@@ -26,6 +26,10 @@ mod l1;
 pub use l1::{L1BlockInfo, L1ConnectionMode, fetch_full_system_config, run_l1_blob_watcher};
 
 mod p2p;
+pub use p2p::{
+    DiscoveryInfo, NodeEndpoint, NodeInfoReport, PeerListReport, PeerStatsReport, PeerSummary,
+    fetch_connected_peers, fetch_node_info, fetch_peer_stats,
+};
 
 mod pods;
 pub use pods::{PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, run_pods_poller};

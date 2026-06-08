@@ -89,9 +89,67 @@ pub(crate) enum Commands {
         #[arg(long, requires = "json")]
         raw: bool,
     },
+    /// Inspect p2p peers and advertised endpoints.
+    P2p {
+        #[command(subcommand)]
+        command: P2pCommands,
+    },
     /// Stream flashblocks as JSON lines.
     #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
     Flashblocks,
+}
+
+/// Read-only p2p inspection commands.
+#[derive(Debug, Subcommand)]
+pub(crate) enum P2pCommands {
+    /// List connected peers per layer.
+    Peers {
+        /// Override the execution-layer RPC URL.
+        ///
+        /// Defaults to the chain config's `rpc` field, which on the
+        /// `mainnet` and `sepolia` presets resolves to the public proxyd
+        /// fleet. Pass this flag to query a single node directly.
+        #[arg(long = "el-rpc", value_name = "URL")]
+        el_rpc: Option<Url>,
+        /// Override the consensus-node RPC URL.
+        ///
+        /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
+        /// so non-devnet users must pass this flag (or set the field in
+        /// their YAML config).
+        #[arg(long = "cl-rpc", value_name = "URL")]
+        cl_rpc: Option<Url>,
+        /// Emit JSON instead of the pretty peer tables.
+        #[arg(long)]
+        json: bool,
+        /// With `--json`, emit raw RPC wire shapes instead of the humanized
+        /// peer summary.
+        #[arg(long, requires = "json")]
+        raw: bool,
+    },
+    /// Show advertised endpoints and peer-count summary per layer.
+    Info {
+        /// Override the execution-layer RPC URL.
+        ///
+        /// Defaults to the chain config's `rpc` field, which on the
+        /// `mainnet` and `sepolia` presets resolves to the public proxyd
+        /// fleet. Pass this flag to query a single node directly.
+        #[arg(long = "el-rpc", value_name = "URL")]
+        el_rpc: Option<Url>,
+        /// Override the consensus-node RPC URL.
+        ///
+        /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
+        /// so non-devnet users must pass this flag (or set the field in
+        /// their YAML config).
+        #[arg(long = "cl-rpc", value_name = "URL")]
+        cl_rpc: Option<Url>,
+        /// Emit JSON instead of the pretty key-value table.
+        #[arg(long)]
+        json: bool,
+        /// With `--json`, emit raw RPC wire shapes instead of the humanized
+        /// endpoint summary.
+        #[arg(long, requires = "json")]
+        raw: bool,
+    },
 }
 
 /// TUI monitor views.

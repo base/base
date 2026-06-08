@@ -1,0 +1,398 @@
+//! Implementation of the `basectl p2p` command group.
+
+use std::io::{self, Write};
+
+use alloy_provider::{
+    ProviderBuilder,
+    ext::{AdminApi, NetApi},
+};
+use anyhow::{Context, Result, anyhow};
+use base_common_network::Base;
+use base_consensus_rpc::BaseP2PApiClient;
+use basectl_cli::{
+    JsonOutput, KeyValueTable, MonitoringConfig, NodeEndpoint, PeerListReport, PeerStatsReport,
+    PeerSummary, fetch_connected_peers, fetch_node_info, fetch_peer_stats,
+};
+use jsonrpsee::http_client::HttpClientBuilder;
+use serde::Serialize;
+use url::Url;
+
+use crate::cli::P2pCommands;
+
+/// Runs the `basectl p2p` command group.
+pub(crate) async fn run(config: MonitoringConfig, command: P2pCommands) -> Result<()> {
+    match command {
+        P2pCommands::Peers { el_rpc, cl_rpc, json, raw } => {
+            run_peers(config, el_rpc, cl_rpc, json, raw).await
+        }
+        P2pCommands::Info { el_rpc, cl_rpc, json, raw } => {
+            run_info(config, el_rpc, cl_rpc, json, raw).await
+        }
+    }
+}
+
+async fn run_peers(
+    config: MonitoringConfig,
+    el_rpc_override: Option<Url>,
+    cl_rpc_override: Option<Url>,
+    json: bool,
+    raw: bool,
+) -> Result<()> {
+    let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
+    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p peers")?;
+
+    match (json, raw) {
+        (true, true) => JsonOutput::print(&fetch_raw_peers(&el_rpc, &cl_rpc).await?)?,
+        (true, false) => {
+            let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
+            JsonOutput::print(&PeersJson::from_report(&config.name, &report))?;
+        }
+        (false, _) => {
+            let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
+            print_peers_pretty(&config.name, &report)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_info(
+    config: MonitoringConfig,
+    el_rpc_override: Option<Url>,
+    cl_rpc_override: Option<Url>,
+    json: bool,
+    raw: bool,
+) -> Result<()> {
+    let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
+    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p info")?;
+
+    match (json, raw) {
+        (true, true) => JsonOutput::print(&fetch_raw_info(&el_rpc, &cl_rpc).await?)?,
+        (true, false) => {
+            let (node_info, peer_stats) = tokio::try_join!(
+                fetch_node_info(&el_rpc, &cl_rpc),
+                fetch_peer_stats(&el_rpc, &cl_rpc)
+            )?;
+            JsonOutput::print(&InfoJson::from_report(&config.name, &node_info, &peer_stats))?;
+        }
+        (false, _) => {
+            let (node_info, peer_stats) = tokio::try_join!(
+                fetch_node_info(&el_rpc, &cl_rpc),
+                fetch_peer_stats(&el_rpc, &cl_rpc)
+            )?;
+            print_info_pretty(&config.name, &node_info, &peer_stats)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_cl_rpc(
+    config: &MonitoringConfig,
+    override_url: Option<&Url>,
+    command_name: &str,
+) -> Result<Url> {
+    if let Some(u) = override_url {
+        return Ok(u.clone());
+    }
+    config.consensus_node_rpc.clone().ok_or_else(|| {
+        anyhow!(
+            "{command_name} needs a consensus-node RPC URL.\n\
+             The '{}' config does not set `consensus_node_rpc`.\n\
+             Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config.",
+            config.name
+        )
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LayerInfoJson {
+    advertised_ip: Option<String>,
+    rlpx_tcp_port: Option<u16>,
+    discovery: Option<basectl_cli::DiscoveryInfo>,
+    peer_count: u32,
+}
+
+impl LayerInfoJson {
+    fn from_endpoint(endpoint: Option<NodeEndpoint>, peer_count: u32) -> Self {
+        Self {
+            advertised_ip: endpoint.map(|endpoint| endpoint.advertised_ip.to_string()),
+            rlpx_tcp_port: endpoint.map(|endpoint| endpoint.rlpx_tcp_port),
+            discovery: endpoint.map(|endpoint| endpoint.discovery),
+            peer_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InfoJson {
+    network: String,
+    el: LayerInfoJson,
+    cl: LayerInfoJson,
+}
+
+impl InfoJson {
+    fn from_report(
+        network: &str,
+        report: &basectl_cli::NodeInfoReport,
+        peer_stats: &PeerStatsReport,
+    ) -> Self {
+        Self {
+            network: network.to_string(),
+            el: LayerInfoJson::from_endpoint(report.el, peer_stats.el_count),
+            cl: LayerInfoJson::from_endpoint(Some(report.cl), peer_stats.cl.connected),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PeersJson {
+    network: String,
+    el: Option<Vec<PeerSummary>>,
+    cl: Vec<PeerSummary>,
+}
+
+impl PeersJson {
+    fn from_report(network: &str, report: &PeerListReport) -> Self {
+        Self { network: network.to_string(), el: report.el.clone(), cl: report.cl.clone() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RawInfoJson {
+    el: Option<serde_json::Value>,
+    el_error: Option<String>,
+    cl: serde_json::Value,
+    peer_counts: RawPeerCountsJson,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RawPeerCountsJson {
+    el: u64,
+    cl: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RawPeersJson {
+    el: Option<serde_json::Value>,
+    el_error: Option<String>,
+    cl: serde_json::Value,
+}
+
+async fn fetch_raw_info(el_rpc: &Url, cl_rpc: &Url) -> Result<RawInfoJson> {
+    let cl_client = HttpClientBuilder::default()
+        .build(cl_rpc.as_str())
+        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+    let el_provider = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .network::<Base>()
+        .connect(el_rpc.as_str())
+        .await
+        .with_context(|| format!("connecting to EL RPC at {el_rpc}"))?;
+    let (el, cl_info, el_count, cl_stats) = tokio::try_join!(
+        async {
+            match el_provider.node_info().await {
+                Ok(info) => Ok((Some(serde_json::to_value(&info)?), None)),
+                Err(err) if err.to_string().contains("error code -32601") => {
+                    Ok((None, Some("EL `admin_nodeInfo` not exposed by this RPC".to_string())))
+                }
+                Err(err) => {
+                    Err(err).with_context(|| format!("fetching admin_nodeInfo from {el_rpc}"))
+                }
+            }
+        },
+        async {
+            BaseP2PApiClient::opp2p_self(&cl_client)
+                .await
+                .with_context(|| format!("fetching opp2p_self from {cl_rpc}"))
+        },
+        async {
+            el_provider
+                .net_peer_count()
+                .await
+                .with_context(|| format!("fetching net_peerCount from {el_rpc}"))
+        },
+        async {
+            BaseP2PApiClient::opp2p_peer_stats(&cl_client)
+                .await
+                .with_context(|| format!("fetching opp2p_peerStats from {cl_rpc}"))
+        },
+    )?;
+
+    Ok(RawInfoJson {
+        el: el.0,
+        el_error: el.1,
+        cl: serde_json::to_value(&cl_info)?,
+        peer_counts: RawPeerCountsJson { el: el_count, cl: serde_json::to_value(cl_stats)? },
+    })
+}
+
+async fn fetch_raw_peers(el_rpc: &Url, cl_rpc: &Url) -> Result<RawPeersJson> {
+    let cl_client = HttpClientBuilder::default()
+        .build(cl_rpc.as_str())
+        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+    let el_provider = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .network::<Base>()
+        .connect(el_rpc.as_str())
+        .await
+        .with_context(|| format!("connecting to EL RPC at {el_rpc}"))?;
+    let (el, cl_peers) = tokio::try_join!(
+        async {
+            match el_provider.peers().await {
+                Ok(peers) => Ok((Some(serde_json::to_value(&peers)?), None)),
+                Err(err) if err.to_string().contains("error code -32601") => {
+                    Ok((None, Some("EL `admin_peers` not exposed by this RPC".to_string())))
+                }
+                Err(err) => Err(err).with_context(|| format!("fetching admin_peers from {el_rpc}")),
+            }
+        },
+        async {
+            BaseP2PApiClient::opp2p_peers(&cl_client, true)
+                .await
+                .with_context(|| format!("fetching opp2p_peers(true) from {cl_rpc}"))
+        },
+    )?;
+
+    Ok(RawPeersJson { el: el.0, el_error: el.1, cl: serde_json::to_value(&cl_peers)? })
+}
+
+fn print_info_pretty(
+    network: &str,
+    report: &basectl_cli::NodeInfoReport,
+    peer_stats: &PeerStatsReport,
+) -> Result<()> {
+    let mut table = KeyValueTable::new();
+    let el_discovery = report.el.map(|endpoint| {
+        format_discovery_flags(endpoint.discovery.v4_enabled, endpoint.discovery.v5_enabled)
+            .to_string()
+    });
+    table
+        .row("network", network)
+        .row(
+            "el_advertised_ip",
+            report
+                .el
+                .map(|endpoint| endpoint.advertised_ip.to_string())
+                .unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
+        )
+        .row(
+            "el_p2p_port",
+            report
+                .el
+                .map(|endpoint| endpoint.rlpx_tcp_port.to_string())
+                .unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
+        )
+        .row(
+            "el_discovery_port",
+            report
+                .el
+                .map(|endpoint| endpoint.discovery.udp_port.to_string())
+                .unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
+        )
+        .row(
+            "el_discovery",
+            el_discovery.unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
+        )
+        .row("el_peer_count", peer_stats.el_count.to_string())
+        .row("cl_advertised_ip", report.cl.advertised_ip.to_string())
+        .row("cl_p2p_port", report.cl.rlpx_tcp_port.to_string())
+        .row("cl_discovery_port", report.cl.discovery.udp_port.to_string())
+        .row(
+            "cl_discovery",
+            format_discovery_flags(report.cl.discovery.v4_enabled, report.cl.discovery.v5_enabled),
+        )
+        .row("cl_peer_count", peer_stats.cl.connected.to_string());
+    table.print()?;
+    Ok(())
+}
+
+fn print_peers_pretty(network: &str, report: &PeerListReport) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "network  {network}")?;
+    writeln!(stdout)?;
+    write_peer_section(&mut stdout, "execution", report.el.as_deref())?;
+    writeln!(stdout)?;
+    write_peer_section(&mut stdout, "consensus", Some(&report.cl))?;
+    Ok(())
+}
+
+fn write_peer_section<W: Write>(
+    writer: &mut W,
+    label: &str,
+    peers: Option<&[PeerSummary]>,
+) -> io::Result<()> {
+    let Some(peers) = peers else {
+        writeln!(writer, "{label} peers unavailable (RPC does not expose admin peer listing)")?;
+        return Ok(());
+    };
+    writeln!(writer, "{label} peers ({})", peers.len())?;
+    if peers.is_empty() {
+        writeln!(writer, "  none")?;
+        return Ok(());
+    }
+
+    let id_width = peers.iter().map(|peer| peer.id.len()).max().unwrap_or(2).max(2);
+    let addr_width = peers.iter().map(|peer| peer.address.len()).max().unwrap_or(4).max(4);
+    writeln!(writer, "  {0:<id_width$}  {1:<addr_width$}  direction", "id", "addr")?;
+    for peer in peers {
+        writeln!(
+            writer,
+            "  {0:<id_width$}  {1:<addr_width$}  {2}",
+            peer.id, peer.address, peer.direction,
+        )?;
+    }
+    Ok(())
+}
+
+const fn format_discovery_flags(v4_enabled: bool, v5_enabled: bool) -> &'static str {
+    match (v4_enabled, v5_enabled) {
+        (true, true) => "v4+v5",
+        (true, false) => "v4",
+        (false, true) => "v5",
+        (false, false) => "disabled",
+    }
+}
+
+fn unavailable_admin_method(method: &str) -> String {
+    format!("unavailable (`{method}` not exposed by this RPC)")
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Address;
+    use url::Url;
+
+    use super::resolve_cl_rpc;
+
+    #[test]
+    fn resolve_cl_rpc_prefers_flag() {
+        let config = basectl_cli::MonitoringConfig {
+            name: "devnet".to_string(),
+            rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
+            flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
+            l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
+            consensus_node_rpc: None,
+            hardforks: None,
+            system_config: Address::ZERO,
+            batcher_address: None,
+            l1_blob_target: 14,
+            conductors: None,
+            discovery: None,
+            validators: None,
+            proofs: None,
+            pods: None,
+        };
+
+        let override_url = Url::parse("http://127.0.0.1:9545").unwrap();
+        let resolved = resolve_cl_rpc(&config, Some(&override_url), "p2p info").unwrap();
+
+        assert_eq!(resolved, override_url);
+    }
+}

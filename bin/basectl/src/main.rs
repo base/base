@@ -2,6 +2,7 @@
 
 mod block;
 mod cli;
+mod p2p;
 mod sync_status;
 
 use basectl_cli::{MonitoringConfig, ViewId, run_app, run_flashblocks_json};
@@ -35,6 +36,9 @@ async fn main() -> anyhow::Result<()> {
                 raw,
             )
             .await
+        }
+        Some(cli::Commands::P2p { command }) => {
+            p2p::run(MonitoringConfig::load(config).await?, command).await
         }
         Some(cli::Commands::Flashblocks) => {
             run_flashblocks_json(MonitoringConfig::load(config).await?).await
