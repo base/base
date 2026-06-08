@@ -2,9 +2,9 @@
 //!
 //! This module provides the [`BlockAssembler`] which reconstructs blocks from flashblocks.
 
-use alloy_consensus::{Header, Sealed};
+use alloy_consensus::{Header, Sealed, proofs};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, bytes::BufMut};
 use alloy_rpc_types::Withdrawal;
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
@@ -129,11 +129,41 @@ impl BlockAssembler {
 
         Ok(AssembledBlock { block, base, flashblocks: flashblocks.to_vec(), header: sealed_header })
     }
+
+    /// Refreshes a same-block pending header without rebuilding the full block body.
+    pub fn refresh_same_block_header(
+        previous_header: &Sealed<Header>,
+        flashblocks: &[Flashblock],
+    ) -> Result<Sealed<Header>> {
+        let latest_flashblock = flashblocks.last().ok_or(ProtocolError::EmptyFlashblocks)?;
+        let transactions_root = proofs::ordered_trie_root_with_encoder(
+            &flashblocks
+                .iter()
+                .flat_map(|flashblock| flashblock.diff.transactions.iter())
+                .collect::<Vec<_>>(),
+            |transaction, buf| buf.put_slice(transaction.as_ref()),
+        );
+
+        let mut header = previous_header.inner().clone();
+        header.transactions_root = transactions_root;
+        header.state_root = latest_flashblock.diff.state_root;
+        header.receipts_root = latest_flashblock.diff.receipts_root;
+        header.logs_bloom = latest_flashblock.diff.logs_bloom;
+        header.gas_used = latest_flashblock.diff.gas_used;
+        if header.withdrawals_root.is_some() {
+            header.withdrawals_root = Some(latest_flashblock.diff.withdrawals_root);
+        }
+        if previous_header.inner().blob_gas_used.is_some() {
+            header.blob_gas_used = Some(latest_flashblock.diff.blob_gas_used.unwrap_or_default());
+        }
+
+        Ok(header.seal(B256::ZERO))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bloom, U256};
+    use alloy_primitives::{Address, Bloom, U256, hex::FromHex};
     use alloy_rpc_types_engine::PayloadId;
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
@@ -176,6 +206,10 @@ mod tests {
         }
     }
 
+    fn block_info_tx() -> Bytes {
+        Bytes::from_hex("0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000").expect("valid block info transaction")
+    }
+
     #[test]
     fn test_assemble_single_flashblock() {
         let flashblocks = vec![create_test_flashblock(0, true)];
@@ -213,6 +247,38 @@ mod tests {
 
         let assembled = BlockAssembler::assemble(&[fb0, fb1]).unwrap();
         assert_eq!(assembled.block.header.blob_gas_used, Some(42_000));
+    }
+
+    #[test]
+    fn test_refresh_same_block_header_matches_full_assembly() {
+        let mut fb0 = create_test_flashblock(0, true);
+        fb0.diff.transactions = vec![block_info_tx()];
+        fb0.diff.blob_gas_used = Some(10);
+
+        let mut fb1 = create_test_flashblock(1, false);
+        fb1.diff.transactions = vec![block_info_tx()];
+        fb1.diff.state_root = B256::from([0x11; 32]);
+        fb1.diff.receipts_root = B256::from([0x22; 32]);
+        fb1.diff.logs_bloom = Bloom::from([0x33; 256]);
+        fb1.diff.gas_used = 42_000;
+        fb1.diff.blob_gas_used = Some(42_000);
+
+        let mut fb2 = create_test_flashblock(2, false);
+        fb2.diff.transactions = vec![block_info_tx()];
+        fb2.diff.state_root = B256::from([0x44; 32]);
+        fb2.diff.receipts_root = B256::from([0x55; 32]);
+        fb2.diff.logs_bloom = Bloom::from([0x66; 256]);
+        fb2.diff.gas_used = 63_000;
+        fb2.diff.blob_gas_used = None;
+
+        let flashblocks = vec![fb0, fb1, fb2];
+        let previous_header = BlockAssembler::assemble(&flashblocks[..2]).unwrap().header;
+        let refreshed_header =
+            BlockAssembler::refresh_same_block_header(&previous_header, &flashblocks).unwrap();
+        let expected_header = BlockAssembler::assemble(&flashblocks).unwrap().header;
+
+        assert_eq!(refreshed_header.inner(), expected_header.inner());
+        assert_eq!(refreshed_header.hash(), B256::ZERO);
     }
 
     #[test]

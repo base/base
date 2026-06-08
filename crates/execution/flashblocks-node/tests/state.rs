@@ -766,3 +766,76 @@ async fn test_progress_canonical_blocks_without_flashblocks() {
     assert_eq!(block_two.transaction_count(), 3);
     assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 }
+
+#[tokio::test]
+async fn test_bundle_state_published_for_pending_metering() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 1)
+            .with_transactions(vec![test.build_transaction_to_send_eth(
+                Account::Alice,
+                Account::Bob,
+                100_000,
+            )])
+            .build(),
+    )
+    .await;
+
+    let pending_blocks = test.flashblocks.get_pending_blocks();
+    let bundle_state =
+        pending_blocks.as_ref().expect("pending blocks should exist").get_bundle_state();
+
+    assert!(
+        bundle_state.account(&Account::Alice.address()).is_some(),
+        "pending bundle_state must include Alice for metering/trie cache consumers"
+    );
+    assert!(
+        bundle_state.account(&Account::Bob.address()).is_some(),
+        "pending bundle_state must include Bob for metering/trie cache consumers"
+    );
+}
+
+#[tokio::test]
+async fn test_same_block_append_refreshes_pending_header() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 1)
+            .with_transactions(vec![test.build_transaction_to_send_eth(
+                Account::Alice,
+                Account::Bob,
+                100_000,
+            )])
+            .build(),
+    )
+    .await;
+
+    let after_first_append =
+        test.flashblocks.get_pending_blocks().get_block(true).expect("block should exist");
+    let first_txs = after_first_append.transactions.len();
+    let first_transactions_root = after_first_append.header.transactions_root;
+
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 2)
+            .with_transactions(vec![test.build_transaction_to_send_eth(
+                Account::Alice,
+                Account::Charlie,
+                200_000,
+            )])
+            .build(),
+    )
+    .await;
+
+    let after_second_append =
+        test.flashblocks.get_pending_blocks().get_block(true).expect("block should exist");
+
+    assert_eq!(after_second_append.header.number, after_first_append.header.number);
+    assert_eq!(after_second_append.transactions.len(), first_txs + 1);
+    assert!(
+        after_second_append.header.transactions_root != first_transactions_root,
+        "same-block append must publish a fresh header with updated transactions_root"
+    );
+}

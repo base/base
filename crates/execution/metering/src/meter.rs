@@ -80,7 +80,7 @@ pub struct PendingTrieInput {
 #[derive(Debug, Clone)]
 pub struct PendingState {
     /// The accumulated bundle of state changes from pending flashblocks.
-    pub bundle_state: BundleState,
+    pub bundle_state: Arc<BundleState>,
     /// Optional pre-computed trie input for faster state root calculation.
     /// If provided, state root calculation skips recomputing the pending state's trie.
     pub trie_input: Option<PendingTrieInput>,
@@ -1338,7 +1338,7 @@ mod tests {
             Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
             Vec::<(B256, Bytecode)>::new(),
         );
-        let pending_state = PendingState { bundle_state, trie_input: None };
+        let pending_state = PendingState { bundle_state: Arc::new(bundle_state), trie_input: None };
 
         // Transaction with nonce=0 — "too low" relative to pending nonce of 5
         let to = Address::random();
@@ -1646,7 +1646,8 @@ mod tests {
         let trie_input = compute_pending_trie_input(&state_provider, hashed)?;
         drop(state_provider);
 
-        let pending_state = PendingState { bundle_state, trie_input: Some(trie_input) };
+        let pending_state =
+            PendingState { bundle_state: Arc::new(bundle_state), trie_input: Some(trie_input) };
 
         // Create a bundle tx: Alice (nonce=1 from pending) sends to a random address
         let to = Address::random();

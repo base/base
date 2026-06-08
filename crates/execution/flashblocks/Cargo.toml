@@ -77,6 +77,7 @@ metrics = { workspace = true, optional = true }
 url.workspace = true
 rayon.workspace = true
 arc-swap.workspace = true
+imbl.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["from"] }
