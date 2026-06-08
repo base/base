@@ -75,10 +75,7 @@ impl InFlightRegistrationGuard {
 
 impl Drop for InFlightRegistrationGuard {
     fn drop(&mut self) {
-        // The critical section is a single `HashSet::remove` and cannot
-        // panic under normal conditions, so poisoning is effectively
-        // impossible. If it ever occurs, the set contents are still
-        // valid and cleanup must proceed.
+        // Recover from poisoning so guard cleanup still runs.
         let mut set = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
         set.remove(&self.signer);
     }
@@ -122,11 +119,7 @@ where
             tx_retry_delay,
         } = *self;
 
-        // Check cancellation BEFORE any other work: a task that was
-        // already cancelled should not acquire the in-flight mutex or do
-        // registry RPC work. This bounds shutdown latency by the longest
-        // in-flight operation rather than by an additional registry round-trip
-        // per pending task.
+        // Avoid taking locks or making registry RPCs after cancellation.
         if signer_cancel.is_cancelled() {
             debug!(signer = %signer_address, "task cancelled before registry probe");
             return Ok(());
@@ -148,8 +141,7 @@ where
             return Ok(());
         };
 
-        // Cancel-aware: `is_registered` is a side-effect-free read, so
-        // dropping it on cancel is safe.
+        // Safe to cancel because this is a side-effect-free registry read.
         let already_registered = tokio::select! {
             biased;
             () = signer_cancel.cancelled() => {
@@ -241,8 +233,6 @@ where
             }
         };
 
-        // Check cancellation before submitting the transaction to avoid starting
-        // new onchain work if shutdown is in progress.
         if signer_cancel.is_cancelled() {
             debug!("shutdown requested, skipping transaction submission");
             return Ok(());
@@ -325,8 +315,6 @@ where
                         Ok(false) => {}
                     }
 
-                    // Non-retryable errors cannot be resolved by retrying with
-                    // the same calldata.
                     if !e.is_retryable() {
                         // If the contract reverted execution, the proof itself
                         // is likely invalid. Block recovery for this signer so
@@ -355,8 +343,6 @@ where
                         "tx submission failed, retrying with same proof"
                     );
 
-                    // Cancellation-aware delay: abort immediately if shutdown
-                    // is requested during the retry wait.
                     tokio::select! {
                         biased;
                         () = signer_cancel.cancelled() => {
