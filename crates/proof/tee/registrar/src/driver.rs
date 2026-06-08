@@ -12,11 +12,9 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, Bytes, hex};
-use alloy_sol_types::SolCall;
-use base_proof_contracts::ITEEProverRegistry;
+use alloy_primitives::{Address, hex};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
-use base_tx_manager::{TxCandidate, TxManager};
+use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use rand::random;
 use tokio::{
@@ -27,9 +25,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
-    CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
-    ProofHandlerConfig, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics,
-    RegistrationManager, RegistryClient, Result, SignerClient,
+    CertManager, CrlConfig, DeregistrationManager, InstanceDiscovery, InstanceHealthStatus,
+    NitroVerifierClient, ProofHandlerConfig, ProverClient, ProverInstance, RegistrarError,
+    RegistrarMetrics, RegistrationManager, RegistryClient, Result, SignerClient,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -809,29 +807,21 @@ where
 
     /// Drives the orphan-deregistration pass.
     ///
-    /// Loads onchain signers, computes the orphan set (`registered \ active`),
-    /// and deregisters each in sequence with a ghost-entry guard. The
-    /// [`Self::run`] pipeline invokes this independently of the concurrent
-    /// registration path.
+    /// Delegates onchain signer loading and orphan cleanup to
+    /// [`DeregistrationManager`]. The [`Self::run`] pipeline invokes this
+    /// independently of the concurrent registration path.
     ///
     /// Both error paths (registry load and per-orphan deregistration)
     /// propagate uniformly so the caller can log + increment
     /// `processing_errors_total` once at a single site.
     async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
-        // Cancel-aware: `get_registered_signers` is a side-effect-free
-        // read, so dropping it on cancel is safe. Without this select,
-        // a shutdown during the registry RPC would extend drain latency
-        // by an entire round-trip before `deregister_orphans` is even
-        // reached.
-        let registered_signers = tokio::select! {
-            biased;
-            () = self.config.cancel.cancelled() => {
-                debug!("cancelled before loading registered signers for orphan dereg");
-                return Ok(());
-            }
-            res = self.registry.get_registered_signers() => res?,
-        };
-        self.deregister_orphans(protected_signers, &registered_signers).await
+        let manager = DeregistrationManager::new(
+            self.config.registry_address,
+            &self.registry,
+            &self.tx_manager,
+            &self.signer_history,
+        );
+        manager.run_orphan_dereg(protected_signers, &self.config.cancel).await
     }
 
     /// Builds the protected-signer set for the orphan-dereg pass: the
@@ -1197,64 +1187,6 @@ where
         RegistrarMetrics::proof_tasks_pending().set(0.0);
     }
 
-    /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
-    async fn submit_deregistration(&self, signer: Address) -> bool {
-        let calldata =
-            Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode());
-
-        // `last_known_instance = None` is the strongest single diagnostic
-        // for phantom rotations: a signer we never observed in any
-        // discovery cycle implies another registrar (or a prior
-        // deployment) wrote it.
-        let last_known_instance = {
-            let history = self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
-            history.get(&signer).cloned()
-        };
-        info!(
-            signer = %signer,
-            last_known_instance = ?last_known_instance,
-            registry = %self.config.registry_address,
-            calldata_len = calldata.len(),
-            "Deregistering signer"
-        );
-
-        let candidate = TxCandidate {
-            tx_data: calldata,
-            to: Some(self.config.registry_address),
-            ..Default::default()
-        };
-
-        info!(
-            tx = ?candidate,
-            "Sending tx candidate",
-        );
-
-        match self.tx_manager.send(candidate).await {
-            Ok(receipt) => {
-                if !receipt.inner.status() {
-                    warn!(
-                        signer = %signer,
-                        tx_hash = %receipt.transaction_hash,
-                        "deregistration transaction reverted onchain",
-                    );
-                    RegistrarMetrics::processing_errors_total().increment(1);
-                    return false;
-                }
-                info!(
-                    signer = %signer,
-                    tx_hash = %receipt.transaction_hash,
-                    "signer deregistered"
-                );
-                true
-            }
-            Err(e) => {
-                warn!(error = %e, signer = %signer, "failed to deregister signer");
-                RegistrarMetrics::processing_errors_total().increment(1);
-                false
-            }
-        }
-    }
-
     /// Deregisters any onchain signer that is not in the `protected_signers` set.
     ///
     /// These orphans arise when a prover instance is terminated (e.g. ASG
@@ -1281,65 +1213,19 @@ where
     ///   registrar instances manage disjoint prover fleets, one registrar would
     ///   incorrectly deregister another's signers. The current deployment model
     ///   assumes a single registrar per registry contract.
+    #[cfg(test)]
     async fn deregister_orphans(
         &self,
         protected_signers: &HashSet<Address>,
         registered_signers: &[Address],
     ) -> Result<()> {
-        let orphans: Vec<_> = registered_signers
-            .iter()
-            .copied()
-            .filter(|addr| !protected_signers.contains(addr))
-            .collect();
-
-        if orphans.is_empty() {
-            return Ok(());
-        }
-
-        info!(count = orphans.len(), "deregistering orphan signers");
-
-        let mut deregistered = 0usize;
-        for signer in orphans {
-            if self.config.cancel.is_cancelled() {
-                debug!("shutdown requested, stopping orphan deregistration");
-                break;
-            }
-
-            // Verify the signer is truly registered onchain before spending
-            // gas on a deregistration tx. The `getRegisteredSigners()` view
-            // reads from an `EnumerableSetLib.AddressSet` which can contain
-            // ghost entries (addresses that appear in `values()` but have
-            // `isRegisteredSigner == false`) due to a storage corruption bug
-            // in Solady v0.0.245. Skipping ghosts prevents an infinite
-            // deregistration loop.
-            match self.registry.is_registered(signer).await {
-                Ok(false) => {
-                    warn!(
-                        signer = %signer,
-                        "signer appears in getRegisteredSigners but isRegisteredSigner is false, \
-                         skipping (possible EnumerableSet ghost entry)"
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        signer = %signer,
-                        "failed to verify signer registration status, skipping deregistration"
-                    );
-                    continue;
-                }
-                Ok(true) => {}
-            }
-
-            if self.submit_deregistration(signer).await {
-                RegistrarMetrics::deregistrations_total().increment(1);
-                deregistered += 1;
-            }
-        }
-
-        info!(count = deregistered, "orphan deregistration complete");
-        Ok(())
+        let manager = DeregistrationManager::new(
+            self.config.registry_address,
+            &self.registry,
+            &self.tx_manager,
+            &self.signer_history,
+        );
+        manager.deregister_orphans(protected_signers, registered_signers, &self.config.cancel).await
     }
 }
 
@@ -1359,6 +1245,7 @@ mod tests {
     use alloy_rpc_types_eth::TransactionReceipt;
     use alloy_sol_types::SolCall;
     use async_trait::async_trait;
+    use base_proof_contracts::ITEEProverRegistry;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
     use base_tx_manager::{SendHandle, TxCandidate, TxManager};
     use hex_literal::hex;

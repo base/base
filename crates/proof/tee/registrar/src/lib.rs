@@ -19,6 +19,9 @@ pub use crl::{
     check_chain_against_crls,
 };
 
+mod deregistration_manager;
+pub use deregistration_manager::DeregistrationManager;
+
 mod discovery;
 pub use discovery::AwsTargetGroupDiscovery;
 
