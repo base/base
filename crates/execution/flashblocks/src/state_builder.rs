@@ -109,6 +109,22 @@ where
         self.evm.db_mut()
     }
 
+    /// Seeds block-level offsets when appending transactions to an already-executed pending block.
+    pub const fn set_execution_offsets(&mut self, cumulative_gas_used: u64, next_log_index: usize) {
+        self.cumulative_gas_used = cumulative_gas_used;
+        self.next_log_index = next_log_index;
+    }
+
+    /// Returns the cumulative gas used for the current pending block.
+    pub const fn cumulative_gas_used(&self) -> u64 {
+        self.cumulative_gas_used
+    }
+
+    /// Returns the next log index for the current pending block.
+    pub const fn next_log_index(&self) -> usize {
+        self.next_log_index
+    }
+
     /// Executes a single transaction and updates internal state.
     /// Should be called in order for each transaction.
     #[instrument(level = "debug", skip_all, fields(tx_hash = %transaction.tx_hash(), idx = idx))]
