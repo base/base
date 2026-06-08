@@ -103,7 +103,7 @@ fn resolve_cl_rpc(
 #[serde(rename_all = "camelCase")]
 struct LayerInfoJson {
     advertised_ip: Option<String>,
-    rlpx_tcp_port: Option<u16>,
+    tcp_port: Option<u16>,
     discovery: Option<basectl_cli::DiscoveryInfo>,
     peer_count: u32,
 }
@@ -112,7 +112,7 @@ impl LayerInfoJson {
     fn from_endpoint(endpoint: Option<NodeEndpoint>, peer_count: u32) -> Self {
         Self {
             advertised_ip: endpoint.map(|endpoint| endpoint.advertised_ip.to_string()),
-            rlpx_tcp_port: endpoint.map(|endpoint| endpoint.rlpx_tcp_port),
+            tcp_port: endpoint.map(|endpoint| endpoint.tcp_port),
             discovery: endpoint.map(|endpoint| endpoint.discovery),
             peer_count,
         }
@@ -178,7 +178,7 @@ fn print_info_pretty(
             "el_p2p_port",
             report
                 .el
-                .map(|endpoint| endpoint.rlpx_tcp_port.to_string())
+                .map(|endpoint| endpoint.tcp_port.to_string())
                 .unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
         )
         .row(
@@ -194,7 +194,7 @@ fn print_info_pretty(
         )
         .row("el_peer_count", peer_stats.el_count.to_string())
         .row("cl_advertised_ip", report.cl.advertised_ip.to_string())
-        .row("cl_p2p_port", report.cl.rlpx_tcp_port.to_string())
+        .row("cl_p2p_port", report.cl.tcp_port.to_string())
         .row("cl_discovery_port", report.cl.discovery.udp_port.to_string())
         .row(
             "cl_discovery",

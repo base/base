@@ -35,7 +35,7 @@ pub struct NodeEndpoint {
     /// Advertised public IP address.
     pub advertised_ip: IpAddr,
     /// Advertised TCP listening port.
-    pub rlpx_tcp_port: u16,
+    pub tcp_port: u16,
     /// Advertised discovery configuration.
     pub discovery: DiscoveryInfo,
 }
@@ -300,6 +300,16 @@ const fn is_method_not_found(err: &TransportError) -> bool {
     matches!(err, TransportError::ErrorResp(payload) if payload.code == -32601)
 }
 
+/// Parses the EL advertised endpoint from `admin_nodeInfo`'s enode + ENR,
+/// preferring ENR-advertised values and falling back to the enode record and
+/// the supplied `admin_nodeInfo` ports.
+///
+/// Discovery flags are inferred heuristically and are best-effort: `v4_enabled`
+/// is taken from the enode carrying a non-zero discovery (UDP) port, and
+/// `v5_enabled` from the ENR advertising a UDP port. This matches standard
+/// Reth/Geth output, but the inference is imperfect — e.g. a discv5-only node
+/// whose enode still includes a non-zero `discport` will report
+/// `v4_enabled = true`.
 fn parse_el_node_endpoint(
     enode: &str,
     enr: &str,
@@ -309,10 +319,10 @@ fn parse_el_node_endpoint(
 ) -> Result<NodeEndpoint> {
     let record =
         NodeRecord::from_str(enode).with_context(|| format!("parsing EL enode `{enode}`"))?;
-    let parsed_enr = parse_enr_fields(enr).with_context(|| format!("parsing EL ENR `{enr}`")).ok();
+    let parsed_enr = parse_enr_fields(enr).ok();
 
     let advertised_ip = parsed_enr.and_then(|fields| fields.ip).unwrap_or(fallback_ip);
-    let rlpx_tcp_port = parsed_enr
+    let tcp_port = parsed_enr
         .and_then(|fields| fields.tcp_port)
         .filter(|port| *port != 0)
         .unwrap_or(if record.tcp_port != 0 { record.tcp_port } else { fallback_listener_port });
@@ -329,7 +339,7 @@ fn parse_el_node_endpoint(
 
     Ok(NodeEndpoint {
         advertised_ip,
-        rlpx_tcp_port,
+        tcp_port,
         discovery: DiscoveryInfo { udp_port, v4_enabled, v5_enabled },
     })
 }
@@ -341,14 +351,14 @@ fn parse_cl_node_endpoint(peer: &base_consensus_gossip::PeerInfo) -> Result<Node
     let fields = parse_enr_fields(enr).with_context(|| format!("parsing CL ENR `{enr}`"))?;
     let advertised_ip =
         fields.ip.ok_or_else(|| anyhow!("CL ENR did not contain an advertised IP address"))?;
-    let rlpx_tcp_port =
+    let tcp_port =
         fields.tcp_port.ok_or_else(|| anyhow!("CL ENR did not contain an advertised TCP port"))?;
     let udp_port =
         fields.udp_port.ok_or_else(|| anyhow!("CL ENR did not contain an advertised UDP port"))?;
 
     Ok(NodeEndpoint {
         advertised_ip,
-        rlpx_tcp_port,
+        tcp_port,
         discovery: DiscoveryInfo { udp_port, v4_enabled: false, v5_enabled: udp_port != 0 },
     })
 }
@@ -401,7 +411,7 @@ mod tests {
             endpoint,
             NodeEndpoint {
                 advertised_ip: IpAddr::V4(Ipv4Addr::new(24, 147, 252, 56)),
-                rlpx_tcp_port: 30304,
+                tcp_port: 30304,
                 discovery: super::DiscoveryInfo {
                     udp_port: 30301,
                     v4_enabled: true,
@@ -436,7 +446,7 @@ mod tests {
         let endpoint = parse_cl_node_endpoint(&peer).unwrap();
 
         assert!(matches!(endpoint.advertised_ip, IpAddr::V4(_)));
-        assert!(endpoint.rlpx_tcp_port > 0);
+        assert!(endpoint.tcp_port > 0);
         assert!(endpoint.discovery.udp_port > 0);
         assert!(!endpoint.discovery.v4_enabled);
         assert!(endpoint.discovery.v5_enabled);
