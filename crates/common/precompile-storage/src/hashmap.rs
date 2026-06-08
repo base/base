@@ -34,10 +34,6 @@ pub struct HashMapStorageProvider {
     gas_params: GasParams,
     state_gas_used: u64,
     gas_refunded: i64,
-    /// When `Some(n)`, enforces the EIP-2200 stipend guard: `sstore` returns `OutOfGas` when
-    /// `n <= gas_params.call_stipend()`. `None` (default) disables the guard so existing tests
-    /// that do not care about gas limits continue to work unchanged.
-    gas_remaining: Option<u64>,
     /// Emitted events keyed by contract address.
     pub events: HashMap<Address, Vec<LogData>>,
 }
@@ -82,7 +78,6 @@ impl HashMapStorageProvider {
             gas_params: GasParams::default(),
             state_gas_used: 0,
             gas_refunded: 0,
-            gas_remaining: None,
         }
     }
 }
@@ -143,11 +138,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     ) -> Result<(), BasePrecompileError> {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
-        }
-        // EIP-2200 stipend guard — mirrors EvmPrecompileStorageProvider::sstore.
-        // Only enforced when gas_remaining is explicitly set (opt-in for tests).
-        if self.gas_remaining.is_some_and(|r| r <= self.gas_params.call_stipend()) {
-            return Err(BasePrecompileError::OutOfGas);
         }
         let old = self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO);
         self.counter_sstore += 1;
@@ -402,13 +392,6 @@ impl HashMapStorageProvider {
     /// Overrides the gas parameters used for state gas accounting (test-utils only).
     pub fn set_gas_params(&mut self, gas_params: GasParams) {
         self.gas_params = gas_params;
-    }
-
-    /// Sets the simulated remaining gas, enabling the EIP-2200 stipend guard in `sstore`
-    /// (test-utils only). Use this to exercise the guard at specific gas levels without
-    /// a live EVM journal.
-    pub const fn set_gas_remaining(&mut self, remaining: u64) {
-        self.gas_remaining = Some(remaining);
     }
 }
 
