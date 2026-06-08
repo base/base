@@ -249,21 +249,16 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     proof_semaphore: Arc<Semaphore>,
     /// Process-local set of signer addresses currently being registered.
     ///
-    /// `try_register` reserves an entry here before its `is_registered`
-    /// precheck and releases it (via [`InFlightGuard`]) when it returns.
-    /// This closes a TOCTOU race in which two concurrent `try_register`
-    /// invocations for the same signer — e.g. when a rotation briefly has
-    /// two instances backing the same enclave signing key, or when the
-    /// per-enclave loop within `process_instance` resolves the same address
-    /// more than once — both read `is_registered == false`, both generate
-    /// (potentially identical) proofs, and both submit duplicate
-    /// registration transactions.
+    /// [`RegistrationManager::register_signer`] reserves an entry here before
+    /// its `is_registered` precheck and releases it when it returns. This closes
+    /// a TOCTOU race in which two concurrent registration attempts for the same
+    /// signer both read `is_registered == false`, both generate proofs, and both
+    /// submit duplicate registration transactions.
     ///
     /// This is a defence-in-depth backstop: the [`Self::run`] spawn loop's
     /// `in_flight: HashSet<Address>` already dedupes at task-spawn time,
-    /// so the `try_register` layer only catches duplicates from callers
-    /// that bypass the spawn loop (notably future paths or hand-rolled
-    /// tests).
+    /// so the registration-manager layer only catches duplicates from callers
+    /// that bypass the spawn loop.
     ///
     /// The set is held across the entire registration lifecycle (including
     /// the ~20 minute Boundless proof generation) so deduplication holds
@@ -510,188 +505,6 @@ where
         })
     }
 
-    /// Resolves signer addresses from an instance and attempts registration.
-    ///
-    /// Returns the derived signer addresses regardless of whether registration
-    /// was needed or succeeded, so the caller can build the active signer set.
-    /// Registration failures are logged but do not prevent the addresses from
-    /// being returned.
-    ///
-    /// Used only by [`Self::step`]; the [`Self::run`] pipeline performs
-    /// the same per-instance work via [`Self::resolve_instance`] +
-    /// per-signer spawned tasks ([`Self::run_proof_task`]).
-    #[cfg(test)]
-    async fn process_instance(&self, instance: &ProverInstance) -> Result<Vec<Address>> {
-        let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
-        let mut addresses = Vec::with_capacity(public_keys.len());
-
-        for public_key in &public_keys {
-            addresses.push(ProverClient::derive_address(public_key)?);
-        }
-
-        // Early return when no signers are found. This avoids panicking on
-        // `all_attestations[0]` below and is a no-op for both registration
-        // and the active signer set.
-        if addresses.is_empty() {
-            return Ok(addresses);
-        }
-
-        // Only attempt registration for instances that pass should_register().
-        // Non-registerable instances (Draining, Unhealthy) still contribute
-        // their addresses to the active signer set to prevent premature
-        // deregistration.
-        //
-        // Exception: recently-launched Unhealthy instances are allowed through
-        // when they fall within the configured unhealthy_registration_window.
-        // New instances may fail ALB health checks during startup while the
-        // application is still initializing.
-        if !instance.health_status.should_register() {
-            if !self.is_recently_launched_unhealthy(instance) {
-                debug!(
-                    status = ?instance.health_status,
-                    instance = %instance.instance_id,
-                    "instance not registerable, skipping registration"
-                );
-                return Ok(addresses);
-            }
-            info!(
-                instance = %instance.instance_id,
-                launch_time = ?instance.launch_time,
-                window = ?self.config.unhealthy_registration_window,
-                "unhealthy instance recently launched, attempting registration"
-            );
-        }
-
-        // Fetch attestations once for all enclaves before the registration
-        // loop. Each signer_attestation RPC hits NSM hardware on the enclave
-        // side, so fetching per-enclave would generate N×N attestation documents
-        // for N enclaves. A single nonce binds the entire batch for freshness.
-        let nonce: [u8; 32] = random();
-        info!(
-            nonce = %hex::encode(nonce),
-            instance = %instance.instance_id,
-            "requesting attestations with nonce"
-        );
-        let all_attestations = self
-            .signer_client
-            .signer_attestation(&instance.endpoint, None, Some(nonce.to_vec()))
-            .await?;
-
-        if all_attestations.len() < addresses.len() {
-            return Err(RegistrarError::ProverClient {
-                instance: instance.endpoint.to_string(),
-                source: format!(
-                    "expected {} attestations but got {}",
-                    addresses.len(),
-                    all_attestations.len()
-                )
-                .into(),
-            });
-        }
-
-        // CRL check: parse the first attestation's cabundle, fetch CRLs,
-        // and revoke any intermediate certs found on a CRL. This check
-        // runs once per instance (all enclaves share the same cert chain).
-        //
-        // NOTE: This check runs even when all signers are already registered
-        // onchain. This is a known inefficiency — the CRL check could be
-        // skipped in that case, but would add complexity for minimal benefit
-        // since CRL fetches are fast relative to proof generation.
-        if self.config.crl.enabled {
-            let cert_manager =
-                self.cert_manager.as_ref().expect("cert_manager required when CRL enabled");
-            match cert_manager
-                .check_and_revoke_crls(&all_attestations[0], instance, &self.tx_manager)
-                .await
-            {
-                Ok(true) => {
-                    // Confirmed revocation — block registration for this instance.
-                    warn!(
-                        instance = %instance.instance_id,
-                        "certificate revoked, skipping registration for this instance"
-                    );
-                    return Ok(addresses);
-                }
-                Ok(false) => {
-                    // All certs clean, proceed with registration.
-                }
-                Err(e) => {
-                    // Fail-open: CRL check errors don't block registration.
-                    warn!(
-                        error = %e,
-                        instance = %instance.instance_id,
-                        "CRL check failed (fail-open, proceeding with registration)"
-                    );
-                }
-            }
-        }
-
-        for (idx, &signer_address) in addresses.iter().enumerate() {
-            if let Err(e) = self
-                .try_register(
-                    instance,
-                    signer_address,
-                    idx,
-                    &all_attestations[idx],
-                    &self.config.cancel,
-                )
-                .await
-            {
-                tracing::error!(
-                    error = %e,
-                    error_source = std::error::Error::source(&e)
-                        .map(std::string::ToString::to_string)
-                        .unwrap_or_default(),
-                    error_debug = ?e,
-                    signer = %signer_address,
-                    enclave_index = idx,
-                    instance = %instance.instance_id,
-                    "registration attempt failed"
-                );
-                RegistrarMetrics::processing_errors_total().increment(1);
-            }
-        }
-
-        Ok(addresses)
-    }
-
-    /// Attempts to register a signer onchain if not already registered.
-    ///
-    /// This is the expensive path: checks onchain status, generates a ZK
-    /// proof from the pre-fetched attestation, and submits a registration
-    /// transaction.
-    ///
-    /// Registration is PCR0-agnostic: all legitimate enclaves are registered
-    /// regardless of their PCR0 measurement. This enables pre-registration of
-    /// new-PCR0 enclaves before a hardfork, eliminating the proof-generation
-    /// delay when the onchain `TEE_IMAGE_HASH` rotates. The onchain
-    /// `TEEVerifier` gates proof acceptance on `TEE_IMAGE_HASH` at submission
-    /// time, so pre-registered enclaves cannot produce accepted proposals
-    /// until the hardfork activates.
-    async fn try_register(
-        &self,
-        instance: &ProverInstance,
-        signer_address: Address,
-        enclave_index: usize,
-        attestation_bytes: &[u8],
-        signer_cancel: &CancellationToken,
-    ) -> Result<()> {
-        RegistrationManager::new(
-            &self.proof_provider,
-            &self.registry,
-            &self.tx_manager,
-            self.proof_semaphore.as_ref(),
-            &self.in_flight_registrations,
-            ProofHandlerConfig {
-                registry_address: self.config.registry_address,
-                max_tx_retries: self.config.max_tx_retries,
-                tx_retry_delay: self.config.tx_retry_delay,
-            },
-        )
-        .register_signer(instance, signer_address, enclave_index, attestation_bytes, signer_cancel)
-        .await
-    }
-
     /// Resolves the signer addresses for a single instance and decides
     /// whether registration should be attempted this cycle.
     ///
@@ -707,10 +520,9 @@ where
     /// - the CRL check confirmed revocation for the instance's chain.
     ///
     /// This is the shared resolution path used by `discover_and_resolve`.
-    /// It performs the same per-instance work as the first half of the
-    /// legacy `process_instance` helper minus the `try_register` loop,
-    /// so the [`Self::run`] pipeline can spawn registration tasks
-    /// separately from discovery.
+    /// It keeps discovery and eligibility checks separate from the
+    /// [`RegistrationManager`] registration path so long proof work can run in
+    /// spawned tasks instead of blocking the next discovery cycle.
     ///
     /// **Cancellation contract.** This future checks
     /// `self.config.cancel.is_cancelled()` before starting new side effects.
@@ -849,12 +661,11 @@ where
     /// Runs one discovery cycle and resolves every instance into the
     /// [`DiscoveryResolution`] consumed by the spawn-and-reap loop.
     ///
-    /// Like the legacy synchronous `step` helper, this fans out
-    /// per-instance resolution work concurrently (bounded by
-    /// [`DriverConfig::max_concurrency`]). Unlike `step`, no registration
-    /// transactions are submitted here — the [`Self::run`] loop spawns a
-    /// dedicated task per registerable signer instead, so that long
-    /// Boundless proofs do not block the next discovery cycle.
+    /// This fans out per-instance resolution work concurrently (bounded by
+    /// [`DriverConfig::max_concurrency`]). No registration transactions are
+    /// submitted here; the [`Self::run`] loop spawns a dedicated task per
+    /// registerable signer instead, so long Boundless proofs do not block the
+    /// next discovery cycle.
     ///
     /// **Why no outer cancel-select.** `resolve_instance` performs several
     /// side effects before deciding whether an instance is registerable. The
@@ -998,11 +809,10 @@ where
 
     /// Drives the orphan-deregistration pass.
     ///
-    /// Loads onchain signers, computes the orphan set
-    /// (`registered \ active`), and deregisters each in sequence with a
-    /// ghost-entry guard. Mirrors the trailing half of the legacy
-    /// synchronous `step` helper — extracted so the [`Self::run`] pipeline
-    /// can invoke it independently of the concurrent registration path.
+    /// Loads onchain signers, computes the orphan set (`registered \ active`),
+    /// and deregisters each in sequence with a ghost-entry guard. The
+    /// [`Self::run`] pipeline invokes this independently of the concurrent
+    /// registration path.
     ///
     /// Both error paths (registry load and per-orphan deregistration)
     /// propagate uniformly so the caller can log + increment
@@ -1075,11 +885,11 @@ where
     /// one cycle and returns the next: without this filter the fresh
     /// task would be deferred for an extra cycle until reap clears the
     /// stale entry. Safety relies on
-    /// [`Self::in_flight_registrations`] (the `try_register`-layer
+    /// [`Self::in_flight_registrations`] (the registration-manager-layer
     /// process-wide `Mutex<HashSet<Address>>` dedupe) catching any
     /// brief overlap between the old task winding down and the new task
-    /// entering `try_register` — the second arrival short-circuits with
-    /// a debug log and exits `Ok(())`.
+    /// entering registration. The second arrival short-circuits with a
+    /// debug log and exits `Ok(())`.
     ///
     /// Transient task failures (non-cancel `Err`) are not re-spawned this
     /// cycle: the entry remains until reaped, after which the next cycle
@@ -1133,9 +943,9 @@ where
         // that was cancelled in a previous cycle and has now reappeared
         // in `registerable` can spawn a fresh task immediately rather
         // than waiting two cycles (one to reap, one to respawn). The
-        // `try_register`-layer in-flight mutex catches any brief overlap
-        // between the winding-down old task and the new task. Updated
-        // as we spawn so a signer that appears in two registerable
+        // The registration-manager in-flight mutex catches any brief
+        // overlap between the winding-down old task and the new task.
+        // Updated as we spawn so a signer that appears in two registerable
         // entries within the same cycle (misconfig / discovery glitch —
         // two instances briefly backing the same enclave key) cannot
         // spawn duplicate proof tasks.
@@ -1188,7 +998,7 @@ where
         }
     }
 
-    /// Spawned-task body: wraps [`Self::try_register`] with task-scoped
+    /// Spawned-task body: runs signer registration with task-scoped
     /// cancellation. Always returns `Ok(signer)` on cooperative cancel
     /// and on registration success; only genuine failures propagate as
     /// `Err`. The success arm carries the signer address so
@@ -1202,7 +1012,20 @@ where
         attestation_bytes: Vec<u8>,
         signer_cancel: CancellationToken,
     ) -> Result<Address> {
-        self.try_register(&instance, signer, enclave_index, &attestation_bytes, &signer_cancel)
+        let registration_manager = RegistrationManager::new(
+            &self.proof_provider,
+            &self.registry,
+            &self.tx_manager,
+            self.proof_semaphore.as_ref(),
+            &self.in_flight_registrations,
+            ProofHandlerConfig {
+                registry_address: self.config.registry_address,
+                max_tx_retries: self.config.max_tx_retries,
+                tx_retry_delay: self.config.tx_retry_delay,
+            },
+        );
+        registration_manager
+            .register_signer(&instance, signer, enclave_index, &attestation_bytes, &signer_cancel)
             .await?;
         Ok(signer)
     }
@@ -1523,7 +1346,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{HashMap, HashSet, VecDeque},
+        collections::{HashMap, HashSet},
         sync::{
             Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
@@ -1537,7 +1360,7 @@ mod tests {
     use alloy_sol_types::SolCall;
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
-    use base_tx_manager::{SendHandle, TxCandidate, TxManager, TxManagerError};
+    use base_tx_manager::{SendHandle, TxCandidate, TxManager};
     use hex_literal::hex;
     use k256::ecdsa::SigningKey;
     use rstest::rstest;
@@ -1804,14 +1627,13 @@ mod tests {
     ///
     /// By default, `is_registered` checks membership in the `signers` list
     /// (matching real contract behavior). When `all_registered` is set, it
-    /// returns `true` unconditionally — useful for `try_register` tests that
-    /// need to short-circuit the registration path.
+    /// returns `true` unconditionally, which short-circuits the registration
+    /// path after the registry precheck.
     #[derive(Debug)]
     struct MockRegistry {
         signers: Vec<Address>,
         /// When `true`, `is_registered` returns `true` for all queries,
-        /// regardless of `signers` membership. Used by tests that need the
-        /// "already registered" path in `try_register`.
+        /// regardless of `signers` membership.
         all_registered: bool,
     }
 
@@ -1936,9 +1758,8 @@ mod tests {
     }
 
     /// Builds a fully-configured driver for primitive-level tests that
-    /// invoke `discover_and_resolve`, `process_instance`, and
-    /// `run_orphan_dereg` directly (rather than the spawn pipeline in
-    /// `run`). Returns an `Arc` so callers can invoke
+    /// invoke `discover_and_resolve` and `run_orphan_dereg` directly
+    /// (rather than the spawn pipeline in `run`). Returns an `Arc` so callers can invoke
     /// `discover_and_resolve` (which takes `&Arc<Self>`) without
     /// re-wrapping at every call site.
     fn cycle_driver(
@@ -1974,8 +1795,8 @@ mod tests {
 
     /// Proof provider that records the `(signer, attestation_bytes)` pair
     /// passed to every `generate_proof_for_signer` invocation, then
-    /// returns `Err` so the spawned `try_register` task exits without
-    /// reaching the (unmocked) tx-manager send path.
+    /// returns `Err` so the spawned registration task exits without
+    /// reaching the tx-manager send path.
     ///
     /// Used by the spawn-pass indexing tests to assert that
     /// [`RegistrationDriver::reconcile_proof_tasks`] pairs each signer
@@ -2011,90 +1832,11 @@ mod tests {
             _cancel: &CancellationToken,
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
             self.recorded.lock().unwrap().insert(signer_address, attestation_bytes.to_vec());
-            // Returning `Err` short-circuits `try_register` so the
-            // spawned task exits before reaching `tx_manager.send()`,
-            // which we do not wire for the indexing tests.
+            // Returning `Err` short-circuits the spawned task before it reaches
+            // `tx_manager.send()`, which we do not wire for the indexing tests.
             Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
                 "RecordingProofProvider exits after capturing attestation".into(),
             ))
-        }
-    }
-
-    /// Mock tx manager that returns a configurable sequence of results.
-    ///
-    /// Each call to `send()` pops the next result from `results`. When
-    /// the queue is exhausted, returns a successful receipt.
-    #[derive(Debug, Clone)]
-    struct FailingTxManager {
-        /// FIFO queue of results to return; `None` means success.
-        results: Arc<Mutex<VecDeque<Option<TxManagerError>>>>,
-        /// Records all submitted calldata for assertion.
-        sent: Arc<Mutex<Vec<Bytes>>>,
-    }
-
-    impl FailingTxManager {
-        /// Creates a manager that returns the given errors in order,
-        /// then succeeds on subsequent calls.
-        fn with_errors(errors: Vec<TxManagerError>) -> Self {
-            let results = errors.into_iter().map(Some).collect();
-            Self { results: Arc::new(Mutex::new(results)), sent: Arc::new(Mutex::new(vec![])) }
-        }
-
-        /// Returns all submitted calldata for assertion.
-        fn sent_calldata(&self) -> Vec<Bytes> {
-            self.sent.lock().unwrap().clone()
-        }
-    }
-
-    impl TxManager for FailingTxManager {
-        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            self.sent.lock().unwrap().push(candidate.tx_data);
-            let next = self.results.lock().unwrap().pop_front();
-            match next {
-                Some(Some(e)) => Err(e),
-                _ => Ok(stub_receipt()),
-            }
-        }
-
-        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            panic!("FailingTxManager::send_async is not implemented; tests only use send()")
-        }
-
-        fn sender_address(&self) -> Address {
-            Address::ZERO
-        }
-    }
-
-    /// Mock registry with dynamic `is_registered` responses.
-    ///
-    /// The first N calls to `is_registered` return values from `responses`;
-    /// subsequent calls return `default_registered`.
-    #[derive(Debug)]
-    struct DynamicRegistry {
-        /// On-chain signers for `get_registered_signers`.
-        signers: Vec<Address>,
-        /// FIFO queue of `is_registered` return values.
-        responses: Mutex<VecDeque<bool>>,
-        /// Value returned after `responses` is exhausted.
-        default_registered: bool,
-    }
-
-    impl DynamicRegistry {
-        /// Registry where `is_registered` always returns `false`.
-        fn never_registered(signers: Vec<Address>) -> Self {
-            Self { signers, responses: Mutex::new(VecDeque::new()), default_registered: false }
-        }
-    }
-
-    #[async_trait]
-    impl RegistryClient for DynamicRegistry {
-        async fn is_registered(&self, _signer: Address) -> Result<bool> {
-            let next = self.responses.lock().unwrap().pop_front();
-            Ok(next.unwrap_or(self.default_registered))
-        }
-
-        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-            Ok(self.signers.clone())
         }
     }
 
@@ -2137,9 +1879,8 @@ mod tests {
         /// Optional per-signer failure routing. If a signer address is
         /// present in this set, [`GatedProofProvider::generate_proof_for_signer`]
         /// returns a synthetic [`ProverError::Boundless`] immediately
-        /// (skipping the release gate) so tests can observe the
-        /// failure-path behaviour of `try_register` without having to
-        /// stand up a second proof provider type. The check happens
+        /// (skipping the release gate) so tests can observe the registration
+        /// failure path without having to stand up a second proof provider type. The check happens
         /// before [`GatedProofState::call_count`] is incremented, so
         /// failed signers do not contribute to the in-flight count
         /// either.
@@ -2169,10 +1910,9 @@ mod tests {
     /// counts (see [`GatedProofHandles::call_count`] and
     /// [`GatedProofHandles::in_flight`]).
     ///
-    /// Cancel-safe: the await on `release.cancelled()` is itself
-    /// cancellable, so when the outer `try_register`'s biased `select!`
-    /// drops this future on its own `signer_cancel`, no state is left
-    /// hanging.
+    /// Cancel-safe: the await on `release.cancelled()` is itself cancellable,
+    /// so when the registration manager's biased `select!` drops this future
+    /// on its own `signer_cancel`, no state is left hanging.
     #[derive(Debug, Clone)]
     struct GatedProofProvider {
         state: Arc<GatedProofState>,
@@ -2676,156 +2416,6 @@ mod tests {
         assert!(tx.sent_calldata().is_empty(), "all ghosts should be skipped, no txs sent");
     }
 
-    // ── process_instance tests ──────────────────────────────────────────
-
-    #[rstest]
-    #[case::healthy_unregistered(InstanceHealthStatus::Healthy, false, 1)]
-    #[case::initial_unregistered(InstanceHealthStatus::Initial, false, 1)]
-    #[case::draining(InstanceHealthStatus::Draining, false, 0)]
-    #[case::unhealthy(InstanceHealthStatus::Unhealthy, false, 0)]
-    #[case::already_registered(InstanceHealthStatus::Healthy, true, 0)]
-    #[tokio::test]
-    async fn process_instance_returns_address_and_correct_tx_count(
-        #[case] status: InstanceHealthStatus,
-        #[case] all_registered: bool,
-        #[case] expected_txs: usize,
-    ) {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = SharedTxManager::new();
-        let registry = if all_registered {
-            MockRegistry::all_registered(vec![])
-        } else {
-            MockRegistry::with_signers(vec![])
-        };
-        let driver =
-            cycle_driver(vec![], signer_client, registry, tx.clone(), CancellationToken::new());
-
-        let inst = instance(EP1, status);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
-        assert_eq!(tx.sent_calldata().len(), expected_txs);
-    }
-
-    // ── Unhealthy registration window tests ────────────────────────────
-
-    #[tokio::test]
-    async fn process_instance_unhealthy_recently_launched_attempts_registration() {
-        // An Unhealthy instance launched 10 minutes ago (within the default
-        // 60-minute window) should be registered.
-        let launch_time = Some(SystemTime::now() - Duration::from_secs(600));
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
-        assert_eq!(tx.sent_calldata().len(), 1, "recently-launched unhealthy should register");
-    }
-
-    #[tokio::test]
-    async fn process_instance_unhealthy_old_launch_skips_registration() {
-        // An Unhealthy instance launched 2 hours ago (outside the 60-minute
-        // window) should NOT be registered.
-        let launch_time = Some(SystemTime::now() - Duration::from_secs(7200));
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
-        assert!(tx.sent_calldata().is_empty(), "old unhealthy should not register");
-    }
-
-    #[tokio::test]
-    async fn process_instance_unhealthy_no_launch_time_skips_registration() {
-        // An Unhealthy instance with no launch_time should NOT be registered
-        // (we can't determine age, so we default to the safe path).
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Unhealthy);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
-        assert!(tx.sent_calldata().is_empty(), "unhealthy with no launch_time should not register");
-    }
-
-    #[tokio::test]
-    async fn process_instance_draining_recently_launched_still_skips_registration() {
-        // A Draining instance launched 10 minutes ago should NOT be registered.
-        // The grace period only applies to Unhealthy, never Draining.
-        let launch_time = Some(SystemTime::now() - Duration::from_secs(600));
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Draining, launch_time);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
-        assert!(tx.sent_calldata().is_empty(), "draining should never register even if recent");
-    }
-
-    #[tokio::test]
-    async fn process_instance_unhealthy_window_zero_disables_feature() {
-        // Setting unhealthy_registration_window to zero disables the feature
-        // entirely — even a freshly-launched Unhealthy instance is skipped.
-        let launch_time = Some(SystemTime::now() - Duration::from_secs(10));
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = SharedTxManager::new();
-
-        let cancel = CancellationToken::new();
-        let mut config = default_config(cancel);
-        config.unhealthy_registration_window = Duration::ZERO;
-
-        let driver = RegistrationDriver::new(
-            MockDiscovery { instances: vec![] },
-            StubProofProvider,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            signer_client,
-            config,
-            None,
-        )
-        .expect("test driver construction succeeds");
-
-        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
-        assert!(tx.sent_calldata().is_empty(), "window=0 should disable unhealthy registration");
-    }
-
     #[tokio::test]
     async fn discover_and_resolve_admits_recently_launched_unhealthy_to_active_and_registerable() {
         // A recently-launched Unhealthy instance must (1) be included in
@@ -2864,17 +2454,12 @@ mod tests {
         );
         assert!(resolution.ok_to_dereg, "single reachable instance clears the majority guard");
 
-        // Drive the registration path via the legacy synchronous helper —
-        // try_register short-circuits because the signer is already
-        // onchain, so no registration tx is sent.
-        driver.process_instance(&instance_under_test).await.unwrap();
-
         // Orphan-dereg pass must not deregister the signer (it's in active_signers).
         driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         assert!(
             tx.sent_calldata().is_empty(),
-            "already-registered signer should not be re-registered or deregistered"
+            "already-registered signer should not be deregistered"
         );
     }
 
@@ -3163,98 +2748,7 @@ mod tests {
             "unresolved instance must block orphan-dereg even when reachable majority clears",
         );
 
-        // Drive the legacy registration path per reachable instance to
-        // confirm registration works in isolation (the spawn pipeline is
-        // exercised separately by the `reconcile_proof_tasks` tests).
-        for inst in &reachable {
-            driver.process_instance(inst).await.unwrap();
-        }
-
-        assert_eq!(
-            tx.sent_calldata().len(),
-            reachable.len(),
-            "every reachable healthy instance should be registered",
-        );
-    }
-
-    #[tokio::test]
-    async fn registration_failure_keeps_signer_in_active_set() {
-        // A signer whose registration tx fails must remain in
-        // `active_signers`, preventing it from being deregistered as an
-        // orphan. This protects against the case where a signer is
-        // already onchain from a previous cycle but the current
-        // registration attempt fails (e.g. insufficient funds).
-        //
-        // Exercised via the primitives: `discover_and_resolve` populates
-        // `active_signers` from the reachable instance regardless of
-        // whether registration later succeeds; `process_instance` drives
-        // the failing registration; `run_orphan_dereg` then runs against
-        // the protected active set and must emit no deregistration.
-        let signer_addr =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-
-        let instance_under_test = instance(EP1, InstanceHealthStatus::Healthy);
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-
-        // is_registered returns false (first call in try_register), then
-        // false again (post-error check). The signer IS in the onchain
-        // set for get_registered_signers — so without active_signers
-        // protection it would be deregistered as an orphan.
-        let registry = DynamicRegistry::never_registered(vec![signer_addr]);
-
-        // First send (registration) fails; subsequent sends would
-        // succeed — but we expect no deregistration to happen.
-        let tx = FailingTxManager::with_errors(vec![
-            TxManagerError::InsufficientFunds,
-            TxManagerError::InsufficientFunds,
-            TxManagerError::InsufficientFunds,
-            TxManagerError::InsufficientFunds,
-        ]);
-
-        let driver = Arc::new(
-            RegistrationDriver::new(
-                MockDiscovery { instances: vec![instance_under_test.clone()] },
-                StubProofProvider,
-                registry,
-                tx.clone(),
-                signer_client,
-                default_config(CancellationToken::new()),
-                None,
-            )
-            .expect("test driver construction succeeds"),
-        );
-
-        let resolution = driver.discover_and_resolve().await.unwrap();
-        assert!(
-            resolution.active_signers.contains(&signer_addr),
-            "reachable instance must contribute signer to active_signers regardless of later \
-             registration outcome",
-        );
-
-        // Drive registration through process_instance — try_register
-        // hits `InsufficientFunds` (non-retryable). `process_instance`
-        // swallows per-signer registration failures (logs + increments
-        // `processing_errors_total`) and returns Ok with the resolved
-        // addresses, mirroring the legacy synchronous loop semantics.
-        let addresses = driver
-            .process_instance(&instance_under_test)
-            .await
-            .expect("process_instance swallows per-signer registration failures");
-        assert_eq!(addresses, vec![signer_addr]);
-
-        assert!(resolution.ok_to_dereg);
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
-
-        // Registration was attempted (1 send for the non-retryable error),
-        // but no deregistration tx because the signer remains in active_signers.
-        let sent = tx.sent_calldata();
-        assert_eq!(sent.len(), 1, "only the failed registration attempt should be sent");
-        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
-        assert_eq!(
-            &sent[0][..4],
-            register_selector,
-            "the only tx should be the registration attempt",
-        );
+        assert!(tx.sent_calldata().is_empty(), "discovery resolution must not send txs");
     }
 
     /// Signer client wrapper that cancels a token after returning keys.
@@ -3332,111 +2826,6 @@ mod tests {
             tx.sent_calldata().is_empty(),
             "mid-cycle cancellation should prevent any orphan deregistration",
         );
-    }
-
-    #[tokio::test]
-    async fn healthy_instances_register_via_primitives_and_orphan_dereg_removes_extras() {
-        // Two healthy instances plus one orphan onchain → resolution
-        // surfaces both signers as registerable AND in active_signers,
-        // process_instance drives the two registrations, and
-        // run_orphan_dereg emits a single deregistration for the orphan.
-        let addr1 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let addr2 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
-        let orphan =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_2)).unwrap();
-
-        let healthy_instances = [
-            instance(EP1, InstanceHealthStatus::Healthy),
-            instance(EP2, InstanceHealthStatus::Healthy),
-        ];
-
-        let signer_client =
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
-
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            healthy_instances.to_vec(),
-            signer_client,
-            // addr1 and addr2 are not yet registered; orphan is onchain.
-            MockRegistry::with_signers(vec![orphan]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let resolution = driver.discover_and_resolve().await.unwrap();
-        assert_eq!(resolution.registerable.len(), 2, "both healthy signers must be registerable");
-        assert!(resolution.active_signers.contains(&addr1));
-        assert!(resolution.active_signers.contains(&addr2));
-        assert!(resolution.ok_to_dereg);
-
-        for inst in &healthy_instances {
-            driver.process_instance(inst).await.unwrap();
-        }
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
-
-        let sent = tx.sent_calldata();
-        // 2 registration txs (addr1, addr2) + 1 deregistration tx (orphan).
-        assert_eq!(sent.len(), 3, "expected 2 registrations + 1 deregistration");
-
-        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
-        let registration_count =
-            sent.iter().filter(|s| s.len() >= 4 && s[..4] == register_selector).count();
-        assert_eq!(registration_count, 2, "expected 2 registration txs");
-
-        let deregister_expected =
-            ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
-        assert!(
-            sent.iter().any(|s| s[..] == deregister_expected[..]),
-            "expected deregistration of orphan {orphan}, sent: {addr1}, {addr2}",
-        );
-    }
-
-    // ── Multi-enclave process_instance tests ────────────────────────────
-
-    #[tokio::test]
-    async fn process_instance_multi_enclave_returns_all_addresses() {
-        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        let expected_addr_0 =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let expected_addr_1 =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
-
-        assert_eq!(addrs.len(), 2);
-        assert_eq!(addrs[0], expected_addr_0);
-        assert_eq!(addrs[1], expected_addr_1);
-        // Two registration transactions (one per enclave).
-        assert_eq!(tx.sent_calldata().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn process_instance_multi_enclave_draining_skips_registration() {
-        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Draining);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(addrs.len(), 2, "both addresses should be returned");
-        assert!(tx.sent_calldata().is_empty(), "no registration txs for draining instance");
     }
 
     #[tokio::test]
@@ -3531,15 +2920,12 @@ mod tests {
         );
         assert!(resolution.ok_to_dereg);
 
-        driver.process_instance(&healthy_inst).await.unwrap();
         driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
-        let sent = tx.sent_calldata();
-        // 1 registration tx for the healthy instance (unregistered).
-        // 0 deregistration txs (unhealthy signer is in active_signers).
-        assert_eq!(sent.len(), 1, "only the healthy instance should be registered");
-        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
-        assert_eq!(&sent[0][..4], register_selector, "the only tx should be a registration");
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "orphan pass must not deregister the unhealthy signer",
+        );
     }
 
     #[tokio::test]
@@ -3677,97 +3063,6 @@ mod tests {
             "proof-provider failures must not cause deregistration of the signer",
         );
     }
-
-    #[tokio::test]
-    async fn mixed_healthy_and_draining_instances_compose_correctly_under_primitives() {
-        // A cycle with both healthy (registerable, contributes to active)
-        // and draining (only contributes to active) instances. Verifies
-        // the two statuses compose correctly: only the healthy instance
-        // appears in `registerable`; both appear in `active_signers`; the
-        // draining signer survives orphan-dereg.
-        let addr_draining =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let addr_healthy =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
-
-        let healthy_inst = instance(EP2, InstanceHealthStatus::Healthy);
-        let instances = vec![instance(EP1, InstanceHealthStatus::Draining), healthy_inst.clone()];
-
-        let signer_client =
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
-
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            instances,
-            signer_client,
-            // The draining signer is onchain. The healthy signer is not.
-            MockRegistry::with_signers(vec![addr_draining]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let resolution = driver.discover_and_resolve().await.unwrap();
-        assert_eq!(
-            resolution.registerable.len(),
-            1,
-            "only the healthy instance should be registerable",
-        );
-        assert_eq!(resolution.registerable[0].signer, addr_healthy);
-        assert!(resolution.active_signers.contains(&addr_draining));
-        assert!(resolution.active_signers.contains(&addr_healthy));
-        assert!(resolution.ok_to_dereg);
-
-        driver.process_instance(&healthy_inst).await.unwrap();
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
-
-        let sent = tx.sent_calldata();
-        // 1 registration tx for the healthy instance.
-        // 0 deregistration txs (draining signer is in active_signers).
-        assert_eq!(sent.len(), 1, "only the healthy instance should be registered");
-        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
-        assert_eq!(&sent[0][..4], register_selector, "the only tx should be a registration");
-    }
-
-    // ── Attestation count mismatch test ───────────────────────────────
-
-    #[tokio::test]
-    async fn process_instance_fails_on_attestation_count_mismatch() {
-        // Return 2 public keys but only 1 attestation → mismatch should error.
-        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
-        // Default mock returns 2 attestations (one per key), so override
-        // to return only 1 attestation.
-        let signer_client = signer_client.with_attestations(EP1, vec![b"single-att".to_vec()]);
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        // Attestations are fetched once for all enclaves before registration.
-        // A count mismatch (fewer attestations than keys) fails the entire
-        // instance — no enclaves are registered.
-        let result = driver.process_instance(&inst).await;
-
-        assert!(result.is_err(), "should fail when attestation count < key count");
-    }
-
-    // The legacy `step_cancellation_breaks_immediately_without_waiting_for_blocked_futures`
-    // test was removed alongside the synchronous `step()` helper. It
-    // wrapped a `tokio::select!` around the per-instance future stream,
-    // asserting that a mid-flight cancellation returned immediately
-    // even when every future was blocked on a `Notify` gate. The
-    // production replacement `discover_and_resolve` deliberately does
-    // NOT `select!` on `cancel.cancelled()` around its `futs.next()`
-    // loop; cooperative cancellation between awaits is the contract, and
-    // end-to-end shutdown latency (including the per-task cooperative
-    // cancel + drain timeout) is covered by the pipeline tests further
-    // down in this module (e.g. `run_drains_pending_proof_tasks_on_shutdown`).
-    //
-    // The companion `BlockingSignerClient` was deleted with this test.
 
     // ── Concurrency limit test ──────────────────────────────────────────
 
@@ -4700,10 +3995,10 @@ mod tests {
     ) {
         // Start with `initial_count` healthy instances; observe every
         // proof task parked. Remove the instances at `drop_indices` from
-        // discovery; the next cycle must cancel their tasks
-        // cooperatively (the signer_cancel token fires inside
-        // try_register's biased select! around generate_proof_for_signer),
-        // and the cancelled tasks exit Ok(()) without submitting a tx.
+        // discovery; the next cycle must cancel their tasks cooperatively
+        // (the signer_cancel token fires inside the registration manager's
+        // biased select! around generate_proof_for_signer), and the cancelled
+        // tasks exit Ok(()) without submitting a tx.
         let harness = multi_healthy_harness(initial_count);
 
         let run_handle = harness.spawn_run();
@@ -4814,9 +4109,8 @@ mod tests {
         /// `should_register()` is `false` and the unhealthy-grace
         /// window doesn't apply.
         InstanceUnhealthy,
-        /// Instance is `Healthy` but the derived signer is already on
-        /// the onchain registry, so `try_register` short-circuits in
-        /// `is_registered()`.
+        /// Instance is `Healthy` but the derived signer is already on the
+        /// onchain registry, so registration short-circuits in `is_registered()`.
         SignerAlreadyRegistered,
     }
 
@@ -4919,8 +4213,8 @@ mod tests {
     //
     // These cover three gaps left after the initial spawn-and-reap test
     // suite: the panic arm of [`apply_join_outcome`], the proof-failure
-    // path through [`RegistrationDriver::try_register`], and a single
-    // cycle that fires both the registration and orphan-dereg passes.
+    // path through the registration manager, and a single cycle that
+    // fires both the registration and orphan-dereg passes.
 
     #[tokio::test]
     async fn apply_join_outcome_drops_pending_entry_when_task_panics() {
@@ -5097,8 +4391,8 @@ mod tests {
         //   3. The failed task is evicted from `pending`, so shutdown
         //      drains cleanly within [`GATED_WAIT_TIMEOUT`].
         //
-        // The failing signer's proof returns `Err` *before* the
-        // `tx_manager.send()` call in `try_register`, so it can never
+        // The failing signer's proof returns `Err` before the
+        // `tx_manager.send()` call in the registration manager, so it can never
         // produce a `registerSigner` calldata frame — regardless of
         // how many cycles re-spawn it under the static `MockRegistry`.
         // Every entry in `count_register_calls` is therefore attributable
@@ -5113,9 +4407,8 @@ mod tests {
 
         let run_handle = harness.spawn_run();
 
-        // Only the surviving signer's task should park in the gate —
-        // the failing task errors immediately and returns from
-        // `try_register` without awaiting.
+        // Only the surviving signer's task should park in the gate; the failing
+        // task errors immediately and returns from registration without awaiting.
         wait_for("exactly one proof parked (failing signer errored before the gate)", || {
             harness.proof.in_flight() == 1
         })
@@ -5176,12 +4469,9 @@ mod tests {
     }
 
     /// `unhealthy_registration_window` parametric test: an `Unhealthy`
-    /// instance whose `launch_time` falls *inside* the window must
-    /// register via the full `run()` pipeline (proving the production
-    /// loop honours the grace period, not just the legacy
-    /// `process_instance` cfg(test) helper); one whose `launch_time`
-    /// falls *outside* the window — or who has no `launch_time` at
-    /// all — must not register.
+    /// instance whose `launch_time` falls *inside* the window must register via
+    /// the full `run()` pipeline; one whose `launch_time` falls *outside* the
+    /// window, or who has no `launch_time` at all, must not register.
     #[rstest]
     // Recently-launched unhealthy instance: should register.
     #[case::recent_launch_registers(
