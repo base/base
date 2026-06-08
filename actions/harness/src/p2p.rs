@@ -203,5 +203,9 @@ impl GossipTransport for TestGossipTransport {
         self.expected_signer = Some(address);
     }
 
+    fn clear_pending_connections(&mut self) -> usize {
+        0
+    }
+
     fn handle_p2p_rpc(&mut self, _request: P2pRpcRequest) {}
 }
