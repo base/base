@@ -49,8 +49,8 @@ impl CertManager {
     /// intermediate is clean.
     ///
     /// The durable onchain pre-check preserves previously-revoked
-    /// intermediates even if AWS later prunes its CRL. AWS CRL fetches are
-    /// then performed in parallel, and every CRL hit is checked onchain
+    /// intermediates even if AWS later prunes its CRL. AWS CRLs are then
+    /// checked for each intermediate, and every CRL hit is checked onchain
     /// before a `revokeCert` transaction is submitted.
     pub async fn check_and_revoke_crls<T>(
         &self,
