@@ -3,16 +3,21 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::Address;
+use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
+use base_upgrade_signal::{
+    AlloyUpgradeSignalReader, UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetrics,
+    UpgradeSignalRuntimeValidation, UpgradeSignalSchedule, UpgradeSignalStartupMode,
+};
 use clap::Args;
 use eyre::Context;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use url::Url;
 
 use crate::{
@@ -28,6 +33,8 @@ pub struct ConsensusNodeOverrides {
     pub l2_engine_rpc: Option<Url>,
     /// Override for the L2 Engine API JWT secret.
     pub l2_engine_jwt_secret: Option<JwtSecret>,
+    /// Runtime upgrade signal validation supplied by an embedded execution node.
+    pub upgrade_signal_runtime_validation: Option<UpgradeSignalRuntimeValidation>,
 }
 
 /// Standalone consensus node command.
@@ -141,6 +148,10 @@ pub struct ConsensusNodeConfigArgs {
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
+
+    /// L1 upgrade signal schedule arguments.
+    #[command(flatten)]
+    pub upgrade_signal: UpgradeSignalArgs,
 }
 
 /// Consensus node configuration arguments for embedded callers.
@@ -232,6 +243,7 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
             sequencer_flags: SequencerArgs::default(),
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
+            upgrade_signal: UpgradeSignalArgs::default(),
         }
     }
 }
@@ -292,7 +304,29 @@ impl ConsensusNodeArgs {
         cfg: RollupConfig,
         overrides: ConsensusNodeOverrides,
     ) -> eyre::Result<RollupNode> {
+        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
+            cfg,
+            overrides,
+            UpgradeSignalStartupMode::ReadAndApply,
+        )
+        .await
+    }
+
+    /// Builds a rollup node with caller-supplied endpoint overrides and upgrade-signal startup behavior.
+    pub async fn build_rollup_node_with_overrides_and_upgrade_signal_startup(
+        &self,
+        mut cfg: RollupConfig,
+        overrides: ConsensusNodeOverrides,
+        startup_mode: UpgradeSignalStartupMode,
+    ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
+        let upgrade_signal_config = self.config.upgrade_signal.config()?;
+        if let Some(signal_config) = &upgrade_signal_config
+            && startup_mode.reads_and_applies()
+            && signal_config.mode.applies_at_startup()
+        {
+            self.apply_initial_upgrade_signal(&mut cfg, signal_config).await?;
+        }
 
         info!(
             target: "rollup_node",
@@ -355,7 +389,9 @@ impl ConsensusNodeArgs {
             p2p_config,
             rpc_config,
         )
-        .with_sequencer_config(self.config.sequencer_flags.config());
+        .with_sequencer_config(self.config.sequencer_flags.config())
+        .with_upgrade_signal_metrics_config(upgrade_signal_config)
+        .with_upgrade_signal_runtime_validation(overrides.upgrade_signal_runtime_validation);
 
         if let Some(path) = self.config.checkpoint_path.clone() {
             builder = builder.with_checkpoint_path(path);
@@ -365,6 +401,94 @@ impl ConsensusNodeArgs {
         }
 
         builder.build().await.wrap_err("Failed to build rollup node")
+    }
+
+    /// Applies the configured L1 upgrade signal to the rollup config before startup.
+    pub async fn apply_initial_upgrade_signal(
+        &self,
+        cfg: &mut RollupConfig,
+        signal_config: &UpgradeSignalConfig,
+    ) -> eyre::Result<()> {
+        let reader = AlloyUpgradeSignalReader::new(
+            RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
+            signal_config.contract_address,
+        );
+        let schedule = match reader.read_schedule(&signal_config.hardfork_ids).await {
+            Ok(schedule) => schedule,
+            Err(error) => return Err(error.into()),
+        };
+        UpgradeSignalMetrics::record_schedule(&schedule);
+        for signal in &schedule.signals {
+            info!(
+                target: "upgrade_signal",
+                hardfork_id = %signal.hardfork_id,
+                activation_timestamp = signal.activation_timestamp,
+                minimum_protocol_version = %signal.protocol_version,
+                node_protocol_version = %signal_config.node_protocol_version,
+                l1_block_number = signal.l1_block_number,
+                "read dynamic upgrade signal for consensus startup"
+            );
+        }
+        let application_schedule = signal_config.application_schedule(&schedule);
+        signal_config.validate_schedule_protocol_versions(&application_schedule)?;
+
+        Self::apply_schedule_to_rollup_config(cfg, &application_schedule);
+
+        Ok(())
+    }
+
+    /// Applies a contract-backed hardfork activation schedule to a rollup config.
+    pub fn apply_schedule_to_rollup_config(
+        cfg: &mut RollupConfig,
+        schedule: &UpgradeSignalSchedule,
+    ) -> usize {
+        let mut applied = 0;
+        let mut cleared = 0;
+        for signal in &schedule.signals {
+            let Some(timestamp) = signal.positive_activation_timestamp() else {
+                if !cfg.clear_hardfork_activation_timestamp(&signal.hardfork_id) {
+                    debug!(
+                        target: "upgrade_signal",
+                        hardfork_id = %signal.hardfork_id,
+                        activation_timestamp = signal.activation_timestamp,
+                        "ignored unsupported rollup hardfork signal"
+                    );
+                    continue;
+                }
+                cleared += 1;
+                info!(
+                    target: "upgrade_signal",
+                    hardfork_id = %signal.hardfork_id,
+                    "cleared upgrade signal from rollup config"
+                );
+                continue;
+            };
+            if !cfg.set_hardfork_activation_timestamp(&signal.hardfork_id, timestamp) {
+                debug!(
+                    target: "upgrade_signal",
+                    hardfork_id = %signal.hardfork_id,
+                    activation_timestamp = timestamp,
+                    "ignored unsupported rollup hardfork signal"
+                );
+                continue;
+            }
+            applied += 1;
+            info!(
+                target: "upgrade_signal",
+                hardfork_id = %signal.hardfork_id,
+                activation_timestamp = timestamp,
+                "applied upgrade signal to rollup config"
+            );
+        }
+        info!(
+            target: "upgrade_signal",
+            applied_hardforks = applied,
+            cleared_hardforks = cleared,
+            configured_hardforks = schedule.signals.len(),
+            "applied upgrade signal schedule to rollup config"
+        );
+
+        applied
     }
 
     /// Starts a rollup node with default external endpoint configuration.
@@ -389,14 +513,35 @@ impl ConsensusNodeArgs {
         overrides: ConsensusNodeOverrides,
         cancellation: CancellationToken,
     ) -> eyre::Result<()> {
-        self.build_rollup_node_with_overrides(cfg, overrides)
-            .await?
-            .start_with_cancellation(cancellation)
-            .await
-            .map_err(|e| {
-                error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
-                eyre::eyre!(e)
-            })
+        self.start_with_overrides_and_cancellation_and_upgrade_signal_startup(
+            cfg,
+            overrides,
+            cancellation,
+            UpgradeSignalStartupMode::ReadAndApply,
+        )
+        .await
+    }
+
+    /// Starts a rollup node with explicit upgrade-signal startup behavior.
+    pub async fn start_with_overrides_and_cancellation_and_upgrade_signal_startup(
+        &self,
+        cfg: RollupConfig,
+        overrides: ConsensusNodeOverrides,
+        cancellation: CancellationToken,
+        startup_mode: UpgradeSignalStartupMode,
+    ) -> eyre::Result<()> {
+        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
+            cfg,
+            overrides,
+            startup_mode,
+        )
+        .await?
+        .start_with_cancellation(cancellation)
+        .await
+        .map_err(|e| {
+            error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
+            eyre::eyre!(e)
+        })
     }
 
     /// Returns the configured genesis signer address for the selected L2 chain.
@@ -413,8 +558,8 @@ mod tests {
     use std::{path::PathBuf, process::Command};
 
     use alloy_chains::Chain;
-    use alloy_primitives::B256;
-    use clap::Parser;
+    use alloy_primitives::{B256, U256, address};
+    use clap::{Args, Parser};
     use rstest::rstest;
 
     use super::*;
@@ -440,7 +585,95 @@ mod tests {
             sequencer_flags: SequencerArgs::default(),
             safedb_path: None,
             checkpoint_path: None,
+            upgrade_signal: UpgradeSignalArgs::default(),
         }
+    }
+
+    #[derive(Parser)]
+    struct CommandParser<T: Args> {
+        #[command(flatten)]
+        args: T,
+    }
+
+    #[test]
+    fn parses_upgrade_signal_args() {
+        let args = CommandParser::<ConsensusNodeConfigArgs>::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l2-engine-rpc",
+            "http://localhost:8551",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+            "--upgrade-signal.hardfork-id",
+            "azul",
+        ])
+        .args;
+
+        assert_eq!(
+            args.upgrade_signal.contract_address,
+            Some(address!("0000000000000000000000000000000000000001"))
+        );
+        assert_eq!(args.upgrade_signal.hardfork_ids, ["azul"]);
+    }
+
+    fn upgrade_schedule(signals: &[(&str, u64)]) -> UpgradeSignalSchedule {
+        UpgradeSignalSchedule::new(
+            signals
+                .iter()
+                .map(|(hardfork_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
+                    hardfork_id: hardfork_id.to_string(),
+                    activation_timestamp: *activation_timestamp,
+                    protocol_version: U256::from(7),
+                    l1_block_number: 1,
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn applies_positive_schedule_to_rollup_config() {
+        let mut cfg = RollupConfig::default();
+
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
+            &mut cfg,
+            &upgrade_schedule(&[("delta", 40), ("azul", 42)]),
+        );
+
+        assert_eq!(applied, 2);
+        assert_eq!(cfg.hardforks.delta_time, Some(40));
+        assert_eq!(cfg.hardforks.base.azul, Some(42));
+    }
+
+    #[test]
+    fn zero_signal_clears_existing_rollup_config() {
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.base.azul = Some(42);
+        cfg.hardforks.delta_time = Some(40);
+
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
+            &mut cfg,
+            &upgrade_schedule(&[("azul", 0)]),
+        );
+
+        assert_eq!(applied, 0);
+        assert_eq!(cfg.hardforks.base.azul, None);
+        assert_eq!(cfg.hardforks.delta_time, Some(40));
+    }
+
+    #[test]
+    fn ignores_unsupported_signal_for_rollup_config() {
+        let mut cfg = RollupConfig::default();
+
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
+            &mut cfg,
+            &upgrade_schedule(&[("unknown", 42)]),
+        );
+
+        assert_eq!(applied, 0);
+        assert_eq!(cfg.hardforks.base.azul, None);
     }
 
     #[rstest]
