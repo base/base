@@ -96,6 +96,21 @@ enum PipelineSessionExit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskKind {
+    Dispatcher,
+    Collector,
+}
+
+impl TaskKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Dispatcher => "dispatcher",
+            Self::Collector => "collector",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DispatchOutcome {
     Accepted,
     Skipped,
@@ -296,14 +311,12 @@ where
             }
             result = &mut dispatcher => {
                 dispatcher_done = true;
-                result??;
-                warn!("Dispatcher loop exited unexpectedly, restarting pipeline session");
+                handle_task_result(TaskKind::Dispatcher, result);
                 PipelineSessionExit::Restart
             }
             result = &mut collector => {
                 collector_done = true;
-                result??;
-                warn!("Collector loop exited unexpectedly, restarting pipeline session");
+                handle_task_result(TaskKind::Collector, result);
                 PipelineSessionExit::Restart
             }
         };
@@ -772,6 +785,20 @@ where
         cache: &mut Option<CachedRecovery>,
         discard_retry: DiscardRetryState<'_>,
     ) {
+        let current_attempt = discard_retry.counts.get(&target_block).copied().unwrap_or(0);
+        if current_attempt >= self.config.max_retries {
+            error!(
+                target_block,
+                attempts = current_attempt,
+                max_retries = self.config.max_retries,
+                "Discard retry budget exhausted, dropping recovery cache"
+            );
+            discard_retry.counts.remove(&target_block);
+            discard_retry.sessions.remove(&target_block);
+            *cache = None;
+            return;
+        }
+
         let request = match self
             .build_proof_request_for(target_block, recovered, claimed_l2_output_root)
             .await
@@ -1336,6 +1363,23 @@ where
 async fn await_loop(handle: JoinHandle<Result<()>>) -> Result<()> {
     handle.await??;
     Ok(())
+}
+
+fn handle_task_result(
+    kind: TaskKind,
+    result: std::result::Result<Result<()>, tokio::task::JoinError>,
+) {
+    match result {
+        Ok(Ok(())) => {
+            warn!(task = kind.label(), "Pipeline task exited unexpectedly, restarting session");
+        }
+        Ok(Err(error)) => {
+            warn!(task = kind.label(), error = %error, "Pipeline task failed, restarting session");
+        }
+        Err(error) => {
+            warn!(task = kind.label(), error = %error, "Pipeline task panicked, restarting session");
+        }
+    }
 }
 
 async fn sleep_or_cancel(duration: Duration, cancel: &CancellationToken) {
@@ -2955,5 +2999,57 @@ mod tests {
             ),
             "discard retries must not reuse root-derived session id"
         );
+    }
+
+    /// Discard retries are capped so persistent discard reasons do not create
+    /// unbounded prover-service sessions for one target.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_discard_retry_exhaustion_drops_cache() {
+        let (pipeline, proof_requester, _cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            2,
+            Duration::from_secs(60),
+            Arc::new(MockOutputProposer),
+        );
+        let recovered = anchor_recovered_state();
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut discard_retry_counts: HashMap<u64, u32> =
+            HashMap::from([(SUBMIT_BLOCK_INTERVAL, 2)]);
+        let mut retry_sessions: HashMap<u64, String> =
+            HashMap::from([(SUBMIT_BLOCK_INTERVAL, "stale-session".to_owned())]);
+
+        pipeline
+            .dispatch_discard_retry(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+                &mut retry_counts,
+                &mut cache,
+                DiscardRetryState {
+                    counts: &mut discard_retry_counts,
+                    sessions: &mut retry_sessions,
+                },
+            )
+            .await;
+
+        assert!(cache.is_none(), "discard exhaustion should drop the recovery cache");
+        assert!(discard_retry_counts.is_empty(), "discard exhaustion should clear retry count");
+        assert!(retry_sessions.is_empty(), "discard exhaustion should clear retry session");
+        assert!(
+            proof_requester.requests.lock().unwrap().is_empty(),
+            "discard exhaustion should not dispatch another session"
+        );
+    }
+
+    /// A task panic is treated as a session restart instead of being
+    /// propagated out of the pipeline runner.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_handle_task_result_treats_panic_as_restartable() {
+        let handle = tokio::spawn(async { panic!("simulated task panic") });
+        let result = handle.await;
+        assert!(result.is_err(), "test setup should produce a JoinError");
+        handle_task_result(TaskKind::Dispatcher, result.map(|()| Ok(())));
     }
 }
