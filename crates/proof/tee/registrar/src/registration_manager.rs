@@ -108,10 +108,10 @@ where
 {
     /// Attempts to register a signer onchain if it is not already registered.
     ///
-    /// This is the expensive path: checks whether a Boundless proof request is
-    /// already in progress for the signer, confirms the signer still needs
-    /// registration, submits or recovers the proof request, and invokes
-    /// [`ProofHandler`] with the completed proof.
+    /// This is the expensive path: checks whether proof work is already in
+    /// progress for the signer, confirms the signer still needs registration,
+    /// generates or recovers the proof, and invokes [`ProofHandler`] with the
+    /// completed proof.
     ///
     /// Registration is PCR0-agnostic: all legitimate enclaves are registered
     /// regardless of their PCR0 measurement. This enables pre-registration of
@@ -136,7 +136,7 @@ where
         };
 
         let Some(proof) = self
-            .submit_boundless_proof_request(
+            .generate_registration_proof(
                 instance,
                 signer_address,
                 enclave_index,
@@ -201,12 +201,12 @@ where
         Ok(Some(in_flight))
     }
 
-    /// Submits or recovers a Boundless proof request for a signer.
+    /// Generates or recovers an attestation proof for a signer.
     ///
     /// Returns `None` on cooperative shutdown. The provider may be a direct
     /// prover in tests or local deployments, but production Boundless providers
     /// use this as the request submission/recovery point.
-    pub async fn submit_boundless_proof_request(
+    pub async fn generate_registration_proof(
         &self,
         instance: &ProverInstance,
         signer_address: Address,

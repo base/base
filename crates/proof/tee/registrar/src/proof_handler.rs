@@ -9,7 +9,7 @@ use std::{fmt, time::Duration};
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::ITEEProverRegistry;
-use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
+use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -73,7 +73,7 @@ where
         &self,
         instance: &ProverInstance,
         signer_address: Address,
-        proof: base_proof_tee_nitro_attestation_prover::AttestationProof,
+        proof: AttestationProof,
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
         if signer_cancel.is_cancelled() {
@@ -90,7 +90,7 @@ where
         &self,
         instance: &ProverInstance,
         signer_address: Address,
-        proof: base_proof_tee_nitro_attestation_prover::AttestationProof,
+        proof: AttestationProof,
     ) -> TxCandidate {
         let calldata = Bytes::from(
             ITEEProverRegistry::registerSignerCall {
