@@ -1,7 +1,7 @@
 //! Middleware for extracting and applying W3C trace context from inbound JSON-RPC HTTP requests.
 //!
 //! Flow:
-//!   HTTP layer: reads `traceparent`/`tracestate` headers → extracts OTel Context → inserts as
+//!   HTTP layer: reads `traceparent`/`tracestate` headers → extracts [`opentelemetry::Context`] → inserts as
 //!               `InboundOtelContext` extension on the HTTP request
 //!   RPC layer:  reads `InboundOtelContext` from RPC request extensions → attaches as current
 //!               context so that `#[instrument]` spans on RPC handlers become children of the
@@ -18,7 +18,7 @@ use opentelemetry::{Context, global, trace::TraceContextExt};
 use opentelemetry_http::HeaderExtractor;
 use tower::{Layer, Service};
 
-/// Inbound OpenTelemetry context extracted from request headers.
+/// Inbound [`opentelemetry::Context`] extracted from request headers.
 #[derive(Clone, Debug)]
 pub struct InboundOtelContext(pub Context);
 
@@ -77,7 +77,7 @@ impl<S> Layer<S> for OtelRpcMiddlewareLayer {
     }
 }
 
-/// RPC middleware that sets parent OpenTelemetry context for method handling.
+/// RPC middleware that sets parent [`opentelemetry::Context`] for method handling.
 #[derive(Clone, Debug)]
 pub struct OtelRpcMiddleware<S> {
     inner: S,
