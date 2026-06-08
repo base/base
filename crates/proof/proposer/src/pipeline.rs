@@ -488,122 +488,135 @@ where
         if cursor.is_none_or(|c| c.l2_block_number < recovered.l2_block_number) {
             *cursor = Some(recovered);
         }
-        let Some(current) = *cursor else { return };
+        while let Some(current) = *cursor {
+            let target_block = match self.next_target_block(current.l2_block_number) {
+                Some(block) => block,
+                None => break,
+            };
 
-        let target_block = match self.next_target_block(current.l2_block_number) {
-            Some(block) => block,
-            None => return,
-        };
-
-        if target_block > safe_head {
-            debug!(
-                current_block = current.l2_block_number,
-                target_block,
-                safe_head,
-                "Safe head below collection target, waiting for L2 head to advance"
-            );
-            Metrics::pipeline_retries().set(retry_counts.values().sum::<u32>() as f64);
-            return;
-        }
-
-        let poll = if let Some(session_id) = retry_sessions.get(&target_block).cloned() {
-            self.proof_collector.poll_session(target_block, session_id).await
-        } else {
-            self.proof_collector.poll(target_block).await
-        };
-
-        match poll {
-            TargetPoll::Ready { session_id, proof } => {
-                info!(
+            if target_block > safe_head {
+                debug!(
+                    current_block = current.l2_block_number,
                     target_block,
-                    session_id = %session_id,
-                    "Proof ready, submitting inline"
+                    safe_head,
+                    "Safe head below collection target, waiting for L2 head to advance"
                 );
-                Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
-                match self.submit_inline(target_block, &current, proof, retry_counts, cache).await {
-                    SubmitEffect::Submitted => {
-                        retry_sessions.remove(&target_block);
-                        discard_retry_counts.remove(&target_block);
-                        if let Some(cached) = cache.as_ref() {
-                            *cursor = Some(cached.state);
+                break;
+            }
+
+            let poll = if let Some(session_id) = retry_sessions.get(&target_block).cloned() {
+                self.proof_collector.poll_session(target_block, session_id).await
+            } else {
+                self.proof_collector.poll(target_block).await
+            };
+
+            match poll {
+                TargetPoll::Ready { session_id, proof } => {
+                    info!(
+                        target_block,
+                        session_id = %session_id,
+                        "Proof ready, submitting inline"
+                    );
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
+                    match self
+                        .submit_inline(target_block, &current, proof, retry_counts, cache)
+                        .await
+                    {
+                        SubmitEffect::Submitted => {
+                            retry_sessions.remove(&target_block);
+                            discard_retry_counts.remove(&target_block);
+                            if let Some(cached) = cache.as_ref() {
+                                *cursor = Some(cached.state);
+                                if cached.state.l2_block_number > current.l2_block_number {
+                                    continue;
+                                }
+                            }
+                            break;
+                        }
+                        SubmitEffect::Restart => {
+                            request_restart(restart_tx, "submit failure").await;
+                            break;
+                        }
+                        SubmitEffect::Redispatch { claimed_l2_output_root } => {
+                            self.dispatch_discard_retry(
+                                target_block,
+                                &current,
+                                claimed_l2_output_root,
+                                retry_counts,
+                                cache,
+                                DiscardRetryState {
+                                    counts: discard_retry_counts,
+                                    sessions: retry_sessions,
+                                },
+                            )
+                            .await;
+                            break;
                         }
                     }
-                    SubmitEffect::Restart => {
-                        request_restart(restart_tx, "submit failure").await;
-                    }
-                    SubmitEffect::Redispatch { claimed_l2_output_root } => {
-                        self.dispatch_discard_retry(
-                            target_block,
-                            &current,
-                            claimed_l2_output_root,
-                            retry_counts,
-                            cache,
-                            DiscardRetryState {
-                                counts: discard_retry_counts,
-                                sessions: retry_sessions,
-                            },
-                        )
-                        .await;
-                    }
                 }
-            }
-            TargetPoll::Pending { session_id, status } => {
-                debug!(
-                    target_block,
-                    session_id = %session_id,
-                    ?status,
-                    "Proof pending, waiting for prover service"
-                );
-            }
-            TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
-                debug!(
-                    target_block,
-                    session_id = %session_id,
-                    claimed_l2_output_root = %claimed_l2_output_root,
-                    "No prover-service session for target, waiting for dispatcher"
-                );
-            }
-            TargetPoll::Failed { session_id, claimed_l2_output_root, error } => {
-                warn!(
-                    target_block,
-                    session_id = %session_id,
-                    error = %error,
-                    "Prover service reported failed session, re-dispatching"
-                );
-                Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED).increment(1);
-                if self.handle_proof_failure(target_block, error, retry_counts, cache) {
-                    if retry_sessions.get(&target_block).is_some_and(|id| id == &session_id) {
-                        self.dispatch_discard_retry(
-                            target_block,
-                            &current,
-                            claimed_l2_output_root,
-                            retry_counts,
-                            cache,
-                            DiscardRetryState {
-                                counts: discard_retry_counts,
-                                sessions: retry_sessions,
-                            },
-                        )
-                        .await;
-                    } else {
-                        self.dispatch_for(
-                            target_block,
-                            &current,
-                            claimed_l2_output_root,
-                            retry_counts,
-                            cache,
-                        )
-                        .await;
-                    }
+                TargetPoll::Pending { session_id, status } => {
+                    debug!(
+                        target_block,
+                        session_id = %session_id,
+                        ?status,
+                        "Proof pending, waiting for prover service"
+                    );
+                    break;
                 }
-            }
-            TargetPoll::Unknown { session_id, error } => {
-                debug!(
-                    target_block,
-                    session_id = ?session_id,
-                    error = %error,
-                    "Transient poll failure, will retry next iteration"
-                );
+                TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
+                    debug!(
+                        target_block,
+                        session_id = %session_id,
+                        claimed_l2_output_root = %claimed_l2_output_root,
+                        "No prover-service session for target, waiting for dispatcher"
+                    );
+                    break;
+                }
+                TargetPoll::Failed { session_id, claimed_l2_output_root, error } => {
+                    warn!(
+                        target_block,
+                        session_id = %session_id,
+                        error = %error,
+                        "Prover service reported failed session, re-dispatching"
+                    );
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
+                        .increment(1);
+                    if self.handle_proof_failure(target_block, error, retry_counts, cache) {
+                        if retry_sessions.get(&target_block).is_some_and(|id| id == &session_id) {
+                            self.dispatch_discard_retry(
+                                target_block,
+                                &current,
+                                claimed_l2_output_root,
+                                retry_counts,
+                                cache,
+                                DiscardRetryState {
+                                    counts: discard_retry_counts,
+                                    sessions: retry_sessions,
+                                },
+                            )
+                            .await;
+                        } else {
+                            self.dispatch_for(
+                                target_block,
+                                &current,
+                                claimed_l2_output_root,
+                                retry_counts,
+                                cache,
+                            )
+                            .await;
+                        }
+                    }
+                    break;
+                }
+                TargetPoll::Unknown { session_id, error } => {
+                    debug!(
+                        target_block,
+                        session_id = ?session_id,
+                        error = %error,
+                        "Transient poll failure, will retry next iteration"
+                    );
+                    break;
+                }
             }
         }
 
@@ -1398,7 +1411,14 @@ async fn request_restart(restart_tx: &mpsc::Sender<String>, reason: &str) {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+        time::Duration,
+    };
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
@@ -2364,6 +2384,74 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct AdvancingGameFactory {
+        submitted_games: Arc<AtomicU64>,
+    }
+
+    #[async_trait]
+    impl DisputeGameFactoryClient for AdvancingGameFactory {
+        async fn game_count(&self) -> Result<u64, base_proof_contracts::ContractError> {
+            Ok(self.submitted_games.load(Ordering::SeqCst))
+        }
+
+        async fn game_at_index(
+            &self,
+            index: u64,
+        ) -> Result<base_proof_contracts::GameAtIndex, base_proof_contracts::ContractError>
+        {
+            Ok(base_proof_contracts::GameAtIndex {
+                game_type: TEST_GAME_TYPE,
+                timestamp: 0,
+                proxy: proxy_addr(index),
+            })
+        }
+
+        async fn init_bonds(
+            &self,
+            _: u32,
+        ) -> Result<alloy_primitives::U256, base_proof_contracts::ContractError> {
+            Ok(alloy_primitives::U256::ZERO)
+        }
+
+        async fn game_impls(&self, _: u32) -> Result<Address, base_proof_contracts::ContractError> {
+            Ok(Address::ZERO)
+        }
+
+        async fn games(
+            &self,
+            _: u32,
+            root_claim: B256,
+            _: alloy_primitives::Bytes,
+        ) -> Result<Address, base_proof_contracts::ContractError> {
+            let block = root_claim.as_slice()[0] as u64;
+            let index = block / SUBMIT_BLOCK_INTERVAL;
+            if index > 0 && index <= self.submitted_games.load(Ordering::SeqCst) {
+                Ok(proxy_addr(index - 1))
+            } else {
+                Ok(Address::ZERO)
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct AdvancingOutputProposer {
+        submitted_games: Arc<AtomicU64>,
+    }
+
+    #[async_trait]
+    impl OutputProposer for AdvancingOutputProposer {
+        async fn propose_output(
+            &self,
+            _: &Proposal,
+            _: Address,
+            _: &[B256],
+        ) -> Result<(), ProposerError> {
+            self.submitted_games.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     /// `handle_proof_failure` increments per-target counters and drops the
     /// cached recovery once the target reaches `max_retries`.
     #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -2570,6 +2658,94 @@ mod tests {
             restart_rx.try_recv().expect("collector should request restart"),
             "submit failure"
         );
+    }
+
+    /// When the dispatcher has already produced a backlog of ready proofs, the
+    /// collector should submit each sequentially ready target in one tick
+    /// instead of sleeping `poll_interval` between successful submissions.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_collector_tick_drains_ready_backlog_after_success() {
+        let submitted_games = Arc::new(AtomicU64::new(0));
+        let proof_requester = Arc::new(MockProofRequester::default());
+        let cancel = CancellationToken::new();
+        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(SUBMIT_BLOCK_INTERVAL * 3, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
+        let factory =
+            Arc::new(AdvancingGameFactory { submitted_games: Arc::clone(&submitted_games) });
+        let output_proposer =
+            Arc::new(AdvancingOutputProposer { submitted_games: Arc::clone(&submitted_games) });
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                submit_timeout: Duration::from_secs(60),
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    game_type: TEST_GAME_TYPE,
+                    block_interval: SUBMIT_BLOCK_INTERVAL,
+                    intermediate_block_interval: SUBMIT_BLOCK_INTERVAL,
+                    poll_interval: Duration::from_millis(10),
+                    ..Default::default()
+                },
+            },
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            factory,
+            Arc::new(MockAggregateVerifier::default()),
+            output_proposer,
+            cancel,
+        );
+
+        let mut dispatch_cache: Option<CachedRecovery> = None;
+        let mut dispatch_retries: HashMap<u64, u32> = HashMap::new();
+        let mut dispatch_cursor: Option<RecoveredState> = None;
+        pipeline
+            .dispatcher_tick(&mut dispatch_cache, &mut dispatch_retries, &mut dispatch_cursor)
+            .await;
+
+        assert_eq!(
+            proof_requester.requests.lock().unwrap().len(),
+            3,
+            "test setup should dispatch three ready proofs"
+        );
+
+        let mut collect_cache: Option<CachedRecovery> = None;
+        let mut collect_retries: HashMap<u64, u32> = HashMap::new();
+        let mut collect_cursor: Option<RecoveredState> = None;
+        let mut discard_retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut retry_sessions: HashMap<u64, String> = HashMap::new();
+        let (restart_tx, mut restart_rx) = mpsc::channel(1);
+
+        pipeline
+            .collector_tick(
+                &mut collect_cache,
+                &mut collect_retries,
+                &mut collect_cursor,
+                &mut discard_retry_counts,
+                &mut retry_sessions,
+                &restart_tx,
+            )
+            .await;
+
+        assert_eq!(
+            submitted_games.load(Ordering::SeqCst),
+            3,
+            "collector should submit every ready proof without waiting another poll tick"
+        );
+        assert!(restart_rx.try_recv().is_err(), "successful backlog drain should not restart");
     }
 
     /// `submit_inline` with a `RootMismatch` outcome drops the cached
