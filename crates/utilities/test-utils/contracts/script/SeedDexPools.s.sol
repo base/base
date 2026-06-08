@@ -144,7 +144,7 @@ contract SeedDexPools is Script {
         MockERC20(token0).approve(clPositionManager, type(uint256).max);
         MockERC20(token1).approve(clPositionManager, type(uint256).max);
 
-        int24 maxTick = int24(887272) - (int24(887272) % tickSpacing);
+        int24 maxTick = (int24(887272) / tickSpacing) * tickSpacing;
         ICLPositionManager(clPositionManager).mint(
             ICLPositionManager.MintParams({
                 token0: token0,
