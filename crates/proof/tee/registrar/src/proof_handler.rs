@@ -380,3 +380,536 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::{HashSet, VecDeque},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU32, Ordering},
+        },
+        time::Duration,
+    };
+
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_primitives::{B256, Bloom};
+    use alloy_rpc_types_eth::TransactionReceipt;
+    use async_trait::async_trait;
+    use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
+    use base_tx_manager::{SendHandle, TxManagerError};
+    use rstest::rstest;
+    use tokio::sync::Semaphore;
+    use url::Url;
+
+    use super::*;
+    use crate::{InstanceHealthStatus, RegistryClient};
+
+    const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
+    const TEST_SIGNER: Address = Address::repeat_byte(0x02);
+    const MAX_TX_RETRIES: u32 = 3;
+    const TX_RETRY_DELAY: Duration = Duration::from_secs(5);
+    const CANCEL_ABORT_BUDGET: Duration = Duration::from_secs(1);
+    const PRE_CANCEL_WARMUP: Duration = Duration::from_millis(50);
+    const WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+    const ATTESTATION: &[u8] = b"stub-attestation";
+
+    fn instance() -> ProverInstance {
+        ProverInstance {
+            instance_id: "i-proof-handler".to_string(),
+            endpoint: Url::parse("http://10.0.0.1:8000").unwrap(),
+            health_status: InstanceHealthStatus::Healthy,
+            launch_time: None,
+        }
+    }
+
+    fn stub_receipt() -> TransactionReceipt {
+        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: Eip658Value::Eip658(true),
+                cumulative_gas_used: 21_000,
+                logs: vec![],
+            },
+            logs_bloom: Bloom::ZERO,
+        });
+        TransactionReceipt {
+            inner,
+            transaction_hash: B256::ZERO,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        }
+    }
+
+    struct HandlerHarness<P, R, T> {
+        proof_provider: P,
+        registry: R,
+        tx_manager: T,
+        proof_semaphore: Semaphore,
+        in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
+    }
+
+    impl<P, R, T> HandlerHarness<P, R, T> {
+        fn new(proof_provider: P, registry: R, tx_manager: T) -> Self {
+            Self {
+                proof_provider,
+                registry,
+                tx_manager,
+                proof_semaphore: Semaphore::new(4),
+                in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
+            }
+        }
+
+        fn handler(&self) -> ProofHandler<'_, P, R, T> {
+            ProofHandler {
+                proof_provider: &self.proof_provider,
+                registry: &self.registry,
+                tx_manager: &self.tx_manager,
+                proof_semaphore: &self.proof_semaphore,
+                in_flight_registrations: &self.in_flight_registrations,
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_tx_retries: MAX_TX_RETRIES,
+                tx_retry_delay: TX_RETRY_DELAY,
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct StubProofProvider;
+
+    #[async_trait]
+    impl AttestationProofProvider for StubProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            Ok(AttestationProof {
+                output: Bytes::from_static(b"stub-output"),
+                proof_bytes: Bytes::from_static(b"stub-proof"),
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct CountingProofProvider {
+        call_count: AtomicU32,
+    }
+
+    impl CountingProofProvider {
+        fn new() -> Self {
+            Self { call_count: AtomicU32::new(0) }
+        }
+
+        fn call_count(&self) -> u32 {
+            self.call_count.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait]
+    impl AttestationProofProvider for CountingProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            self.call_count.fetch_add(1, Ordering::Relaxed);
+            Ok(AttestationProof {
+                output: Bytes::from_static(b"stub-output"),
+                proof_bytes: Bytes::from_static(b"stub-proof"),
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct CancelThenErrorProofProvider;
+
+    #[async_trait]
+    impl AttestationProofProvider for CancelThenErrorProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            cancel.cancel();
+            Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
+                "simulated cancel race".into(),
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct YieldingProofProvider {
+        call_count: Arc<AtomicU32>,
+    }
+
+    impl YieldingProofProvider {
+        fn new() -> Self {
+            Self { call_count: Arc::new(AtomicU32::new(0)) }
+        }
+
+        fn call_count(&self) -> u32 {
+            self.call_count.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait]
+    impl AttestationProofProvider for YieldingProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            self.call_count.fetch_add(1, Ordering::Relaxed);
+            for _ in 0..16 {
+                tokio::task::yield_now().await;
+            }
+            Ok(AttestationProof {
+                output: Bytes::from_static(b"stub-output"),
+                proof_bytes: Bytes::from_static(b"stub-proof"),
+            })
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct FailingTxManager {
+        results: Arc<Mutex<VecDeque<Option<TxManagerError>>>>,
+        sent: Arc<Mutex<Vec<Bytes>>>,
+    }
+
+    impl FailingTxManager {
+        fn with_errors(errors: Vec<TxManagerError>) -> Self {
+            let results = errors.into_iter().map(Some).collect();
+            Self { results: Arc::new(Mutex::new(results)), sent: Arc::new(Mutex::new(vec![])) }
+        }
+
+        fn send_count(&self) -> usize {
+            self.sent.lock().unwrap().len()
+        }
+
+        fn sent_calldata(&self) -> Vec<Bytes> {
+            self.sent.lock().unwrap().clone()
+        }
+    }
+
+    impl TxManager for FailingTxManager {
+        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            self.sent.lock().unwrap().push(candidate.tx_data);
+            let next = self.results.lock().unwrap().pop_front();
+            match next {
+                Some(Some(e)) => Err(e),
+                _ => Ok(stub_receipt()),
+            }
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+            panic!("FailingTxManager::send_async is not implemented; tests only use send()")
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    #[derive(Debug)]
+    struct DynamicRegistry {
+        signers: Vec<Address>,
+        responses: Mutex<VecDeque<bool>>,
+        default_registered: bool,
+    }
+
+    impl DynamicRegistry {
+        fn never_registered(signers: Vec<Address>) -> Self {
+            Self { signers, responses: Mutex::new(VecDeque::new()), default_registered: false }
+        }
+
+        fn registered_after_first_check(signers: Vec<Address>) -> Self {
+            Self {
+                signers,
+                responses: Mutex::new(VecDeque::from([false])),
+                default_registered: true,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RegistryClient for DynamicRegistry {
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            let next = self.responses.lock().unwrap().pop_front();
+            Ok(next.unwrap_or(self.default_registered))
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            Ok(self.signers.clone())
+        }
+    }
+
+    #[derive(Debug)]
+    struct StallingRegistry;
+
+    #[async_trait]
+    impl RegistryClient for StallingRegistry {
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            std::future::pending::<()>().await;
+            Ok(false)
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            Ok(vec![])
+        }
+    }
+
+    fn assert_all_calldata_identical(sent: &[Bytes]) {
+        if sent.len() < 2 {
+            return;
+        }
+        for (i, entry) in sent.iter().enumerate().skip(1) {
+            assert_eq!(&sent[0], entry, "calldata mismatch: sent[0] != sent[{i}]");
+        }
+    }
+
+    async fn register<P, R, T>(
+        harness: &HandlerHarness<P, R, T>,
+        cancel: &CancellationToken,
+    ) -> Result<()>
+    where
+        P: AttestationProofProvider,
+        R: RegistryClient,
+        T: TxManager,
+    {
+        harness.handler().register_signer(&instance(), TEST_SIGNER, 0, ATTESTATION, cancel).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn register_signer_already_registered_after_error_returns_ok() {
+        let tx = FailingTxManager::with_errors(vec![TxManagerError::Rpc("nonce race".into())]);
+        let harness = HandlerHarness::new(
+            StubProofProvider,
+            DynamicRegistry::registered_after_first_check(vec![]),
+            tx.clone(),
+        );
+
+        let result = register(&harness, &CancellationToken::new()).await;
+
+        assert!(result.is_ok(), "should succeed when signer is registered onchain: {result:?}");
+        assert_eq!(tx.send_count(), 1);
+    }
+
+    #[rstest]
+    #[case::execution_reverted(TxManagerError::ExecutionReverted {
+        reason: Some("bad proof".into()),
+        data: None,
+    })]
+    #[case::insufficient_funds(TxManagerError::InsufficientFunds)]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 })]
+    #[tokio::test(start_paused = true)]
+    async fn register_signer_non_retryable_error_aborts_immediately(#[case] error: TxManagerError) {
+        let tx = FailingTxManager::with_errors(vec![error]);
+        let harness = HandlerHarness::new(
+            StubProofProvider,
+            DynamicRegistry::never_registered(vec![]),
+            tx.clone(),
+        );
+
+        let result = register(&harness, &CancellationToken::new()).await;
+
+        assert!(result.is_err(), "non-retryable tx errors should propagate");
+        assert_eq!(tx.send_count(), 1, "should not retry after non-retryable error");
+    }
+
+    #[rstest]
+    #[case::immediate_success(vec![], true, 1)]
+    #[case::transient_retry_success(
+        vec![
+            TxManagerError::Rpc("transient 1".into()),
+            TxManagerError::Rpc("transient 2".into()),
+        ],
+        true,
+        3,
+    )]
+    #[case::retry_exhaustion(
+        (0..=MAX_TX_RETRIES)
+            .map(|_| TxManagerError::Rpc("persistent failure".into()))
+            .collect(),
+        false,
+        (MAX_TX_RETRIES + 1) as usize,
+    )]
+    #[case::transient_then_execution_reverted(
+        vec![
+            TxManagerError::Rpc("transient".into()),
+            TxManagerError::ExecutionReverted { reason: None, data: None },
+        ],
+        false,
+        2,
+    )]
+    #[tokio::test(start_paused = true)]
+    async fn register_signer_tx_outcome(
+        #[case] errors: Vec<TxManagerError>,
+        #[case] should_succeed: bool,
+        #[case] expected_sends: usize,
+    ) {
+        let tx = FailingTxManager::with_errors(errors);
+        let harness = HandlerHarness::new(
+            CountingProofProvider::new(),
+            DynamicRegistry::never_registered(vec![]),
+            tx.clone(),
+        );
+
+        let result = register(&harness, &CancellationToken::new()).await;
+
+        assert_eq!(result.is_ok(), should_succeed, "unexpected registration result: {result:?}",);
+        assert_eq!(tx.send_count(), expected_sends);
+        assert_all_calldata_identical(&tx.sent_calldata());
+        assert_eq!(harness.proof_provider.call_count(), 1, "proof should be generated once");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn register_signer_cancellation_during_retry_sleep_aborts() {
+        let tx = FailingTxManager::with_errors(vec![
+            TxManagerError::Rpc("fail 1".into()),
+            TxManagerError::Rpc("fail 2".into()),
+            TxManagerError::Rpc("fail 3".into()),
+        ]);
+        let harness = HandlerHarness::new(
+            StubProofProvider,
+            DynamicRegistry::never_registered(vec![]),
+            tx.clone(),
+        );
+        let cancel = CancellationToken::new();
+        let cancel_handle = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            cancel_handle.cancel();
+        });
+
+        let result = register(&harness, &cancel).await;
+
+        assert!(result.is_ok(), "cancel-induced exit should be Ok(()): {result:?}");
+        assert_eq!(tx.send_count(), 1, "should abort during retry sleep");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn register_signer_cancellation_before_loop_sends_nothing() {
+        let tx = FailingTxManager::with_errors(vec![]);
+        let harness = HandlerHarness::new(
+            StubProofProvider,
+            DynamicRegistry::never_registered(vec![]),
+            tx.clone(),
+        );
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let result = register(&harness, &cancel).await;
+
+        assert!(result.is_ok(), "pre-cancel should be a cooperative success: {result:?}");
+        assert_eq!(tx.send_count(), 0, "should not send any tx after pre-cancellation");
+    }
+
+    #[tokio::test]
+    async fn register_signer_provider_err_after_cancel_returns_ok() {
+        let tx = FailingTxManager::with_errors(vec![]);
+        let harness = HandlerHarness::new(
+            CancelThenErrorProofProvider,
+            DynamicRegistry::never_registered(vec![]),
+            tx.clone(),
+        );
+        let cancel = CancellationToken::new();
+
+        let result = register(&harness, &cancel).await;
+
+        assert!(result.is_ok(), "provider Err after cancel must be mapped to Ok(()): {result:?}",);
+        assert_eq!(tx.send_count(), 0, "cancelled task must not submit a transaction");
+    }
+
+    #[tokio::test]
+    async fn register_signer_aborts_promptly_when_cancel_fires_during_registry_stall() {
+        let harness = Arc::new(HandlerHarness::new(
+            StubProofProvider,
+            StallingRegistry,
+            FailingTxManager::with_errors(vec![]),
+        ));
+        let signer_cancel = CancellationToken::new();
+        let task_harness = Arc::clone(&harness);
+        let task_cancel = signer_cancel.clone();
+        let inst = instance();
+        let handle = tokio::spawn(async move {
+            let start = tokio::time::Instant::now();
+            let res = task_harness
+                .handler()
+                .register_signer(&inst, TEST_SIGNER, 0, ATTESTATION, &task_cancel)
+                .await;
+            (res, start.elapsed())
+        });
+
+        tokio::time::sleep(PRE_CANCEL_WARMUP).await;
+        signer_cancel.cancel();
+
+        let (result, elapsed) = tokio::time::timeout(WAIT_TIMEOUT, handle)
+            .await
+            .expect("register_signer must not hang past the timeout")
+            .expect("spawned task must not panic");
+
+        assert!(result.is_ok(), "cancel-induced exit must be Ok(()): {result:?}");
+        assert!(
+            elapsed < CANCEL_ABORT_BUDGET,
+            "cancel must abort the registry stall within {CANCEL_ABORT_BUDGET:?} (took {elapsed:?})",
+        );
+    }
+
+    #[tokio::test]
+    async fn register_signer_concurrent_same_signer_dedups() {
+        let tx = FailingTxManager::with_errors(vec![]);
+        let harness = HandlerHarness::new(
+            YieldingProofProvider::new(),
+            DynamicRegistry::never_registered(vec![]),
+            tx.clone(),
+        );
+        let cancel = CancellationToken::new();
+        let handler = harness.handler();
+        let inst = instance();
+
+        let (r1, r2) = tokio::join!(
+            handler.register_signer(&inst, TEST_SIGNER, 0, ATTESTATION, &cancel),
+            handler.register_signer(&inst, TEST_SIGNER, 0, ATTESTATION, &cancel),
+        );
+
+        assert!(r1.is_ok(), "first concurrent registration failed: {r1:?}");
+        assert!(r2.is_ok(), "second concurrent registration failed: {r2:?}");
+        assert_eq!(tx.send_count(), 1, "same signer must dedup to a single tx");
+        assert_eq!(harness.proof_provider.call_count(), 1, "proof should be generated once");
+    }
+
+    #[rstest]
+    #[case::completion(vec![], false)]
+    #[case::failure(vec![TxManagerError::InsufficientFunds], true)]
+    #[tokio::test]
+    async fn register_signer_in_flight_slot_released_after_attempt(
+        #[case] errors: Vec<TxManagerError>,
+        #[case] first_attempt_should_fail: bool,
+    ) {
+        let tx = FailingTxManager::with_errors(errors);
+        let harness = HandlerHarness::new(
+            StubProofProvider,
+            DynamicRegistry::never_registered(vec![]),
+            tx.clone(),
+        );
+        let cancel = CancellationToken::new();
+
+        let first_result = register(&harness, &cancel).await;
+        assert_eq!(
+            first_result.is_err(),
+            first_attempt_should_fail,
+            "unexpected first registration result: {first_result:?}",
+        );
+        register(&harness, &cancel).await.unwrap();
+
+        assert_eq!(tx.send_count(), 2, "registration must release in-flight slot");
+    }
+}

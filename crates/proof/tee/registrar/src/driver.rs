@@ -1524,7 +1524,7 @@ mod tests {
         collections::{HashMap, HashSet, VecDeque},
         sync::{
             Arc, Mutex,
-            atomic::{AtomicU32, AtomicUsize, Ordering},
+            atomic::{AtomicUsize, Ordering},
         },
         time::SystemTime,
     };
@@ -1705,33 +1705,6 @@ mod tests {
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
             Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
                 "simulated proof failure".into(),
-            ))
-        }
-    }
-
-    /// Mock proof provider that cancels its own token and then returns
-    /// `Err` synchronously on the same poll — simulating the race window
-    /// where `BoundlessProver`'s internal `cancel.is_cancelled()` check
-    /// fires *after* `try_register`'s biased `select!` has polled the
-    /// cancel branch (Pending) but *before* the select can re-poll it.
-    ///
-    /// Without the `Err(_) if signer_cancel.is_cancelled()` guard in
-    /// `try_register`, this `Err` would propagate as a task failure and
-    /// violate the `PendingRegistration` "cancelled task always
-    /// returns `Ok(signer)`" contract.
-    #[derive(Debug)]
-    struct CancelThenErrorProofProvider;
-
-    #[async_trait]
-    impl AttestationProofProvider for CancelThenErrorProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            cancel.cancel();
-            Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
-                "simulated cancel-race".into(),
             ))
         }
     }
@@ -1995,45 +1968,7 @@ mod tests {
         )
     }
 
-    // ── Configurable mock types for retry tests ────────────────────────
-
-    /// Maximum number of tx submission retries used by `default_config`.
-    const MAX_TX_RETRIES: u32 = DEFAULT_MAX_TX_RETRIES;
-
-    /// Proof provider that counts `generate_proof` invocations.
-    ///
-    /// Returns the same stub proof as [`StubProofProvider`] but tracks
-    /// how many times it was called, allowing tests to assert that the
-    /// expensive proof generation is not repeated across retries.
-    #[derive(Debug)]
-    struct CountingProofProvider {
-        call_count: AtomicU32,
-    }
-
-    impl CountingProofProvider {
-        fn new() -> Self {
-            Self { call_count: AtomicU32::new(0) }
-        }
-
-        fn call_count(&self) -> u32 {
-            self.call_count.load(Ordering::Relaxed)
-        }
-    }
-
-    #[async_trait]
-    impl AttestationProofProvider for CountingProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            self.call_count.fetch_add(1, Ordering::Relaxed);
-            Ok(AttestationProof {
-                output: Bytes::from_static(b"stub-output"),
-                proof_bytes: Bytes::from_static(b"stub-proof"),
-            })
-        }
-    }
+    // ── Proof-task mock types ─────────────────────────────────────────
 
     /// Proof provider that records the `(signer, attestation_bytes)` pair
     /// passed to every `generate_proof_for_signer` invocation, then
@@ -2103,12 +2038,7 @@ mod tests {
             Self { results: Arc::new(Mutex::new(results)), sent: Arc::new(Mutex::new(vec![])) }
         }
 
-        /// Returns the number of `send()` calls made.
-        fn send_count(&self) -> usize {
-            self.sent.lock().unwrap().len()
-        }
-
-        /// Returns all submitted calldata for equality assertions.
+        /// Returns all submitted calldata for assertion.
         fn sent_calldata(&self) -> Vec<Bytes> {
             self.sent.lock().unwrap().clone()
         }
@@ -2125,7 +2055,7 @@ mod tests {
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            panic!("FailingTxManager::send_async is not implemented; retry tests only use send()")
+            panic!("FailingTxManager::send_async is not implemented; tests only use send()")
         }
 
         fn sender_address(&self) -> Address {
@@ -2152,16 +2082,6 @@ mod tests {
         fn never_registered(signers: Vec<Address>) -> Self {
             Self { signers, responses: Mutex::new(VecDeque::new()), default_registered: false }
         }
-
-        /// Registry where the first call returns `false` (initial check),
-        /// then subsequent calls return `true` (signer appeared onchain).
-        fn registered_after_first_check(signers: Vec<Address>) -> Self {
-            Self {
-                signers,
-                responses: Mutex::new(VecDeque::from([false])),
-                default_registered: true,
-            }
-        }
     }
 
     #[async_trait]
@@ -2174,28 +2094,6 @@ mod tests {
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
             Ok(self.signers.clone())
         }
-    }
-
-    /// Builds a driver for tx retry tests with configurable proof provider,
-    /// tx manager, and registry.
-    fn retry_driver<P: AttestationProofProvider + 'static>(
-        signer_client: MockSignerClient,
-        registry: DynamicRegistry,
-        tx: FailingTxManager,
-        proof_provider: P,
-        cancel: CancellationToken,
-    ) -> RegistrationDriver<MockDiscovery, P, DynamicRegistry, FailingTxManager, MockSignerClient>
-    {
-        RegistrationDriver::new(
-            MockDiscovery { instances: vec![] },
-            proof_provider,
-            registry,
-            tx,
-            signer_client,
-            default_config(cancel),
-            None,
-        )
-        .expect("test driver construction succeeds")
     }
 
     // ── Pipeline test infrastructure ────────────────────────────────────
@@ -3964,341 +3862,35 @@ mod tests {
         assert!(tx.sent_calldata().is_empty(), "discover_and_resolve must not send txs");
     }
 
-    // ── tx retry tests (Fix C) ──────────────────────────────────────────
-    //
-    // These tests verify the retry loop in `try_register`. Key
-    // invariants:
-    // - The expensive proof is generated exactly once and reused across
-    //   retries (identical calldata in every `send()` call).
-    // - Non-retryable errors abort immediately.
-    // - `is_registered` is checked after each failure to catch false
-    //   negatives.
-    // - Cancellation is respected both at the top of the loop and during
-    //   the retry delay.
-
-    /// Asserts that all calldata entries submitted to the tx manager are
-    /// identical, confirming the same proof is reused across retries.
-    fn assert_all_calldata_identical(sent: &[Bytes]) {
-        if sent.len() < 2 {
-            return;
-        }
-        for (i, entry) in sent.iter().enumerate().skip(1) {
-            assert_eq!(
-                &sent[0], entry,
-                "calldata mismatch: sent[0] != sent[{i}] — proof was regenerated"
-            );
-        }
-    }
-
-    /// Transient errors followed by success: the retry loop should retry
-    /// and eventually succeed. Proof is generated once, same calldata
-    /// across all attempts.
-    #[tokio::test(start_paused = true)]
-    async fn try_register_retries_transient_error_then_succeeds() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![
-            TxManagerError::Rpc("transient 1".into()),
-            TxManagerError::Rpc("transient 2".into()),
-        ]);
-        let proof_provider = CountingProofProvider::new();
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            proof_provider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let result = driver.process_instance(&inst).await;
-
-        assert!(result.is_ok(), "should succeed after retries: {result:?}");
-        // 2 failed attempts + 1 success = 3 total sends.
-        assert_eq!(tx.send_count(), 3);
-        assert_all_calldata_identical(&tx.sent_calldata());
-        assert_eq!(driver.proof_provider.call_count(), 1, "proof should be generated once");
-    }
-
-    /// Transient error but onchain check shows signer is already
-    /// registered: should return Ok without retrying.
-    #[tokio::test(start_paused = true)]
-    async fn try_register_already_registered_after_error_returns_ok() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![TxManagerError::Rpc("nonce race".into())]);
-        // First `is_registered` call (before proof gen) returns false.
-        // Second call (after tx error) returns true (tx was mined despite error).
-        let registry = DynamicRegistry::registered_after_first_check(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            StubProofProvider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let result = driver.process_instance(&inst).await;
-
-        assert!(result.is_ok(), "should succeed: signer registered onchain: {result:?}");
-        // Only 1 send attempt — the is_registered check short-circuits retry.
-        assert_eq!(tx.send_count(), 1);
-    }
-
-    /// Non-retryable errors abort immediately without retry.
-    /// Each variant is a distinct `TxManagerError` that `is_retryable()` returns
-    /// `false` for — the retry loop must recognise them and bail after one send.
-    #[rstest]
-    #[case::execution_reverted(TxManagerError::ExecutionReverted {
-        reason: Some("bad proof".into()),
-        data: None,
-    })]
-    #[case::insufficient_funds(TxManagerError::InsufficientFunds)]
-    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 })]
-    #[tokio::test(start_paused = true)]
-    async fn try_register_non_retryable_error_aborts_immediately(#[case] error: TxManagerError) {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![error]);
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            StubProofProvider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let result = driver.process_instance(&inst).await;
-
-        // process_instance logs errors but doesn't propagate them, so it returns Ok.
-        // However, the tx manager should only have been called once (no retry).
-        assert!(result.is_ok());
-        assert_eq!(tx.send_count(), 1, "should not retry after non-retryable error");
-    }
-
-    /// Transient errors exhaust all retries: should fail after
-    /// `MAX_TX_RETRIES` + 1 attempts. Same calldata in every attempt.
-    #[tokio::test(start_paused = true)]
-    async fn try_register_exhausts_retries_then_fails() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        // Return more errors than MAX_TX_RETRIES allows.
-        let errors: Vec<TxManagerError> = (0..=MAX_TX_RETRIES)
-            .map(|_| TxManagerError::Rpc("persistent failure".into()))
-            .collect();
-        let tx = FailingTxManager::with_errors(errors);
-        let proof_provider = CountingProofProvider::new();
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            proof_provider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let result = driver.process_instance(&inst).await;
-
-        // process_instance catches the error — verify via send count.
-        assert!(result.is_ok());
-        // 1 initial + MAX_TX_RETRIES retries = MAX_TX_RETRIES + 1 total.
-        assert_eq!(
-            tx.send_count(),
-            (MAX_TX_RETRIES + 1) as usize,
-            "should attempt exactly MAX_TX_RETRIES + 1 sends",
-        );
-        assert_all_calldata_identical(&tx.sent_calldata());
-        assert_eq!(driver.proof_provider.call_count(), 1, "proof should be generated once");
-    }
-
-    /// Cancellation during the retry sleep aborts the retry loop without
-    /// sending another transaction.
-    ///
-    /// Uses `start_paused = true` so time advances only when polled.
-    /// The cancel token fires 1 second into the 5-second retry delay,
-    /// then we advance time past the full delay to prove no second send
-    /// occurs.
-    #[tokio::test(start_paused = true)]
-    async fn try_register_cancellation_during_retry_sleep_aborts() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        // Return enough transient errors for multiple retries — but
-        // cancellation should prevent all but the first.
-        let tx = FailingTxManager::with_errors(vec![
-            TxManagerError::Rpc("fail 1".into()),
-            TxManagerError::Rpc("fail 2".into()),
-            TxManagerError::Rpc("fail 3".into()),
-        ]);
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let cancel = CancellationToken::new();
-        let driver =
-            retry_driver(signer_client, registry, tx.clone(), StubProofProvider, cancel.clone());
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-
-        // Spawn a task that cancels after 1 second (during the 5s delay).
-        let cancel_handle = cancel.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            cancel_handle.cancel();
-        });
-
-        let result = driver.process_instance(&inst).await;
-
-        assert!(result.is_ok());
-        // Only 1 send: the tokio::select! in the retry delay catches
-        // the cancellation before the sleep completes.
-        assert_eq!(tx.send_count(), 1, "should abort during retry sleep");
-    }
-
-    /// Cancellation before the retry loop starts: no tx is sent at all.
-    #[tokio::test(start_paused = true)]
-    async fn try_register_cancellation_before_loop_sends_nothing() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![]);
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let cancel = CancellationToken::new();
-        cancel.cancel(); // Cancel before entering try_register.
-        let driver = retry_driver(signer_client, registry, tx.clone(), StubProofProvider, cancel);
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let result = driver.process_instance(&inst).await;
-
-        assert!(result.is_ok());
-        assert_eq!(tx.send_count(), 0, "should not send any tx after pre-cancellation");
-    }
-
-    /// Cancel-race: provider returns `Err` synchronously *after* having
-    /// fired the cancel token in the same poll. The biased `select!` in
-    /// `try_register` polled the cancel branch (then Pending) before
-    /// polling the provider arm, so it commits to the provider's `Err`
-    /// rather than the (now-fired) cancel. The
-    /// `Err(_) if signer_cancel.is_cancelled()` guard catches this and
-    /// returns `Ok(())` so the outer `run_proof_task` can map it to
-    /// `Ok(signer)` per the `PendingRegistration` contract.
-    #[tokio::test]
-    async fn try_register_provider_err_after_cancel_returns_ok() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![]);
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let cancel = CancellationToken::new();
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            CancelThenErrorProofProvider,
-            cancel.clone(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let signer =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-
-        let res = driver.try_register(&inst, signer, 0, b"stub-attestation", &cancel).await;
-
-        assert!(
-            res.is_ok(),
-            "provider Err after cancel must be mapped to Ok(()) by try_register; got {res:?}",
-        );
-        assert_eq!(tx.send_count(), 0, "cancelled task must not submit a transaction");
-    }
-
-    /// Mixed errors: transient → `ExecutionReverted`. The retry loop should
-    /// process the first error (retryable), then abort on the second
-    /// (non-retryable) without further retries.
-    #[tokio::test(start_paused = true)]
-    async fn try_register_transient_then_execution_reverted() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![
-            TxManagerError::Rpc("transient".into()),
-            TxManagerError::ExecutionReverted { reason: None, data: None },
-        ]);
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            StubProofProvider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let result = driver.process_instance(&inst).await;
-
-        assert!(result.is_ok());
-        // 2 sends: first retryable, second fatal.
-        assert_eq!(tx.send_count(), 2);
-        assert_all_calldata_identical(&tx.sent_calldata());
-    }
-
-    /// Immediate success on first attempt: no retries needed.
-    #[tokio::test(start_paused = true)]
-    async fn try_register_immediate_success() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![]); // no errors — immediate success
-        let proof_provider = CountingProofProvider::new();
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            proof_provider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let result = driver.process_instance(&inst).await;
-
-        assert!(result.is_ok());
-        assert_eq!(tx.send_count(), 1, "should succeed on first attempt");
-        assert_eq!(driver.proof_provider.call_count(), 1, "proof should be generated once");
-    }
-
     // ── cancel-aware registry await tests ──────────────────────────────
     //
-    // The three production registry RPCs in the spawned-task path —
-    // `is_registered` (pre-proof-gen and post-tx-error in `try_register`)
-    // and `get_registered_signers` (in `run_orphan_dereg`) — are each
-    // wrapped in `select!` against their owning cancel token so a
-    // shutdown during the RPC drops the call immediately. Without these
-    // wraps, a stalled registry RPC would extend drain latency by an
-    // entire round-trip per pending task (or per orphan-dereg cycle),
-    // far above the cooperative `tx_manager.send()` bound that drain
-    // already accepts.
+    // `get_registered_signers` in `run_orphan_dereg` is wrapped in
+    // `select!` against the driver cancel token so a shutdown during the
+    // RPC drops the call immediately. Proof-handler-owned registry awaits
+    // are covered in `proof_handler::tests`.
 
     /// Per-call stall registry: parks the configured method on a
     /// never-completing future. Used to assert that the `select!`
-    /// wrappers in `try_register` and `run_orphan_dereg` short-circuit
-    /// on cancel instead of blocking on the RPC.
+    /// wrapper in `run_orphan_dereg` short-circuits on cancel instead of
+    /// blocking on the RPC.
     struct StallingRegistry {
-        stall_is_registered: bool,
-        stall_get_registered_signers: bool,
         signers: Vec<Address>,
     }
 
     impl StallingRegistry {
-        fn stalling_is_registered() -> Self {
-            Self { stall_is_registered: true, stall_get_registered_signers: false, signers: vec![] }
-        }
-
         fn stalling_get_registered_signers(signers: Vec<Address>) -> Self {
-            Self { stall_is_registered: false, stall_get_registered_signers: true, signers }
+            Self { signers }
         }
     }
 
     #[async_trait]
     impl RegistryClient for StallingRegistry {
         async fn is_registered(&self, _signer: Address) -> Result<bool> {
-            if self.stall_is_registered {
-                std::future::pending::<()>().await;
-            }
             Ok(false)
         }
 
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-            if self.stall_get_registered_signers {
-                std::future::pending::<()>().await;
-            }
+            std::future::pending::<()>().await;
             Ok(self.signers.clone())
         }
     }
@@ -4315,58 +3907,6 @@ mod tests {
     /// reaches its `is_registered` await point, short enough that the
     /// total test time stays well under [`CANCEL_ABORT_BUDGET`].
     const PRE_CANCEL_WARMUP: Duration = Duration::from_millis(50);
-
-    /// `try_register` MUST abort promptly when its `signer_cancel`
-    /// fires during the pre-proof-gen `is_registered` RPC. Without the
-    /// `select!` wrap this call would block until the RPC eventually
-    /// returns, extending drain latency by one round-trip per pending
-    /// task at shutdown.
-    #[tokio::test]
-    async fn try_register_aborts_promptly_when_cancel_fires_during_registry_stall() {
-        let cancel = CancellationToken::new();
-        let signer_cancel = cancel.child_token();
-        let signer =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let driver = Arc::new(
-            RegistrationDriver::new(
-                MockDiscovery { instances: vec![] },
-                StubProofProvider,
-                StallingRegistry::stalling_is_registered(),
-                SharedTxManager::new(),
-                StubSignerClient,
-                default_config(cancel.clone()),
-                None,
-            )
-            .expect("driver constructs"),
-        );
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let attestation = vec![0u8; 32];
-
-        let driver_clone = Arc::clone(&driver);
-        let signer_cancel_clone = signer_cancel.clone();
-        let handle = tokio::spawn(async move {
-            let start = tokio::time::Instant::now();
-            let res = driver_clone
-                .try_register(&inst, signer, 0, &attestation, &signer_cancel_clone)
-                .await;
-            (res, start.elapsed())
-        });
-
-        // Let the spawned task reach its `is_registered` await.
-        tokio::time::sleep(PRE_CANCEL_WARMUP).await;
-        signer_cancel.cancel();
-
-        let (result, elapsed) = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
-            .await
-            .expect("try_register must not hang past the timeout")
-            .expect("spawned task must not panic");
-
-        assert!(result.is_ok(), "cancel-induced exit must be Ok(()): {result:?}");
-        assert!(
-            elapsed < CANCEL_ABORT_BUDGET,
-            "cancel must abort the registry stall within {CANCEL_ABORT_BUDGET:?} (took {elapsed:?})",
-        );
-    }
 
     /// `run_orphan_dereg` MUST abort promptly when `config.cancel` fires
     /// during the `get_registered_signers` RPC. Without the `select!`
@@ -5708,158 +5248,4 @@ mod tests {
     // paths. Mixing real cert bytes into these orchestration tests would
     // not exercise any additional code and would add ~3 KB of attestation
     // byte literals to every test run.
-
-    // ── In-flight dedup tests (try_register layer) ──────────────────────
-    //
-    // Covers the in-flight registration guard at the `try_register`
-    // layer (process-local `Mutex<HashSet<Address>>`) which closes the
-    // TOCTOU race in which two concurrent `try_register` invocations
-    // for the same signer race past the `is_registered` precheck and
-    // both submit duplicate registration transactions. This is a
-    // defence-in-depth backstop to the spawn-loop dedupe in
-    // [`RegistrationDriver::run`].
-
-    /// Proof provider that yields cooperatively during proof generation.
-    ///
-    /// Without yielding, the single-threaded test executor would run the
-    /// first concurrent future to completion before polling the second,
-    /// hiding any race window in `try_register`. The repeated yields here
-    /// guarantee a second concurrent caller is polled — and reaches its
-    /// own in-flight check — while the first is still mid-proof.
-    #[derive(Debug)]
-    struct YieldingProofProvider {
-        call_count: Arc<AtomicU32>,
-    }
-
-    impl YieldingProofProvider {
-        fn new() -> Self {
-            Self { call_count: Arc::new(AtomicU32::new(0)) }
-        }
-
-        fn call_count(&self) -> u32 {
-            self.call_count.load(Ordering::Relaxed)
-        }
-    }
-
-    #[async_trait]
-    impl AttestationProofProvider for YieldingProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            self.call_count.fetch_add(1, Ordering::Relaxed);
-            // Yield repeatedly so any concurrent task gets polled and
-            // exercises the in-flight dedup path.
-            for _ in 0..16 {
-                tokio::task::yield_now().await;
-            }
-            Ok(AttestationProof {
-                output: Bytes::from_static(b"stub-output"),
-                proof_bytes: Bytes::from_static(b"stub-proof"),
-            })
-        }
-    }
-
-    /// Two concurrent `process_instance` calls that resolve to the same
-    /// signer address must collapse into a single registration: only one
-    /// proof generated, only one tx submitted, both calls return Ok.
-    ///
-    /// Models the cross-instance rotation case where two prover instances
-    /// briefly back the same enclave signing key, as well as the
-    /// intra-instance case where the per-enclave loop resolves the same
-    /// address more than once.
-    #[tokio::test]
-    async fn try_register_concurrent_same_signer_dedups() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![]); // both attempts succeed
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let proof_provider = YieldingProofProvider::new();
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            proof_provider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let (r1, r2) = tokio::join!(driver.process_instance(&inst), driver.process_instance(&inst));
-
-        assert!(r1.is_ok(), "first concurrent registration failed: {r1:?}");
-        assert!(r2.is_ok(), "second concurrent registration failed: {r2:?}");
-        assert_eq!(
-            tx.send_count(),
-            1,
-            "concurrent registration of the same signer must dedup to a single tx",
-        );
-        assert_eq!(
-            driver.proof_provider.call_count(),
-            1,
-            "concurrent registration of the same signer must not regenerate the proof",
-        );
-    }
-
-    /// After a successful registration completes, the in-flight slot must
-    /// be released so a later cycle can re-register the same signer if it
-    /// becomes orphaned and re-discovered. Sequential calls for the same
-    /// signer must both execute their `is_registered` precheck (which in
-    /// the test mock returns false twice via `never_registered`), and both
-    /// submit txs — proving the guard does not leak across calls.
-    #[tokio::test]
-    async fn try_register_in_flight_slot_released_after_completion() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![]);
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            StubProofProvider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        driver.process_instance(&inst).await.unwrap();
-        driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(
-            tx.send_count(),
-            2,
-            "sequential (non-overlapping) registrations must each submit their own tx — \
-             the in-flight slot must be released when try_register returns",
-        );
-    }
-
-    /// A failed registration (non-retryable error from the tx manager)
-    /// must still release the in-flight slot. Otherwise a transient
-    /// failure for one signer would permanently block subsequent
-    /// registration attempts for that signer.
-    #[tokio::test]
-    async fn try_register_in_flight_slot_released_after_failure() {
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        // First call fails non-retryably; second call succeeds.
-        let tx = FailingTxManager::with_errors(vec![TxManagerError::InsufficientFunds]);
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            StubProofProvider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        // First attempt: fails non-retryably (slot released on Err path).
-        driver.process_instance(&inst).await.unwrap();
-        // Second attempt: must reach the tx manager again — proving the
-        // in-flight slot was released after the first call's failure.
-        driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(
-            tx.send_count(),
-            2,
-            "a failed registration must release the in-flight slot so retries can proceed",
-        );
-    }
 }
