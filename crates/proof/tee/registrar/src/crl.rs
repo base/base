@@ -19,7 +19,6 @@ use std::time::Duration;
 
 use alloy_primitives::B256;
 use base_proof_tee_nitro_verifier::compute_path_digests;
-use futures::stream::{self, StreamExt};
 use tracing::{debug, warn};
 use x509_parser::{
     certificate::X509Certificate,
@@ -198,58 +197,40 @@ pub async fn check_chain_against_crls(
 ) -> Vec<RevokedCertInfo> {
     let mut revoked = Vec::new();
 
-    let intermediates: Vec<_> = CertCrlInfo::intermediates(cert_infos).cloned().collect();
-    if intermediates.is_empty() {
-        return revoked;
-    }
+    for info in CertCrlInfo::intermediates(cert_infos) {
+        let Some(ref crl_url) = info.crl_url else {
+            debug!(cert = %info.label, "no CRL distribution point, skipping");
+            continue;
+        };
 
-    // Nitro attestation chains have a small number of intermediates, so fan
-    // out one CRL fetch per intermediate instead of adding another limiter.
-    let concurrency = intermediates.len();
-    let mut checks = stream::iter(intermediates)
-        .map(|info| async move {
-            let Some(ref crl_url) = info.crl_url else {
-                debug!(cert = %info.label, "no CRL distribution point, skipping");
-                return None;
-            };
+        debug!(cert = %info.label, url = %crl_url, "fetching CRL");
 
-            debug!(cert = %info.label, url = %crl_url, "fetching CRL");
-
-            match fetch_and_check_crl(http_client, crl_url, &info.serial_number).await {
-                Ok(true) => {
-                    warn!(
-                        cert = %info.label,
-                        url = %crl_url,
-                        serial = %hex::encode(&info.serial_number),
-                        path_digest = %info.path_digest,
-                        "certificate found on CRL — REVOKED"
-                    );
-                    Some(RevokedCertInfo {
-                        label: info.label.clone(),
-                        path_digest: info.path_digest,
-                    })
-                }
-                Ok(false) => {
-                    debug!(cert = %info.label, "certificate not on CRL");
-                    None
-                }
-                Err(e) => {
-                    // Fail-open: log warning but continue.
-                    warn!(
-                        cert = %info.label,
-                        url = %crl_url,
-                        error = %e,
-                        "CRL check failed (fail-open, proceeding)"
-                    );
-                    None
-                }
+        match fetch_and_check_crl(http_client, crl_url, &info.serial_number).await {
+            Ok(true) => {
+                warn!(
+                    cert = %info.label,
+                    url = %crl_url,
+                    serial = %hex::encode(&info.serial_number),
+                    path_digest = %info.path_digest,
+                    "certificate found on CRL — REVOKED"
+                );
+                revoked.push(RevokedCertInfo {
+                    label: info.label.clone(),
+                    path_digest: info.path_digest,
+                });
             }
-        })
-        .buffer_unordered(concurrency);
-
-    while let Some(result) = checks.next().await {
-        if let Some(revoked_cert) = result {
-            revoked.push(revoked_cert);
+            Ok(false) => {
+                debug!(cert = %info.label, "certificate not on CRL");
+            }
+            Err(e) => {
+                // Fail-open: log warning but continue.
+                warn!(
+                    cert = %info.label,
+                    url = %crl_url,
+                    error = %e,
+                    "CRL check failed (fail-open, proceeding)"
+                );
+            }
         }
     }
 
