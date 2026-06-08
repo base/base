@@ -23,12 +23,15 @@ base-node-runner.workspace = true
 base-builder-cli.workspace = true
 base-builder-core.workspace = true
 base-common-chains.workspace = true
+base-common-genesis.workspace = true
 base-consensus-cli.workspace = true
 base-execution-cli.workspace = true
+base-upgrade-signal.workspace = true
 base-builder-metering.workspace = true
 base-execution-chainspec.workspace = true
 
 # alloy
+alloy-provider.workspace = true
 alloy-chains = { workspace = true, features = ["std"] }
 
 # reth
