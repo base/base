@@ -2,46 +2,44 @@
 
 mod app;
 pub use app::{
-    Action, ActionMenuItem, App, CommandCenterView, ConductorState, ConductorView, ConfigView,
-    ConfirmButton, DaMonitorView, DaState, FlashState, FlashblocksView, HomeView, Overlay,
-    PendingAction, ProofsState, ProofsView, Resources, Router, SourceLabel, TransactionPane,
-    UpgradesView, ValidatorState, View, ViewId, create_view, run_app, run_flashblocks_json,
-    start_background_services,
+    Action, ActionMenuItem, App, BLOB_SIZE, BlockContribution, CommandCenterView, ConductorState,
+    ConductorView, ConfigView, ConfirmButton, DaMonitorView, DaState, DaTracker,
+    EVENT_POLL_TIMEOUT, FlashState, FlashblockEntry, FlashblocksView, HomeView, L1_BLOCK_WINDOW,
+    L1Block, L1BlockFilter, LoadingState, MAX_HISTORY, Overlay, PendingAction, PodsState, PodsView,
+    ProofsState, ProofsView, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, RateTracker,
+    Resources, Router, SourceLabel, TransactionPane, UpgradesView, ValidatorState, View, ViewId,
+    create_view, run_app, run_flashblocks_json, start_background_services,
 };
 
-mod commands;
-pub use commands::{
-    BLOB_SIZE, BlockContribution, COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GAS_FILL,
-    COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, COLOR_TARGET, DaTracker,
-    EVENT_POLL_TIMEOUT, FlashblockEntry, L1_BLOCK_WINDOW, L1Block, L1BlockFilter,
-    L1BlocksTableParams, LoadingState, MAX_HISTORY, RATE_WINDOW_2M, RATE_WINDOW_5M,
-    RATE_WINDOW_30S, RateTracker, backlog_size_color, block_color, block_color_bright,
+mod output;
+pub use output::{
+    COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GAS_FILL, COLOR_GROWTH,
+    COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, COLOR_TARGET, JsonOutput, KeyValueTable,
+    L1BlocksTableParams, TimestampJson, backlog_size_color, block_color, block_color_bright,
     build_gas_bar, format_bytes, format_duration, format_gas, format_gwei, format_rate,
-    render_da_backlog_bar, render_gas_usage_bar, render_l1_blocks_table, target_usage_color,
-    time_diff_color, truncate_block_number,
+    format_unix_timestamp, render_da_backlog_bar, render_gas_usage_bar, render_l1_blocks_table,
+    target_usage_color, time_diff_color, truncate_block_number,
 };
 
 mod config;
 pub use config::{
     ConductorNodeConfig, ConductorSource, DiscoveryConfig, DiscoveryPorts, MonitoringConfig,
-    ProofsConfig, ValidatorNodeConfig,
+    PodGroupConfig, PodsConfig, ProofsConfig, ValidatorNodeConfig,
 };
-
-mod l1_client;
-pub use l1_client::fetch_full_system_config;
 
 mod rpc;
 pub use rpc::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, ConductorNodeStatus,
     ConductorPollUpdate, InitialBacklog, L1BlockInfo, L1ConnectionMode, LatestProposal,
-    PausedPeers, ProofsSnapshot, TimestampedFlashblock, TxSummary, ValidatorNodeStatus,
+    PausedPeers, PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, ProofsSnapshot,
+    SyncStatusReport, TimestampedFlashblock, TxSummary, ValidatorNodeStatus,
     conductor_pause_all_nodes, conductor_pause_node, conductor_resume_all_nodes,
-    conductor_resume_node, decode_flashblock_transactions, fetch_block_transactions,
-    fetch_initial_backlog_with_progress, fetch_safe_and_latest, pause_sequencer_node,
-    restart_conductor_node, run_block_fetcher, run_conductor_poller, run_flashblock_ws,
-    run_flashblock_ws_timestamped, run_l1_blob_watcher, run_proofs_poller, run_safe_head_poller,
-    run_validator_poller, start_sequencer_node, stop_sequencer_node, transfer_conductor_leader,
-    unpause_sequencer_node,
+    conductor_resume_node, decode_flashblock_transactions, fetch_block, fetch_block_transactions,
+    fetch_full_system_config, fetch_initial_backlog_with_progress, fetch_safe_and_latest,
+    fetch_sync_status, pause_sequencer_node, restart_conductor_node, run_block_fetcher,
+    run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher,
+    run_pods_poller, run_proofs_poller, run_safe_head_poller, run_validator_poller,
+    start_sequencer_node, stop_sequencer_node, transfer_conductor_leader, unpause_sequencer_node,
 };
 
 mod tui;

@@ -284,7 +284,7 @@ impl OPSuccinctDataFetcher {
         if let Some(block) = block {
             Ok(block.header.inner)
         } else {
-            bail!("Failed to get L1 header for block {block_number}");
+            bail!("Failed to get L2 header for block {block_number}");
         }
     }
 

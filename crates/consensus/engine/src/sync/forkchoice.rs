@@ -10,7 +10,7 @@ use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::Transaction;
 use base_protocol::{BlockInfo, FromBlockError, L2BlockInfo};
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::{
     EngineClient, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
@@ -204,10 +204,57 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
     engine_client: &EngineClient_,
     pruned_block_number: u64,
 ) -> Result<L2BlockInfo, SyncStartError> {
+    // Establish the upper-bound invariant for the binary search by fetching the `latest` block
+    // and verifying that its body is available. The search relies on `hi` always pointing to a
+    // block with an intact body; without this probe, two failure modes are possible:
+    //
+    //   1. `latest_number == pruned_block_number` (or only pruned blocks exist) — the
+    //      `while lo < hi` loop never executes and the post-loop fetch would re-attempt the
+    //      known-pruned block, re-raising the very `MissingL1InfoDeposit` we were recovering
+    //      from.
+    //   2. `latest` itself is pruned — every probed midpoint would shift `lo` upward, the
+    //      search would converge on `latest_number`, and the post-loop hydrate would fail
+    //      for the same reason.
+    //
+    // Probing once up front lets us return a precise error instead of crashing with a stale
+    // `MissingL1InfoDeposit`, and also gives us a known-good `L2BlockInfo` we can return
+    // immediately when the search range collapses.
     let latest = get_block_compat(engine_client, BlockNumberOrTag::Latest.into())
         .await?
         .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
     let latest_number = latest.header.number;
+    let latest_consensus =
+        latest.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
+
+    let mut last_known_unpruned =
+        match L2BlockInfo::from_block_and_genesis(&latest_consensus, &cfg.genesis) {
+            Ok(info) => info,
+            Err(FromBlockError::MissingL1InfoDeposit(hash)) => {
+                error!(
+                    target: "sync_start",
+                    latest_block_number = latest_number,
+                    latest_block_hash = %hash,
+                    "Latest L2 block body is pruned; cannot recover an unpruned upper bound"
+                );
+                return Err(SyncStartError::NoUnprunedBlockAvailable {
+                    pruned_block_number,
+                    latest_block_number: latest_number,
+                });
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+    if pruned_block_number >= latest_number {
+        // Nothing to search above the pruned block. `latest` is by definition unpruned (just
+        // validated above), so it is the earliest unpruned block we have.
+        warn!(
+            target: "sync_start",
+            pruned_block_number,
+            latest_block_number = latest_number,
+            "Pruned block at or above latest; falling back to latest as earliest unpruned"
+        );
+        return Ok(last_known_unpruned);
+    }
 
     // Binary search for the prune boundary between the known-pruned block and the latest block.
     // Invariant: blocks at `lo` have pruned bodies, blocks at `hi` have available bodies.
@@ -232,7 +279,13 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
             block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
 
         match L2BlockInfo::from_block_and_genesis(&consensus_block, &cfg.genesis) {
-            Ok(_) => hi = mid,
+            Ok(info) => {
+                // Cache the last successfully hydrated block at the upper bound so the
+                // post-loop return can avoid an extra round-trip — the value at `lo` after
+                // the loop exits is necessarily this same block.
+                last_known_unpruned = info;
+                hi = mid;
+            }
             Err(FromBlockError::MissingL1InfoDeposit(_)) => lo = mid + 1,
             Err(err) => return Err(err.into()),
         }
@@ -244,13 +297,7 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
         "found earliest unpruned block"
     );
 
-    let block = engine_client
-        .get_l2_block(lo.into())
-        .full()
-        .await?
-        .ok_or(SyncStartError::BlockNotFound(lo.into()))?;
-    let consensus_block = block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
-    L2BlockInfo::from_block_and_genesis(&consensus_block, &cfg.genesis).map_err(Into::into)
+    Ok(last_known_unpruned)
 }
 
 /// Wrapper function around [`EngineClient::get_l2_block`] to handle compatibility issues with geth

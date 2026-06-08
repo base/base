@@ -8,19 +8,10 @@ sol! {
         // ── Structs ─────────────────────────────────────────────────────────
 
         enum B20Variant {
-            /// Default B-20 token variant.
-            DEFAULT,
+            /// Asset B-20 token variant.
+            ASSET,
             /// Stablecoin B-20 token variant.
-            STABLECOIN,
-            /// Security B-20 token variant.
-            SECURITY
-        }
-
-        struct B20CreateParams {
-            uint8 version;
-            string name;
-            string symbol;
-            address initialAdmin;
+            STABLECOIN
         }
 
         struct B20StablecoinCreateParams {
@@ -31,13 +22,12 @@ sol! {
             string currency;
         }
 
-        struct B20SecurityCreateParams {
+        struct B20AssetCreateParams {
             uint8 version;
             string name;
             string symbol;
             address initialAdmin;
-            string isin;
-            uint256 minimumRedeemable;
+            uint8 decimals;
         }
 
         // ── Errors ───────────────────────────────────────────────────────────
@@ -52,10 +42,14 @@ sol! {
         error UnsupportedVersion(uint8 version, B20Variant variant);
 
         /// A required string argument was empty.
-        error MissingRequiredField();
+        /// @param field  Name of the missing field (e.g. `"currency"`).
+        error MissingRequiredField(string field);
 
         /// The stablecoin `currency` field was not on the ISO 4217 fiat allowlist.
         error InvalidCurrency(string code);
+
+        /// The asset `decimals` field was outside the allowed range.
+        error InvalidDecimals(uint8 decimals);
 
         /// One of the post-creation init calls failed.
         error InitCallFailed(uint256 index);
@@ -67,8 +61,16 @@ sol! {
             B20Variant indexed variant,
             string name,
             string symbol,
-            uint8 decimals
+            uint8 decimals,
+            bytes variantParams
         );
+
+        /// ABI-encoded payload for the `variantParams` field of `B20Created`
+        /// when variant is `STABLECOIN`.
+        struct B20StablecoinEventParams {
+            uint8 version;
+            string currency;
+        }
 
         // ── Functions ────────────────────────────────────────────────────────
 

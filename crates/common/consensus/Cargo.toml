@@ -52,6 +52,7 @@ rand.workspace = true
 rstest.workspace = true
 serde_json.workspace = true
 alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }

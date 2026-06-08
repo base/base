@@ -31,6 +31,7 @@ derive_more = { workspace = true, features = ["from", "try_into"] }
 [dev-dependencies]
 proptest.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
+rstest.workspace = true
 
 [[test]]
 name = "contract"

@@ -11,8 +11,9 @@ use crate::{B20Guards, B20PolicyType, IB20, Token, TokenAccounting};
 pub trait Transferable: Token {
     /// Moves `amount` tokens from `from` to `to`. Emits `Transfer`.
     ///
-    /// When `privileged` is true (factory bootstrap window) the pause and
-    /// policy checks are skipped; balance invariants are always enforced.
+    /// When `privileged` is true (factory bootstrap window) only the policy
+    /// checks are skipped; the pause check and balance invariants are always
+    /// enforced.
     fn transfer(
         &mut self,
         from: Address,
@@ -20,14 +21,28 @@ pub trait Transferable: Token {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        if from == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
-        }
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::TRANSFER)?;
+        self.transfer_inner(from, to, amount, privileged)
+    }
+
+    /// Internal transfer implementation that skips the pause check.
+    ///
+    /// Called by [`Self::transfer`] after the pause check, and by
+    /// [`Self::transfer_from`] which does its own pause check first.
+    fn transfer_inner(
+        &mut self,
+        from: Address,
+        to: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
+        if from == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
+        }
         if !privileged {
-            B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::TRANSFER)?;
             B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferSender, from)?;
             B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferReceiver, to)?;
         }
@@ -52,8 +67,11 @@ pub trait Transferable: Token {
     /// Moves `amount` tokens from `from` to `to` using `spender`'s allowance.
     /// Emits `Transfer`. Skips allowance decrement when allowance is `U256::MAX`.
     ///
-    /// When `privileged` is true the executor policy check is skipped; the
-    /// inner `transfer` call also receives `privileged`.
+    /// The pause check is always enforced first. The executor policy check runs
+    /// unconditionally (unless `privileged` is true or `spender == from`),
+    /// regardless of whether the allowance is `U256::MAX`. When `privileged` is
+    /// true the executor policy check is skipped; the inner transfer also receives
+    /// `privileged`.
     fn transfer_from(
         &mut self,
         spender: Address,
@@ -62,24 +80,29 @@ pub trait Transferable: Token {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::TRANSFER)?;
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
-        if !privileged && spender != from {
-            B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferExecutor, spender)?;
-        }
         let allowance = self.accounting().allowance(from, spender)?;
-        if allowance == U256::MAX {
-            return self.transfer(from, to, amount, privileged);
-        }
-        if allowance < amount {
+        let is_infinite = allowance == U256::MAX;
+        if !is_infinite && allowance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientAllowance {
                 spender,
                 allowance,
                 needed: amount,
             }));
         }
-        self.transfer(from, to, amount, privileged)?;
+        if !privileged && spender != from {
+            B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferExecutor, spender)?;
+        }
+        self.transfer_inner(from, to, amount, privileged)?;
+        if is_infinite {
+            return Ok(());
+        }
         self.accounting_mut().set_allowance(from, spender, allowance - amount)
     }
 
@@ -129,6 +152,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::BasePrecompileError;
+    use rstest::rstest;
 
     use crate::{
         B20PausableFeature, B20PolicyType, IB20, InMemoryPolicy, InMemoryTokenAccounting,
@@ -385,16 +409,22 @@ mod tests {
     }
 
     #[test]
-    fn transfer_privileged_skips_pause_check() {
+    fn transfer_from_with_max_allowance_reverts_when_executor_policy_denies() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
-        accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::TRANSFER);
+        accounting.allowances.insert((ALICE, SPENDER), U256::MAX);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferExecutor.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
-        token.transfer(ALICE, BOB, U256::ONE, true).unwrap();
-
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(9u64));
-        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ONE);
+        assert_eq!(
+            token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferExecutor.id(),
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            })
+        );
     }
 
     #[test]
@@ -575,7 +605,128 @@ mod tests {
             .unwrap();
 
         assert_eq!(token.accounting().events.len(), 2);
-        // First event must be the Transfer.
         IB20::Transfer::decode_log_data(&token.accounting().events[0]).unwrap();
+    }
+
+    #[rstest]
+    #[case::paused_gets_pause_error_not_zero_addr_error(
+        true,          // paused
+        ALICE,         // from
+        Address::ZERO, // to
+        false,         // privileged
+        false,         // sender_blocked
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::TRANSFER })
+    )]
+    #[case::paused_privileged_still_gets_pause_error(
+        true,  // paused
+        ALICE, // from
+        BOB,   // to
+        true,  // privileged
+        false, // sender_blocked
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::TRANSFER })
+    )]
+    #[case::zero_receiver_before_zero_sender(
+        false,         // paused
+        Address::ZERO, // from
+        Address::ZERO, // to
+        false,         // privileged
+        false,         // sender_blocked
+        BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+    )]
+    #[case::zero_addr_before_policy(
+        false,         // paused
+        ALICE,         // from
+        Address::ZERO, // to
+        false,         // privileged
+        true,          // sender_blocked
+        BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+    )]
+    #[case::policy_before_balance(
+        false, // paused
+        ALICE, // from
+        BOB,   // to
+        false, // privileged
+        true,  // sender_blocked
+        BasePrecompileError::revert(IB20::PolicyForbids {
+            policyScope: B20PolicyType::TransferSender.id(),
+            policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+        })
+    )]
+    fn transfer_guard_ordering(
+        #[case] paused: bool,
+        #[case] from: Address,
+        #[case] to: Address,
+        #[case] privileged: bool,
+        #[case] sender_blocked: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        if paused {
+            accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::TRANSFER);
+        }
+        if sender_blocked {
+            accounting
+                .policy_ids
+                .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        }
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(token.transfer(from, to, U256::ONE, privileged).unwrap_err(), expected_error);
+    }
+
+    #[rstest]
+    #[case::paused_gets_pause_error_not_allowance_error(
+        true,  // paused
+        false, // has_allowance
+        false, // privileged
+        false, // executor_blocked
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::TRANSFER })
+    )]
+    #[case::paused_privileged_still_gets_pause_error(
+        true,  // paused
+        true,  // has_allowance
+        true,  // privileged
+        false, // executor_blocked
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::TRANSFER })
+    )]
+    #[case::allowance_before_executor_policy(
+        false, // paused
+        false, // has_allowance
+        false, // privileged
+        true,  // executor_blocked
+        BasePrecompileError::revert(IB20::InsufficientAllowance {
+            spender: SPENDER,
+            allowance: U256::ZERO,
+            needed: U256::ONE,
+        })
+    )]
+    fn transfer_from_guard_ordering(
+        #[case] paused: bool,
+        #[case] has_allowance: bool,
+        #[case] privileged: bool,
+        #[case] executor_blocked: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        if paused {
+            accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::TRANSFER);
+        }
+        if has_allowance {
+            accounting.allowances.insert((ALICE, SPENDER), U256::from(10u64));
+        }
+        if executor_blocked {
+            accounting.policy_ids.insert(
+                B20PolicyType::TransferExecutor.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            );
+        }
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, privileged).unwrap_err(),
+            expected_error
+        );
     }
 }

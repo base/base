@@ -106,12 +106,16 @@ impl MetricsCollector {
 
     /// Generates a summary of collected metrics.
     ///
-    /// `duration` should span from first submission to last confirmation
-    /// so that the reported TPS reflects end-to-end throughput.
-    pub fn summarize(&self, duration: Duration, config: Option<ConfigSummary>) -> MetricsSummary {
+    /// `wall_clock_duration` is used as a fallback when block timestamps are
+    /// unavailable. TPS is normally derived from block time span.
+    pub fn summarize(
+        &self,
+        wall_clock_duration: Duration,
+        config: Option<ConfigSummary>,
+    ) -> MetricsSummary {
         let aggregator = MetricsAggregator::new(&self.transactions);
         aggregator.summarize(
-            duration,
+            wall_clock_duration,
             self.submitted_count,
             self.failed_count,
             &self.failure_reasons,

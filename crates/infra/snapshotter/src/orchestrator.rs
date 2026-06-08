@@ -9,7 +9,9 @@ use anyhow::{Context, Result, bail};
 use tracing::{error, info};
 
 use crate::{
-    SnapshotterConfig, container::ContainerManager, snapshot::SnapshotGenerator,
+    SnapshotterConfig,
+    container::ContainerManager,
+    snapshot::{SnapshotGenerator, SnapshotManifest},
     upload::SnapshotUploader,
 };
 
@@ -98,12 +100,18 @@ impl<C: ContainerManager> Snapshotter<C> {
 
         info!(remote_files = remote_static_files.len(), "fetched remote static file listing");
 
+        let remote_manifest = self.uploader.fetch_previous_manifest().await?;
+        info!(
+            has_remote_manifest = remote_manifest.is_some(),
+            "fetched previous manifest for blake3 diff"
+        );
+
         let source_datadir = self.config.source_datadir.clone();
         let output_dir_for_gen = run_output_dir.clone();
         let chain_id = self.config.chain_id;
         let block = self.config.block;
         let blocks_per_file = self.config.blocks_per_file;
-        let remote_for_gen = remote_static_files.clone();
+        let remote_for_gen = remote_static_files;
 
         let files = tokio::task::spawn_blocking(move || {
             SnapshotGenerator::generate_manifest(
@@ -123,8 +131,20 @@ impl<C: ContainerManager> Snapshotter<C> {
             bail!("snapshot generation produced no files");
         }
 
+        let manifest_bytes = tokio::fs::read(run_output_dir.join("manifest.json"))
+            .await
+            .context("failed to read freshly generated manifest.json")?;
+        let local_manifest: SnapshotManifest = serde_json::from_slice(&manifest_bytes)
+            .context("failed to parse freshly generated manifest.json")?;
+
         self.uploader
-            .upload(&run_output_dir, &files, run_timestamp, &remote_static_files)
+            .upload(
+                &run_output_dir,
+                &files,
+                run_timestamp,
+                &local_manifest,
+                remote_manifest.as_ref(),
+            )
             .await
             .context("snapshot upload failed")?;
 

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -23,12 +23,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
 /// Maximum number of concurrent RPC requests during funding/draining operations.
-const FUNDING_CONCURRENCY: usize = 32;
+pub(super) const FUNDING_CONCURRENCY: usize = 32;
 
-/// Maximum number of funding TXs to send before waiting for confirmation.
+/// Maximum number of TXs to send before waiting for confirmation.
 /// Kept below typical per-sender txpool limits (e.g. reth default is 16) to
 /// avoid "txpool is full" rejections when all TXs originate from one funder.
 const FUNDING_BATCH_SIZE: usize = 16;
+pub(super) const BATCH_SIZE: usize = FUNDING_BATCH_SIZE;
 
 use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay, PreparedBatch,
@@ -44,8 +45,8 @@ use crate::{
         create_wallet_provider,
     },
     workload::{
-        AccountPool, AerodromeClPayload, CalldataPayload, Erc20Payload, OsakaPayload,
-        PrecompilePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
+        AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
+        OsakaPayload, PrecompilePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
     },
 };
 
@@ -55,14 +56,13 @@ const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(60);
 const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(65);
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
-
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
-    config: LoadConfig,
+    pub(super) config: LoadConfig,
     config_summary: Option<ConfigSummary>,
-    client: QueryProvider,
-    accounts: AccountPool,
-    generator: WorkloadGenerator,
+    pub(super) client: QueryProvider,
+    pub(super) accounts: AccountPool,
+    pub(super) generator: WorkloadGenerator,
     collector: MetricsCollector,
     stop_flag: Arc<AtomicBool>,
     cancel_token: CancellationToken,
@@ -171,11 +171,11 @@ impl LoadRunner {
         self.config.txpool_nodes.len()
     }
 
-    fn build_signers(accounts: &AccountPool) -> HashMap<Address, PrivateKeySigner> {
+    pub(super) fn build_signers(accounts: &AccountPool) -> HashMap<Address, PrivateKeySigner> {
         accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect()
     }
 
-    fn create_generator(
+    pub(super) fn create_generator(
         workload_config: WorkloadConfig,
         config: &LoadConfig,
     ) -> Result<WorkloadGenerator> {
@@ -212,11 +212,28 @@ impl LoadRunner {
                     );
                     generator = generator.with_payload(payload, weight_pct);
                 }
+                TxType::B20 { contract } => {
+                    if let Some(token) = contract {
+                        generator = generator.with_payload(
+                            B20TransferPayload::new(*token, U256::from(1000), U256::from(10000)),
+                            weight_pct,
+                        );
+                    }
+                }
                 TxType::Osaka { target } => {
                     generator =
                         generator.with_payload(OsakaPayload::new(target.clone()), weight_pct);
                 }
-                TxType::UniswapV3 { router, token_in, token_out, fee, min_amount, max_amount } => {
+                TxType::UniswapV3 {
+                    router,
+                    token_in,
+                    token_out,
+                    fee,
+                    min_amount,
+                    max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
+                } => {
                     generator = generator.with_payload(
                         UniswapV3Payload::new(
                             *router,
@@ -225,6 +242,7 @@ impl LoadRunner {
                             *fee,
                             *min_amount,
                             *max_amount,
+                            Some((*reverse_min_amount, *reverse_max_amount)),
                         ),
                         weight_pct,
                     );
@@ -236,6 +254,8 @@ impl LoadRunner {
                     tick_spacing,
                     min_amount,
                     max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
                 } => {
                     generator = generator.with_payload(
                         AerodromeClPayload::new(
@@ -245,6 +265,7 @@ impl LoadRunner {
                             *tick_spacing,
                             *min_amount,
                             *max_amount,
+                            Some((*reverse_min_amount, *reverse_max_amount)),
                         ),
                         weight_pct,
                     );
@@ -271,6 +292,7 @@ impl LoadRunner {
                 TxType::Transfer => 21_000,
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
+                TxType::B20 { .. } => 100_000,
                 TxType::Precompile { target, iterations, blake2f_rounds, .. } => {
                     let per_call = match target {
                         PrecompileId::Identity | PrecompileId::Bn254Add => 22_000,
@@ -294,7 +316,7 @@ impl LoadRunner {
                     OsakaTarget::Clz => 80_000,
                     OsakaTarget::P256verifyOsaka | OsakaTarget::ModexpOsaka => 30_000,
                 },
-                TxType::UniswapV3 { .. } | TxType::AerodromeCl { .. } => 250_000,
+                TxType::UniswapV3 { .. } | TxType::AerodromeCl { .. } => 115_000,
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }
@@ -441,7 +463,7 @@ impl LoadRunner {
         let pb_fund = self.progress_bar(total_txs, "Funding accounts");
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
             let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
             let mut retries: Vec<(Address, U256, u64)> = Vec::new();
             let mut fatal_errors: Vec<String> = Vec::new();
@@ -454,7 +476,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
 
             let mut nonce_refresh_needed: Vec<(Address, U256)> = Vec::new();
 
@@ -467,7 +489,9 @@ impl LoadRunner {
                     }
                     Err(e) => {
                         let error_str = e.to_string();
-                        if error_str.contains("already known") {
+                        if error_str.contains("already known")
+                            || error_str.contains("replacement transaction underpriced")
+                        {
                             retries.push((address, deficit, nonce));
                         } else if error_str.contains("nonce too low") {
                             info!(to = %address, nonce, "nonce too low, will refresh and retry");
@@ -506,8 +530,7 @@ impl LoadRunner {
                     }
                 });
 
-                let mut retry_stream =
-                    stream::iter(retry_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+                let mut retry_stream = stream::iter(retry_futs).buffer_unordered(BATCH_SIZE);
 
                 while let Some((result, address, nonce)) = retry_stream.next().await {
                     match result {
@@ -555,8 +578,7 @@ impl LoadRunner {
                         }
                     });
 
-                let mut nonce_retry_stream =
-                    stream::iter(nonce_retry_futs).buffered(FUNDING_BATCH_SIZE);
+                let mut nonce_retry_stream = stream::iter(nonce_retry_futs).buffered(BATCH_SIZE);
 
                 let mut nonce_retry_pending: Vec<Address> = Vec::new();
                 while let Some((result, address, retry_nonce)) = nonce_retry_stream.next().await {
@@ -611,6 +633,8 @@ impl LoadRunner {
         let addr_to_idx: HashMap<Address, usize> =
             self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
 
+        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
+
         for result in refresh_results {
             let (addr, balance, account_nonce) = result?;
             let idx = addr_to_idx[&addr];
@@ -618,9 +642,9 @@ impl LoadRunner {
             account.balance = balance;
             account.nonce = account_nonce;
 
-            let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
             let nonce_manager =
-                NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT).with_pending_tag();
+                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
+                    .with_pending_tag();
             Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
 
             debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
@@ -632,7 +656,7 @@ impl LoadRunner {
 
     /// Collects unique token addresses from configured swap transaction types.
     pub fn collect_swap_tokens(&self) -> Vec<Address> {
-        let mut tokens = std::collections::HashSet::new();
+        let mut tokens = HashSet::new();
         for tx_config in &self.config.transactions {
             match &tx_config.tx_type {
                 TxType::UniswapV3 { token_in, token_out, .. }
@@ -643,11 +667,31 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
+                | TxType::B20 { .. }
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
             }
         }
         tokens.into_iter().collect()
+    }
+
+    /// Collects unique router addresses from configured swap transaction types.
+    pub fn collect_swap_routers(&self) -> Vec<Address> {
+        let mut routers = HashSet::new();
+        for tx_config in &self.config.transactions {
+            match &tx_config.tx_type {
+                TxType::UniswapV3 { router, .. } | TxType::AerodromeCl { router, .. } => {
+                    routers.insert(*router);
+                }
+                TxType::Transfer
+                | TxType::Calldata { .. }
+                | TxType::Erc20 { .. }
+                | TxType::B20 { .. }
+                | TxType::Precompile { .. }
+                | TxType::Osaka { .. } => {}
+            }
+        }
+        routers.into_iter().collect()
     }
 
     /// Clears pending transactions from all configured txpool nodes for every test sender.
@@ -869,7 +913,7 @@ impl LoadRunner {
         let total_txs = txs.len();
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
             let mut pending_txs: Vec<(Address, Address)> = Vec::new();
 
             let send_futs = batch.into_iter().map(|(tx, token, sender)| {
@@ -880,7 +924,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
 
             while let Some((result, token, sender)) = send_stream.next().await {
                 match result {
@@ -924,7 +968,7 @@ impl LoadRunner {
         Bytes::from(mintCall { to, amount }.abi_encode())
     }
 
-    fn encode_erc20_balance_of(account: Address) -> Bytes {
+    pub(super) fn encode_erc20_balance_of(account: Address) -> Bytes {
         sol! {
             function balanceOf(address account) external view returns (uint256);
         }
@@ -934,6 +978,14 @@ impl LoadRunner {
     /// Runs the load test and returns metrics summary.
     #[instrument(skip(self), fields(target_gps = self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
+        for tx_config in &self.config.transactions {
+            if let TxType::B20 { contract: None } = &tx_config.tx_type {
+                return Err(BaselineError::Config(
+                    "b20 contract address not resolved; call setup_b20_tokens first".into(),
+                ));
+            }
+        }
+
         self.collector.reset();
         self.stop_flag.store(false, Ordering::SeqCst);
         self.cancel_token = CancellationToken::new();
@@ -1119,7 +1171,9 @@ impl LoadRunner {
                 let failed = self.collector.failed_count();
                 let reverted = self.collector.reverted_count();
                 let in_flight = results_tracker.total_in_flight();
+                let pending = results_tracker.pending_count();
                 let senders_blocked = results_tracker.senders_at_limit(max_in_flight_per_sender);
+                let total_queued: u64 = queued_per_sender.values().sum();
                 let (p50, p99) = self.collector.rolling_p50_p99();
                 let (block_receipt_delay_p50, block_receipt_delay_p99) =
                     self.collector.rolling_block_receipt_delay_p50_p99();
@@ -1132,6 +1186,8 @@ impl LoadRunner {
                     failed,
                     reverted,
                     in_flight,
+                    pending,
+                    total_queued,
                     senders_blocked,
                     gas_price = self.gas_price,
                     p50_ms = p50.as_millis() as u64,
@@ -1329,7 +1385,10 @@ impl LoadRunner {
                 }
             }
 
-            let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
+            // Use a shorter expiry during drain: the test is over, so any
+            // pending tx older than the drain window itself is stale.
+            let drain_expiry = PENDING_CONFIRMATION_TIMEOUT.saturating_sub(drain_start.elapsed());
+            let expired = results_tracker.expire_pending(drain_expiry);
             if expired > 0 {
                 self.collector.record_failures("expired without confirmation", expired);
             }
@@ -1564,7 +1623,7 @@ impl LoadRunner {
         Ok(total_drained)
     }
 
-    fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
+    pub(super) fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
         if self.snapshot_tx.is_some() {
             return ProgressBar::hidden();
         }
@@ -1624,7 +1683,7 @@ impl LoadRunner {
     }
 
     /// Waits for token balances to reach a target after mint/distribution transactions.
-    async fn await_token_balances(
+    pub(super) async fn await_token_balances(
         client: &QueryProvider,
         pending_accounts: &mut Vec<(Address, Address)>,
         target_balance: U256,
@@ -1675,6 +1734,57 @@ impl LoadRunner {
         }
 
         Ok(settled)
+    }
+
+    pub(super) async fn refresh_sender_state(&mut self) -> Result<()> {
+        let total_accounts = self.accounts.len();
+        let client = self.client.clone();
+        let pb_refresh = self.progress_bar(total_accounts as u64, "Refreshing account state");
+
+        let refresh_futs: Vec<_> = self
+            .accounts
+            .accounts()
+            .iter()
+            .map(|a| {
+                let client = client.clone();
+                let addr = a.address;
+                async move {
+                    let balance = client.get_balance(addr).await.rpc("get balance")?;
+                    let nonce =
+                        client.get_transaction_count(addr).await.rpc("get transaction count")?;
+                    Ok::<_, BaselineError>((addr, balance, nonce))
+                }
+            })
+            .collect();
+
+        let refresh_results: Vec<_> = stream::iter(refresh_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_refresh.inc(1))
+            .collect()
+            .await;
+        pb_refresh.finish_and_clear();
+
+        let addr_to_idx: HashMap<Address, usize> =
+            self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
+
+        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
+
+        for result in refresh_results {
+            let (addr, balance, account_nonce) = result?;
+            let idx = addr_to_idx[&addr];
+            let account = &mut self.accounts.accounts_mut()[idx];
+            account.balance = balance;
+            account.nonce = account_nonce;
+
+            let nonce_manager =
+                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
+                    .with_pending_tag();
+            Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
+
+            debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
+        }
+
+        Ok(())
     }
 
     /// Waits for source account balances to drop to the post-drain dust threshold.

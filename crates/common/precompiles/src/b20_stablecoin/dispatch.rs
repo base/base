@@ -1,9 +1,9 @@
 //! ABI dispatch for the stablecoin B-20 variant.
 //!
-//! Dispatches the full `IB20` selector set using B-20 stablecoin activation.
+//! Dispatches the full `IB20` selector set for stablecoin tokens.
 //! All logic mirrors `B20Token::inner_with_privilege` exactly; the only
-//! distinction is the activation guard and the `StablecoinAccounting` bound
-//! that provides `currency()` from the stablecoin extension namespace.
+//! distinction is the `StablecoinAccounting` bound that provides `currency()`
+//! from the stablecoin extension namespace.
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
@@ -11,8 +11,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20StablecoinToken, B20TokenRole, Burnable,
-    Configurable,
+    B20StablecoinToken, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
@@ -102,9 +101,6 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        ActivationRegistryStorage::new(ctx)
-            .ensure_activated(ActivationFeature::B20Stablecoin.id())?;
-
         if let Ok(call) = IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata) {
             let label = call.as_label();
             return observer.observe(label, || self.handle_stablecoin_call(call));

@@ -13,6 +13,10 @@ base_metrics::define_metrics! {
     #[no_zero]
     last_proposed_block: gauge,
 
+    #[describe("Most recently collected (proved) L2 block number awaiting submission")]
+    #[no_zero]
+    last_collected_block: gauge,
+
     #[describe("Proof tasks currently in flight")]
     inflight_proofs: gauge,
 
@@ -21,6 +25,21 @@ base_metrics::define_metrics! {
 
     #[describe("Total pending retries across all target blocks")]
     pipeline_retries: gauge,
+
+    #[describe("Total proof dispatch outcomes from the prover service")]
+    #[label(name = "outcome", default = ["accepted", "failed"])]
+    proof_dispatch_total: counter,
+
+    #[describe("Total proof collection outcomes returned by the proof collector")]
+    #[label(name = "outcome", default = ["ready", "failed"])]
+    proof_collection_total: counter,
+
+    #[describe("Total proof statuses received when polling the prover service")]
+    #[label(name = "status", default = ["queued", "running", "succeeded", "failed"])]
+    proof_status_received_total: counter,
+
+    #[describe("Total number of proof retries scheduled after a failed dispatch or collection")]
+    proof_retries_total: counter,
 
     #[describe("Latest safe (or finalized) L2 block number")]
     #[no_zero]
@@ -65,6 +84,30 @@ base_metrics::define_metrics! {
 }
 
 impl Metrics {
+    /// Label value for an accepted dispatch outcome.
+    pub const DISPATCH_OUTCOME_ACCEPTED: &str = "accepted";
+
+    /// Label value for a failed dispatch outcome.
+    pub const DISPATCH_OUTCOME_FAILED: &str = "failed";
+
+    /// Label value for a ready (successfully collected) proof.
+    pub const COLLECTION_OUTCOME_READY: &str = "ready";
+
+    /// Label value for a failed proof collection.
+    pub const COLLECTION_OUTCOME_FAILED: &str = "failed";
+
+    /// Label value for a queued proof status response.
+    pub const PROOF_STATUS_QUEUED: &str = "queued";
+
+    /// Label value for a running proof status response.
+    pub const PROOF_STATUS_RUNNING: &str = "running";
+
+    /// Label value for a succeeded proof status response.
+    pub const PROOF_STATUS_SUCCEEDED: &str = "succeeded";
+
+    /// Label value for a failed proof status response.
+    pub const PROOF_STATUS_FAILED: &str = "failed";
+
     /// Records that the proposer service has started by setting the `up` gauge to 1.
     pub fn record_startup() {
         Self::up().set(1.0);

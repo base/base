@@ -12,42 +12,27 @@ pub(crate) fn derive_stablecoin(input: DeriveInput) -> proc_macro::TokenStream {
     expand_stablecoin(input).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
-pub(crate) fn derive_security(input: DeriveInput) -> proc_macro::TokenStream {
-    expand_security(input).unwrap_or_else(syn::Error::into_compile_error).into()
+pub(crate) fn derive_asset(input: DeriveInput) -> proc_macro::TokenStream {
+    expand_asset(input).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
 fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
     require_field(&input, "b20")?;
-    let has_redeem = has_field(&input, "redeem");
+    let has_asset = has_field(&input, "asset");
     let name = input.ident;
-    let redeem = has_redeem.then_some(quote! {
-        if policy_scope == Self::REDEEM_SENDER_POLICY {
-            return Ok(Self::__read_policy_lane(
-                self.redeem.redeem_policy_ids()?,
-                Self::__REDEEM_SENDER_POLICY_LANE,
-            ));
+    let decimals_impl = if has_asset {
+        quote! { crate::AssetAccounting::decimals(self) }
+    } else {
+        quote! {
+            Ok(crate::B20Variant::from_address(
+                ::base_precompile_storage::ContractStorage::address(self),
+            )
+            .map_or(0, crate::B20Variant::decimals))
         }
-    });
-    let set_redeem = has_redeem.then_some(quote! {
-        if policy_scope == Self::REDEEM_SENDER_POLICY {
-            let packed = Self::__write_policy_lane(
-                self.redeem.redeem_policy_ids()?,
-                Self::__REDEEM_SENDER_POLICY_LANE,
-                policy_id,
-            );
-            return self.redeem.set_redeem_policy_ids(packed);
-        }
-    });
+    };
 
     Ok(quote! {
         impl #name<'_> {
-            const __TRANSFER_SENDER_POLICY_LANE: usize = 0;
-            const __TRANSFER_RECEIVER_POLICY_LANE: usize = 1;
-            const __TRANSFER_EXECUTOR_POLICY_LANE: usize = 2;
-            const __MINT_RECEIVER_POLICY_LANE: usize = 0;
-            const __REDEEM_SENDER_POLICY_LANE: usize = 0;
-            const __POLICY_LANE_BITS: usize = 64;
-
             fn __require_policy_type(
                 policy_scope: ::alloy_primitives::B256,
             ) -> ::base_precompile_storage::Result<crate::B20PolicyType> {
@@ -56,22 +41,6 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                         crate::IB20::UnsupportedPolicyType { policyScope: policy_scope },
                     )
                 })
-            }
-
-            fn __read_policy_lane(packed: ::alloy_primitives::U256, lane: usize) -> u64 {
-                ((packed >> (lane * Self::__POLICY_LANE_BITS))
-                    & ::alloy_primitives::U256::from(u64::MAX))
-                    .to::<u64>()
-            }
-
-            fn __write_policy_lane(
-                packed: ::alloy_primitives::U256,
-                lane: usize,
-                policy_id: u64,
-            ) -> ::alloy_primitives::U256 {
-                let shift = lane * Self::__POLICY_LANE_BITS;
-                let mask = ::alloy_primitives::U256::from(u64::MAX) << shift;
-                (packed & !mask) | (::alloy_primitives::U256::from(policy_id) << shift)
             }
         }
 
@@ -163,10 +132,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             }
 
             fn decimals(&self) -> ::base_precompile_storage::Result<u8> {
-                Ok(crate::B20Variant::from_address(
-                    ::base_precompile_storage::ContractStorage::address(self),
-                )
-                .map_or(0, crate::B20Variant::decimals))
+                #decimals_impl
             }
 
             fn paused(&self) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
@@ -253,12 +219,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &self,
                 role: ::alloy_primitives::B256,
             ) -> ::base_precompile_storage::Result<::alloy_primitives::B256> {
-                let admin_role = self.b20.role_admin(role)?;
-                if admin_role.is_zero() && role != crate::B20TokenRole::DefaultAdmin.id() {
-                    Ok(crate::B20TokenRole::DefaultAdmin.id())
-                } else {
-                    Ok(admin_role)
-                }
+                self.b20.role_admin(role)
             }
 
             fn set_role_admin(
@@ -273,24 +234,15 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &self,
                 policy_scope: ::alloy_primitives::B256,
             ) -> ::base_precompile_storage::Result<u64> {
-                #redeem
                 match Self::__require_policy_type(policy_scope)? {
-                    crate::B20PolicyType::TransferSender => Ok(Self::__read_policy_lane(
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_SENDER_POLICY_LANE,
-                    )),
-                    crate::B20PolicyType::TransferReceiver => Ok(Self::__read_policy_lane(
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_RECEIVER_POLICY_LANE,
-                    )),
-                    crate::B20PolicyType::TransferExecutor => Ok(Self::__read_policy_lane(
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_EXECUTOR_POLICY_LANE,
-                    )),
-                    crate::B20PolicyType::MintReceiver => Ok(Self::__read_policy_lane(
-                        self.b20.mint_policy_ids()?,
-                        Self::__MINT_RECEIVER_POLICY_LANE,
-                    )),
+                    crate::B20PolicyType::TransferSender => self.b20.transfer_sender_policy_id(),
+                    crate::B20PolicyType::TransferReceiver => {
+                        self.b20.transfer_receiver_policy_id()
+                    }
+                    crate::B20PolicyType::TransferExecutor => {
+                        self.b20.transfer_executor_policy_id()
+                    }
+                    crate::B20PolicyType::MintReceiver => self.b20.mint_receiver_policy_id(),
                 }
             }
 
@@ -299,34 +251,19 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 policy_scope: ::alloy_primitives::B256,
                 policy_id: u64,
             ) -> ::base_precompile_storage::Result<()> {
-                #set_redeem
-                let (packed, lane, mint) = match Self::__require_policy_type(policy_scope)? {
-                    crate::B20PolicyType::TransferSender => (
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_SENDER_POLICY_LANE,
-                        false,
-                    ),
-                    crate::B20PolicyType::TransferReceiver => (
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_RECEIVER_POLICY_LANE,
-                        false,
-                    ),
-                    crate::B20PolicyType::TransferExecutor => (
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_EXECUTOR_POLICY_LANE,
-                        false,
-                    ),
-                    crate::B20PolicyType::MintReceiver => (
-                        self.b20.mint_policy_ids()?,
-                        Self::__MINT_RECEIVER_POLICY_LANE,
-                        true,
-                    ),
-                };
-                let packed = Self::__write_policy_lane(packed, lane, policy_id);
-                if mint {
-                    self.b20.set_mint_policy_ids(packed)
-                } else {
-                    self.b20.set_transfer_policy_ids(packed)
+                match Self::__require_policy_type(policy_scope)? {
+                    crate::B20PolicyType::TransferSender => {
+                        self.b20.set_transfer_sender_policy_id(policy_id)
+                    }
+                    crate::B20PolicyType::TransferReceiver => {
+                        self.b20.set_transfer_receiver_policy_id(policy_id)
+                    }
+                    crate::B20PolicyType::TransferExecutor => {
+                        self.b20.set_transfer_executor_policy_id(policy_id)
+                    }
+                    crate::B20PolicyType::MintReceiver => {
+                        self.b20.set_mint_receiver_policy_id(policy_id)
+                    }
                 }
             }
 
@@ -359,64 +296,50 @@ fn expand_stablecoin(input: DeriveInput) -> syn::Result<TokenStream> {
     })
 }
 
-fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
-    require_field(&input, "security")?;
-    require_field(&input, "redeem")?;
+fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
+    require_field(&input, "asset")?;
     let name = input.ident;
     Ok(quote! {
-        impl crate::SecurityAccounting for #name<'_> {
-            fn shares_to_tokens_ratio(
+        impl crate::AssetAccounting for #name<'_> {
+            fn multiplier(
                 &self,
             ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
-                let ratio = self.security.shares_to_tokens_ratio()?;
-                Ok(if ratio.is_zero() { Self::WAD } else { ratio })
+                let multiplier = self.asset.multiplier()?;
+                Ok(if multiplier.is_zero() { Self::WAD } else { multiplier })
             }
 
-            fn set_shares_to_tokens_ratio(
+            fn set_multiplier(
                 &mut self,
-                ratio: ::alloy_primitives::U256,
+                multiplier: ::alloy_primitives::U256,
             ) -> ::base_precompile_storage::Result<()> {
-                self.security.set_shares_to_tokens_ratio(ratio)
+                self.asset.set_multiplier(multiplier)
             }
 
-            fn security_identifier(
+            fn extra_metadata(
                 &self,
-                identifier_type: &str,
+                key: &str,
             ) -> ::base_precompile_storage::Result<::alloc::string::String> {
                 ::base_precompile_storage::Handler::read(
-                    self.security
-                        .identifiers
-                        .at(&::alloc::string::String::from(identifier_type)),
+                    self.asset
+                        .extra_metadata
+                        .at(&::alloc::string::String::from(key)),
                 )
             }
 
-            fn set_security_identifier_value(
+            fn set_extra_metadata_value(
                 &mut self,
-                identifier_type: &str,
+                key: &str,
                 value: ::alloc::string::String,
             ) -> ::base_precompile_storage::Result<()> {
-                let key = ::alloc::string::String::from(identifier_type);
+                let key = ::alloc::string::String::from(key);
                 if value.is_empty() {
-                    ::base_precompile_storage::Handler::delete(self.security.identifiers.at_mut(&key))
+                    ::base_precompile_storage::Handler::delete(self.asset.extra_metadata.at_mut(&key))
                 } else {
                     ::base_precompile_storage::Handler::write(
-                        self.security.identifiers.at_mut(&key),
+                        self.asset.extra_metadata.at_mut(&key),
                         value,
                     )
                 }
-            }
-
-            fn minimum_redeemable(
-                &self,
-            ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
-                self.redeem.minimum_redeemable()
-            }
-
-            fn set_minimum_redeemable(
-                &mut self,
-                minimum: ::alloy_primitives::U256,
-            ) -> ::base_precompile_storage::Result<()> {
-                self.redeem.set_minimum_redeemable(minimum)
             }
 
             fn is_announcement_id_used(
@@ -424,7 +347,7 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
                 id: &str,
             ) -> ::base_precompile_storage::Result<bool> {
                 ::base_precompile_storage::Handler::read(
-                    self.security
+                    self.asset
                         .used_announcement_ids
                         .at(&::alloc::string::String::from(id)),
                 )
@@ -435,11 +358,16 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
                 id: &str,
             ) -> ::base_precompile_storage::Result<()> {
                 ::base_precompile_storage::Handler::write(
-                    self.security
+                    self.asset
                         .used_announcement_ids
                         .at_mut(&::alloc::string::String::from(id)),
                     true,
                 )
+            }
+
+            fn decimals(&self) -> ::base_precompile_storage::Result<u8> {
+                let stored = self.asset.decimals()?;
+                Ok(if stored == 0 { Self::MIN_DECIMALS } else { stored })
             }
         }
     })

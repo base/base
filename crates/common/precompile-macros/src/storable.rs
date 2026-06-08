@@ -97,20 +97,30 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
     let packing_module = gen_packing_module_from_ir(&layout_fields, &mod_ident);
 
     let len = fields.len();
-    let (direct_fields, direct_names, mapping_names) = field_infos.iter().fold(
-        (Vec::with_capacity(len), Vec::with_capacity(len), Vec::new()),
+    let (direct_fields, field_inits) = field_infos.iter().fold(
+        (Vec::with_capacity(len), Vec::with_capacity(len)),
         |mut out, field_info| {
+            let name = &field_info.name;
             if extract_mapping_types(&field_info.ty).is_none() {
-                out.0.push((&field_info.name, &field_info.ty));
-                out.1.push(&field_info.name);
+                out.0.push((name, &field_info.ty));
+                out.1.push(quote! { #name });
             } else {
-                out.2.push(&field_info.name);
+                out.1.push(quote! { #name: Default::default() });
             }
             out
         },
     );
 
     let direct_tys: Vec<_> = direct_fields.iter().map(|(_, ty)| *ty).collect();
+    let is_dynamic = if direct_tys.is_empty() {
+        quote! { false }
+    } else {
+        quote! {
+            #(
+                <#direct_tys as ::base_precompile_storage::StorableType>::IS_DYNAMIC
+            )||*
+        }
+    };
 
     let load_impl = gen_load_impl(&direct_fields, &mod_ident);
     let store_impl = gen_store_impl(&direct_fields, &mod_ident);
@@ -128,9 +138,7 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
             const LAYOUT: ::base_precompile_storage::Layout = ::base_precompile_storage::Layout::Slots(#mod_ident::SLOT_COUNT);
             #namespace_consts
 
-            const IS_DYNAMIC: bool = #(
-                <#direct_tys as ::base_precompile_storage::StorableType>::IS_DYNAMIC
-            )||*;
+            const IS_DYNAMIC: bool = #is_dynamic;
 
             type Handler<'a> = #handler_name<'a>;
 
@@ -156,8 +164,7 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
                 #load_impl
 
                 Ok(Self {
-                    #(#direct_names),*,
-                    #(#mapping_names: Default::default()),*
+                    #(#field_inits),*
                 })
             }
 
@@ -658,7 +665,7 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
         prev_slot_ref.map_or_else(
             || quote! {{
                 if <#ty as ::base_precompile_storage::StorableType>::IS_PACKABLE {
-                    // Always SLOAD first (Category 3: is_t4() optimization removed — correct but slightly less efficient)
+                    // Load the existing slot before packing so neighboring packed values are preserved.
                     pending_val = storage.load(#slot_addr)?;
                     pending_offset = Some(#packing::#loc_const.offset_slots);
                     let mut packed = ::base_precompile_storage::PackedSlot(pending_val);
@@ -685,7 +692,7 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
                     if let Some(offset) = pending_offset {
                         storage.store(base_slot + ::alloy_primitives::U256::from(offset), pending_val)?;
                     }
-                    // Always SLOAD first (Category 3: is_t4() optimization removed — correct but slightly less efficient)
+                    // Load the existing slot before packing so neighboring packed values are preserved.
                     pending_val = storage.load(#slot_addr)?;
                     pending_offset = Some(curr_offset);
                     let mut packed = ::base_precompile_storage::PackedSlot(pending_val);
@@ -715,6 +722,10 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
 }
 
 fn gen_delete_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
+    if fields.is_empty() {
+        return quote! {};
+    }
+
     let dynamic_deletes = fields.iter().map(|(name, ty)| {
         let loc_const = PackingConstants::new(name).location();
         quote! {

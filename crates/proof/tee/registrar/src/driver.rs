@@ -1,8 +1,8 @@
 //! Registration driver — core orchestration loop.
 //!
-//! Discovers prover instances, checks on-chain registration status, generates
+//! Discovers prover instances, checks onchain registration status, generates
 //! ZK proofs for unregistered signers, and submits registration transactions
-//! to L1 via the [`TxManager`]. Also detects orphaned on-chain signers (those
+//! to L1 via the [`TxManager`]. Also detects orphaned onchain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
 use std::{
@@ -12,11 +12,10 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, Bytes, FixedBytes, hex};
+use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::SolCall;
-use base_proof_contracts::{INitroEnclaveVerifier, ITEEProverRegistry};
+use base_proof_contracts::ITEEProverRegistry;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
-use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::StreamExt;
 use rand::random;
@@ -28,8 +27,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
-    CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient, ProverClient,
-    ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result, SignerClient, crl,
+    CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
+    ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result,
+    SignerClient,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -182,22 +182,18 @@ pub struct DiscoveryResolution {
     /// Total instances returned by discovery (reachable + unreachable).
     pub total_count: usize,
     /// Whether orphan deregistration is safe to run this cycle. `true`
-    /// when the cancellation token has not fired **and either**
-    /// `total_count` is zero (legitimate fleet drain) **or** a strict
-    /// majority of discovered instances were reachable
-    /// (`reachable * 2 > total`). `false` during shutdown (to avoid
-    /// acquiring nonces we don't intend to broadcast) or when too few
+    /// when the cancellation token has not fired, no discovered instance
+    /// had an inconclusive resolution, **and either** `total_count` is zero
+    /// (legitimate fleet drain) **or** a strict majority of discovered
+    /// instances were reachable (`reachable * 2 > total`). `false` during
+    /// shutdown (to avoid acquiring nonces we don't intend to broadcast),
+    /// when any instance resolution was inconclusive, or when too few
     /// instances responded for the quorum guard to clear.
     pub ok_to_dereg: bool,
-    /// Instance IDs whose `resolve_instance` call returned `Err` this
-    /// cycle (transient `signer_public_key` / `signer_attestation` / CRL
-    /// failure). Their signers are absent from `registerable` only
-    /// because we couldn't resolve them — not because we proved them
-    /// gone or ineligible — so `reconcile_proof_tasks` MUST skip the
-    /// cancel-pass for any in-flight task whose `instance_id` is in
-    /// this set. Otherwise a single transient hiccup during a long
-    /// (~70 min) Boundless proof would abandon the in-flight work and
-    /// force the next cycle to start over from scratch.
+    /// Instance IDs whose resolution was inconclusive this cycle, either
+    /// because `resolve_instance` returned `Err` or because it returned
+    /// `Ok` with `unresolved: true`. In-flight proof tasks for these
+    /// instances must be preserved until a later cycle reaches a verdict.
     pub unresolved_instance_ids: HashSet<String>,
 }
 
@@ -205,7 +201,9 @@ pub struct DiscoveryResolution {
 /// gating. `attestations` is `Some` only when the instance is registerable
 /// and its CRL check did not flag revocation; otherwise it is `None` and
 /// the caller skips registration but still uses `addresses` for the
-/// active-signer set.
+/// active-signer set. `unresolved` distinguishes intentional skips
+/// (draining, old unhealthy, revoked, shutdown) from partial failures after
+/// signer addresses were known (for example, attestation RPC failure).
 #[derive(Debug)]
 pub struct ResolveOutcome {
     /// Signer addresses derived from the instance's enclave public keys.
@@ -214,10 +212,19 @@ pub struct ResolveOutcome {
     /// this cycle; `None` when registration is being skipped (health
     /// status, CRL revocation, shutdown).
     pub attestations: Option<Vec<Vec<u8>>>,
+    /// Whether resolution reached an inconclusive state after signer
+    /// addresses were already known.
+    ///
+    /// The caller should still add [`Self::addresses`] to the active set,
+    /// because the instance proved it is reachable and advertising those
+    /// signers, but should also preserve any in-flight proof task tied to
+    /// the instance because registration eligibility could not be decided
+    /// this cycle.
+    pub unresolved: bool,
 }
 
 /// Core registration loop tying together discovery, attestation polling,
-/// ZK proof generation, and on-chain submission.
+/// ZK proof generation, and onchain submission.
 ///
 /// Generic over the discovery, proof generation, registry, transaction
 /// manager, and signer client backends so each can be mocked independently
@@ -229,14 +236,9 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     tx_manager: T,
     signer_client: S,
     config: DriverConfig,
-    /// Pre-built HTTP client for CRL fetches. Built once at construction
-    /// time when CRL checking is enabled. `None` when CRL is disabled.
-    crl_http_client: Option<reqwest::Client>,
-    /// Optional on-chain `NitroEnclaveVerifier` revocation client. Consulted
-    /// before submitting a registration so that intermediates already revoked
-    /// on-chain (`revokedCerts` sentinel set) cannot be re-trusted via the
-    /// `_cacheNewCert` rewrite path.
-    nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
+    /// Optional certificate revocation manager. Built once at construction
+    /// time when CRL checking is enabled. `None` when CRL checking is disabled.
+    cert_manager: Option<CertManager>,
     /// Bounds the number of proof-generation calls that may be in-flight
     /// across the spawned task pool at once. Sized from
     /// [`DriverConfig::max_concurrency`], matching the discovery/resolve
@@ -267,6 +269,15 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// the ~20 minute Boundless proof generation) so deduplication holds
     /// across cycles as well as within one.
     in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
+    /// Last-known EC2 instance ID for every signer address the registrar
+    /// has ever observed advertising itself in a discovery cycle.
+    /// Updated in `discover_and_resolve`, consulted by
+    /// `submit_deregistration` so the "Deregistering signer" log line
+    /// can attribute the orphan to the EC2 instance it last lived on.
+    /// `None` on dereg is the strongest single diagnostic that another
+    /// registrar (or a prior deployment) wrote the signer.
+    /// Entries are never evicted — bounded by historic fleet size.
+    signer_history: Arc<Mutex<HashMap<Address, String>>>,
 }
 
 /// RAII guard that removes a signer address from [`RegistrationDriver::in_flight_registrations`]
@@ -310,16 +321,16 @@ where
     ///
     /// When CRL checking is enabled, pre-builds the HTTP client used for
     /// CRL fetches so it can be reused across registration cycles. The
-    /// optional `nitro_verifier` client consults the on-chain durable
+    /// optional `nitro_verifier` client consults the onchain durable
     /// revocation sentinel before each registration; pass `None` to disable
-    /// the on-chain pre-check (useful for tests and unit deployments).
+    /// the onchain pre-check (useful for tests and unit deployments).
     ///
     /// # Errors
     ///
     /// Returns [`RegistrarError::Config`] when `config.crl.enabled` is `true`
-    /// and either the `nitro_verifier` client is missing or the CRL HTTP
-    /// client fails to build. Failing fast prevents a misconfigured driver
-    /// from silently bypassing CRL protection at runtime.
+    /// and either the `nitro_verifier` client is missing or the
+    /// [`CertManager`] fails to initialize. Failing fast prevents a
+    /// misconfigured driver from silently bypassing CRL protection at runtime.
     pub fn new(
         discovery: D,
         proof_provider: P,
@@ -329,20 +340,16 @@ where
         config: DriverConfig,
         nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
     ) -> Result<Self> {
-        if config.crl.enabled && nitro_verifier.is_none() {
-            return Err(RegistrarError::Config(
-                "CRL checking enabled but nitro_verifier client not configured; \
-                 a NitroEnclaveVerifier client is required as both the revokeCert \
-                 destination and the on-chain revokedCerts sentinel source"
-                    .into(),
-            ));
-        }
-        let crl_http_client = if config.crl.enabled {
-            Some(crl::build_crl_http_client(config.crl.fetch_timeout).map_err(|e| {
-                RegistrarError::Config(format!(
-                    "failed to build CRL HTTP client (Layer 2 / AWS CRL fetch): {e}"
-                ))
-            })?)
+        let cert_manager = if config.crl.enabled {
+            let Some(nitro_verifier) = nitro_verifier else {
+                return Err(RegistrarError::Config(
+                    "CRL checking enabled but nitro_verifier client not configured; \
+                     a NitroEnclaveVerifier client is required as both the revokeCert \
+                     destination and the onchain revokedCerts sentinel source"
+                        .into(),
+                ));
+            };
+            Some(CertManager::new(&config.crl, nitro_verifier)?)
         } else {
             None
         };
@@ -354,10 +361,10 @@ where
             tx_manager,
             signer_client,
             config,
-            crl_http_client,
-            nitro_verifier,
+            cert_manager,
             proof_semaphore,
             in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
+            signer_history: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -610,14 +617,18 @@ where
         // runs once per instance (all enclaves share the same cert chain).
         //
         // NOTE: This check runs even when all signers are already registered
-        // on-chain. This is a known inefficiency — the CRL check could be
+        // onchain. This is a known inefficiency — the CRL check could be
         // skipped in that case, but would add complexity for minimal benefit
         // since CRL fetches are fast relative to proof generation.
         if self.config.crl.enabled {
-            match self.check_and_revoke_crls(&all_attestations[0], instance).await {
+            let cert_manager =
+                self.cert_manager.as_ref().expect("cert_manager required when CRL enabled");
+            match cert_manager
+                .check_and_revoke_crls(&all_attestations[0], instance, &self.tx_manager)
+                .await
+            {
                 Ok(true) => {
                     // Confirmed revocation — block registration for this instance.
-                    // The revokeCert transaction was already submitted above.
                     warn!(
                         instance = %instance.instance_id,
                         "certificate revoked, skipping registration for this instance"
@@ -667,16 +678,16 @@ where
         Ok(addresses)
     }
 
-    /// Attempts to register a signer on-chain if not already registered.
+    /// Attempts to register a signer onchain if not already registered.
     ///
-    /// This is the expensive path: checks on-chain status, generates a ZK
+    /// This is the expensive path: checks onchain status, generates a ZK
     /// proof from the pre-fetched attestation, and submits a registration
     /// transaction.
     ///
     /// Registration is PCR0-agnostic: all legitimate enclaves are registered
     /// regardless of their PCR0 measurement. This enables pre-registration of
     /// new-PCR0 enclaves before a hardfork, eliminating the proof-generation
-    /// delay when the on-chain `TEE_IMAGE_HASH` rotates. The on-chain
+    /// delay when the onchain `TEE_IMAGE_HASH` rotates. The onchain
     /// `TEEVerifier` gates proof acceptance on `TEE_IMAGE_HASH` at submission
     /// time, so pre-registered enclaves cannot produce accepted proposals
     /// until the hardfork activates.
@@ -713,7 +724,7 @@ where
         // catching any caller path that bypasses the spawn loop.
         //
         // The guard is held across the entire registration (including
-        // the ~20 minute Boundless proof generation and the on-chain
+        // the ~20 minute Boundless proof generation and the onchain
         // confirmation wait) and is released via RAII on every exit
         // path: success, error, retry-exhaustion, cancellation drop,
         // and panic.
@@ -735,7 +746,7 @@ where
         };
 
         // Cancel-aware: `is_registered` is a side-effect-free read, so
-        // dropping it on cancel is safe (no nonce risk, no on-chain
+        // dropping it on cancel is safe (no nonce risk, no onchain
         // state mutation). Without this select, a shutdown during the
         // registry RPC would extend drain latency by an entire
         // round-trip per pending task.
@@ -817,7 +828,7 @@ where
         // abandon work the impl had already started (see provider docs);
         // for `DirectProver` this leaks a `spawn_blocking` until the
         // backend completes, and for `BoundlessProver` any already-submitted
-        // off-chain request is recoverable via the deterministic
+        // offchain request is recoverable via the deterministic
         // request-id derivation on the next call.
         //
         // Race window: the biased `select!` polls the cancel branch first,
@@ -863,7 +874,7 @@ where
         };
 
         // Check cancellation before submitting the transaction — avoid starting
-        // new on-chain work if shutdown is in progress.
+        // new onchain work if shutdown is in progress.
         if signer_cancel.is_cancelled() {
             debug!("shutdown requested, skipping transaction submission");
             return Ok(());
@@ -879,6 +890,7 @@ where
 
         info!(
             signer = %signer_address,
+            instance = %instance.instance_id,
             registry = %self.config.registry_address,
             calldata_len = calldata.len(),
             "Registering signer"
@@ -910,7 +922,7 @@ where
 
         let receipt = loop {
             // Check cancellation at the top of each iteration to avoid
-            // starting new on-chain work after shutdown is requested.
+            // starting new onchain work after shutdown is requested.
             //
             // IMPORTANT: we never wrap `tx_manager.send()` itself in a
             // `select!` against `signer_cancel` — dropping `send()` after
@@ -926,7 +938,7 @@ where
                 Err(e) => {
                     // The signer may already be registered despite the error
                     // (e.g. the tx was mined but the tx manager reported a
-                    // nonce race during fee bumping). Check on-chain state.
+                    // nonce race during fee bumping). Check onchain state.
                     //
                     // Cancel-aware: side-effect-free read; safe to drop on
                     // cancel. The surrounding retry loop's top-of-iter
@@ -950,7 +962,7 @@ where
                             info!(
                                 signer = %signer_address,
                                 error = %e,
-                                "tx error but signer is registered on-chain, treating as success"
+                                "tx error but signer is registered onchain, treating as success"
                             );
                             RegistrarMetrics::registrations_total().increment(1);
                             return Ok(());
@@ -1063,19 +1075,18 @@ where
     /// so the [`Self::run`] pipeline can spawn registration tasks
     /// separately from discovery.
     ///
-    /// **Cancellation contract.** This future is allowed to be dropped by
-    /// the caller only at boundaries that contain no in-flight
-    /// `tx_manager.send()` — i.e. before, between, or after the explicit
-    /// `self.config.cancel.is_cancelled()` early-return checks below.
-    /// `check_and_revoke_crls` submits `revokeCert` transactions via
-    /// [`Self::submit_revoke_cert`]; dropping that future after a
-    /// `NonceGuard` has been acquired but before broadcast would leave a
-    /// permanent nonce gap. `discover_and_resolve` therefore drains its
-    /// `buffer_unordered` stream to natural completion instead of wrapping
-    /// `futs.next()` in a cancel-select.
+    /// **Cancellation contract.** This future checks
+    /// `self.config.cancel.is_cancelled()` before starting new side effects.
+    /// `check_and_revoke_crls` awaits any `revokeCert` transaction
+    /// submissions it triggers, so revocation outcomes are logged before
+    /// the resolution future returns.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
         if self.config.cancel.is_cancelled() {
-            return Ok(ResolveOutcome { addresses: Vec::new(), attestations: None });
+            return Ok(ResolveOutcome {
+                addresses: Vec::new(),
+                attestations: None,
+                unresolved: false,
+            });
         }
 
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
@@ -1085,7 +1096,7 @@ where
         }
 
         if addresses.is_empty() {
-            return Ok(ResolveOutcome { addresses, attestations: None });
+            return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
         }
 
         if !instance.health_status.should_register() {
@@ -1095,7 +1106,7 @@ where
                     instance = %instance.instance_id,
                     "instance not registerable, skipping registration"
                 );
-                return Ok(ResolveOutcome { addresses, attestations: None });
+                return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
             }
             info!(
                 instance = %instance.instance_id,
@@ -1106,7 +1117,7 @@ where
         }
 
         if self.config.cancel.is_cancelled() {
-            return Ok(ResolveOutcome { addresses, attestations: None });
+            return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
         }
 
         let nonce: [u8; 32] = random();
@@ -1115,28 +1126,37 @@ where
             instance = %instance.instance_id,
             "requesting attestations with nonce"
         );
-        let all_attestations = self
+        let all_attestations = match self
             .signer_client
             .signer_attestation(&instance.endpoint, None, Some(nonce.to_vec()))
-            .await?;
+            .await
+        {
+            Ok(attestations) => attestations,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    instance = %instance.instance_id,
+                    "failed to fetch signer attestations after resolving signer addresses"
+                );
+                RegistrarMetrics::processing_errors_total().increment(1);
+                return Ok(ResolveOutcome { addresses, attestations: None, unresolved: true });
+            }
+        };
 
         if all_attestations.len() < addresses.len() {
-            return Err(RegistrarError::ProverClient {
-                instance: instance.endpoint.to_string(),
-                source: format!(
-                    "expected {} attestations but got {}",
-                    addresses.len(),
-                    all_attestations.len()
-                )
-                .into(),
-            });
+            warn!(
+                expected = addresses.len(),
+                actual = all_attestations.len(),
+                instance = %instance.instance_id,
+                "signer attestation count was lower than signer public key count"
+            );
+            RegistrarMetrics::processing_errors_total().increment(1);
+            return Ok(ResolveOutcome { addresses, attestations: None, unresolved: true });
         }
 
         if self.config.crl.enabled {
-            // Skip the CRL check (and its potential `revokeCert` submission)
-            // on shutdown so we don't acquire a nonce we won't broadcast.
-            // Already-running `submit_revoke_cert` calls are NOT cancelled —
-            // see the cancellation contract on this function.
+            // Skip the CRL check and any `revokeCert` submission on shutdown
+            // so we do not start new onchain work.
             //
             // Return `attestations: None` so the safety invariant —
             // `Some(..)` ↔ "passed every eligibility + security gate,
@@ -1147,7 +1167,7 @@ where
             // non-local dependence on that re-check and matches the
             // CRL-revoked branch below.
             if self.config.cancel.is_cancelled() {
-                return Ok(ResolveOutcome { addresses, attestations: None });
+                return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
             }
             // Use `.first()` rather than `[0]` so the non-empty
             // invariant is locally visible: the `addresses.is_empty()`
@@ -1162,13 +1182,18 @@ where
                     instance: instance.endpoint.to_string(),
                     source: "no attestations available for CRL check".into(),
                 })?;
-            match self.check_and_revoke_crls(first_attestation, instance).await {
+            let cert_manager =
+                self.cert_manager.as_ref().expect("cert_manager required when CRL enabled");
+            match cert_manager
+                .check_and_revoke_crls(first_attestation, instance, &self.tx_manager)
+                .await
+            {
                 Ok(true) => {
                     warn!(
                         instance = %instance.instance_id,
                         "certificate revoked, skipping registration for this instance"
                     );
-                    return Ok(ResolveOutcome { addresses, attestations: None });
+                    return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
                 }
                 Ok(false) => {}
                 Err(e) => {
@@ -1181,7 +1206,7 @@ where
             }
         }
 
-        Ok(ResolveOutcome { addresses, attestations: Some(all_attestations) })
+        Ok(ResolveOutcome { addresses, attestations: Some(all_attestations), unresolved: false })
     }
 
     /// Runs one discovery cycle and resolves every instance into the
@@ -1194,22 +1219,21 @@ where
     /// dedicated task per registerable signer instead, so that long
     /// Boundless proofs do not block the next discovery cycle.
     ///
-    /// **Why no outer cancel-select.** `resolve_instance` may call
-    /// `check_and_revoke_crls` → `submit_revoke_cert` → `tx_manager.send()`;
-    /// dropping that future after `NonceGuard` acquisition leaves a
-    /// permanent nonce gap. The buffered stream is therefore drained to
-    /// natural completion; each `resolve_instance` short-circuits on
-    /// `self.config.cancel` *between* awaits but never abandons an
-    /// in-flight send. Shutdown latency is bounded by `max_concurrency` ×
-    /// the slowest signer-RPC / CRL-fetch timeout, not by long proof work
-    /// (which lives in the spawned proof tasks).
+    /// **Why no outer cancel-select.** `resolve_instance` performs several
+    /// side effects before deciding whether an instance is registerable. The
+    /// buffered stream is therefore drained to natural completion; each
+    /// `resolve_instance` short-circuits on `self.config.cancel` between
+    /// awaits. Shutdown latency is bounded by `max_concurrency` × the slowest
+    /// signer-RPC / CRL-fetch timeout, not by long proof work (which lives in
+    /// the spawned proof tasks).
     ///
-    /// The returned `ok_to_dereg` flag bakes in both the majority guard
-    /// (`reachable * 2 > total`) and the cancellation policy (token not
-    /// cancelled). The empty-discovery case sets it to `true` so legitimate
-    /// fleet drains still let orphan cleanup proceed — except when the
-    /// driver is cancelled, in which case the orphan dereg pass is skipped
-    /// so we don't acquire nonces during shutdown.
+    /// The returned `ok_to_dereg` flag bakes in the cancellation policy
+    /// (token not cancelled), the inconclusive-resolution guard (no
+    /// `unresolved_instance_ids`), and the majority guard
+    /// (`reachable * 2 > total`). The empty-discovery case sets it to
+    /// `true` so legitimate fleet drains still let orphan cleanup proceed —
+    /// except when the driver is cancelled, in which case the orphan dereg
+    /// pass is skipped so we don't acquire nonces during shutdown.
     async fn discover_and_resolve(self: &Arc<Self>) -> Result<DiscoveryResolution> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
@@ -1247,17 +1271,30 @@ where
         }))
         .buffer_unordered(concurrency);
 
-        // No cancel-select around `futs.next()`: `resolve_instance` may
-        // hold an in-flight `tx_manager.send()` (via CRL revokeCert) whose
-        // nonce we MUST broadcast to avoid a permanent gap. Each future
-        // checks `self.config.cancel` cooperatively between awaits; new
-        // work is short-circuited, but in-flight sends complete naturally.
+        // No cancel-select around `futs.next()`: each future checks
+        // `self.config.cancel` cooperatively between awaits, so new work is
+        // short-circuited while already-started resolution work reaches a
+        // natural boundary.
         while let Some((instance, result)) = futs.next().await {
             match result {
                 Ok(outcome) => {
                     reachable_count += 1;
                     for addr in &outcome.addresses {
                         active_signers.insert(*addr);
+                    }
+                    if outcome.unresolved {
+                        unresolved_instance_ids.insert(instance.instance_id.clone());
+                    }
+                    // Record signer -> instance attribution before the
+                    // `instance` is moved into `RegisterableSigner` below.
+                    // Consumed by `submit_deregistration` to annotate the
+                    // dereg log with the last-known instance.
+                    {
+                        let mut history =
+                            self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
+                        for addr in &outcome.addresses {
+                            history.insert(*addr, instance.instance_id.clone());
+                        }
                     }
                     if let Some(attestations) = outcome.attestations {
                         // `resolve_instance` already enforced the pairing
@@ -1299,17 +1336,18 @@ where
             }
         }
 
-        let ok_to_dereg = if self.config.cancel.is_cancelled() {
-            false
-        } else if total_count == 0 {
-            true
-        } else {
-            // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
-            // is bounded above by `total_count = instances.len()`, so the
-            // doubling can only overflow on a list with `usize::MAX / 2`
-            // entries, which is physically impossible.
-            reachable_count * 2 > total_count
-        };
+        let ok_to_dereg =
+            if self.config.cancel.is_cancelled() || !unresolved_instance_ids.is_empty() {
+                false
+            } else if total_count == 0 {
+                true
+            } else {
+                // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
+                // is bounded above by `total_count = instances.len()`, so the
+                // doubling can only overflow on a list with `usize::MAX / 2`
+                // entries, which is physically impossible.
+                reachable_count * 2 > total_count
+            };
 
         Ok(DiscoveryResolution {
             registerable,
@@ -1323,7 +1361,7 @@ where
 
     /// Drives the orphan-deregistration pass.
     ///
-    /// Loads on-chain signers, computes the orphan set
+    /// Loads onchain signers, computes the orphan set
     /// (`registered \ active`), and deregisters each in sequence with a
     /// ghost-entry guard. Mirrors the trailing half of the legacy
     /// synchronous `step` helper — extracted so the [`Self::run`] pipeline
@@ -1699,145 +1737,22 @@ where
         RegistrarMetrics::proof_tasks_pending().set(0.0);
     }
 
-    /// Checks the attestation's intermediate certificates against two
-    /// revocation sources and submits `revokeCert` transactions for any
-    /// newly-revoked certificates. Returns `Ok(true)` if any intermediate
-    /// is revoked at either layer, `Ok(false)` if all are clean.
-    ///
-    /// 1. **On-chain pre-check** (CHAIN-4194 / Immunefi #75608): each
-    ///    intermediate's path digest is queried via
-    ///    [`NitroVerifierClient::is_revoked`]. The contract's
-    ///    `revokedCerts` sentinel is persistent across `_cacheNewCert`
-    ///    overwrites, so an operator-revoked hash keeps failing
-    ///    registration even after the AWS CRL is pruned. A hit
-    ///    short-circuits the AWS fetch; no `revokeCert` tx is needed.
-    /// 2. **AWS CRL check**: any intermediate matched against its CRL
-    ///    distribution point triggers a `revokeCert` tx to the
-    ///    `NitroEnclaveVerifier`.
-    ///
-    /// Layer 1 fails open: RPC/decode errors (e.g. against a verifier
-    /// contract predating the `revokedCerts` selector) are logged and
-    /// the call falls through to Layer 2, never silently disabling AWS
-    /// CRL enforcement.
-    async fn check_and_revoke_crls(
-        &self,
-        attestation_bytes: &[u8],
-        instance: &ProverInstance,
-    ) -> Result<bool> {
-        // Invariants enforced by `RegistrationDriver::new` when `crl.enabled`.
-        let verifier =
-            self.nitro_verifier.as_deref().expect("nitro_verifier required when CRL enabled");
-        let verifier_address = verifier.address();
-
-        // Parse the attestation document to get the cert chain.
-        let report = AttestationReport::parse(attestation_bytes).map_err(|e| {
-            RegistrarError::ProverClient {
-                instance: instance.endpoint.to_string(),
-                source: format!("failed to parse attestation for CRL check: {e}").into(),
-            }
-        })?;
-
-        let cert_chain_der = report.cert_chain_der();
-        // Parse the chain once and share the result across both layers.
-        let cert_infos = crl::CertCrlInfo::from_chain(&cert_chain_der)?;
-
-        // ── Layer 1: on-chain durable revocation sentinel ───────────────
-        RegistrarMetrics::onchain_revocation_checks_total().increment(1);
-        match OnchainRevocationCheck::run(verifier, &cert_infos, &instance.instance_id).await {
-            Ok(true) => return Ok(true),
-            Ok(false) => {}
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    instance = %instance.instance_id,
-                    "on-chain revocation pre-check failed; falling through to AWS CRL layer"
-                );
-                RegistrarMetrics::onchain_revocation_check_errors().increment(1);
-            }
-        }
-
-        // ── Layer 2: AWS CRL distribution point check ───────────────────
-        let http_client =
-            self.crl_http_client.as_ref().expect("crl_http_client required when CRL enabled");
-
-        RegistrarMetrics::crl_checks_total().increment(1);
-
-        let revoked_certs = crl::check_chain_against_crls(&cert_infos, http_client).await;
-
-        if revoked_certs.is_empty() {
-            debug!(instance = %instance.instance_id, "CRL check passed, all certs clean");
-            return Ok(false);
-        }
-
-        RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
-
-        for revoked in &revoked_certs {
-            warn!(
-                cert = %revoked.label,
-                path_digest = %revoked.path_digest,
-                instance = %instance.instance_id,
-                "submitting revokeCert transaction"
-            );
-
-            self.submit_revoke_cert(verifier_address, revoked.path_digest).await;
-        }
-
-        Ok(true)
-    }
-
-    /// Submits a `revokeCert` transaction to the `NitroEnclaveVerifier`.
-    ///
-    /// Errors are logged but not propagated — a failed revocation should not
-    /// block the registration cycle.
-    async fn submit_revoke_cert(&self, verifier_address: Address, cert_hash: FixedBytes<32>) {
-        let calldata =
-            Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: cert_hash }.abi_encode());
-
-        info!(
-            verifier = %verifier_address,
-            cert_hash = %cert_hash,
-            calldata_len = calldata.len(),
-            "Revoking certificate"
-        );
-
-        let candidate =
-            TxCandidate { tx_data: calldata, to: Some(verifier_address), ..Default::default() };
-
-        match self.tx_manager.send(candidate).await {
-            Ok(receipt) => {
-                if !receipt.inner.status() {
-                    warn!(
-                        cert_hash = %cert_hash,
-                        tx_hash = %receipt.transaction_hash,
-                        "revokeCert transaction reverted (cert may already be revoked)"
-                    );
-                } else {
-                    info!(
-                        cert_hash = %cert_hash,
-                        tx_hash = %receipt.transaction_hash,
-                        "certificate revoked successfully"
-                    );
-                    RegistrarMetrics::revoke_cert_success_total().increment(1);
-                }
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    cert_hash = %cert_hash,
-                    "failed to submit revokeCert transaction"
-                );
-                RegistrarMetrics::revoke_cert_tx_failures().increment(1);
-            }
-        }
-    }
-
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
     async fn submit_deregistration(&self, signer: Address) -> bool {
         let calldata =
             Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode());
 
+        // `last_known_instance = None` is the strongest single diagnostic
+        // for phantom rotations: a signer we never observed in any
+        // discovery cycle implies another registrar (or a prior
+        // deployment) wrote it.
+        let last_known_instance = {
+            let history = self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
+            history.get(&signer).cloned()
+        };
         info!(
             signer = %signer,
+            last_known_instance = ?last_known_instance,
             registry = %self.config.registry_address,
             calldata_len = calldata.len(),
             "Deregistering signer"
@@ -1880,10 +1795,10 @@ where
         }
     }
 
-    /// Deregisters any on-chain signer that is not in the `protected_signers` set.
+    /// Deregisters any onchain signer that is not in the `protected_signers` set.
     ///
     /// These orphans arise when a prover instance is terminated (e.g. ASG
-    /// scale-down) without first deregistering its signer on-chain. The
+    /// scale-down) without first deregistering its signer onchain. The
     /// `protected_signers` set is built by [`Self::protected_signers`] as
     /// the union of resolved-this-cycle signers and signers with an
     /// in-flight proof task, so transiently-unresolved instances and
@@ -1894,14 +1809,14 @@ where
     /// Before submitting a deregistration transaction, each orphan candidate is
     /// verified via [`RegistryClient::is_registered`] (backed by the
     /// `isRegisteredSigner` mapping). This guards against ghost entries in the
-    /// on-chain `EnumerableSetLib.AddressSet` that can appear after certain
+    /// onchain `EnumerableSetLib.AddressSet` that can appear after certain
     /// add/remove sequences due to a bug in Solady v0.0.245. Without this
     /// check, ghost addresses would be deregistered every cycle in an infinite
     /// loop, burning gas without effect.
     ///
     /// # Assumptions
     ///
-    /// - **Single registrar**: This method queries *all* on-chain signers and
+    /// - **Single registrar**: This method queries *all* onchain signers and
     ///   treats any signer not in `protected_signers` as an orphan. If multiple
     ///   registrar instances manage disjoint prover fleets, one registrar would
     ///   incorrectly deregister another's signers. The current deployment model
@@ -1930,7 +1845,7 @@ where
                 break;
             }
 
-            // Verify the signer is truly registered on-chain before spending
+            // Verify the signer is truly registered onchain before spending
             // gas on a deregistration tx. The `getRegisteredSigners()` view
             // reads from an `EnumerableSetLib.AddressSet` which can contain
             // ghost entries (addresses that appear in `values()` but have
@@ -1968,47 +1883,6 @@ where
     }
 }
 
-/// On-chain durable revocation check.
-///
-/// Consults the `revokedCerts` mapping for every intermediate in a pre-parsed
-/// Nitro cert chain (root and leaf are skipped — see
-/// [`crl::CertCrlInfo::intermediates`]).
-#[derive(Debug)]
-pub struct OnchainRevocationCheck;
-
-impl OnchainRevocationCheck {
-    /// Returns `Ok(true)` as soon as any intermediate's accumulated path
-    /// digest is found revoked on-chain, `Ok(false)` if every intermediate
-    /// is clean.
-    ///
-    /// # Errors
-    ///
-    /// Returns the underlying RPC error verbatim; the caller decides whether
-    /// to fail-open or propagate.
-    pub async fn run(
-        verifier: &dyn NitroVerifierClient,
-        cert_infos: &[crl::CertCrlInfo],
-        instance_id: &str,
-    ) -> Result<bool> {
-        for info in crl::CertCrlInfo::intermediates(cert_infos) {
-            if verifier.is_revoked(info.path_digest).await? {
-                warn!(
-                    cert = %info.label,
-                    path_digest = %info.path_digest,
-                    instance = %instance_id,
-                    "intermediate is revoked on-chain (durable sentinel set), \
-                     skipping registration"
-                );
-                RegistrarMetrics::onchain_revocations_detected().increment(1);
-                return Ok(true);
-            }
-        }
-
-        debug!(instance = %instance_id, "on-chain revocation pre-check passed");
-        Ok(false)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -2034,10 +1908,7 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{
-        InstanceHealthStatus, RegistryClient, Result, SignerClient,
-        test_utils::{CertFixtures, INTER1_HEX, INTER2_HEX, LEAF_HEX, ROOT_HEX},
-    };
+    use crate::{InstanceHealthStatus, RegistryClient, Result, SignerClient};
 
     // ── Shared constants ────────────────────────────────────────────────
 
@@ -2242,6 +2113,8 @@ mod tests {
         /// Maps endpoint URL → list of attestation blobs (one per enclave).
         /// Falls back to `b"mock-attestation"` if not configured.
         attestations: HashMap<Url, Vec<Vec<u8>>>,
+        /// Endpoints whose attestation RPC should fail.
+        fail_attestation: HashSet<Url>,
     }
 
     impl MockSignerClient {
@@ -2257,7 +2130,7 @@ mod tests {
                     (url, vec![public_key_from_private(pk)])
                 })
                 .collect();
-            Self { keys, attestations: HashMap::new() }
+            Self { keys, attestations: HashMap::new(), fail_attestation: HashSet::new() }
         }
 
         /// Creates a mock that returns multiple public keys for a single endpoint,
@@ -2265,13 +2138,24 @@ mod tests {
         fn multi_enclave(host_port: &str, private_keys: &[&[u8; 32]]) -> Self {
             let url = Url::parse(&format!("http://{host_port}")).unwrap();
             let pubs = private_keys.iter().map(|pk| public_key_from_private(pk)).collect();
-            Self { keys: HashMap::from([(url, pubs)]), attestations: HashMap::new() }
+            Self {
+                keys: HashMap::from([(url, pubs)]),
+                attestations: HashMap::new(),
+                fail_attestation: HashSet::new(),
+            }
         }
 
         /// Configures attestation blobs for a given endpoint.
         fn with_attestations(mut self, host_port: &str, attestations: Vec<Vec<u8>>) -> Self {
             let url = Url::parse(&format!("http://{host_port}")).unwrap();
             self.attestations.insert(url, attestations);
+            self
+        }
+
+        /// Configures the attestation RPC for a given endpoint to fail.
+        fn with_attestation_failure(mut self, host_port: &str) -> Self {
+            let url = Url::parse(&format!("http://{host_port}")).unwrap();
+            self.fail_attestation.insert(url);
             self
         }
     }
@@ -2291,6 +2175,12 @@ mod tests {
             _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
         ) -> Result<Vec<Vec<u8>>> {
+            if self.fail_attestation.contains(endpoint) {
+                return Err(RegistrarError::ProverClient {
+                    instance: endpoint.to_string(),
+                    source: "attestation unavailable".into(),
+                });
+            }
             if let Some(atts) = self.attestations.get(endpoint) {
                 return Ok(atts.clone());
             }
@@ -2629,7 +2519,7 @@ mod tests {
         }
 
         /// Registry where the first call returns `false` (initial check),
-        /// then subsequent calls return `true` (signer appeared on-chain).
+        /// then subsequent calls return `true` (signer appeared onchain).
         fn registered_after_first_check(signers: Vec<Address>) -> Self {
             Self {
                 signers,
@@ -3003,7 +2893,7 @@ mod tests {
     }
 
     /// Builds a [`MockRegistry`] that reports zero registered signers.
-    /// Used by every pipeline test that wants the on-chain state to
+    /// Used by every pipeline test that wants the onchain state to
     /// start empty.
     fn empty_registry() -> MockRegistry {
         MockRegistry::with_signers(vec![])
@@ -3011,7 +2901,7 @@ mod tests {
 
     /// Builds the single-instance / single-key `(EP1, HARDHAT_KEY_0)`
     /// harness used by most pipeline tests, with no signers registered
-    /// on-chain. Centralising this pair removes ~5 lines of boilerplate
+    /// onchain. Centralising this pair removes ~5 lines of boilerplate
     /// per test and makes it impossible for them to drift out of sync.
     fn single_healthy_harness() -> GatedRunHarness {
         GatedRunHarness::new(
@@ -3022,7 +2912,7 @@ mod tests {
     }
 
     /// Builds an `n`-instance harness with all healthy instances and
-    /// no signers registered on-chain. The signer client is seeded with
+    /// no signers registered onchain. The signer client is seeded with
     /// **every** endpoint in [`ALL_ENDPOINTS`] (not just the initial
     /// `n`) so scale-up tests that swap the discovery list mid-run can
     /// resolve public keys for instances that weren't part of the
@@ -3408,7 +3298,7 @@ mod tests {
         // `is_recently_launched_unhealthy`), and (2) contribute its
         // signer to `active_signers` (preventing premature
         // deregistration). The orphan-dereg pass over the active set
-        // must NOT touch the signer even though it's already on-chain.
+        // must NOT touch the signer even though it's already onchain.
         let addr = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
         let launch_time = Some(SystemTime::now() - Duration::from_secs(300));
 
@@ -3420,7 +3310,7 @@ mod tests {
         let driver = cycle_driver(
             vec![instance_under_test.clone()],
             signer_client,
-            // addr is already on-chain; without active_signers protection it would be deregistered.
+            // addr is already onchain; without active_signers protection it would be deregistered.
             MockRegistry::with_signers(vec![addr]),
             tx.clone(),
             CancellationToken::new(),
@@ -3441,7 +3331,7 @@ mod tests {
 
         // Drive the registration path via the legacy synchronous helper —
         // try_register short-circuits because the signer is already
-        // on-chain, so no registration tx is sent.
+        // onchain, so no registration tx is sent.
         driver.process_instance(&instance_under_test).await.unwrap();
 
         // Orphan-dereg pass must not deregister the signer (it's in active_signers).
@@ -3456,10 +3346,10 @@ mod tests {
     // ── discover_and_resolve + run_orphan_dereg tests ──────────────────
 
     /// When discovery returns zero instances the active set is empty, so
-    /// every on-chain signer is an orphan and must be deregistered.
+    /// every onchain signer is an orphan and must be deregistered.
     /// Verifies both that `discover_and_resolve` flips `ok_to_dereg` to
     /// `true` for the legitimate zero-instance case and that
-    /// `run_orphan_dereg` emits a deregistration tx per on-chain signer.
+    /// `run_orphan_dereg` emits a deregistration tx per onchain signer.
     #[rstest]
     #[case::single_orphan(vec![ORPHAN_A])]
     #[case::multiple_orphans(vec![ORPHAN_A, ORPHAN_B, ORPHAN_C])]
@@ -3487,7 +3377,7 @@ mod tests {
         driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         let sent = tx.sent_calldata();
-        assert_eq!(sent.len(), expected_count, "all on-chain signers should be deregistered");
+        assert_eq!(sent.len(), expected_count, "all onchain signers should be deregistered");
 
         // Verify each deregistration targets the correct signer.
         for orphan in orphans {
@@ -3530,7 +3420,7 @@ mod tests {
             !resolution.ok_to_dereg,
             "1/3 reachable: majority guard should block orphan-dereg pass",
         );
-        // Resolution itself sends no on-chain tx (no CRL revocation).
+        // Resolution itself sends no onchain tx (no CRL revocation).
         assert!(tx.sent_calldata().is_empty(), "discover_and_resolve must not send txs");
     }
 
@@ -3577,7 +3467,7 @@ mod tests {
         // A draining instance must contribute its signer to
         // `active_signers` (protecting it from orphan-dereg) but must
         // NOT appear in `registerable`. The orphan-dereg pass over the
-        // active set then must not deregister the on-chain signer.
+        // active set then must not deregister the onchain signer.
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let instances = vec![instance(EP1, InstanceHealthStatus::Draining)];
 
@@ -3585,7 +3475,7 @@ mod tests {
         let driver = cycle_driver(
             instances,
             signer_client,
-            // The derived address for HARDHAT_KEY_0 is already on-chain,
+            // The derived address for HARDHAT_KEY_0 is already onchain,
             // so it should NOT be deregistered.
             MockRegistry::with_signers(vec![HARDHAT_ACCOUNT]),
             tx.clone(),
@@ -3618,7 +3508,7 @@ mod tests {
     // These tests verify the exact boundary and surrounding values:
     //   - 1/4 reachable → 1*2 <= 4 → true  → deregistration skipped
     //   - 2/4 reachable → 2*2 <= 4 → true  → deregistration skipped
-    //   - 3/4 reachable → 3*2 <= 4 → false → deregistration proceeds
+    //   - 3/4 reachable → majority clears, but unresolved instance skips deregistration
     //   - 4/4 reachable → 4*2 <= 4 → false → deregistration proceeds
 
     /// All 4 endpoints and corresponding private keys, indexed for
@@ -3630,7 +3520,7 @@ mod tests {
     #[rstest]
     #[case::one_of_four(1, true)]
     #[case::two_of_four(2, true)]
-    #[case::three_of_four(3, false)]
+    #[case::three_of_four(3, true)]
     #[case::four_of_four(4, false)]
     #[tokio::test]
     async fn discover_and_resolve_reachability_guard_boundary(
@@ -3639,9 +3529,10 @@ mod tests {
     ) {
         // All 4 instances are discovered; only `reachable_count` have keys
         // in the MockSignerClient (the rest will fail signer_public_key).
-        // Verify `ok_to_dereg` flips at the strict-majority boundary and
-        // that the downstream `run_orphan_dereg` pass emits the expected
-        // calldata only when the guard clears.
+        // Verify `ok_to_dereg` remains false while any discovered instance
+        // is unresolved, and that the downstream `run_orphan_dereg` pass
+        // emits calldata only when every instance resolves and the majority
+        // guard clears.
         let instances: Vec<_> =
             ALL_ENDPOINTS.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect();
 
@@ -3657,7 +3548,7 @@ mod tests {
             instances,
             signer_client,
             // All reachable signers already registered, so no registration txs.
-            // The orphan is on-chain — deregistered only if guard passes.
+            // The orphan is onchain — deregistered only if guard passes.
             MockRegistry::all_registered(vec![ORPHAN_D]),
             tx.clone(),
             CancellationToken::new(),
@@ -3732,7 +3623,10 @@ mod tests {
             resolution.unresolved_instance_ids.contains(&unreachable.instance_id),
             "unreachable instance must be marked as unresolved so reconcile skips its cancel-pass",
         );
-        assert!(resolution.ok_to_dereg, "3/4 reachable: majority guard clears (strict majority)",);
+        assert!(
+            !resolution.ok_to_dereg,
+            "unresolved instance must block orphan-dereg even when reachable majority clears",
+        );
 
         // Drive the legacy registration path per reachable instance to
         // confirm registration works in isolation (the spawn pipeline is
@@ -3753,7 +3647,7 @@ mod tests {
         // A signer whose registration tx fails must remain in
         // `active_signers`, preventing it from being deregistered as an
         // orphan. This protects against the case where a signer is
-        // already on-chain from a previous cycle but the current
+        // already onchain from a previous cycle but the current
         // registration attempt fails (e.g. insufficient funds).
         //
         // Exercised via the primitives: `discover_and_resolve` populates
@@ -3768,7 +3662,7 @@ mod tests {
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
 
         // is_registered returns false (first call in try_register), then
-        // false again (post-error check). The signer IS in the on-chain
+        // false again (post-error check). The signer IS in the onchain
         // set for get_registered_signers — so without active_signers
         // protection it would be deregistered as an orphan.
         let registry = DynamicRegistry::never_registered(vec![signer_addr]);
@@ -3907,7 +3801,7 @@ mod tests {
 
     #[tokio::test]
     async fn healthy_instances_register_via_primitives_and_orphan_dereg_removes_extras() {
-        // Two healthy instances plus one orphan on-chain → resolution
+        // Two healthy instances plus one orphan onchain → resolution
         // surfaces both signers as registerable AND in active_signers,
         // process_instance drives the two registrations, and
         // run_orphan_dereg emits a single deregistration for the orphan.
@@ -3928,7 +3822,7 @@ mod tests {
         let driver = cycle_driver(
             healthy_instances.to_vec(),
             signer_client,
-            // addr1 and addr2 are not yet registered; orphan is on-chain.
+            // addr1 and addr2 are not yet registered; orphan is onchain.
             MockRegistry::with_signers(vec![orphan]),
             tx.clone(),
             CancellationToken::new(),
@@ -4027,7 +3921,7 @@ mod tests {
         let driver = cycle_driver(
             instances,
             signer_client,
-            // Both signers are on-chain — without active_signers protection
+            // Both signers are onchain — without active_signers protection
             // they would be deregistered as orphans.
             MockRegistry::with_signers(vec![addr0, addr1]),
             tx.clone(),
@@ -4081,7 +3975,7 @@ mod tests {
         let driver = cycle_driver(
             instances,
             signer_client,
-            // The unhealthy signer is on-chain. Without active_signers protection it would be
+            // The unhealthy signer is onchain. Without active_signers protection it would be
             // deregistered.
             MockRegistry::with_signers(vec![addr_unhealthy]),
             tx.clone(),
@@ -4114,6 +4008,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discover_and_resolve_attestation_mismatch_keeps_signer_active_and_unresolved() {
+        // If the registrar reaches signer_public_key successfully but
+        // then cannot pair an attestation with the signer, the instance
+        // is still reachable and advertising that signer. The signer
+        // must remain protected from orphan deregistration, while the
+        // instance is marked unresolved so any in-flight proof task is
+        // preserved for a later conclusive cycle.
+        let signer_addr =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        let signer_client =
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestations(EP1, vec![]);
+
+        let tx = SharedTxManager::new();
+        let driver = cycle_driver(
+            vec![inst.clone()],
+            signer_client,
+            MockRegistry::with_signers(vec![signer_addr]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let resolution = driver.discover_and_resolve().await.unwrap();
+
+        assert!(
+            resolution.active_signers.contains(&signer_addr),
+            "partial resolution must keep the signer in the active set",
+        );
+        assert!(
+            resolution.registerable.is_empty(),
+            "without a matching attestation the signer must not be registerable",
+        );
+        assert!(
+            resolution.unresolved_instance_ids.contains(&inst.instance_id),
+            "partial resolution must preserve in-flight tasks for the instance",
+        );
+        assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
+
+        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "orphan pass must not deregister a signer advertised by a partially resolved instance",
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_attestation_error_keeps_signer_active_and_unresolved() {
+        // This is the production-shaped variant of the previous test:
+        // public key resolution succeeds, but the attestation RPC itself
+        // fails. The signer must still be protected from orphan dereg.
+        let signer_addr =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        let signer_client =
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestation_failure(EP1);
+
+        let tx = SharedTxManager::new();
+        let driver = cycle_driver(
+            vec![inst.clone()],
+            signer_client,
+            MockRegistry::with_signers(vec![signer_addr]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let resolution = driver.discover_and_resolve().await.unwrap();
+
+        assert!(resolution.active_signers.contains(&signer_addr));
+        assert!(resolution.registerable.is_empty());
+        assert!(resolution.unresolved_instance_ids.contains(&inst.instance_id));
+        assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
+
+        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "attestation RPC failures must not orphan a signer whose public key resolved",
+        );
+    }
+
+    #[tokio::test]
     async fn discover_and_resolve_does_not_invoke_proof_provider_so_active_set_survives_outage() {
         // Under the spawn pipeline, proof generation runs only inside
         // spawned `run_proof_task` futures — `discover_and_resolve`
@@ -4125,7 +4101,7 @@ mod tests {
         // ever invoked it, the resolution would error (or skip the
         // signer); instead the signer must land in `active_signers` and
         // `run_orphan_dereg` must emit no deregistration tx for the
-        // on-chain signer.
+        // onchain signer.
         let signer_addr =
             ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
 
@@ -4189,7 +4165,7 @@ mod tests {
         let driver = cycle_driver(
             instances,
             signer_client,
-            // The draining signer is on-chain. The healthy signer is not.
+            // The draining signer is onchain. The healthy signer is not.
             MockRegistry::with_signers(vec![addr_draining]),
             tx.clone(),
             CancellationToken::new(),
@@ -4251,13 +4227,10 @@ mod tests {
     // even when every future was blocked on a `Notify` gate. The
     // production replacement `discover_and_resolve` deliberately does
     // NOT `select!` on `cancel.cancelled()` around its `futs.next()`
-    // loop — see the rationale comment at the call site (cancelling a
-    // `resolve_instance` future that holds an in-flight CRL
-    // `revokeCert` `tx_manager.send()` would leak a nonce). Cooperative
-    // cancellation between awaits is the contract, and end-to-end
-    // shutdown latency (including the per-task cooperative cancel +
-    // drain timeout) is covered by the pipeline tests further down in
-    // this module (e.g. `run_drains_pending_proof_tasks_on_shutdown`).
+    // loop; cooperative cancellation between awaits is the contract, and
+    // end-to-end shutdown latency (including the per-task cooperative
+    // cancel + drain timeout) is covered by the pipeline tests further
+    // down in this module (e.g. `run_drains_pending_proof_tasks_on_shutdown`).
     //
     // The companion `BlockingSignerClient` was deleted with this test.
 
@@ -4352,7 +4325,7 @@ mod tests {
             ALL_ENDPOINTS.len(),
             "all 4 healthy instances should resolve into the registerable set",
         );
-        // Resolution itself emits no on-chain tx — the spawn pass owns registration.
+        // Resolution itself emits no onchain tx — the spawn pass owns registration.
         assert!(tx.sent_calldata().is_empty(), "discover_and_resolve must not send txs");
     }
 
@@ -4412,7 +4385,7 @@ mod tests {
         assert_eq!(driver.proof_provider.call_count(), 1, "proof should be generated once");
     }
 
-    /// Transient error but on-chain check shows signer is already
+    /// Transient error but onchain check shows signer is already
     /// registered: should return Ok without retrying.
     #[tokio::test(start_paused = true)]
     async fn try_register_already_registered_after_error_returns_ok() {
@@ -4432,7 +4405,7 @@ mod tests {
         let inst = instance(EP1, InstanceHealthStatus::Healthy);
         let result = driver.process_instance(&inst).await;
 
-        assert!(result.is_ok(), "should succeed: signer registered on-chain: {result:?}");
+        assert!(result.is_ok(), "should succeed: signer registered onchain: {result:?}");
         // Only 1 send attempt — the is_registered check short-circuits retry.
         assert_eq!(tx.send_count(), 1);
     }
@@ -5064,7 +5037,7 @@ mod tests {
     /// `resolution.active_signers` (no fresh evidence this cycle) but
     /// is **present in** `pending` (reconcile preserves the task via
     /// `unresolved_instance_ids`). If the preserved task succeeds and
-    /// registers the signer on-chain right as the orphan-dereg pass
+    /// registers the signer onchain right as the orphan-dereg pass
     /// runs, the protected set assembled by
     /// [`RunDriver::protected_signers`] MUST union the two, otherwise
     /// the very next call to `deregister_orphans` would deregister the
@@ -5074,7 +5047,7 @@ mod tests {
         let signer =
             ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
 
-        // Registry reports the signer as already registered on-chain —
+        // Registry reports the signer as already registered onchain —
         // the state that exists immediately after the preserved task's
         // `registerSigner` tx confirms.
         let harness = GatedRunHarness::new(
@@ -5140,7 +5113,7 @@ mod tests {
 
     /// Sanity contrast for
     /// [`protected_signers_union_blocks_dereg_of_freshly_registered_signer`]:
-    /// with `pending` empty and the same on-chain state, the orphan
+    /// with `pending` empty and the same onchain state, the orphan
     /// pass MUST deregister the signer. Proves the previous test's
     /// success was due to the union, not unrelated logic.
     #[tokio::test]
@@ -5665,7 +5638,7 @@ mod tests {
         /// window doesn't apply.
         InstanceUnhealthy,
         /// Instance is `Healthy` but the derived signer is already on
-        /// the on-chain registry, so `try_register` short-circuits in
+        /// the onchain registry, so `try_register` short-circuits in
         /// `is_registered()`.
         SignerAlreadyRegistered,
     }
@@ -5729,7 +5702,7 @@ mod tests {
     #[tokio::test]
     async fn run_deregisters_orphan_signer_via_orphan_pass() {
         // No discovered instances → active_signers is empty →
-        // every on-chain signer is an orphan. ok_to_dereg is true
+        // every onchain signer is an orphan. ok_to_dereg is true
         // when total_count == 0, so the orphan pass fires and
         // deregisters ORPHAN_A.
         let harness = GatedRunHarness::new(vec![], &[], MockRegistry::with_signers(vec![ORPHAN_A]));
@@ -5989,7 +5962,7 @@ mod tests {
     #[tokio::test]
     async fn run_handles_orphan_dereg_and_active_registration_in_same_cycle() {
         // Mixed-mode cycle: EP1 is healthy + unregistered (so it must
-        // register), while ORPHAN_A is already on-chain but has no
+        // register), while ORPHAN_A is already onchain but has no
         // backing instance (so it must be deregistered). Both passes
         // must run in the same cycle and both transactions must land.
         let harness = GatedRunHarness::new(
@@ -6096,10 +6069,10 @@ mod tests {
     // disabled in [`default_config`], and `MockRegistry` does not verify
     // calldata. The canonical 4-certificate chain from
     // `crate::test_utils` is exercised separately and exhaustively by
-    // the OnchainRevocationCheck tests below, which target the actual
-    // cert-parsing code paths. Mixing real cert bytes into these
-    // orchestration tests would not exercise any additional code and
-    // would add ~3 KB of attestation byte literals to every test run.
+    // the cert manager tests, which target the actual cert-parsing code
+    // paths. Mixing real cert bytes into these orchestration tests would
+    // not exercise any additional code and would add ~3 KB of attestation
+    // byte literals to every test run.
 
     // ── In-flight dedup tests (try_register layer) ──────────────────────
     //
@@ -6252,205 +6225,6 @@ mod tests {
             tx.send_count(),
             2,
             "a failed registration must release the in-flight slot so retries can proceed",
-        );
-    }
-
-    // ── OnchainRevocationCheck tests ────────────────────────────────────
-    //
-    // Covers the durable on-chain revocation pre-check (CHAIN-4194 /
-    // Immunefi #75608). Uses the canonical 4-cert chain
-    // (root → inter1 → inter2 → leaf) from [`crate::test_utils`].
-
-    const ONCHAIN_TEST_INSTANCE_ID: &str = "i-onchain-revocation-test";
-
-    /// Mock [`NitroVerifierClient`] for unit-testing the on-chain pre-check.
-    /// `error`, when set, is returned once and then cleared.
-    #[derive(Default)]
-    struct MockNitroVerifier {
-        revoked: HashSet<FixedBytes<32>>,
-        error: Mutex<Option<RegistrarError>>,
-        call_count: AtomicU32,
-    }
-
-    impl MockNitroVerifier {
-        fn revoking(hashes: impl IntoIterator<Item = FixedBytes<32>>) -> Self {
-            Self {
-                revoked: hashes.into_iter().collect(),
-                error: Mutex::new(None),
-                call_count: AtomicU32::new(0),
-            }
-        }
-
-        fn failing(error: RegistrarError) -> Self {
-            Self {
-                revoked: HashSet::new(),
-                error: Mutex::new(Some(error)),
-                call_count: AtomicU32::new(0),
-            }
-        }
-    }
-
-    const TEST_VERIFIER_ADDRESS: Address = Address::repeat_byte(0xAB);
-
-    #[async_trait::async_trait]
-    impl crate::NitroVerifierClient for MockNitroVerifier {
-        fn address(&self) -> Address {
-            TEST_VERIFIER_ADDRESS
-        }
-
-        async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool> {
-            self.call_count.fetch_add(1, Ordering::SeqCst);
-            if let Some(err) = self.error.lock().unwrap().take() {
-                return Err(err);
-            }
-            Ok(self.revoked.contains(&cert_hash))
-        }
-    }
-
-    // Cert indices in the canonical chain.
-    const ROOT_INDEX: usize = 0;
-    const INTER1_INDEX: usize = 1;
-    const INTER2_INDEX: usize = 2;
-    const LEAF_INDEX: usize = 3;
-
-    fn full_chain_der() -> Vec<Vec<u8>> {
-        CertFixtures::decode_chain(&[ROOT_HEX, INTER1_HEX, INTER2_HEX, LEAF_HEX])
-    }
-
-    fn chain_subset(indices: &[usize]) -> Vec<Vec<u8>> {
-        let full = full_chain_der();
-        indices.iter().map(|&i| full[i].clone()).collect()
-    }
-
-    fn path_digest_for(index: usize) -> FixedBytes<32> {
-        let der = full_chain_der();
-        let refs: Vec<&[u8]> = der.iter().map(Vec::as_slice).collect();
-        crl::CertCrlInfo::from_chain(&refs)
-            .expect("static fixtures parse")
-            .remove(index)
-            .path_digest
-    }
-
-    fn full_chain_cert_infos() -> Vec<crl::CertCrlInfo> {
-        let der = full_chain_der();
-        let refs: Vec<&[u8]> = der.iter().map(Vec::as_slice).collect();
-        crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse")
-    }
-
-    fn full_chain_intermediate_count() -> u32 {
-        u32::try_from(full_chain_der().len().saturating_sub(2)).unwrap()
-    }
-
-    async fn run_pre_check(verifier: &MockNitroVerifier) -> (Result<bool>, u32) {
-        let cert_infos = full_chain_cert_infos();
-        let result =
-            OnchainRevocationCheck::run(verifier, &cert_infos, ONCHAIN_TEST_INSTANCE_ID).await;
-        (result, verifier.call_count.load(Ordering::SeqCst))
-    }
-
-    #[tokio::test]
-    async fn onchain_revocation_check_returns_false_when_no_intermediates_revoked() {
-        let verifier = MockNitroVerifier::default();
-        let (result, calls) = run_pre_check(&verifier).await;
-
-        assert!(
-            !result.expect("clean chain must succeed"),
-            "no intermediates flagged as revoked → registration must proceed"
-        );
-        assert_eq!(
-            calls,
-            full_chain_intermediate_count(),
-            "every intermediate must be queried when none are revoked"
-        );
-    }
-
-    #[rstest]
-    #[case::inter1_revoked(INTER1_INDEX, 1)]
-    #[case::inter2_revoked(INTER2_INDEX, 2)]
-    #[tokio::test]
-    async fn onchain_revocation_check_blocks_when_any_intermediate_revoked(
-        #[case] revoked_index: usize,
-        #[case] expected_calls_at_short_circuit: u32,
-    ) {
-        let verifier = MockNitroVerifier::revoking([path_digest_for(revoked_index)]);
-        let (result, calls) = run_pre_check(&verifier).await;
-
-        assert!(
-            result.expect("revoked-intermediate query must succeed"),
-            "revoked intermediate must block registration",
-        );
-        assert_eq!(
-            calls, expected_calls_at_short_circuit,
-            "pre-check must short-circuit at the first revoked intermediate",
-        );
-    }
-
-    #[tokio::test]
-    async fn onchain_revocation_check_short_circuits_when_all_intermediates_revoked() {
-        let verifier = MockNitroVerifier::revoking([
-            path_digest_for(INTER1_INDEX),
-            path_digest_for(INTER2_INDEX),
-        ]);
-        let (result, calls) = run_pre_check(&verifier).await;
-
-        assert!(result.expect("query must succeed"), "any revoked intermediate must block");
-        assert_eq!(calls, 1, "first intermediate triggers short-circuit");
-    }
-
-    #[tokio::test]
-    async fn onchain_revocation_check_skips_root_and_leaf() {
-        let verifier =
-            MockNitroVerifier::revoking([path_digest_for(ROOT_INDEX), path_digest_for(LEAF_INDEX)]);
-        let (result, calls) = run_pre_check(&verifier).await;
-
-        assert!(
-            !result.expect("query must succeed"),
-            "root/leaf revocation flags must not block registration",
-        );
-        assert_eq!(
-            calls,
-            full_chain_intermediate_count(),
-            "only intermediates are queried; root and leaf are skipped",
-        );
-    }
-
-    #[tokio::test]
-    async fn onchain_revocation_check_propagates_rpc_errors() {
-        let verifier = MockNitroVerifier::failing(RegistrarError::NitroVerifierCall {
-            context: "revokedCerts(0xdeadbeef)".into(),
-            source: "boom".into(),
-        });
-        let (result, _calls) = run_pre_check(&verifier).await;
-
-        let err = result.expect_err("RPC errors must surface to the caller");
-        assert!(
-            matches!(err, RegistrarError::NitroVerifierCall { .. }),
-            "expected NitroVerifierCall, got: {err:?}"
-        );
-    }
-
-    #[rstest]
-    #[case::root_only(&[ROOT_INDEX], 0)]
-    #[case::root_and_leaf(&[ROOT_INDEX, LEAF_INDEX], 0)]
-    #[case::three_cert(&[ROOT_INDEX, INTER1_INDEX, LEAF_INDEX], 1)]
-    #[tokio::test]
-    async fn onchain_revocation_check_queries_intermediates_only(
-        #[case] indices: &[usize],
-        #[case] expected_calls: u32,
-    ) {
-        let owned = chain_subset(indices);
-        let refs: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
-        let cert_infos = crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse");
-        let verifier = MockNitroVerifier::default();
-
-        let result =
-            OnchainRevocationCheck::run(&verifier, &cert_infos, ONCHAIN_TEST_INSTANCE_ID).await;
-
-        assert!(!result.expect("query must succeed"), "clean chain not revoked");
-        assert_eq!(
-            verifier.call_count.load(Ordering::SeqCst),
-            expected_calls,
-            "only intermediates (root and leaf skipped) should produce RPC calls",
         );
     }
 }

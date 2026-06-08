@@ -11,8 +11,8 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
-    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20SecurityStorage,
-    B20Variant, IActivationRegistry, IB20, IB20Factory, IPolicyRegistry, PolicyRegistryStorage,
+    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
+    IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
 };
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;
@@ -64,7 +64,7 @@ impl BerylTestEnv {
     pub(crate) const B20_PROBE_GAS_LIMIT: u64 = 1_000_000;
 
     /// Fixed decimals for the default B-20 token variant.
-    pub(crate) const B20_DECIMALS: u8 = 18;
+    pub(crate) const B20_DECIMALS: u8 = 6;
 
     /// Name for the default B-20 token variant.
     pub(crate) const B20_NAME: &str = "Action B20";
@@ -84,20 +84,14 @@ impl BerylTestEnv {
     /// ISO 4217 currency code for the stablecoin B-20 token variant.
     pub(crate) const B20_STABLECOIN_CURRENCY: &str = "USD";
 
-    /// Fixed decimals for the security B-20 token variant.
-    pub(crate) const B20_SECURITY_DECIMALS: u8 = 6;
+    /// Fixed decimals for the asset B-20 token variant.
+    pub(crate) const B20_ASSET_DECIMALS: u8 = 6;
 
-    /// Name for the security B-20 token variant.
-    pub(crate) const B20_SECURITY_NAME: &str = "Action Security";
+    /// Name for the asset B-20 token variant.
+    pub(crate) const B20_ASSET_NAME: &str = "Action Asset";
 
-    /// Symbol for the security B-20 token variant.
-    pub(crate) const B20_SECURITY_SYMBOL: &str = "ASEC";
-
-    /// ISIN stored on the security B-20 token at creation.
-    pub(crate) const B20_SECURITY_ISIN: &str = "US0000000001";
-
-    /// Initial minimum redeemable share amount for the security B-20 token.
-    pub(crate) const B20_SECURITY_MINIMUM_REDEEMABLE: u64 = 10;
+    /// Symbol for the asset B-20 token variant.
+    pub(crate) const B20_ASSET_SYMBOL: &str = "AAST";
 
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;
@@ -186,24 +180,14 @@ impl BerylTestEnv {
         self.chain_id
     }
 
-    /// Activation registry feature ID for the token factory precompile.
-    pub(crate) const fn b20_factory_feature() -> B256 {
-        ActivationFeature::B20Factory.id()
-    }
-
-    /// Activation registry feature ID for the B-20 token precompile.
-    pub(crate) const fn b20_token_feature() -> B256 {
-        ActivationFeature::B20Token.id()
+    /// Activation registry feature ID for the B-20 asset precompile.
+    pub(crate) const fn b20_asset_feature() -> B256 {
+        ActivationFeature::B20Asset.id()
     }
 
     /// Activation registry feature ID for the B-20 stablecoin precompile.
     pub(crate) const fn b20_stablecoin_feature() -> B256 {
         ActivationFeature::B20Stablecoin.id()
-    }
-
-    /// Activation registry feature ID for the B-20 security precompile.
-    pub(crate) const fn b20_security_feature() -> B256 {
-        ActivationFeature::B20Security.id()
     }
 
     /// Activation registry feature ID for the policy registry precompile.
@@ -240,7 +224,7 @@ impl BerylTestEnv {
 
     /// Returns the deterministic B-20 token address created by Alice.
     pub(crate) fn b20_token_address(&self) -> Address {
-        B20Variant::B20.compute_address(Self::alice(), Self::b20_token_salt()).0
+        B20Variant::Asset.compute_address(Self::alice(), Self::b20_token_salt()).0
     }
 
     /// Returns the deterministic B-20 stablecoin address created by Alice.
@@ -250,7 +234,7 @@ impl BerylTestEnv {
 
     /// Returns the deterministic B-20 security token address created by Alice.
     pub(crate) fn b20_security_address(&self) -> Address {
-        B20Variant::Security.compute_address(Self::alice(), Self::b20_security_salt()).0
+        B20Variant::Asset.compute_address(Self::alice(), Self::b20_security_salt()).0
     }
 
     /// Creates a transaction that calls the B-20 token factory with the default salt.
@@ -560,7 +544,7 @@ impl BerylTestEnv {
 
     fn create_b20_token_call_with_salt(&self, salt: B256) -> IB20Factory::createB20Call {
         IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::DEFAULT,
+            variant: IB20Factory::B20Variant::ASSET,
             salt,
             params: self.b20_token_params().abi_encode().into(),
             initCalls: vec![
@@ -586,19 +570,13 @@ impl BerylTestEnv {
 
     fn create_b20_security_call_with_salt(&self, salt: B256) -> IB20Factory::createB20Call {
         IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::SECURITY,
+            variant: IB20Factory::B20Variant::ASSET,
             salt,
-            params: self.b20_security_params().abi_encode().into(),
+            params: self.b20_asset_params().abi_encode().into(),
             initCalls: vec![
                 IB20::mintCall { to: Self::alice(), amount: U256::from(Self::B20_INITIAL_SUPPLY) }
                     .abi_encode()
                     .into(),
-                IB20::updatePolicyCall {
-                    policyScope: B20SecurityStorage::REDEEM_SENDER_POLICY,
-                    newPolicyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID,
-                }
-                .abi_encode()
-                .into(),
             ],
         }
     }
@@ -633,18 +611,19 @@ impl BerylTestEnv {
         Bytes::from(init_code)
     }
 
-    fn b20_token_params(&self) -> IB20Factory::B20CreateParams {
-        IB20Factory::B20CreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+    fn b20_token_params(&self) -> IB20Factory::B20AssetCreateParams {
+        IB20Factory::B20AssetCreateParams {
+            version: B20Variant::Asset.supported_version(),
             name: Self::B20_NAME.to_string(),
             symbol: Self::B20_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
+            decimals: 6,
         }
     }
 
     fn b20_stablecoin_params(&self) -> IB20Factory::B20StablecoinCreateParams {
         IB20Factory::B20StablecoinCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20Variant::Stablecoin.supported_version(),
             name: Self::B20_STABLECOIN_NAME.to_string(),
             symbol: Self::B20_STABLECOIN_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
@@ -652,14 +631,13 @@ impl BerylTestEnv {
         }
     }
 
-    fn b20_security_params(&self) -> IB20Factory::B20SecurityCreateParams {
-        IB20Factory::B20SecurityCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
-            name: Self::B20_SECURITY_NAME.to_string(),
-            symbol: Self::B20_SECURITY_SYMBOL.to_string(),
+    fn b20_asset_params(&self) -> IB20Factory::B20AssetCreateParams {
+        IB20Factory::B20AssetCreateParams {
+            version: B20Variant::Asset.supported_version(),
+            name: Self::B20_ASSET_NAME.to_string(),
+            symbol: Self::B20_ASSET_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
-            isin: Self::B20_SECURITY_ISIN.to_string(),
-            minimumRedeemable: U256::from(Self::B20_SECURITY_MINIMUM_REDEEMABLE),
+            decimals: Self::B20_ASSET_DECIMALS,
         }
     }
 

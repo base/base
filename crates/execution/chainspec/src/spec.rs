@@ -19,6 +19,20 @@ use reth_primitives_traits::SealedHeader;
 
 use crate::{ChainUpgradesExt, compute_jovian_base_fee, decode_holocene_base_fee};
 
+/// Error constructing a [`BaseChainSpec`].
+#[derive(Debug, thiserror::Error)]
+pub enum BaseChainSpecError {
+    /// Genesis JSON failed to deserialize.
+    #[error("invalid genesis JSON: {0}")]
+    GenesisJson(#[from] serde_json::Error),
+    /// Beryl is scheduled but no activation registry admin address is configured.
+    #[error("missing activation admin address for Beryl-enabled chain ID: {chain_id}")]
+    MissingActivationAdminAddress {
+        /// Chain ID whose Beryl-enabled configuration lacks an activation admin address.
+        chain_id: u64,
+    },
+}
+
 /// Genesis info extracted from a Base genesis config.
 #[derive(Default, Debug)]
 pub struct GenesisInfo {
@@ -102,7 +116,129 @@ impl BaseChainSpec {
 
     /// Converts the given [`Genesis`] into an [`BaseChainSpec`].
     pub fn from_genesis(genesis: Genesis) -> Self {
-        genesis.into()
+        Self::try_from_genesis(genesis)
+            .expect("Beryl-enabled genesis must configure activationAdminAddress")
+    }
+
+    /// Tries to convert the given [`Genesis`] into a [`BaseChainSpec`].
+    pub fn try_from_genesis(genesis: Genesis) -> Result<Self, BaseChainSpecError> {
+        let base_genesis_info = GenesisInfo::extract_from(&genesis);
+        let genesis_info = base_genesis_info.base_chain_info.genesis_info.unwrap_or_default();
+        let activation_admin_address = genesis_info.activation_admin_address;
+
+        // Block-based hardforks in canonical fork ID order.
+        let hardfork_opts = [
+            (EthereumHardfork::Frontier.boxed(), Some(0)),
+            (EthereumHardfork::Homestead.boxed(), genesis.config.homestead_block),
+            (EthereumHardfork::Tangerine.boxed(), genesis.config.eip150_block),
+            (EthereumHardfork::SpuriousDragon.boxed(), genesis.config.eip155_block),
+            (EthereumHardfork::Byzantium.boxed(), genesis.config.byzantium_block),
+            (EthereumHardfork::Constantinople.boxed(), genesis.config.constantinople_block),
+            (EthereumHardfork::Petersburg.boxed(), genesis.config.petersburg_block),
+            (EthereumHardfork::Istanbul.boxed(), genesis.config.istanbul_block),
+            (EthereumHardfork::MuirGlacier.boxed(), genesis.config.muir_glacier_block),
+            (EthereumHardfork::Berlin.boxed(), genesis.config.berlin_block),
+            (EthereumHardfork::London.boxed(), genesis.config.london_block),
+            (EthereumHardfork::ArrowGlacier.boxed(), genesis.config.arrow_glacier_block),
+            (EthereumHardfork::GrayGlacier.boxed(), genesis.config.gray_glacier_block),
+        ];
+        let mut hardforks = hardfork_opts
+            .into_iter()
+            .filter_map(|(hardfork, opt)| opt.map(|block| (hardfork, ForkCondition::Block(block))))
+            .collect::<Vec<_>>();
+
+        // We set the paris hardfork for Base networks to zero
+        hardforks.push((
+            EthereumHardfork::Paris.boxed(),
+            ForkCondition::TTD {
+                activation_block_number: 0,
+                total_difficulty: U256::ZERO,
+                fork_block: genesis.config.merge_netsplit_block,
+            },
+        ));
+
+        if let Some(block) = genesis_info.bedrock_block {
+            hardforks.push((BaseUpgrade::Bedrock.boxed(), ForkCondition::Block(block)));
+        }
+
+        // Time-based hardforks
+        // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
+        let azul_time = genesis_info.base.azul;
+        let beryl_time = genesis_info.base.beryl;
+        let cobalt_time = genesis_info.base.cobalt;
+        let time_hardfork_opts = [
+            (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
+            (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
+            (BaseUpgrade::Canyon.boxed(), genesis_info.canyon_time),
+            (EthereumHardfork::Cancun.boxed(), genesis_info.ecotone_time),
+            (BaseUpgrade::Ecotone.boxed(), genesis_info.ecotone_time),
+            (BaseUpgrade::Fjord.boxed(), genesis_info.fjord_time),
+            (BaseUpgrade::Granite.boxed(), genesis_info.granite_time),
+            (BaseUpgrade::Holocene.boxed(), genesis_info.holocene_time),
+            (EthereumHardfork::Prague.boxed(), genesis_info.isthmus_time),
+            (BaseUpgrade::Isthmus.boxed(), genesis_info.isthmus_time),
+            (BaseUpgrade::Jovian.boxed(), genesis_info.jovian_time),
+            (EthereumHardfork::Osaka.boxed(), azul_time),
+            (BaseUpgrade::Azul.boxed(), azul_time),
+            (BaseUpgrade::Beryl.boxed(), beryl_time),
+            (BaseUpgrade::Cobalt.boxed(), cobalt_time),
+        ];
+
+        let mut time_hardforks = time_hardfork_opts
+            .into_iter()
+            .filter_map(|(hardfork, opt)| {
+                opt.map(|time| (hardfork, ForkCondition::Timestamp(time)))
+            })
+            .collect::<Vec<_>>();
+
+        hardforks.append(&mut time_hardforks);
+
+        let hardforks = ChainHardforks::new(hardforks);
+        let chain_id = genesis.config.chain_id;
+        Self::validate_beryl_activation_admin(&hardforks, activation_admin_address, chain_id)?;
+        let genesis_header =
+            SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &hardforks));
+
+        Ok(Self {
+            inner: ChainSpec {
+                chain: chain_id.into(),
+                genesis_header,
+                genesis,
+                hardforks,
+                paris_block_and_final_difficulty: Some((0, U256::ZERO)),
+                base_fee_params: base_genesis_info.base_fee_params,
+                ..Default::default()
+            },
+            activation_admin_address,
+        })
+    }
+
+    /// Tries to convert the given [`ChainSpec`] into a [`BaseChainSpec`].
+    pub fn try_from_chainspec(
+        value: ChainSpec,
+        activation_admin_address: Option<Address>,
+    ) -> Result<Self, BaseChainSpecError> {
+        Self::validate_beryl_activation_admin(
+            &value.hardforks,
+            activation_admin_address,
+            value.chain.id(),
+        )?;
+        Ok(Self { inner: value, activation_admin_address })
+    }
+
+    /// Validates that Beryl-enabled chains include an activation registry admin address.
+    pub fn validate_beryl_activation_admin(
+        hardforks: &ChainHardforks,
+        activation_admin_address: Option<Address>,
+        chain_id: u64,
+    ) -> Result<(), BaseChainSpecError> {
+        if activation_admin_address.is_none()
+            && !matches!(hardforks.fork(BaseUpgrade::Beryl), ForkCondition::Never)
+        {
+            return Err(BaseChainSpecError::MissingActivationAdminAddress { chain_id });
+        }
+
+        Ok(())
     }
 
     /// Builds a [`Header`] for the genesis block of a Base chain.
@@ -141,12 +277,17 @@ impl BaseChainSpec {
 }
 
 impl TryFrom<&ChainConfig> for BaseChainSpec {
-    type Error = serde_json::Error;
+    type Error = BaseChainSpecError;
 
     fn try_from(cfg: &ChainConfig) -> Result<Self, Self::Error> {
         let genesis = serde_json::from_str(cfg.genesis_json)?;
         let hardforks = base_common_chains::ChainUpgrades::new(BaseUpgrade::forks_for(cfg))
             .to_chain_hardforks();
+        Self::validate_beryl_activation_admin(
+            &hardforks,
+            cfg.activation_admin_address,
+            cfg.chain_id,
+        )?;
         let genesis_header = match cfg.genesis_l2_hash {
             B256::ZERO => SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &hardforks)),
             hash => SealedHeader::new(Self::make_genesis_header(&genesis, &hardforks), hash),
@@ -294,97 +435,14 @@ impl Upgrades for BaseChainSpec {
 
 impl From<Genesis> for BaseChainSpec {
     fn from(genesis: Genesis) -> Self {
-        let base_genesis_info = GenesisInfo::extract_from(&genesis);
-        let genesis_info = base_genesis_info.base_chain_info.genesis_info.unwrap_or_default();
-        let activation_admin_address = genesis_info.activation_admin_address;
-
-        // Block-based hardforks in canonical fork ID order.
-        let hardfork_opts = [
-            (EthereumHardfork::Frontier.boxed(), Some(0)),
-            (EthereumHardfork::Homestead.boxed(), genesis.config.homestead_block),
-            (EthereumHardfork::Tangerine.boxed(), genesis.config.eip150_block),
-            (EthereumHardfork::SpuriousDragon.boxed(), genesis.config.eip155_block),
-            (EthereumHardfork::Byzantium.boxed(), genesis.config.byzantium_block),
-            (EthereumHardfork::Constantinople.boxed(), genesis.config.constantinople_block),
-            (EthereumHardfork::Petersburg.boxed(), genesis.config.petersburg_block),
-            (EthereumHardfork::Istanbul.boxed(), genesis.config.istanbul_block),
-            (EthereumHardfork::MuirGlacier.boxed(), genesis.config.muir_glacier_block),
-            (EthereumHardfork::Berlin.boxed(), genesis.config.berlin_block),
-            (EthereumHardfork::London.boxed(), genesis.config.london_block),
-            (EthereumHardfork::ArrowGlacier.boxed(), genesis.config.arrow_glacier_block),
-            (EthereumHardfork::GrayGlacier.boxed(), genesis.config.gray_glacier_block),
-        ];
-        let mut hardforks = hardfork_opts
-            .into_iter()
-            .filter_map(|(hardfork, opt)| opt.map(|block| (hardfork, ForkCondition::Block(block))))
-            .collect::<Vec<_>>();
-
-        // We set the paris hardfork for Base networks to zero
-        hardforks.push((
-            EthereumHardfork::Paris.boxed(),
-            ForkCondition::TTD {
-                activation_block_number: 0,
-                total_difficulty: U256::ZERO,
-                fork_block: genesis.config.merge_netsplit_block,
-            },
-        ));
-
-        if let Some(block) = genesis_info.bedrock_block {
-            hardforks.push((BaseUpgrade::Bedrock.boxed(), ForkCondition::Block(block)));
-        }
-
-        // Time-based hardforks
-        // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
-        let azul_time = genesis_info.base.azul;
-        let beryl_time = genesis_info.base.beryl;
-        let time_hardfork_opts = [
-            (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
-            (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
-            (BaseUpgrade::Canyon.boxed(), genesis_info.canyon_time),
-            (EthereumHardfork::Cancun.boxed(), genesis_info.ecotone_time),
-            (BaseUpgrade::Ecotone.boxed(), genesis_info.ecotone_time),
-            (BaseUpgrade::Fjord.boxed(), genesis_info.fjord_time),
-            (BaseUpgrade::Granite.boxed(), genesis_info.granite_time),
-            (BaseUpgrade::Holocene.boxed(), genesis_info.holocene_time),
-            (EthereumHardfork::Prague.boxed(), genesis_info.isthmus_time),
-            (BaseUpgrade::Isthmus.boxed(), genesis_info.isthmus_time),
-            (BaseUpgrade::Jovian.boxed(), genesis_info.jovian_time),
-            (EthereumHardfork::Osaka.boxed(), azul_time),
-            (BaseUpgrade::Azul.boxed(), azul_time),
-            (BaseUpgrade::Beryl.boxed(), beryl_time),
-        ];
-
-        let mut time_hardforks = time_hardfork_opts
-            .into_iter()
-            .filter_map(|(hardfork, opt)| {
-                opt.map(|time| (hardfork, ForkCondition::Timestamp(time)))
-            })
-            .collect::<Vec<_>>();
-
-        hardforks.append(&mut time_hardforks);
-
-        let hardforks = ChainHardforks::new(hardforks);
-        let genesis_header =
-            SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &hardforks));
-
-        Self {
-            inner: ChainSpec {
-                chain: genesis.config.chain_id.into(),
-                genesis_header,
-                genesis,
-                hardforks,
-                paris_block_and_final_difficulty: Some((0, U256::ZERO)),
-                base_fee_params: base_genesis_info.base_fee_params,
-                ..Default::default()
-            },
-            activation_admin_address,
-        }
+        Self::from_genesis(genesis)
     }
 }
 
 impl From<ChainSpec> for BaseChainSpec {
     fn from(value: ChainSpec) -> Self {
-        Self { inner: value, activation_admin_address: None }
+        Self::try_from_chainspec(value, None)
+            .expect("Beryl-enabled chain spec requires activation admin")
     }
 }
 
@@ -404,11 +462,11 @@ mod tests {
     use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
-        BaseFeeParams, BaseFeeParamsKind, EthChainSpec, EthereumHardforks, test_fork_ids,
+        BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthChainSpec, EthereumHardforks, test_fork_ids,
     };
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
-    use crate::{BaseChainSpec, BaseChainSpecBuilder};
+    use crate::{BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError};
 
     #[test]
     fn test_storage_root_consistency() {
@@ -627,6 +685,63 @@ mod tests {
     }
 
     #[test]
+    fn beryl_genesis_without_activation_admin_is_rejected() {
+        let chain_id = 987_654;
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = chain_id;
+        genesis.config.extra_fields.insert("base".to_string(), serde_json::json!({ "beryl": 0 }));
+
+        let err = BaseChainSpec::try_from_genesis(genesis)
+            .expect_err("Beryl genesis without activation admin should be rejected");
+        assert!(
+            matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id: id } if id == chain_id)
+        );
+    }
+
+    #[test]
+    fn beryl_chain_config_without_activation_admin_is_rejected() {
+        let mut config = ChainConfig::devnet().clone();
+        config.beryl_timestamp = Some(0);
+        config.activation_admin_address = None;
+
+        let err = BaseChainSpec::try_from(&config)
+            .expect_err("Beryl chain config without activation admin should be rejected");
+        assert!(
+            matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id } if chain_id == config.chain_id)
+        );
+    }
+
+    #[test]
+    fn beryl_builder_without_activation_admin_is_rejected() {
+        let chain_id = ChainConfig::mainnet().chain_id;
+        let err = BaseChainSpecBuilder::base_mainnet()
+            .optional_activation_admin_address(None)
+            .beryl_activated()
+            .try_build()
+            .expect_err("Beryl builder without activation admin should be rejected");
+
+        assert!(
+            matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id: id } if id == chain_id)
+        );
+    }
+
+    #[test]
+    fn beryl_chainspec_can_be_built_with_activation_admin() {
+        let admin = address!("0xcb00000000000000000000000000000000000000");
+        let inner = ChainSpec::builder()
+            .chain(987_654.into())
+            .genesis(Genesis::default())
+            .with_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(0))
+            .build();
+
+        let chain_spec = BaseChainSpec::try_from_chainspec(inner, Some(admin))
+            .expect("Beryl chain spec with activation admin should build");
+
+        assert_eq!(chain_spec.activation_admin_address(), Some(admin));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 0));
+    }
+
+    #[test]
     fn base_sepolia_genesis() {
         let base_sepolia_spec = BaseChainSpec::sepolia();
         let genesis = base_sepolia_spec.genesis_header();
@@ -734,6 +849,7 @@ mod tests {
           "v1": 55,
           "v2": 60
         },
+        "activationAdminAddress": "0xcb00000000000000000000000000000000000000",
         "optimism": {
           "eip1559Elasticity": 60,
           "eip1559Denominator": 70
@@ -962,7 +1078,11 @@ mod tests {
                     (String::from("holoceneTime"), 0.into()),
                     (String::from("isthmusTime"), 0.into()),
                     (String::from("jovianTime"), 0.into()),
-                    (String::from("base"), serde_json::json!({ "v1": 0, "v2": 0 })),
+                    (String::from("base"), serde_json::json!({ "v1": 0, "v2": 0, "v3": 0 })),
+                    (
+                        String::from("activationAdminAddress"),
+                        serde_json::json!(address!("0xcb00000000000000000000000000000000000000")),
+                    ),
                 ]
                 .into_iter()
                 .collect(),
@@ -1004,6 +1124,7 @@ mod tests {
             EthereumHardfork::Osaka.boxed(),
             BaseUpgrade::Azul.boxed(),
             BaseUpgrade::Beryl.boxed(),
+            BaseUpgrade::Cobalt.boxed(),
         ];
 
         for (expected, actual) in expected_hardforks.iter().zip(hardforks.iter()) {

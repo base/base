@@ -6,13 +6,13 @@
 //! certificate has been revoked.
 //!
 //! The check is **fail-open**: if a CRL cannot be fetched or parsed, the
-//! registration proceeds with a warning. The on-chain expiry tracking
+//! registration proceeds with a warning. The onchain expiry tracking
 //! (Step 2) provides a backstop for expired certs.
 //!
 //! **TOCTOU note**: there is an inherent race between the CRL check and the
-//! on-chain registration transaction. A certificate could be added to the
+//! onchain registration transaction. A certificate could be added to the
 //! CRL after the check passes but before the registration lands. This is
-//! acceptable because the on-chain expiry backstop and periodic re-checks
+//! acceptable because the onchain expiry backstop and periodic re-checks
 //! bound the exposure window.
 
 use std::time::Duration;
@@ -62,7 +62,7 @@ pub struct CertCrlInfo {
     pub serial_number: Vec<u8>,
     /// CRL distribution point URL, if present in the certificate.
     pub crl_url: Option<String>,
-    /// Accumulated path digest for this certificate position (for on-chain
+    /// Accumulated path digest for this certificate position (for onchain
     /// `revokeCert` calls).
     pub path_digest: B256,
 }
@@ -72,7 +72,7 @@ impl CertCrlInfo {
     /// DER-encoded chain.
     ///
     /// The certificates must be in chain order: root → intermediates → leaf.
-    /// Path digests are computed identically to the on-chain
+    /// Path digests are computed identically to the onchain
     /// `NitroEnclaveVerifier` accumulation.
     ///
     /// # Errors
@@ -117,7 +117,7 @@ impl CertCrlInfo {
     /// skipping the root (index 0) and the leaf (last index).
     ///
     /// Roots manage their own trust and leaves are short-lived
-    /// (~3 hours), so neither participates in the on-chain
+    /// (~3 hours), so neither participates in the onchain
     /// `_cacheNewCert` rewrite that the durable revocation sentinel
     /// guards against; the AWS CRL layer applies the same scope.
     /// Chains shorter than three certificates yield an empty iterator.
@@ -131,7 +131,7 @@ impl CertCrlInfo {
 pub struct RevokedCertInfo {
     /// Label of the revoked certificate (e.g. "intermediate 1").
     pub label: String,
-    /// Path digest for on-chain `revokeCert()`.
+    /// Path digest for onchain `revokeCert()`.
     pub path_digest: B256,
 }
 
@@ -188,7 +188,7 @@ fn is_allowed_crl_host(url: &str) -> bool {
 /// # Arguments
 ///
 /// * `cert_infos` - Pre-parsed cert chain info, typically produced once per
-///   cycle by [`CertCrlInfo::from_chain`] and shared with the on-chain
+///   cycle by [`CertCrlInfo::from_chain`] and shared with the onchain
 ///   revocation pre-check so the DER parse only happens once.
 /// * `http_client` - HTTP client for fetching CRLs
 pub async fn check_chain_against_crls(

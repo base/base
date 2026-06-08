@@ -31,7 +31,7 @@ pub enum RegistrarError {
     #[error("registry error")]
     Registry(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    /// An on-chain registry contract call failed.
+    /// An onchain registry contract call failed.
     #[error("registry call failed: {context}")]
     RegistryCall {
         /// Description of the call that failed (e.g. `"isValidSigner(0x1234…)"`).
@@ -41,7 +41,7 @@ pub enum RegistrarError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    /// An on-chain `NitroEnclaveVerifier` contract call failed.
+    /// An onchain `NitroEnclaveVerifier` contract call failed.
     #[error("nitro verifier call failed: {context}")]
     NitroVerifierCall {
         /// Description of the call that failed (e.g. `"revokedCerts(0x…)"`).

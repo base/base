@@ -31,7 +31,7 @@ pub enum InstanceHealthStatus {
 }
 
 impl InstanceHealthStatus {
-    /// Returns `true` if the instance should be registered on-chain.
+    /// Returns `true` if the instance should be registered onchain.
     ///
     /// Both `Initial` (AWS warm-up) and `Healthy` instances are candidates for
     /// registration. `Unhealthy` and `Draining` instances are not.
@@ -52,7 +52,7 @@ impl InstanceHealthStatus {
     }
 }
 
-/// A signer currently registered on-chain via `TEEProverRegistry`.
+/// A signer currently registered onchain via `TEEProverRegistry`.
 #[derive(Debug, Clone)]
 pub struct RegisteredSigner {
     /// The signer's Ethereum address.

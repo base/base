@@ -1,7 +1,7 @@
 //! E2E tests for the snapshotter upload flow using `MinIO`.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -9,7 +9,7 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use base_snapshotter::{
-    ContainerManager, DockerContainerManager, SnapshotGenerator, SnapshotUploader,
+    ContainerManager, DockerContainerManager, SnapshotGenerator, SnapshotManifest, SnapshotUploader,
 };
 use bollard::{
     Docker,
@@ -168,6 +168,71 @@ fn create_fake_snapshot(dir: &Path, block: u64) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// Parses a `manifest.json` written into `output_dir` by `create_fake_snapshot`
+/// or `SnapshotGenerator::generate_manifest`.
+fn parse_local_manifest(output_dir: &Path) -> Result<SnapshotManifest> {
+    let bytes = std::fs::read(output_dir.join("manifest.json"))?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+/// Minimal `SnapshotManifest` with no components — for tests that don't
+/// upload any `DiffByHash` chunks and therefore don't need real hashes.
+const fn empty_manifest(block: u64) -> SnapshotManifest {
+    SnapshotManifest {
+        block,
+        chain_id: 8453,
+        storage_version: 2,
+        timestamp: 0,
+        components: BTreeMap::new(),
+    }
+}
+
+/// Builds a `SnapshotManifest` whose chunked components carry per-chunk
+/// `OutputFileChecksum` entries derived from `hash_seed`. Two manifests built
+/// with the same seed will produce identical BLAKE3s for every chunk (→ skip).
+/// Different seeds → mismatch (→ re-upload).
+fn manifest_with_seeded_hashes(
+    block: u64,
+    blocks_per_file: u64,
+    components: &[&str],
+    hash_seed: &str,
+) -> SnapshotManifest {
+    let num_chunks = block.div_ceil(blocks_per_file);
+    let mut comps: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    for &component in components {
+        let chunk_output_files: Vec<serde_json::Value> = (0..num_chunks)
+            .map(|i| {
+                let start = i * blocks_per_file;
+                let end = start + blocks_per_file - 1;
+                serde_json::json!([
+                    {
+                        "path": format!("static_files/static_file_{component}_{start}_{end}"),
+                        "size": 100,
+                        "blake3": format!("{hash_seed}-{component}-{i}-main")
+                    },
+                    {
+                        "path": format!("static_files/static_file_{component}_{start}_{end}.off"),
+                        "size": 100,
+                        "blake3": format!("{hash_seed}-{component}-{i}-off")
+                    }
+                ])
+            })
+            .collect();
+        comps.insert(
+            component.to_string(),
+            serde_json::json!({
+                "blocks_per_file": blocks_per_file,
+                "total_blocks": block,
+                "chunk_sizes": vec![100u64; num_chunks as usize],
+                "chunk_decompressed_sizes": vec![200u64; num_chunks as usize],
+                "chunk_output_files": chunk_output_files,
+                "chunk_skipped": vec![false; num_chunks as usize],
+            }),
+        );
+    }
+    SnapshotManifest { block, chain_id: 8453, storage_version: 2, timestamp: 0, components: comps }
+}
+
 #[tokio::test]
 #[serial]
 async fn upload_artifacts_to_minio() -> Result<()> {
@@ -181,10 +246,10 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let output_dir = tmp.path().join("output");
     let files = create_fake_snapshot(&output_dir, 1_000_000)?;
+    let local_manifest = parse_local_manifest(&output_dir)?;
 
-    let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, &std::collections::HashMap::new())
-        .await?;
+    let upload_prefix =
+        uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;
     assert_eq!(upload_prefix, "mainnet/1700000000", "run prefix should be date-based");
 
     let s3 = &harness.storage_client;
@@ -238,10 +303,10 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let output_dir = tmp.path().join("output");
     let files = create_fake_snapshot(&output_dir, 100)?;
+    let local_manifest = parse_local_manifest(&output_dir)?;
 
-    let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, &std::collections::HashMap::new())
-        .await?;
+    let upload_prefix =
+        uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;
     assert_eq!(upload_prefix, "1700000000", "empty prefix should produce bare date");
 
     let s3 = &harness.storage_client;
@@ -264,9 +329,56 @@ async fn upload_with_empty_prefix() -> Result<()> {
     Ok(())
 }
 
+/// Helper: writes a `manifest.json` and a complete set of fake artifacts to
+/// `output_dir`. The chunked-component sections of the manifest carry BLAKE3
+/// hashes derived from `hash_seed`, so two runs sharing a seed will produce
+/// matching hashes and trigger the `DiffByHash` skip path.
+fn seeded_snapshot(
+    output_dir: &Path,
+    block: u64,
+    blocks_per_file: u64,
+    components: &[&str],
+    hash_seed: &str,
+    chunk_content: &[u8],
+) -> Result<Vec<PathBuf>> {
+    std::fs::create_dir_all(output_dir)?;
+    let manifest = manifest_with_seeded_hashes(block, blocks_per_file, components, hash_seed);
+    std::fs::write(output_dir.join("manifest.json"), serde_json::to_string_pretty(&manifest)?)?;
+    std::fs::write(output_dir.join("state.tar.zst"), b"state-data")?;
+    std::fs::write(output_dir.join("rocksdb_indices.tar.zst"), b"rocksdb-data")?;
+
+    let num_chunks = block.div_ceil(blocks_per_file);
+    for &component in components {
+        for i in 0..num_chunks {
+            let start = i * blocks_per_file;
+            let end = start + blocks_per_file - 1;
+            std::fs::write(
+                output_dir.join(format!("{component}-{start}-{end}.tar.zst")),
+                chunk_content,
+            )?;
+        }
+    }
+
+    let mut files: Vec<PathBuf> = std::fs::read_dir(output_dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file())
+        .collect();
+    files.sort_unstable();
+    Ok(files)
+}
+
+const DIFF_TEST_COMPONENTS: &[&str] = &[
+    "headers",
+    "transactions",
+    "receipts",
+    "account_changesets",
+    "storage_changesets",
+    "transaction_senders",
+];
+
 #[tokio::test]
 #[serial]
-async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
+async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
     let harness = TestHarness::new().await?;
     let s3 = &harness.storage_client;
     let bucket = &harness.bucket_name;
@@ -274,99 +386,175 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
     let uploader = SnapshotUploader::new(
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
-        "diff-test".to_string(),
+        "diff-match".to_string(),
     );
 
-    // Pre-seed static_files/ with finalized chunks from a previous run
-    let preexisting: &[(&str, &[u8])] = &[
-        ("headers-0-499999.tar.zst", b"finalized-headers-0"),
-        ("headers-500000-999999.tar.zst", b"finalized-headers-1"),
-        ("transactions-0-499999.tar.zst", b"finalized-txs-0"),
-        ("transactions-500000-999999.tar.zst", b"finalized-txs-1"),
-        ("receipts-0-499999.tar.zst", b"finalized-receipts-0"),
-        ("receipts-500000-999999.tar.zst", b"finalized-receipts-1"),
-        ("account_changesets-0-499999.tar.zst", b"finalized-acc-cs-0"),
-        ("storage_changesets-0-499999.tar.zst", b"finalized-stor-cs-0"),
-    ];
+    // Pre-seed static_files/ with the prior run's chunks and a previous manifest.json
+    // at {prefix}/1699000000/manifest.json. Both use the same hash seed.
+    let prev_manifest = manifest_with_seeded_hashes(1_000_000, 500_000, DIFF_TEST_COMPONENTS, "v1");
+    s3.put_object()
+        .bucket(bucket)
+        .key("diff-match/1699000000/manifest.json")
+        .body(serde_json::to_vec(&prev_manifest)?.into())
+        .send()
+        .await?;
 
-    for (name, data) in preexisting {
-        let key = format!("diff-test/static_files/{name}");
-        s3.put_object()
-            .bucket(bucket)
-            .key(&key)
-            .body(aws_sdk_s3::primitives::ByteStream::from(data.to_vec()))
-            .send()
-            .await?;
+    for &component in DIFF_TEST_COMPONENTS {
+        for chunk_idx in 0..2u64 {
+            let start = chunk_idx * 500_000;
+            let end = start + 499_999;
+            let key = format!("diff-match/static_files/{component}-{start}-{end}.tar.zst");
+            s3.put_object()
+                .bucket(bucket)
+                .key(&key)
+                .body(aws_sdk_s3::primitives::ByteStream::from(b"old-bytes".to_vec()))
+                .send()
+                .await?;
+        }
     }
+
+    // Generate a new run that produces the SAME hashes (same seed) but with
+    // different on-disk byte content — proves the comparison is hash-based,
+    // not byte-based.
+    let tmp = tempfile::tempdir()?;
+    let output_dir = tmp.path().join("output");
+    let files =
+        seeded_snapshot(&output_dir, 1_000_000, 500_000, DIFF_TEST_COMPONENTS, "v1", b"new-bytes")?;
+    let local_manifest = parse_local_manifest(&output_dir)?;
+    let remote_manifest = uploader.fetch_previous_manifest().await?;
+    assert!(remote_manifest.is_some(), "should find the pre-seeded previous manifest");
+
+    uploader
+        .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
+        .await?;
+
+    // Verify: pre-seeded chunks were NOT overwritten (skipped due to blake3 match).
+    for &component in DIFF_TEST_COMPONENTS {
+        for chunk_idx in 0..2u64 {
+            let start = chunk_idx * 500_000;
+            let end = start + 499_999;
+            let key = format!("diff-match/static_files/{component}-{start}-{end}.tar.zst");
+            let body = get_object_bytes(s3, bucket, &key).await?;
+            assert_eq!(
+                body.as_slice(),
+                b"old-bytes",
+                "chunk {component} {chunk_idx} should have been skipped (blake3 match)"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Result<()> {
+    // This is the core correctness case the PR exists to fix: a chunk whose
+    // contents changed in a way that preserves its archive size. Size-based
+    // diff would skip; hash-based diff must re-upload.
+    let harness = TestHarness::new().await?;
+    let s3 = &harness.storage_client;
+    let bucket = &harness.bucket_name;
+
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "diff-mismatch".to_string(),
+    );
+
+    // Previous run published hashes with seed "v1".
+    let prev_manifest = manifest_with_seeded_hashes(1_000_000, 500_000, DIFF_TEST_COMPONENTS, "v1");
+    s3.put_object()
+        .bucket(bucket)
+        .key("diff-mismatch/1699000000/manifest.json")
+        .body(serde_json::to_vec(&prev_manifest)?.into())
+        .send()
+        .await?;
+
+    for &component in DIFF_TEST_COMPONENTS {
+        for chunk_idx in 0..2u64 {
+            let start = chunk_idx * 500_000;
+            let end = start + 499_999;
+            let key = format!("diff-mismatch/static_files/{component}-{start}-{end}.tar.zst");
+            s3.put_object()
+                .bucket(bucket)
+                .key(&key)
+                .body(aws_sdk_s3::primitives::ByteStream::from(b"corrupted-bytes-x".to_vec()))
+                .send()
+                .await?;
+        }
+    }
+
+    // New run reports DIFFERENT hashes (seed "v2") for the same chunk filenames.
+    // Local chunk bytes are the same length as remote, so size comparison would
+    // have skipped — but blake3 comparison should force a re-upload.
+    let tmp = tempfile::tempdir()?;
+    let output_dir = tmp.path().join("output");
+    let files = seeded_snapshot(
+        &output_dir,
+        1_000_000,
+        500_000,
+        DIFF_TEST_COMPONENTS,
+        "v2",
+        b"healthy-bytes-yyy",
+    )?;
+    assert_eq!(
+        b"healthy-bytes-yyy".len(),
+        b"corrupted-bytes-x".len(),
+        "test fixture must hold size constant"
+    );
+    let local_manifest = parse_local_manifest(&output_dir)?;
+    let remote_manifest = uploader.fetch_previous_manifest().await?;
+
+    uploader
+        .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
+        .await?;
+
+    // Verify every chunk was re-uploaded with the fresh bytes.
+    for &component in DIFF_TEST_COMPONENTS {
+        for chunk_idx in 0..2u64 {
+            let start = chunk_idx * 500_000;
+            let end = start + 499_999;
+            let key = format!("diff-mismatch/static_files/{component}-{start}-{end}.tar.zst");
+            let body = get_object_bytes(s3, bucket, &key).await?;
+            assert_eq!(
+                body.as_slice(),
+                b"healthy-bytes-yyy",
+                "chunk {component} {chunk_idx} should have been re-uploaded despite size match"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let s3 = &harness.storage_client;
+    let bucket = &harness.bucket_name;
+
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "first-run".to_string(),
+    );
 
     let tmp = tempfile::tempdir()?;
     let output_dir = tmp.path().join("output");
-    std::fs::create_dir_all(&output_dir)?;
+    let files = seeded_snapshot(&output_dir, 500_000, 500_000, &["headers"], "v1", b"fresh-chunk")?;
+    let local_manifest = parse_local_manifest(&output_dir)?;
+    let remote_manifest = uploader.fetch_previous_manifest().await?;
+    assert!(remote_manifest.is_none(), "fresh bucket should have no previous manifest");
 
-    let manifest = serde_json::json!({"block": 1_000_000, "chain_id": 8453, "storage_version": 2});
-    std::fs::write(output_dir.join("manifest.json"), serde_json::to_string(&manifest)?)?;
+    uploader
+        .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
+        .await?;
 
-    // AlwaysUpload: mdbx + rocksdb
-    std::fs::write(output_dir.join("state.tar.zst"), b"new-mdbx-state-data")?;
-    std::fs::write(output_dir.join("rocksdb_indices.tar.zst"), b"new-rocksdb-data")?;
-
-    // DiffBySize: finalized chunks with SAME size → should be SKIPPED
-    for &(name, data) in preexisting {
-        std::fs::write(output_dir.join(name), data)?;
-    }
-
-    // DiffBySize: new tip chunks → should be UPLOADED
-    std::fs::write(output_dir.join("headers-1000000-1499999.tar.zst"), b"new-tip-headers")?;
-    std::fs::write(output_dir.join("transactions-1000000-1499999.tar.zst"), b"new-tip-txs")?;
-    std::fs::write(output_dir.join("receipts-1000000-1499999.tar.zst"), b"new-tip-receipts")?;
-    std::fs::write(output_dir.join("account_changesets-500000-999999.tar.zst"), b"new-tip-acc-cs")?;
-    std::fs::write(
-        output_dir.join("storage_changesets-500000-999999.tar.zst"),
-        b"new-tip-stor-cs",
-    )?;
-
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&output_dir)?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.is_file())
-        .collect();
-    files.sort_unstable();
-
-    let remote_listing = uploader.list_remote_static_files().await?;
-    let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, &remote_listing).await?;
-    assert_eq!(upload_prefix, "diff-test/1700000000");
-
-    // Verify AlwaysUpload: mdbx + rocksdb in date dir
-    let state_body = get_object_bytes(s3, bucket, "diff-test/1700000000/state.tar.zst").await?;
-    assert_eq!(state_body, b"new-mdbx-state-data", "mdbx should be in date dir");
-
-    let rocksdb_body =
-        get_object_bytes(s3, bucket, "diff-test/1700000000/rocksdb_indices.tar.zst").await?;
-    assert_eq!(rocksdb_body, b"new-rocksdb-data", "rocksdb should be in date dir");
-
-    // Verify DiffBySize SKIPPED: finalized chunks retain original content in static_files/
-    for (name, original_data) in preexisting {
-        let body = get_object_bytes(s3, bucket, &format!("diff-test/static_files/{name}")).await?;
-        assert_eq!(body.as_slice(), *original_data, "finalized chunk {name} should be unchanged");
-    }
-
-    // Verify DiffBySize UPLOADED: new tip chunks in static_files/
-    let tip_checks: &[(&str, &[u8])] = &[
-        ("headers-1000000-1499999.tar.zst", b"new-tip-headers"),
-        ("transactions-1000000-1499999.tar.zst", b"new-tip-txs"),
-        ("receipts-1000000-1499999.tar.zst", b"new-tip-receipts"),
-        ("account_changesets-500000-999999.tar.zst", b"new-tip-acc-cs"),
-        ("storage_changesets-500000-999999.tar.zst", b"new-tip-stor-cs"),
-    ];
-    for (name, expected) in tip_checks {
-        let body = get_object_bytes(s3, bucket, &format!("diff-test/static_files/{name}")).await?;
-        assert_eq!(body.as_slice(), *expected, "tip chunk {name} should be in static_files/");
-    }
-
-    // Verify manifest in date dir
-    let manifest_body = get_object_bytes(s3, bucket, "diff-test/1700000000/manifest.json").await?;
-    let parsed: serde_json::Value = serde_json::from_slice(&manifest_body)?;
-    assert_eq!(parsed["block"], 1_000_000, "manifest should be in date dir");
+    let body =
+        get_object_bytes(s3, bucket, "first-run/static_files/headers-0-499999.tar.zst").await?;
+    assert_eq!(body.as_slice(), b"fresh-chunk", "static file should be uploaded on first run");
 
     Ok(())
 }
@@ -502,7 +690,7 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
     ];
 
     let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, &std::collections::HashMap::new())
+        .upload(&output_dir, &files, 1_700_000_000, &empty_manifest(2_000_000), None)
         .await?;
     assert_eq!(upload_prefix, "overwrite-test/1700000000");
 
@@ -625,15 +813,15 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let output_dir = tmp.path().join("output");
     let files = create_fake_snapshot(&output_dir, 1_000_000)?;
+    let local_manifest = parse_local_manifest(&output_dir)?;
 
     let uploader = SnapshotUploader::new(
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "e2e-test".to_string(),
     );
-    let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, &std::collections::HashMap::new())
-        .await?;
+    let upload_prefix =
+        uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;
 
     let manifest_body = get_object_bytes(
         &harness.storage_client,

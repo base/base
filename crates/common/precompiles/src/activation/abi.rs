@@ -17,9 +17,6 @@ sol! {
         /// Feature is already activated.
         error AlreadyActivated(bytes32 feature);
 
-        /// Feature is already deactivated.
-        error AlreadyDeactivated(bytes32 feature);
-
         /// Feature is not activated.
         error FeatureNotActivated(bytes32 feature);
 
@@ -31,6 +28,9 @@ sol! {
 
         /// Returns true when `feature` is activated.
         function isActivated(bytes32 feature) external view returns (bool);
+
+        /// Reverts with `FeatureNotActivated` if `feature` is not activated.
+        function checkActivated(bytes32 feature) external view;
 
         /// Returns the activation admin.
         function admin() external view returns (address);

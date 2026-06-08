@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use alloy_consensus::{Header, Sealed, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
@@ -26,9 +26,7 @@ use revm::{
     state::{AccountInfo, EvmState},
 };
 
-use crate::{
-    BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLogs, metrics::Metrics,
-};
+use crate::{BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
@@ -50,7 +48,7 @@ pub struct PendingBlocksBuilder {
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
 
-    bundle_state: BundleState,
+    bundle_state: Option<Arc<BundleState>>,
 
     // Deferred error from `with_transaction` (e.g. duplicate hash). Surfaced from `build()`.
     deferred_error: Option<BuildError>,
@@ -81,7 +79,7 @@ impl PendingBlocksBuilder {
             execution_times: HashMap::new(),
             state_root_times: HashMap::new(),
             state_overrides: None,
-            bundle_state: BundleState::default(),
+            bundle_state: None,
             deferred_error: None,
         }
     }
@@ -170,7 +168,7 @@ impl PendingBlocksBuilder {
     /// Sets the accumulated bundle state.
     #[inline]
     pub fn with_bundle_state(&mut self, bundle_state: BundleState) -> &Self {
-        self.bundle_state = bundle_state;
+        self.bundle_state = Some(Arc::new(bundle_state));
         self
     }
 
@@ -231,7 +229,7 @@ impl PendingBlocksBuilder {
             transaction_state: self.transaction_state,
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
-            bundle_state: self.bundle_state,
+            bundle_state: self.bundle_state.unwrap_or_default(),
             transaction_results: self.transaction_results,
             execution_times: self.execution_times,
             state_root_times: self.state_root_times,
@@ -260,7 +258,7 @@ pub struct PendingBlocks {
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
 
-    bundle_state: BundleState,
+    bundle_state: Arc<BundleState>,
 }
 
 impl PendingBlocks {
@@ -342,19 +340,9 @@ impl PendingBlocks {
         self.transaction_senders.get(tx_hash).copied()
     }
 
-    /// Returns a clone of the bundle state.
-    ///
-    /// NOTE: This clones the entire `BundleState`, which contains a `HashMap` of all touched
-    /// accounts and their storage slots. The cost scales with the number of accounts and
-    /// storage slots modified in the flashblock. Monitor `bundle_state_clone_duration` and
-    /// `bundle_state_clone_size` metrics to track if this becomes a bottleneck.
-    pub fn get_bundle_state(&self) -> BundleState {
-        let size = self.bundle_state.state.len();
-        let start = Instant::now();
-        let cloned = self.bundle_state.clone();
-        Metrics::bundle_state_clone_duration().record(start.elapsed());
-        Metrics::bundle_state_clone_size().record(size as f64);
-        cloned
+    /// Returns a shared reference to the bundle state.
+    pub fn get_bundle_state(&self) -> Arc<BundleState> {
+        Arc::clone(&self.bundle_state)
     }
 
     /// Returns all transactions for a specific block number.

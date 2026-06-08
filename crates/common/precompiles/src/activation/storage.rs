@@ -23,36 +23,26 @@ pub struct ActivationRegistryStorage {
 /// the key when querying or mutating activation state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivationFeature {
-    /// `keccak256("base.b20_token")`
-    B20Token,
-    /// `keccak256("base.b20_factory")`
-    B20Factory,
     /// `keccak256("base.policy_registry")`
     PolicyRegistry,
     /// `keccak256("base.b20_stablecoin")`
     B20Stablecoin,
-    /// `keccak256("base.b20_security")`
-    B20Security,
+    /// `keccak256("base.b20_asset")`
+    B20Asset,
 }
 
 impl ActivationFeature {
     /// Returns the `keccak256` hash that identifies this feature in storage.
     pub const fn id(self) -> B256 {
         match self {
-            Self::B20Token => {
-                b256!("0x47a1afe8d3d691b87e090ee972d223a11f4da971ff5416c04985bb2393aca752")
-            }
-            Self::B20Factory => {
-                b256!("0x78751e29c8bcc0d609ab18e9fbc4158e73f7db25ae2ee095dad42e2578b1e800")
-            }
             Self::PolicyRegistry => {
                 b256!("0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f")
             }
             Self::B20Stablecoin => {
                 b256!("0xecfa0def2c10020caaf65e6155aa69c84b24892aaef76eeac52e0e2b3a0b8601")
             }
-            Self::B20Security => {
-                b256!("0x83d32fab502ae0e8bc4352a117767262cb5e47cc8d67a744008ed4ff03fcf5e6")
+            Self::B20Asset => {
+                b256!("0xcdcc772fe4cbdb1029f822861176d09e646db96723d4c1e82ddfdeb8163ef54c")
             }
         }
     }
@@ -125,7 +115,7 @@ impl ActivationRegistryStorage<'_> {
     pub fn set_activated(
         &mut self,
         feature: B256,
-        activated: bool,
+        to_activated_state: bool,
         activation_admin_address: Option<Address>,
     ) -> Result<()> {
         // Keep this guard at the shared mutation boundary so `activate`, `deactivate`, and direct
@@ -142,20 +132,24 @@ impl ActivationRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
         }
 
-        let current = self.features.at(&feature).read()?;
-        if current == activated {
-            if activated {
-                return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
-                    feature,
-                }));
-            }
+        let current_activated_state = self.features.at(&feature).read()?;
 
+        let is_activating_and_already_activated = to_activated_state && current_activated_state;
+        let is_deactivating_and_already_deactivated =
+            !to_activated_state && !current_activated_state;
+
+        if is_activating_and_already_activated {
+            return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
+                feature,
+            }));
+        }
+        if is_deactivating_and_already_deactivated {
             return Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
                 feature,
             }));
         }
 
-        if activated {
+        if to_activated_state {
             self.__initialize()?;
             self.features.at_mut(&feature).write(true)?;
             self.emit_event(IActivationRegistry::FeatureActivated { feature, caller })?;
@@ -182,7 +176,7 @@ mod tests {
         activation::storage::slots,
     };
 
-    const FEATURE: B256 = ActivationFeature::B20Security.id();
+    const FEATURE: B256 = ActivationFeature::B20Asset.id();
     const ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
     const ACTIVATION_REGISTRY_ROOT: U256 =
         uint!(0x43ee1bbe25e988521cccd8b2c8fbd38c8287ebff8e074e825a70dfd3885cce00_U256);
@@ -281,11 +275,9 @@ mod tests {
 
     #[test]
     fn feature_id_constants_match_canonical_names() {
-        assert_eq!(ActivationFeature::B20Token.id(), keccak256("base.b20_token"));
-        assert_eq!(ActivationFeature::B20Factory.id(), keccak256("base.b20_factory"));
         assert_eq!(ActivationFeature::PolicyRegistry.id(), keccak256("base.policy_registry"));
         assert_eq!(ActivationFeature::B20Stablecoin.id(), keccak256("base.b20_stablecoin"));
-        assert_eq!(ActivationFeature::B20Security.id(), keccak256("base.b20_security"));
+        assert_eq!(ActivationFeature::B20Asset.id(), keccak256("base.b20_asset"));
     }
 
     #[test]
@@ -444,5 +436,52 @@ mod tests {
 
         assert!(!activated_output.is_revert());
         assert!(deactivated_output.is_revert());
+    }
+
+    #[test]
+    fn ensure_activated_succeeds_when_feature_is_active() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        activate_feature(&mut storage).unwrap();
+
+        let result = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).ensure_activated(FEATURE)
+        });
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ensure_activated_reverts_when_feature_never_activated() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        let result = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).ensure_activated(FEATURE)
+        });
+
+        assert_eq!(
+            result.unwrap_err(),
+            BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
+                feature: FEATURE,
+            })
+        );
+    }
+
+    #[test]
+    fn ensure_activated_reverts_after_deactivate() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        activate_feature(&mut storage).unwrap();
+        deactivate_feature(&mut storage).unwrap();
+
+        let result = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).ensure_activated(FEATURE)
+        });
+
+        assert_eq!(
+            result.unwrap_err(),
+            BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
+                feature: FEATURE,
+            })
+        );
     }
 }

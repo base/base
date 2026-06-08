@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn test_zkvm_precompiles_match_beryl_dynamic_installation() {
         let (token_address, _) =
-            B20Variant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
         let installed_addresses = [
             B20FactoryStorage::ADDRESS,
@@ -451,7 +451,9 @@ mod tests {
             token_address,
         ];
 
-        for (upgrade, expected) in [(BaseUpgrade::Azul, false), (BaseUpgrade::Beryl, true)] {
+        for (upgrade, expected) in
+            [(BaseUpgrade::Azul, false), (BaseUpgrade::Beryl, true), (BaseUpgrade::Cobalt, true)]
+        {
             let spec = BaseSpecId::new(upgrade);
             let base_precompiles = BasePrecompiles::new_with_spec(spec).install();
             let zkvm_precompiles = BaseZkvmPrecompiles::new_with_spec(spec);

@@ -11,14 +11,14 @@ use crate::{B20Guards, B20PolicyType, B20TokenRole, IB20, Token, TokenAccounting
 pub trait Mintable: Token {
     /// Creates `amount` tokens at `to`. Enforces supply cap. Emits `Transfer(0x0, to, amount)`.
     fn mint(&mut self, caller: Address, to: Address, amount: U256, privileged: bool) -> Result<()> {
-        if to == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
-        }
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
         }
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
         B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
         let supply = self.accounting().total_supply()?;
         let cap = self.accounting().supply_cap()?;
         let new_supply =
@@ -56,6 +56,7 @@ pub trait Mintable: Token {
 mod tests {
     use alloy_primitives::{Address, U256};
     use base_precompile_storage::BasePrecompileError;
+    use rstest::rstest;
 
     use crate::{
         B20PausableFeature, B20PolicyType, B20TokenRole, IB20, InMemoryPolicy,
@@ -137,19 +138,6 @@ mod tests {
     }
 
     #[test]
-    fn non_privileged_mint_without_role_reverts() {
-        let mut token = make_token();
-
-        assert_eq!(
-            token.mint(CALLER, ALICE, U256::ONE, false).unwrap_err(),
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: CALLER,
-                neededRole: B20TokenRole::Mint.id(),
-            })
-        );
-    }
-
-    #[test]
     fn non_privileged_mint_with_role_succeeds() {
         let mut token = token_with_role(B20TokenRole::Mint, CALLER);
 
@@ -162,6 +150,23 @@ mod tests {
     fn mint_reverts_when_mint_feature_paused() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.mint(CALLER, ALICE, U256::ONE, true).unwrap_err(),
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::MINT,
+            })
+        );
+    }
+
+    #[test]
+    fn mint_paused_gets_pause_error_not_policy_error() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::MintReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
@@ -187,5 +192,66 @@ mod tests {
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );
+    }
+
+    #[rstest]
+    #[case::paused_without_role_gets_pause_error(
+        true,         // paused
+        false,        // has_role
+        ALICE,        // to
+        false,        // privileged
+        false,        // policy_blocks
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::MINT })
+    )]
+    #[case::paused_privileged_gets_pause_error(
+        true,         // paused
+        true,         // has_role
+        ALICE,        // to
+        true,         // privileged
+        false,        // policy_blocks
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::MINT })
+    )]
+    #[case::role_before_zero_addr_for_non_privileged(
+        false,        // paused
+        false,        // has_role
+        Address::ZERO,// to
+        false,        // privileged
+        false,        // policy_blocks
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: CALLER,
+            neededRole: B20TokenRole::Mint.id(),
+        })
+    )]
+    #[case::zero_addr_before_policy(
+        false,        // paused
+        true,         // has_role
+        Address::ZERO,// to
+        true,         // privileged
+        true,         // policy_blocks
+        BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+    )]
+    fn mint_guard_ordering(
+        #[case] paused: bool,
+        #[case] has_role: bool,
+        #[case] to: Address,
+        #[case] privileged: bool,
+        #[case] policy_blocks: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        if paused {
+            accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
+        }
+        if has_role {
+            accounting.roles.insert((B20TokenRole::Mint.id(), CALLER), true);
+        }
+        if policy_blocks {
+            accounting
+                .policy_ids
+                .insert(B20PolicyType::MintReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        }
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(token.mint(CALLER, to, U256::ONE, privileged).unwrap_err(), expected_error);
     }
 }
