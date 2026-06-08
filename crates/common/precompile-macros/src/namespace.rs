@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, LitStr};
 
-use crate::utils::{attr_path_is, parse_namespace_id};
+use crate::utils::attr_path_is;
 
 pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     match expand_impl(attr.into(), item.into()) {
@@ -20,19 +20,17 @@ fn expand_impl(
     let namespace_id: LitStr = syn::parse2(attr)?;
     let mut input: DeriveInput = syn::parse2(item)?;
 
-    parse_namespace_id(namespace_id.clone())?;
-
     if input.attrs.iter().any(|attr| {
         attr_path_is(attr.path(), "namespace") || attr_path_is(attr.path(), "storage_namespace")
     }) {
         return Err(syn::Error::new_spanned(&input.ident, "duplicate `namespace` attribute"));
     }
 
-    if let Some(contract_index) =
-        input.attrs.iter().position(|attr| attr_path_is(attr.path(), "contract"))
-    {
-        input.attrs.insert(contract_index + 1, syn::parse_quote!(#[namespace(#namespace_id)]));
-        return Ok(quote! { #input });
+    if input.attrs.iter().any(|attr| attr_path_is(attr.path(), "contract")) {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`#[namespace]` must be placed below `#[contract]` on contract storage layouts",
+        ));
     }
 
     if has_storable_derive(&input)? {
@@ -42,7 +40,7 @@ fn expand_impl(
 
     Err(syn::Error::new_spanned(
         &input.ident,
-        "`#[namespace]` must be paired with `#[contract]` or `#[derive(Storable)]`",
+        "`#[namespace]` must be paired with `#[derive(Storable)]` or placed below `#[contract]`",
     ))
 }
 

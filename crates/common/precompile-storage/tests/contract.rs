@@ -661,27 +661,3 @@ mod packed_slot_layout {
         });
     }
 }
-
-mod namespace_outer_order {
-    use alloy_primitives::{Address, U256, address, uint};
-    use base_precompile_macros::{contract, namespace};
-
-    const ORDER_ADDR: Address = address!("0000000000000000000000000000000000005678");
-
-    #[namespace("b20.outer-order")]
-    #[contract(addr = ORDER_ADDR)]
-    pub struct OuterOrderStorage {
-        pub value: U256,
-    }
-
-    #[test]
-    fn namespace_macro_reorders_above_contract() {
-        assert_eq!(ORDER_ADDR, address!("0000000000000000000000000000000000005678"));
-        assert_eq!(slots::NAMESPACE_ID, "b20.outer-order");
-        assert_eq!(
-            slots::NAMESPACE_ROOT,
-            uint!(0xf06e16fd945cfdfdb627e60cabea1fb8bb965382c21574655d1e8bb28bdfcf00_U256)
-        );
-        assert_eq!(slots::VALUE, slots::NAMESPACE_ROOT);
-    }
-}
