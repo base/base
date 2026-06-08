@@ -16,7 +16,7 @@ use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::ITEEProverRegistry;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
-use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
+use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::StreamExt;
 use rand::random;
 use tokio::{
@@ -28,8 +28,8 @@ use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
-    ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result,
-    SignerClient,
+    ProofHandler, ProofHandlerConfig, ProofHandlerContext, ProofHandlerRequest, ProverClient,
+    ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result, SignerClient,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -278,29 +278,6 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// registrar (or a prior deployment) wrote the signer.
     /// Entries are never evicted — bounded by historic fleet size.
     signer_history: Arc<Mutex<HashMap<Address, String>>>,
-}
-
-/// RAII guard that removes a signer address from [`RegistrationDriver::in_flight_registrations`]
-/// when dropped.
-///
-/// Ensures cleanup on every exit path from `try_register` — success,
-/// error, retry-exhaustion, cancellation drop, and panic — so a failed
-/// or cancelled registration does not permanently block future attempts
-/// for the same signer.
-struct InFlightGuard {
-    in_flight: Arc<Mutex<HashSet<Address>>>,
-    signer: Address,
-}
-
-impl Drop for InFlightGuard {
-    fn drop(&mut self) {
-        // The critical section is a single `HashSet::remove` and cannot
-        // panic under normal conditions, so poisoning is effectively
-        // impossible. If it ever occurs, the set contents are still
-        // valid and cleanup must proceed.
-        let mut set = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
-        set.remove(&self.signer);
-    }
 }
 
 impl<D, P, R, T, S> fmt::Debug for RegistrationDriver<D, P, R, T, S> {
@@ -699,360 +676,30 @@ where
         attestation_bytes: &[u8],
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
-        // Check cancellation BEFORE any other work: a task that was
-        // already cancelled (e.g. its signer just vanished from
-        // discovery, or shutdown started) shouldn't acquire the
-        // in-flight mutex or do registry RPC work. This bounds
-        // shutdown latency by the longest in-flight operation rather
-        // than by an additional registry round-trip per pending task
-        // (audit finding #8).
-        if signer_cancel.is_cancelled() {
-            debug!(signer = %signer_address, "task cancelled before registry probe");
-            return Ok(());
-        }
-
-        // Reserve this signer in the in-flight set before the
-        // `is_registered` precheck. If another concurrent task already
-        // owns it — e.g. a sibling `process_instance` future for a
-        // different prover instance that happens to back the same
-        // enclave signing key during a rotation — short-circuit so we
-        // don't race past the TOCTOU `is_registered` check, regenerate
-        // the proof, and submit a duplicate registration transaction.
-        //
-        // This is a defence-in-depth backstop to the [`Self::run`]
-        // spawn loop's task-spawn-time dedupe (`in_flight: HashSet<Address>`),
-        // catching any caller path that bypasses the spawn loop.
-        //
-        // The guard is held across the entire registration (including
-        // the ~20 minute Boundless proof generation and the onchain
-        // confirmation wait) and is released via RAII on every exit
-        // path: success, error, retry-exhaustion, cancellation drop,
-        // and panic.
-        let _in_flight = {
-            let mut set = self.in_flight_registrations.lock().unwrap_or_else(|e| e.into_inner());
-            if !set.insert(signer_address) {
-                debug!(
-                    signer = %signer_address,
-                    enclave_index,
-                    instance = %instance.instance_id,
-                    "registration already in flight for this signer, skipping duplicate",
-                );
-                return Ok(());
-            }
-            InFlightGuard {
-                in_flight: Arc::clone(&self.in_flight_registrations),
-                signer: signer_address,
-            }
+        let handler_config = ProofHandlerConfig {
+            registry_address: self.config.registry_address,
+            max_tx_retries: self.config.max_tx_retries,
+            tx_retry_delay: self.config.tx_retry_delay,
         };
 
-        // Cancel-aware: `is_registered` is a side-effect-free read, so
-        // dropping it on cancel is safe (no nonce risk, no onchain
-        // state mutation). Without this select, a shutdown during the
-        // registry RPC would extend drain latency by an entire
-        // round-trip per pending task.
-        let already_registered = tokio::select! {
-            biased;
-            () = signer_cancel.cancelled() => {
-                debug!(
-                    signer = %signer_address,
-                    "cancelled while probing registry pre-proof-gen"
-                );
-                return Ok(());
-            }
-            res = self.registry.is_registered(signer_address) => res?,
-        };
-        if already_registered {
-            debug!(signer = %signer_address, "already registered, skipping");
-            return Ok(());
-        }
-
-        // Check cancellation before the most expensive operation (proof generation
-        // can take minutes via Boundless).
-        if signer_cancel.is_cancelled() {
-            debug!("shutdown requested, skipping proof generation");
-            return Ok(());
-        }
-
-        info!(
-            signer = %signer_address,
-            enclave_index,
-            instance = %instance.instance_id,
-            "generating proof for unregistered signer"
-        );
-
-        // Acquire a proof-concurrency permit. Bounds the number of
-        // simultaneous Boundless/Direct proof generations across all
-        // spawned tasks to [`DriverConfig::max_concurrency`], matching the
-        // discovery/resolve concurrency bound. Held until `_permit` drops
-        // at the end of this scope (after proof gen + the tx send loop).
-        // Cancellation while waiting on a permit is a clean exit.
-        let _permit = tokio::select! {
-            biased;
-            () = signer_cancel.cancelled() => {
-                debug!(
-                    signer = %signer_address,
-                    instance = %instance.instance_id,
-                    "task cancelled before acquiring proof permit"
-                );
-                return Ok(());
-            }
-            permit = Arc::clone(&self.proof_semaphore).acquire_owned() => {
-                // `acquire_owned` only errors when the semaphore is
-                // closed; we never call `close()`, so this branch should
-                // be unreachable. Treat it as a clean exit rather than a
-                // panic so a future refactor that introduces `close()`
-                // (or pulls in a third-party semaphore wrapper) cannot
-                // crash the registration driver loop.
-                match permit {
-                    Ok(p) => p,
-                    Err(_) => {
-                        warn!(
-                            signer = %signer_address,
-                            instance = %instance.instance_id,
-                            "proof semaphore closed unexpectedly, exiting task"
-                        );
-                        return Ok(());
-                    }
-                }
-            }
-        };
-
-        // Cooperative cancel-safety around the long-running proof.
-        //
-        // `signer_cancel` is a child of the driver's global cancel token,
-        // so a process-wide shutdown or a `reconcile_proof_tasks` decision
-        // (instance vanished / no longer registerable) both reach us here.
-        // Biased select! checks the token first to bound wake latency.
-        //
-        // Dropping the `generate_proof_for_signer` future on cancel may
-        // abandon work the impl had already started (see provider docs);
-        // for `DirectProver` this leaks a `spawn_blocking` until the
-        // backend completes, and for `BoundlessProver` any already-submitted
-        // offchain request is recoverable via the deterministic
-        // request-id derivation on the next call.
-        //
-        // Race window: the biased `select!` polls the cancel branch first,
-        // but if the token fires *between* that poll and the provider's own
-        // internal `cancel.is_cancelled()` check, the provider returns an
-        // `Err` that we must not propagate as a task failure (it would
-        // violate the `PendingRegistration` "cancelled task always
-        // returns `Ok(signer)`" contract and bump `processing_errors_total`
-        // for a clean cancel).
-        // The `Err(_) if signer_cancel.is_cancelled()` arm closes that gap.
-        //
-        // Invariant: the token forwarded to the provider MUST be the
-        // same `signer_cancel` the outer arm polls — the guard observes
-        // provider-side cancel-fires through that shared state. A future
-        // refactor that passed a child token to the provider (e.g. for
-        // per-provider tighter scoping) would silently break this guard
-        // because `signer_cancel.is_cancelled()` would stay `false` when
-        // only the child fired.
-        let proof = tokio::select! {
-            biased;
-            () = signer_cancel.cancelled() => {
-                debug!(
-                    signer = %signer_address,
-                    instance = %instance.instance_id,
-                    "task cancelled during proof generation"
-                );
-                return Ok(());
-            }
-            res = self.proof_provider.generate_proof_for_signer(attestation_bytes, signer_address, signer_cancel) => {
-                match res {
-                    Ok(p) => p,
-                    Err(_) if signer_cancel.is_cancelled() => {
-                        debug!(
-                            signer = %signer_address,
-                            instance = %instance.instance_id,
-                            "task cancelled during proof generation (provider returned Err after cancel)",
-                        );
-                        return Ok(());
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            }
-        };
-
-        // Check cancellation before submitting the transaction — avoid starting
-        // new onchain work if shutdown is in progress.
-        if signer_cancel.is_cancelled() {
-            debug!("shutdown requested, skipping transaction submission");
-            return Ok(());
-        }
-
-        let calldata = Bytes::from(
-            ITEEProverRegistry::registerSignerCall {
-                output: proof.output,
-                proofBytes: proof.proof_bytes,
-            }
-            .abi_encode(),
-        );
-
-        info!(
-            signer = %signer_address,
-            instance = %instance.instance_id,
-            registry = %self.config.registry_address,
-            calldata_len = calldata.len(),
-            "Registering signer"
-        );
-
-        let candidate = TxCandidate {
-            tx_data: calldata,
-            to: Some(self.config.registry_address),
-            ..Default::default()
-        };
-
-        info!(
-            tx = ?candidate,
-            "Sending tx candidate",
-        );
-
-        // Retry tx submission on transient errors to avoid discarding an
-        // expensive proof (~20 min Boundless generation) on a nonce race
-        // or brief network blip.
-        //
-        // Only errors that `TxManagerError::is_retryable()` considers
-        // transient are retried.  Deterministic failures (execution
-        // reverted, insufficient funds, config errors, fee limits, etc.)
-        // abort immediately since retrying with the same calldata and
-        // state cannot succeed.
-        let max_tx_retries = self.config.max_tx_retries;
-        let tx_retry_delay = self.config.tx_retry_delay;
-        let mut tx_retries = 0;
-
-        let receipt = loop {
-            // Check cancellation at the top of each iteration to avoid
-            // starting new onchain work after shutdown is requested.
-            //
-            // IMPORTANT: we never wrap `tx_manager.send()` itself in a
-            // `select!` against `signer_cancel` — dropping `send()` after
-            // nonce acquisition but before broadcast leaves a nonce gap
-            // (see `NonceGuard::Drop` which does not roll back).
-            if signer_cancel.is_cancelled() {
-                debug!("shutdown requested, aborting tx submission");
-                return Ok(());
-            }
-
-            match self.tx_manager.send(candidate.clone()).await {
-                Ok(receipt) => break receipt,
-                Err(e) => {
-                    // The signer may already be registered despite the error
-                    // (e.g. the tx was mined but the tx manager reported a
-                    // nonce race during fee bumping). Check onchain state.
-                    //
-                    // Cancel-aware: side-effect-free read; safe to drop on
-                    // cancel. The surrounding retry loop's top-of-iter
-                    // `signer_cancel.is_cancelled()` check already bounds
-                    // latency to one in-flight tx send, but a stalled
-                    // registry RPC here would still extend drain by an
-                    // entire round-trip per failed-tx retry.
-                    let post_err_check = tokio::select! {
-                        biased;
-                        () = signer_cancel.cancelled() => {
-                            debug!(
-                                signer = %signer_address,
-                                "cancelled while verifying post-tx-error registration state"
-                            );
-                            return Ok(());
-                        }
-                        res = self.registry.is_registered(signer_address) => res,
-                    };
-                    match post_err_check {
-                        Ok(true) => {
-                            info!(
-                                signer = %signer_address,
-                                error = %e,
-                                "tx error but signer is registered onchain, treating as success"
-                            );
-                            RegistrarMetrics::registrations_total().increment(1);
-                            return Ok(());
-                        }
-                        Err(registry_err) => {
-                            warn!(
-                                error = %registry_err,
-                                signer = %signer_address,
-                                "failed to query is_registered after tx error"
-                            );
-                        }
-                        Ok(false) => {}
-                    }
-
-                    // Non-retryable errors (execution reverts, insufficient
-                    // funds, config errors, fee limits, etc.) cannot be
-                    // resolved by retrying with the same calldata.
-                    if !e.is_retryable() {
-                        // If the contract reverted execution, the proof
-                        // itself is likely invalid (wrong image ID, stale
-                        // attestation, etc.). Block recovery for this
-                        // signer so the next cycle generates a fresh
-                        // proof instead of re-recovering the same one.
-                        if matches!(e, TxManagerError::ExecutionReverted { .. }) {
-                            warn!(
-                                signer = %signer_address,
-                                "execution reverted, blocking proof recovery for signer"
-                            );
-                            self.proof_provider.block_recovery_for_signer(signer_address);
-                        }
-                        return Err(RegistrarError::from(e));
-                    }
-
-                    tx_retries += 1;
-                    if tx_retries > max_tx_retries {
-                        return Err(RegistrarError::from(e));
-                    }
-
-                    warn!(
-                        error = %e,
-                        signer = %signer_address,
-                        retry = tx_retries,
-                        max_retries = max_tx_retries,
-                        "tx submission failed, retrying with same proof"
-                    );
-
-                    // Cancellation-aware delay: abort immediately if
-                    // shutdown is requested during the retry wait.
-                    tokio::select! {
-                        biased;
-                        () = signer_cancel.cancelled() => {
-                            // Cooperative cancel during the retry wait is
-                            // a clean exit, not a task failure — match the
-                            // `PendingRegistration` doc contract ("returns
-                            // `Ok(signer)` when it observes the cancel").
-                            // The underlying
-                            // tx error is logged for context; the next
-                            // discovery cycle will respawn if still wanted.
-                            debug!(
-                                error = %e,
-                                signer = %signer_address,
-                                "shutdown requested during retry delay; abandoning task"
-                            );
-                            return Ok(());
-                        }
-                        () = tokio::time::sleep(tx_retry_delay) => {}
-                    }
-                }
-            }
-        };
-
-        if !receipt.inner.status() {
-            warn!(
-                signer = %signer_address,
-                tx_hash = %receipt.transaction_hash,
-                "registration transaction reverted onchain",
-            );
-            return Err(RegistrarError::Transaction(
-                format!("registration transaction {} reverted", receipt.transaction_hash,).into(),
-            ));
-        }
-
-        info!(
-            signer = %signer_address,
-            tx_hash = %receipt.transaction_hash,
-            "signer registered successfully"
-        );
-        RegistrarMetrics::registrations_total().increment(1);
-
-        Ok(())
+        ProofHandler::register_signer(
+            ProofHandlerContext {
+                proof_provider: &self.proof_provider,
+                registry: &self.registry,
+                tx_manager: &self.tx_manager,
+                proof_semaphore: self.proof_semaphore.as_ref(),
+                in_flight_registrations: &self.in_flight_registrations,
+                config: &handler_config,
+            },
+            ProofHandlerRequest {
+                instance,
+                signer_address,
+                enclave_index,
+                attestation_bytes,
+                signer_cancel,
+            },
+        )
+        .await
     }
 
     /// Resolves the signer addresses for a single instance and decides
