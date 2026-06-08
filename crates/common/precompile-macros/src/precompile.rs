@@ -188,7 +188,8 @@ impl Parse for InstallConfig {
         input.parse::<Token![=]>()?;
         let address = input.parse()?;
 
-        if !input.is_empty() && !input.peek(Token![,]) {
+        let has_non_comma_remainder = !input.is_empty() && !input.peek(Token![,]);
+        if has_non_comma_remainder {
             return Err(syn::Error::new(input.span(), "unexpected `install` option"));
         }
         if !input.is_empty() {
