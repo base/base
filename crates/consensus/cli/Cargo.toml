@@ -29,7 +29,6 @@ base-consensus-disc = { workspace = true, features = ["metrics"] }
 base-consensus-node = { workspace = true, features = ["metrics"] }
 base-consensus-providers = { workspace = true, features = ["metrics"] }
 reth-node-core.workspace = true
-reth-tracing-otlp = { workspace = true, optional = true }
 
 # alloy
 alloy-signer.workspace = true
@@ -55,7 +54,6 @@ tokio-util.workspace = true
 
 # tracing
 tracing = { workspace = true, features = ["std"] }
-tracing-subscriber.workspace = true
 
 # misc
 eyre.workspace = true
@@ -63,8 +61,7 @@ dirs.workspace = true
 strum.workspace = true
 metrics.workspace = true
 serde.workspace = true
-opentelemetry.workspace = true
-opentelemetry_sdk.workspace = true
+
 thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 
@@ -74,8 +71,4 @@ tempfile.workspace = true
 
 [features]
 default = [ "otlp" ]
-otlp = [
-	"dep:reth-tracing-otlp",
-	"reth-node-core/otlp",
-	"reth-tracing-otlp/otlp",
-]
+otlp = [ "base-cli-utils/otlp", "reth-node-core/otlp" ]

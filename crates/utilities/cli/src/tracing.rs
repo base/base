@@ -109,6 +109,43 @@ impl LogConfig {
         self.init_tracing_subscriber_with_filter_and_extra_layer(filter, None)
     }
 
+    /// Initialize the tracing subscriber with [`reth_node_core::args::TraceArgs`] OTLP export.
+    ///
+    /// Registers the W3C `TraceContextPropagator`, builds an optional OTLP span layer from
+    /// `trace_args`, and initializes the subscriber with the given noise-suppression directives.
+    /// This is the preferred entry point for binaries that want OTLP support.
+    pub fn init_with_trace_args(
+        &self,
+        trace_args: &mut reth_node_core::args::TraceArgs,
+        directives: &[&str],
+    ) -> eyre::Result<()> {
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+        );
+
+        let otlp_layer: Option<Box<dyn Layer<Registry> + Send + Sync>> = {
+            #[cfg(feature = "otlp")]
+            if let Some(mut endpoint) = trace_args.otlp.clone() {
+                trace_args.protocol.validate_endpoint(&mut endpoint)?;
+                let config = reth_tracing_otlp::OtlpConfig::new(
+                    trace_args.service_name.clone(),
+                    endpoint,
+                    trace_args.protocol,
+                    trace_args.sample_ratio,
+                )?;
+                let layer = reth_tracing_otlp::span_layer(config)?
+                    .with_filter(trace_args.otlp_filter.clone());
+                Some(Box::new(layer))
+            } else {
+                None
+            }
+            #[cfg(not(feature = "otlp"))]
+            None
+        };
+
+        self.init_tracing_subscriber_with_directives_and_extra_layer(directives, otlp_layer)
+    }
+
     fn build_filter_from_directives(&self, directives: &[&str]) -> EnvFilter {
         let mut filter = EnvFilter::builder()
             .with_default_directive(self.global_level.into())

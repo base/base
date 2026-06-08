@@ -14,7 +14,6 @@ use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
-use tracing_subscriber::Layer;
 use url::Url;
 
 use crate::{
@@ -54,35 +53,9 @@ pub struct ConsensusNodeCommand {
 
 impl ConsensusNodeCommand {
     /// Runs the standalone consensus node command.
-    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        opentelemetry::global::set_text_map_propagator(
-            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-        );
-
-        let log_config = LogConfig::from(self.logging.clone());
-        let otlp_layer: Option<Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync>> = {
-            #[cfg(feature = "otlp")]
-            if let Some(mut endpoint) = self.traces.otlp.clone() {
-                self.traces.protocol.validate_endpoint(&mut endpoint)?;
-                let config = reth_tracing_otlp::OtlpConfig::new(
-                    self.traces.service_name.clone(),
-                    endpoint,
-                    self.traces.protocol,
-                    self.traces.sample_ratio,
-                )?;
-                let layer = reth_tracing_otlp::span_layer(config)?
-                    .with_filter(self.traces.otlp_filter.clone());
-                Some(Box::new(layer))
-            } else {
-                None
-            }
-            #[cfg(not(feature = "otlp"))]
-            None
-        };
-        log_config.init_tracing_subscriber_with_directives_and_extra_layer(
-            &["libp2p_gossipsub=error"],
-            otlp_layer,
-        )?;
+    pub fn run(mut self, chain: ConsensusChainArgs) -> eyre::Result<()> {
+        LogConfig::from(self.logging.clone())
+            .init_with_trace_args(&mut self.traces, &["libp2p_gossipsub=error"])?;
 
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
