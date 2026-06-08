@@ -2,18 +2,12 @@
 
 use std::io::{self, Write};
 
-use alloy_provider::{
-    ProviderBuilder,
-    ext::{AdminApi, NetApi},
-};
-use anyhow::{Context, Result, anyhow};
-use base_common_network::Base;
-use base_consensus_rpc::BaseP2PApiClient;
+use anyhow::{Result, anyhow};
 use basectl_cli::{
     JsonOutput, KeyValueTable, MonitoringConfig, NodeEndpoint, PeerListReport, PeerStatsReport,
-    PeerSummary, fetch_connected_peers, fetch_node_info, fetch_peer_stats,
+    PeerSummary, fetch_connected_peers, fetch_node_info, fetch_peer_stats, fetch_raw_info,
+    fetch_raw_peers,
 };
-use jsonrpsee::http_client::HttpClientBuilder;
 use serde::Serialize;
 use url::Url;
 
@@ -159,108 +153,6 @@ impl PeersJson {
     fn from_report(network: &str, report: &PeerListReport) -> Self {
         Self { network: network.to_string(), el: report.el.clone(), cl: report.cl.clone() }
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RawInfoJson {
-    el: Option<serde_json::Value>,
-    el_error: Option<String>,
-    cl: serde_json::Value,
-    peer_counts: RawPeerCountsJson,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RawPeerCountsJson {
-    el: u64,
-    cl: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RawPeersJson {
-    el: Option<serde_json::Value>,
-    el_error: Option<String>,
-    cl: serde_json::Value,
-}
-
-async fn fetch_raw_info(el_rpc: &Url, cl_rpc: &Url) -> Result<RawInfoJson> {
-    let cl_client = HttpClientBuilder::default()
-        .build(cl_rpc.as_str())
-        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
-    let el_provider = ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Base>()
-        .connect(el_rpc.as_str())
-        .await
-        .with_context(|| format!("connecting to EL RPC at {el_rpc}"))?;
-    let (el, cl_info, el_count, cl_stats) = tokio::try_join!(
-        async {
-            match el_provider.node_info().await {
-                Ok(info) => Ok((Some(serde_json::to_value(&info)?), None)),
-                Err(err) if err.to_string().contains("error code -32601") => {
-                    Ok((None, Some("EL `admin_nodeInfo` not exposed by this RPC".to_string())))
-                }
-                Err(err) => {
-                    Err(err).with_context(|| format!("fetching admin_nodeInfo from {el_rpc}"))
-                }
-            }
-        },
-        async {
-            BaseP2PApiClient::opp2p_self(&cl_client)
-                .await
-                .with_context(|| format!("fetching opp2p_self from {cl_rpc}"))
-        },
-        async {
-            el_provider
-                .net_peer_count()
-                .await
-                .with_context(|| format!("fetching net_peerCount from {el_rpc}"))
-        },
-        async {
-            BaseP2PApiClient::opp2p_peer_stats(&cl_client)
-                .await
-                .with_context(|| format!("fetching opp2p_peerStats from {cl_rpc}"))
-        },
-    )?;
-
-    Ok(RawInfoJson {
-        el: el.0,
-        el_error: el.1,
-        cl: serde_json::to_value(&cl_info)?,
-        peer_counts: RawPeerCountsJson { el: el_count, cl: serde_json::to_value(cl_stats)? },
-    })
-}
-
-async fn fetch_raw_peers(el_rpc: &Url, cl_rpc: &Url) -> Result<RawPeersJson> {
-    let cl_client = HttpClientBuilder::default()
-        .build(cl_rpc.as_str())
-        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
-    let el_provider = ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Base>()
-        .connect(el_rpc.as_str())
-        .await
-        .with_context(|| format!("connecting to EL RPC at {el_rpc}"))?;
-    let (el, cl_peers) = tokio::try_join!(
-        async {
-            match el_provider.peers().await {
-                Ok(peers) => Ok((Some(serde_json::to_value(&peers)?), None)),
-                Err(err) if err.to_string().contains("error code -32601") => {
-                    Ok((None, Some("EL `admin_peers` not exposed by this RPC".to_string())))
-                }
-                Err(err) => Err(err).with_context(|| format!("fetching admin_peers from {el_rpc}")),
-            }
-        },
-        async {
-            BaseP2PApiClient::opp2p_peers(&cl_client, true)
-                .await
-                .with_context(|| format!("fetching opp2p_peers(true) from {cl_rpc}"))
-        },
-    )?;
-
-    Ok(RawPeersJson { el: el.0, el_error: el.1, cl: serde_json::to_value(&cl_peers)? })
 }
 
 fn print_info_pretty(
