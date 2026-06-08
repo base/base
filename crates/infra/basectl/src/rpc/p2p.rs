@@ -6,7 +6,9 @@ use alloy_provider::{
     Provider, ProviderBuilder,
     ext::{AdminApi, NetApi},
 };
+use alloy_rpc_client::RpcClient;
 use alloy_transport::TransportError;
+use alloy_transport_http::Http;
 use anyhow::{Context, Result, anyhow};
 use base_common_network::Base;
 use base_consensus_gossip::PeerStats;
@@ -14,6 +16,7 @@ use base_consensus_peers::{BootNode, NodeRecord};
 use base_consensus_rpc::BaseP2PApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use serde::Serialize;
+use tracing::warn;
 use url::Url;
 
 /// Advertised discovery endpoint information for a node.
@@ -133,13 +136,19 @@ pub async fn fetch_info(rpc: &Url, cl_rpc: &Url) -> Result<(NodeInfoReport, Peer
     let (el, cl_info, el_count, cl_stats) = tokio::try_join!(
         async {
             match el_provider.node_info().await {
-                Ok(info) => Ok(Some(parse_el_node_endpoint(
+                Ok(info) => match parse_el_node_endpoint(
                     &info.enode,
                     &info.enr,
                     info.ip,
                     info.ports.discovery,
                     info.ports.listener,
-                )?)),
+                ) {
+                    Ok(endpoint) => Ok(Some(endpoint)),
+                    Err(err) => {
+                        warn!(error = %err, "failed to parse EL node endpoint; reporting EL as unavailable");
+                        Ok(None)
+                    }
+                },
                 Err(err) if is_method_not_found(&err) => Ok(None),
                 Err(err) => Err(err).with_context(|| format!("fetching admin_nodeInfo from {rpc}")),
             }
@@ -221,7 +230,7 @@ pub async fn fetch_connected_peers(rpc: &Url, cl_rpc: &Url) -> Result<PeerListRe
 pub async fn fetch_raw_info(rpc: &Url, cl_rpc: &Url) -> Result<RawInfoReport> {
     let (cl_client, el_provider) = connect_layers(rpc, cl_rpc).await?;
 
-    let (el, cl_info, el_count, cl_stats) = tokio::try_join!(
+    let ((el_value, el_error), cl_info, el_count, cl_stats) = tokio::try_join!(
         async {
             match el_provider.node_info().await {
                 Ok(info) => Ok((
@@ -256,8 +265,8 @@ pub async fn fetch_raw_info(rpc: &Url, cl_rpc: &Url) -> Result<RawInfoReport> {
     )?;
 
     Ok(RawInfoReport {
-        el: el.0,
-        el_error: el.1,
+        el: el_value,
+        el_error,
         cl: serde_json::to_value(&cl_info).context("serializing opp2p_self to JSON value")?,
         peer_counts: RawPeerCounts {
             el: el_count,
@@ -271,7 +280,7 @@ pub async fn fetch_raw_info(rpc: &Url, cl_rpc: &Url) -> Result<RawInfoReport> {
 pub async fn fetch_raw_peers(rpc: &Url, cl_rpc: &Url) -> Result<RawPeersReport> {
     let (cl_client, el_provider) = connect_layers(rpc, cl_rpc).await?;
 
-    let (el, cl_peers) = tokio::try_join!(
+    let ((el_value, el_error), cl_peers) = tokio::try_join!(
         async {
             match el_provider.peers().await {
                 Ok(peers) => Ok((
@@ -295,8 +304,8 @@ pub async fn fetch_raw_peers(rpc: &Url, cl_rpc: &Url) -> Result<RawPeersReport> 
     )?;
 
     Ok(RawPeersReport {
-        el: el.0,
-        el_error: el.1,
+        el: el_value,
+        el_error,
         cl: serde_json::to_value(&cl_peers).context("serializing opp2p_peers to JSON value")?,
     })
 }
@@ -307,12 +316,15 @@ async fn connect_layers(rpc: &Url, cl_rpc: &Url) -> Result<(HttpClient, impl Pro
         .request_timeout(Duration::from_secs(10))
         .build(cl_rpc.as_str())
         .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+    let http_client = alloy_transport_http::reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .with_context(|| format!("building EL HTTP client for {rpc}"))?;
+    let transport = Http::with_client(http_client, rpc.clone());
     let el_provider = ProviderBuilder::new()
         .disable_recommended_fillers()
         .network::<Base>()
-        .connect(rpc.as_str())
-        .await
-        .with_context(|| format!("connecting to EL RPC at {rpc}"))?;
+        .connect_client(RpcClient::new(transport, false));
     Ok((cl_client, el_provider))
 }
 
