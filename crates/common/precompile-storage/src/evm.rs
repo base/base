@@ -315,9 +315,10 @@ mod tests {
     /// call stipend constant returned by `GasParams` is exactly 2300, as required by EIP-2200.
     ///
     /// Unit tests cannot directly instantiate [`super::EvmPrecompileStorageProvider`] because
-    /// it requires a live EVM journal via `PrecompileInput`. The stipend guard is therefore not
-    /// exercisable in isolation here. Full coverage of the guard at runtime is provided by the
-    /// B20 fork tests that forward exactly 2300 gas into a stateful precompile call.
+    /// it requires a live EVM journal via `PrecompileInput`. The guard logic itself (boundary
+    /// at `remaining <= 2300`, below-boundary, above-boundary, and priority over the static
+    /// guard) is covered by `HashMapStorageProvider` tests in `hashmap.rs`, which mirror the
+    /// same `<=` comparison against `gas_params.call_stipend()`.
     #[test]
     fn eip_2200_stipend_guard_constant_is_2300() {
         let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
