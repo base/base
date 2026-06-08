@@ -392,25 +392,23 @@ mod tests {
     #[derive(Debug)]
     struct DynamicRegistry {
         signers: Vec<Address>,
-        responses: Mutex<VecDeque<bool>>,
         default_registered: bool,
     }
 
     impl DynamicRegistry {
         fn never_registered(signers: Vec<Address>) -> Self {
-            Self { signers, responses: Mutex::new(VecDeque::new()), default_registered: false }
+            Self { signers, default_registered: false }
         }
 
         fn registered(signers: Vec<Address>) -> Self {
-            Self { signers, responses: Mutex::new(VecDeque::new()), default_registered: true }
+            Self { signers, default_registered: true }
         }
     }
 
     #[async_trait]
     impl RegistryClient for DynamicRegistry {
         async fn is_registered(&self, _signer: Address) -> Result<bool> {
-            let next = self.responses.lock().unwrap().pop_front();
-            Ok(next.unwrap_or(self.default_registered))
+            Ok(self.default_registered)
         }
 
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
