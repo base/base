@@ -219,12 +219,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &self,
                 role: ::alloy_primitives::B256,
             ) -> ::base_precompile_storage::Result<::alloy_primitives::B256> {
-                let admin_role = self.b20.role_admin(role)?;
-                if admin_role.is_zero() && role != crate::B20TokenRole::DefaultAdmin.id() {
-                    Ok(crate::B20TokenRole::DefaultAdmin.id())
-                } else {
-                    Ok(admin_role)
-                }
+                self.b20.role_admin(role)
             }
 
             fn set_role_admin(

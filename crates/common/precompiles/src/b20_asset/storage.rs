@@ -84,14 +84,14 @@ impl B20AssetStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256, address, uint};
+    use alloy_primitives::{Address, B256, U256, address, uint};
     use base_precompile_storage::{Handler, StorableType, StorageCtx, StorageKey, setup_storage};
 
     use super::{
         __packing_b20_asset_extension_storage, B20AssetExtensionStorage, B20AssetInit,
         B20AssetStorage, slots,
     };
-    use crate::{AssetAccounting, B20CoreStorage};
+    use crate::{AssetAccounting, B20CoreStorage, B20TokenRole, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
@@ -157,6 +157,24 @@ mod tests {
 
             assert_eq!(ctx.sload(TOKEN, multiplier_slot).unwrap(), configured_multiplier);
             assert_eq!(token.multiplier().unwrap(), configured_multiplier);
+        });
+    }
+
+    #[test]
+    fn role_admin_reads_raw_storage_default() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = B20AssetStorage::from_address(TOKEN, ctx);
+
+            assert_eq!(
+                TokenAccounting::role_admin(&token, B20TokenRole::Mint.id()).unwrap(),
+                B20TokenRole::DefaultAdmin.id()
+            );
+            assert_eq!(
+                TokenAccounting::role_admin(&token, B20TokenRole::DefaultAdmin.id()).unwrap(),
+                B256::ZERO
+            );
         });
     }
 
