@@ -894,9 +894,8 @@ mod tests {
 
     use crate::{
         BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
-        EngineProcessorOptions, EngineRequestReceiver, InsertUnsafePayloadRequest, MockConductor,
-        NodeMode, NoopCheckpointWriter, ResetRequest,
-        actors::engine::client::MockEngineDerivationClient,
+        EngineProcessorOptions, EngineRequestReceiver, MockConductor, NodeMode,
+        NoopCheckpointWriter, ResetRequest, actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Test-only [`ForkchoiceCheckpointReader`] that returns pre-seeded safe/finalized heads.
@@ -1155,11 +1154,7 @@ mod tests {
             unsafe_payload_processor(node_mode, el_sync_finished, unsafe_head, safe_head);
 
         if local_payload {
-            processor.handle_local_unsafe_l2_block(InsertUnsafePayloadRequest {
-                envelope,
-                result_tx: None,
-                otel_cx: opentelemetry::Context::new(),
-            });
+            processor.handle_local_unsafe_l2_block(envelope, None);
         } else {
             processor.handle_external_unsafe_l2_block(envelope);
         }
