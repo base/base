@@ -37,7 +37,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-common-consensus = { workspace = true, features = ["k256"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
-alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub", "ws"] }
 alloy-consensus = { workspace = true, features = ["std", "k256"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub", "ws"] }
