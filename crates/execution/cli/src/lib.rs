@@ -17,7 +17,6 @@ mod node;
 pub use node::{ExecutionNodeArgs, ExecutionNodeLaunchConfig};
 /// Standard Base execution-node runner wiring.
 pub mod standard_node;
-mod upgrade_signal;
 
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
@@ -41,6 +40,7 @@ use reth_node_core::{
 use reth_node_metrics as _;
 use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
 pub use standard_node::{RpcStandardNodeArgs, StandardBaseRethNode, StandardNodeArgs};
+mod upgrade_signal;
 pub use upgrade_signal::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalMetricsExtension,
     ExecutionUpgradeSignalRuntimeRefresher,
