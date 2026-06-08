@@ -188,6 +188,9 @@ impl Parse for InstallConfig {
         input.parse::<Token![=]>()?;
         let address = input.parse()?;
 
+        if !input.is_empty() && !input.peek(Token![,]) {
+            return Err(syn::Error::new(input.span(), "unexpected `install` option"));
+        }
         if !input.is_empty() {
             input.parse::<Token![,]>()?;
         }
@@ -252,5 +255,19 @@ mod tests {
 
         assert!(config.storage.is_some());
         assert!(config.macro_path.is_some());
+    }
+
+    #[test]
+    fn config_rejects_install_option_without_comma_as_unexpected_option() {
+        let err = parse_config(quote! { install(address = X extra) }).err().unwrap();
+
+        assert!(err.to_string().contains("unexpected `install` option"));
+    }
+
+    #[test]
+    fn config_rejects_extra_install_option_after_comma() {
+        let err = parse_config(quote! { install(address = X, extra) }).err().unwrap();
+
+        assert!(err.to_string().contains("unexpected `install` option"));
     }
 }
