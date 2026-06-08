@@ -3965,6 +3965,8 @@ dependencies = [
  "opentelemetry 0.31.0",
  "opentelemetry_sdk 0.31.0",
  "reqwest 0.13.3",
+ "reth-node-core",
+ "reth-tracing-otlp",
  "rstest",
  "serde",
  "serde_json",
@@ -3974,6 +3976,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber 0.3.23",
  "url",
 ]
 
