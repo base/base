@@ -232,6 +232,7 @@ where
                 tx_hash = %receipt.transaction_hash,
                 "registration transaction reverted onchain",
             );
+            self.proof_provider.block_recovery_for_signer(signer_address);
             return Err(RegistrarError::Transaction(
                 format!("registration transaction {} reverted", receipt.transaction_hash).into(),
             ));
@@ -283,9 +284,13 @@ mod tests {
     }
 
     fn stub_receipt() -> TransactionReceipt {
+        stub_receipt_with_status(true)
+    }
+
+    fn stub_receipt_with_status(success: bool) -> TransactionReceipt {
         let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
             receipt: Receipt {
-                status: Eip658Value::Eip658(true),
+                status: Eip658Value::Eip658(success),
                 cumulative_gas_used: 21_000,
                 logs: vec![],
             },
@@ -349,6 +354,32 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct TrackingProofProvider {
+        blocked_signers: Arc<Mutex<Vec<Address>>>,
+    }
+
+    impl TrackingProofProvider {
+        fn blocked_signers(&self) -> Vec<Address> {
+            self.blocked_signers.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl AttestationProofProvider for TrackingProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            Ok(stub_proof())
+        }
+
+        fn block_recovery_for_signer(&self, signer: Address) {
+            self.blocked_signers.lock().unwrap().push(signer);
+        }
+    }
+
     #[derive(Debug, Clone)]
     struct FailingTxManager {
         results: Arc<Mutex<VecDeque<Option<TxManagerError>>>>,
@@ -382,6 +413,37 @@ mod tests {
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
             panic!("FailingTxManager::send_async is not implemented; tests only use send()")
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct ReceiptTxManager {
+        receipt: TransactionReceipt,
+        sent: Arc<Mutex<Vec<Bytes>>>,
+    }
+
+    impl ReceiptTxManager {
+        fn new(receipt: TransactionReceipt) -> Self {
+            Self { receipt, sent: Arc::new(Mutex::new(vec![])) }
+        }
+
+        fn send_count(&self) -> usize {
+            self.sent.lock().unwrap().len()
+        }
+    }
+
+    impl TxManager for ReceiptTxManager {
+        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            self.sent.lock().unwrap().push(candidate.tx_data);
+            Ok(self.receipt.clone())
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+            panic!("ReceiptTxManager::send_async is not implemented; tests only use send()")
         }
 
         fn sender_address(&self) -> Address {
@@ -526,6 +588,22 @@ mod tests {
         assert_eq!(result.is_ok(), should_succeed, "unexpected registration result: {result:?}",);
         assert_eq!(tx.send_count(), expected_sends);
         assert_all_calldata_identical(&tx.sent_calldata());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn handle_registration_proof_reverted_receipt_blocks_recovery() {
+        let tx = ReceiptTxManager::new(stub_receipt_with_status(false));
+        let harness = HandlerHarness::new(
+            TrackingProofProvider::default(),
+            DynamicRegistry::never_registered(vec![]),
+            tx.clone(),
+        );
+
+        let result = handle_proof(&harness, &CancellationToken::new()).await;
+
+        assert!(result.is_err(), "reverted receipt should fail registration");
+        assert_eq!(tx.send_count(), 1, "should submit exactly one tx");
+        assert_eq!(harness.proof_provider.blocked_signers(), vec![TEST_SIGNER]);
     }
 
     #[tokio::test(start_paused = true)]
