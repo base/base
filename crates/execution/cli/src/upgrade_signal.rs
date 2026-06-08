@@ -155,11 +155,9 @@ impl ExecutionUpgradeSignal {
     ) -> RpcResult<UpgradeSignalApplySummary> {
         match refresher.refresher.read_validated_schedule().await {
             Ok(schedule) => {
-                let application_schedule =
-                    refresher.refresher.config.application_schedule(&schedule);
                 if let Err(error) = Self::validate_runtime_schedule_for_chain_spec(
                     &refresher.chain_spec,
-                    &application_schedule,
+                    &schedule,
                 ) {
                     warn!(
                         target: "upgrade_signal",
@@ -174,7 +172,7 @@ impl ExecutionUpgradeSignal {
                 }
                 let summary = UpgradeSignalRuntimeApplier::apply_schedule(
                     refresher.refresher.chain_id,
-                    &application_schedule,
+                    &schedule,
                 );
                 info!(
                     target: "upgrade_signal",
