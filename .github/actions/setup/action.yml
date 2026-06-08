@@ -76,6 +76,7 @@ runs:
           build-essential \
           clang \
           libclang-dev \
+          libprotobuf-dev \
           libsqlite3-dev \
           llvm \
           llvm-dev \
