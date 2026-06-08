@@ -15,6 +15,9 @@ use base_common_consensus::{
 };
 use sha2::Digest;
 
+#[cfg(feature = "k256")]
+use alloy_consensus::transaction::SignerRecoverable;
+
 /// Payload Attributes
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
