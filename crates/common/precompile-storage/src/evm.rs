@@ -300,7 +300,7 @@ impl From<alloy_evm::EvmInternalsError> for BasePrecompileError {
 #[cfg(test)]
 mod tests {
     use alloy_evm::{EvmInternals, eth::EthEvmContext, precompiles::PrecompileInput};
-    use alloy_primitives::Address;
+    use alloy_primitives::{Address, U256};
     use revm::{
         context_interface::cfg::GasParams, database::EmptyDB, primitives::hardfork::SpecId,
         state::Bytecode,
@@ -319,16 +319,16 @@ mod tests {
 
     fn make_evm_provider<'a>(
         ctx: &'a mut EthEvmContext<EmptyDB>,
+        gas_params: GasParams,
         gas: u64,
         is_static: bool,
     ) -> super::EvmPrecompileStorageProvider<'a> {
-        let gas_params = GasParams::default();
         let input = PrecompileInput {
             data: &[],
             gas,
             reservoir: 0,
             caller: Address::ZERO,
-            value: alloy_primitives::U256::ZERO,
+            value: U256::ZERO,
             target_address: Address::ZERO,
             is_static,
             bytecode_address: Address::ZERO,
@@ -342,14 +342,11 @@ mod tests {
     fn sstore_oog_at_call_stipend_boundary() {
         let gas_params = GasParams::default();
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
-        let mut provider = make_evm_provider(&mut ctx, gas_params.call_stipend(), false);
+        let mut provider =
+            make_evm_provider(&mut ctx, gas_params.clone(), gas_params.call_stipend(), false);
 
         assert_eq!(
-            provider.sstore(
-                Address::ZERO,
-                alloy_primitives::U256::ZERO,
-                alloy_primitives::U256::from(1u64)
-            ),
+            provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
             Err(BasePrecompileError::OutOfGas),
         );
     }
@@ -359,14 +356,11 @@ mod tests {
     fn sstore_oog_below_call_stipend() {
         let gas_params = GasParams::default();
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
-        let mut provider = make_evm_provider(&mut ctx, gas_params.call_stipend() - 1, false);
+        let mut provider =
+            make_evm_provider(&mut ctx, gas_params.clone(), gas_params.call_stipend() - 1, false);
 
         assert_eq!(
-            provider.sstore(
-                Address::ZERO,
-                alloy_primitives::U256::ZERO,
-                alloy_primitives::U256::from(1u64)
-            ),
+            provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
             Err(BasePrecompileError::OutOfGas),
         );
     }
@@ -376,19 +370,11 @@ mod tests {
     fn sstore_allowed_above_call_stipend() {
         let gas_params = GasParams::default();
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
-        // Provide enough gas to pass the stipend guard and cover all sstore costs.
+        // Large margin covers the stipend guard + cold sstore costs (~2600 gas).
         let gas = gas_params.call_stipend() + 1_000_000;
-        let mut provider = make_evm_provider(&mut ctx, gas, false);
+        let mut provider = make_evm_provider(&mut ctx, gas_params.clone(), gas, false);
 
-        assert!(
-            provider
-                .sstore(
-                    Address::ZERO,
-                    alloy_primitives::U256::ZERO,
-                    alloy_primitives::U256::from(1u64)
-                )
-                .is_ok(),
-        );
+        assert!(provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)).is_ok());
     }
 
     /// Static-call violation is checked before the stipend guard.
@@ -397,14 +383,11 @@ mod tests {
         let gas_params = GasParams::default();
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
         // Gas at stipend boundary — both guards would fire, static takes priority.
-        let mut provider = make_evm_provider(&mut ctx, gas_params.call_stipend(), true);
+        let mut provider =
+            make_evm_provider(&mut ctx, gas_params.clone(), gas_params.call_stipend(), true);
 
         assert_eq!(
-            provider.sstore(
-                Address::ZERO,
-                alloy_primitives::U256::ZERO,
-                alloy_primitives::U256::from(1u64)
-            ),
+            provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
             Err(BasePrecompileError::StaticCallViolation),
         );
     }
