@@ -88,6 +88,11 @@ where
             "Deregistering signer"
         );
 
+        info!(
+            tx = ?candidate,
+            "Sending tx candidate",
+        );
+
         match self.tx_manager.send(candidate).await {
             Ok(receipt) => {
                 if !receipt.inner.status() {
@@ -124,11 +129,21 @@ where
         registered_signers: &[Address],
         cancel: &CancellationToken,
     ) -> Result<()> {
-        let mut deregistered = 0usize;
-        let orphan_signers =
-            registered_signers.iter().copied().filter(|addr| !protected_signers.contains(addr));
+        let orphans: Vec<_> = registered_signers
+            .iter()
+            .copied()
+            .filter(|addr| !protected_signers.contains(addr))
+            .collect();
 
-        for signer in orphan_signers {
+        if orphans.is_empty() {
+            return Ok(());
+        }
+
+        info!(count = orphans.len(), "deregistering orphan signers");
+
+        let mut deregistered = 0usize;
+
+        for signer in orphans {
             if cancel.is_cancelled() {
                 debug!("shutdown requested, stopping orphan deregistration");
                 break;
