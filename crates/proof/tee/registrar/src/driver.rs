@@ -262,15 +262,9 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// the ~20 minute Boundless proof generation) so deduplication holds
     /// across cycles as well as within one.
     in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
-    /// Last-known EC2 instance ID for every signer address the registrar
-    /// has ever observed advertising itself in a discovery cycle.
-    /// Updated in `discover_and_resolve`, consulted by
-    /// [`DeregistrationManager::submit_deregistration`] so the "Deregistering
-    /// signer" log line can attribute the orphan to the EC2 instance it last
-    /// lived on.
-    /// `None` on dereg is the strongest single diagnostic that another
-    /// registrar (or a prior deployment) wrote the signer.
-    /// Entries are never evicted — bounded by historic fleet size.
+    /// Last-known EC2 instance ID for every signer observed during discovery.
+    /// Used to annotate orphan deregistration logs.
+    /// Entries are never evicted; bounded by historic fleet size.
     signer_history: Arc<Mutex<HashMap<Address, String>>>,
 }
 
@@ -427,15 +421,8 @@ where
                     }
 
                     if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
-                        // Protect every in-flight signer in addition to
-                        // `active_signers`. An instance whose
-                        // `resolve_instance` failed this cycle is in
-                        // `unresolved_instance_ids` (so reconcile
-                        // preserves its task), but its signer is absent
-                        // from `active_signers`. Without this union the
-                        // preserved task could complete and `register`
-                        // the signer mid-pass, and the very same orphan
-                        // sweep would then deregister it (TOCTOU).
+                        // Pending proof tasks can register while orphan cleanup
+                        // is running, so protect those signers too.
                         let protected = Self::protected_signers(&resolution, &pending);
                         if let Err(e) = self.run_orphan_dereg(&protected).await {
                             warn!(error = %e, "orphan deregistration pass failed");
@@ -732,10 +719,8 @@ where
                     if outcome.unresolved {
                         unresolved_instance_ids.insert(instance.instance_id.clone());
                     }
-                    // Record signer -> instance attribution before the
-                    // `instance` is moved into `RegisterableSigner` below.
-                    // Consumed by `DeregistrationManager::submit_deregistration`
-                    // to annotate the dereg log with the last-known instance.
+                    // Record signer -> instance attribution before `instance`
+                    // is moved into `RegisterableSigner` below.
                     {
                         let mut history =
                             self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
@@ -806,15 +791,7 @@ where
         })
     }
 
-    /// Drives the orphan-deregistration pass.
-    ///
-    /// Delegates onchain signer loading and orphan cleanup to
-    /// [`DeregistrationManager`]. The [`Self::run`] pipeline invokes this
-    /// independently of the concurrent registration path.
-    ///
-    /// Both error paths (registry load and per-orphan deregistration)
-    /// propagate uniformly so the caller can log + increment
-    /// `processing_errors_total` once at a single site.
+    /// Runs orphan deregistration through [`DeregistrationManager`].
     async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
         let manager = DeregistrationManager::new(
             self.config.registry_address,
@@ -825,18 +802,10 @@ where
         manager.run_orphan_dereg(protected_signers, &self.config.cancel).await
     }
 
-    /// Builds the protected-signer set for the orphan-dereg pass: the
-    /// union of `resolution.active_signers` and the keys of `pending`.
+    /// Builds the protected-signer set for orphan deregistration.
     ///
-    /// Including `pending.keys()` closes the TOCTOU window described on
-    /// [`Self::run`]: when an instance fails [`Self::resolve_instance`]
-    /// transiently this cycle, its signer is absent from
-    /// `active_signers`, but [`Self::reconcile_proof_tasks`] preserves
-    /// the in-flight proof task (its instance id is in
-    /// [`DiscoveryResolution::unresolved_instance_ids`]). If that task
-    /// successfully registers the signer just as the orphan pass runs,
-    /// the union ensures the freshly registered signer is treated as
-    /// protected rather than as an orphan to be deregistered.
+    /// Includes both active signers and pending proof tasks so a signer that
+    /// registers mid-pass is not immediately deregistered.
     fn protected_signers(
         resolution: &DiscoveryResolution,
         pending: &HashMap<Address, PendingRegistration>,
