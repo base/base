@@ -14,8 +14,8 @@ use crate::{
         PodsSnapshot, ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
         fetch_full_system_config, fetch_initial_backlog_with_progress, run_block_fetcher,
         run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
-        run_l1_blob_watcher, run_pods_poller, run_proofs_poller, run_safe_head_poller,
-        run_validator_poller,
+        run_l1_blob_watcher, run_pods_poller, run_proofs_poller, run_rollup_config_poller,
+        run_safe_head_poller, run_validator_poller,
     },
     tui::Toast,
 };
@@ -114,7 +114,14 @@ pub fn start_background_services(
     tokio::spawn(fetch_initial_backlog_with_progress(config.rpc.to_string(), backlog_tx));
 
     let proofs_toast_tx = toast_tx.clone();
+    let rollup_config_toast_tx = toast_tx.clone();
     tokio::spawn(run_safe_head_poller(config.rpc.to_string(), sync_tx, toast_tx));
+
+    if let Some(consensus_rpc) = config.consensus_node_rpc.clone() {
+        let (upgrades_tx, upgrades_rx) = mpsc::channel(4);
+        resources.set_upgrades_channel(upgrades_rx);
+        tokio::spawn(run_rollup_config_poller(consensus_rpc, upgrades_tx, rollup_config_toast_tx));
+    }
 
     let (sys_config_tx, sys_config_rx) = mpsc::channel::<SystemConfig>(1);
     resources.set_sys_config_channel(sys_config_rx);
