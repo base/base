@@ -211,6 +211,14 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
             Ok(response) => {
                 self.response_to_poll(target_block, session_id, output.output_root, response)
             }
+            Err(e) if e.is_not_found() => {
+                debug!(
+                    target_block,
+                    session_id = %session_id,
+                    "Retry session missing from prover service, dispatch needed",
+                );
+                TargetPoll::NotFound { session_id, claimed_l2_output_root: output.output_root }
+            }
             Err(e) => TargetPoll::Unknown {
                 session_id: Some(session_id),
                 error: Self::error_from_client(e),

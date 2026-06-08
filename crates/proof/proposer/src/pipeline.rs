@@ -564,12 +564,32 @@ where
                     break;
                 }
                 TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
-                    debug!(
-                        target_block,
-                        session_id = %session_id,
-                        claimed_l2_output_root = %claimed_l2_output_root,
-                        "No prover-service session for target, waiting for dispatcher"
-                    );
+                    if retry_sessions.get(&target_block).is_some_and(|id| id == &session_id) {
+                        warn!(
+                            target_block,
+                            session_id = %session_id,
+                            "Discard retry session missing, dispatching a fresh retry"
+                        );
+                        self.dispatch_discard_retry(
+                            target_block,
+                            &current,
+                            claimed_l2_output_root,
+                            retry_counts,
+                            cache,
+                            DiscardRetryState {
+                                counts: discard_retry_counts,
+                                sessions: retry_sessions,
+                            },
+                        )
+                        .await;
+                    } else {
+                        debug!(
+                            target_block,
+                            session_id = %session_id,
+                            claimed_l2_output_root = %claimed_l2_output_root,
+                            "No prover-service session for target, waiting for dispatcher"
+                        );
+                    }
                     break;
                 }
                 TargetPoll::Failed { session_id, claimed_l2_output_root, error } => {
@@ -3216,6 +3236,47 @@ mod tests {
         assert!(
             proof_requester.requests.lock().unwrap().is_empty(),
             "discard exhaustion should not dispatch another session"
+        );
+    }
+
+    /// If a retry-specific session disappears from prover service, the
+    /// collector should dispatch a fresh retry instead of polling the missing
+    /// session forever.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_collector_tick_redispatches_missing_retry_session() {
+        let (pipeline, proof_requester, _cancel) = step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
+
+        let mut cache: Option<CachedRecovery> = None;
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut cursor: Option<RecoveredState> = None;
+        let mut discard_retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut retry_sessions: HashMap<u64, String> =
+            HashMap::from([(SUBMIT_BLOCK_INTERVAL, "missing-retry-session".to_owned())]);
+        let (restart_tx, _restart_rx) = mpsc::channel(1);
+
+        pipeline
+            .collector_tick(
+                &mut cache,
+                &mut retry_counts,
+                &mut cursor,
+                &mut discard_retry_counts,
+                &mut retry_sessions,
+                &restart_tx,
+            )
+            .await;
+
+        let retry_session = retry_sessions
+            .get(&SUBMIT_BLOCK_INTERVAL)
+            .expect("missing retry session should be replaced");
+        assert_ne!(retry_session, "missing-retry-session");
+        assert!(
+            proof_requester.requests.lock().unwrap().contains_key(retry_session),
+            "collector should dispatch the replacement retry session"
+        );
+        assert_eq!(
+            discard_retry_counts.get(&SUBMIT_BLOCK_INTERVAL).copied(),
+            Some(1),
+            "replacement retry should consume one discard retry attempt"
         );
     }
 
