@@ -3144,16 +3144,19 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "alloy-provider 2.0.5",
  "base-builder-cli",
  "base-builder-core",
  "base-builder-metering",
  "base-cli-utils",
  "base-common-chains",
+ "base-common-genesis",
  "base-consensus-cli",
  "base-execution-chainspec",
  "base-execution-cli",
  "base-node-runner",
  "base-txpool-rpc",
+ "base-upgrade-signal",
  "clap",
  "eyre",
  "figment",
@@ -3956,6 +3959,7 @@ dependencies = [
  "base-consensus-rpc",
  "base-consensus-sources",
  "base-jwt",
+ "base-upgrade-signal",
  "clap",
  "dirs 6.0.0",
  "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -4150,6 +4154,7 @@ dependencies = [
  "base-health",
  "base-metrics",
  "base-protocol",
+ "base-upgrade-signal",
  "bytes",
  "derive_more 2.1.1",
  "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -4257,6 +4262,7 @@ dependencies = [
  "base-consensus-gossip",
  "base-consensus-safedb",
  "base-protocol",
+ "base-upgrade-signal",
  "getrandom 0.4.2",
  "ipnet",
  "jsonrpsee",
@@ -4379,6 +4385,7 @@ dependencies = [
  "alloy-primitives",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-genesis",
  "base-common-rpc-types",
  "derive_more 2.1.1",
  "reth-chainspec",
@@ -6431,6 +6438,24 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+]
+
+[[package]]
+name = "base-upgrade-signal"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-types-eth 2.0.5",
+ "alloy-sol-types",
+ "base-common-genesis",
+ "base-metrics",
+ "clap",
+ "metrics",
+ "serde",
+ "thiserror 2.0.18",
+ "tracing",
+ "url",
 ]
 
 [[package]]
