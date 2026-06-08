@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.93
+ARG RUST_VERSION=1.94.1
 FROM public.ecr.aws/docker/library/rust:${RUST_VERSION}-trixie AS rust-builder-base
 WORKDIR /app
 ARG MOLD_VERSION=2.40.4
@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
       --bin basectl \
       --bin snapshotter && \
     target_dir="/app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")" && \
-    cp "$target_dir/base-reth-node" /app/base-reth-node && \
+    cp "$target_dir/base-reth-node" /app/base-client && \
     cp "$target_dir/base-consensus" /app/base-consensus && \
     cp "$target_dir/basectl" /app/basectl && \
     cp "$target_dir/snapshotter" /app/snapshotter
@@ -153,11 +153,10 @@ RUN apt-get update && \
 WORKDIR /app
 
 FROM runtime-base AS client
-COPY --from=client-builder /app/base-reth-node ./base-reth-node
+COPY --from=client-builder /app/base-client ./base-client
 COPY --from=client-builder /app/base-consensus ./base-consensus
 COPY --from=client-builder /app/basectl ./basectl
 COPY --from=client-builder /app/snapshotter ./snapshotter
-RUN ln -s ./base-reth-node ./base-client
 ENTRYPOINT ["./base-client"]
 
 FROM runtime-base AS base

@@ -4,7 +4,7 @@ This directory contains the Dockerfiles and Compose configuration for the Base n
 
 ## Dockerfiles
 
-`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. It bundles `base-reth-node`, `base-consensus`, `basectl`, and `snapshotter`, while preserving the historical `base-client` entrypoint as a compatibility alias to `base-reth-node`.
+`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. It bundles `base-consensus`, `basectl`, and `snapshotter`, while preserving the historical `base-client` entrypoint by copying the `base-reth-node` binary into the image under that compatible name.
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 
