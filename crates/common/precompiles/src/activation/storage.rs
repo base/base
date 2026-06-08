@@ -134,8 +134,7 @@ impl ActivationRegistryStorage<'_> {
 
         let current_activated_state = self.features.at(&feature).read()?;
 
-        let is_activating_and_already_activated =
-            to_activated_state && current_activated_state;
+        let is_activating_and_already_activated = to_activated_state && current_activated_state;
         let is_deactivating_and_already_deactivated =
             !to_activated_state && !current_activated_state;
 
