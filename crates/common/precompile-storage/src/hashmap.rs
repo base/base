@@ -358,7 +358,6 @@ pub fn setup_storage() -> (HashMapStorageProvider, Address) {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use revm::{context_interface::cfg::GasParams, primitives::hardfork::SpecId};
 
     use super::*;
     use crate::{error::BasePrecompileError, provider::PrecompileStorageProvider};
@@ -366,11 +365,6 @@ mod tests {
     const ADDR: Address = Address::ZERO;
     const KEY: U256 = U256::ZERO;
 
-    fn amsterdam_params() -> GasParams {
-        GasParams::new_spec(SpecId::AMSTERDAM)
-    }
-
-    /// Positive refunds accumulate in the counter.
     #[test]
     fn refund_gas_accumulates_positive() {
         let mut p = HashMapStorageProvider::new(1);
@@ -379,7 +373,6 @@ mod tests {
         assert_eq!(p.gas_refunded(), 1_500);
     }
 
-    /// Negative refunds (EIP-3529 cancellations) reduce the counter.
     #[test]
     fn refund_gas_accumulates_negative() {
         let mut p = HashMapStorageProvider::new(1);
@@ -388,14 +381,12 @@ mod tests {
         assert_eq!(p.gas_refunded(), 0);
     }
 
-    /// Gas refund counter starts at zero on a fresh provider.
     #[test]
     fn refund_gas_starts_at_zero() {
         let p = HashMapStorageProvider::new(1);
         assert_eq!(p.gas_refunded(), 0);
     }
 
-    /// Clearing a previously set slot (nonzero to zero) earns an EIP-3529 refund.
     #[test]
     fn sstore_clearing_slot_generates_refund() {
         let mut p = HashMapStorageProvider::new(1);
@@ -407,7 +398,6 @@ mod tests {
         assert!(p.gas_refunded() > 0, "clearing a non-zero slot must earn a refund");
     }
 
-    /// Overwriting a nonzero slot with another nonzero value earns no refund.
     #[test]
     fn sstore_nonzero_to_nonzero_earns_no_refund() {
         let mut p = HashMapStorageProvider::new(1);
@@ -416,7 +406,6 @@ mod tests {
         assert_eq!(p.gas_refunded(), 0);
     }
 
-    /// Writing to a zero slot (first write) earns no refund.
     #[test]
     fn sstore_zero_to_nonzero_earns_no_refund() {
         let mut p = HashMapStorageProvider::new(1);
@@ -428,7 +417,6 @@ mod tests {
     #[test]
     fn sstore_blocked_when_remaining_equals_call_stipend() {
         let mut p = HashMapStorageProvider::new(1);
-        p.set_gas_params(amsterdam_params());
         p.set_gas_remaining(2300); // exactly at the 2300 stipend boundary
         assert_eq!(
             p.sstore(ADDR, KEY, U256::from(1u64)),
@@ -441,7 +429,6 @@ mod tests {
     #[test]
     fn sstore_blocked_when_remaining_below_call_stipend() {
         let mut p = HashMapStorageProvider::new(1);
-        p.set_gas_params(amsterdam_params());
         p.set_gas_remaining(2299);
         assert_eq!(p.sstore(ADDR, KEY, U256::from(1u64)), Err(BasePrecompileError::OutOfGas),);
     }
@@ -450,7 +437,6 @@ mod tests {
     #[test]
     fn sstore_allowed_when_remaining_above_call_stipend() {
         let mut p = HashMapStorageProvider::new(1);
-        p.set_gas_params(amsterdam_params());
         p.set_gas_remaining(2301);
         assert!(
             p.sstore(ADDR, KEY, U256::from(1u64)).is_ok(),
@@ -462,7 +448,6 @@ mod tests {
     #[test]
     fn sstore_always_allowed_without_gas_remaining_set() {
         let mut p = HashMapStorageProvider::new(1);
-        p.set_gas_params(amsterdam_params());
         // gas_remaining is None — guard disabled, unlimited gas
         assert!(p.sstore(ADDR, KEY, U256::from(1u64)).is_ok());
     }
@@ -473,7 +458,6 @@ mod tests {
     #[test]
     fn sstore_static_violation_checked_before_stipend_guard() {
         let mut p = HashMapStorageProvider::new(1);
-        p.set_gas_params(amsterdam_params());
         p.set_static(true);
         p.set_gas_remaining(2300); // stipend guard would also fire — proves ordering
         assert_eq!(
