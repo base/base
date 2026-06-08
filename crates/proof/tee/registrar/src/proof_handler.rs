@@ -108,29 +108,55 @@ where
         attestation_bytes: &[u8],
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
-        let Self {
-            proof_provider,
-            registry,
-            tx_manager,
-            proof_semaphore,
-            in_flight_registrations,
-            registry_address,
-            max_tx_retries,
-            tx_retry_delay,
-        } = *self;
+        let Some(_in_flight) = self
+            .prepare_registration_attempt(instance, signer_address, enclave_index, signer_cancel)
+            .await?
+        else {
+            return Ok(());
+        };
 
+        let Some(proof) = self
+            .generate_registration_proof(
+                instance,
+                signer_address,
+                enclave_index,
+                attestation_bytes,
+                signer_cancel,
+            )
+            .await?
+        else {
+            return Ok(());
+        };
+
+        if signer_cancel.is_cancelled() {
+            debug!("shutdown requested, skipping transaction submission");
+            return Ok(());
+        }
+
+        let candidate = self.registration_tx_candidate(instance, signer_address, proof);
+        self.submit_registration_candidate(signer_address, candidate, signer_cancel).await
+    }
+
+    /// Reserves this signer and confirms it still needs registration.
+    pub async fn prepare_registration_attempt(
+        &self,
+        instance: &ProverInstance,
+        signer_address: Address,
+        enclave_index: usize,
+        signer_cancel: &CancellationToken,
+    ) -> Result<Option<InFlightRegistrationGuard>> {
         // Avoid taking locks or making registry RPCs after cancellation.
         if signer_cancel.is_cancelled() {
             debug!(signer = %signer_address, "task cancelled before registry probe");
-            return Ok(());
+            return Ok(None);
         }
 
         // Reserve this signer in the in-flight set before the `is_registered`
         // precheck. If another concurrent task already owns it, short-circuit
         // so we do not race past the precheck, regenerate the proof, and
         // submit a duplicate registration transaction.
-        let Some(_in_flight) =
-            InFlightRegistrationGuard::try_acquire(in_flight_registrations, signer_address)
+        let Some(in_flight) =
+            InFlightRegistrationGuard::try_acquire(self.in_flight_registrations, signer_address)
         else {
             debug!(
                 signer = %signer_address,
@@ -138,7 +164,7 @@ where
                 instance = %instance.instance_id,
                 "registration already in flight for this signer, skipping duplicate",
             );
-            return Ok(());
+            return Ok(None);
         };
 
         // Safe to cancel because this is a side-effect-free registry read.
@@ -149,20 +175,32 @@ where
                     signer = %signer_address,
                     "cancelled while probing registry pre-proof-gen"
                 );
-                return Ok(());
+                return Ok(None);
             }
-            res = registry.is_registered(signer_address) => res?,
+            res = self.registry.is_registered(signer_address) => res?,
         };
         if already_registered {
             debug!(signer = %signer_address, "already registered, skipping");
-            return Ok(());
+            return Ok(None);
         }
 
+        Ok(Some(in_flight))
+    }
+
+    /// Generates a registration proof for a signer, returning `None` on cooperative shutdown.
+    pub async fn generate_registration_proof(
+        &self,
+        instance: &ProverInstance,
+        signer_address: Address,
+        enclave_index: usize,
+        attestation_bytes: &[u8],
+        signer_cancel: &CancellationToken,
+    ) -> Result<Option<base_proof_tee_nitro_attestation_prover::AttestationProof>> {
         // Check cancellation before the most expensive operation. Proof
         // generation and proof-result polling can take minutes via Boundless.
         if signer_cancel.is_cancelled() {
             debug!("shutdown requested, skipping proof generation");
-            return Ok(());
+            return Ok(None);
         }
 
         info!(
@@ -182,9 +220,9 @@ where
                     instance = %instance.instance_id,
                     "task cancelled before acquiring proof permit"
                 );
-                return Ok(());
+                return Ok(None);
             }
-            permit = proof_semaphore.acquire() => {
+            permit = self.proof_semaphore.acquire() => {
                 match permit {
                     Ok(p) => p,
                     Err(_) => {
@@ -193,7 +231,7 @@ where
                             instance = %instance.instance_id,
                             "proof semaphore closed unexpectedly, exiting task"
                         );
-                        return Ok(());
+                        return Ok(None);
                     }
                 }
             }
@@ -203,7 +241,7 @@ where
         // provider future on cancel may abandon work the impl had already
         // started; for Boundless, any submitted offchain request is recoverable
         // via deterministic request-id derivation on the next call.
-        let proof = tokio::select! {
+        tokio::select! {
             biased;
             () = signer_cancel.cancelled() => {
                 debug!(
@@ -211,33 +249,36 @@ where
                     instance = %instance.instance_id,
                     "task cancelled during proof generation"
                 );
-                return Ok(());
+                Ok(None)
             }
-            res = proof_provider.generate_proof_for_signer(
+            res = self.proof_provider.generate_proof_for_signer(
                 attestation_bytes,
                 signer_address,
                 signer_cancel,
             ) => {
                 match res {
-                    Ok(p) => p,
+                    Ok(proof) => Ok(Some(proof)),
                     Err(_) if signer_cancel.is_cancelled() => {
                         debug!(
                             signer = %signer_address,
                             instance = %instance.instance_id,
                             "task cancelled during proof generation (provider returned Err after cancel)",
                         );
-                        return Ok(());
+                        Ok(None)
                     }
-                    Err(e) => return Err(e.into()),
+                    Err(e) => Err(e.into()),
                 }
             }
-        };
-
-        if signer_cancel.is_cancelled() {
-            debug!("shutdown requested, skipping transaction submission");
-            return Ok(());
         }
+    }
 
+    /// Builds the `registerSigner` transaction candidate for a generated proof.
+    pub fn registration_tx_candidate(
+        &self,
+        instance: &ProverInstance,
+        signer_address: Address,
+        proof: base_proof_tee_nitro_attestation_prover::AttestationProof,
+    ) -> TxCandidate {
         let calldata = Bytes::from(
             ITEEProverRegistry::registerSignerCall {
                 output: proof.output,
@@ -249,19 +290,32 @@ where
         info!(
             signer = %signer_address,
             instance = %instance.instance_id,
-            registry = %registry_address,
+            registry = %self.registry_address,
             calldata_len = calldata.len(),
             "Registering signer"
         );
 
-        let candidate =
-            TxCandidate { tx_data: calldata, to: Some(registry_address), ..Default::default() };
+        let candidate = TxCandidate {
+            tx_data: calldata,
+            to: Some(self.registry_address),
+            ..Default::default()
+        };
 
         info!(
             tx = ?candidate,
             "Sending tx candidate",
         );
 
+        candidate
+    }
+
+    /// Submits a registration transaction and retries transient delivery failures.
+    pub async fn submit_registration_candidate(
+        &self,
+        signer_address: Address,
+        candidate: TxCandidate,
+        signer_cancel: &CancellationToken,
+    ) -> Result<()> {
         // Retry tx submission on transient errors to avoid discarding an
         // expensive proof on a nonce race or brief network blip.
         let mut tx_retries = 0;
@@ -278,7 +332,7 @@ where
                 return Ok(());
             }
 
-            match tx_manager.send(candidate.clone()).await {
+            match self.tx_manager.send(candidate.clone()).await {
                 Ok(receipt) => break receipt,
                 Err(e) => {
                     // The signer may already be registered despite the error
@@ -293,7 +347,7 @@ where
                             );
                             return Ok(());
                         }
-                        res = registry.is_registered(signer_address) => res,
+                        res = self.registry.is_registered(signer_address) => res,
                     };
                     match post_err_check {
                         Ok(true) => {
@@ -325,13 +379,13 @@ where
                                 signer = %signer_address,
                                 "execution reverted, blocking proof recovery for signer"
                             );
-                            proof_provider.block_recovery_for_signer(signer_address);
+                            self.proof_provider.block_recovery_for_signer(signer_address);
                         }
                         return Err(RegistrarError::from(e));
                     }
 
                     tx_retries += 1;
-                    if tx_retries > max_tx_retries {
+                    if tx_retries > self.max_tx_retries {
                         return Err(RegistrarError::from(e));
                     }
 
@@ -339,7 +393,7 @@ where
                         error = %e,
                         signer = %signer_address,
                         retry = tx_retries,
-                        max_retries = max_tx_retries,
+                        max_retries = self.max_tx_retries,
                         "tx submission failed, retrying with same proof"
                     );
 
@@ -353,7 +407,7 @@ where
                             );
                             return Ok(());
                         }
-                        () = tokio::time::sleep(tx_retry_delay) => {}
+                        () = tokio::time::sleep(self.tx_retry_delay) => {}
                     }
                 }
             }
