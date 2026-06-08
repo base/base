@@ -228,17 +228,40 @@ mod tests {
     };
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{B256, Bloom};
+    use alloy_primitives::{B256, Bloom, address};
     use alloy_rpc_types_eth::TransactionReceipt;
     use async_trait::async_trait;
     use base_tx_manager::SendHandle;
+    use rstest::rstest;
     use tokio::sync::Notify;
 
     use super::*;
 
+    /// Expected byte length of ABI-encoded `deregisterSigner(address)` calldata:
+    /// 4-byte selector + 32-byte left-padded address word.
+    const DEREGISTER_CALLDATA_LEN: usize = 36;
+    /// Number of zero-padding bytes before the 20-byte address in the ABI word.
+    const ABI_ADDRESS_PAD: usize = 12;
+    /// Byte offset where the raw 20-byte address starts in the encoded calldata.
+    const ABI_ADDRESS_OFFSET: usize = 4 + ABI_ADDRESS_PAD;
     const REGISTRY_ADDRESS: Address = Address::new([0x11; 20]);
+    const HARDHAT_ACCOUNT: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const SIGNER_A: Address = Address::new([0xAA; 20]);
     const SIGNER_B: Address = Address::new([0xBB; 20]);
+    const SIGNER_C: Address = Address::new([0xCC; 20]);
+
+    #[rstest]
+    #[case::zero_address(Address::ZERO)]
+    #[case::hardhat_account(HARDHAT_ACCOUNT)]
+    #[case::all_ones(Address::repeat_byte(0xFF))]
+    fn deregister_calldata_encodes_correctly(#[case] signer: Address) {
+        let calldata = ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode();
+
+        assert_eq!(calldata.len(), DEREGISTER_CALLDATA_LEN);
+        assert_eq!(&calldata[..4], &ITEEProverRegistry::deregisterSignerCall::SELECTOR);
+        assert_eq!(&calldata[4..ABI_ADDRESS_OFFSET], &[0u8; ABI_ADDRESS_PAD]);
+        assert_eq!(&calldata[ABI_ADDRESS_OFFSET..], signer.as_slice());
+    }
 
     #[test]
     fn candidate_targets_registry_with_deregister_signer_calldata() {
@@ -257,6 +280,31 @@ mod tests {
         );
         assert_eq!(candidate.gas_limit, 0);
         assert!(candidate.blobs.is_empty());
+    }
+
+    #[rstest]
+    #[case::no_orphans(vec![SIGNER_A, SIGNER_B], vec![SIGNER_A, SIGNER_B], 0)]
+    #[case::one_orphan(vec![SIGNER_A, SIGNER_B], vec![SIGNER_A], 1)]
+    #[case::all_orphans(vec![SIGNER_A, SIGNER_B], vec![], 2)]
+    #[tokio::test]
+    async fn deregister_orphans_tx_count(
+        #[case] registered_signers: Vec<Address>,
+        #[case] protected_signers: Vec<Address>,
+        #[case] expected_txs: usize,
+    ) {
+        let registry = MockRegistry::with_signers(registered_signers.clone());
+        let tx_manager = MockTxManager::default();
+        let history = Arc::new(Mutex::new(HashMap::new()));
+        let manager =
+            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+        let protected_signers: HashSet<Address> = protected_signers.into_iter().collect();
+
+        manager
+            .deregister_orphans(&protected_signers, &registered_signers, &CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(tx_manager.take_candidates().len(), expected_txs);
     }
 
     #[tokio::test]
@@ -303,6 +351,22 @@ mod tests {
             sent[0].tx_data,
             Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer: SIGNER_B }.abi_encode())
         );
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_skips_all_ghosts_sends_nothing() {
+        let registry = MockRegistry::with_enumerated_and_true_signers(
+            vec![SIGNER_A, SIGNER_B, SIGNER_C],
+            vec![],
+        );
+        let tx_manager = MockTxManager::default();
+        let history = Arc::new(Mutex::new(HashMap::new()));
+        let manager =
+            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+
+        manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await.unwrap();
+
+        assert!(tx_manager.take_candidates().is_empty());
     }
 
     #[tokio::test]

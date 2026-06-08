@@ -1187,22 +1187,6 @@ where
         }
         RegistrarMetrics::proof_tasks_pending().set(0.0);
     }
-
-    /// Test helper that delegates to [`DeregistrationManager::deregister_orphans`].
-    #[cfg(test)]
-    async fn deregister_orphans(
-        &self,
-        protected_signers: &HashSet<Address>,
-        registered_signers: &[Address],
-    ) -> Result<()> {
-        let manager = DeregistrationManager::new(
-            self.config.registry_address,
-            &self.registry,
-            &self.tx_manager,
-            &self.signer_history,
-        );
-        manager.deregister_orphans(protected_signers, registered_signers, &self.config.cancel).await
-    }
 }
 
 #[cfg(test)]
@@ -1234,17 +1218,6 @@ mod tests {
     use crate::{InstanceHealthStatus, RegistryClient, Result, SignerClient};
 
     // ── Shared constants ────────────────────────────────────────────────
-
-    /// Expected byte length of ABI-encoded `deregisterSigner(address)` calldata:
-    /// 4-byte selector + 32-byte left-padded address word.
-    const DEREGISTER_CALLDATA_LEN: usize = 36;
-
-    /// Number of zero-padding bytes before the 20-byte address in the ABI word.
-    const ABI_ADDRESS_PAD: usize = 12;
-
-    /// Byte offset where the raw 20-byte address starts in the encoded calldata
-    /// (after the 4-byte selector and 12 bytes of zero-padding).
-    const ABI_ADDRESS_OFFSET: usize = 4 + ABI_ADDRESS_PAD;
 
     /// Well-known Hardhat / Anvil account #0 address.
     const HARDHAT_ACCOUNT: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
@@ -1594,30 +1567,6 @@ mod tests {
                 fetch_timeout: Duration::from_secs(crate::DEFAULT_CRL_FETCH_TIMEOUT_SECS),
             },
         }
-    }
-
-    /// Builds a driver for `deregister_orphans` tests (no signer client needed).
-    fn driver_with_shared_tx(
-        registered_signers: Vec<Address>,
-        tx: SharedTxManager,
-    ) -> RegistrationDriver<
-        MockDiscovery,
-        StubProofProvider,
-        MockRegistry,
-        SharedTxManager,
-        StubSignerClient,
-    > {
-        let registry = MockRegistry::with_signers(registered_signers);
-        RegistrationDriver::new(
-            MockDiscovery { instances: vec![] },
-            StubProofProvider,
-            registry,
-            tx,
-            StubSignerClient,
-            default_config(CancellationToken::new()),
-            None,
-        )
-        .expect("test driver construction succeeds")
     }
 
     /// Builds a fully-configured driver for primitive-level tests that
@@ -2111,172 +2060,6 @@ mod tests {
             ok_to_dereg: true,
             unresolved_instance_ids: HashSet::new(),
         }
-    }
-
-    // ── Calldata encoding tests ─────────────────────────────────────────
-
-    #[rstest]
-    #[case::zero_address(Address::ZERO)]
-    #[case::hardhat_account(HARDHAT_ACCOUNT)]
-    #[case::all_ones(Address::repeat_byte(0xFF))]
-    fn deregister_calldata_encodes_correctly(#[case] signer: Address) {
-        let calldata = ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode();
-
-        assert_eq!(calldata.len(), DEREGISTER_CALLDATA_LEN);
-        assert_eq!(&calldata[..4], &ITEEProverRegistry::deregisterSignerCall::SELECTOR);
-        // The 12 bytes between the selector and the address must be zero-padding.
-        assert_eq!(&calldata[4..ABI_ADDRESS_OFFSET], &[0u8; ABI_ADDRESS_PAD]);
-        // The last 20 bytes must be the raw signer address.
-        assert_eq!(&calldata[ABI_ADDRESS_OFFSET..], signer.as_slice());
-    }
-
-    // ── deregister_orphans tests ────────────────────────────────────────
-
-    #[rstest]
-    #[case::no_orphans(vec![ORPHAN_A, ORPHAN_B], vec![ORPHAN_A, ORPHAN_B], 0)]
-    #[case::one_orphan(vec![ORPHAN_A, ORPHAN_B], vec![ORPHAN_A], 1)]
-    #[case::all_orphans(vec![ORPHAN_A, ORPHAN_B], vec![], 2)]
-    #[tokio::test]
-    async fn deregister_orphans_tx_count(
-        #[case] registered: Vec<Address>,
-        #[case] active: Vec<Address>,
-        #[case] expected_txs: usize,
-    ) {
-        let active: HashSet<Address> = active.into_iter().collect();
-
-        let tx = SharedTxManager::new();
-        let driver = driver_with_shared_tx(registered.clone(), tx.clone());
-
-        driver.deregister_orphans(&active, &registered).await.unwrap();
-
-        assert_eq!(tx.sent_calldata().len(), expected_txs);
-    }
-
-    #[tokio::test]
-    async fn deregister_orphans_calldata_targets_orphan() {
-        let registered = vec![ORPHAN_A, ORPHAN_B];
-        let tx = SharedTxManager::new();
-        let driver = driver_with_shared_tx(registered.clone(), tx.clone());
-
-        driver.deregister_orphans(&HashSet::from([ORPHAN_A]), &registered).await.unwrap();
-
-        let sent = tx.sent_calldata();
-        let expected = ITEEProverRegistry::deregisterSignerCall { signer: ORPHAN_B }.abi_encode();
-        assert_eq!(sent[0], Bytes::from(expected));
-    }
-
-    #[tokio::test]
-    async fn deregister_orphans_respects_cancellation() {
-        let tx = SharedTxManager::new();
-        let cancel = CancellationToken::new();
-        let registry = MockRegistry::with_signers(vec![ORPHAN_A]);
-        let driver = RegistrationDriver::new(
-            MockDiscovery { instances: vec![] },
-            StubProofProvider,
-            registry,
-            tx.clone(),
-            StubSignerClient,
-            default_config(cancel.clone()),
-            None,
-        )
-        .expect("test driver construction succeeds");
-
-        let registered = vec![ORPHAN_A];
-        cancel.cancel();
-        driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
-
-        assert!(tx.sent_calldata().is_empty(), "no txs should be sent after cancellation");
-    }
-
-    /// Mock registry that simulates a corrupted `EnumerableSetLib.AddressSet`.
-    ///
-    /// `get_registered_signers()` returns `all_values` (including ghost entries),
-    /// but `is_registered()` only returns `true` for addresses in
-    /// `truly_registered`. This models the Solady v0.0.245 bug where
-    /// `values()` contains stale addresses whose `isRegisteredSigner`
-    /// mapping is `false`.
-    #[derive(Debug)]
-    struct GhostRegistry {
-        /// Addresses returned by `getRegisteredSigners()` (includes ghosts).
-        all_values: Vec<Address>,
-        /// Addresses for which `isRegisteredSigner` is `true`.
-        truly_registered: HashSet<Address>,
-    }
-
-    impl GhostRegistry {
-        /// Creates a registry where `ghosts` appear in `values()` but have
-        /// `isRegisteredSigner == false`, and `real` signers appear in both.
-        fn new(real: Vec<Address>, ghosts: Vec<Address>) -> Self {
-            let truly_registered: HashSet<Address> = real.iter().copied().collect();
-            let mut all_values = real;
-            all_values.extend(ghosts);
-            Self { all_values, truly_registered }
-        }
-    }
-
-    #[async_trait]
-    impl RegistryClient for GhostRegistry {
-        async fn is_registered(&self, signer: Address) -> Result<bool> {
-            Ok(self.truly_registered.contains(&signer))
-        }
-
-        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-            Ok(self.all_values.clone())
-        }
-    }
-
-    #[tokio::test]
-    async fn deregister_orphans_skips_ghost_entries() {
-        // Simulates the Solady v0.0.245 EnumerableSetLib bug: ORPHAN_A is a
-        // ghost entry that appears in getRegisteredSigners() but has
-        // isRegisteredSigner == false. ORPHAN_B is a real orphan.
-        let ghost_registry = GhostRegistry::new(vec![ORPHAN_B], vec![ORPHAN_A]);
-
-        let tx = SharedTxManager::new();
-        let driver = RegistrationDriver::new(
-            MockDiscovery { instances: vec![] },
-            StubProofProvider,
-            ghost_registry,
-            tx.clone(),
-            StubSignerClient,
-            default_config(CancellationToken::new()),
-            None,
-        )
-        .expect("test driver construction succeeds");
-
-        // Both ORPHAN_A and ORPHAN_B are "registered" (in values()),
-        // neither is in active_signers.
-        let registered = vec![ORPHAN_A, ORPHAN_B];
-        driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
-
-        let sent = tx.sent_calldata();
-        // Only ORPHAN_B should be deregistered; ORPHAN_A is a ghost.
-        assert_eq!(sent.len(), 1, "ghost entry should be skipped");
-        let expected = ITEEProverRegistry::deregisterSignerCall { signer: ORPHAN_B }.abi_encode();
-        assert_eq!(sent[0], Bytes::from(expected));
-    }
-
-    #[tokio::test]
-    async fn deregister_orphans_skips_all_ghosts_sends_nothing() {
-        // All orphan candidates are ghost entries — no tx should be sent.
-        let ghost_registry = GhostRegistry::new(vec![], vec![ORPHAN_A, ORPHAN_B, ORPHAN_C]);
-
-        let tx = SharedTxManager::new();
-        let driver = RegistrationDriver::new(
-            MockDiscovery { instances: vec![] },
-            StubProofProvider,
-            ghost_registry,
-            tx.clone(),
-            StubSignerClient,
-            default_config(CancellationToken::new()),
-            None,
-        )
-        .expect("test driver construction succeeds");
-
-        let registered = vec![ORPHAN_A, ORPHAN_B, ORPHAN_C];
-        driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
-
-        assert!(tx.sent_calldata().is_empty(), "all ghosts should be skipped, no txs sent");
     }
 
     #[tokio::test]
