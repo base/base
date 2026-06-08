@@ -21,6 +21,9 @@ use base_consensus_providers::{
 use base_consensus_rpc::RpcBuilder;
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
+use base_upgrade_signal::{
+    UpgradeSignalConfig, UpgradeSignalRefresher, UpgradeSignalRuntimeValidation,
+};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -34,6 +37,7 @@ use crate::{
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
     RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    UpgradeSignalMetricsActor,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -118,6 +122,10 @@ pub struct RollupNode {
     /// If the path is set but the database cannot be opened (e.g., bad permissions, disk
     /// error, or corrupted file), the node **fails to start** with an error.
     pub safedb_path: Option<PathBuf>,
+    /// Optional L1 upgrade signal metrics observer configuration.
+    pub upgrade_signal_metrics_config: Option<UpgradeSignalConfig>,
+    /// Optional runtime upgrade signal validation context.
+    pub upgrade_signal_runtime_validation: Option<UpgradeSignalRuntimeValidation>,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -532,7 +540,28 @@ impl RollupNode {
             derivation_origin_rx,
             cancellation.clone(),
         );
-
+        let upgrade_signal_metrics_actor =
+            self.upgrade_signal_metrics_config.clone().map(|config| {
+                UpgradeSignalMetricsActor::new(
+                    config,
+                    self.l1_config.engine_provider.clone(),
+                    cancellation.clone(),
+                )
+            });
+        let upgrade_signal_refresher =
+            self.upgrade_signal_metrics_config.clone().and_then(|config| {
+                config.mode.allows_runtime_admin().then(|| {
+                    let refresher = UpgradeSignalRefresher::new(
+                        config,
+                        self.l1_config.engine_provider.clone(),
+                        self.config.l2_chain_id.id(),
+                    );
+                    match self.upgrade_signal_runtime_validation {
+                        Some(validation) => refresher.with_runtime_validation(validation),
+                        None => refresher,
+                    }
+                })
+            });
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if self.mode().is_sequencer() {
             let sequencer_engine_client = QueuedSequencerEngineClient {
@@ -585,6 +614,7 @@ impl RollupNode {
                 QueuedEngineRpcClient::new(engine_rpc_request_tx),
                 sequencer_admin_client,
                 safe_db_reader,
+                upgrade_signal_refresher,
             )
         });
 
@@ -604,6 +634,7 @@ impl RollupNode {
                 Some((network, ())),
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
+                upgrade_signal_metrics_actor.map(|actor| (actor, ())),
                 Some((derivation, ())),
                 Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),
