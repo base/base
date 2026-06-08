@@ -254,8 +254,6 @@ fn gen_auto_slot_expr(
 
 /// Classify a field based on its type.
 pub(crate) fn classify_field_type(ty: &Type) -> syn::Result<FieldKind<'_>> {
-    use crate::utils::extract_mapping_types;
-
     if let Some((key_ty, value_ty)) = extract_mapping_types(ty) {
         return Ok(FieldKind::Mapping { key: key_ty, value: value_ty });
     }
