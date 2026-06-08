@@ -286,6 +286,7 @@ mod tests {
         thread::{self, JoinHandle},
     };
 
+    use alloy_primitives::{B256, b256};
     use rstest::{fixture, rstest};
 
     use super::*;
@@ -302,6 +303,13 @@ mod tests {
     const INTER2_EXPECTED_SERIAL_HEX: &str = "cb286a4a4a09207f8b0c14950dcd6861";
     const INTER3_EXPECTED_SERIAL_HEX: &str = "c8925d382506d820d93d2c704a7523c4ba2ddfaa";
     const LEAF_EXPECTED_SERIAL_HEX: &str = "0193685e7fee7d8500000000674b3bd8";
+    const EXPECTED_PATH_DIGESTS: [B256; 5] = [
+        b256!("641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b"),
+        b256!("aa413b647367f37da57079d2ae215fa2b14cb42ec0c4e4275f56dd3caff95b36"),
+        b256!("bc023b9f717f6a435ab56642c5b5784179fb4d39166d36641d47887d3011c125"),
+        b256!("f8cffb2fa4503ee3753a54d06d3dcbf96f4ea1db505cccc5c14f784f5234604a"),
+        b256!("140ad974a8d3c771bf24a12fdbfff85a7191ba9a9a703869948aebedc16dd3ad"),
+    ];
     const EMPTY_CRL_DER: [u8; 49] = [
         0x30, 0x2f, 0x30, 0x1d, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03,
         0x03, 0x30, 0x00, 0x17, 0x0d, 0x32, 0x34, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30,
@@ -399,10 +407,9 @@ mod tests {
     fn path_digests_match_onchain_computation(full_chain: ChainFixture) {
         let refs = full_chain.refs();
         let infos = CertCrlInfo::from_chain(&refs).unwrap();
-        let expected = compute_path_digests(&refs);
 
-        assert_eq!(infos.len(), expected.len());
-        for (info, expected_digest) in infos.iter().zip(expected) {
+        assert_eq!(infos.len(), EXPECTED_PATH_DIGESTS.len());
+        for (info, expected_digest) in infos.iter().zip(EXPECTED_PATH_DIGESTS) {
             assert_eq!(info.path_digest, expected_digest);
         }
     }
