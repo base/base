@@ -1391,9 +1391,16 @@ mod tests {
                 IB20Factory::getB20AddressCall::abi_encode_returns(&Address::ZERO),
             );
         });
+        // One keccak call for the valid getB20Address, zero for the invalid variant.
+        assert_eq!(
+            storage.counter_keccak256(),
+            1,
+            "getB20Address must call keccak256 exactly once for a valid variant"
+        );
 
         // createB20 also meters the keccak hash for valid variants. Verify the token
         // is created at the same address that getB20Address predicted.
+        storage.reset_counters();
         storage.set_caller(sender);
         StorageCtx::enter(&mut storage, |ctx| {
             let call = create_call(
@@ -1406,5 +1413,10 @@ mod tests {
                 IB20Factory::createB20Call::abi_encode_returns(&expected_asset_addr),
             );
         });
+        assert_eq!(
+            storage.counter_keccak256(),
+            1,
+            "createB20 must call keccak256 exactly once for a valid variant"
+        );
     }
 }
