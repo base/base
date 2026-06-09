@@ -6,26 +6,51 @@ use base_precompile_storage::StorageCtx;
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    B20FactoryStorage, B20Variant, IB20Factory,
-    macros::{decode_precompile_call, deduct_calldata_cost},
+    B20FactoryStorage, B20Variant, BerylCallRecorder, BerylMetricLabels, IB20Factory,
+    NoopPrecompileCallObserver, PrecompileCallObserver, macros::decode_precompile_call,
 };
 
 impl<'a> B20FactoryStorage<'a> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        deduct_calldata_cost!(ctx, calldata);
-        ctx.result_output(self.inner(ctx, calldata), |b| b)
+        self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
     }
 
-    fn inner(
+    /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler with an observer.
+    pub fn dispatch_with_observer<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-    ) -> base_precompile_storage::Result<Bytes> {
+        observer: O,
+    ) -> PrecompileResult
+    where
+        O: PrecompileCallObserver,
+    {
+        let mut recorder =
+            BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
+        if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
+            return recorder.record_base_error_result(ctx, error);
+        }
+        recorder.record_base_result(ctx, self.inner(ctx, calldata, observer), |b| b)
+    }
+
+    fn inner<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        observer: O,
+    ) -> base_precompile_storage::Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
         match decode_precompile_call!(calldata, IB20Factory::IB20FactoryCalls) {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
-                let token = self.create_b20(caller, call)?;
+                let variant = B20Variant::from_abi(call.variant);
+                let token = self.create_b20_with_observer(caller, call, observer.clone())?;
+                if let Some(variant) = variant {
+                    observer.record_b20_created(variant.as_label());
+                }
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {

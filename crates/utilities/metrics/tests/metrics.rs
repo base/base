@@ -276,6 +276,79 @@ fn two_label_counter() {
 }
 
 base_metrics::define_metrics! {
+    beryl_label,
+    struct = BerylLabelMetrics,
+
+    #[describe("Calls by precompile, method, variant, and status")]
+    #[label(precompile)]
+    #[label(method)]
+    #[label(variant)]
+    #[label(status)]
+    calls: counter,
+
+    #[describe("Batch items by precompile, method, and variant")]
+    #[label(precompile)]
+    #[label(method)]
+    #[label(variant)]
+    batch_items: histogram,
+
+    #[describe("Zeroed calls by precompile, method, variant, and status")]
+    #[label(name = "precompile", default = ["factory"])]
+    #[label(name = "method", default = ["create"])]
+    #[label(name = "variant", default = ["b20"])]
+    #[label(name = "status", default = ["success"])]
+    zeroed_calls: counter,
+}
+
+#[test]
+fn three_and_four_label_metrics_record_and_zero() {
+    with_recorder(|snap| {
+        BerylLabelMetrics::calls("factory", "create", "b20", "success").increment(9);
+        BerylLabelMetrics::batch_items("policy", "createPolicies", "none").record(3.0);
+        BerylLabelMetrics::zero();
+
+        let snapshot = snap.snapshot().into_vec();
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "beryl_label.calls",
+                &[
+                    ("precompile", "factory"),
+                    ("method", "create"),
+                    ("variant", "b20"),
+                    ("status", "success")
+                ]
+            ),
+            Some(&DebugValue::Counter(9)),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Histogram,
+                "beryl_label.batch_items",
+                &[("precompile", "policy"), ("method", "createPolicies"), ("variant", "none")]
+            ),
+            Some(&DebugValue::Histogram(vec![OrderedFloat(3.0)])),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "beryl_label.zeroed_calls",
+                &[
+                    ("precompile", "factory"),
+                    ("method", "create"),
+                    ("variant", "b20"),
+                    ("status", "success")
+                ]
+            ),
+            Some(&DebugValue::Counter(0)),
+        );
+    });
+}
+
+base_metrics::define_metrics! {
     timer_test,
     struct = TimerMetrics,
     #[describe("Duration")]

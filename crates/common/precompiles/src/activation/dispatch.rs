@@ -6,9 +6,10 @@ use base_precompile_storage::StorageCtx;
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationRegistryStorage,
+    ActivationRegistryStorage, BerylCallRecorder, BerylMetricLabels,
     IActivationRegistry::{self, IActivationRegistryCalls as C},
-    macros::{decode_precompile_call, deduct_calldata_cost},
+    NoopPrecompileCallObserver, PrecompileCallObserver,
+    macros::decode_precompile_call,
 };
 
 impl ActivationRegistryStorage<'_> {
@@ -19,8 +20,33 @@ impl ActivationRegistryStorage<'_> {
         calldata: &[u8],
         activation_admin_address: Option<Address>,
     ) -> PrecompileResult {
-        deduct_calldata_cost!(ctx, calldata);
-        ctx.result_output(self.inner(calldata, activation_admin_address), |output| output)
+        self.dispatch_with_observer(
+            ctx,
+            calldata,
+            activation_admin_address,
+            NoopPrecompileCallObserver,
+        )
+    }
+
+    /// ABI-dispatches activation registry calldata with an observer.
+    pub fn dispatch_with_observer<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        activation_admin_address: Option<Address>,
+        observer: O,
+    ) -> PrecompileResult
+    where
+        O: PrecompileCallObserver,
+    {
+        let mut recorder =
+            BerylCallRecorder::start(observer, BerylMetricLabels::activation_call(calldata));
+        if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
+            return recorder.record_base_error_result(ctx, error);
+        }
+        recorder.record_base_result(ctx, self.inner(calldata, activation_admin_address), |output| {
+            output
+        })
     }
 
     fn inner(

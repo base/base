@@ -108,6 +108,14 @@ impl B20Variant {
         }
     }
 
+    /// Returns the stable metric label for this B-20 variant.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Asset => "asset",
+            Self::Stablecoin => "stablecoin",
+        }
+    }
+
     /// Builds this variant's B-20 address prefix.
     pub const fn address_prefix(self) -> [u8; 11] {
         [Self::PREFIX_BYTE, 0, 0, 0, 0, 0, 0, 0, 0, 0, self.discriminant()]

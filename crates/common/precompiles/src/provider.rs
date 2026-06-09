@@ -183,10 +183,14 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
-            B20Factory::install(&mut precompiles);
-            BerylLookup::install_with_observer(&mut precompiles, observer);
-            PolicyRegistryPrecompile::install(&mut precompiles);
-            ActivationRegistry::install(&mut precompiles, self.activation_admin_address);
+            B20Factory::install_with_observer(&mut precompiles, observer.clone());
+            BerylLookup::install_with_observer(&mut precompiles, observer.clone());
+            PolicyRegistryPrecompile::install_with_observer(&mut precompiles, observer.clone());
+            ActivationRegistry::install_with_observer(
+                &mut precompiles,
+                self.activation_admin_address,
+                observer,
+            );
         }
         precompiles
     }

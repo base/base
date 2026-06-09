@@ -3,7 +3,7 @@
 //! Asset-specific selectors are tried first via `IB20Asset::IB20AssetCalls`.
 //! The `IB20` match block handles inherited selectors.
 
-use alloc::{string::String, vec::Vec};
+use alloc::string::ToString;
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
@@ -11,12 +11,13 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, B20AssetStorage, B20AssetToken, B20TokenRole, Burnable, Configurable,
+    AssetAccounting, B20AssetStorage, B20AssetToken, B20TokenRole, BerylAuxiliaryMetrics,
+    BerylCallRecorder, BerylMetricLabels, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
     PrecompileCallObserver, RoleManaged, Token, Transferable,
-    macros::{decode_precompile_call, deduct_calldata_cost},
+    macros::decode_precompile_call,
 };
 
 impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
@@ -35,17 +36,21 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        deduct_calldata_cost!(ctx, calldata);
+        let mut recorder =
+            BerylCallRecorder::start(observer.clone(), BerylMetricLabels::b20_asset_call(calldata));
+        if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
+            return recorder.record_base_error_result(ctx, error);
+        }
 
         match self.accounting().is_initialized() {
             Ok(true) => {}
             Ok(false) => {
-                return BasePrecompileError::Revert(Bytes::new())
-                    .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+                return recorder
+                    .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
             }
-            Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
+            Err(error) => return recorder.record_base_error_result(ctx, error),
         }
-        ctx.result_output(self.inner_with_observer(ctx, calldata, observer), |b| b)
+        recorder.record_base_result(ctx, self.inner_with_observer(ctx, calldata, observer), |b| b)
     }
 
     /// Decodes calldata and executes the matching `IB20Asset` or inherited `IB20` operation.
@@ -98,9 +103,15 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         O: PrecompileCallObserver,
     {
         // Asset-specific and overridden selectors are caught here first.
-        if let Ok(call) = IB20Asset::IB20AssetCalls::abi_decode(calldata) {
+        if let Some(selector) = BerylMetricLabels::selector(calldata)
+            && IB20Asset::IB20AssetCalls::valid_selector(selector)
+        {
+            let call = IB20Asset::IB20AssetCalls::abi_decode(calldata).map_err(|error| {
+                BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+            })?;
             let label = call.as_label();
-            return observer.observe(label, || self.handle_asset_call(ctx, call, privileged));
+            return observer
+                .observe(label, || self.handle_asset_call(ctx, call, privileged, &observer));
         }
 
         // Fall through to inherited IB20 selectors.
@@ -322,12 +333,16 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         Ok(encoded)
     }
 
-    fn handle_asset_call(
+    fn handle_asset_call<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         call: SC,
         privileged: bool,
-    ) -> base_precompile_storage::Result<Bytes> {
+        observer: &O,
+    ) -> base_precompile_storage::Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
         let caller = ctx.caller();
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
@@ -358,12 +373,16 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
             // --- Announcement ---
             SC::announce(c) => {
-                self.announce(ctx, c.internalCalls, c.id, c.description, c.uri, privileged)?;
+                self.announce(ctx, c, privileged, observer)?;
                 Bytes::new()
             }
 
             // --- Batched mint ---
             SC::batchMint(c) => {
+                observer.record_batch_items(
+                    &BerylAuxiliaryMetrics::b20("asset", "batchMint"),
+                    c.recipients.len(),
+                );
                 self.batch_mint(caller, c.recipients, c.amounts, privileged)?;
                 Bytes::new()
             }
@@ -380,25 +399,41 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     /// Posts an announcement and atomically executes `internal_calls` via self-dispatch.
     ///
     /// The selector check in the inner loop prevents recursive invocation.
-    fn announce(
+    fn announce<O>(
         &mut self,
         ctx: StorageCtx<'_>,
-        internal_calls: Vec<Bytes>,
-        id: String,
-        description: String,
-        uri: String,
+        call: IB20Asset::announceCall,
         privileged: bool,
-    ) -> base_precompile_storage::Result<()> {
+        observer: &O,
+    ) -> base_precompile_storage::Result<()>
+    where
+        O: PrecompileCallObserver,
+    {
         let caller = ctx.caller();
+        let internal_calls = call.internalCalls;
+        let internal_call_count = internal_calls.len();
+        let internal_call_bytes = internal_calls.iter().map(|call| call.len()).sum();
+        observer.record_internal_calls(
+            &BerylAuxiliaryMetrics::b20("asset", "announce"),
+            internal_call_count,
+            internal_call_bytes,
+        );
         self.ensure_operator_role(caller, privileged)?;
 
+        let id = call.id;
         if self.accounting().is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id }));
         }
         self.accounting_mut().mark_announcement_id_used(id.as_str())?;
 
         self.accounting_mut().emit_event(
-            IB20Asset::Announcement { caller, id: id.clone(), description, uri }.encode_log_data(),
+            IB20Asset::Announcement {
+                caller,
+                id: id.clone(),
+                description: call.description,
+                uri: call.uri,
+            }
+            .encode_log_data(),
         )?;
 
         for call in &internal_calls {
@@ -422,7 +457,8 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec::Vec;
+    use alloc::{string::String, vec::Vec};
+    use std::sync::{Arc, Mutex};
 
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolEvent};
@@ -432,11 +468,29 @@ mod tests {
 
     use crate::{
         ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
-        B20AssetToken, B20TokenRole, IB20, IB20Asset, InMemoryPolicy, InMemoryTokenAccounting,
-        Token, TokenAccounting,
+        B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset, InMemoryPolicy,
+        InMemoryTokenAccounting, PrecompileCallMetric, PrecompileCallObserver,
+        PrecompileCallOutcome, PrecompileCallStatus, Token, TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
+
+    #[derive(Debug, Clone, Default)]
+    struct RecordingObserver {
+        calls: Arc<Mutex<Vec<(PrecompileCallMetric, PrecompileCallOutcome)>>>,
+    }
+
+    impl RecordingObserver {
+        fn calls(&self) -> Vec<(PrecompileCallMetric, PrecompileCallOutcome)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl PrecompileCallObserver for RecordingObserver {
+        fn record_call(&self, call: &PrecompileCallMetric, outcome: &PrecompileCallOutcome) {
+            self.calls.lock().unwrap().push((call.clone(), *outcome));
+        }
+    }
 
     const ALICE: Address = Address::repeat_byte(0xaa);
     const BOB: Address = Address::repeat_byte(0xbb);
@@ -471,6 +525,49 @@ mod tests {
 
     fn batch_mint_calldata(recipients: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {
         IB20Asset::batchMintCall { recipients, amounts }.abi_encode()
+    }
+
+    #[test]
+    fn dispatch_with_observer_records_asset_success() {
+        let observer = RecordingObserver::default();
+        let mut token = make_token();
+        let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
+        let mut storage = storage_with_caller(ALICE);
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            token.dispatch_with_observer(ctx, &calldata, observer.clone())
+        })
+        .expect("dispatch should not fatally error");
+
+        assert!(output.is_success());
+        let calls = observer.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0.precompile, "b20");
+        assert_eq!(calls[0].0.method, "balanceOf");
+        assert_eq!(calls[0].0.variant, Some("asset"));
+        assert_eq!(calls[0].1.status, PrecompileCallStatus::Success);
+    }
+
+    #[test]
+    fn dispatch_with_observer_records_asset_decode_failure() {
+        let observer = RecordingObserver::default();
+        let mut token = make_token();
+        let calldata = IB20::balanceOfCall::SELECTOR;
+        let mut storage = storage_with_caller(ALICE);
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            token.dispatch_with_observer(ctx, &calldata, observer.clone())
+        })
+        .expect("dispatch should not fatally error");
+
+        assert!(output.is_revert());
+        let calls = observer.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0.precompile, "b20");
+        assert_eq!(calls[0].0.method, "balanceOf");
+        assert_eq!(calls[0].0.variant, Some("asset"));
+        assert_eq!(calls[0].1.status, PrecompileCallStatus::Revert);
+        assert_eq!(calls[0].1.error, Some(BerylErrorKind::AbiDecode));
     }
 
     #[test]
