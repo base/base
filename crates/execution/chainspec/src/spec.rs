@@ -470,7 +470,7 @@ mod tests {
     use alloy_consensus::proofs::storage_root_unhashed;
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
-    use alloy_primitives::{B256, U256, address, b256};
+    use alloy_primitives::{Address, B256, U256, address, b256};
     use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
@@ -757,7 +757,6 @@ mod tests {
 
     #[test]
     fn beryl_chain_config_with_zero_activation_admin_is_rejected() {
-        use alloy_primitives::Address;
         let mut config = ChainConfig::devnet().clone();
         config.beryl_timestamp = Some(0);
         config.activation_admin_address = Some(Address::ZERO);
@@ -771,7 +770,6 @@ mod tests {
 
     #[test]
     fn beryl_builder_with_zero_activation_admin_is_rejected() {
-        use alloy_primitives::Address;
         let chain_id = ChainConfig::mainnet().chain_id;
         let err = BaseChainSpecBuilder::base_mainnet()
             .optional_activation_admin_address(Some(Address::ZERO))
