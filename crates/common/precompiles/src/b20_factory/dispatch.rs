@@ -1,7 +1,7 @@
 //! ABI dispatch for the `B20Factory` precompile.
 
-use alloy_primitives::Bytes;
-use alloy_sol_types::SolCall;
+use alloy_primitives::{Address, Bytes};
+use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
@@ -53,6 +53,12 @@ impl<'a> B20FactoryStorage<'a> {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
                 let variant = B20Variant::from_abi(call.variant);
+                // Charge keccak gas for address derivation only when the variant is valid.
+                // Invalid variants are rejected in create_b20_with_observer before
+                // compute_address runs, so no keccak hash occurs on the revert path.
+                if variant.is_some() {
+                    ctx.keccak256(&(caller, call.salt).abi_encode())?;
+                }
                 let token = self.create_b20_with_observer(caller, call, observer.clone())?;
                 if let Some(variant) = variant {
                     observer.record_b20_created(variant.as_label());
@@ -60,10 +66,16 @@ impl<'a> B20FactoryStorage<'a> {
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
-                let addr = B20Variant::from_abi(call.variant)
-                    .expect("abi_decode_validate rejects non-canonical discriminants")
-                    .compute_address(call.sender, call.salt)
-                    .0;
+                // Returns zero for an unrecognized variant to match base-std, which documents
+                // this function as "Never reverts" (meaning no ABI revert; keccak gas is
+                // still charged for recognized variants and OOG can terminate the call frame).
+                let addr = match B20Variant::from_abi(call.variant) {
+                    Some(v) => {
+                        ctx.keccak256(&(call.sender, call.salt).abi_encode())?;
+                        v.compute_address(call.sender, call.salt).0
+                    }
+                    None => Address::ZERO,
+                };
                 Ok(IB20Factory::getB20AddressCall::abi_encode_returns(&addr).into())
             }
             IB20Factory::IB20FactoryCalls::isB20(call) => {
