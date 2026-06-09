@@ -56,7 +56,12 @@ impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
     pub const ADDRESS: Address = address!("8453000000000000000000000000000000000001");
 
-    /// Returns the activation admin.
+    /// Returns the activation admin address, or [`Address::ZERO`] if no admin is configured.
+    ///
+    /// [`Address::ZERO`] here means "no admin is set" — it is not a valid admin address.
+    /// Configuration-time validation rejects `Some(Address::ZERO)`, so in a correctly
+    /// constructed chain spec the zero return always means `activation_admin_address` was
+    /// `None`. Callers must not treat the zero return as a meaningful admin address.
     pub const fn admin(&self, activation_admin_address: Option<Address>) -> Address {
         match activation_admin_address {
             Some(address) => address,
