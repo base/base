@@ -11,6 +11,7 @@ use basectl_cli::{
 use crate::cli::DoctorArgs;
 
 const ANSI_RED: &str = "\x1b[31m";
+const ANSI_YELLOW: &str = "\x1b[33m";
 const ANSI_GREEN: &str = "\x1b[32m";
 const ANSI_CYAN: &str = "\x1b[36m";
 const ANSI_DIM: &str = "\x1b[2m";
@@ -104,7 +105,8 @@ fn write_check<W: Write>(writer: &mut W, check: &DoctorCheck) -> io::Result<()> 
 
 fn colored_status(status: DoctorStatus) -> String {
     let color = match status {
-        DoctorStatus::Fail | DoctorStatus::Warn => ANSI_RED,
+        DoctorStatus::Fail => ANSI_RED,
+        DoctorStatus::Warn => ANSI_YELLOW,
         DoctorStatus::Skip => ANSI_DIM,
         DoctorStatus::Info => ANSI_CYAN,
         DoctorStatus::Pass => ANSI_GREEN,
@@ -197,8 +199,8 @@ mod tests {
     use url::Url;
 
     use super::{
-        ANSI_CYAN, ANSI_GREEN, ANSI_RED, colored_status, status_sort_key, validate_thresholds,
-        write_check,
+        ANSI_CYAN, ANSI_GREEN, ANSI_RED, ANSI_YELLOW, colored_status, status_sort_key,
+        validate_thresholds, write_check,
     };
     use crate::cli::DoctorArgs;
 
@@ -219,7 +221,7 @@ mod tests {
 
         assert!(rendered.contains("WARN"));
         assert!(rendered.contains("el_peer_count"));
-        assert!(rendered.contains(ANSI_RED));
+        assert!(rendered.contains(ANSI_YELLOW));
         assert!(rendered.contains("  value:\n    count: 3"));
         assert!(rendered.contains("  threshold:\n    warnBelow: 5"));
         assert!(rendered.contains("Check p2p config."));
@@ -252,7 +254,7 @@ mod tests {
     #[test]
     fn pretty_status_labels_are_colored() {
         assert_eq!(colored_status(DoctorStatus::Fail), format!("{ANSI_RED}FAIL\x1b[0m"));
-        assert_eq!(colored_status(DoctorStatus::Warn), format!("{ANSI_RED}WARN\x1b[0m"));
+        assert_eq!(colored_status(DoctorStatus::Warn), format!("{ANSI_YELLOW}WARN\x1b[0m"));
         assert_eq!(colored_status(DoctorStatus::Info), format!("{ANSI_CYAN}INFO\x1b[0m"));
         assert_eq!(colored_status(DoctorStatus::Pass), format!("{ANSI_GREEN}PASS\x1b[0m"));
     }

@@ -243,7 +243,7 @@ impl Doctor {
             Self::bootnode_check(chain_id.as_ref().ok(), &config),
             Self::advertised_endpoint_check(&el_info, cl_info.as_ref()),
             Self::declared_network_check(&config, &chain_id),
-            Self::reth_limits_check(options.reth_config.as_ref()),
+            Self::reth_limits_check(options.reth_config.as_deref()),
             Self::consensus_rpc_check(options.cl_rpc.as_ref()),
             Self::el_peer_count_check(&el_info, options.thresholds.peer_warn_threshold),
             Self::cl_peer_count_check(cl_info.as_ref(), options.thresholds.peer_warn_threshold),
@@ -383,7 +383,7 @@ impl Doctor {
         }
     }
 
-    fn reth_limits_check(path: Option<&PathBuf>) -> DoctorCheck {
+    fn reth_limits_check(path: Option<&Path>) -> DoctorCheck {
         let Some(path) = path else {
             return DoctorCheck::new(
                 "reth_limits",
