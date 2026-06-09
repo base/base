@@ -7,6 +7,7 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
+use opentelemetry::Context;
 use tokio::sync::mpsc;
 
 use super::SealTaskError;
@@ -87,6 +88,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             Arc::clone(&self.cfg),
             new_payload.clone(),
             self.payload_safety,
+            Context::current(),
         )
         .execute(state)
         .await

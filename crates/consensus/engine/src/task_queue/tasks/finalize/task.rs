@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
 use derive_more::Constructor;
+use opentelemetry::Context;
 
 use crate::{
     EngineClient, EngineState, EngineTaskExt, FinalizeTaskError, Metrics, SynchronizeTask,
@@ -72,6 +73,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
             Arc::clone(&self.client),
             Arc::clone(&self.cfg),
             EngineSyncStateUpdate { finalized_head: Some(block_info), ..Default::default() },
+            Context::current(),
         )
         .execute(state)
         .await?;

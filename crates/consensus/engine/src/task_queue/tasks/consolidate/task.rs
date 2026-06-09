@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
+use opentelemetry::{Context, context::FutureExt as OtelFutureExt};
 
 use crate::{
     ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety,
@@ -73,6 +74,8 @@ pub struct ConsolidateTask<EngineClient_: EngineClient> {
     pub cfg: Arc<RollupConfig>,
     /// The input for consolidation (either attributes or block info).
     pub input: ConsolidateInput,
+    /// The `OpenTelemetry` context to propagate through EL HTTP calls.
+    pub otel_cx: Context,
 }
 
 impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
@@ -81,8 +84,9 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
         client: Arc<EngineClient_>,
         cfg: Arc<RollupConfig>,
         input: ConsolidateInput,
+        otel_cx: Context,
     ) -> Self {
-        Self { client, cfg, input }
+        Self { client, cfg, input, otel_cx }
     }
 
     /// This is used when the [`ConsolidateTask`] fails to consolidate the engine state
@@ -130,6 +134,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 safe_head: Some(*safe_l2),
                 ..Default::default()
             },
+            self.otel_cx.clone(),
         )
         .execute(state)
         .await
@@ -173,7 +178,12 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
         // Fetch the unsafe L2 block
         let block_num = self.input.l2_block_number();
         let fetch_start = Instant::now();
-        let block = match self.client.l2_block_by_label(block_num.into()).await {
+        let block = match self
+            .client
+            .l2_block_by_label(block_num.into())
+            .with_context(self.otel_cx.clone())
+            .await
+        {
             Ok(Some(block)) => block,
             Ok(None) => {
                 warn!(target: "engine", block_num, "Received `None` block");
@@ -233,6 +243,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                             safe_head: Some(block_info),
                             ..Default::default()
                         },
+                        self.otel_cx.clone(),
                     )
                     .execute(state)
                     .await
