@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use basectl_cli::{
     Doctor, DoctorCheck, DoctorOptions, DoctorReport, DoctorStatus, DoctorThresholds, JsonOutput,
     MonitoringConfig,
@@ -18,6 +18,7 @@ const ANSI_RESET: &str = "\x1b[0m";
 
 /// Runs the `basectl doctor` subcommand.
 pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<bool> {
+    validate_thresholds(&args)?;
     let options = DoctorOptions {
         el_rpc: args.el_rpc.unwrap_or_else(|| config.rpc.clone()),
         cl_rpc: args.cl_rpc.or_else(|| config.consensus_node_rpc.clone()),
@@ -38,6 +39,16 @@ pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<bo
         print_pretty(&report)?;
     }
     Ok(report.has_failures())
+}
+
+fn validate_thresholds(args: &DoctorArgs) -> Result<()> {
+    if args.head_lag_warn_blocks >= args.head_lag_fail_blocks {
+        bail!("`--head-lag-warn-blocks` must be less than `--head-lag-fail-blocks`");
+    }
+    if args.safe_recency_warn_blocks >= args.safe_recency_fail_blocks {
+        bail!("`--safe-recency-warn-blocks` must be less than `--safe-recency-fail-blocks`");
+    }
+    Ok(())
 }
 
 fn print_pretty(report: &DoctorReport) -> Result<()> {
@@ -179,10 +190,17 @@ fn is_empty_value(value: &serde_json::Value) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use basectl_cli::{DoctorCheck, DoctorStatus};
     use serde_json::json;
+    use url::Url;
 
-    use super::{ANSI_CYAN, ANSI_GREEN, ANSI_RED, colored_status, status_sort_key, write_check};
+    use super::{
+        ANSI_CYAN, ANSI_GREEN, ANSI_RED, colored_status, status_sort_key, validate_thresholds,
+        write_check,
+    };
+    use crate::cli::DoctorArgs;
 
     #[test]
     fn pretty_check_includes_status_value_threshold_and_hint() {
@@ -237,5 +255,45 @@ mod tests {
         assert_eq!(colored_status(DoctorStatus::Warn), format!("{ANSI_RED}WARN\x1b[0m"));
         assert_eq!(colored_status(DoctorStatus::Info), format!("{ANSI_CYAN}INFO\x1b[0m"));
         assert_eq!(colored_status(DoctorStatus::Pass), format!("{ANSI_GREEN}PASS\x1b[0m"));
+    }
+
+    #[test]
+    fn rejects_invalid_head_lag_thresholds() {
+        let args = test_args(|args| {
+            args.head_lag_warn_blocks = 30;
+            args.head_lag_fail_blocks = 10;
+        });
+
+        let err = validate_thresholds(&args).unwrap_err();
+
+        assert!(err.to_string().contains("--head-lag-warn-blocks"));
+    }
+
+    #[test]
+    fn rejects_invalid_safe_recency_thresholds() {
+        let args = test_args(|args| {
+            args.safe_recency_warn_blocks = 300;
+            args.safe_recency_fail_blocks = 300;
+        });
+
+        let err = validate_thresholds(&args).unwrap_err();
+
+        assert!(err.to_string().contains("--safe-recency-warn-blocks"));
+    }
+
+    fn test_args(update: impl FnOnce(&mut DoctorArgs)) -> DoctorArgs {
+        let mut args = DoctorArgs {
+            el_rpc: Some(Url::parse("http://127.0.0.1:8545").unwrap()),
+            cl_rpc: None,
+            reth_config: Option::<PathBuf>::None,
+            peer_warn_threshold: 5,
+            head_lag_warn_blocks: 10,
+            head_lag_fail_blocks: 20,
+            safe_recency_warn_blocks: 150,
+            safe_recency_fail_blocks: 300,
+            json: false,
+        };
+        update(&mut args);
+        args
     }
 }
