@@ -84,11 +84,11 @@ struct LayerInfoJson {
     advertised_ip: Option<String>,
     tcp_port: Option<u16>,
     discovery: Option<basectl_cli::DiscoveryInfo>,
-    peer_count: u32,
+    peer_count: Option<u32>,
 }
 
 impl LayerInfoJson {
-    fn from_endpoint(endpoint: Option<NodeEndpoint>, peer_count: u32) -> Self {
+    fn from_endpoint(endpoint: Option<NodeEndpoint>, peer_count: Option<u32>) -> Self {
         let (advertised_ip, tcp_port, discovery) = endpoint.map_or((None, None, None), |ep| {
             (Some(ep.advertised_ip.to_string()), Some(ep.tcp_port), Some(ep.discovery))
         });
@@ -113,7 +113,7 @@ impl InfoJson {
         Self {
             network: network.to_string(),
             el: LayerInfoJson::from_endpoint(report.el, peer_stats.el_count),
-            cl: LayerInfoJson::from_endpoint(report.cl, peer_stats.cl.connected),
+            cl: LayerInfoJson::from_endpoint(report.cl, peer_stats.cl.map(|stats| stats.connected)),
         }
     }
 }
@@ -123,7 +123,7 @@ impl InfoJson {
 struct PeersJson {
     network: String,
     el: Option<Vec<PeerSummary>>,
-    cl: Vec<PeerSummary>,
+    cl: Option<Vec<PeerSummary>>,
 }
 
 impl PeersJson {
@@ -173,7 +173,13 @@ fn print_info_pretty(
             "el_discovery",
             el_discovery.unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
         )
-        .row("el_peer_count", peer_stats.el_count.to_string())
+        .row(
+            "el_peer_count",
+            peer_stats
+                .el_count
+                .map(|count| count.to_string())
+                .unwrap_or_else(unavailable_el_peer_count),
+        )
         .row(
             "cl_advertised_ip",
             report
@@ -196,7 +202,13 @@ fn print_info_pretty(
                 .unwrap_or_else(unavailable_cl_endpoint),
         )
         .row("cl_discovery", cl_discovery.unwrap_or_else(unavailable_cl_endpoint))
-        .row("cl_peer_count", peer_stats.cl.connected.to_string());
+        .row(
+            "cl_peer_count",
+            peer_stats
+                .cl
+                .map(|stats| stats.connected.to_string())
+                .unwrap_or_else(unavailable_cl_peer_stats),
+        );
     table.print()?;
     Ok(())
 }
@@ -207,7 +219,7 @@ fn print_peers_pretty(network: &str, report: &PeerListReport) -> Result<()> {
     writeln!(stdout)?;
     write_peer_section(&mut stdout, "execution", report.el.as_deref())?;
     writeln!(stdout)?;
-    write_peer_section(&mut stdout, "consensus", Some(&report.cl))?;
+    write_peer_section(&mut stdout, "consensus", report.cl.as_deref())?;
     Ok(())
 }
 
@@ -252,8 +264,16 @@ fn unavailable_admin_method(method: &str) -> String {
     format!("unavailable (`{method}` not exposed by this RPC)")
 }
 
+fn unavailable_el_peer_count() -> String {
+    "unavailable (`net_peerCount` not exposed by this RPC)".to_string()
+}
+
 fn unavailable_cl_endpoint() -> String {
     "unavailable (could not parse advertised endpoint from `opp2p_self`)".to_string()
+}
+
+fn unavailable_cl_peer_stats() -> String {
+    "unavailable (`opp2p_peerStats` not exposed by this RPC)".to_string()
 }
 
 #[cfg(test)]

@@ -14,7 +14,10 @@ use base_common_network::Base;
 use base_consensus_gossip::PeerStats;
 use base_consensus_peers::{BootNode, NodeRecord};
 use base_consensus_rpc::BaseP2PApiClient;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
+use jsonrpsee::{
+    core::client::Error as JsonRpcClientError,
+    http_client::{HttpClient, HttpClientBuilder},
+};
 use serde::Serialize;
 use tracing::{debug, warn};
 use url::Url;
@@ -63,9 +66,35 @@ pub struct PeerStatsReport {
     /// `u64` to `u32` so the humanized output reports a uniform peer-count type
     /// across both layers (CL's `PeerStats::connected` is `u32`). The raw path
     /// [`RawPeerCounts::el`] preserves the native `u64`.
-    pub el_count: u32,
+    pub el_count: Option<u32>,
     /// Connected CL peer statistics from `opp2p_peerStats`.
-    pub cl: PeerStats,
+    pub cl: Option<PeerStats>,
+}
+
+/// Execution-layer p2p endpoint and peer-count summary.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElInfoReport {
+    /// Execution-layer advertised endpoint. `None` when the EL RPC does not
+    /// expose `admin_nodeInfo` or its enode/ENR could not be parsed.
+    pub endpoint: Option<NodeEndpoint>,
+    /// Connected EL peer count from `net_peerCount`.
+    pub peer_count: Option<u32>,
+    /// Reason the EL peer count is absent, when applicable.
+    pub peer_count_error: Option<&'static str>,
+}
+
+/// Consensus-layer p2p endpoint and peer-count summary.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClInfoReport {
+    /// Consensus-layer advertised endpoint. `None` when the `opp2p_self` ENR
+    /// was missing or could not be parsed.
+    pub endpoint: Option<NodeEndpoint>,
+    /// Connected CL peer statistics from `opp2p_peerStats`.
+    pub peer_stats: Option<PeerStats>,
+    /// Reason the CL peer statistics are absent, when applicable.
+    pub peer_stats_error: Option<&'static str>,
 }
 
 /// Humanized peer row used by `basectl p2p peers` pretty and JSON output.
@@ -86,8 +115,8 @@ pub struct PeerSummary {
 pub struct PeerListReport {
     /// Connected EL peers.
     pub el: Option<Vec<PeerSummary>>,
-    /// Connected CL peers.
-    pub cl: Vec<PeerSummary>,
+    /// Connected CL peers, or `None` when `opp2p_peers` is not exposed.
+    pub cl: Option<Vec<PeerSummary>>,
 }
 
 /// Raw `p2p info` payload — passthrough RPC wire shapes for `--json --raw`.
@@ -98,8 +127,10 @@ pub struct RawInfoReport {
     pub el: Option<serde_json::Value>,
     /// Reason the EL `admin_nodeInfo` result is absent, when applicable.
     pub el_error: Option<String>,
-    /// Raw `opp2p_self` result.
-    pub cl: serde_json::Value,
+    /// Raw `opp2p_self` result, or `None` when not exposed.
+    pub cl: Option<serde_json::Value>,
+    /// Reason the CL `opp2p_self` result is absent, when applicable.
+    pub cl_error: Option<String>,
     /// Connected peer counts per layer.
     pub peer_counts: RawPeerCounts,
 }
@@ -111,8 +142,10 @@ pub struct RawPeerCounts {
     /// EL peer count from `net_peerCount`, in its native `u64` wire type. The
     /// humanized path [`PeerStatsReport::el_count`] narrows this to `u32`.
     pub el: u64,
-    /// Raw `opp2p_peerStats` result.
-    pub cl: serde_json::Value,
+    /// Raw `opp2p_peerStats` result, or `None` when not exposed.
+    pub cl: Option<serde_json::Value>,
+    /// Reason the CL `opp2p_peerStats` result is absent, when applicable.
+    pub cl_error: Option<String>,
 }
 
 /// Raw `p2p peers` payload — passthrough RPC wire shapes for `--json --raw`.
@@ -123,8 +156,10 @@ pub struct RawPeersReport {
     pub el: Option<serde_json::Value>,
     /// Reason the EL `admin_peers` result is absent, when applicable.
     pub el_error: Option<String>,
-    /// Raw `opp2p_peers(true)` result.
-    pub cl: serde_json::Value,
+    /// Raw `opp2p_peers(true)` result, or `None` when not exposed.
+    pub cl: Option<serde_json::Value>,
+    /// Reason the CL `opp2p_peers` result is absent, when applicable.
+    pub cl_error: Option<String>,
 }
 
 /// Fetches the advertised endpoints and connected peer-count summary for
@@ -133,9 +168,17 @@ pub struct RawPeersReport {
 /// All four RPC calls (EL `admin_nodeInfo` + `net_peerCount`, CL `opp2p_self` +
 /// `opp2p_peerStats`) run concurrently over a single connection per layer.
 pub async fn fetch_info(rpc: &Url, cl_rpc: &Url) -> Result<(NodeInfoReport, PeerStatsReport)> {
-    let (cl_client, el_provider) = connect_layers(rpc, cl_rpc).await?;
+    let (el, cl) = tokio::try_join!(fetch_el_info(rpc), fetch_cl_info(cl_rpc))?;
+    let node_info = NodeInfoReport { el: el.endpoint, cl: cl.endpoint };
+    let peer_stats = PeerStatsReport { el_count: el.peer_count, cl: cl.peer_stats };
+    Ok((node_info, peer_stats))
+}
 
-    let (el, cl_info, el_count, cl_stats) = tokio::try_join!(
+/// Fetches execution-layer advertised endpoint and peer-count summary.
+pub async fn fetch_el_info(rpc: &Url) -> Result<ElInfoReport> {
+    let el_provider = connect_el(rpc).await?;
+
+    let (endpoint, peer_count) = tokio::join!(
         async {
             match el_provider.node_info().await {
                 Ok(info) => match parse_el_node_endpoint(
@@ -145,46 +188,82 @@ pub async fn fetch_info(rpc: &Url, cl_rpc: &Url) -> Result<(NodeInfoReport, Peer
                     info.ports.discovery,
                     info.ports.listener,
                 ) {
-                    Ok(endpoint) => Ok(Some(endpoint)),
+                    Ok(endpoint) => Ok::<Option<NodeEndpoint>, anyhow::Error>(Some(endpoint)),
                     Err(err) => {
                         warn!(error = %err, "failed to parse EL node endpoint; reporting EL as unavailable");
-                        Ok(None)
+                        Ok::<Option<NodeEndpoint>, anyhow::Error>(None)
                     }
                 },
-                Err(err) if is_method_not_found(&err) => Ok(None),
-                Err(err) => Err(err).with_context(|| format!("fetching admin_nodeInfo from {rpc}")),
+                Err(err) if is_method_not_found(&err) => {
+                    Ok::<Option<NodeEndpoint>, anyhow::Error>(None)
+                }
+                Err(err) => {
+                    warn!(error = %err, "failed to fetch EL node endpoint; reporting EL endpoint as unavailable");
+                    Ok::<Option<NodeEndpoint>, anyhow::Error>(None)
+                }
             }
         },
         async {
-            BaseP2PApiClient::opp2p_self(&cl_client)
-                .await
-                .with_context(|| format!("fetching opp2p_self from {cl_rpc}"))
+            match el_provider.net_peer_count().await {
+                Ok(peer_count) => u32::try_from(peer_count).map_or(
+                    (None, Some("EL `net_peerCount` exceeded `u32::MAX`; unexpected RPC value")),
+                    |peer_count| (Some(peer_count), None),
+                ),
+                Err(err) => {
+                    warn!(error = %err, "failed to fetch EL peer count; reporting EL peer count as unavailable");
+                    (None, Some("EL `net_peerCount` unavailable from this RPC"))
+                }
+            }
         },
-        async {
-            el_provider
-                .net_peer_count()
-                .await
-                .with_context(|| format!("fetching net_peerCount from {rpc}"))
-        },
-        async {
-            BaseP2PApiClient::opp2p_peer_stats(&cl_client)
-                .await
-                .with_context(|| format!("fetching opp2p_peerStats from {cl_rpc}"))
-        },
-    )?;
+    );
+    Ok(ElInfoReport {
+        endpoint: endpoint?,
+        peer_count: peer_count.0,
+        peer_count_error: peer_count.1,
+    })
+}
 
-    let cl = match parse_cl_node_endpoint(&cl_info) {
-        Ok(endpoint) => Some(endpoint),
-        Err(err) => {
-            warn!(error = %err, "failed to parse CL node endpoint from opp2p_self; reporting CL as unavailable");
+/// Fetches consensus-layer advertised endpoint and peer-count summary.
+pub async fn fetch_cl_info(cl_rpc: &Url) -> Result<ClInfoReport> {
+    let cl_client = connect_cl(cl_rpc)?;
+
+    let (cl_info, peer_stats) = tokio::join!(
+        async {
+            match BaseP2PApiClient::opp2p_self(&cl_client).await {
+                Ok(info) => Ok(Some(info)),
+                Err(err) if is_jsonrpc_method_not_found(&err) => Ok(None),
+                Err(err) => Err(err).with_context(|| format!("fetching opp2p_self from {cl_rpc}")),
+            }
+        },
+        async {
+            match BaseP2PApiClient::opp2p_peer_stats(&cl_client).await {
+                Ok(stats) => Ok((Some(stats), None)),
+                Err(err) if is_jsonrpc_method_not_found(&err) => {
+                    Ok((None, Some("CL `opp2p_peerStats` not exposed by this RPC")))
+                }
+                Err(err) => {
+                    Err(err).with_context(|| format!("fetching opp2p_peerStats from {cl_rpc}"))
+                }
+            }
+        },
+    );
+    let cl_info = cl_info?;
+    let (peer_stats, peer_stats_error) = peer_stats?;
+
+    let endpoint = cl_info.map_or_else(
+        || {
+            warn!(rpc = %cl_rpc, "CL opp2p_self not exposed by this RPC; reporting CL endpoint as unavailable");
             None
-        }
-    };
-    let node_info = NodeInfoReport { el, cl };
-    let el_count = u32::try_from(el_count)
-        .context("EL `net_peerCount` exceeded `u32::MAX`; unexpected RPC value")?;
-    let peer_stats = PeerStatsReport { el_count, cl: cl_stats };
-    Ok((node_info, peer_stats))
+        },
+        |info| match parse_cl_node_endpoint(&info) {
+            Ok(endpoint) => Some(endpoint),
+            Err(err) => {
+                warn!(error = %err, "failed to parse CL node endpoint from opp2p_self; reporting CL as unavailable");
+                None
+            }
+        },
+    );
+    Ok(ClInfoReport { endpoint, peer_stats, peer_stats_error })
 }
 
 /// Fetches connected EL + CL peer lists for `basectl p2p peers`.
@@ -215,23 +294,29 @@ pub async fn fetch_connected_peers(rpc: &Url, cl_rpc: &Url) -> Result<PeerListRe
             }
         },
         async {
-            BaseP2PApiClient::opp2p_peers(&cl_client, true)
-                .await
-                .with_context(|| format!("fetching opp2p_peers(true) from {cl_rpc}"))
+            match BaseP2PApiClient::opp2p_peers(&cl_client, true).await {
+                Ok(peers) => Ok(Some(peers)),
+                Err(err) if is_jsonrpc_method_not_found(&err) => Ok(None),
+                Err(err) => {
+                    Err(err).with_context(|| format!("fetching opp2p_peers(true) from {cl_rpc}"))
+                }
+            }
         },
     )?;
 
-    let mut cl = cl_peers
-        .peers
-        .into_iter()
-        .map(|(id, peer)| PeerSummary {
-            id,
-            address: peer.addresses.join(", "),
-            direction: peer.direction.to_string(),
-        })
-        .collect::<Vec<_>>();
-    cl.sort_by(|a, b| a.id.cmp(&b.id));
-
+    let cl = cl_peers.map(|peers| {
+        let mut cl = peers
+            .peers
+            .into_iter()
+            .map(|(id, peer)| PeerSummary {
+                id,
+                address: peer.addresses.join(", "),
+                direction: peer.direction.to_string(),
+            })
+            .collect::<Vec<_>>();
+        cl.sort_by(|a, b| a.id.cmp(&b.id));
+        cl
+    });
     Ok(PeerListReport { el, cl })
 }
 
@@ -256,9 +341,11 @@ pub async fn fetch_raw_info(rpc: &Url, cl_rpc: &Url) -> Result<RawInfoReport> {
             }
         },
         async {
-            BaseP2PApiClient::opp2p_self(&cl_client)
-                .await
-                .with_context(|| format!("fetching opp2p_self from {cl_rpc}"))
+            match BaseP2PApiClient::opp2p_self(&cl_client).await {
+                Ok(info) => Ok(Some(info)),
+                Err(err) if is_jsonrpc_method_not_found(&err) => Ok(None),
+                Err(err) => Err(err).with_context(|| format!("fetching opp2p_self from {cl_rpc}")),
+            }
         },
         async {
             el_provider
@@ -267,21 +354,35 @@ pub async fn fetch_raw_info(rpc: &Url, cl_rpc: &Url) -> Result<RawInfoReport> {
                 .with_context(|| format!("fetching net_peerCount from {rpc}"))
         },
         async {
-            BaseP2PApiClient::opp2p_peer_stats(&cl_client)
-                .await
-                .with_context(|| format!("fetching opp2p_peerStats from {cl_rpc}"))
+            match BaseP2PApiClient::opp2p_peer_stats(&cl_client).await {
+                Ok(stats) => Ok(Some(stats)),
+                Err(err) if is_jsonrpc_method_not_found(&err) => Ok(None),
+                Err(err) => {
+                    Err(err).with_context(|| format!("fetching opp2p_peerStats from {cl_rpc}"))
+                }
+            }
         },
     )?;
 
+    let (cl_value, cl_error) = match cl_info {
+        Some(v) => {
+            (Some(serde_json::to_value(&v).context("serializing opp2p_self to JSON value")?), None)
+        }
+        None => (None, Some("CL `opp2p_self` not exposed by this RPC".to_string())),
+    };
+    let (cl_stats_value, cl_stats_error) = match cl_stats {
+        Some(v) => (
+            Some(serde_json::to_value(v).context("serializing opp2p_peerStats to JSON value")?),
+            None,
+        ),
+        None => (None, Some("CL `opp2p_peerStats` not exposed by this RPC".to_string())),
+    };
     Ok(RawInfoReport {
         el: el_value,
         el_error,
-        cl: serde_json::to_value(&cl_info).context("serializing opp2p_self to JSON value")?,
-        peer_counts: RawPeerCounts {
-            el: el_count,
-            cl: serde_json::to_value(cl_stats)
-                .context("serializing opp2p_peerStats to JSON value")?,
-        },
+        cl: cl_value,
+        cl_error,
+        peer_counts: RawPeerCounts { el: el_count, cl: cl_stats_value, cl_error: cl_stats_error },
     })
 }
 
@@ -306,25 +407,40 @@ pub async fn fetch_raw_peers(rpc: &Url, cl_rpc: &Url) -> Result<RawPeersReport> 
             }
         },
         async {
-            BaseP2PApiClient::opp2p_peers(&cl_client, true)
-                .await
-                .with_context(|| format!("fetching opp2p_peers(true) from {cl_rpc}"))
+            match BaseP2PApiClient::opp2p_peers(&cl_client, true).await {
+                Ok(peers) => Ok(Some(peers)),
+                Err(err) if is_jsonrpc_method_not_found(&err) => Ok(None),
+                Err(err) => {
+                    Err(err).with_context(|| format!("fetching opp2p_peers(true) from {cl_rpc}"))
+                }
+            }
         },
     )?;
 
-    Ok(RawPeersReport {
-        el: el_value,
-        el_error,
-        cl: serde_json::to_value(&cl_peers).context("serializing opp2p_peers to JSON value")?,
-    })
+    let (cl_value, cl_error) = match cl_peers {
+        Some(v) => {
+            (Some(serde_json::to_value(&v).context("serializing opp2p_peers to JSON value")?), None)
+        }
+        None => (None, Some("CL `opp2p_peers` not exposed by this RPC".to_string())),
+    };
+    Ok(RawPeersReport { el: el_value, el_error, cl: cl_value, cl_error })
 }
 
 /// Connects to the EL provider and CL RPC client used by every p2p fetch.
 async fn connect_layers(rpc: &Url, cl_rpc: &Url) -> Result<(HttpClient, impl Provider<Base>)> {
-    let cl_client = HttpClientBuilder::default()
+    let cl_client = connect_cl(cl_rpc)?;
+    let el_provider = connect_el(rpc).await?;
+    Ok((cl_client, el_provider))
+}
+
+fn connect_cl(cl_rpc: &Url) -> Result<HttpClient> {
+    HttpClientBuilder::default()
         .request_timeout(Duration::from_secs(10))
         .build(cl_rpc.as_str())
-        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))
+}
+
+async fn connect_el(rpc: &Url) -> Result<impl Provider<Base>> {
     let http_client = alloy_transport_http::reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -334,11 +450,15 @@ async fn connect_layers(rpc: &Url, cl_rpc: &Url) -> Result<(HttpClient, impl Pro
         .disable_recommended_fillers()
         .network::<Base>()
         .connect_client(RpcClient::new(transport, false));
-    Ok((cl_client, el_provider))
+    Ok(el_provider)
 }
 
 const fn is_method_not_found(err: &TransportError) -> bool {
     matches!(err, TransportError::ErrorResp(payload) if payload.code == -32601)
+}
+
+fn is_jsonrpc_method_not_found(err: &JsonRpcClientError) -> bool {
+    matches!(err, JsonRpcClientError::Call(payload) if payload.code() == -32601)
 }
 
 /// Parses the EL advertised endpoint from `admin_nodeInfo`'s enode + ENR,
@@ -446,8 +566,11 @@ mod tests {
     use base_consensus_gossip::{
         Connectedness, Direction, GossipScores, PeerInfo, PeerScores, ReqRespScores,
     };
+    use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
-    use super::{NodeEndpoint, parse_cl_node_endpoint, parse_el_node_endpoint};
+    use super::{
+        NodeEndpoint, is_jsonrpc_method_not_found, parse_cl_node_endpoint, parse_el_node_endpoint,
+    };
 
     #[test]
     fn parses_el_endpoint_from_enode_and_enr() {
@@ -503,5 +626,16 @@ mod tests {
         assert!(endpoint.discovery.udp_port > 0);
         assert!(!endpoint.discovery.v4_enabled);
         assert!(endpoint.discovery.v5_enabled);
+    }
+
+    #[test]
+    fn detects_jsonrpc_method_not_found_for_cl_p2p_methods() {
+        let err = JsonRpcClientError::Call(ErrorObjectOwned::owned(
+            -32601,
+            "method not found",
+            None::<()>,
+        ));
+
+        assert!(is_jsonrpc_method_not_found(&err));
     }
 }
