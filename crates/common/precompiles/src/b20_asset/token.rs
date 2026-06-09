@@ -202,6 +202,9 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         privileged: bool,
     ) -> Result<()> {
         self.ensure_operator_role(caller, privileged)?;
+        if new_multiplier.is_zero() {
+            return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
+        }
         self.accounting_mut().set_multiplier(new_multiplier)?;
         self.accounting_mut().emit_event(
             IB20Asset::MultiplierUpdated { multiplier: new_multiplier }.encode_log_data(),
@@ -280,6 +283,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{Address, B256, U256, keccak256};
+    use alloy_sol_types::SolEvent;
     use base_precompile_storage::BasePrecompileError;
     use rstest::rstest;
 
@@ -421,5 +425,28 @@ mod tests {
         let err = token.update_policy(CALLER, invalid_scope, 999, false).unwrap_err();
 
         assert_eq!(err, expected_update_policy_error(setup, invalid_scope));
+    }
+
+    #[test]
+    fn update_multiplier_rejects_zero() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, CALLER), true);
+
+        let err = token.update_multiplier(CALLER, U256::ZERO, false).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
+    }
+
+    #[test]
+    fn update_multiplier_emits_wad_event() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, CALLER), true);
+
+        token.update_multiplier(CALLER, B20AssetStorage::WAD, false).unwrap();
+
+        assert_eq!(token.accounting().events.len(), 1);
+        let decoded =
+            IB20Asset::MultiplierUpdated::decode_log_data(&token.accounting().events[0]).unwrap();
+        assert_eq!(decoded.multiplier, B20AssetStorage::WAD);
     }
 }
