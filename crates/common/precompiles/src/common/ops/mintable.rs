@@ -18,6 +18,11 @@ pub trait Mintable: Token {
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
+        // MintReceiver is always enforced regardless of `privileged`. Unlike transfer-side
+        // policies, we never mint tokens to a policy-denied address, even during factory
+        // bootstrap. Skipping this check would allow an initCalls sequence to mint into a
+        // restricted address set before normal policy enforcement begins, creating an
+        // unrecoverable policy violation.
         B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         let supply = self.accounting().total_supply()?;
         let cap = self.accounting().supply_cap()?;

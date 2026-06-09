@@ -42,6 +42,10 @@ pub trait Transferable: Token {
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
+        // Transfer-side policies (TransferSender, TransferReceiver, TransferExecutor) are
+        // intentionally bypassed during factory bootstrap (privileged=true). MintReceiver is
+        // NOT bypassed; see `Mintable::mint` for that asymmetry -- minting to a policy-denied
+        // address is never allowed even during bootstrap.
         if !privileged {
             B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferSender, from)?;
             B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferReceiver, to)?;
