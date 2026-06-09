@@ -8,7 +8,7 @@
 //!               caller's trace
 
 use std::{
-    future::{Future, poll_fn},
+    future::Future,
     task::{Context as TaskContext, Poll},
 };
 
@@ -17,7 +17,7 @@ use jsonrpsee_core::middleware::{Batch, Notification, Request as RpcRequest, Rpc
 use opentelemetry::{Context, global, trace::TraceContextExt};
 use opentelemetry_http::HeaderExtractor;
 use tower::{Layer, Service};
-use tracing::{self, Instrument};
+use tracing::Instrument;
 
 /// Inbound [`opentelemetry::Context`] extracted from request headers.
 #[derive(Clone, Debug)]
@@ -97,23 +97,15 @@ where
         req: RpcRequest<'a>,
     ) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
-        let span = tracing::info_span!("request", "rpc.method" = %req.method);
+        // Attach the parent OTel context before creating the tracing span so that
+        // tracing-opentelemetry sets it as the span's OTel parent at construction time.
+        // The guard is dropped immediately after; the span retains the parent reference.
+        let _guard = cx.map(|InboundOtelContext(ctx)| ctx.attach());
+        let span =
+            tracing::info_span!("request", "span.kind" = "server", "rpc.method" = %req.method);
+        drop(_guard);
         let inner = self.inner.clone();
-
-        async move {
-            let mut fut = Box::pin(inner.call(req));
-
-            if let Some(InboundOtelContext(parent_ctx)) = cx {
-                poll_fn(move |poll_cx| {
-                    let _guard = parent_ctx.clone().attach();
-                    fut.as_mut().poll(poll_cx)
-                })
-                .instrument(span)
-                .await
-            } else {
-                fut.instrument(span).await
-            }
-        }
+        async move { inner.call(req).await }.instrument(span)
     }
 
     fn batch<'a>(
@@ -121,23 +113,12 @@ where
         mut req: Batch<'a>,
     ) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
-        let span = tracing::info_span!("batch", "rpc.batch.len" = req.len());
+        let _guard = cx.map(|InboundOtelContext(ctx)| ctx.attach());
+        let span =
+            tracing::info_span!("batch", "span.kind" = "server", "rpc.batch.len" = req.len());
+        drop(_guard);
         let inner = self.inner.clone();
-
-        async move {
-            let mut fut = Box::pin(inner.batch(req));
-
-            if let Some(InboundOtelContext(parent_ctx)) = cx {
-                poll_fn(move |poll_cx| {
-                    let _guard = parent_ctx.clone().attach();
-                    fut.as_mut().poll(poll_cx)
-                })
-                .instrument(span)
-                .await
-            } else {
-                fut.instrument(span).await
-            }
-        }
+        async move { inner.batch(req).await }.instrument(span)
     }
 
     fn notification<'a>(
@@ -145,22 +126,11 @@ where
         req: Notification<'a>,
     ) -> impl Future<Output = Self::NotificationResponse> + Send + 'a {
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
-        let span = tracing::info_span!("notification", "rpc.method" = %req.method);
+        let _guard = cx.map(|InboundOtelContext(ctx)| ctx.attach());
+        let span =
+            tracing::info_span!("notification", "span.kind" = "server", "rpc.method" = %req.method);
+        drop(_guard);
         let inner = self.inner.clone();
-
-        async move {
-            let mut fut = Box::pin(inner.notification(req));
-
-            if let Some(InboundOtelContext(parent_ctx)) = cx {
-                poll_fn(move |poll_cx| {
-                    let _guard = parent_ctx.clone().attach();
-                    fut.as_mut().poll(poll_cx)
-                })
-                .instrument(span)
-                .await
-            } else {
-                fut.instrument(span).await
-            }
-        }
+        async move { inner.notification(req).await }.instrument(span)
     }
 }
