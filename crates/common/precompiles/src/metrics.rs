@@ -579,8 +579,7 @@ where
     pub fn deduct_calldata_gas(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<()> {
         const G_SHA3WORD: u64 = 6;
 
-        let calldata_len = calldata.len();
-        let calldata_cost = calldata_len.div_ceil(32).saturating_mul(G_SHA3WORD as usize) as u64;
+        let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(G_SHA3WORD);
         ctx.deduct_gas(calldata_cost)
     }
 

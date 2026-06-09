@@ -8,6 +8,8 @@ use base_common_precompiles::PrecompileCallStatus;
 use base_common_precompiles::{
     PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
 };
+#[cfg(feature = "metrics")]
+use metrics::SharedString;
 
 #[cfg(feature = "metrics")]
 base_metrics::define_metrics! {
@@ -108,9 +110,10 @@ impl PrecompileCallObserver for BerylPrecompileMetricsObserver {
 
         #[cfg(feature = "metrics")]
         {
-            let method = call.method.clone().into_owned();
+            let method: SharedString = call.method.clone().into_owned().into();
             let variant = call.variant_label();
             let status = outcome.status.as_label();
+            let gas_refunded = outcome.gas_refunded.max(0) as f64;
 
             BerylPrecompileMetrics::calls_total(call.precompile, method.clone(), variant, status)
                 .increment(1);
@@ -126,7 +129,7 @@ impl PrecompileCallObserver for BerylPrecompileMetricsObserver {
             )
             .record(outcome.state_gas_used as f64);
             BerylPrecompileMetrics::gas_refunded(call.precompile, method.clone(), variant, status)
-                .record(outcome.gas_refunded as f64);
+                .record(gas_refunded);
 
             if let Some(duration_seconds) = outcome.duration_seconds {
                 BerylPrecompileMetrics::duration_seconds(

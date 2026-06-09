@@ -110,8 +110,10 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
                 BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
             })?;
             let label = call.as_label();
-            return observer
-                .observe(label, || self.handle_asset_call(ctx, call, privileged, &observer));
+            let asset_observer = observer.clone();
+            return observer.observe(label, move || {
+                self.handle_asset_call(ctx, call, privileged, asset_observer)
+            });
         }
 
         // Fall through to inherited IB20 selectors.
@@ -338,7 +340,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         ctx: StorageCtx<'_>,
         call: SC,
         privileged: bool,
-        observer: &O,
+        observer: O,
     ) -> base_precompile_storage::Result<Bytes>
     where
         O: PrecompileCallObserver,
@@ -373,7 +375,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
             // --- Announcement ---
             SC::announce(c) => {
-                self.announce(ctx, c, privileged, observer)?;
+                self.announce(ctx, c, privileged, &observer)?;
                 Bytes::new()
             }
 
