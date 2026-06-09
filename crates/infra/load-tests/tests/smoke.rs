@@ -149,6 +149,53 @@ fn metrics_summary_latency() {
 }
 
 #[test]
+fn metrics_summary_first_half_split() {
+    let mut collector = MetricsCollector::new();
+
+    // 10 txs across blocks 100..=109 (10 blocks ≈ 20s at 2s/block).
+    // wall_clock_duration = 20s → first half = 10s → 5 blocks → end_block = 100 + 5 = 105.
+    // First-half window = blocks 100..=105 → 6 confirmed txs.
+    for i in 0..10u64 {
+        collector.record_confirmed(TransactionMetrics::new(
+            TxHash::repeat_byte(i as u8),
+            Some(Duration::from_millis(100 + i * 10)),
+            Some(Duration::from_millis(50 + i * 5)),
+            21_000,
+            1_000_000_000,
+            Some(100 + i),
+        ));
+    }
+
+    let summary = collector.summarize(Duration::from_secs(20), None);
+
+    let fh = &summary.first_half;
+    assert_eq!(fh.confirmed_count, 6, "first half should include blocks 100..=105");
+    assert_eq!(fh.block_range.first_block, Some(100));
+    assert_eq!(fh.block_range.last_block, Some(105));
+    assert_eq!(fh.block_range.block_count, 6);
+    // 6 txs over 5 block-intervals (10s) → 0.6 TPS.
+    assert!((fh.tps - 0.6).abs() < 1e-6, "expected tps≈0.6, got {}", fh.tps);
+    // First-half block latencies: 100..=150ms → p50 = 130ms (rank 3 of 6).
+    assert_eq!(fh.block_latency.min, Duration::from_millis(100));
+    assert_eq!(fh.block_latency.max, Duration::from_millis(150));
+    assert_eq!(fh.flashblocks_latency.count, 6);
+
+    // Full-range numbers stay unchanged and span all 10 blocks.
+    assert_eq!(summary.throughput.total_confirmed, 10);
+    assert_eq!(summary.block_range.block_count, 10);
+}
+
+#[test]
+fn metrics_summary_first_half_empty_when_no_confirms() {
+    let collector = MetricsCollector::new();
+    let summary = collector.summarize(Duration::from_secs(60), None);
+
+    assert_eq!(summary.first_half.confirmed_count, 0);
+    assert_eq!(summary.first_half.block_range.block_count, 0);
+    assert_eq!(summary.first_half.tps, 0.0);
+}
+
+#[test]
 fn metrics_summary_gas() {
     let mut collector = MetricsCollector::new();
 

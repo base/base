@@ -263,10 +263,41 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
 
     if summary.error.is_none() || summary.throughput.total_submitted > 0 {
         println!();
-        println!("=== Results ===");
+        println!("=== Results: First Half (clean window) ===");
         if let Some(ref err) = summary.error {
             println!("Error: {err}");
         }
+        let fh = &summary.first_half;
+        let fhbr = &fh.block_range;
+        match (fhbr.first_block, fhbr.last_block) {
+            (Some(first), Some(last)) => println!(
+                "Blocks: first={first}  last={last}  span={} block(s)  (~{:.1}s)",
+                fhbr.block_count,
+                fh.duration.as_secs_f64()
+            ),
+            _ => println!("Blocks: no confirmed transactions in first half"),
+        }
+        println!("Confirmed: {} | TPS: {:.2} | GPS: {:.0}", fh.confirmed_count, fh.tps, fh.gps);
+        let fhbl = &fh.block_latency;
+        println!(
+            "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+            fhbl.min, fhbl.p50, fhbl.mean, fhbl.p99, fhbl.max
+        );
+        let fhfb = &fh.flashblocks_latency;
+        println!(
+            "FB Latency:    min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
+            fhfb.min, fhfb.p50, fhfb.mean, fhfb.p99, fhfb.max, fhfb.count
+        );
+
+        println!();
+        println!("=== Results: Full Range ===");
+        println!(
+            "NOTE: there is a delay in transaction inclusion which causes metrics to be skewed."
+        );
+        println!(
+            "This is an active investigation and is pending full e2e observability rollout, which"
+        );
+        println!("will help identify the bottleneck.");
         println!(
             "Submitted: {} | Confirmed: {} | Failed: {} | Reverted: {}",
             summary.throughput.total_submitted,

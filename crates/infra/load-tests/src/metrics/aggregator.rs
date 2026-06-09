@@ -3,8 +3,9 @@ use std::{collections::HashMap, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    BlockRange, ConfigSummary, FirstHalfMetrics, FlashblocksLatencyMetrics, GasMetrics,
+    LatencyMetrics, ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    types::BLOCK_INTERVAL,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -41,26 +42,76 @@ impl<'a> MetricsAggregator<'a> {
         let tps_values: Vec<f64> = throughput_samples.iter().map(|s| s.tps).collect();
         let gps_values: Vec<f64> = throughput_samples.iter().map(|s| s.gps).collect();
 
-        let block_range = self.compute_block_range();
+        let block_range = Self::compute_block_range(self.transactions);
         let throughput_duration = block_range.block_time_duration().unwrap_or(wall_clock_duration);
 
         MetricsSummary {
             config,
             error: None,
-            block_latency: self.compute_block_latency(),
-            block_receipt_delay: self.compute_block_receipt_delay(),
-            flashblocks_latency: self.compute_flashblocks_latency(),
-            throughput: self.compute_throughput(throughput_duration, submitted, failed),
+            first_half: Self::compute_first_half(self.transactions, wall_clock_duration),
+            block_latency: Self::compute_block_latency(self.transactions),
+            block_receipt_delay: Self::compute_block_receipt_delay(self.transactions),
+            flashblocks_latency: Self::compute_flashblocks_latency(self.transactions),
+            throughput: Self::compute_throughput(
+                self.transactions,
+                throughput_duration,
+                submitted,
+                failed,
+            ),
             throughput_percentiles: Self::compute_throughput_percentiles(&tps_values, &gps_values),
             throughput_timeseries: throughput_samples.to_vec(),
-            gas: self.compute_gas(),
+            gas: Self::compute_gas(self.transactions),
             block_range,
             top_failure_reasons,
         }
     }
 
-    fn compute_block_range(&self) -> BlockRange {
-        let mut iter = self.transactions.iter().filter_map(|t| t.block_number);
+    /// Computes the "first half" reporting window: transactions in blocks
+    /// `[first_block, first_block + (wall_clock_duration / 2) / BLOCK_INTERVAL]`.
+    /// The window is closed and inclusive at both ends.
+    fn compute_first_half(
+        transactions: &[TransactionMetrics],
+        wall_clock_duration: Duration,
+    ) -> FirstHalfMetrics {
+        let full_range = Self::compute_block_range(transactions);
+        let Some(first_block) = full_range.first_block else {
+            return FirstHalfMetrics::default();
+        };
+
+        let half = wall_clock_duration / 2;
+        let block_span = (half.as_secs_f64() / BLOCK_INTERVAL.as_secs_f64()).round() as u64;
+        let end_block = first_block.saturating_add(block_span);
+
+        let filtered: Vec<TransactionMetrics> = transactions
+            .iter()
+            .filter(|t| t.block_number.is_some_and(|b| b <= end_block))
+            .cloned()
+            .collect();
+
+        let block_range = Self::compute_block_range(&filtered);
+        let duration = block_range.block_time_duration().unwrap_or(half);
+        let confirmed_count = filtered.len() as u64;
+        let total_gas: u64 = filtered.iter().map(|t| t.gas_used).sum();
+        let duration_secs = duration.as_secs_f64();
+        let (tps, gps) = if duration_secs > 0.0 {
+            (confirmed_count as f64 / duration_secs, total_gas as f64 / duration_secs)
+        } else {
+            (0.0, 0.0)
+        };
+
+        FirstHalfMetrics {
+            block_range,
+            duration,
+            confirmed_count,
+            tps,
+            gps,
+            block_latency: Self::compute_block_latency(&filtered),
+            flashblocks_latency: Self::compute_flashblocks_latency(&filtered),
+        }
+    }
+
+    fn compute_block_range(transactions: &[TransactionMetrics]) -> BlockRange {
+        let mut iter = transactions.iter().filter_map(|t| t.block_number);
         let Some(first) = iter.next() else {
             return BlockRange::default();
         };
@@ -68,16 +119,16 @@ impl<'a> MetricsAggregator<'a> {
         BlockRange { first_block: Some(min), last_block: Some(max), block_count: max - min + 1 }
     }
 
-    fn compute_block_latency(&self) -> LatencyMetrics {
+    fn compute_block_latency(transactions: &[TransactionMetrics]) -> LatencyMetrics {
         let mut latencies: Vec<Duration> =
-            self.transactions.iter().filter_map(|t| t.block_latency).collect();
+            transactions.iter().filter_map(|t| t.block_latency).collect();
 
         Self::compute_duration_metrics(&mut latencies)
     }
 
-    fn compute_block_receipt_delay(&self) -> LatencyMetrics {
+    fn compute_block_receipt_delay(transactions: &[TransactionMetrics]) -> LatencyMetrics {
         let mut latencies: Vec<Duration> =
-            self.transactions.iter().filter_map(|t| t.block_receipt_delay).collect();
+            transactions.iter().filter_map(|t| t.block_receipt_delay).collect();
 
         Self::compute_duration_metrics(&mut latencies)
     }
@@ -103,9 +154,11 @@ impl<'a> MetricsAggregator<'a> {
         }
     }
 
-    fn compute_flashblocks_latency(&self) -> FlashblocksLatencyMetrics {
+    fn compute_flashblocks_latency(
+        transactions: &[TransactionMetrics],
+    ) -> FlashblocksLatencyMetrics {
         let mut latencies: Vec<Duration> =
-            self.transactions.iter().filter_map(|t| t.flashblocks_latency).collect();
+            transactions.iter().filter_map(|t| t.flashblocks_latency).collect();
 
         if latencies.is_empty() {
             return FlashblocksLatencyMetrics::default();
@@ -130,14 +183,14 @@ impl<'a> MetricsAggregator<'a> {
     }
 
     fn compute_throughput(
-        &self,
+        transactions: &[TransactionMetrics],
         duration: Duration,
         submitted: u64,
         failed: u64,
     ) -> ThroughputMetrics {
-        let confirmed = self.transactions.len() as u64;
-        let total_reverted = self.transactions.iter().filter(|t| t.reverted).count() as u64;
-        let total_gas: u64 = self.transactions.iter().map(|t| t.gas_used).sum();
+        let confirmed = transactions.len() as u64;
+        let total_reverted = transactions.iter().filter(|t| t.reverted).count() as u64;
+        let total_gas: u64 = transactions.iter().map(|t| t.gas_used).sum();
         let duration_secs = duration.as_secs_f64();
 
         let (tps, gps) = if duration_secs > 0.0 {
@@ -157,15 +210,15 @@ impl<'a> MetricsAggregator<'a> {
         }
     }
 
-    fn compute_gas(&self) -> GasMetrics {
-        if self.transactions.is_empty() {
+    fn compute_gas(transactions: &[TransactionMetrics]) -> GasMetrics {
+        if transactions.is_empty() {
             return GasMetrics::default();
         }
 
-        let total_gas: u64 = self.transactions.iter().map(|t| t.gas_used).sum();
-        let total_cost: u128 = self.transactions.iter().map(|t| t.cost_wei()).sum();
-        let total_gas_price: u128 = self.transactions.iter().map(|t| t.gas_price).sum();
-        let count = self.transactions.len() as u64;
+        let total_gas: u64 = transactions.iter().map(|t| t.gas_used).sum();
+        let total_cost: u128 = transactions.iter().map(|t| t.cost_wei()).sum();
+        let total_gas_price: u128 = transactions.iter().map(|t| t.gas_price).sum();
+        let count = transactions.len() as u64;
 
         GasMetrics {
             total_gas,
@@ -214,6 +267,13 @@ impl<'a> MetricsAggregator<'a> {
 }
 
 /// Summary of all collected metrics.
+///
+/// Reporting is split into two scopes:
+/// * `first_half` covers the first half of the run and is the "clean" window
+///   used for headline TPS / latency comparisons.
+/// * Top-level `throughput`, `block_latency`, `flashblocks_latency`, etc. cover
+///   the full run and include a known late-run degradation that is pending
+///   end-to-end observability rollout.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetricsSummary {
     /// Test configuration (excludes URLs and secrets).
@@ -222,13 +282,15 @@ pub struct MetricsSummary {
     /// Fatal error that stopped the test (e.g., funding failure).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Block production latency.
+    /// First-half reporting window (clean TPS / block / FB latency).
+    pub first_half: FirstHalfMetrics,
+    /// Block production latency (full run).
     pub block_latency: LatencyMetrics,
-    /// Delay between block production time and receipt observation.
+    /// Delay between block production time and receipt observation (full run).
     pub block_receipt_delay: LatencyMetrics,
-    /// Flashblocks sequencer latency.
+    /// Flashblocks sequencer latency (full run).
     pub flashblocks_latency: FlashblocksLatencyMetrics,
-    /// Throughput statistics.
+    /// Throughput statistics (full run).
     pub throughput: ThroughputMetrics,
     /// Rolling-window throughput percentiles (TPS and GPS).
     pub throughput_percentiles: ThroughputPercentiles,

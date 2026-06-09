@@ -148,7 +148,7 @@ pub struct ThroughputSample {
 }
 
 /// L2 block interval (2 seconds per block).
-const BLOCK_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const BLOCK_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Range of block numbers in which test transactions were included.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -173,6 +173,32 @@ impl BlockRange {
         }
         Some(BLOCK_INTERVAL * (self.block_count - 1) as u32)
     }
+}
+
+/// Throughput + latency over the first half of the test window.
+///
+/// "First half" is defined as transactions confirmed in blocks
+/// `[first_block, first_block + (wall_clock_duration / 2) / BLOCK_INTERVAL]`.
+/// This carves out a "clean" reporting window that excludes the late-run
+/// degradation captured by the full-range metrics. See `MetricsSummary.first_half`
+/// vs `MetricsSummary.throughput` for the disclaimer on the full-range numbers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FirstHalfMetrics {
+    /// Block range covered by the first-half window.
+    pub block_range: BlockRange,
+    /// Duration spanned by `block_range` (using `BLOCK_INTERVAL`), or
+    /// `wall_clock_duration / 2` when the window contains fewer than 2 blocks.
+    pub duration: Duration,
+    /// Confirmed transactions inside the first-half window.
+    pub confirmed_count: u64,
+    /// Transactions per second over the first-half window.
+    pub tps: f64,
+    /// Gas per second over the first-half window.
+    pub gps: f64,
+    /// Block production latency for first-half transactions.
+    pub block_latency: LatencyMetrics,
+    /// Flashblocks sequencer latency for first-half transactions.
+    pub flashblocks_latency: FlashblocksLatencyMetrics,
 }
 
 /// Aggregated flashblocks latency percentiles.

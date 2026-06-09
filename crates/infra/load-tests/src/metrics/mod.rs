@@ -2,8 +2,8 @@
 
 mod types;
 pub use types::{
-    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    BlockRange, ConfigSummary, FirstHalfMetrics, FlashblocksLatencyMetrics, GasMetrics,
+    LatencyMetrics, ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
 };
 
 mod rolling_window;
