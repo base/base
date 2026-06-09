@@ -17,6 +17,7 @@ use jsonrpsee_core::middleware::{Batch, Notification, Request as RpcRequest, Rpc
 use opentelemetry::{Context, global, trace::TraceContextExt};
 use opentelemetry_http::HeaderExtractor;
 use tower::{Layer, Service};
+use tracing::{self, Instrument};
 
 /// Inbound [`opentelemetry::Context`] extracted from request headers.
 #[derive(Clone, Debug)]
@@ -96,6 +97,7 @@ where
         req: RpcRequest<'a>,
     ) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
+        let span = tracing::info_span!("request", "rpc.method" = %req.method);
         let inner = self.inner.clone();
 
         async move {
@@ -106,9 +108,10 @@ where
                     let _guard = parent_ctx.clone().attach();
                     fut.as_mut().poll(poll_cx)
                 })
+                .instrument(span)
                 .await
             } else {
-                fut.await
+                fut.instrument(span).await
             }
         }
     }
@@ -118,6 +121,7 @@ where
         mut req: Batch<'a>,
     ) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
+        let span = tracing::info_span!("batch", "rpc.batch.len" = req.len());
         let inner = self.inner.clone();
 
         async move {
@@ -128,9 +132,10 @@ where
                     let _guard = parent_ctx.clone().attach();
                     fut.as_mut().poll(poll_cx)
                 })
+                .instrument(span)
                 .await
             } else {
-                fut.await
+                fut.instrument(span).await
             }
         }
     }
@@ -140,6 +145,7 @@ where
         req: Notification<'a>,
     ) -> impl Future<Output = Self::NotificationResponse> + Send + 'a {
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
+        let span = tracing::info_span!("notification", "rpc.method" = %req.method);
         let inner = self.inner.clone();
 
         async move {
@@ -150,9 +156,10 @@ where
                     let _guard = parent_ctx.clone().attach();
                     fut.as_mut().poll(poll_cx)
                 })
+                .instrument(span)
                 .await
             } else {
-                fut.await
+                fut.instrument(span).await
             }
         }
     }
