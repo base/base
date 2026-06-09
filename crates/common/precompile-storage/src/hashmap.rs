@@ -94,10 +94,13 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
 
         let code_len = code.len();
-        // Mirror the production is_new_account check so state gas tracking is faithful.
         let is_new_account = self.accounts.get(&address).is_none_or(AccountInfo::is_empty);
+        let has_empty_code =
+            self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
         if is_new_account {
             self.deduct_state_gas(self.gas_params.create_state_gas())?;
+        }
+        if has_empty_code {
             self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
         let account = self.accounts.entry(address).or_default();
@@ -267,6 +270,12 @@ impl HashMapStorageProvider {
     pub fn set_nonce(&mut self, address: Address, nonce: u64) {
         let account = self.accounts.entry(address).or_default();
         account.nonce = nonce;
+    }
+
+    /// Sets the balance for the given address (test-utils only).
+    pub fn set_balance(&mut self, address: Address, balance: U256) {
+        let account = self.accounts.entry(address).or_default();
+        account.balance = balance;
     }
 
     /// Overrides the block timestamp (test-utils only).

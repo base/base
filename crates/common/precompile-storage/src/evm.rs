@@ -96,13 +96,13 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         // Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
-        // For new (empty) accounts charge the CREATE equivalent costs (Yellow Paper G_create).
-        let is_new_account = {
+        let (is_new_account, has_empty_code) = {
             let state_load = self
                 .internals
                 .load_account(address)
                 .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-            state_load.data.info.is_empty()
+            let info = &state_load.data.info;
+            (info.is_empty(), info.is_empty_code_hash())
         };
 
         if is_new_account {
@@ -111,14 +111,13 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-            // EIP-8037: both state gas charges are gated on is_new_account.
-            // create_state_gas covers the new account entry in the state trie.
-            // code_deposit_state_gas covers the new code object. Replacing code on an
-            // existing account is not a state-creating operation in the EIP-8037 model —
-            // the code slot already occupies a trie node — so it is intentionally excluded.
-            // In practice, precompile set_code is only called during factory token creation,
-            // where the target address is always a fresh account.
+            // EIP-8037: charge for the new account entry in the state trie.
             self.deduct_state_gas(self.gas_params.create_state_gas())?;
+        }
+        if has_empty_code {
+            // EIP-8037: charge for depositing code into an account whose code slot is
+            // currently empty. Applies to both new accounts and existent accounts that
+            // have only a nonzero balance or nonce (no prior code).
             self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
 
@@ -419,6 +418,30 @@ mod tests {
         let expected = gas_params.create_state_gas() + gas_params.code_deposit_state_gas(code_len);
         assert!(expected > 0, "AMSTERDAM state gas must be non-zero");
         assert_eq!(provider.state_gas_used(), expected);
+    }
+
+    /// `set_code` on a balance-only account (nonzero balance, no code) must charge
+    /// `code_deposit_state_gas` but not `create_state_gas`. This covers the attack where
+    /// a caller prefunds a future token address before calling the factory.
+    #[test]
+    fn set_code_balance_only_account_charges_code_deposit_state_gas_only() {
+        let mut provider = amsterdam_provider();
+        let addr = Address::from([0x42u8; 20]);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code_len = code.len();
+        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+
+        // Simulate a prefunded account: has balance but no code.
+        provider.set_balance(addr, U256::from(1u64));
+
+        provider.set_code(addr, code).unwrap();
+
+        let expected = gas_params.code_deposit_state_gas(code_len);
+        assert_eq!(
+            provider.state_gas_used(),
+            expected,
+            "balance-only account must pay code_deposit_state_gas but not create_state_gas"
+        );
     }
 
     /// `set_code` on an already-initialised account must NOT charge any additional
