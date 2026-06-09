@@ -6,13 +6,13 @@ use alloy_primitives::{Address, B256};
 use base_proof_primitives::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider};
 use base_prover_service_client::ProofRequesterProvider;
+use base_prover_service_protocol::TeeKind;
 use tracing::info;
 
 use crate::{
     driver::RecoveredState,
     error::ProposerError,
     proof_adapter::{DispatchedProof, ProofRequesterDispatcher, ProposerProofAdapter},
-    proof_collector::ProofCollector,
 };
 
 /// Static parameters needed to build proposer proof requests.
@@ -155,7 +155,7 @@ where
         target_block: u64,
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
-        collector: &ProofCollector<impl base_proof_rpc::RollupProvider + 'static>,
+        tee_kind: TeeKind,
         attempt: u32,
     ) -> ProofDispatchAttempt {
         let request =
@@ -163,11 +163,8 @@ where
                 Ok(request) => request,
                 Err(error) => return ProofDispatchAttempt::BuildFailed(error),
             };
-        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(
-            &request,
-            collector.tee_kind(),
-            attempt,
-        );
+        let session_id =
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, tee_kind, attempt);
 
         match self.dispatcher.dispatch_tee_with_session_id(request, session_id).await {
             Ok(dispatched) => ProofDispatchAttempt::Accepted(dispatched),
@@ -178,12 +175,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
-    use crate::test_utils::{
-        MockL1, MockL2, MockProofRequester, MockRollupClient, test_sync_status,
-    };
+    use crate::test_utils::{MockL1, MockL2, MockProofRequester};
 
     fn dispatcher() -> (ProofDispatcher<MockL1, MockL2>, Arc<MockProofRequester>) {
         let requester = Arc::new(MockProofRequester::default());
@@ -225,27 +218,19 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_discard_retry_uses_retry_specific_session() {
-        let (dispatcher, requester) = dispatcher();
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(200, B256::ZERO),
-            output_roots: HashMap::new(),
-            max_safe_block: None,
-        });
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
-            rollup,
-        );
+        let (dispatcher, _requester) = dispatcher();
         let claimed_root = B256::repeat_byte(0xaa);
 
-        let outcome =
-            dispatcher.dispatch_discard_retry(200, &recovered(), claimed_root, &collector, 1).await;
+        let outcome = dispatcher
+            .dispatch_discard_retry(200, &recovered(), claimed_root, TeeKind::AwsNitro, 1)
+            .await;
         let ProofDispatchAttempt::Accepted(dispatched) = outcome else {
             panic!("expected accepted dispatch")
         };
 
         assert_ne!(
             dispatched.session_id,
-            ProposerProofAdapter::tee_session_id_for_root(claimed_root, collector.tee_kind())
+            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro)
         );
     }
 
