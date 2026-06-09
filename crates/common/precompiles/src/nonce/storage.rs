@@ -105,7 +105,14 @@ impl NonceManagerStorage<'_> {
     }
 
     /// Returns whether `hash` has been recorded and has not yet expired relative
-    /// to `now` (Unix seconds). Intended for transaction-pool replay checks.
+    /// to `now` (Unix seconds).
+    ///
+    /// Intended for transaction-pool replay checks. `now` is a caller-supplied
+    /// timestamp because the mempool has no block context and uses wall-clock
+    /// time, whereas [`Self::check_and_mark_expiring_nonce`] reads the block
+    /// timestamp internally at inclusion. The two clocks can disagree near an
+    /// entry's expiry boundary; this getter is an advisory pre-filter and the
+    /// block-timestamp check at inclusion is authoritative.
     pub fn is_expiring_nonce_seen(&self, hash: B256, now: u64) -> Result<bool> {
         let expiry = self.expiring_nonce_seen.at(&hash).read()?;
         Ok(expiry != 0 && expiry > now)
@@ -115,10 +122,14 @@ impl NonceManagerStorage<'_> {
     /// protection for nonce-free EIP-8130 transactions.
     ///
     /// `expiring_nonce_hash` is the signature-invariant replay hash
-    /// (`keccak256(encode_for_signing || sender)`), so re-signed fee-payer
-    /// variants of one logical transaction collapse to a single entry. The hash
-    /// is recorded in a circular buffer that reclaims expired slots as the write
-    /// pointer advances.
+    /// (`keccak256(resolved_sender || sender_signature_hash)`), so re-signed
+    /// fee-payer variants of one logical transaction collapse to a single entry.
+    /// The hash is recorded in a circular buffer that reclaims expired slots as
+    /// the write pointer advances.
+    ///
+    /// `now` is read from the block timestamp, so this is the authoritative
+    /// inclusion-time replay check (cf. the advisory, wall-clock-based
+    /// [`Self::is_expiring_nonce_seen`] used by the mempool).
     ///
     /// Intended for the EIP-8130 execution layer; not reachable through ABI
     /// dispatch.
@@ -149,6 +160,15 @@ impl NonceManagerStorage<'_> {
             return Err(BasePrecompileError::revert(INonceManager::ExpiringNonceReplay {}));
         }
 
+        // Steps 3–6 mutate four correlated persistent slots (the reclaimed old
+        // entry, the ring slot, the new seen entry, and the write pointer). Guard
+        // them with a checkpoint so a mid-sequence failure reverts the whole group
+        // atomically — otherwise a partial write could record an entry in
+        // `expiring_nonce_seen` whose ring slot is never reclaimable because the
+        // pointer never advanced. The guard reverts on drop unless committed, so
+        // any early `?` return below rolls back every write in the group.
+        let checkpoint = self.storage.checkpoint();
+
         self.__initialize()?;
 
         // 3. Inspect the entry the write pointer currently references.
@@ -174,6 +194,7 @@ impl NonceManagerStorage<'_> {
         let next = if ptr + 1 >= Self::EXPIRING_NONCE_SET_CAPACITY { 0 } else { ptr + 1 };
         self.expiring_nonce_ring_ptr.write(next)?;
 
+        checkpoint.commit();
         Ok(())
     }
 }
