@@ -56,6 +56,8 @@ impl<'a> B20FactoryStorage<'a> {
                 // Charge keccak gas for address derivation only when the variant is valid.
                 // Invalid variants are rejected in create_b20_with_observer before
                 // compute_address runs, so no keccak hash occurs on the revert path.
+                // compute_address re-encodes (caller, salt) internally to stay ctx-free;
+                // the resulting double allocation is intentional.
                 if variant.is_some() {
                     ctx.keccak256(&(caller, call.salt).abi_encode())?;
                 }
