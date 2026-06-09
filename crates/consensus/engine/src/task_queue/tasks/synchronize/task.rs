@@ -6,6 +6,7 @@ use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadStatusEnum}
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use derive_more::Constructor;
+use opentelemetry::{Context, context::FutureExt as OtelFutureExt};
 use tokio::time::Instant;
 
 use crate::{
@@ -43,6 +44,8 @@ pub struct SynchronizeTask<EngineClient_: EngineClient> {
     pub rollup: Arc<RollupConfig>,
     /// The sync state update to apply to the engine state.
     pub state_update: EngineSyncStateUpdate,
+    /// The `OpenTelemetry` context to propagate through EL HTTP calls.
+    pub otel_cx: Context,
 }
 
 impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
@@ -132,7 +135,11 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // NOTE: it doesn't matter which version we use here, because we're not sending any
         // payload attributes. The forkchoice updated call is version agnostic if no payload
         // attributes are provided.
-        let response = self.client.fork_choice_updated_v3(forkchoice, None).await;
+        let response = self
+            .client
+            .fork_choice_updated_v3(forkchoice, None)
+            .with_context(self.otel_cx.clone())
+            .await;
 
         let valid_response = response.map_err(|e| {
             // Fatal forkchoice update error.

@@ -330,6 +330,7 @@ where
         &mut self,
         envelope: BaseExecutionPayloadEnvelope,
         result_tx: Option<mpsc::Sender<InsertTaskResult>>,
+        otel_cx: opentelemetry::Context,
     ) {
         self.log_follower_upgrade_activation(&envelope);
         let task = match result_tx {
@@ -339,18 +340,24 @@ where
                     Arc::clone(&self.rollup),
                     envelope,
                     result_tx,
+                    otel_cx,
                 )))
             }
             None => EngineTask::Insert(Box::new(InsertTask::unsafe_payload(
                 Arc::clone(&self.client),
                 Arc::clone(&self.rollup),
                 envelope,
+                otel_cx,
             ))),
         };
         self.engine.enqueue(task);
     }
 
-    fn handle_external_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+    fn handle_external_unsafe_l2_block(
+        &mut self,
+        envelope: BaseExecutionPayloadEnvelope,
+        otel_cx: opentelemetry::Context,
+    ) {
         let block_number = envelope.execution_payload.block_number();
         let sync_state = self.engine.state().sync_state;
         let unsafe_head = sync_state.unsafe_head();
@@ -363,7 +370,7 @@ where
                 parent_hash = %envelope.execution_payload.parent_hash(),
                 "Validator enqueuing external unsafe payload"
             );
-            self.enqueue_unsafe_payload_insert(envelope, None);
+            self.enqueue_unsafe_payload_insert(envelope, None, otel_cx);
             return;
         }
 
@@ -380,7 +387,7 @@ where
                 max_external_unsafe_gap = EngineProcessorOptions::MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
                 "Sequencer enqueuing external unsafe payload within gap limit"
             );
-            self.enqueue_unsafe_payload_insert(envelope, None);
+            self.enqueue_unsafe_payload_insert(envelope, None, otel_cx);
             return;
         }
 
@@ -401,6 +408,7 @@ where
         &mut self,
         envelope: BaseExecutionPayloadEnvelope,
         result_tx: Option<mpsc::Sender<InsertTaskResult>>,
+        otel_cx: opentelemetry::Context,
     ) {
         debug!(
             target: "engine",
@@ -409,7 +417,7 @@ where
             parent_hash = %envelope.execution_payload.parent_hash(),
             "Enqueuing local sequencer unsafe payload"
         );
-        self.enqueue_unsafe_payload_insert(envelope, result_tx);
+        self.enqueue_unsafe_payload_insert(envelope, result_tx, otel_cx);
     }
 
     async fn mark_el_sync_complete_and_notify_derivation_actor(
@@ -800,6 +808,7 @@ where
                             Arc::clone(&self.client),
                             Arc::clone(&self.rollup),
                             safe_signal,
+                            opentelemetry::Context::current(),
                         )));
                         self.engine.enqueue(task);
                     }
@@ -815,13 +824,12 @@ where
                         self.engine.enqueue(task);
                     }
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
-                        self.handle_external_unsafe_l2_block(*envelope);
+                        let otel_cx = opentelemetry::Context::current();
+                        self.handle_external_unsafe_l2_block(*envelope, otel_cx);
                     }
                     EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
                         let InsertUnsafePayloadRequest { envelope, result_tx, otel_cx } = *envelope;
-                        // Attach for the synchronous enqueue call only — no await, no Send issue.
-                        let _guard = otel_cx.attach();
-                        self.handle_local_unsafe_l2_block(envelope, result_tx);
+                        self.handle_local_unsafe_l2_block(envelope, result_tx, otel_cx);
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
@@ -1154,9 +1162,9 @@ mod tests {
             unsafe_payload_processor(node_mode, el_sync_finished, unsafe_head, safe_head);
 
         if local_payload {
-            processor.handle_local_unsafe_l2_block(envelope, None);
+            processor.handle_local_unsafe_l2_block(envelope, None, opentelemetry::Context::new());
         } else {
-            processor.handle_external_unsafe_l2_block(envelope);
+            processor.handle_external_unsafe_l2_block(envelope, opentelemetry::Context::new());
         }
 
         assert_eq!(*queue_rx.borrow(), expected_queue_len);
@@ -1915,11 +1923,14 @@ mod tests {
         );
 
         processor.bootstrap_validator(Some(reth_latest)).await;
-        processor.handle_external_unsafe_l2_block(unsafe_payload_with_l1_info(
-            reth_latest.block_info.number + 1,
-            reth_latest.block_info.hash,
-            next_hash,
-        ));
+        processor.handle_external_unsafe_l2_block(
+            unsafe_payload_with_l1_info(
+                reth_latest.block_info.number + 1,
+                reth_latest.block_info.hash,
+                next_hash,
+            ),
+            opentelemetry::Context::new(),
+        );
 
         processor
             .drain()

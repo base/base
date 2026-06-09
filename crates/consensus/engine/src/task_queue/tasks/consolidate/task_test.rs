@@ -11,6 +11,7 @@ use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction as BaseTransaction;
 use base_protocol::L1BlockInfoBedrock;
+use opentelemetry::Context;
 
 use crate::{
     AttributesMatch, AttributesMismatch, ConsolidateTask, EngineTaskExt,
@@ -99,6 +100,7 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
         client,
         Arc::new(RollupConfig::default()),
         ConsolidateInput::from(attributes),
+        Context::new(),
     );
 
     // Execute — previously this returned Critical UnsafeHeadChangedSinceBuild.
@@ -161,7 +163,12 @@ async fn consolidate_rejects_attribute_transaction_with_trailing_bytes() {
             .with_l2_block_by_label(BlockNumberOrTag::Number(block_number), unsafe_block)
             .build(),
     );
-    let task = ConsolidateTask::new(client, Arc::new(cfg), ConsolidateInput::from(attributes));
+    let task = ConsolidateTask::new(
+        client,
+        Arc::new(cfg),
+        ConsolidateInput::from(attributes),
+        Context::new(),
+    );
 
     let result = task.execute(&mut state).await;
 

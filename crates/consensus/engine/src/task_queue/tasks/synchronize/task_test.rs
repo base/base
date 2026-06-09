@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use base_common_genesis::RollupConfig;
+use opentelemetry::Context;
 
 use crate::{
     EngineTaskExt, SynchronizeTask,
@@ -42,6 +43,7 @@ async fn valid_response_advances_sync_state() {
         client,
         cfg,
         EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() },
+        Context::new(),
     );
 
     task.execute(&mut state).await.expect("should succeed");
@@ -69,6 +71,7 @@ async fn syncing_response_does_not_advance_sync_state() {
         client,
         cfg,
         EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() },
+        Context::new(),
     );
 
     task.execute(&mut state).await.expect("should succeed");
@@ -98,6 +101,7 @@ async fn syncing_then_valid_advances_state_on_second_call() {
         Arc::clone(&client),
         Arc::clone(&cfg),
         EngineSyncStateUpdate { unsafe_head: Some(head_a), ..Default::default() },
+        Context::new(),
     );
     task.execute(&mut state).await.expect("should succeed");
     assert_eq!(state.sync_state.unsafe_head().block_info.number, 0);
@@ -111,6 +115,7 @@ async fn syncing_then_valid_advances_state_on_second_call() {
         Arc::clone(&client),
         Arc::clone(&cfg),
         EngineSyncStateUpdate { unsafe_head: Some(head_b), ..Default::default() },
+        Context::new(),
     );
     task.execute(&mut state).await.expect("should succeed");
     assert_eq!(
