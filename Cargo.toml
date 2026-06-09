@@ -51,7 +51,6 @@ members = [
   "crates/proof/succinct/utils/ethereum/client",
   "crates/proof/succinct/utils/ethereum/host",
   "crates/proof/succinct/scripts/*",
-  "crates/proof/succinct/validity",
 
   "crates/utilities/*",
   "crates/batcher/*",
@@ -257,7 +256,6 @@ base-proof-tee-nitro-attestation-prover = { path = "crates/proof/tee/nitro-attes
 base-proof-succinct-elfs = { path = "crates/proof/succinct/utils/elfs" }
 base-proof-succinct-prove = { path = "crates/proof/succinct/scripts/prove" }
 base-proof-succinct-scripts = { path = "crates/proof/succinct/scripts/utils" }
-base-proof-succinct-validity = { path = "crates/proof/succinct/validity" }
 base-proof-succinct-host-utils = { path = "crates/proof/succinct/utils/host" }
 base-proof-succinct-build-utils = { path = "crates/proof/succinct/utils/build" }
 base-proof-succinct-proof-utils = { path = "crates/proof/succinct/utils/proof" }
