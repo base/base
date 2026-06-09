@@ -34,6 +34,31 @@ impl PolicyRegistryStorage<'_> {
     {
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::policy_call(calldata));
+        if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
+            return recorder.record_base_error_result(ctx, error);
+        }
+        let result = if Self::is_view_selector(calldata) {
+            self.inner(calldata, &observer)
+        } else {
+            ActivationRegistryStorage::new(ctx)
+                .ensure_activated(ActivationFeature::PolicyRegistry.id())
+                .and_then(|()| self.inner(calldata, &observer))
+        };
+        recorder.record_base_result(ctx, result, |b| b)
+    }
+
+    /// ABI-dispatches policy registry calldata with an observer.
+    pub fn dispatch_with_observer<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        observer: O,
+    ) -> PrecompileResult
+    where
+        O: PrecompileCallObserver,
+    {
+        let mut recorder =
+            BerylCallRecorder::start(observer.clone(), BerylMetricLabels::policy_call(calldata));
         if !ctx.call_value().is_zero() {
             return recorder.record_base_error_result(
                 ctx,
@@ -142,8 +167,8 @@ impl PolicyRegistryStorage<'_> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_primitives::{Address, Bytes, address};
-    use alloy_sol_types::{SolCall, SolError, SolValue};
+    use alloy_primitives::{Address, Bytes, U256, address};
+    use alloy_sol_types::{Panic, PanicKind, SolCall, SolError, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{

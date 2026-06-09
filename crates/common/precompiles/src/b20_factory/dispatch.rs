@@ -28,12 +28,6 @@ impl<'a> B20FactoryStorage<'a> {
     {
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
-        if !ctx.call_value().is_zero() {
-            return recorder.record_base_error_result(
-                ctx,
-                BasePrecompileError::revert(IB20Factory::NonPayable {}),
-            );
-        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
@@ -52,14 +46,11 @@ impl<'a> B20FactoryStorage<'a> {
         match decode_precompile_call!(calldata, IB20Factory::IB20FactoryCalls) {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
-                // abi_decode_validate rejects non-canonical discriminants before dispatch,
-                // so from_abi returning None here would be an internal invariant violation.
-                let variant = B20Variant::from_abi(call.variant).expect(
-                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
-                );
-                let address_hash = ctx.metered_keccak256(&(caller, call.salt).abi_encode())?;
-                let token = self.create_b20_with_observer(call, address_hash, observer.clone())?;
-                observer.record_b20_created(variant.as_label());
+                let variant = B20Variant::from_abi(call.variant);
+                let token = self.create_b20_with_observer(caller, call, observer.clone())?;
+                if let Some(variant) = variant {
+                    observer.record_b20_created(variant.as_label());
+                }
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {

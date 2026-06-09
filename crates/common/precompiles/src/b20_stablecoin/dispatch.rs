@@ -13,8 +13,8 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    B20StablecoinToken, B20TokenRole, B20Variant, BerylCallRecorder, BerylMetricLabels,
-    BerylSelector, Burnable, Configurable,
+    B20StablecoinToken, B20TokenRole, BerylCallRecorder, BerylMetricLabels, BerylSelector,
+    Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
@@ -42,10 +42,6 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             observer.clone(),
             BerylMetricLabels::b20_stablecoin_call(calldata),
         );
-        if !ctx.call_value().is_zero() {
-            return recorder
-                .record_base_error_result(ctx, BasePrecompileError::revert(IB20::NonPayable {}));
-        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
@@ -113,9 +109,10 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
         {
-            let call = IB20Stablecoin::IB20StablecoinCalls::abi_decode_validate(calldata).map_err(
-                |error| BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() },
-            )?;
+            let call =
+                IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata).map_err(|error| {
+                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+                })?;
             let label = call.as_label();
             return observer.observe(label, || self.handle_stablecoin_call(call));
         }

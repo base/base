@@ -54,19 +54,14 @@ impl<'a> B20FactoryStorage<'a> {
         caller: Address,
         call: IB20Factory::createB20Call,
     ) -> Result<Address> {
-        let address_hash = keccak256((caller, call.salt).abi_encode());
-        self.create_b20_with_observer(call, address_hash, NoopPrecompileCallObserver)
+        self.create_b20_with_observer(caller, call, NoopPrecompileCallObserver)
     }
 
     /// Creates a token at a deterministic address and records observer-only metrics.
-    ///
-    /// `address_hash` must be `keccak256(abi_encode(caller, call.salt))`. The caller is
-    /// responsible for computing this hash (and charging gas via `ctx.metered_keccak256`
-    /// before calling this method from a dispatch context).
     pub fn create_b20_with_observer<O>(
         &mut self,
+        caller: Address,
         call: IB20Factory::createB20Call,
-        address_hash: B256,
         observer: O,
     ) -> Result<Address>
     where

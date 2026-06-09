@@ -212,4 +212,35 @@ mod tests {
         assert_eq!(actual, admin);
         assert!(BerylPrecompileMetricsObserver::recorded_calls_for_test() > 0);
     }
+
+    struct ReadOnlyDbAdapter;
+
+    impl DatabaseRef for ReadOnlyDbAdapter {
+        type Error = Infallible;
+
+        fn basic_ref(&self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            Ok(None)
+        }
+
+        fn code_by_hash_ref(&self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Ok(Bytecode::new())
+        }
+
+        fn storage_ref(
+            &self,
+            _address: Address,
+            _index: StorageKey,
+        ) -> Result<StorageValue, Self::Error> {
+            Ok(StorageValue::ZERO)
+        }
+
+        fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
+            Ok(B256::ZERO)
+        }
+    }
+
+    #[test]
+    fn build_base_accepts_read_only_database_adapters_without_debug() {
+        let _ = BaseContext::base().with_ref_db(ReadOnlyDbAdapter).build_base();
+    }
 }
