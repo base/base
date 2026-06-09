@@ -100,7 +100,7 @@ pub struct ChainConfig {
     /// Activation registry admin address.
     ///
     /// Required and non-zero for all Base chains: every Base chain has Beryl scheduled, and
-    /// Beryl's activation registry precompile needs an admin at genesis. Address::ZERO is
+    /// Beryl's activation registry precompile needs an admin at genesis. `Address::ZERO` is
     /// rejected by chainspec validation.
     pub activation_admin_address: Address,
 
