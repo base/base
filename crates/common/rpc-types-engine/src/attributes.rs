@@ -183,8 +183,6 @@ impl BasePayloadAttributes {
             alloy_consensus::crypto::RecoveryError,
         >,
     > + '_ {
-        use alloy_consensus::transaction::SignerRecoverable;
-
         self.decoded_transactions().map(|res| {
             res.map_err(alloy_consensus::crypto::RecoveryError::from_source)
                 .and_then(|tx| tx.try_into_recovered())
