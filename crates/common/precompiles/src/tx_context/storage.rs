@@ -84,12 +84,29 @@ impl<'a> TxContextStorage<'a> {
     /// Intended for the EIP-8130 execution layer to call once at the start of
     /// transaction processing. The values are cleared automatically when the
     /// transaction's transient storage is reset.
+    ///
+    /// # Invariant
+    /// In the EIP-8130 domain the resolved sender, payer, and actor id are always
+    /// non-zero (sender/payer are recovered addresses; the actor id derives from
+    /// the sender). The getters depend on this: a zero slot unambiguously means
+    /// "unset" and selects the `tx.origin` fallback, so writing a zero field here
+    /// would make it indistinguishable from an unset one. The debug assertions
+    /// below pin the invariant; callers must uphold it.
+    ///
+    /// # Gas
+    /// The three `tstore` writes are intentionally not checkpointed: transient
+    /// storage resets at transaction end, so a partial write cannot persist
+    /// across transactions. The caller is responsible for ensuring enough gas is
+    /// available to complete all three writes.
     pub fn set_context(
         &mut self,
         sender: Address,
         payer: Address,
         sender_actor_id: B256,
     ) -> Result<()> {
+        debug_assert!(!sender.is_zero(), "EIP-8130 resolved sender must be non-zero");
+        debug_assert!(!payer.is_zero(), "EIP-8130 resolved payer must be non-zero");
+        debug_assert!(!sender_actor_id.is_zero(), "EIP-8130 sender actor id must be non-zero");
         self.storage.tstore(
             Self::ADDRESS,
             Self::SENDER_SLOT,
