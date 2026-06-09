@@ -38,7 +38,10 @@ mod tests {
 
         let input = vec![0u8; 81_984 + bn254::PAIR_ELEMENT_LEN];
         let result = bn254_pair.execute(&input, u64::MAX, 0);
-        assert!(result.is_err(), "expected error for oversized bn254 pair input, got {result:?}");
+        assert!(
+            matches!(&result, Ok(output) if output.halt_reason().is_some()),
+            "expected halt for oversized bn254 pair input, got {result:?}"
+        );
     }
 
     #[test]
