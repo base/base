@@ -34,9 +34,6 @@ pub struct WorkerApiConfig {
 }
 
 impl WorkerApiConfig {
-    /// Default worker API tuning.
-    pub const DEFAULT: Self = Self::new(300, 3600);
-
     /// Create worker API tuning.
     pub const fn new(default_lock_duration_seconds: u32, max_lock_duration_seconds: u32) -> Self {
         let config = Self { default_lock_duration_seconds, max_lock_duration_seconds };
@@ -55,8 +52,19 @@ impl WorkerApiConfig {
 
 impl Default for WorkerApiConfig {
     fn default() -> Self {
-        Self::DEFAULT
+        Self::new(300, 3600)
     }
+}
+
+/// Tuning for the prover service JSON-RPC server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerConfig {
+    /// Shared `retry_count` cap with [`crate::worker::StatusPoller`].
+    pub max_proof_retries: i32,
+    /// Worker job lock-duration tuning.
+    pub worker: WorkerApiConfig,
+    /// Shared worker-claim reclaim budget.
+    pub worker_queue: WorkerQueueConfig,
 }
 
 /// JSON-RPC server implementing the requester and worker API traits.
@@ -64,21 +72,12 @@ impl Default for WorkerApiConfig {
 pub struct ProverServiceServer {
     repo: ProofRequestRepo,
     manager: ProofRequestManager,
-    /// Shared `retry_count` cap with [`crate::worker::StatusPoller`].
-    max_proof_retries: i32,
-    /// Worker job lock-duration tuning.
-    worker: WorkerApiConfig,
-    /// Shared worker-claim reclaim budget.
-    worker_queue: WorkerQueueConfig,
+    config: ServerConfig,
 }
 
 impl fmt::Debug for ProverServiceServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProverServiceServer")
-            .field("max_proof_retries", &self.max_proof_retries)
-            .field("worker", &self.worker)
-            .field("worker_queue", &self.worker_queue)
-            .finish_non_exhaustive()
+        f.debug_struct("ProverServiceServer").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
@@ -87,18 +86,10 @@ impl ProverServiceServer {
     pub const fn new(
         repo: ProofRequestRepo,
         manager: ProofRequestManager,
-        max_proof_retries: i32,
-        worker_queue: WorkerQueueConfig,
+        config: ServerConfig,
     ) -> Self {
-        Self { repo, manager, max_proof_retries, worker: WorkerApiConfig::DEFAULT, worker_queue }
-    }
-
-    /// Override worker lock-duration tuning.
-    #[must_use]
-    pub const fn with_worker_config(mut self, worker: WorkerApiConfig) -> Self {
-        worker.validate();
-        self.worker = worker;
-        self
+        config.worker.validate();
+        Self { repo, manager, config }
     }
 }
 

@@ -63,6 +63,7 @@ metrics.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 base-proof-primitives = { workspace = true, features = ["serde"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 

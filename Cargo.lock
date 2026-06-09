@@ -5984,6 +5984,7 @@ dependencies = [
  "metrics",
  "nonzero_ext",
  "reqwest 0.13.3",
+ "rstest",
  "serde",
  "serde_json",
  "sp1-cluster-artifact",

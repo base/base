@@ -611,6 +611,24 @@ impl ProofRequestRepo {
     ) -> Result<SubmitProofOutcome> {
         let session_id = canonical_session_id(&req.session_id)
             .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+
+        // Read first to validate the result type and detect idempotent retries.
+        let Some(existing) = self.get_proof_job_by_canonical_session_id(&session_id).await? else {
+            return Ok(SubmitProofOutcome::NotFound);
+        };
+
+        if let Err(reason) = existing.validate_submitted_result(&req.result) {
+            return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
+        }
+
+        // Idempotent retry: the same worker/lock already completed this job.
+        if existing.job_status == ProofJobStatus::Succeeded
+            && existing.lock_id == Some(req.lock_id)
+            && existing.worker_id.as_deref() == Some(req.worker_id.as_str())
+        {
+            return Ok(SubmitProofOutcome::Completed(existing));
+        }
+
         let result_payload =
             serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
         let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&req.result);

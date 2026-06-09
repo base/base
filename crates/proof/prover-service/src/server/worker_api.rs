@@ -65,10 +65,10 @@ impl ProverServiceServer {
             tee_kinds: request.tee_kinds.into_iter().map(Into::into).collect(),
             zk_vms: request.zk_vms.into_iter().map(Into::into).collect(),
             lock_duration_seconds: resolve_lock_duration(
-                self.worker,
+                self.config.worker,
                 request.lock_duration_seconds,
             ),
-            max_attempts: self.worker_queue.reclaim_attempts,
+            max_attempts: self.config.worker_queue.reclaim_attempts,
         };
 
         let job = self
@@ -114,7 +114,10 @@ impl ProverServiceServer {
                 session_id: canonical_session_id,
                 lock_id,
                 worker_id,
-                lock_duration_seconds: resolve_lock_duration(self.worker, lock_duration_seconds),
+                lock_duration_seconds: resolve_lock_duration(
+                    self.config.worker,
+                    lock_duration_seconds,
+                ),
             })
             .await
             .map_err(|e| internal(format!("Database error: {e}")))?;
@@ -188,6 +191,18 @@ impl ProverServiceServer {
                 );
                 Ok(WorkerSubmitProofResponse { job: into_protocol_job(job)? })
             }
+            SubmitProofOutcome::ResultMismatch { reason, .. } => {
+                warn!(
+                    worker_id = %request.worker_id,
+                    session_id = %request.session_id,
+                    reason = %reason,
+                    "rejected worker proof submission: result does not match claimed job"
+                );
+                Err(invalid_argument(format!(
+                    "submit_proof rejected for session_id {}: {reason}",
+                    request.session_id
+                )))
+            }
             SubmitProofOutcome::NotFound => {
                 Err(not_found(format!("proof job not found for session_id {}", request.session_id)))
             }
@@ -249,29 +264,17 @@ fn reject_ownership(method: &str, session_id: &str, reason: &str) -> ErrorObject
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use uuid::Uuid;
 
     use super::{WorkerApiConfig, parse_lock_id, resolve_lock_duration};
 
-    #[test]
-    fn resolve_lock_duration_uses_default_for_zero() {
-        let config = WorkerApiConfig::DEFAULT;
-        assert_eq!(resolve_lock_duration(config, 0), config.default_lock_duration_seconds);
-    }
-
-    #[test]
-    fn resolve_lock_duration_clamps_to_max() {
-        let config = WorkerApiConfig::DEFAULT;
-        assert_eq!(
-            resolve_lock_duration(config, config.max_lock_duration_seconds + 1),
-            config.max_lock_duration_seconds
-        );
-    }
-
-    #[test]
-    fn resolve_lock_duration_passes_through_in_range() {
-        let config = WorkerApiConfig::DEFAULT;
-        assert_eq!(resolve_lock_duration(config, 120), 120);
+    #[rstest]
+    #[case::zero_uses_default(0, 300)]
+    #[case::above_max_clamps(3601, 3600)]
+    #[case::in_range_passes_through(120, 120)]
+    fn resolve_lock_duration_resolves(#[case] requested: u32, #[case] expected: u32) {
+        assert_eq!(resolve_lock_duration(WorkerApiConfig::default(), requested), expected);
     }
 
     #[test]

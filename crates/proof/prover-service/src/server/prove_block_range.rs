@@ -59,7 +59,7 @@ impl ProverServiceServer {
 
         let outcome = self
             .repo
-            .create_for_worker_queue(db_request, self.max_proof_retries)
+            .create_for_worker_queue(db_request, self.config.max_proof_retries)
             .await
             .map_err(|e| match e {
                 CreateProofRequestError::IdCollision { id, field } => {
@@ -90,7 +90,7 @@ impl ProverServiceServer {
                 warn!(
                     proof_request_id = %id,
                     session_id = %session_id,
-                    max_proof_retries = self.max_proof_retries,
+                    max_proof_retries = self.config.max_proof_retries,
                     "rejected ProveBlockRange: proof request retry budget exhausted for this session_id",
                 );
                 return Err(resource_exhausted(format!(
