@@ -538,6 +538,13 @@ impl BerylCallTimer {
     }
 }
 
+/// Per-word calldata ingestion cost charged by Beryl native precompile dispatchers.
+///
+/// Emulates the cost a Solidity predeploy would incur reading its calldata:
+/// `G_copy` (3 gas/word) + `G_memory` (3 gas/word) = 6 gas/word.
+/// Part of the receipts/gas-used commitment: must be identical across all Base execution clients.
+pub(crate) const CALLDATA_WORD_GAS: u64 = 6;
+
 /// Per-call recorder for Beryl precompile observations.
 #[derive(Debug)]
 pub struct BerylCallRecorder<O> {
@@ -575,12 +582,6 @@ where
 
     /// Deducts the common calldata gas charged by Beryl precompile dispatch.
     pub fn deduct_calldata_gas(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<()> {
-        /// Per-word calldata ingestion cost charged by native precompile dispatchers.
-        /// Emulates the cost a Solidity predeploy would incur reading its calldata:
-        /// `G_copy` (3 gas/word) + `G_memory` (3 gas/word) = 6 gas/word.
-        /// Part of the receipts/gas-used commitment -- must match across all Base execution clients.
-        const CALLDATA_WORD_GAS: u64 = 6;
-
         let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
         ctx.deduct_gas(calldata_cost)
     }
@@ -718,12 +719,12 @@ mod tests {
 
     #[test]
     fn deduct_calldata_cost_gas_formula() {
-        // 32 bytes = 1 word => 1 * 6 = 6 gas
-        let cost_one_word = 32usize.div_ceil(32).saturating_mul(6) as u64;
-        assert_eq!(cost_one_word, 6);
+        // 32 bytes = 1 word => 1 * CALLDATA_WORD_GAS
+        let cost_one_word = 32usize.div_ceil(32).saturating_mul(CALLDATA_WORD_GAS as usize) as u64;
+        assert_eq!(cost_one_word, CALLDATA_WORD_GAS);
 
-        // 36 bytes (4-byte selector + 32-byte arg) = ceil(36/32) = 2 words => 2 * 6 = 12 gas
-        let cost_two_words = 36usize.div_ceil(32).saturating_mul(6) as u64;
-        assert_eq!(cost_two_words, 12);
+        // 36 bytes (4-byte selector + 32-byte arg) = ceil(36/32) = 2 words => 2 * CALLDATA_WORD_GAS
+        let cost_two_words = 36usize.div_ceil(32).saturating_mul(CALLDATA_WORD_GAS as usize) as u64;
+        assert_eq!(cost_two_words, 2 * CALLDATA_WORD_GAS);
     }
 }
