@@ -4,7 +4,7 @@
   "baseFeeVaultWithdrawalNetwork": 0,
   "batchSenderAddress": "${BATCHER_ADDR}",
   "disputeGameFinalityDelaySeconds": 0,
-  "delayedWETHWithdrawalDelay": 302400,
+  "delayedWETHWithdrawalDelay": 0,
   "eip1559Denominator": 50,
   "eip1559DenominatorCanyon": 250,
   "eip1559Elasticity": 6,
