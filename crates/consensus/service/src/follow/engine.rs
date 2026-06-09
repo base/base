@@ -8,6 +8,7 @@ use base_consensus_engine::{
     SynchronizeTask,
 };
 use base_protocol::L2BlockInfo;
+use opentelemetry::Context;
 use tokio::sync::Mutex;
 
 use crate::follow::error::FollowError;
@@ -62,6 +63,7 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
             Arc::clone(&self.client),
             Arc::clone(&self.rollup_config),
             envelope,
+            Context::current(),
         );
         EngineTask::Insert(Box::new(task))
             .execute(&mut *self.state.lock().await)
@@ -87,6 +89,7 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
                 finalized_head: finalized,
                 ..Default::default()
             },
+            Context::current(),
         );
         task.execute(&mut *self.state.lock().await).await.map_err(FollowError::engine_task)
     }

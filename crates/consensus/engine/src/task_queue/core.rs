@@ -8,6 +8,7 @@ use alloy_rpc_types_engine::{
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
+use opentelemetry::Context;
 use thiserror::Error;
 use tokio::sync::watch::Sender;
 
@@ -439,6 +440,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 safe_head: Some(start.safe),
                 finalized_head: Some(start.finalized),
             },
+            Context::current(),
         )
         .execute(&mut self.state)
         .await
@@ -505,7 +507,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         config: Arc<RollupConfig>,
         update: EngineSyncStateUpdate,
     ) -> Result<bool, SynchronizeTaskError> {
-        SynchronizeTask::new(client, config, update).execute(&mut self.state).await?;
+        SynchronizeTask::new(client, config, update, Context::current())
+            .execute(&mut self.state)
+            .await?;
         self.state_sender.send_replace(self.state);
         Ok(self.state.el_sync_finished)
     }

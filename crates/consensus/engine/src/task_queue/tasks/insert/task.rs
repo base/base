@@ -13,6 +13,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
 };
 use base_protocol::L2BlockInfo;
+use opentelemetry::{Context, context::FutureExt as OtelFutureExt};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -60,6 +61,8 @@ pub struct InsertTask<EngineClient_: EngineClient> {
     payload_safety: InsertPayloadSafety,
     /// Optional response channel used by callers that need insertion acknowledgement.
     result_tx: Option<mpsc::Sender<InsertTaskResult>>,
+    /// The `OpenTelemetry` context to propagate through EL HTTP calls.
+    pub otel_cx: Context,
 }
 
 impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
@@ -69,8 +72,9 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         rollup_config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
         payload_safety: InsertPayloadSafety,
+        otel_cx: Context,
     ) -> Self {
-        Self { client, rollup_config, envelope, payload_safety, result_tx: None }
+        Self { client, rollup_config, envelope, payload_safety, result_tx: None, otel_cx }
     }
 
     /// Creates a new task to insert an unsafe payload.
@@ -78,8 +82,9 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         client: Arc<EngineClient_>,
         rollup_config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
+        otel_cx: Context,
     ) -> Self {
-        Self::new(client, rollup_config, envelope, InsertPayloadSafety::Unsafe)
+        Self::new(client, rollup_config, envelope, InsertPayloadSafety::Unsafe, otel_cx)
     }
 
     /// Creates a new task to insert an unsafe payload and send insertion acknowledgement.
@@ -88,6 +93,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         rollup_config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
         result_tx: mpsc::Sender<InsertTaskResult>,
+        otel_cx: Context,
     ) -> Self {
         Self {
             client,
@@ -95,6 +101,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             envelope,
             payload_safety: InsertPayloadSafety::Unsafe,
             result_tx: Some(result_tx),
+            otel_cx,
         }
     }
 
@@ -103,8 +110,9 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         client: Arc<EngineClient_>,
         rollup_config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
+        otel_cx: Context,
     ) -> Self {
-        Self::new(client, rollup_config, envelope, InsertPayloadSafety::Safe)
+        Self::new(client, rollup_config, envelope, InsertPayloadSafety::Safe, otel_cx)
     }
 
     /// Checks the response of the `engine_newPayload` call.
@@ -202,20 +210,26 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             BaseExecutionPayload::V1(payload) => {
                 let payload_input =
                     ExecutionPayloadInputV2 { execution_payload: payload, withdrawals: None };
-                self.client.new_payload_v2(payload_input).await
+                self.client.new_payload_v2(payload_input).with_context(self.otel_cx.clone()).await
             }
             BaseExecutionPayload::V2(payload) => {
                 let payload_input = ExecutionPayloadInputV2 {
                     execution_payload: payload.payload_inner,
                     withdrawals: Some(payload.withdrawals),
                 };
-                self.client.new_payload_v2(payload_input).await
+                self.client.new_payload_v2(payload_input).with_context(self.otel_cx.clone()).await
             }
             BaseExecutionPayload::V3(payload) => {
-                self.client.new_payload_v3(payload, parent_beacon_block_root).await
+                self.client
+                    .new_payload_v3(payload, parent_beacon_block_root)
+                    .with_context(self.otel_cx.clone())
+                    .await
             }
             BaseExecutionPayload::V4(payload) => {
-                self.client.new_payload_v4(payload, parent_beacon_block_root).await
+                self.client
+                    .new_payload_v4(payload, parent_beacon_block_root)
+                    .with_context(self.otel_cx.clone())
+                    .await
             }
         };
 
@@ -248,6 +262,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
                 safe_head: advances_safe_head.then_some(new_block_ref),
                 ..Default::default()
             },
+            self.otel_cx.clone(),
         )
         .execute(state)
         .await?;
@@ -414,6 +429,7 @@ mod tests {
             Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
             InsertPayloadSafety::Unsafe,
+            opentelemetry::Context::new(),
         )
         .execute(&mut state)
         .await
@@ -444,6 +460,7 @@ mod tests {
             Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
             InsertPayloadSafety::Unsafe,
+            opentelemetry::Context::new(),
         )
         .execute(&mut state)
         .await
@@ -474,6 +491,7 @@ mod tests {
             Arc::clone(&client),
             Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
+            opentelemetry::Context::new(),
         )
         .execute(&mut state)
         .await
@@ -498,6 +516,7 @@ mod tests {
             Arc::clone(&client),
             Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
+            opentelemetry::Context::new(),
         )
         .execute(&mut state)
         .await
@@ -522,6 +541,7 @@ mod tests {
             Arc::clone(&client),
             Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
+            opentelemetry::Context::new(),
         )
         .execute(&mut state)
         .await
@@ -548,6 +568,7 @@ mod tests {
             Arc::clone(&client),
             Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
+            opentelemetry::Context::new(),
         )
         .execute(&mut state)
         .await
@@ -574,6 +595,7 @@ mod tests {
             Arc::clone(&client),
             Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
+            opentelemetry::Context::new(),
         )
         .execute(&mut state)
         .await
