@@ -18,8 +18,9 @@ use reth_node_builder::{
     node::NodeTypes,
     rpc::{
         BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn,
-        EngineValidatorBuilder, EthApiBuilder, Identity, PayloadValidatorBuilder, RethRpcAddOns,
-        RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
+        EngineValidatorBuilder, EthApiBuilder, Identity, PayloadValidatorBuilder,
+        RethAuthHttpMiddleware, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns,
+        RpcContext, RpcHandle,
     },
 };
 use reth_primitives_traits::header::HeaderMut;
@@ -41,17 +42,19 @@ pub struct BaseAddOns<
     EB = BaseEngineApiBuilder<PVB>,
     EVB = BasicEngineValidatorBuilder<PVB>,
     RpcMiddleware = Identity,
+    HttpMiddleware = Identity,
 > {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
     /// and eth-api.
-    pub rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
+    pub rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>,
     /// Data availability configuration for the payload builder.
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
 }
 
-impl<N, EthB, PVB, EB, EVB, RpcMiddleware> BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
+impl<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>
+    BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>
 where
     N: FullNodeComponents,
     EthB: EthApiBuilder<N>,
@@ -59,7 +62,7 @@ where
     /// Creates a new instance from components.
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
-        rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
+        rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
     ) -> Self {
@@ -77,13 +80,15 @@ where
     }
 }
 
-impl<N, NetworkT, RpcMiddleware>
+impl<N, NetworkT, RpcMiddleware, HttpMiddleware>
     BaseAddOns<
         N,
         BaseEthApiBuilder<NetworkT>,
         BasePayloadValidatorBuilder,
         BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
+        BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
         RpcMiddleware,
+        HttpMiddleware,
     >
 where
     N: FullNodeComponents<Types: BaseNodeTypes>,
@@ -95,7 +100,8 @@ where
     }
 }
 
-impl<N, EthB, PVB, EB, EVB, RpcMiddleware> BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
+impl<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>
+    BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>
 where
     N: FullNodeComponents,
     EthB: EthApiBuilder<N>,
@@ -104,7 +110,7 @@ where
     pub fn with_engine_api<T>(
         self,
         engine_api_builder: T,
-    ) -> BaseAddOns<N, EthB, PVB, T, EVB, RpcMiddleware> {
+    ) -> BaseAddOns<N, EthB, PVB, T, EVB, RpcMiddleware, HttpMiddleware> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_engine_api(engine_api_builder),
@@ -117,7 +123,7 @@ where
     pub fn with_payload_validator<T>(
         self,
         payload_validator_builder: T,
-    ) -> BaseAddOns<N, EthB, T, EB, EVB, RpcMiddleware> {
+    ) -> BaseAddOns<N, EthB, T, EB, EVB, RpcMiddleware, HttpMiddleware> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_payload_validator(payload_validator_builder),
@@ -130,7 +136,7 @@ where
     pub fn with_engine_validator<T>(
         self,
         engine_validator_builder: T,
-    ) -> BaseAddOns<N, EthB, PVB, EB, T, RpcMiddleware> {
+    ) -> BaseAddOns<N, EthB, PVB, EB, T, RpcMiddleware, HttpMiddleware> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_engine_validator(engine_validator_builder),
@@ -146,10 +152,31 @@ where
     /// layer, allowing you to intercept, modify, or enhance RPC request processing.
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, EthB, PVB, EB, EVB, T> {
+    pub fn with_rpc_middleware<T>(
+        self,
+        rpc_middleware: T,
+    ) -> BaseAddOns<N, EthB, PVB, EB, EVB, T, HttpMiddleware> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_rpc_middleware(rpc_middleware),
+            da_config,
+            gas_limit_config,
+        )
+    }
+
+    /// Sets the HTTP middleware stack for processing HTTP requests.
+    ///
+    /// This middleware is applied at the transport layer before requests are decoded and routed
+    /// to JSON-RPC method handlers.
+    ///
+    /// See also [`RpcAddOns::with_http_middleware`].
+    pub fn with_http_middleware<T>(
+        self,
+        http_middleware: T,
+    ) -> BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, T> {
+        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
+        BaseAddOns::new(
+            rpc_add_ons.with_auth_http_middleware(http_middleware),
             da_config,
             gas_limit_config,
         )
@@ -176,8 +203,8 @@ where
     }
 }
 
-impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> NodeAddOns<N>
-    for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
+impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware, HttpMiddleware> NodeAddOns<N>
+    for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>
 where
     N: FullNodeComponents<
             Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
@@ -195,6 +222,7 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
+    HttpMiddleware: RethAuthHttpMiddleware<Identity>,
     Attrs: Attributes<
             Transaction = TxTy<N::Types>,
             RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
@@ -258,8 +286,8 @@ where
     }
 }
 
-impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> RethRpcAddOns<N>
-    for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
+impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware, HttpMiddleware> RethRpcAddOns<N>
+    for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>
 where
     N: FullNodeComponents<
             Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
@@ -277,6 +305,7 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
+    HttpMiddleware: RethAuthHttpMiddleware<Identity>,
     Attrs: Attributes<
             Transaction = TxTy<N::Types>,
             RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
@@ -290,8 +319,8 @@ where
     }
 }
 
-impl<N, EthB, PVB, EB, EVB, RpcMiddleware> EngineValidatorAddOn<N>
-    for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
+impl<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware> EngineValidatorAddOn<N>
+    for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>
 where
     N: FullNodeComponents,
     EthB: EthApiBuilder<N>,
@@ -299,6 +328,7 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: Send,
+    HttpMiddleware: Send,
 {
     type ValidatorBuilder = EVB;
 
@@ -310,7 +340,7 @@ where
 /// A regular Base EVM and executor builder.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
+pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity, HttpMiddleware = Identity> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     sequencer_url: Option<String>,
@@ -326,6 +356,8 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     min_suggested_priority_fee: u64,
     /// RPC middleware to use
     rpc_middleware: RpcMiddleware,
+    /// HTTP middleware to use.
+    http_middleware: HttpMiddleware,
     /// Optional tokio runtime to use for the RPC server.
     tokio_runtime: Option<tokio::runtime::Handle>,
 }
@@ -340,12 +372,15 @@ impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
             min_suggested_priority_fee: 1_000_000,
             _nt: PhantomData,
             rpc_middleware: Identity::new(),
+            http_middleware: Identity::new(),
             tokio_runtime: None,
         }
     }
 }
 
-impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
+impl<NetworkT, RpcMiddleware, HttpMiddleware>
+    BaseAddOnsBuilder<NetworkT, RpcMiddleware, HttpMiddleware>
+{
     /// With a [`SequencerClient`].
     pub fn with_sequencer(mut self, sequencer_client: Option<String>) -> Self {
         self.sequencer_url = sequencer_client;
@@ -385,13 +420,17 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     }
 
     /// Configure the RPC middleware to use
-    pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOnsBuilder<NetworkT, T> {
+    pub fn with_rpc_middleware<T>(
+        self,
+        rpc_middleware: T,
+    ) -> BaseAddOnsBuilder<NetworkT, T, HttpMiddleware> {
         let Self {
             sequencer_url,
             sequencer_headers,
             da_config,
             gas_limit_config,
             min_suggested_priority_fee,
+            http_middleware,
             tokio_runtime,
             _nt,
             ..
@@ -404,16 +443,48 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             min_suggested_priority_fee,
             _nt,
             rpc_middleware,
+            http_middleware,
+            tokio_runtime,
+        }
+    }
+
+    /// Configure the HTTP middleware to use.
+    pub fn with_http_middleware<T>(
+        self,
+        http_middleware: T,
+    ) -> BaseAddOnsBuilder<NetworkT, RpcMiddleware, T> {
+        let Self {
+            sequencer_url,
+            sequencer_headers,
+            da_config,
+            gas_limit_config,
+            min_suggested_priority_fee,
+            rpc_middleware,
+            tokio_runtime,
+            _nt,
+            ..
+        } = self;
+        BaseAddOnsBuilder {
+            sequencer_url,
+            sequencer_headers,
+            da_config,
+            gas_limit_config,
+            min_suggested_priority_fee,
+            _nt,
+            rpc_middleware,
+            http_middleware,
             tokio_runtime,
         }
     }
 }
 
-impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
+impl<NetworkT, RpcMiddleware, HttpMiddleware>
+    BaseAddOnsBuilder<NetworkT, RpcMiddleware, HttpMiddleware>
+{
     /// Builds an instance of [`BaseAddOns`].
     pub fn build<N, PVB, EB, EVB>(
         self,
-    ) -> BaseAddOns<N, BaseEthApiBuilder<NetworkT>, PVB, EB, EVB, RpcMiddleware>
+    ) -> BaseAddOns<N, BaseEthApiBuilder<NetworkT>, PVB, EB, EVB, RpcMiddleware, HttpMiddleware>
     where
         N: FullNodeComponents<Types: NodeTypes>,
         BaseEthApiBuilder<NetworkT>: EthApiBuilder<N>,
@@ -428,6 +499,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             gas_limit_config,
             min_suggested_priority_fee,
             rpc_middleware,
+            http_middleware,
             tokio_runtime,
             ..
         } = self;
@@ -442,7 +514,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
                 EB::default(),
                 EVB::default(),
                 rpc_middleware,
-                Identity::new(),
+                http_middleware,
             )
             .with_tokio_runtime(tokio_runtime),
             da_config.unwrap_or_default(),
