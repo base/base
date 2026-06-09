@@ -43,12 +43,10 @@ impl FromWord for bool {
     }
     #[inline]
     fn from_word(word: U256) -> crate::error::Result<Self> {
-        if word == U256::ZERO {
-            Ok(false)
-        } else if word == U256::ONE {
-            Ok(true)
-        } else {
-            Err(crate::error::BasePrecompileError::enum_conversion_error())
+        match word {
+            w if w == U256::ZERO => Ok(false),
+            w if w == U256::ONE => Ok(true),
+            _ => Err(crate::error::BasePrecompileError::enum_conversion_error()),
         }
     }
 }
