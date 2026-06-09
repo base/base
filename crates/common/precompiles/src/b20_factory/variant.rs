@@ -93,10 +93,12 @@ impl B20Variant {
         }
     }
 
-    /// Returns the default fixed decimal precision for variants without stored decimals.
-    pub const fn decimals(self) -> u8 {
+    /// Returns the fixed decimal precision for this variant, or `None` for variants (like
+    /// `Asset`) where decimals are per-token and supplied at creation time via init params.
+    pub const fn decimals(self) -> Option<u8> {
         match self {
-            Self::Asset | Self::Stablecoin => 6,
+            Self::Stablecoin => Some(6),
+            Self::Asset => None,
         }
     }
 

@@ -121,7 +121,9 @@ impl<'a> B20FactoryStorage<'a> {
             variant: B20Variant::Stablecoin.abi(),
             name,
             symbol,
-            decimals: B20Variant::Stablecoin.decimals(),
+            decimals: B20Variant::Stablecoin
+                .decimals()
+                .expect("stablecoin has fixed 6-decimal precision"),
             variantParams: encode_stablecoin_variant_params(&currency),
         })?;
 
@@ -1262,5 +1264,41 @@ mod tests {
         // constant sharing.
         assert!(B20Variant::Stablecoin.supported_version() > 0);
         assert!(B20Variant::Asset.supported_version() > 0);
+    }
+
+    #[test]
+    fn b20created_asset_event_emits_token_specific_decimals() {
+        // Regression: B20Created.decimals for an asset token must reflect init.decimals
+        // (per-token), not any variant constant. Use 12 to distinguish from both the
+        // Stablecoin fixed value (6) and the Asset MIN_DECIMALS sentinel (6).
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt: B256::repeat_byte(0x72),
+            params: IB20Factory::B20AssetCreateParams {
+                version: 1,
+                name: "Custom Decimals Asset".to_string(),
+                symbol: "CDA".to_string(),
+                initialAdmin: Address::repeat_byte(0xAB),
+                decimals: 12,
+            }
+            .abi_encode()
+            .into(),
+            initCalls: Vec::new(),
+        };
+        storage.set_caller(Address::repeat_byte(0x01));
+        StorageCtx::enter(&mut storage, |ctx| {
+            dispatch_factory_success(ctx, call);
+        });
+        let event = storage
+            .get_events(B20FactoryStorage::ADDRESS)
+            .iter()
+            .find_map(|l| IB20Factory::B20Created::decode_log_data(l).ok())
+            .expect("B20Created must be emitted");
+        assert_eq!(
+            event.decimals, 12,
+            "B20Created.decimals must equal init.decimals, not any variant constant"
+        );
     }
 }

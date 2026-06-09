@@ -27,7 +27,8 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             Ok(crate::B20Variant::from_address(
                 ::base_precompile_storage::ContractStorage::address(self),
             )
-            .map_or(0, crate::B20Variant::decimals))
+            .and_then(|v| v.decimals())
+            .unwrap_or(0))
         }
     };
 
