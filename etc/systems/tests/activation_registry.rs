@@ -158,6 +158,45 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
     Ok(())
 }
 
+/// `checkActivated` reverts before activation and succeeds while the feature is active.
+#[tokio::test]
+async fn test_activation_registry_check_activated_gate() -> Result<()> {
+    let (_system, provider) = common::start_beryl_system().await?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
+        .wrap_err("Failed to parse system test private key")?;
+    common::wait_for_balance(&provider, admin.address()).await?;
+
+    let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let feature = ActivationFeature::B20Asset.id();
+
+    assert!(
+        client
+            .call(
+                ActivationRegistryStorage::ADDRESS,
+                IActivationRegistry::checkActivatedCall { feature },
+            )
+            .await
+            .is_err(),
+        "checkActivated should revert while feature is inactive"
+    );
+
+    client.activate_feature(feature).await?;
+    assert!(is_activated(&client, feature).await?, "feature should be active");
+    client
+        .call(
+            ActivationRegistryStorage::ADDRESS,
+            IActivationRegistry::checkActivatedCall { feature },
+        )
+        .await
+        .wrap_err("checkActivated should succeed while feature is active")?;
+
+    client.deactivate_feature(feature).await?;
+    assert!(!is_activated(&client, feature).await?, "feature should be inactive");
+
+    Ok(())
+}
+
 async fn is_activated(client: &B20PrecompileClient<'_>, feature: B256) -> Result<bool> {
     let output = client
         .call(ActivationRegistryStorage::ADDRESS, IActivationRegistry::isActivatedCall { feature })
