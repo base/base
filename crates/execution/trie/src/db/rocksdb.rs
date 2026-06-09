@@ -40,7 +40,10 @@ use crate::{
     BaseProofsStorageError,
     BaseProofsStorageError::NoBlocksFound,
     BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
-    api::{BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus, WriteCounts},
+    api::{
+        BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore,
+        InitialStateAnchor, InitialStateStatus, WriteCounts,
+    },
     db::{
         AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory, HashedStorageHistory,
         HashedStorageKey, IntoKV, MaybeDeleted, StorageTrieHistory, StorageTrieKey, StorageValue,
@@ -786,14 +789,16 @@ impl RocksdbProofsStorage {
                 }
 
                 let (_, block_number) = decode_history_key::<T>(&raw_key)?;
-                if block_number >= survivor_block {
+                if block_number > survivor_block {
+                    continue;
+                }
+                if block_number == survivor_block {
                     let value = T::Value::decompress(&raw_value)?;
-                    if block_number == survivor_block && value.value.0.is_none() {
+                    if value.value.0.is_none() {
                         deletes.push(raw_key.to_vec());
                     }
-                    break;
+                    continue;
                 }
-
                 deletes.push(raw_key.to_vec());
             }
         }
@@ -1233,8 +1238,8 @@ impl RocksdbProofsStorage {
         let mut hashed_acc_candidates: HashMap<B256, u64> = HashMap::default();
         let mut hashed_storage_candidates: HashMap<HashedStorageKey, u64> = HashMap::default();
 
-        for (block_number, change_set) in
-            self.iter_change_sets_from_snapshot(snapshot, (earliest.saturating_add(1))..=target_block)?
+        for (block_number, change_set) in self
+            .iter_change_sets_from_snapshot(snapshot, (earliest.saturating_add(1))..=target_block)?
         {
             for key in change_set.account_trie_keys {
                 acc_candidates
@@ -1606,6 +1611,12 @@ impl RocksdbProofsStorage {
         T: RocksDbHistoryTable,
     {
         let cf = self.cf(T::NAME)?;
+        // This returns the lexicographically LARGEST user-key prefix that has
+        // any history entry, used as a resume cursor during initial state
+        // population. The block-suffix encoding (forward or reversed) is
+        // irrelevant here: only the tiebreak among rows sharing a user-key
+        // prefix changes, so `IteratorMode::End` still lands on a row whose
+        // user-key prefix is the maximum.
         let mut iter = self.db.iterator_cf(&cf, IteratorMode::End);
         let Some(item) = iter.next() else {
             return Ok(None);
@@ -2092,12 +2103,7 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         account_nodes.sort_by_key(|(key, _)| *key);
         let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
-        self.persist_history_batch::<AccountTrieHistory, _, _>(
-            &mut batch,
-            0,
-            account_nodes.into_iter(),
-            true,
-        )?;
+        self.persist_history_batch::<AccountTrieHistory, _, _>(&mut batch, 0, account_nodes, true)?;
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(())
     }
@@ -2107,20 +2113,30 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         hashed_address: B256,
         storage_nodes: Vec<(Nibbles, Option<BranchNodeCompact>)>,
     ) -> BaseProofsStorageResult<()> {
-        let mut storage_nodes = storage_nodes;
-        if storage_nodes.is_empty() {
+        self.store_storage_branches_bulk(vec![(hashed_address, storage_nodes)])
+    }
+
+    fn store_storage_branches_bulk(
+        &self,
+        entries: Vec<(B256, Vec<(Nibbles, Option<BranchNodeCompact>)>)>,
+    ) -> BaseProofsStorageResult<()> {
+        if entries.is_empty() {
             return Ok(());
         }
-
-        storage_nodes.sort_by_key(|(key, _)| *key);
         let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
-        self.persist_history_batch::<StorageTrieHistory, _, _>(
-            &mut batch,
-            0,
-            storage_nodes.into_iter().map(|(path, node)| (hashed_address, path, node)),
-            true,
-        )?;
+        for (hashed_address, mut storage_nodes) in entries {
+            if storage_nodes.is_empty() {
+                continue;
+            }
+            storage_nodes.sort_by_key(|(key, _)| *key);
+            self.persist_history_batch::<StorageTrieHistory, _, _>(
+                &mut batch,
+                0,
+                storage_nodes.into_iter().map(|(path, node)| (hashed_address, path, node)),
+                true,
+            )?;
+        }
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(())
     }
@@ -2137,12 +2153,7 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         accounts.sort_by_key(|(key, _)| *key);
         let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
-        self.persist_history_batch::<HashedAccountHistory, _, _>(
-            &mut batch,
-            0,
-            accounts.into_iter(),
-            true,
-        )?;
+        self.persist_history_batch::<HashedAccountHistory, _, _>(&mut batch, 0, accounts, true)?;
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(())
     }
@@ -2152,22 +2163,32 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         hashed_address: B256,
         storages: Vec<(B256, U256)>,
     ) -> BaseProofsStorageResult<()> {
-        let mut storages = storages;
-        if storages.is_empty() {
+        self.store_hashed_storages_bulk(vec![(hashed_address, storages)])
+    }
+
+    fn store_hashed_storages_bulk(
+        &self,
+        entries: Vec<(B256, Vec<(B256, U256)>)>,
+    ) -> BaseProofsStorageResult<()> {
+        if entries.is_empty() {
             return Ok(());
         }
-
-        storages.sort_by_key(|(key, _)| *key);
         let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
-        self.persist_history_batch::<HashedStorageHistory, _, _>(
-            &mut batch,
-            0,
-            storages
-                .into_iter()
-                .map(|(key, value)| (hashed_address, key, Some(StorageValue(value)))),
-            true,
-        )?;
+        for (hashed_address, mut storages) in entries {
+            if storages.is_empty() {
+                continue;
+            }
+            storages.sort_by_key(|(key, _)| *key);
+            self.persist_history_batch::<HashedStorageHistory, _, _>(
+                &mut batch,
+                0,
+                storages
+                    .into_iter()
+                    .map(|(key, value)| (hashed_address, key, Some(StorageValue(value)))),
+                true,
+            )?;
+        }
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(())
     }
@@ -2177,6 +2198,110 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         let anchor = self.get_initial_state_anchor()?.ok_or(NoBlocksFound)?;
         self.set_earliest_block_number_hash_unlocked(anchor.number, anchor.hash)?;
         Ok(anchor)
+    }
+}
+
+/// Batch session for [`RocksdbProofsStorage`].
+///
+/// Unlike the MDBX implementation, `RocksDB` does not expose a transaction cursor readable
+/// mid-session; each `store_trie_updates` call commits immediately via a write batch. To
+/// avoid the per-cursor cost of `db.snapshot()` (which pins SST files against compaction
+/// and is expensive enough at the thousands-per-block scale to stall sync), the session
+/// holds ONE snapshot and reuses it across all cursor reads. The snapshot is refreshed
+/// after each `store_trie_updates` so subsequent block reads observe the prior commit.
+#[derive(Debug)]
+pub struct RocksdbBatchSession<'a> {
+    storage: &'a RocksdbProofsStorage,
+    snapshot: Arc<RocksdbReadSnapshot<'a>>,
+}
+
+impl<'a> RocksdbBatchSession<'a> {
+    fn new(storage: &'a RocksdbProofsStorage) -> Self {
+        let snapshot = Arc::new(RocksdbReadSnapshot::new(storage.db.as_ref()));
+        Self { storage, snapshot }
+    }
+}
+
+impl BaseProofsBatchSession for RocksdbBatchSession<'_> {
+    type StorageTrieCursor<'a>
+        = RocksdbTrieCursor<'a, StorageTrieHistory>
+    where
+        Self: 'a;
+    type AccountTrieCursor<'a>
+        = RocksdbTrieCursor<'a, AccountTrieHistory>
+    where
+        Self: 'a;
+    type StorageCursor<'a>
+        = RocksdbStorageCursor<'a>
+    where
+        Self: 'a;
+    type AccountHashedCursor<'a>
+        = RocksdbAccountCursor<'a>
+    where
+        Self: 'a;
+
+    fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
+        self.storage.get_earliest_block_number()
+    }
+
+    fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
+        self.storage.get_latest_block_number()
+    }
+
+    fn storage_trie_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'_>> {
+        self.storage.storage_trie_cursor_with_tx(&self.snapshot, hashed_address, max_block_number)
+    }
+
+    fn account_trie_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'_>> {
+        self.storage.account_trie_cursor_with_tx(&self.snapshot, max_block_number)
+    }
+
+    fn storage_hashed_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'_>> {
+        self.storage.storage_hashed_cursor_with_tx(&self.snapshot, hashed_address, max_block_number)
+    }
+
+    fn account_hashed_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>> {
+        self.storage.account_hashed_cursor_with_tx(&self.snapshot, max_block_number)
+    }
+
+    fn store_trie_updates(
+        &mut self,
+        block_ref: BlockWithParent,
+        block_state_diff: BlockStateDiff,
+    ) -> BaseProofsStorageResult<WriteCounts> {
+        let counts = self.storage.store_trie_updates(block_ref, block_state_diff)?;
+        // Refresh the snapshot so the next block's cursor reads observe this commit.
+        self.snapshot = Arc::new(RocksdbReadSnapshot::new(self.storage.db.as_ref()));
+        Ok(counts)
+    }
+}
+
+impl BaseProofsBatchStore for RocksdbProofsStorage {
+    type BatchSession<'a>
+        = RocksdbBatchSession<'a>
+    where
+        Self: 'a;
+
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
+    {
+        let mut session = RocksdbBatchSession::new(self);
+        f(&mut session)
     }
 }
 
@@ -2304,7 +2429,11 @@ where
         let (prefix, target) = self.exact_lookup_bounds(&key)?;
         let read_options = exact_prefix_read_options(&prefix);
         let mut iter = self.snapshot.snapshot().raw_iterator_cf_opt(&cf, read_options);
-        iter.seek_for_prev(&target);
+        // Forward `seek` is the fast path: with reversed block-suffix encoding
+        // the newest version-at-or-below `max_block_number` sorts FIRST within
+        // the prefix box, so we land directly on it instead of paying the
+        // documented 7-8x penalty of `seek_for_prev` (RocksDB PR #5535).
+        iter.seek(&target);
         if !iter.valid() {
             iter.status().map_err(rocksdb_error)?;
             return Ok(None);
@@ -2326,7 +2455,9 @@ where
         let (prefix, target) = self.exact_lookup_bounds(&key)?;
         let read_options = exact_prefix_read_options(&prefix);
         let mut iter = self.snapshot.snapshot().raw_iterator_cf_opt(&cf, read_options);
-        iter.seek_for_prev(&target);
+        // Forward `seek` is the fast path under the reversed block-suffix
+        // encoding; see `latest_version_for_key` for the full rationale.
+        iter.seek(&target);
         if !iter.valid() {
             iter.status().map_err(rocksdb_error)?;
             return Ok(None);
@@ -2338,7 +2469,9 @@ where
         }
 
         let raw_value = iter.value().ok_or(DatabaseError::Decode)?;
-        T::Value::decompress(raw_value).map(Some).map_err(|e| DatabaseError::Other(format!("decompress error: {e}")))
+        T::Value::decompress(raw_value)
+            .map(Some)
+            .map_err(|e| DatabaseError::Other(format!("decompress error: {e}")))
     }
 
     fn seek_exact(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
@@ -2730,8 +2863,7 @@ where
     }
     let split = T::KEY_LEN;
     let key = T::decode_history_key_prefix(&raw_key[..split])?;
-    let block_number =
-        u64::from_be_bytes(raw_key[split..].try_into().map_err(|_| DatabaseError::Decode)?);
+    let block_number = decode_history_block_suffix(&raw_key[split..])?;
     Ok((key, block_number))
 }
 
@@ -2874,6 +3006,30 @@ fn decode_block_number(raw_key: &[u8]) -> Result<u64, DatabaseError> {
         return Err(DatabaseError::Decode);
     }
     Ok(u64::from_be_bytes(raw_key.try_into().map_err(|_| DatabaseError::Decode)?))
+}
+
+/// Encodes the block-number suffix attached to history-table keys so that newer
+/// blocks sort BEFORE older blocks under the default `BytewiseComparator`.
+///
+/// This is the standard "complement key" trick (`u64::MAX - block_number`) used
+/// to make "find latest version at or below block N" fast on an LSM-tree: a
+/// forward `seek(target)` followed by `next()` lands on the answer rather than
+/// requiring the much slower `seek_for_prev()` / `prev()` path.
+///
+/// Used ONLY for history-table key suffixes (`AccountTrieHistory`,
+/// `StorageTrieHistory`, `HashedAccountHistory`, `HashedStorageHistory`).
+/// `BlockChangeSet` keys remain plain big-endian (forward range scans).
+const fn encode_history_block_suffix(block_number: u64) -> [u8; 8] {
+    (u64::MAX - block_number).to_be_bytes()
+}
+
+/// Inverse of [`encode_history_block_suffix`].
+fn decode_history_block_suffix(raw_suffix: &[u8]) -> Result<u64, DatabaseError> {
+    if raw_suffix.len() != BLOCK_NUMBER_KEY_LEN {
+        return Err(DatabaseError::Decode);
+    }
+    let complement = u64::from_be_bytes(raw_suffix.try_into().map_err(|_| DatabaseError::Decode)?);
+    Ok(u64::MAX - complement)
 }
 
 fn range_start(range: &impl RangeBounds<u64>) -> u64 {
@@ -3124,7 +3280,9 @@ mod tests {
                 let right = Nibbles::from_nibbles_unchecked(right);
                 assert_eq!(
                     left.cmp(&right),
-                    encode_packed_nibbles(&left).unwrap().cmp(&encode_packed_nibbles(&right).unwrap())
+                    encode_packed_nibbles(&left)
+                        .unwrap()
+                        .cmp(&encode_packed_nibbles(&right).unwrap())
                 );
             }
         }
@@ -3204,7 +3362,8 @@ mod tests {
 
     #[test]
     fn packed_nibbles_reject_invalid_padding() {
-        let mut encoded = encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1, 2, 3])).unwrap();
+        let mut encoded =
+            encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1, 2, 3])).unwrap();
         encoded[HASH_KEY_LEN - 1] = 1;
         assert!(decode_packed_nibbles(&encoded).is_err());
 
@@ -3394,10 +3553,7 @@ mod tests {
 
             let mut trie_updates = TrieUpdates::default();
             let mut storage_updates = StorageTrieUpdates::default();
-            storage_updates.storage_nodes.insert(
-                path.clone(),
-                branch.clone(),
-            );
+            storage_updates.storage_nodes.insert(*path, branch.clone());
             trie_updates.storage_tries.insert(address, storage_updates);
 
             let diff = BlockStateDiff {
@@ -3414,29 +3570,20 @@ mod tests {
         // seek_exact uses exact_prefix_read_options (with prefix_same_as_start)
         // and should find each entry individually.
         for path in &nibble_paths {
-            let mut cursor = storage
-                .storage_trie_cursor(address, u64::MAX)
-                .expect("cursor should open");
-            let result = cursor
-                .seek_exact(path.clone())
-                .expect("seek_exact should succeed");
-            assert!(
-                result.is_some(),
-                "seek_exact should find entry for path {path:?}"
-            );
+            let mut cursor =
+                storage.storage_trie_cursor(address, u64::MAX).expect("cursor should open");
+            let result = cursor.seek_exact(*path).expect("seek_exact should succeed");
+            assert!(result.is_some(), "seek_exact should find entry for path {path:?}");
         }
 
         // seek/next use prefix_read_options with a 32-byte address prefix
         // on a CF with a 65-byte prefix extractor. After flush, the bloom
         // filter can cause the iterator to skip SST blocks whose 65-byte
         // prefix doesn't match the one extracted from the seek key.
-        let mut cursor = storage
-            .storage_trie_cursor(address, u64::MAX)
-            .expect("cursor should open");
+        let mut cursor =
+            storage.storage_trie_cursor(address, u64::MAX).expect("cursor should open");
 
-        let first = cursor
-            .seek(Nibbles::default())
-            .expect("seek should succeed");
+        let first = cursor.seek(Nibbles::default()).expect("seek should succeed");
         assert!(first.is_some(), "seek should find at least one entry");
 
         let mut found = vec![first.unwrap().0];

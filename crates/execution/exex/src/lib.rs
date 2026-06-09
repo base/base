@@ -823,10 +823,12 @@ mod tests {
     }
 
     #[test]
-    fn sync_turn_end_advances_one_block_at_a_time() {
-        assert_eq!(sync_turn_end(0, 10), 1);
+    fn sync_turn_end_advances_up_to_sync_blocks_per_turn() {
+        assert_eq!(sync_turn_end(0, 10), 10);
         assert_eq!(sync_turn_end(9, 10), 10);
         assert_eq!(sync_turn_end(10, 10), 10);
+        assert_eq!(sync_turn_end(0, 1000), SYNC_BLOCKS_PER_TURN as u64);
+        assert_eq!(sync_turn_end(50, 1000), 100);
     }
 
     #[tokio::test]

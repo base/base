@@ -586,12 +586,8 @@ mod tests {
 
     #[test]
     fn test_parse_proofs_history_db_v2_alias() {
-        let args = CommandParser::<RollupArgs>::parse_from([
-            "reth",
-            "--proofs-history.db",
-            "v2",
-        ])
-        .args;
+        let args =
+            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.db", "v2"]).args;
         assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Rocksdb);
     }
 

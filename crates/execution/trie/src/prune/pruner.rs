@@ -50,6 +50,7 @@ where
     P: BaseProofsStore,
     H: BlockHashReader,
 {
+    /// Executes the pruning logic and returns the pruner output.
     pub fn run_inner(&self) -> BaseProofStoragePrunerResult {
         let latest_block_opt = self.provider.get_latest_block_number()?;
         if latest_block_opt.is_none() {
@@ -478,8 +479,7 @@ mod tests {
             .returning(move |_| Ok(Some(b256(3))));
 
         let pruner =
-            BaseProofStoragePruner::new(clone_storage(&store), block_hash_reader, 1, 1000)
-                .unwrap();
+            BaseProofStoragePruner::new(clone_storage(&store), block_hash_reader, 1, 1000).unwrap();
         let out = pruner.run_inner().expect("pruner ok");
         assert_eq!(out.start_block, 0);
         assert_eq!(out.end_block, 4, "pruned up to 4 (inclusive); new earliest is 4");

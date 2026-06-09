@@ -1119,7 +1119,7 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
         account_nodes.sort_by_key(|(key, _)| *key);
 
         self.env.update(|tx| {
-            self.persist_history_batch(tx, 0, account_nodes.into_iter(), true)?;
+            self.persist_history_batch(tx, 0, account_nodes, true)?;
             Ok(())
         })?
     }
@@ -1160,7 +1160,7 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
         accounts.sort_by_key(|(key, _)| *key);
 
         self.env.update(|tx| {
-            self.persist_history_batch(tx, 0, accounts.into_iter(), true)?;
+            self.persist_history_batch(tx, 0, accounts, true)?;
             Ok(())
         })?
     }

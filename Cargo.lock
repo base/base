@@ -5826,9 +5826,7 @@ dependencies = [
 name = "base-proofs-extension"
 version = "0.0.0"
 dependencies = [
- "base-common-consensus",
  "base-execution-exex",
- "base-execution-payload-builder",
  "base-execution-rpc",
  "base-execution-trie",
  "base-node-core",
