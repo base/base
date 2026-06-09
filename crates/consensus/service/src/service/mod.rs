@@ -11,6 +11,7 @@ pub use builder::{
 pub use crate::follow::{FollowNode, FollowNodeConfig};
 
 mod mode;
+pub use base_consensus_providers::L1TxFormat;
 pub use mode::NodeMode;
 
 mod node;

@@ -15,8 +15,8 @@ use base_upgrade_signal::UpgradeSignalConfig;
 use url::Url;
 
 use crate::{
-    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, UpgradeSignalNodeConfig,
-    actors::DerivationDelegateClient, service::node::L1Config,
+    EngineConfig, L1TxFormat, NetworkConfig, RollupNode, SequencerConfig,
+    UpgradeSignalNodeConfig, actors::DerivationDelegateClient, service::node::L1Config,
 };
 
 /// Upgrade signal configuration for the [`RollupNodeBuilder`].
@@ -49,12 +49,14 @@ pub struct L1ConfigBuilder {
     pub chain_config: ChainConfig,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
-    /// The L1 beacon API, or `None` when the L1 parent has no beacon (blob) DA endpoint.
+    /// The L1 beacon API, or `None` when the L1 has no beacon (blob) DA endpoint.
     pub beacon: Option<Url>,
     /// The L1 RPC URL.
     pub rpc_url: Url,
     /// Request timeout for general L1 execution JSON-RPC calls.
     pub rpc_timeout: Duration,
+    /// The transaction format of the L1 chain (Ethereum or Base/OP).
+    pub l1_tx_format: L1TxFormat,
     /// The duration in seconds of an L1 slot. This can be used to hardcode a fixed slot
     /// duration if the l1-beacon's slot configuration is not available.
     pub slot_duration_override: Option<u64>,
@@ -221,6 +223,8 @@ impl RollupNodeBuilder {
                 self.l1_config_builder.rpc_url.clone(),
                 self.l1_config_builder.rpc_timeout,
             ),
+            l1_eth_rpc: self.l1_config_builder.rpc_url.clone(),
+            l1_tx_format: self.l1_config_builder.l1_tx_format,
             finalized_poll_interval,
             verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
             da_batcher_sender_override: self.l1_config_builder.da_batcher_sender_override,
@@ -320,6 +324,7 @@ mod tests {
             beacon: Some(Url::parse("http://127.0.0.1:5052").unwrap()),
             rpc_url: Url::parse("http://127.0.0.1:8545").unwrap(),
             rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
+            l1_tx_format: L1TxFormat::default(),
             slot_duration_override: None,
             verifier_l1_confs: 0,
             da_batcher_sender_override: None,

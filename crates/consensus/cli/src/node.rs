@@ -457,6 +457,7 @@ impl ConsensusNodeArgs {
             beacon: self.config.l1_rpc_args.l1_beacon()?,
             rpc_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
+            l1_tx_format: self.config.l1_rpc_args.l1_tx_format,
             slot_duration_override: self.config.l1_rpc_args.l1_slot_duration_override,
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
             da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,

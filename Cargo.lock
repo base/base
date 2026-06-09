@@ -4033,6 +4033,7 @@ dependencies = [
  "base-metrics",
  "base-protocol",
  "c-kzg",
+ "derive_more 2.1.1",
  "http-body-util",
  "httpmock",
  "lru 0.16.4",

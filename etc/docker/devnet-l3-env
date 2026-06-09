@@ -10,6 +10,9 @@ L1_MODE=base
 # beaconless mode must be opted into explicitly via --l1.calldata-only, otherwise the consensus
 # node refuses to start (guards against a main-chain node silently running without a beacon API).
 BASE_NODE_L1_CALLDATA_ONLY=true
+# The L1 parent is Base/OP-format: blocks carry deposit (0x7E) txs the Ethereum envelopes can't
+# deserialize. Tell the consensus node's parent-chain reader to decode Base-format transactions.
+BASE_NODE_L1_TX_FORMAT=base
 # L1 slot duration matches base-anvil's --block-time (2s).
 BASE_NODE_L1_SLOT_DURATION_OVERRIDE=2
 
