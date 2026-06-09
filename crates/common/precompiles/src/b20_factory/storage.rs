@@ -606,7 +606,7 @@ mod tests {
     }
 
     /// A prefunded token address (balance > 0, no code) must cause `create_b20` to charge
-    /// state creation gas, not skip it. This is the regression test for BOP-320.
+    /// state creation gas, not skip it.
     #[test]
     fn test_create_token_at_prefunded_address_charges_state_gas() {
         let mut storage = HashMapStorageProvider::new(1);
