@@ -73,8 +73,8 @@ impl<'a> B20FactoryStorage<'a> {
                 // still charged for recognized variants and OOG can terminate the call frame).
                 let addr = match B20Variant::from_abi(call.variant) {
                     Some(v) => {
-                        ctx.keccak256(&(call.sender, call.salt).abi_encode())?;
-                        v.compute_address(call.sender, call.salt).0
+                        let hash = ctx.keccak256(&(call.sender, call.salt).abi_encode())?;
+                        v.compute_address_from_hash(hash).0
                     }
                     None => Address::ZERO,
                 };

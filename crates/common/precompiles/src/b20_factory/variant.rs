@@ -128,7 +128,14 @@ impl B20Variant {
     /// Returns the address and the 9-byte hash tail embedded in the address.
     pub fn compute_address(self, creator: Address, salt: B256) -> (Address, [u8; 9]) {
         let hash = keccak256((creator, salt).abi_encode());
+        self.compute_address_from_hash(hash)
+    }
 
+    /// Computes the deterministic token address from a pre-computed `keccak256(creator, salt)` hash.
+    ///
+    /// Use when the hash is already available (e.g. after charging keccak gas via `ctx.keccak256`)
+    /// to avoid re-encoding and re-hashing.
+    pub fn compute_address_from_hash(self, hash: B256) -> (Address, [u8; 9]) {
         let mut tail = [0u8; 9];
         tail.copy_from_slice(&hash[..9]);
 
