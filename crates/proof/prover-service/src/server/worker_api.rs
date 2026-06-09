@@ -203,6 +203,17 @@ impl ProverServiceServer {
                     request.session_id
                 )))
             }
+            SubmitProofOutcome::ResultConflict { .. } => {
+                warn!(
+                    worker_id = %request.worker_id,
+                    session_id = %request.session_id,
+                    "rejected worker proof submission: job already completed with a different result"
+                );
+                Err(failed_precondition(format!(
+                    "submit_proof rejected for session_id {}: job already completed with a different result",
+                    request.session_id
+                )))
+            }
             SubmitProofOutcome::NotFound => {
                 Err(not_found(format!("proof job not found for session_id {}", request.session_id)))
             }

@@ -1051,6 +1051,12 @@ pub enum SubmitProofOutcome {
         /// Human-readable description of the mismatch.
         reason: String,
     },
+    /// An idempotent retry from the owning worker/lock submitted a result that
+    /// differs from the one already stored. The stored result is kept.
+    ResultConflict {
+        /// The already-completed job whose stored result was retained.
+        job: ProofJob,
+    },
     /// No proof job exists for the supplied `session_id`.
     NotFound,
     /// The job exists but is not currently claimed.

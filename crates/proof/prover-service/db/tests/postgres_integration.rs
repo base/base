@@ -1595,6 +1595,22 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
         Some(&[0xca, 0xfe][..])
     );
 
+    // Same worker/lock, different payload: conflict, stored result kept.
+    let conflict = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: uppercase_session_id.clone(),
+            lock_id,
+            worker_id: "submit-worker".to_owned(),
+            result: compressed_result(vec![0xba, 0xad]),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(conflict, SubmitProofOutcome::ResultConflict { .. }));
+    assert_eq!(
+        repo.get(id).await.unwrap().unwrap().stark_receipt.as_deref(),
+        Some(&[0xca, 0xfe][..])
+    );
+
     // A retry that no longer owns the lock still sees a terminal job.
     let foreign = repo
         .complete_claimed_proof_job(CompleteClaimedProofJob {

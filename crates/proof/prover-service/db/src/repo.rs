@@ -553,6 +553,22 @@ impl ProofRequestRepo {
         row.as_ref().map(row_to_proof_job).transpose()
     }
 
+    /// Fetch the stored `result_payload` for a canonical `session_id`, if any.
+    async fn stored_result_payload(&self, session_id: &str) -> Result<Option<serde_json::Value>> {
+        let row = sqlx::query(
+            r#"
+            SELECT result_payload
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            "#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|row| row.get::<Option<serde_json::Value>, _>("result_payload")))
+    }
+
     /// Extend the lock for the currently owned worker proof job (`heartbeat`).
     pub async fn heartbeat_proof_job(&self, req: HeartbeatProofJob) -> Result<HeartbeatOutcome> {
         let session_id = canonical_session_id(&req.session_id)
@@ -621,16 +637,22 @@ impl ProofRequestRepo {
             return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
         }
 
-        // Idempotent retry: the same worker/lock already completed this job.
+        let result_payload =
+            serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+
+        // Idempotent retry by the owning worker/lock; a differing payload conflicts.
         if existing.job_status == ProofJobStatus::Succeeded
             && existing.lock_id == Some(req.lock_id)
             && existing.worker_id.as_deref() == Some(req.worker_id.as_str())
         {
-            return Ok(SubmitProofOutcome::Completed(existing));
+            let stored = self.stored_result_payload(&session_id).await?;
+            return Ok(if stored.as_ref() == Some(&result_payload) {
+                SubmitProofOutcome::Completed(existing)
+            } else {
+                SubmitProofOutcome::ResultConflict { job: existing }
+            });
         }
 
-        let result_payload =
-            serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
         let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&req.result);
         let submitted_lock_id = req.lock_id.to_string();
         let columns = PROOF_JOB_RETURNING_COLUMNS;
