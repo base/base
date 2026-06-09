@@ -41,7 +41,9 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Granite | BaseUpgrade::Holocene => Self::granite(),
             BaseUpgrade::Isthmus => Self::isthmus(),
             BaseUpgrade::Jovian => Self::jovian(),
-            BaseUpgrade::Azul | BaseUpgrade::Beryl | BaseUpgrade::Cobalt => Self::azul(),
+            BaseUpgrade::Azul => Self::azul(),
+            BaseUpgrade::Beryl => Self::beryl(),
+            BaseUpgrade::Cobalt => Self::cobalt(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 
@@ -163,6 +165,13 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     /// Static precompiles are the same as Azul; Beryl adds dynamic precompiles at install time.
     pub fn beryl() -> &'static Precompiles {
         Self::azul()
+    }
+
+    /// Returns precompiles for the Base Cobalt spec.
+    ///
+    /// Static precompiles are the same as Beryl; Cobalt adds dynamic precompiles at install time.
+    pub fn cobalt() -> &'static Precompiles {
+        Self::beryl()
     }
 
     /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed.
