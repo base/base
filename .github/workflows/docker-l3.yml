@@ -3,9 +3,20 @@ name: Docker (L3)
 on:
   push:
     branches: [l3]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      contracts_ref:
+        description: "base/contracts ref to build devnet-setup from (branch name or commit SHA)"
+        required: false
+        default: l3-changes
+      skip_rust_services:
+        description: "Only rebuild devnet-setup (skip Rust service images)"
+        required: false
+        type: boolean
+        default: false
 
 env:
+  CONTRACTS_REF: ${{ github.event.inputs.contracts_ref || 'l3-changes' }}
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
 
 permissions:
@@ -13,6 +24,9 @@ permissions:
 
 jobs:
   build-rust-services:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.skip_rust_services != true
     strategy:
       fail-fast: false
       matrix:
@@ -89,10 +103,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve base/contracts l3-changes
+      - name: Resolve base/contracts ref
         id: contracts
         run: |
-          contracts_commit="$(git ls-remote https://github.com/base/contracts.git refs/heads/l3-changes | cut -f1)"
+          contracts_ref="${CONTRACTS_REF}"
+          if [[ "$contracts_ref" =~ ^[0-9a-f]{40}$ ]]; then
+            contracts_commit="$contracts_ref"
+          else
+            contracts_commit="$(git ls-remote https://github.com/base/contracts.git "refs/heads/${contracts_ref}" | cut -f1)"
+          fi
           test -n "$contracts_commit"
           echo "commit=$contracts_commit" >> "$GITHUB_OUTPUT"
 
