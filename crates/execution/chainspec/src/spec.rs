@@ -232,14 +232,14 @@ impl BaseChainSpec {
         Ok(Self { inner: value, activation_admin_address })
     }
 
-    /// Validates that Beryl-enabled chains include an activation registry admin address.
+    /// Validates that Beryl-enabled chains have a valid activation registry admin address:
+    /// present (not `None`) and non-zero.
     pub fn validate_beryl_activation_admin(
         hardforks: &ChainHardforks,
         activation_admin_address: Option<Address>,
         chain_id: u64,
     ) -> Result<(), BaseChainSpecError> {
-        let beryl_scheduled =
-            !matches!(hardforks.fork(BaseUpgrade::Beryl), ForkCondition::Never);
+        let beryl_scheduled = !matches!(hardforks.fork(BaseUpgrade::Beryl), ForkCondition::Never);
 
         if activation_admin_address.is_none() && beryl_scheduled {
             return Err(BaseChainSpecError::MissingActivationAdminAddress { chain_id });

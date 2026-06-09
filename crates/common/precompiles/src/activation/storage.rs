@@ -58,7 +58,7 @@ impl ActivationRegistryStorage<'_> {
 
     /// Returns the activation admin address, or [`Address::ZERO`] if no admin is configured.
     ///
-    /// [`Address::ZERO`] here means "no admin is set" — it is not a valid admin address.
+    /// [`Address::ZERO`] here means "no admin is set": it is not a valid admin address.
     /// Configuration-time validation rejects `Some(Address::ZERO)`, so in a correctly
     /// constructed chain spec the zero return always means `activation_admin_address` was
     /// `None`. Callers must not treat the zero return as a meaningful admin address.
