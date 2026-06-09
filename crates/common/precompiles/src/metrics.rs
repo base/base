@@ -580,10 +580,14 @@ where
         &self.call
     }
 
+    /// Computes the calldata gas cost for the given calldata slice.
+    pub fn calldata_gas_cost(calldata: &[u8]) -> u64 {
+        (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS)
+    }
+
     /// Deducts the common calldata gas charged by Beryl precompile dispatch.
     pub fn deduct_calldata_gas(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<()> {
-        let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
-        ctx.deduct_gas(calldata_cost)
+        ctx.deduct_gas(Self::calldata_gas_cost(calldata))
     }
 
     /// Records a Base precompile error before it is converted to a [`PrecompileResult`].
@@ -649,8 +653,8 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        BerylCallOutcome, BerylErrorKind, BerylMetricLabels, BerylSelector, CALLDATA_WORD_GAS,
-        IB20, IB20Factory, IPolicyRegistry,
+        BerylCallOutcome, BerylCallRecorder, BerylErrorKind, BerylMetricLabels, BerylSelector,
+        CALLDATA_WORD_GAS, IB20, IB20Factory, IPolicyRegistry, NoopPrecompileCallObserver,
     };
 
     #[test]
@@ -719,12 +723,12 @@ mod tests {
 
     #[test]
     fn deduct_calldata_cost_gas_formula() {
-        // 32 bytes = 1 word => 1 * CALLDATA_WORD_GAS
-        let cost_one_word = 32usize.div_ceil(32).saturating_mul(CALLDATA_WORD_GAS as usize) as u64;
-        assert_eq!(cost_one_word, CALLDATA_WORD_GAS);
+        type Recorder = BerylCallRecorder<NoopPrecompileCallObserver>;
+
+        // 32 bytes = 1 word => CALLDATA_WORD_GAS
+        assert_eq!(Recorder::calldata_gas_cost(&[0u8; 32]), CALLDATA_WORD_GAS);
 
         // 36 bytes (4-byte selector + 32-byte arg) = ceil(36/32) = 2 words => 2 * CALLDATA_WORD_GAS
-        let cost_two_words = 36usize.div_ceil(32).saturating_mul(CALLDATA_WORD_GAS as usize) as u64;
-        assert_eq!(cost_two_words, 2 * CALLDATA_WORD_GAS);
+        assert_eq!(Recorder::calldata_gas_cost(&[0u8; 36]), 2 * CALLDATA_WORD_GAS);
     }
 }
