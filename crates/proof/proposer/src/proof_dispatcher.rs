@@ -95,7 +95,7 @@ where
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
     ) -> Result<ProofRequest, ProposerError> {
-        let (l1_head_result, agreed_head_result) = tokio::join!(
+        let (l1_head, agreed_l2_head) = tokio::try_join!(
             async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
             async {
                 self.l2_client
@@ -103,10 +103,7 @@ where
                     .await
                     .map_err(ProposerError::Rpc)
             },
-        );
-
-        let l1_head = l1_head_result?;
-        let agreed_l2_head = agreed_head_result?;
+        )?;
 
         let request = ProofRequest {
             l1_head: l1_head.hash,
