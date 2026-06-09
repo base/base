@@ -19,7 +19,8 @@ use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
-    EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
+    EngineConfig, L1ConfigBuilder, L1TxFormat, NetworkConfig, NodeMode, RollupNodeBuilder,
+    SequencerConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
@@ -143,6 +144,7 @@ impl InProcessConsensus {
             trust_rpc: true,
             beacon: Some(config.l1_beacon_url),
             rpc_url: config.l1_rpc_url.clone(),
+            l1_tx_format: L1TxFormat::default(),
             slot_duration_override: config.l1_slot_duration_override,
             verifier_l1_confs: config.verifier_l1_confs,
         };

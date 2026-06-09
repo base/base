@@ -31,3 +31,6 @@ pub use l2_chain_provider::{AlloyL2ChainProvider, AlloyL2ChainProviderError};
 
 mod pipeline;
 pub use pipeline::OnlinePipeline;
+
+mod tx_format;
+pub use tx_format::L1TxFormat;
