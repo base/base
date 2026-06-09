@@ -47,7 +47,7 @@ Each line is one JSON object:
   "event_id": "0x7d5c4f...",
   "event_time": "2026-06-02T00:00:00.000000000Z",
   "producer": "base-reth-node",
-  "event_type": "PENDING",
+  "event_type": "TXPOOL_PENDING",
   "network": "base-mainnet",
   "tx_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
   "block_hash": null,
@@ -70,7 +70,12 @@ Required fields:
 
 At least one join key should normally be present: `tx_hash`,
 `block_hash`/`block_number`, or `payload_id`. `request_id` is optional but useful
-for proxy and ingress correlation.
+for proxy and ingress correlation. Producers should not emit transaction journal
+events for aggregate operational conditions that cannot be tied to one of these
+join keys. For example, broadcast lag is reported through logs and metrics
+because the receiver only knows a skipped count, while
+`INGRESS_METERING_SEND_DROPPED` is emitted once per dropped transaction only
+when ingress still has the original `tx_hash`.
 
 Producer-specific fields belong in `data`. Do not write raw transaction bytes,
 calldata, full request bodies, API keys, secrets, authorization headers, raw
@@ -113,7 +118,7 @@ durable journal when `--enable-transaction-event-journal` and
 `--transaction-event-journal-path` are set:
 
 ```json
-{"schema_version":"transaction-event/v1","event_id":"0x4d6d...","event_time":"2026-06-02T00:00:00Z","producer":"base-reth-node","event_type":"PENDING","network":"base-mainnet","tx_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","block_hash":null,"block_number":null,"payload_id":null,"request_id":null,"data":{"event_source":"txpool-tracing","txpool_event":"pending","event_index":0,"node_role":"mempool","pool":"pending"}}
+{"schema_version":"transaction-event/v1","event_id":"0x4d6d...","event_time":"2026-06-02T00:00:00Z","producer":"base-reth-node","event_type":"TXPOOL_PENDING","network":"base-mainnet","tx_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","block_hash":null,"block_number":null,"payload_id":null,"request_id":null,"data":{"event_source":"txpool-tracing","txpool_event":"pending","event_index":0,"node_role":"mempool","pool":"pending"}}
 ```
 
 ## Event Vocabulary
@@ -124,37 +129,52 @@ Edge/proxy:
 - `PROXY_REJECTED`
 - `PROXY_VALIDATION_ACCEPTED`
 - `PROXY_VALIDATION_REJECTED`
-- `ROUTED_TO_NODE`
-- `NODE_ACCEPTED`
-- `NODE_REJECTED`
-- `INGRESS_RPC_FORWARD_ATTEMPT`
-- `INGRESS_RPC_FORWARD_SUCCESS`
-- `INGRESS_RPC_FORWARD_FAILURE`
+- `PROXY_ROUTED_TO_BACKEND`
+- `PROXY_BACKEND_SUCCESS`
+- `PROXY_BACKEND_FAILURE`
+- `PROXY_INGRESS_RPC_ATTEMPT`
+- `PROXY_INGRESS_RPC_SUCCESS`
+- `PROXY_INGRESS_RPC_FAILURE`
 
 Ingress/audit:
 
 - `INGRESS_RECEIVED`
 - `SIMULATION_STARTED`
-- `SIMULATION_ACCEPTED`
-- `SIMULATION_REJECTED`
+- `SIMULATION_SUCCEEDED`
+- `SIMULATION_FAILED`
+- `INGRESS_TX_FORWARD_ATTEMPT`
+- `INGRESS_TX_FORWARD_SUCCESS`
+- `INGRESS_TX_FORWARD_FAILURE`
+- `INGRESS_METERING_SEND_ATTEMPT`
+- `INGRESS_METERING_SEND_SUCCESS`
+- `INGRESS_METERING_SEND_FAILURE`
+- `INGRESS_METERING_SEND_DROPPED`
 
 Mempool/node:
 
-- `PENDING`
-- `QUEUED`
-- `PENDING_TO_QUEUED`
-- `QUEUED_TO_PENDING`
-- `DROPPED`
-- `REPLACED`
-- `OVERFLOWED`
-- `INCLUDED`
-- `FLASHBLOCK_INCLUDED`
+- `TXPOOL_PENDING`
+- `TXPOOL_QUEUED`
+- `TXPOOL_PENDING_TO_QUEUED`
+- `TXPOOL_QUEUED_TO_PENDING`
+- `TXPOOL_DROPPED`
+- `TXPOOL_REPLACED`
+- `TXPOOL_TRACKING_OVERFLOWED`
+- `TXPOOL_BLOCK_INCLUDED`
+- `TXPOOL_FLASHBLOCK_INCLUDED`
 
 Forwarding:
 
-- `FORWARD_ATTEMPT`
-- `FORWARD_ACK`
-- `FORWARD_NACK`
+- `TXPOOL_BUILDER_FORWARD_ATTEMPT`
+- `TXPOOL_BUILDER_FORWARD_SUCCESS`
+- `TXPOOL_BUILDER_FORWARD_FAILURE`
+- `TXPOOL_BUILDER_FORWARD_DROPPED`
+- `TXPOOL_VALIDATED_INSERT_ACCEPTED`
+- `TXPOOL_VALIDATED_INSERT_REJECTED`
+
+`TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
+where the forwarding task still knows the `tx_hash`, such as final RPC failure
+after retries. Broadcast lag is intentionally excluded from the transaction
+journal and remains visible through logs and metrics.
 
 Builder:
 
@@ -246,7 +266,7 @@ Routed to node:
   "event_id": "0x3b5c...",
   "event_time": "2026-06-02T00:00:00.000000000Z",
   "producer": "base-routing/proxyd",
-  "event_type": "ROUTED_TO_NODE",
+  "event_type": "PROXY_ROUTED_TO_BACKEND",
   "network": "base-mainnet",
   "tx_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
   "block_hash": null,

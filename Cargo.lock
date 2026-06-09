@@ -4732,8 +4732,10 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-evm",
  "base-metrics",
+ "base-observability-events",
  "base-test-utils",
  "c-kzg",
+ "chrono",
  "derive_more 2.1.1",
  "futures",
  "jsonrpsee",
@@ -4750,6 +4752,7 @@ dependencies = [
  "reth-tasks",
  "reth-transaction-pool",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -6395,6 +6398,7 @@ version = "0.0.0"
 dependencies = [
  "base-execution-txpool",
  "base-node-runner",
+ "base-observability-events",
  "tracing",
  "url",
 ]

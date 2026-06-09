@@ -296,7 +296,7 @@ impl PgTransactionEventSink {
             "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
              FROM transaction_events \
-             WHERE event_type IN ('SIMULATION_REJECTED', 'BUILDER_REJECTED') \
+             WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED') \
                AND ($1::BIGINT IS NULL OR block_number >= $1) \
                AND ($2::BIGINT IS NULL OR block_number <= $2) \
                AND ($3::TIMESTAMPTZ IS NULL OR event_time >= $3) \

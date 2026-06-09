@@ -8,7 +8,7 @@ against audit-archiver/Postgres.
 
 - One recent block hash with at least one non-system transaction.
 - The same block by number.
-- One transaction hash from that block with a `SIMULATION_ACCEPTED` event.
+- One transaction hash from that block with a `SIMULATION_SUCCEEDED` event.
 - One bundle hash or bundle id from that transaction's event data.
 - One rejected transaction from the last 31 days, if present.
 

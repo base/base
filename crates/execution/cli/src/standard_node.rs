@@ -288,7 +288,10 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
-        runner.install_ext::<TxForwardingExtension>((&args).into());
+        runner.install_ext::<TxForwardingExtension>((
+            (&args).into(),
+            transaction_event_writer_config(&args.rpc)?,
+        ));
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rpc.rollup_args);
 

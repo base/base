@@ -12,7 +12,7 @@ use base_test_utils::Account;
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
-    let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(()).build().await?;
+    let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(None).build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
 }

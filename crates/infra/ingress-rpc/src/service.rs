@@ -31,7 +31,7 @@ use tokio::{
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::{Config, metrics::Metrics};
+use crate::{Config, MeteringForwardMessage, metrics::Metrics};
 
 /// RPC providers for different endpoints.
 #[derive(Debug)]
@@ -60,7 +60,7 @@ pub struct IngressService {
     send_transaction_default_lifetime_seconds: u64,
     block_time_milliseconds: u64,
     meter_bundle_timeout_ms: u64,
-    builder_tx: broadcast::Sender<MeterBundleResponse>,
+    builder_tx: broadcast::Sender<MeteringForwardMessage>,
     bundle_cache: Cache<B256, ()>,
     send_to_builder: bool,
     transaction_event_writer: TransactionEventWriter,
@@ -77,7 +77,7 @@ impl IngressService {
     pub fn new(
         providers: Providers,
         audit_channel: mpsc::Sender<BundleEvent>,
-        builder_tx: broadcast::Sender<MeterBundleResponse>,
+        builder_tx: broadcast::Sender<MeteringForwardMessage>,
         config: Config,
     ) -> Self {
         let transaction_event_writer =
@@ -95,7 +95,7 @@ impl IngressService {
     pub fn new_with_transaction_event_writer(
         providers: Providers,
         audit_channel: mpsc::Sender<BundleEvent>,
-        builder_tx: broadcast::Sender<MeterBundleResponse>,
+        builder_tx: broadcast::Sender<MeteringForwardMessage>,
         config: Config,
         transaction_event_writer: TransactionEventWriter,
     ) -> Self {
@@ -140,7 +140,7 @@ impl IngressApiServer for IngressService {
             let writer = self.transaction_event_writer.clone();
             Self::emit_transaction_event_with_data(
                 &writer,
-                TransactionEventType::ForwardAttempt,
+                TransactionEventType::IngressTxForwardAttempt,
                 tx_hash,
                 None,
                 None,
@@ -154,7 +154,7 @@ impl IngressApiServer for IngressService {
                     Ok(_) => {
                         Self::emit_transaction_event_with_data(
                             &writer,
-                            TransactionEventType::ForwardAck,
+                            TransactionEventType::IngressTxForwardSuccess,
                             tx_hash,
                             None,
                             None,
@@ -168,7 +168,7 @@ impl IngressApiServer for IngressService {
                     Err(e) => {
                         Self::emit_transaction_event_with_data(
                             &writer,
-                            TransactionEventType::ForwardNack,
+                            TransactionEventType::IngressTxForwardFailure,
                             tx_hash,
                             None,
                             None,
@@ -223,7 +223,7 @@ impl IngressApiServer for IngressService {
             {
                 Ok(response) => {
                     self.emit_simulation_event(
-                        TransactionEventType::SimulationAccepted,
+                        TransactionEventType::SimulationSucceeded,
                         tx_hash,
                         *bundle_hash,
                         simulation_start.elapsed(),
@@ -255,7 +255,11 @@ impl IngressApiServer for IngressService {
                 // Update the current size of the `builder_tx` channel captured right before sending to the builder
                 Metrics::buffered_meter_bundle_responses_size().set(self.builder_tx.len() as f64);
                 if self.send_to_builder {
-                    match self.builder_tx.send(meter_info.clone()) {
+                    let message = MeteringForwardMessage {
+                        tx_hashes: vec![tx_hash],
+                        response: meter_info.clone(),
+                    };
+                    match self.builder_tx.send(message) {
                         Ok(n) => debug!(
                             receivers = n,
                             bundle_hash = %bundle_hash,
@@ -276,7 +280,7 @@ impl IngressApiServer for IngressService {
                 AcceptedBundle::new(parsed_bundle, meter_bundle_response.unwrap_or_default());
 
             self.emit_transaction_event(
-                TransactionEventType::ForwardAttempt,
+                TransactionEventType::IngressTxForwardAttempt,
                 tx_hash,
                 Some(*bundle_hash),
                 Some(*accepted_bundle.uuid()),
@@ -286,7 +290,7 @@ impl IngressApiServer for IngressService {
                 Ok(_) => {
                     Metrics::sent_to_mempool().increment(1);
                     self.emit_transaction_event(
-                        TransactionEventType::ForwardAck,
+                        TransactionEventType::IngressTxForwardSuccess,
                         tx_hash,
                         Some(*bundle_hash),
                         Some(*accepted_bundle.uuid()),
@@ -492,7 +496,7 @@ impl IngressService {
         data.insert("rejection_code".to_string(), serde_json::json!("simulation_error"));
         Self::emit_transaction_event_with_data(
             &self.transaction_event_writer,
-            TransactionEventType::SimulationRejected,
+            TransactionEventType::SimulationFailed,
             tx_hash,
             Some(bundle_hash),
             None,
@@ -509,7 +513,7 @@ impl IngressService {
     ) {
         Self::emit_transaction_event_with_data(
             &self.transaction_event_writer,
-            TransactionEventType::ForwardNack,
+            TransactionEventType::IngressTxForwardFailure,
             tx_hash,
             Some(bundle_hash),
             Some(bundle_id),

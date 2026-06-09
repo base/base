@@ -3,7 +3,8 @@
 
 use base_execution_txpool::{SpawnedConsumer, SpawnedForwarder};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use tracing::info;
+use base_observability_events::{TransactionEventWriter, TransactionEventWriterConfig};
+use tracing::{info, warn};
 
 use crate::TxForwardingConfig;
 
@@ -12,12 +13,17 @@ use crate::TxForwardingConfig;
 pub struct TxForwardingExtension {
     /// Transaction forwarding configuration.
     pub config: TxForwardingConfig,
+    /// Optional writer config for durable transaction events.
+    pub transaction_event_writer_config: Option<TransactionEventWriterConfig>,
 }
 
 impl TxForwardingExtension {
     /// Creates a new transaction forwarding extension.
-    pub const fn new(config: TxForwardingConfig) -> Self {
-        Self { config }
+    pub const fn new(
+        config: TxForwardingConfig,
+        transaction_event_writer_config: Option<TransactionEventWriterConfig>,
+    ) -> Self {
+        Self { config, transaction_event_writer_config }
     }
 }
 
@@ -29,6 +35,7 @@ impl BaseNodeExtension for TxForwardingExtension {
         }
 
         let config = self.config;
+        let writer_config = self.transaction_event_writer_config;
 
         hooks.add_node_started_hook(move |ctx| {
             info!(
@@ -41,13 +48,28 @@ impl BaseNodeExtension for TxForwardingExtension {
 
             let pool = ctx.pool().clone();
             let consumer_config = config.to_consumer_config();
-            let forwarder_config = config.to_forwarder_config();
             let executor = ctx.task_executor;
-            let consumer = SpawnedConsumer::spawn(pool, consumer_config, &executor);
-            let forwarder = SpawnedForwarder::spawn(&consumer.sender, forwarder_config, &executor);
+            let task_executor = executor.clone();
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {
+                    let event_writer = match writer_config {
+                        Some(config) => match TransactionEventWriter::from_config(config).await {
+                            Ok(writer) => Some(writer),
+                            Err(err) => {
+                                warn!(error = %err, "transaction forwarding event journal disabled");
+                                None
+                            }
+                        },
+                        None => None,
+                    };
+
+                    let forwarder_config =
+                        config.with_transaction_event_writer(event_writer).to_forwarder_config();
+                    let consumer = SpawnedConsumer::spawn(pool, consumer_config, &task_executor);
+                    let forwarder =
+                        SpawnedForwarder::spawn(&consumer.sender, forwarder_config, &task_executor);
+
                     let _guard = signal.await;
                     consumer.shutdown();
                     forwarder.shutdown().await;
@@ -60,9 +82,9 @@ impl BaseNodeExtension for TxForwardingExtension {
 }
 
 impl FromExtensionConfig for TxForwardingExtension {
-    type Config = TxForwardingConfig;
+    type Config = (TxForwardingConfig, Option<TransactionEventWriterConfig>);
 
     fn from_config(config: Self::Config) -> Self {
-        Self::new(config)
+        Self::new(config.0, config.1)
     }
 }

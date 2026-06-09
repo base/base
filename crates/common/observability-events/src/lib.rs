@@ -83,50 +83,70 @@ pub enum TransactionEventType {
     ProxyValidationAccepted,
     #[serde(rename = "PROXY_VALIDATION_REJECTED")]
     ProxyValidationRejected,
-    #[serde(rename = "ROUTED_TO_NODE")]
-    RoutedToNode,
-    #[serde(rename = "NODE_ACCEPTED")]
-    NodeAccepted,
-    #[serde(rename = "NODE_REJECTED")]
-    NodeRejected,
-    #[serde(rename = "INGRESS_RPC_FORWARD_ATTEMPT")]
-    IngressRpcForwardAttempt,
-    #[serde(rename = "INGRESS_RPC_FORWARD_SUCCESS")]
-    IngressRpcForwardSuccess,
-    #[serde(rename = "INGRESS_RPC_FORWARD_FAILURE")]
-    IngressRpcForwardFailure,
+    #[serde(rename = "PROXY_ROUTED_TO_BACKEND")]
+    ProxyRoutedToBackend,
+    #[serde(rename = "PROXY_BACKEND_SUCCESS")]
+    ProxyBackendSuccess,
+    #[serde(rename = "PROXY_BACKEND_FAILURE")]
+    ProxyBackendFailure,
+    #[serde(rename = "PROXY_INGRESS_RPC_ATTEMPT")]
+    ProxyIngressRpcAttempt,
+    #[serde(rename = "PROXY_INGRESS_RPC_SUCCESS")]
+    ProxyIngressRpcSuccess,
+    #[serde(rename = "PROXY_INGRESS_RPC_FAILURE")]
+    ProxyIngressRpcFailure,
     #[serde(rename = "INGRESS_RECEIVED")]
     IngressReceived,
     #[serde(rename = "SIMULATION_STARTED")]
     SimulationStarted,
-    #[serde(rename = "SIMULATION_ACCEPTED")]
-    SimulationAccepted,
-    #[serde(rename = "SIMULATION_REJECTED")]
-    SimulationRejected,
-    #[serde(rename = "PENDING")]
+    #[serde(rename = "SIMULATION_SUCCEEDED")]
+    SimulationSucceeded,
+    #[serde(rename = "SIMULATION_FAILED")]
+    SimulationFailed,
+    #[serde(rename = "INGRESS_TX_FORWARD_ATTEMPT")]
+    IngressTxForwardAttempt,
+    #[serde(rename = "INGRESS_TX_FORWARD_SUCCESS")]
+    IngressTxForwardSuccess,
+    #[serde(rename = "INGRESS_TX_FORWARD_FAILURE")]
+    IngressTxForwardFailure,
+    #[serde(rename = "INGRESS_METERING_SEND_ATTEMPT")]
+    IngressMeteringSendAttempt,
+    #[serde(rename = "INGRESS_METERING_SEND_SUCCESS")]
+    IngressMeteringSendSuccess,
+    #[serde(rename = "INGRESS_METERING_SEND_FAILURE")]
+    IngressMeteringSendFailure,
+    #[serde(rename = "INGRESS_METERING_SEND_DROPPED")]
+    IngressMeteringSendDropped,
+    #[serde(rename = "TXPOOL_PENDING")]
     Pending,
-    #[serde(rename = "QUEUED")]
+    #[serde(rename = "TXPOOL_QUEUED")]
     Queued,
-    #[serde(rename = "PENDING_TO_QUEUED")]
+    #[serde(rename = "TXPOOL_PENDING_TO_QUEUED")]
     PendingToQueued,
-    #[serde(rename = "QUEUED_TO_PENDING")]
+    #[serde(rename = "TXPOOL_QUEUED_TO_PENDING")]
     QueuedToPending,
-    #[serde(rename = "DROPPED")]
+    #[serde(rename = "TXPOOL_DROPPED")]
     Dropped,
-    #[serde(rename = "REPLACED")]
+    #[serde(rename = "TXPOOL_REPLACED")]
     Replaced,
-    #[serde(rename = "OVERFLOWED")]
+    #[serde(rename = "TXPOOL_TRACKING_OVERFLOWED")]
     Overflowed,
-    #[serde(rename = "INCLUDED")]
+    #[serde(rename = "TXPOOL_BLOCK_INCLUDED")]
     Included,
-    #[serde(rename = "FLASHBLOCK_INCLUDED")]
+    #[serde(rename = "TXPOOL_FLASHBLOCK_INCLUDED")]
     FlashblockIncluded,
-    #[serde(rename = "FORWARD_ATTEMPT")]
-    ForwardAttempt,
-    #[serde(rename = "FORWARD_ACK")]
-    ForwardAck,
-    #[serde(rename = "FORWARD_NACK")]
-    ForwardNack,
+    #[serde(rename = "TXPOOL_BUILDER_FORWARD_ATTEMPT")]
+    TxpoolBuilderForwardAttempt,
+    #[serde(rename = "TXPOOL_BUILDER_FORWARD_SUCCESS")]
+    TxpoolBuilderForwardSuccess,
+    #[serde(rename = "TXPOOL_BUILDER_FORWARD_FAILURE")]
+    TxpoolBuilderForwardFailure,
+    #[serde(rename = "TXPOOL_BUILDER_FORWARD_DROPPED")]
+    TxpoolBuilderForwardDropped,
+    #[serde(rename = "TXPOOL_VALIDATED_INSERT_ACCEPTED")]
+    TxpoolValidatedInsertAccepted,
+    #[serde(rename = "TXPOOL_VALIDATED_INSERT_REJECTED")]
+    TxpoolValidatedInsertRejected,
     #[serde(rename = "BUILDER_CONSIDERED")]
     BuilderConsidered,
     #[serde(rename = "BUILDER_ACCEPTED")]
@@ -144,28 +164,38 @@ impl fmt::Display for TransactionEventType {
             Self::ProxyRejected => "PROXY_REJECTED",
             Self::ProxyValidationAccepted => "PROXY_VALIDATION_ACCEPTED",
             Self::ProxyValidationRejected => "PROXY_VALIDATION_REJECTED",
-            Self::RoutedToNode => "ROUTED_TO_NODE",
-            Self::NodeAccepted => "NODE_ACCEPTED",
-            Self::NodeRejected => "NODE_REJECTED",
-            Self::IngressRpcForwardAttempt => "INGRESS_RPC_FORWARD_ATTEMPT",
-            Self::IngressRpcForwardSuccess => "INGRESS_RPC_FORWARD_SUCCESS",
-            Self::IngressRpcForwardFailure => "INGRESS_RPC_FORWARD_FAILURE",
+            Self::ProxyRoutedToBackend => "PROXY_ROUTED_TO_BACKEND",
+            Self::ProxyBackendSuccess => "PROXY_BACKEND_SUCCESS",
+            Self::ProxyBackendFailure => "PROXY_BACKEND_FAILURE",
+            Self::ProxyIngressRpcAttempt => "PROXY_INGRESS_RPC_ATTEMPT",
+            Self::ProxyIngressRpcSuccess => "PROXY_INGRESS_RPC_SUCCESS",
+            Self::ProxyIngressRpcFailure => "PROXY_INGRESS_RPC_FAILURE",
             Self::IngressReceived => "INGRESS_RECEIVED",
             Self::SimulationStarted => "SIMULATION_STARTED",
-            Self::SimulationAccepted => "SIMULATION_ACCEPTED",
-            Self::SimulationRejected => "SIMULATION_REJECTED",
-            Self::Pending => "PENDING",
-            Self::Queued => "QUEUED",
-            Self::PendingToQueued => "PENDING_TO_QUEUED",
-            Self::QueuedToPending => "QUEUED_TO_PENDING",
-            Self::Dropped => "DROPPED",
-            Self::Replaced => "REPLACED",
-            Self::Overflowed => "OVERFLOWED",
-            Self::Included => "INCLUDED",
-            Self::FlashblockIncluded => "FLASHBLOCK_INCLUDED",
-            Self::ForwardAttempt => "FORWARD_ATTEMPT",
-            Self::ForwardAck => "FORWARD_ACK",
-            Self::ForwardNack => "FORWARD_NACK",
+            Self::SimulationSucceeded => "SIMULATION_SUCCEEDED",
+            Self::SimulationFailed => "SIMULATION_FAILED",
+            Self::IngressTxForwardAttempt => "INGRESS_TX_FORWARD_ATTEMPT",
+            Self::IngressTxForwardSuccess => "INGRESS_TX_FORWARD_SUCCESS",
+            Self::IngressTxForwardFailure => "INGRESS_TX_FORWARD_FAILURE",
+            Self::IngressMeteringSendAttempt => "INGRESS_METERING_SEND_ATTEMPT",
+            Self::IngressMeteringSendSuccess => "INGRESS_METERING_SEND_SUCCESS",
+            Self::IngressMeteringSendFailure => "INGRESS_METERING_SEND_FAILURE",
+            Self::IngressMeteringSendDropped => "INGRESS_METERING_SEND_DROPPED",
+            Self::Pending => "TXPOOL_PENDING",
+            Self::Queued => "TXPOOL_QUEUED",
+            Self::PendingToQueued => "TXPOOL_PENDING_TO_QUEUED",
+            Self::QueuedToPending => "TXPOOL_QUEUED_TO_PENDING",
+            Self::Dropped => "TXPOOL_DROPPED",
+            Self::Replaced => "TXPOOL_REPLACED",
+            Self::Overflowed => "TXPOOL_TRACKING_OVERFLOWED",
+            Self::Included => "TXPOOL_BLOCK_INCLUDED",
+            Self::FlashblockIncluded => "TXPOOL_FLASHBLOCK_INCLUDED",
+            Self::TxpoolBuilderForwardAttempt => "TXPOOL_BUILDER_FORWARD_ATTEMPT",
+            Self::TxpoolBuilderForwardSuccess => "TXPOOL_BUILDER_FORWARD_SUCCESS",
+            Self::TxpoolBuilderForwardFailure => "TXPOOL_BUILDER_FORWARD_FAILURE",
+            Self::TxpoolBuilderForwardDropped => "TXPOOL_BUILDER_FORWARD_DROPPED",
+            Self::TxpoolValidatedInsertAccepted => "TXPOOL_VALIDATED_INSERT_ACCEPTED",
+            Self::TxpoolValidatedInsertRejected => "TXPOOL_VALIDATED_INSERT_REJECTED",
             Self::BuilderConsidered => "BUILDER_CONSIDERED",
             Self::BuilderAccepted => "BUILDER_ACCEPTED",
             Self::BuilderRejected => "BUILDER_REJECTED",
@@ -699,7 +729,7 @@ mod tests {
         assert_eq!(value["schema_version"], SCHEMA_VERSION);
         assert_eq!(value["event_time"], "2026-06-02T00:00:00Z");
         assert_eq!(value["producer"], "base-reth-node");
-        assert_eq!(value["event_type"], "PENDING");
+        assert_eq!(value["event_type"], "TXPOOL_PENDING");
         assert_eq!(value["network"], "base-mainnet");
         assert_eq!(value["tx_hash"], format!("{:#x}", TxHash::repeat_byte(0x11)));
         assert_eq!(value["data"]["pool"], "pending");
@@ -767,16 +797,16 @@ mod tests {
     fn deterministic_event_id_is_stable_and_ordered() {
         let id_a = EventIdBuilder::new()
             .part("producer", "base-reth-node")
-            .part("event_type", "PENDING")
+            .part("event_type", "TXPOOL_PENDING")
             .part("tx_hash", TxHash::repeat_byte(0x22))
             .finish();
         let id_b = EventIdBuilder::new()
             .part("producer", "base-reth-node")
-            .part("event_type", "PENDING")
+            .part("event_type", "TXPOOL_PENDING")
             .part("tx_hash", TxHash::repeat_byte(0x22))
             .finish();
         let id_c = EventIdBuilder::new()
-            .part("event_type", "PENDING")
+            .part("event_type", "TXPOOL_PENDING")
             .part("producer", "base-reth-node")
             .part("tx_hash", TxHash::repeat_byte(0x22))
             .finish();

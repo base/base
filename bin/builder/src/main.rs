@@ -29,11 +29,14 @@ fn main() {
 
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder_args.build_metering_store());
+        let transaction_events_enabled = builder_args.transaction_events.enabled;
         let transaction_event_writer =
             TransactionEventWriter::from_config(builder_args.transaction_events.writer_config())
                 .await?;
-        let transaction_event_sink = builder_args.transaction_events.enabled.then(|| {
-            base_builder_core::SharedBuilderTransactionEventSink::from(transaction_event_writer)
+        let transaction_event_sink = transaction_events_enabled.then(|| {
+            base_builder_core::SharedBuilderTransactionEventSink::from(
+                transaction_event_writer.clone(),
+            )
         });
 
         let builder_config = builder_args
@@ -48,7 +51,9 @@ fn main() {
             .with_service_builder(FlashblocksServiceBuilder(builder_config));
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(());
+        runner.install_ext::<BuilderApiExtension>(
+            transaction_events_enabled.then_some(transaction_event_writer),
+        );
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();
             Ok(())

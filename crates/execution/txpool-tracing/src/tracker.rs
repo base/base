@@ -705,7 +705,7 @@ mod tests {
 
         assert_eq!(value["schema_version"], "transaction-event/v1");
         assert_eq!(value["producer"], "base-reth-node");
-        assert_eq!(value["event_type"], "PENDING");
+        assert_eq!(value["event_type"], "TXPOOL_PENDING");
         assert_eq!(value["network"], "base-mainnet");
         assert_eq!(value["tx_hash"], format!("{tx_hash:#x}"));
         assert_eq!(value["data"]["event_source"], Tracker::EVENT_SOURCE);
