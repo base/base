@@ -4,6 +4,7 @@ use std::{
     marker::PhantomData,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
+    time::Duration,
 };
 
 use alloy_consensus::BlockHeader;
@@ -77,6 +78,12 @@ use crate::{
 
 /// Discovery v5 protocol version for Base.
 pub const BASE_V0_PROTOCOL_VERSION: [u8; 6] = *b"basev0";
+
+/// Timeout for discv5 ENR requests during bootstrap on regular execution nodes.
+pub const BASE_DISCV5_BOOTNODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Retry count for discv5 ENR requests during bootstrap on regular execution nodes.
+pub const BASE_DISCV5_BOOTNODE_REQUEST_RETRIES: u8 = 3;
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
 pub trait BaseNodeTypes:
@@ -1185,6 +1192,8 @@ impl BaseDiscoveryConfig {
                 ..Default::default()
             });
         }
+        builder.request_timeout(BASE_DISCV5_BOOTNODE_REQUEST_TIMEOUT);
+        builder.request_retries(BASE_DISCV5_BOOTNODE_REQUEST_RETRIES);
 
         builder.build()
     }
@@ -1460,6 +1469,8 @@ mod tests {
         let discv5_config = discovery_config.discv5_config(&args);
 
         assert_eq!(discv5_config.protocol_identity.protocol_id, expected_protocol_id);
+        assert_eq!(discv5_config.request_timeout, BASE_DISCV5_BOOTNODE_REQUEST_TIMEOUT);
+        assert_eq!(discv5_config.request_retries, BASE_DISCV5_BOOTNODE_REQUEST_RETRIES);
     }
 
     #[rstest]
