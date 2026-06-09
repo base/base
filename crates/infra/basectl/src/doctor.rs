@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fs,
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -245,7 +245,13 @@ impl Doctor {
             Self::consensus_rpc_check(options.cl_rpc.as_ref()),
             Self::el_peer_count_check(&el_info, options.thresholds.peer_warn_threshold),
             Self::cl_peer_count_check(cl_info.as_ref(), options.thresholds.peer_warn_threshold),
-            Self::head_vs_tip_check(&local_head, &public_head, &options.thresholds, &config.rpc),
+            Self::head_vs_tip_check(
+                &local_head,
+                &public_head,
+                &options.thresholds,
+                &options.el_rpc,
+                &config.rpc,
+            ),
             Self::safe_head_recency_check(sync_status.as_ref(), &options.thresholds),
             Self::l1_reachability_check(&l1_head, &config.l1_rpc),
         ];
@@ -323,8 +329,8 @@ impl Doctor {
         let el = endpoint_sanity(el_info.as_ref().ok().and_then(|info| info.endpoint));
         let cl = match cl_info {
             Some(Ok(info)) => endpoint_sanity(info.endpoint),
-            Some(Err(err)) => LayerEndpointSanity::unavailable(err.to_string()),
-            None => LayerEndpointSanity::unavailable("consensus-node RPC unavailable".to_string()),
+            Some(Err(err)) => unavailable_endpoint(err.to_string()),
+            None => unavailable_endpoint("consensus-node RPC unavailable"),
         };
         let status = worst_status([el.status, cl.status]);
         DoctorCheck::new(
@@ -432,7 +438,7 @@ impl Doctor {
                 || {
                     DoctorCheck::new(
                         "el_peer_count",
-                        DoctorStatus::Fail,
+                        DoctorStatus::Skip,
                         "could not fetch EL peer count",
                         json!({ "error": info.peer_count_error }),
                         json!({ "failAt": 0, "warnBelow": warn_threshold }),
@@ -497,12 +503,23 @@ impl Doctor {
         local_head: &Result<u64>,
         public_head: &Result<u64>,
         thresholds: &DoctorThresholds,
+        local_rpc: &Url,
         public_rpc: &Url,
     ) -> DoctorCheck {
         let threshold = json!({
             "warnBehindBlocks": thresholds.head_lag_warn_blocks,
             "failBehindBlocks": thresholds.head_lag_fail_blocks,
         });
+        if local_rpc == public_rpc {
+            return DoctorCheck::new(
+                "el_head_vs_tip",
+                DoctorStatus::Skip,
+                "local EL RPC matches the public tip reference",
+                json!({ "localRpc": local_rpc, "publicTipRpc": public_rpc }),
+                threshold,
+                Some("Pass `--el-rpc <URL>` pointing at a specific node to run a meaningful head-vs-tip check.".to_string()),
+            );
+        }
         let Ok(local) = local_head else {
             return DoctorCheck::new(
                 "el_head_vs_tip",
@@ -684,19 +701,6 @@ pub struct LayerEndpointSanity {
     pub reason: String,
 }
 
-impl LayerEndpointSanity {
-    /// Creates an unavailable layer result.
-    pub const fn unavailable(reason: String) -> Self {
-        Self {
-            status: DoctorStatus::Skip,
-            advertised_ip: None,
-            tcp_port: None,
-            discovery_udp_port: None,
-            reason,
-        }
-    }
-}
-
 /// Minimal `reth.toml` shape needed by doctor.
 #[derive(Debug, Deserialize)]
 pub struct RethToml {
@@ -724,7 +728,7 @@ pub struct RethLimits {
 
 impl RethLimits {
     /// Reads the minimal reth limits from a TOML file.
-    pub fn read(path: &PathBuf) -> Result<Self> {
+    pub fn read(path: &Path) -> Result<Self> {
         let contents = fs::read_to_string(path)
             .with_context(|| format!("reading reth config at {}", path.display()))?;
         let parsed: RethToml = toml::from_str(&contents)
@@ -736,7 +740,7 @@ impl RethLimits {
     }
 
     /// Converts parsed limits into a doctor check.
-    pub fn into_check(self, path: &PathBuf) -> DoctorCheck {
+    pub fn into_check(self, path: &Path) -> DoctorCheck {
         let missing = [
             self.headers.is_none().then_some("headers.limit"),
             self.bodies.is_none().then_some("bodies.limit"),
@@ -874,7 +878,7 @@ fn bootnode_addrs(raw: &str) -> Result<(&'static str, Option<SocketAddr>, Option
 
 fn endpoint_sanity(endpoint: Option<NodeEndpoint>) -> LayerEndpointSanity {
     let Some(endpoint) = endpoint else {
-        return LayerEndpointSanity::unavailable("advertised endpoint unavailable".to_string());
+        return unavailable_endpoint("advertised endpoint unavailable");
     };
     let (status, reason) = classify_ip(endpoint.advertised_ip);
     LayerEndpointSanity {
@@ -883,6 +887,16 @@ fn endpoint_sanity(endpoint: Option<NodeEndpoint>) -> LayerEndpointSanity {
         tcp_port: Some(endpoint.tcp_port),
         discovery_udp_port: Some(endpoint.discovery.udp_port),
         reason,
+    }
+}
+
+fn unavailable_endpoint(reason: impl Into<String>) -> LayerEndpointSanity {
+    LayerEndpointSanity {
+        status: DoctorStatus::Skip,
+        advertised_ip: None,
+        tcp_port: None,
+        discovery_udp_port: None,
+        reason: reason.into(),
     }
 }
 
@@ -965,11 +979,12 @@ mod tests {
     };
 
     use serde_json::json;
+    use url::Url;
 
     use super::{
-        DoctorCheck, DoctorStatus, DoctorSummary, DoctorThresholds, RethLimits, bootnode_addrs,
-        bootnode_chain, bootnode_layer_summary, classify_ip, expected_chain_id, peer_count_check,
-        worst_status,
+        Doctor, DoctorCheck, DoctorStatus, DoctorSummary, DoctorThresholds, ElInfoReport,
+        RethLimits, bootnode_addrs, bootnode_chain, bootnode_layer_summary, classify_ip,
+        expected_chain_id, peer_count_check, worst_status,
     };
 
     #[test]
@@ -1033,6 +1048,29 @@ mod tests {
             RethLimits { headers: None, bodies: Some(100) }.into_check(&path).status,
             DoctorStatus::Warn,
         );
+    }
+
+    #[test]
+    fn head_vs_tip_skips_when_local_rpc_is_public_reference() {
+        let rpc = Url::parse("https://sepolia.base.org").unwrap();
+        let thresholds = DoctorThresholds::default();
+
+        let check = Doctor::head_vs_tip_check(&Ok(10), &Ok(10), &thresholds, &rpc, &rpc);
+
+        assert_eq!(check.status, DoctorStatus::Skip);
+    }
+
+    #[test]
+    fn el_peer_count_unavailable_skips_instead_of_failing() {
+        let info = Ok(ElInfoReport {
+            endpoint: None,
+            peer_count: None,
+            peer_count_error: Some("EL `net_peerCount` unavailable from this RPC"),
+        });
+
+        let check = Doctor::el_peer_count_check(&info, 5);
+
+        assert_eq!(check.status, DoctorStatus::Skip);
     }
 
     #[test]
