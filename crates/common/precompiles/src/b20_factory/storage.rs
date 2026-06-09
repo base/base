@@ -285,7 +285,7 @@ impl TokenCreateParams {
     pub fn decode(variant: B20Variant, params: &Bytes) -> Result<Self> {
         match variant {
             B20Variant::Stablecoin => {
-                let p = IB20Factory::B20StablecoinCreateParams::abi_decode(params)
+                let p = IB20Factory::B20StablecoinCreateParams::abi_decode_validate(params)
                     .map_err(Self::invalid_params)?;
                 Ok(Self::Stablecoin {
                     common: CommonParams { version: p.version, initial_admin: p.initialAdmin },
@@ -298,7 +298,7 @@ impl TokenCreateParams {
                 })
             }
             B20Variant::Asset => {
-                let p = IB20Factory::B20AssetCreateParams::abi_decode(params)
+                let p = IB20Factory::B20AssetCreateParams::abi_decode_validate(params)
                     .map_err(Self::invalid_params)?;
                 Ok(Self::Asset {
                     common: CommonParams { version: p.version, initial_admin: p.initialAdmin },
@@ -996,18 +996,6 @@ mod tests {
                 IB20Factory::getB20AddressCall::abi_encode_returns(&expected_token),
             );
             assert_output(
-                dispatch_factory_success(
-                    ctx,
-                    IB20Factory::getB20AddressCall {
-                        variant: IB20Factory::B20Variant::__Invalid,
-                        sender: creator,
-                        salt,
-                    },
-                ),
-                IB20Factory::getB20AddressCall::abi_encode_returns(&Address::ZERO),
-            );
-
-            assert_output(
                 dispatch_factory_success(ctx, call),
                 IB20Factory::createB20Call::abi_encode_returns(&expected_token),
             );
@@ -1274,24 +1262,167 @@ mod tests {
     }
 
     #[test]
-    fn get_b20_address_returns_zero_for_invalid_variant() {
+    fn get_b20_address_reverts_for_invalid_variant() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
         let sender = Address::repeat_byte(0x11);
         let salt = B256::repeat_byte(0xAB);
 
         StorageCtx::enter(&mut storage, |ctx| {
-            assert_output(
-                dispatch_factory_success(
-                    ctx,
-                    IB20Factory::getB20AddressCall {
-                        variant: IB20Factory::B20Variant::__Invalid,
-                        sender,
-                        salt,
-                    },
-                ),
-                IB20Factory::getB20AddressCall::abi_encode_returns(&Address::ZERO),
+            // Strict ABI decoding rejects non-canonical enum discriminants, so an
+            // out-of-range variant produces an ABI decode error rather than Address::ZERO.
+            dispatch_factory_revert(
+                ctx,
+                IB20Factory::getB20AddressCall {
+                    variant: IB20Factory::B20Variant::__Invalid,
+                    sender,
+                    salt,
+                },
             );
+        });
+    }
+
+    /// Encodes `call` with a dirty high byte injected into the 32-byte ABI word at `word_index`
+    /// (0 = first word after the 4-byte selector).
+    fn dirty_calldata(call: impl SolCall, word_index: usize) -> Vec<u8> {
+        let mut encoded = call.abi_encode();
+        let byte_offset = 4 + word_index * 32;
+        encoded[byte_offset] = 0xFF;
+        encoded
+    }
+
+    /// Encodes `params` with a dirty high byte injected into the 32-byte word at `word_index`.
+    fn dirty_params(params: impl SolValue, word_index: usize) -> Bytes {
+        let mut encoded = params.abi_encode();
+        let byte_offset = word_index * 32;
+        encoded[byte_offset] = 0xFF;
+        encoded.into()
+    }
+
+    #[test]
+    fn dirty_variant_word_in_create_b20_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        storage.set_caller(Address::repeat_byte(0x01));
+        // variant is word 0 after selector; dirty high byte must cause an ABI decode error
+        let calldata = dirty_calldata(b20_call(B256::repeat_byte(0xA0)), 0);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            let result = factory.dispatch(ctx, &calldata);
+            assert!(result.unwrap().is_revert(), "dirty variant word must revert");
+        });
+    }
+
+    #[test]
+    fn dirty_sender_word_in_get_b20_address_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        // sender is word 1 after selector in getB20AddressCall
+        let calldata = dirty_calldata(
+            IB20Factory::getB20AddressCall {
+                variant: IB20Factory::B20Variant::ASSET,
+                sender: Address::repeat_byte(0x11),
+                salt: B256::repeat_byte(0x22),
+            },
+            1,
+        );
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            let result = factory.dispatch(ctx, &calldata);
+            assert!(result.unwrap().is_revert(), "dirty sender word must revert");
+        });
+    }
+
+    #[test]
+    fn dirty_token_word_in_is_b20_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        // token is word 0 after selector in isB20Call
+        let (token_addr, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x01), B256::repeat_byte(0x01));
+        let calldata = dirty_calldata(IB20Factory::isB20Call { token: token_addr }, 0);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            let result = factory.dispatch(ctx, &calldata);
+            assert!(result.unwrap().is_revert(), "dirty token word must revert");
+        });
+    }
+
+    #[test]
+    fn dirty_version_word_in_asset_params_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        // version is the first (word 0) static field in B20AssetCreateParams
+        let params = dirty_params(token_params("Test", "TST"), 0);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt: B256::repeat_byte(0xB1),
+            params,
+            initCalls: Vec::new(),
+        };
+        StorageCtx::enter(&mut storage, |ctx| {
+            let result = dispatch_factory_revert(ctx, call);
+            assert!(result.starts_with(&IB20Factory::createB20Call::SELECTOR));
+        });
+    }
+
+    #[test]
+    fn dirty_initial_admin_word_in_asset_params_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        // initialAdmin is word 3 (after version, name-offset, symbol-offset) in B20AssetCreateParams
+        let params = dirty_params(token_params("Test", "TST"), 3);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt: B256::repeat_byte(0xB2),
+            params,
+            initCalls: Vec::new(),
+        };
+        StorageCtx::enter(&mut storage, |ctx| {
+            let result = dispatch_factory_revert(ctx, call);
+            assert!(result.starts_with(&IB20Factory::createB20Call::SELECTOR));
+        });
+    }
+
+    #[test]
+    fn dirty_decimals_word_in_asset_params_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        // decimals is word 4 in B20AssetCreateParams (version, name-offset, symbol-offset, initialAdmin, decimals)
+        let params = dirty_params(token_params("Test", "TST"), 4);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt: B256::repeat_byte(0xB3),
+            params,
+            initCalls: Vec::new(),
+        };
+        StorageCtx::enter(&mut storage, |ctx| {
+            let result = dispatch_factory_revert(ctx, call);
+            assert!(result.starts_with(&IB20Factory::createB20Call::SELECTOR));
+        });
+    }
+
+    #[test]
+    fn dirty_initial_admin_word_in_stablecoin_params_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let clean_params = IB20Factory::B20StablecoinCreateParams {
+            version: B20Variant::Stablecoin.supported_version(),
+            name: "Stablecoin".to_string(),
+            symbol: "STB".to_string(),
+            initialAdmin: Address::repeat_byte(0xAB),
+            currency: "USD".to_string(),
+        };
+        // initialAdmin is word 3 in B20StablecoinCreateParams (version, name-offset, symbol-offset, initialAdmin, ...)
+        let params = dirty_params(clean_params, 3);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::STABLECOIN,
+            salt: B256::repeat_byte(0xB4),
+            params,
+            initCalls: Vec::new(),
+        };
+        StorageCtx::enter(&mut storage, |ctx| {
+            let result = dispatch_factory_revert(ctx, call);
+            assert!(result.starts_with(&IB20Factory::createB20Call::SELECTOR));
         });
     }
 

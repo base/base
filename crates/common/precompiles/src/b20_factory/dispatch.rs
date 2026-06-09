@@ -54,8 +54,9 @@ impl<'a> B20FactoryStorage<'a> {
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
-                // Returns zero for an unrecognized variant to match base-std, which documents
-                // this function as "Never reverts."
+                // Returns zero for an unrecognized variant. Strict ABI decoding rejects
+                // non-canonical calldata before this point, so only canonically-encoded
+                // but unrecognized variants reach here.
                 let addr = B20Variant::from_abi(call.variant)
                     .map(|v| v.compute_address(call.sender, call.salt).0)
                     .unwrap_or(Address::ZERO);

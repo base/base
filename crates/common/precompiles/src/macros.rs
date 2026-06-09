@@ -65,7 +65,7 @@ macro_rules! decode_precompile_call {
             }
         };
 
-        match <$call_ty as ::alloy_sol_types::SolInterface>::abi_decode(calldata) {
+        match <$call_ty as ::alloy_sol_types::SolInterface>::abi_decode_validate(calldata) {
             Ok(call) => call,
             Err(error)
                 if <$call_ty as ::alloy_sol_types::SolInterface>::valid_selector(selector) =>
