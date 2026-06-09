@@ -700,6 +700,21 @@ impl ProofRequestRepo {
             return Ok(SubmitProofOutcome::NotFound);
         };
 
+        // Re-check idempotency after a concurrent submit wins the row lock.
+        if job.job_status == ProofJobStatus::Succeeded
+            && job.lock_id == Some(req.lock_id)
+            && job.worker_id.as_deref() == Some(req.worker_id.as_str())
+        {
+            if let Err(reason) = job.validate_submitted_result(&req.result) {
+                return Ok(SubmitProofOutcome::ResultMismatch { job, reason });
+            }
+
+            return Ok(if job.result_payload.as_ref() == Some(&result_payload) {
+                SubmitProofOutcome::Completed(job)
+            } else {
+                SubmitProofOutcome::ResultConflict { job }
+            });
+        }
         if matches!(job.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
             return Ok(SubmitProofOutcome::Terminal(job));
         }
