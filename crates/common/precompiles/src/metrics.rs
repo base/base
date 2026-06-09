@@ -543,7 +543,7 @@ impl BerylCallTimer {
 /// Emulates the cost a Solidity predeploy would incur reading its calldata:
 /// `G_copy` (3 gas/word) + `G_memory` (3 gas/word) = 6 gas/word.
 /// Part of the receipts/gas-used commitment: must be identical across all Base execution clients.
-pub(crate) const CALLDATA_WORD_GAS: u64 = 6;
+pub const CALLDATA_WORD_GAS: u64 = 6;
 
 /// Per-call recorder for Beryl precompile observations.
 #[derive(Debug)]
