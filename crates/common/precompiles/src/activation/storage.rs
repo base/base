@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn bytecode_marker_persists_after_deactivation_bop322() {
-        // BOP-322: code presence is an initialization marker only; it persists after deactivation
+        // Code presence is an initialization marker only; it persists after deactivation
         // by design. EXTCODESIZE/EXTCODEHASH at Self::ADDRESS must not be used as a liveness signal.
         let mut storage = HashMapStorageProvider::new(1);
 
