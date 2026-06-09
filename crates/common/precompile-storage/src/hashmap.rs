@@ -358,7 +358,7 @@ impl HashMapStorageProvider {
         self.counter_keccak256
     }
 
-    /// Resets the SLOAD/SSTORE counters (test-utils only).
+    /// Resets the SLOAD/SSTORE/keccak256 counters (test-utils only).
     pub const fn reset_counters(&mut self) {
         self.counter_sload = 0;
         self.counter_sstore = 0;
