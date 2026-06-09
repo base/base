@@ -1,7 +1,6 @@
-use alloc::string::ToString;
-
 use revm::precompile::{
-    Precompile, PrecompileError, PrecompileId, PrecompileResult, bn254, call_eth_precompile,
+    Precompile, PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult, bn254,
+    call_eth_precompile,
 };
 
 /// Max input size for the bn254 pair precompile after the Granite hardfork.
@@ -13,7 +12,7 @@ pub const GRANITE: Precompile =
 /// Run the bn254 pair precompile with Granite input limit.
 pub fn run_pair_granite(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > GRANITE_MAX_INPUT_SIZE {
-        return Err(PrecompileError::Fatal("Bn254PairLength".to_string()));
+        return Ok(PrecompileOutput::halt(PrecompileHalt::Bn254PairLength, reservoir));
     }
     Ok(call_eth_precompile(
         |i, g| {
@@ -39,7 +38,7 @@ pub const JOVIAN: Precompile =
 /// Run the bn254 pair precompile with Jovian input limit.
 pub fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > JOVIAN_MAX_INPUT_SIZE {
-        return Err(PrecompileError::Fatal("Bn254PairLength".to_string()));
+        return Ok(PrecompileOutput::halt(PrecompileHalt::Bn254PairLength, reservoir));
     }
     Ok(call_eth_precompile(
         |i, g| {
@@ -58,10 +57,7 @@ pub fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> Precompi
 
 #[cfg(test)]
 mod tests {
-    use revm::{
-        precompile::{PrecompileError, bn254},
-        primitives::hex,
-    };
+    use revm::{precompile::bn254, primitives::hex};
 
     use crate::{JOVIAN_MAX_INPUT_SIZE, run_pair_granite, run_pair_jovian};
 
@@ -111,7 +107,7 @@ mod tests {
         let over_limit = vec![1u8; 587 * bn254::PAIR_ELEMENT_LEN];
         assert!(matches!(
             run_pair_granite(&over_limit, 260_000, 0),
-            Err(PrecompileError::Fatal(_))
+            Ok(o) if o.halt_reason().is_some()
         ));
     }
 
@@ -130,6 +126,6 @@ mod tests {
     #[test]
     fn test_bn254_pair_jovian_bad_input_len() {
         let input = [0u8; JOVIAN_MAX_INPUT_SIZE + 1];
-        assert!(matches!(run_pair_jovian(&input, u64::MAX, 0), Err(PrecompileError::Fatal(_))));
+        assert!(matches!(run_pair_jovian(&input, u64::MAX, 0), Ok(o) if o.halt_reason().is_some()));
     }
 }
