@@ -1,9 +1,9 @@
 //! The zkvm ELF binaries.
 //!
 //! The actual binaries live out of tree under `crates/proof/succinct/elf/` and are
-//! not committed to git. `build.rs` resolves them against the pinned sha256s
-//! in `crates/proof/succinct/elf/manifest.toml` and exposes their absolute paths via
-//! `cargo:rustc-env` so the constants below can embed them at compile time.
+//! not committed to git. `build.rs` resolves them from the local cache and
+//! exposes their absolute paths via `cargo:rustc-env` so the constants below can
+//! embed them at compile time.
 
 /// Aggregation program ELF binary.
 pub const AGGREGATION_ELF: &[u8] = include_bytes!(env!("AGGREGATION_ELF_PATH"));

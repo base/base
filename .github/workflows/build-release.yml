@@ -267,7 +267,7 @@ jobs:
           echo "has_digests=$has_digests" >> "$GITHUB_OUTPUT"
           echo "has_binaries=$has_binaries" >> "$GITHUB_OUTPUT"
 
-  # Merge manifests and publish
+  # Merge Docker manifests and publish
   publish:
     needs: [find-release-artifacts]
     if: ${{ !cancelled() && (needs.find-release-artifacts.outputs.has_digests == 'true' || (inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true')) }}

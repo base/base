@@ -5414,11 +5414,6 @@ dependencies = [
 [[package]]
 name = "base-proof-succinct-elfs"
 version = "0.0.0"
-dependencies = [
- "serde",
- "sha2 0.10.9",
- "toml 1.1.2+spec-1.1.0",
-]
 
 [[package]]
 name = "base-proof-succinct-ethereum-client-utils"
