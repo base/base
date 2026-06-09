@@ -74,6 +74,10 @@ impl PermitArgs {
     }
 
     /// Maps Ethereum `v` (27/28) to secp256k1 recovery parity, then recovers the signer.
+    ///
+    /// Rejects high-s signatures (s > N/2) to match the `OpenZeppelin` ECDSA convention and prevent
+    /// signature malleability. Both (r, s, v) and its malleated twin (r, N-s, v XOR 1) would
+    /// recover the same address, so accepting high-s widens the valid signature set without benefit.
     pub fn recover_signer(&self, signing_hash: B256) -> Result<Address> {
         let odd_y_parity = match self.v {
             Self::RECOVERY_ID_EVEN_Y => false,
@@ -88,6 +92,15 @@ impl PermitArgs {
 
         let sig =
             alloy_primitives::Signature::from_scalars_and_parity(self.r, self.s, odd_y_parity);
+
+        // Reject high-s signatures: normalize_s() returns Some iff s > N/2.
+        if sig.normalize_s().is_some() {
+            return Err(BasePrecompileError::revert(IB20::InvalidSigner {
+                signer: Address::ZERO,
+                owner: self.owner,
+            }));
+        }
+
         sig.recover_address_from_prehash(&signing_hash).map_err(|_| {
             BasePrecompileError::revert(IB20::InvalidSigner {
                 signer: Address::ZERO,
@@ -343,6 +356,50 @@ mod tests {
         let args = sample_permit_args(owner);
 
         assert!(args.recover_signer(B256::repeat_byte(0x11)).is_err());
+    }
+
+    /// Regression test for BOP-334: high-s signatures must be rejected even though they would
+    /// recover the same owner address as the canonical low-s counterpart.
+    #[test]
+    fn permit_args_recover_signer_rejects_high_s() {
+        let token = make_token();
+        let owner = owner_address();
+        let args = signed_permit_args(&token, owner, SPENDER, U256::from(100u64), U256::MAX);
+        let domain_sep = domain_separator_for_token(&token, CHAIN_ID);
+        let signing_hash = args.signing_hash(domain_sep, U256::ZERO);
+
+        // Malleate: s_high = N - s_low, and flip v (27 <-> 28).
+        // secp256k1 group order N:
+        let secp256k1_n = alloy_primitives::uint!(
+            0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141_U256
+        );
+        let s_low = U256::from_be_bytes(args.s.0);
+        let s_high = secp256k1_n - s_low;
+        let v_flipped = if args.v == PermitArgs::RECOVERY_ID_EVEN_Y {
+            PermitArgs::RECOVERY_ID_ODD_Y
+        } else {
+            PermitArgs::RECOVERY_ID_EVEN_Y
+        };
+        let malleated =
+            PermitArgs { s: B256::from(s_high.to_be_bytes::<32>()), v: v_flipped, ..args };
+
+        assert_eq!(
+            malleated.recover_signer(signing_hash).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner { signer: Address::ZERO, owner })
+        );
+    }
+
+    /// Companion to `permit_args_recover_signer_rejects_high_s`: confirms the un-malleated
+    /// canonical low-s signature is still accepted after the high-s guard is in place.
+    #[test]
+    fn permit_args_recover_signer_accepts_canonical_low_s() {
+        let token = make_token();
+        let owner = owner_address();
+        let args = signed_permit_args(&token, owner, SPENDER, U256::from(100u64), U256::MAX);
+        let domain_sep = domain_separator_for_token(&token, CHAIN_ID);
+        let signing_hash = args.signing_hash(domain_sep, U256::ZERO);
+
+        assert_eq!(args.recover_signer(signing_hash).unwrap(), owner);
     }
 
     // ---- Permittable ----
