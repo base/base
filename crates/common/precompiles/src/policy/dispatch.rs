@@ -310,8 +310,6 @@ mod tests {
         })
         .expect("dispatch should not fatally error");
 
-        // Strict ABI decoding rejects the out-of-range enum value at the decode step
-        // (AbiDecodeFailed) rather than allowing it through to cause a Panic.
         assert!(output.is_revert());
 
         let valid_calldata = IPolicyRegistry::createPolicyCall {
