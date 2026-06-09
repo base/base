@@ -360,6 +360,8 @@ mod tests {
 
     /// Regression test for BOP-334: high-s signatures must be rejected even though they would
     /// recover the same owner address as the canonical low-s counterpart.
+    /// The complementary case — canonical low-s is still accepted — is covered by
+    /// `permit_args_recover_signer_returns_owner`.
     #[test]
     fn permit_args_recover_signer_rejects_high_s() {
         let token = make_token();
@@ -387,19 +389,6 @@ mod tests {
             malleated.recover_signer(signing_hash).unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidSigner { signer: Address::ZERO, owner })
         );
-    }
-
-    /// Companion to `permit_args_recover_signer_rejects_high_s`: confirms the un-malleated
-    /// canonical low-s signature is still accepted after the high-s guard is in place.
-    #[test]
-    fn permit_args_recover_signer_accepts_canonical_low_s() {
-        let token = make_token();
-        let owner = owner_address();
-        let args = signed_permit_args(&token, owner, SPENDER, U256::from(100u64), U256::MAX);
-        let domain_sep = domain_separator_for_token(&token, CHAIN_ID);
-        let signing_hash = args.signing_hash(domain_sep, U256::ZERO);
-
-        assert_eq!(args.recover_signer(signing_hash).unwrap(), owner);
     }
 
     // ---- Permittable ----
