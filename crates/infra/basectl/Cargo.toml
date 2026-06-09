@@ -26,10 +26,11 @@ alloy-transport-http = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-common-precompiles = { workspace = true }
 base-common-flashblocks = { workspace = true }
+toml = { workspace = true, features = ["parse", "serde"] }
 url = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["net", "process", "time"] }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["std"] }

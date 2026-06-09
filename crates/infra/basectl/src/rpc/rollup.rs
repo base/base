@@ -2,9 +2,12 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use alloy_sol_types::sol;
+use alloy_transport_http::Http;
 use anyhow::{Context, Result};
+use base_common_network::Base;
 use base_consensus_rpc::{BaseP2PApiClient, RollupNodeApiClient};
 use base_protocol::SyncStatus;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
@@ -46,10 +49,15 @@ pub async fn fetch_sync_status(rpc: &Url, cl_rpc: &Url) -> Result<SyncStatusRepo
         .request_timeout(Duration::from_secs(10))
         .build(cl_rpc.as_str())
         .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+    let http_client = alloy_transport_http::reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .with_context(|| format!("building L2 EL HTTP client for {rpc}"))?;
+    let transport = Http::with_client(http_client, rpc.clone());
     let el_provider = ProviderBuilder::new()
-        .connect(rpc.as_str())
-        .await
-        .with_context(|| format!("connecting to L2 EL RPC at {rpc}"))?;
+        .disable_recommended_fillers()
+        .network::<Base>()
+        .connect_client(RpcClient::new(transport, false));
     let (cl, el) = tokio::try_join!(
         async {
             RollupNodeApiClient::sync_status(&cl_client)

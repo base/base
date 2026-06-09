@@ -16,20 +16,24 @@ mod el;
 pub use el::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, InitialBacklog, TxSummary,
     decode_flashblock_transactions, fetch_block, fetch_block_transactions,
-    fetch_initial_backlog_with_progress, run_block_fetcher,
+    fetch_initial_backlog_with_progress, fetch_l2_block_number, fetch_l2_chain_id,
+    run_block_fetcher,
 };
 
 mod flashblocks;
 pub use flashblocks::{TimestampedFlashblock, run_flashblock_ws, run_flashblock_ws_timestamped};
 
 mod l1;
-pub use l1::{L1BlockInfo, L1ConnectionMode, fetch_full_system_config, run_l1_blob_watcher};
+pub use l1::{
+    L1BlockInfo, L1ConnectionMode, fetch_full_system_config, fetch_l1_block_number,
+    run_l1_blob_watcher,
+};
 
 mod p2p;
 pub use p2p::{
-    DiscoveryInfo, NodeEndpoint, NodeInfoReport, PeerListReport, PeerStatsReport, PeerSummary,
-    RawInfoReport, RawPeerCounts, RawPeersReport, fetch_connected_peers, fetch_info,
-    fetch_raw_info, fetch_raw_peers,
+    ClInfoReport, DiscoveryInfo, ElInfoReport, NodeEndpoint, NodeInfoReport, PeerListReport,
+    PeerStatsReport, PeerSummary, RawInfoReport, RawPeerCounts, RawPeersReport, fetch_cl_info,
+    fetch_connected_peers, fetch_el_info, fetch_info, fetch_raw_info, fetch_raw_peers,
 };
 
 mod pods;
