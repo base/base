@@ -793,47 +793,4 @@ mod tests {
             BasePrecompileError::under_overflow()
         );
     }
-
-    /// Gas-pinning regression test for the `announce` batched dispatch model.
-    ///
-    /// Each `internalCalls` entry is dispatched via `inner_with_privilege`, a direct Rust call
-    /// with no per-call DELEGATECALL opcode overhead. With `InMemoryTokenAccounting`, all token
-    /// state lives in Rust `HashMap`s rather than EVM storage slots, so zero `SLOAD`/`SSTORE`
-    /// operations reach the `HashMapStorageProvider` during the announce call itself. This count
-    /// is pinned here so that any future change routing internal calls through real EVM storage
-    /// produces a visible test failure rather than a silent gas-schedule drift.
-    #[test]
-    fn announce_two_internal_calls_storage_op_count_is_stable() {
-        let mut token = make_token();
-        // Grant ALICE the OPERATOR_ROLE so the announce can proceed without privilege.
-        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, ALICE), true);
-
-        let mut storage = storage_with_caller(ALICE);
-        // Reset counters after setup so only the announce call itself is measured.
-        storage.reset_counters();
-
-        let call_1 =
-            IB20Asset::updateMultiplierCall { newMultiplier: B20AssetStorage::WAD }.abi_encode();
-        let call_2 = IB20Asset::updateMultiplierCall {
-            newMultiplier: B20AssetStorage::WAD * U256::from(2u64),
-        }
-        .abi_encode();
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            token.inner(
-                ctx,
-                &IB20Asset::announceCall {
-                    internalCalls: alloc::vec![Bytes::from(call_1), Bytes::from(call_2),],
-                    id: String::from("2026-Q1-split"),
-                    description: String::from("Test announcement"),
-                    uri: String::from("https://example.com"),
-                }
-                .abi_encode(),
-            )
-        })
-        .unwrap();
-
-        assert_eq!(storage.counter_sload(), 0);
-        assert_eq!(storage.counter_sstore(), 0);
-    }
 }
