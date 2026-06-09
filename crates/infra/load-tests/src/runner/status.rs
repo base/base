@@ -38,10 +38,6 @@ pub struct DisplaySnapshot {
     pub block_receipt_delay_p50: Duration,
     /// Rolling 30s block receipt delay p99.
     pub block_receipt_delay_p99: Duration,
-    /// Rolling 30s flashblocks p50 latency.
-    pub flashblocks_p50_latency: Duration,
-    /// Rolling 30s flashblocks p99 latency.
-    pub flashblocks_p99_latency: Duration,
     /// Current gas price in gwei.
     pub gas_price_gwei: f64,
     /// Total ETH across all sender accounts (formatted).
@@ -68,7 +64,6 @@ pub struct LoadTestDisplay {
     flight: ProgressBar,
     funding: ProgressBar,
     gas_lat: ProgressBar,
-    flashblocks_lat: ProgressBar,
     duration: Option<Duration>,
 }
 
@@ -138,7 +133,6 @@ impl LoadTestDisplay {
             flight: make_stat(mp),
             funding: make_stat(mp),
             gas_lat: make_stat(mp),
-            flashblocks_lat: make_stat(mp),
             duration,
         }
     }
@@ -227,19 +221,6 @@ impl LoadTestDisplay {
             fmt_latency(snap.block_receipt_delay_p50),
             fmt_latency(snap.block_receipt_delay_p99),
         ));
-
-        if snap.flashblocks_p50_latency > Duration::ZERO
-            || snap.flashblocks_p99_latency > Duration::ZERO
-        {
-            self.flashblocks_lat.set_message(format!(
-                "               fb latency p50 {}   p99 {}",
-                fmt_latency(snap.flashblocks_p50_latency),
-                fmt_latency(snap.flashblocks_p99_latency),
-            ));
-        } else {
-            self.flashblocks_lat
-                .set_message("               fb latency waiting for data...".to_string());
-        }
     }
 
     /// Finishes all bars and clears the stat rows.
@@ -248,14 +229,7 @@ impl LoadTestDisplay {
             self.header.set_position(d.as_secs());
         }
         self.header.finish_with_message("Base Load Test  complete");
-        for bar in [
-            &self.txs,
-            &self.rate,
-            &self.flight,
-            &self.funding,
-            &self.gas_lat,
-            &self.flashblocks_lat,
-        ] {
+        for bar in [&self.txs, &self.rate, &self.flight, &self.funding, &self.gas_lat] {
             bar.finish_and_clear();
         }
     }

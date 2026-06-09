@@ -128,7 +128,9 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
             self.data_source.receipts_by_hash(next_l1_origin.hash).await.map_err(Into::into)?;
 
         let l1_system_config_address = self.rollup_config.l1_system_config_address;
-        let ecotone_active = self.rollup_config.is_ecotone_active(next_l1_origin.timestamp);
+        let ecotone_active = self.rollup_config.is_ecotone_active(
+            self.rollup_config.l1_timestamp_to_l2_time(next_l1_origin.timestamp),
+        );
         self.update_system_config_with_receipts(
             &receipts,
             l1_system_config_address,
@@ -136,8 +138,12 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
             next_l1_origin.number,
         );
 
-        let prev_block_holocene = self.rollup_config.is_holocene_active(block.timestamp);
-        let next_block_holocene = self.rollup_config.is_holocene_active(next_l1_origin.timestamp);
+        let prev_block_holocene = self
+            .rollup_config
+            .is_holocene_active(self.rollup_config.l1_timestamp_to_l2_time(block.timestamp));
+        let next_block_holocene = self.rollup_config.is_holocene_active(
+            self.rollup_config.l1_timestamp_to_l2_time(next_l1_origin.timestamp),
+        );
 
         // Update the block origin regardless of if a holocene activation is required.
         self.update_origin(next_l1_origin);

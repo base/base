@@ -105,7 +105,6 @@ impl App {
 
         loop {
             self.resources.da.poll();
-            self.resources.flash.poll();
             self.resources.toasts.poll();
             self.resources.conductor.poll();
             self.resources.validators.poll();

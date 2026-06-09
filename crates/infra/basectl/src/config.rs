@@ -120,13 +120,6 @@ pub struct ConductorNodeConfig {
     /// If set, the TUI can restart this container with `r`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker_cl: Option<String>,
-    /// Flashblocks WebSocket endpoint for this sequencer's builder node.
-    ///
-    /// When set, the command center will automatically reconnect its flashblocks
-    /// stream to the current Raft leader's endpoint whenever leadership changes,
-    /// rather than staying connected to the original leader's now-idle socket.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub flashblocks_ws: Option<Url>,
 }
 
 /// Conductor cluster discovery configuration.
@@ -235,7 +228,6 @@ impl ConductorSource {
                     docker_conductor: None,
                     docker_el: None,
                     docker_cl: None,
-                    flashblocks_ws: None,
                 })
             }
         }
@@ -271,7 +263,6 @@ impl ConductorSource {
                     docker_conductor: None,
                     docker_el: None,
                     docker_cl: None,
-                    flashblocks_ws: None,
                 }
             })
             .collect();
@@ -304,8 +295,6 @@ pub struct MonitoringConfig {
     pub name: String,
     /// L2 JSON-RPC endpoint URL.
     pub rpc: Url,
-    /// Flashblocks WebSocket endpoint URL.
-    pub flashblocks_ws: Url,
     /// L1 Ethereum JSON-RPC endpoint URL.
     pub l1_rpc: Url,
     /// Optional Base consensus node JSON-RPC endpoint URL.
@@ -414,7 +403,6 @@ const fn default_blob_target() -> u64 {
 struct MonitoringConfigOverride {
     name: Option<String>,
     rpc: Option<Url>,
-    flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
     consensus_node_rpc: Option<Url>,
     hardforks: Option<HardForkConfig>,
@@ -461,7 +449,6 @@ impl MonitoringConfig {
         Self {
             name: "mainnet".to_string(),
             rpc: Url::parse("https://mainnet.base.org").unwrap(),
-            flashblocks_ws: Url::parse("wss://mainnet.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: None,
             hardforks: Some(rollup.hardforks),
@@ -485,7 +472,6 @@ impl MonitoringConfig {
         Self {
             name: "sepolia".to_string(),
             rpc: Url::parse("https://sepolia.base.org").unwrap(),
-            flashblocks_ws: Url::parse("wss://sepolia.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: None,
             hardforks: Some(rollup.hardforks),
@@ -515,7 +501,6 @@ impl MonitoringConfig {
         Self {
             name: "devnet".to_string(),
             rpc: Url::parse("http://localhost:7545").unwrap(),
-            flashblocks_ws: Url::parse("ws://localhost:7111").unwrap(),
             l1_rpc: Url::parse("http://localhost:4545").unwrap(),
             consensus_node_rpc: Some(Url::parse("http://localhost:7549").unwrap()),
             hardforks: None,
@@ -534,7 +519,6 @@ impl MonitoringConfig {
                     docker_conductor: Some("op-conductor-0".to_string()),
                     docker_el: Some("base-builder".to_string()),
                     docker_cl: Some("base-builder-cl".to_string()),
-                    flashblocks_ws: Some(Url::parse("ws://localhost:7111").unwrap()),
                 },
                 ConductorNodeConfig {
                     name: "op-conductor-1".to_string(),
@@ -546,7 +530,6 @@ impl MonitoringConfig {
                     docker_conductor: Some("op-conductor-1".to_string()),
                     docker_el: Some("base-sequencer-1".to_string()),
                     docker_cl: Some("base-sequencer-1-cl".to_string()),
-                    flashblocks_ws: Some(Url::parse("ws://localhost:10111").unwrap()),
                 },
                 ConductorNodeConfig {
                     name: "op-conductor-2".to_string(),
@@ -558,7 +541,6 @@ impl MonitoringConfig {
                     docker_conductor: Some("op-conductor-2".to_string()),
                     docker_el: Some("base-sequencer-2".to_string()),
                     docker_cl: Some("base-sequencer-2-cl".to_string()),
-                    flashblocks_ws: Some(Url::parse("ws://localhost:11111").unwrap()),
                 },
             ]),
             validators: Some(vec![
@@ -689,7 +671,6 @@ impl MonitoringConfig {
         Ok(Self {
             name: overrides.name.unwrap_or(base.name),
             rpc: overrides.rpc.unwrap_or(base.rpc),
-            flashblocks_ws: overrides.flashblocks_ws.unwrap_or(base.flashblocks_ws),
             l1_rpc: overrides.l1_rpc.unwrap_or(base.l1_rpc),
             consensus_node_rpc: overrides.consensus_node_rpc.or(base.consensus_node_rpc),
             hardforks: overrides.hardforks.or(base.hardforks),
@@ -731,7 +712,6 @@ mod tests {
         assert_eq!(devnet.name, "devnet");
         assert!(devnet.rpc.as_str().contains("localhost"));
         assert_eq!(devnet.rpc.as_str(), "http://localhost:7545/");
-        assert_eq!(devnet.flashblocks_ws.as_str(), "ws://localhost:7111/");
         assert_eq!(devnet.l1_rpc.as_str(), "http://localhost:4545/");
         assert!(devnet.consensus_node_rpc.is_some());
         assert_eq!(devnet.consensus_node_rpc.unwrap().as_str(), "http://localhost:7549/");

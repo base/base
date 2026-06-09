@@ -219,7 +219,9 @@ where
             }
             // Wait one block time before retrying the reset, but service admin queries
             // and honour cancellation throughout the backoff window.
-            let sleep = tokio::time::sleep(Duration::from_secs(self.rollup_config.block_time));
+            let sleep = tokio::time::sleep(Duration::from_millis(
+                self.rollup_config.block_time_duration_millis(),
+            ));
             tokio::pin!(sleep);
             loop {
                 select! {
@@ -261,8 +263,9 @@ where
     type StartData = ();
 
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
-        let mut build_ticker =
-            ScheduledTicker::new(Duration::from_secs(self.rollup_config.block_time));
+        let mut build_ticker = ScheduledTicker::new(Duration::from_millis(
+            self.rollup_config.block_time_duration_millis(),
+        ));
 
         self.update_metrics();
 
@@ -368,7 +371,10 @@ where
                                 let next_block_seconds =
                                     handle_timestamp.saturating_add(self.rollup_config.block_time);
                                 let next_block_time = UNIX_EPOCH
-                                    + Duration::from_secs(next_block_seconds)
+                                    + Duration::from_millis(
+                                        self.rollup_config
+                                            .timestamp_duration_millis(next_block_seconds),
+                                    )
                                     - last_seal_duration;
                                 build_ticker.reset_at(next_block_time);
                                 // Do not call build() here. The next payload is built after the
@@ -386,7 +392,10 @@ where
                                         .timestamp
                                         .saturating_add(self.rollup_config.block_time);
                                     let next_block_time = UNIX_EPOCH
-                                        + Duration::from_secs(next_block_seconds)
+                                        + Duration::from_millis(
+                                            self.rollup_config
+                                                .timestamp_duration_millis(next_block_seconds),
+                                        )
                                         - last_seal_duration;
                                     build_ticker.reset_at(next_block_time);
                                 } else {
@@ -404,7 +413,10 @@ where
                                 .timestamp
                                 .saturating_add(self.rollup_config.block_time);
                             let next_block_time = UNIX_EPOCH
-                                + Duration::from_secs(next_block_seconds)
+                                + Duration::from_millis(
+                                    self.rollup_config
+                                        .timestamp_duration_millis(next_block_seconds),
+                                )
                                 - last_seal_duration;
                             build_ticker.reset_at(next_block_time);
                         } else {

@@ -32,9 +32,8 @@ const FUNDING_BATCH_SIZE: usize = 16;
 pub(super) const BATCH_SIZE: usize = FUNDING_BATCH_SIZE;
 
 use super::{
-    BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay, PreparedBatch,
-    PreparedTransaction, QueuedSubmitFailures, RateLimiter, ResultsTracker, SubmissionPipeline,
-    SubmitEvent, TxType,
+    BlockWatcher, DisplaySnapshot, LoadConfig, LoadTestDisplay, PreparedBatch, PreparedTransaction,
+    QueuedSubmitFailures, RateLimiter, ResultsTracker, SubmissionPipeline, SubmitEvent, TxType,
 };
 use crate::{
     BaselineError, Result,
@@ -1021,16 +1020,6 @@ impl LoadRunner {
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
         let results_tracker = ResultsTracker::new(&sender_addresses);
 
-        info!(url = %self.config.flashblocks_ws, "starting flashblock transaction watcher");
-        let flashblock_watcher_task = Some(
-            FlashblockWatcher::new(
-                self.config.flashblocks_ws.clone(),
-                results_tracker.clone(),
-                self.cancel_token.clone(),
-            )
-            .start(),
-        );
-
         info!(url = %self.config.query_rpc, "starting block watcher");
         let block_watcher_task = Some(
             BlockWatcher::new(
@@ -1177,8 +1166,6 @@ impl LoadRunner {
                 let (p50, p99) = self.collector.rolling_p50_p99();
                 let (block_receipt_delay_p50, block_receipt_delay_p99) =
                     self.collector.rolling_block_receipt_delay_p50_p99();
-                let (flashblocks_p50, flashblocks_p99) =
-                    self.collector.rolling_flashblocks_p50_p99();
                 info!(
                     elapsed_secs,
                     submitted,
@@ -1194,8 +1181,6 @@ impl LoadRunner {
                     p99_ms = p99.as_millis() as u64,
                     block_receipt_delay_p50_ms = block_receipt_delay_p50.as_millis() as u64,
                     block_receipt_delay_p99_ms = block_receipt_delay_p99.as_millis() as u64,
-                    flashblocks_p50_ms = flashblocks_p50.as_millis() as u64,
-                    flashblocks_p99_ms = flashblocks_p99.as_millis() as u64,
                     "progress"
                 );
                 last_progress_report = Instant::now();
@@ -1353,8 +1338,8 @@ impl LoadRunner {
             &mut self.collector,
         );
 
-        // Keep background watchers alive through the drain so late flashblock
-        // inclusions and block observations can still be joined into metrics.
+        // Keep the block watcher alive through the drain so late block observations
+        // can still be joined into metrics.
         self.stop_flag.store(true, Ordering::SeqCst);
 
         if let Some(display) = &self.display {
@@ -1408,12 +1393,6 @@ impl LoadRunner {
         // Now safe to stop background watcher tasks.
         self.cancel_token.cancel();
 
-        if let Some(task) = flashblock_watcher_task {
-            match tokio::time::timeout(Duration::from_secs(2), task).await {
-                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock watcher panicked"),
-                _ => {}
-            }
-        }
         if let Some(task) = block_watcher_task {
             match tokio::time::timeout(Duration::from_secs(2), task).await {
                 Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
@@ -1437,7 +1416,6 @@ impl LoadRunner {
         let (p50, p99) = self.collector.rolling_p50_p99();
         let (block_receipt_delay_p50, block_receipt_delay_p99) =
             self.collector.rolling_block_receipt_delay_p50_p99();
-        let (flashblocks_p50, flashblocks_p99) = self.collector.rolling_flashblocks_p50_p99();
         DisplaySnapshot {
             elapsed: start.elapsed(),
             duration: self.config.duration,
@@ -1454,8 +1432,6 @@ impl LoadRunner {
             p99_latency: p99,
             block_receipt_delay_p50,
             block_receipt_delay_p99,
-            flashblocks_p50_latency: flashblocks_p50,
-            flashblocks_p99_latency: flashblocks_p99,
             gas_price_gwei: self.gas_price as f64 / 1e9,
             total_eth: self.last_total_eth.clone(),
             min_eth: self.last_min_eth.clone(),

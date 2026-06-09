@@ -165,7 +165,6 @@ base-common-chains = { path = "crates/common/chains" }
 base-common-network = { path = "crates/common/network" }
 base-access-lists = { path = "crates/common/access-lists" }
 base-common-rpc-types = { path = "crates/common/rpc-types" }
-base-common-flashblocks = { path = "crates/common/flashblocks" }
 base-common-evm = { path = "crates/common/evm", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
 base-precompile-macros = { path = "crates/common/precompile-macros" }
@@ -177,7 +176,6 @@ base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", defaul
 
 # Builder
 base-builder-core = { path = "crates/builder/core" }
-base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
 
 # Consensus
@@ -206,7 +204,6 @@ base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
 base-engine-tree = { path = "crates/execution/engine-tree" }
-base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
 base-bundle-extension = { path = "crates/execution/bundle" }
 base-proofs-extension = { path = "crates/execution/proofs" }
@@ -215,7 +212,6 @@ base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
-base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl" }
@@ -223,7 +219,6 @@ audit-archiver-lib = { path = "crates/infra/audit" }
 base-load-tests = { path = "crates/infra/load-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
-websocket-proxy = { path = "crates/infra/websocket-proxy" }
 base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 
 # Proof

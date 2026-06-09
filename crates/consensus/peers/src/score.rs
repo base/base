@@ -33,8 +33,8 @@ impl PeerScoreLevel {
     /// The decay factor is calculated using the formula:
     /// `decay_factor = (1 - decay_to_zero) ^ (duration / slot)`.
     pub fn score_decay(duration: std::time::Duration, slot: std::time::Duration) -> f64 {
-        let num_of_times = duration.as_secs() / slot.as_secs();
-        (1.0 - Self::DECAY_TO_ZERO).powf(1.0 / num_of_times as f64)
+        let num_of_times = (duration.as_secs_f64() / slot.as_secs_f64()).max(1.0);
+        (1.0 - Self::DECAY_TO_ZERO).powf(1.0 / num_of_times)
     }
 
     /// Default peer score thresholds.
@@ -54,13 +54,13 @@ impl PeerScoreLevel {
         (3600 * std::time::Duration::from_secs(1)).as_secs_f64() / slot.as_secs_f64()
     }
 
-    /// Returns the topic score parameters given the block time.
-    pub fn topic_score_params(block_time: u64) -> TopicScoreParams {
-        let slot = std::time::Duration::from_secs(block_time);
+    /// Returns the topic score parameters given the block time in milliseconds.
+    pub fn topic_score_params(block_time_millis: u64) -> TopicScoreParams {
+        let slot = std::time::Duration::from_millis(block_time_millis);
         let epoch = slot * 6;
         let invalid_decay_period = 50 * epoch;
-        let decay_epoch =
-            std::time::Duration::from_secs(Self::DECAY_EPOCH as u64 * epoch.as_secs());
+        let decay_epoch = epoch.mul_f64(Self::DECAY_EPOCH);
+        let slots_per_epoch = epoch.as_secs_f64() / slot.as_secs_f64();
         TopicScoreParams {
             topic_weight: 0.8,
             time_in_mesh_weight: Self::MAX_IN_MESH_SCORE / Self::in_mesh_cap(slot),
@@ -71,11 +71,8 @@ impl PeerScoreLevel {
             first_message_deliveries_cap: 23.0,
             mesh_message_deliveries_weight: Self::MESH_WEIGHT,
             mesh_message_deliveries_decay: Self::score_decay(decay_epoch, slot),
-            mesh_message_deliveries_cap: (epoch.as_secs() / slot.as_secs()) as f64
-                * Self::DECAY_EPOCH,
-            mesh_message_deliveries_threshold: (epoch.as_secs() / slot.as_secs()) as f64
-                * Self::DECAY_EPOCH
-                / 10.0,
+            mesh_message_deliveries_cap: slots_per_epoch * Self::DECAY_EPOCH,
+            mesh_message_deliveries_threshold: slots_per_epoch * Self::DECAY_EPOCH / 10.0,
             mesh_message_deliveries_window: std::time::Duration::from_secs(2),
             mesh_message_deliveries_activation: epoch * 4,
             mesh_failure_penalty_weight: Self::MESH_WEIGHT,
@@ -88,12 +85,12 @@ impl PeerScoreLevel {
     /// Constructs topic scores for the given topics.
     pub fn topic_scores(
         topics: Vec<TopicHash>,
-        block_time: u64,
+        block_time_millis: u64,
     ) -> HashMap<TopicHash, TopicScoreParams> {
         let mut topic_scores = HashMap::with_capacity(topics.len());
         for topic in topics {
             debug!(target: "scoring", topic = %topic, "Topic scoring enabled");
-            topic_scores.insert(topic, Self::topic_score_params(block_time));
+            topic_scores.insert(topic, Self::topic_score_params(block_time_millis));
         }
         topic_scores
     }
@@ -101,21 +98,24 @@ impl PeerScoreLevel {
     /// Returns the [`PeerScoreParams`] for the given peer scoring level.
     ///
     /// # Arguments
-    /// * `block_time` - The block time in seconds.
+    /// * `block_time_millis` - The block time in milliseconds.
     pub fn to_params(
         &self,
         topics: Vec<TopicHash>,
         topic_scoring: bool,
-        block_time: u64,
+        block_time_millis: u64,
     ) -> Option<PeerScoreParams> {
-        let slot = std::time::Duration::from_secs(block_time);
+        let slot = std::time::Duration::from_millis(block_time_millis);
         debug!(target: "scoring", slot = ?slot, "Slot duration");
         let epoch = slot * 6;
         let ten_epochs = epoch * 10;
         let one_hundred_epochs = epoch * 100;
         let penalty_decay = Self::score_decay(ten_epochs, slot);
-        let topics =
-            if topic_scoring { Self::topic_scores(topics, block_time) } else { Default::default() };
+        let topics = if topic_scoring {
+            Self::topic_scores(topics, block_time_millis)
+        } else {
+            Default::default()
+        };
         match self {
             Self::Off => None,
             Self::Light => Some(PeerScoreParams {

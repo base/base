@@ -171,6 +171,39 @@ services:
       - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
+  patch-l2-rollup:
+    image: base-builder:local
+    build:
+      <<: *rust-service-build
+      target: builder
+    container_name: patch-l2-rollup
+    depends_on:
+      setup-l2:
+        condition: service_completed_successfully
+    volumes:
+      - ../../.devnet/l2/configs:/genesis/l2
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -eu
+        output="$$(/app/base-builder init --chain=/genesis/l2/genesis.json --datadir=/tmp/l2-genesis-hash --color=never 2>&1)"
+        printf '%s\n' "$$output"
+        hash="$$(printf '%s\n' "$$output" | sed -n 's/.*Genesis block written hash=\(0x[0-9a-fA-F]*\).*/\1/p' | tail -n 1)"
+        if [ -z "$$hash" ]; then
+          echo "ERROR: failed to compute L2 genesis hash" >&2
+          exit 1
+        fi
+        tmp="$$(mktemp)"
+        jq --arg hash "$$hash" '.genesis.l2.hash = $$hash' /genesis/l2/rollup.json > "$$tmp"
+        mv "$$tmp" /genesis/l2/rollup.json
+        if [ -f /genesis/l2/rollup-conductor.json ]; then
+          tmp="$$(mktemp)"
+          jq --arg hash "$$hash" '.genesis.l2.hash = $$hash' /genesis/l2/rollup-conductor.json > "$$tmp"
+          mv "$$tmp" /genesis/l2/rollup-conductor.json
+        fi
+        echo "Patched L2 rollup genesis hash: $$hash"
+
   base-el-bootnode:
     image: base-reth-node:local
     build:
@@ -212,7 +245,7 @@ services:
       target: consensus
     container_name: base-cl-bootnode
     depends_on:
-      setup-l2:
+      patch-l2-rollup:
         condition: service_completed_successfully
     ports:
       - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}"     # P2P TCP metadata
@@ -268,7 +301,6 @@ services:
       - "${L2_BUILDER_AUTH_PORT}:${L2_BUILDER_AUTH_PORT}"           # Auth RPC (Engine API)
       - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}"             # P2P
       - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}/udp"         # Discovery
-      - "${L2_BUILDER_FLASHBLOCKS_PORT}:${L2_BUILDER_FLASHBLOCKS_PORT}"  # Flashblocks
       - "${L2_BUILDER_METRICS_PORT}:${L2_BUILDER_METRICS_PORT}"     # Metrics
     volumes:
       - ../../.devnet/l2/builder:/data
@@ -303,13 +335,10 @@ services:
       - --p2p-secret-key-hex=${BUILDER_P2P_KEY}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
-      - --flashblocks.addr=0.0.0.0
-      - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
-      - --flashblocks.block-time=200
-      - --rollup.chain-block-time=2000
+      - --rollup.chain-block-time=${L2_BLOCK_TIME_MS}
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --builder.enable-resource-metering
-      - --builder.flashblock-execution-time-budget-us=${METERING_EXECUTION_TIME_US}
+      - --builder.block-execution-time-budget-us=${METERING_EXECUTION_TIME_US}
       - --builder.block-state-root-gas-limit=${BUILDER_BLOCK_STATE_ROOT_GAS_LIMIT}
       - --builder.max-rejected-txs-per-block=${BUILDER_MAX_REJECTED_TXS_PER_BLOCK}
       - --txpool.nolocals
@@ -507,7 +536,6 @@ services:
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --rpc.eth-proof-window=1209600
-      - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
       - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
@@ -516,7 +544,6 @@ services:
       - --metering.execution-time-us=${METERING_EXECUTION_TIME_US}
       - --metering.state-root-time-us=${METERING_STATE_ROOT_TIME_US}
       - --metering.da-bytes=${METERING_DA_BYTES}
-      - --metering.target-flashblocks-per-block=${METERING_TARGET_FLASHBLOCKS_PER_BLOCK}
       - --color=never
       - -vvv
     healthcheck:
@@ -606,6 +633,8 @@ services:
     depends_on:
       setup-l2:
         condition: service_completed_successfully
+      l1-cl:
+        condition: service_healthy
       base-el-bootnode:
         condition: service_started
       base-builder-cl:

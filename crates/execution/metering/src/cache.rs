@@ -1,7 +1,7 @@
 //! In-memory cache for metering data used by the priority fee estimator.
 //!
 //! Transactions are stored in sequencer order (highest priority fee first) as received
-//! from flashblock events.
+//! from segment events.
 
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
@@ -61,26 +61,26 @@ impl ResourceTotals {
     }
 }
 
-/// Metrics for a single flashblock within a block.
+/// Metrics for a single segment within a block.
 ///
 /// Transactions are stored in sequencer order (highest priority fee first).
 #[derive(Debug)]
-pub struct FlashblockMetrics {
+pub struct SegmentMetrics {
     /// Block number.
     pub block_number: u64,
-    /// Flashblock index within the block.
-    pub flashblock_index: u64,
+    /// Segment index within the block.
+    pub segment_index: u64,
     /// Transactions in sequencer order.
     transactions: Vec<MeteredTransaction>,
     totals: ResourceTotals,
 }
 
-impl FlashblockMetrics {
-    /// Creates a new flashblock metrics container.
-    pub fn new(block_number: u64, flashblock_index: u64) -> Self {
+impl SegmentMetrics {
+    /// Creates a new segment metrics container.
+    pub fn new(block_number: u64, segment_index: u64) -> Self {
         Self {
             block_number,
-            flashblock_index,
+            segment_index,
             transactions: Vec::new(),
             totals: ResourceTotals::default(),
         }
@@ -92,7 +92,7 @@ impl FlashblockMetrics {
         self.transactions.push(tx);
     }
 
-    /// Returns the resource totals for this flashblock.
+    /// Returns the resource totals for this segment.
     pub const fn totals(&self) -> ResourceTotals {
         self.totals
     }
@@ -113,34 +113,34 @@ impl FlashblockMetrics {
     }
 }
 
-/// Aggregated metrics for a block, including per-flashblock breakdown.
+/// Aggregated metrics for a block, including per-segment breakdown.
 #[derive(Debug)]
 pub struct BlockMetrics {
     /// Block number.
     pub block_number: u64,
-    flashblocks: BTreeMap<u64, FlashblockMetrics>,
+    segments: BTreeMap<u64, SegmentMetrics>,
     totals: ResourceTotals,
 }
 
 impl BlockMetrics {
     /// Creates a new block metrics container.
     pub fn new(block_number: u64) -> Self {
-        Self { block_number, flashblocks: BTreeMap::new(), totals: ResourceTotals::default() }
+        Self { block_number, segments: BTreeMap::new(), totals: ResourceTotals::default() }
     }
 
-    /// Iterates over all flashblocks.
-    pub fn flashblocks(&self) -> impl Iterator<Item = &FlashblockMetrics> {
-        self.flashblocks.values()
+    /// Iterates over all segments.
+    pub fn segments(&self) -> impl Iterator<Item = &SegmentMetrics> {
+        self.segments.values()
     }
 
-    /// Returns a mutable reference to the flashblock, creating it if necessary.
-    /// Returns `(flashblock, is_new)`.
-    pub fn flashblock_mut(&mut self, flashblock_index: u64) -> (&mut FlashblockMetrics, bool) {
-        let is_new = !self.flashblocks.contains_key(&flashblock_index);
+    /// Returns a mutable reference to the segment, creating it if necessary.
+    /// Returns `(segment, is_new)`.
+    pub fn segment_mut(&mut self, segment_index: u64) -> (&mut SegmentMetrics, bool) {
+        let is_new = !self.segments.contains_key(&segment_index);
         let entry = self
-            .flashblocks
-            .entry(flashblock_index)
-            .or_insert_with(|| FlashblockMetrics::new(self.block_number, flashblock_index));
+            .segments
+            .entry(segment_index)
+            .or_insert_with(|| SegmentMetrics::new(self.block_number, segment_index));
         (entry, is_new)
     }
 
@@ -161,27 +161,27 @@ impl BlockMetrics {
 #[derive(Debug)]
 pub struct MeteringCache {
     max_blocks: usize,
-    max_flashblocks_per_block: usize,
+    max_segments_per_block: usize,
     blocks: BTreeMap<u64, BlockMetrics>,
 }
 
 impl MeteringCache {
     /// Creates a new cache retaining at most `max_blocks` recent blocks and
-    /// at most `max_flashblocks_per_block` flashblocks per block.
+    /// at most `max_segments_per_block` segments per block.
     ///
-    /// `max_flashblocks_per_block` counts all flashblocks for a block, including
-    /// the base flashblock at index `0`.
+    /// `max_segments_per_block` counts all segments for a block, including
+    /// the base segment at index `0`.
     ///
     /// # Panics
     ///
-    /// Panics if `max_blocks` or `max_flashblocks_per_block` is zero.
-    pub const fn new(max_blocks: usize, max_flashblocks_per_block: usize) -> Self {
+    /// Panics if `max_blocks` or `max_segments_per_block` is zero.
+    pub const fn new(max_blocks: usize, max_segments_per_block: usize) -> Self {
         Self {
             max_blocks: NonZeroUsize::new(max_blocks)
                 .expect("max_blocks must be greater than 0")
                 .get(),
-            max_flashblocks_per_block: NonZeroUsize::new(max_flashblocks_per_block)
-                .expect("max_flashblocks_per_block must be greater than 0")
+            max_segments_per_block: NonZeroUsize::new(max_segments_per_block)
+                .expect("max_segments_per_block must be greater than 0")
                 .get(),
             blocks: BTreeMap::new(),
         }
@@ -192,9 +192,9 @@ impl MeteringCache {
         self.max_blocks
     }
 
-    /// Returns the maximum number of flashblocks retained per block.
-    pub const fn max_flashblocks_per_block(&self) -> usize {
-        self.max_flashblocks_per_block
+    /// Returns the maximum number of segments retained per block.
+    pub const fn max_segments_per_block(&self) -> usize {
+        self.max_segments_per_block
     }
 
     /// Returns the block metrics for the given block number.
@@ -214,17 +214,17 @@ impl MeteringCache {
     pub fn push_transaction(
         &mut self,
         block_number: u64,
-        flashblock_index: u64,
+        segment_index: u64,
         tx: MeteredTransaction,
     ) -> bool {
-        if flashblock_index >= self.max_flashblocks_per_block as u64 {
+        if segment_index >= self.max_segments_per_block as u64 {
             return false;
         }
 
         let block = self.block_mut(block_number);
         block.accumulate(&tx);
-        let (flashblock, _) = block.flashblock_mut(flashblock_index);
-        flashblock.push_transaction(tx);
+        let (segment, _) = block.segment_mut(segment_index);
+        segment.push_transaction(tx);
         true
     }
 
@@ -286,9 +286,9 @@ mod tests {
         cache.push_transaction(100, 0, tx1.clone());
 
         let block = cache.block(100).unwrap();
-        let flashblock = block.flashblocks().next().unwrap();
-        assert_eq!(flashblock.len(), 1);
-        assert_eq!(flashblock.transactions()[0].tx_hash, tx1.tx_hash);
+        let segment = block.segments().next().unwrap();
+        assert_eq!(segment.len(), 1);
+        assert_eq!(segment.transactions()[0].tx_hash, tx1.tx_hash);
     }
 
     #[test]
@@ -300,9 +300,9 @@ mod tests {
         cache.push_transaction(100, 0, test_tx(3, 10));
 
         let block = cache.block(100).unwrap();
-        let flashblock = block.flashblocks().next().unwrap();
+        let segment = block.segments().next().unwrap();
         let fees: Vec<_> =
-            flashblock.transactions().iter().map(|tx| tx.priority_fee_per_gas).collect();
+            segment.transactions().iter().map(|tx| tx.priority_fee_per_gas).collect();
         // Order should be preserved as inserted
         assert_eq!(fees, vec![U256::from(30u64), U256::from(20u64), U256::from(10u64)]);
     }
@@ -325,8 +325,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "max_flashblocks_per_block must be greater than 0")]
-    fn zero_flashblock_capacity_panics() {
+    #[should_panic(expected = "max_segments_per_block must be greater than 0")]
+    fn zero_segment_capacity_panics() {
         let _ = MeteringCache::new(1, 0);
     }
 
@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_transactions_beyond_flashblock_capacity() {
+    fn ignores_transactions_beyond_segment_capacity() {
         let mut cache = MeteringCache::new(10, 2);
 
         assert!(cache.push_transaction(100, 0, test_tx(1, 10)));
@@ -402,9 +402,9 @@ mod tests {
         assert!(!cache.push_transaction(100, 2, test_tx(3, 30)));
 
         let block = cache.block(100).unwrap();
-        let flashblock_indexes: Vec<_> =
-            block.flashblocks().map(|flashblock| flashblock.flashblock_index).collect();
-        assert_eq!(flashblock_indexes, vec![0, 1]);
+        let segment_indexes: Vec<_> =
+            block.segments().map(|segment| segment.segment_index).collect();
+        assert_eq!(segment_indexes, vec![0, 1]);
         assert_eq!(block.totals().gas_used, 20);
     }
 }

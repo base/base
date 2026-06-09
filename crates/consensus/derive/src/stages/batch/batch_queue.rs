@@ -142,7 +142,10 @@ where
                     // Drop Future batches post-holocene.
                     //
                     // See: <https://specs.base.org/upgrades/holocene/derivation#batch_queue>
-                    if !self.cfg.is_holocene_active(origin.timestamp) {
+                    if !self
+                        .cfg
+                        .is_holocene_active(self.cfg.l1_timestamp_to_l2_time(origin.timestamp))
+                    {
                         remaining.push(batch.clone());
                     } else {
                         self.prev.flush();
@@ -169,7 +172,10 @@ where
                     return Err(PipelineError::Eof.temp());
                 }
                 BatchValidity::Past => {
-                    if !self.cfg.is_holocene_active(origin.timestamp) {
+                    if !self
+                        .cfg
+                        .is_holocene_active(self.cfg.l1_timestamp_to_l2_time(origin.timestamp))
+                    {
                         error!(target: "batch_queue", "BatchValidity::Past is not allowed pre-holocene");
                         return Err(PipelineError::InvalidBatchValidity.crit());
                     }
@@ -217,7 +223,8 @@ where
         // Fill with empty L2 blocks of the same epoch until we meet the time of the next L1 origin,
         // to preserve that L2 time >= L1 time. If this is the first block of the epoch, always
         // generate a batch to ensure that we at least have one batch per epoch.
-        if next_timestamp < next_epoch.timestamp || first_of_epoch {
+        if next_timestamp < self.cfg.l1_timestamp_to_l2_time(next_epoch.timestamp) || first_of_epoch
+        {
             info!(target: "batch_queue", epoch_number = epoch.number, "Generating empty batch for epoch");
             return Ok(Batch::Single(SingleBatch {
                 parent_hash: parent.block_info.hash,
@@ -254,7 +261,8 @@ where
             data.check_batch(&self.cfg, &self.l1_blocks, parent, &mut self.fetcher).await;
         // Post-Holocene, future batches are dropped due to prevent gaps.
         let drop = validity.is_drop()
-            || (self.cfg.is_holocene_active(origin.timestamp) && validity.is_future());
+            || (self.cfg.is_holocene_active(self.cfg.l1_timestamp_to_l2_time(origin.timestamp))
+                && validity.is_future());
         if drop {
             self.prev.flush();
             return Ok(());

@@ -62,7 +62,7 @@ services:
       - TIPS_INGRESS_BUILDER_RPCS=http://base-builder:${L2_BUILDER_HTTP_PORT},http://base-client:${L2_CLIENT_HTTP_PORT}
       - TIPS_INGRESS_SEND_TO_BUILDER=true
       - TIPS_INGRESS_CHAIN_ID=${L2_CHAIN_ID}
-      - TIPS_INGRESS_BLOCK_TIME_MILLISECONDS=2000
+      - TIPS_INGRESS_BLOCK_TIME_MILLISECONDS=${L2_BLOCK_TIME_MS}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${L2_INGRESS_HEALTH_PORT}/health"]
       interval: 5s

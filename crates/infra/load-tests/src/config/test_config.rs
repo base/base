@@ -34,9 +34,6 @@ pub struct TestConfig {
     /// Optional HTTP JSON-RPC endpoints whose txpools should be cleared before a test.
     #[serde(default)]
     pub txpool_nodes: Vec<Url>,
-    /// Builder flashblocks broadcast WebSocket endpoint.
-    #[serde(default)]
-    pub flashblocks_ws: Option<Url>,
 
     /// Mnemonic phrase for deriving sender accounts.
     /// If not provided, accounts are generated from seed.
@@ -107,7 +104,6 @@ impl Default for TestConfig {
             ],
             query_rpc: None,
             txpool_nodes: Vec::new(),
-            flashblocks_ws: None,
             mnemonic: None,
             funding_amount: "10000000000000000".to_string(),
             sender_count: 100,
@@ -134,7 +130,6 @@ impl fmt::Debug for TestConfig {
             .field("transaction_submission_rpcs", &self.transaction_submission_rpcs)
             .field("query_rpc", &self.query_rpc)
             .field("txpool_nodes", &self.txpool_nodes)
-            .field("flashblocks_ws", &self.flashblocks_ws)
             .field("mnemonic", &self.mnemonic.as_ref().map(|_| "[REDACTED]"))
             .field("funding_amount", &self.funding_amount)
             .field("sender_count", &self.sender_count)
@@ -349,11 +344,6 @@ impl TestConfig {
             Self::validate_http_url(url, "txpool_nodes")?;
         }
 
-        let Some(flashblocks_ws) = &self.flashblocks_ws else {
-            return Err(BaselineError::Config("flashblocks_ws is required".into()));
-        };
-        Self::validate_ws_url(flashblocks_ws, "flashblocks_ws")?;
-
         Ok(())
     }
 
@@ -375,21 +365,6 @@ impl TestConfig {
             ))),
             scheme => Err(BaselineError::Config(format!(
                 "{field_name} has invalid scheme '{scheme}', expected 'http://' or 'https://'"
-            ))),
-        }
-    }
-
-    fn validate_ws_url(url: &Url, field_name: &str) -> Result<()> {
-        match url.scheme() {
-            "ws" | "wss" => Ok(()),
-            "http" => Err(BaselineError::Config(format!(
-                "{field_name} uses 'http://' scheme but requires 'ws://' for WebSocket connections"
-            ))),
-            "https" => Err(BaselineError::Config(format!(
-                "{field_name} uses 'https://' scheme but requires 'wss://' for secure WebSocket connections"
-            ))),
-            scheme => Err(BaselineError::Config(format!(
-                "{field_name} has invalid scheme '{scheme}', expected 'ws://' or 'wss://'"
             ))),
         }
     }
@@ -552,10 +527,6 @@ impl TestConfig {
             batch_size: self.batch_size.max(1) as usize,
             batch_timeout,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
-            flashblocks_ws: self
-                .flashblocks_ws
-                .clone()
-                .ok_or_else(|| BaselineError::Config("flashblocks_ws is required".into()))?,
         })
     }
 
@@ -746,7 +717,6 @@ mod tests {
     fn parse_minimal_config() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.primary_submission_rpc().unwrap().host_str(), Some("localhost"));
@@ -761,7 +731,6 @@ flashblocks_ws: ws://localhost:7111
 transaction_submission_rpcs:
   - http://localhost:7545
   - http://localhost:7546
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         let load_config = config.to_load_config(Some(1337)).unwrap();
@@ -777,7 +746,6 @@ transaction_submission_rpcs: http://localhost:8545
 txpool_nodes:
   - http://localhost:7545
   - http://localhost:10545
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         let load_config = config.to_load_config(Some(1337)).unwrap();
@@ -790,7 +758,6 @@ flashblocks_ws: ws://localhost:7111
     fn parse_full_config() {
         let yaml = r#"
 transaction_submission_rpcs: https://sepolia.base.org
-flashblocks_ws: wss://sepolia.flashblocks.base.org/ws
 mnemonic: "test test test test test test test test test test test junk"
 funding_amount: "500000000000000000"
 sender_count: 20
@@ -822,7 +789,6 @@ transactions:
     fn parse_duration_formats() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 duration: "30s"
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
@@ -830,7 +796,6 @@ duration: "30s"
 
         let yaml2 = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 duration: "1h 30m"
 "#;
         let config2 = TestConfig::from_yaml(yaml2).unwrap();
@@ -841,7 +806,6 @@ duration: "1h 30m"
     fn parse_precompile_targets() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 funder_key: "0x1234"
 transactions:
   - weight: 10
@@ -898,7 +862,6 @@ transactions:
     fn parse_precompile_with_iterations() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 funder_key: "0x1234"
 looper_contract: "0x1234567890123456789012345678901234567890"
 transactions:
@@ -922,22 +885,10 @@ transactions:
     }
 
     #[test]
-    fn rejects_http_scheme_for_flashblocks_ws() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: http://localhost:7111
-"#;
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("flashblocks_ws"));
-        assert!(err.to_string().contains("ws://"));
-    }
-
-    #[test]
     fn query_rpc_accepts_http() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: http://localhost:8546
-flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.query_rpc.as_ref().unwrap().scheme(), "http");
@@ -948,7 +899,6 @@ flashblocks_ws: ws://localhost:7111
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
 query_rpc: wss://localhost:8546
-flashblocks_ws: wss://localhost:7111
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("query_rpc"));
@@ -961,7 +911,6 @@ flashblocks_ws: wss://localhost:7111
 transaction_submission_rpcs: http://localhost:8545
 txpool_nodes:
   - ws://localhost:7546
-flashblocks_ws: ws://localhost:7111
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("txpool_nodes"));
@@ -969,29 +918,9 @@ flashblocks_ws: ws://localhost:7111
     }
 
     #[test]
-    fn flashblocks_ws_accepts_wss() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: wss://localhost:7111
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.flashblocks_ws.as_ref().unwrap().scheme(), "wss");
-    }
-
-    #[test]
-    fn missing_flashblocks_ws_is_rejected() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-"#;
-        let err = TestConfig::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("flashblocks_ws"));
-    }
-
-    #[test]
     fn parse_uniswap_v3_config() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 10
     type: uniswap_v3
@@ -1014,7 +943,6 @@ transactions:
     fn parse_aerodrome_cl_config() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 10
     type: aerodrome_cl

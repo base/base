@@ -21,7 +21,6 @@ base-common-chains = { workspace = true }
 base-common-network = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-common-precompiles = { workspace = true }
-base-common-flashblocks = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
@@ -38,4 +37,3 @@ base-protocol = { workspace = true, features = ["serde", "std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-consensus = { workspace = true, features = ["std", "k256"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
-tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }

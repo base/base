@@ -64,8 +64,10 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
 
         // Start building on the next L1 origin block if the next L2 block's timestamp is
         // greater than or equal to the next L1 origin's timestamp.
+        let next_l2_timestamp = unsafe_head.block_info.timestamp + self.cfg.block_time;
+
         if let Some(next) = self.next
-            && unsafe_head.block_info.timestamp + self.cfg.block_time >= next.timestamp
+            && next_l2_timestamp >= self.cfg.l1_timestamp_to_l2_time(next.timestamp)
         {
             return Ok(next);
         }
@@ -74,10 +76,9 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
             return Err(L1OriginSelectorError::OriginNotFound(unsafe_head.l1_origin.hash));
         };
 
-        let max_seq_drift = self.cfg.max_sequencer_drift(current.timestamp);
-        let past_seq_drift = unsafe_head.block_info.timestamp + self.cfg.block_time
-            - current.timestamp
-            > max_seq_drift;
+        let current_origin_time = self.cfg.l1_timestamp_to_l2_time(current.timestamp);
+        let max_seq_drift = self.cfg.max_sequencer_drift(current_origin_time);
+        let past_seq_drift = next_l2_timestamp.saturating_sub(current_origin_time) > max_seq_drift;
 
         // If the sequencer drift has not been exceeded, return the current L1 origin.
         if !past_seq_drift {
@@ -87,6 +88,7 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
         warn!(
             target: "l1_origin_selector",
             current_origin_time = current.timestamp,
+            current_origin_l2_time = current_origin_time,
             unsafe_head_time = unsafe_head.block_info.timestamp,
             max_seq_drift,
             "Next L2 block time is past the sequencer drift"
@@ -94,7 +96,7 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
 
         if self
             .next
-            .map(|n| unsafe_head.block_info.timestamp + self.cfg.block_time < n.timestamp)
+            .map(|n| next_l2_timestamp < self.cfg.l1_timestamp_to_l2_time(n.timestamp))
             .unwrap_or(false)
         {
             // If the next L1 origin is ahead of the next L2 block's timestamp, return the current

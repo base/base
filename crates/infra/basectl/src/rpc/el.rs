@@ -1,15 +1,11 @@
 use std::sync::Arc;
 
-use alloy_consensus::{Transaction, transaction::SignerRecoverable};
-use alloy_eips::{
-    BlockId,
-    eip2718::{Decodable2718, Encodable2718},
-};
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_consensus::Transaction;
+use alloy_eips::{BlockId, Encodable2718};
+use alloy_primitives::{Address, B256};
 use alloy_provider::{Network, Provider, ProviderBuilder, network::TransactionResponse};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::{Context, Result, anyhow};
-use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
 use futures::{StreamExt, stream};
 use tokio::sync::mpsc;
@@ -258,41 +254,6 @@ fn effective_priority_fee_per_gas(
     base_fee_per_gas
         .map(|base_fee| effective_gas_price.saturating_sub(u128::from(base_fee)))
         .or(max_priority_fee_per_gas)
-}
-
-/// Decodes raw EIP-2718 encoded transaction bytes into summaries.
-///
-/// Used to extract transaction details from flashblock stream data without RPC calls.
-pub fn decode_flashblock_transactions(
-    raw_txs: &[Bytes],
-    base_fee_per_gas: Option<u64>,
-) -> Vec<TxSummary> {
-    raw_txs
-        .iter()
-        .filter_map(|tx_bytes| {
-            let envelope = BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref())
-                .inspect_err(|e| warn!(error = %e, "failed to decode transaction"))
-                .ok()?;
-            let hash = envelope.tx_hash();
-            let to = envelope.to();
-            let effective_priority_fee_per_gas = effective_priority_fee_per_gas(
-                base_fee_per_gas,
-                envelope.effective_gas_price(base_fee_per_gas),
-                envelope.max_priority_fee_per_gas(),
-            );
-            let recovered = envelope
-                .try_into_recovered()
-                .inspect_err(|e| warn!(error = %e, "failed to recover signer"))
-                .ok()?;
-            Some(TxSummary {
-                hash,
-                from: recovered.signer(),
-                to,
-                effective_priority_fee_per_gas,
-                base_fee_per_gas,
-            })
-        })
-        .collect()
 }
 
 /// Fetches all transactions for a given block and sends summaries through the channel.

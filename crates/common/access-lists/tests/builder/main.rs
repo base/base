@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use alloy_primitives::{Address, B256, TxKind, U256};
 use alloy_sol_types::SolCall;
-use base_access_lists::{FBALBuilderDb, FlashblockAccessList};
+use base_access_lists::{AccessListBuilderDb, BlockAccessList};
 use base_common_evm::{
     BaseContext, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase,
 };
@@ -53,16 +53,16 @@ fn cfg_env() -> CfgEnv<BaseSpecId> {
     cfg_env
 }
 
-/// Executes a list of transactions and builds a `FlashblockAccessList` tracking all
+/// Executes a list of transactions and builds a `BlockAccessList` tracking all
 /// account and storage changes across all transactions.
 ///
-/// Uses a single `FBALBuilderDb` instance that wraps the underlying `InMemoryDB`,
+/// Uses a single `AccessListBuilderDb` instance that wraps the underlying `InMemoryDB`,
 /// calling `set_index()` before each transaction to track which txn caused which change.
 pub fn execute_txns_build_access_list(
     txs: Vec<BaseTransaction<TxEnv>>,
     acc_overrides: Option<HashMap<Address, AccountInfo>>,
     storage_overrides: Option<HashMap<Address, HashMap<U256, B256>>>,
-) -> Result<FlashblockAccessList> {
+) -> Result<BlockAccessList> {
     // Set up the underlying InMemoryDB with any overrides
     let mut db = InMemoryDB::default();
     if let Some(overrides) = acc_overrides {
@@ -78,25 +78,27 @@ pub fn execute_txns_build_access_list(
         }
     }
 
-    // Create a single FBALBuilderDb that wraps the InMemoryDB for all transactions
-    let mut fbal_db = FBALBuilderDb::new(db);
+    // Create a single AccessListBuilderDb that wraps the InMemoryDB for all transactions
+    let mut access_list_db = AccessListBuilderDb::new(db);
     let max_tx_index = txs.len().saturating_sub(1);
 
     for (i, tx) in txs.into_iter().enumerate() {
         // Set the transaction index before executing each transaction
-        fbal_db.set_index(i as u64);
+        access_list_db.set_index(i as u64);
 
-        let ctx =
-            BaseContext::base().with_db(&mut fbal_db).with_block(block_env()).with_cfg(cfg_env());
+        let ctx = BaseContext::base()
+            .with_db(&mut access_list_db)
+            .with_block(block_env())
+            .with_cfg(cfg_env());
         let mut evm = ctx.build_base();
         let ResultAndState { state, .. } = evm.transact(tx).unwrap();
         drop(evm);
 
-        // Commit the state changes to our FBALBuilderDb
-        fbal_db.commit(state);
+        // Commit the state changes to our AccessListBuilderDb
+        access_list_db.commit(state);
     }
 
     // Finish and build the access list
-    let access_list_builder = fbal_db.finish()?;
+    let access_list_builder = access_list_db.finish()?;
     Ok(access_list_builder.build(0, max_tx_index as u64))
 }

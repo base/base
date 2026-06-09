@@ -5,10 +5,7 @@
 use alloy_eip7928 as _;
 
 mod cached_execution;
-pub use cached_execution::{
-    CachedExecutionProvider, CachedExecutor, FlashblocksCachedExecutionProvider,
-    NoopCachedExecutionProvider,
-};
+pub use cached_execution::{CachedExecutionProvider, CachedExecutor, NoopCachedExecutionProvider};
 
 mod validator;
 pub use validator::{BaseEngineValidator, BaseEngineValidatorBuilder};

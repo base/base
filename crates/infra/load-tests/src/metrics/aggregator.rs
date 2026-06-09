@@ -3,8 +3,8 @@ use std::{collections::HashMap, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    BlockRange, ConfigSummary, GasMetrics, LatencyMetrics, ThroughputMetrics,
+    ThroughputPercentiles, ThroughputSample, TransactionMetrics,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -49,7 +49,6 @@ impl<'a> MetricsAggregator<'a> {
             error: None,
             block_latency: self.compute_block_latency(),
             block_receipt_delay: self.compute_block_receipt_delay(),
-            flashblocks_latency: self.compute_flashblocks_latency(),
             throughput: self.compute_throughput(throughput_duration, submitted, failed),
             throughput_percentiles: Self::compute_throughput_percentiles(&tps_values, &gps_values),
             throughput_timeseries: throughput_samples.to_vec(),
@@ -100,32 +99,6 @@ impl<'a> MetricsAggregator<'a> {
             p50: Self::percentile(latencies, 50),
             p95: Self::percentile(latencies, 95),
             p99: Self::percentile(latencies, 99),
-        }
-    }
-
-    fn compute_flashblocks_latency(&self) -> FlashblocksLatencyMetrics {
-        let mut latencies: Vec<Duration> =
-            self.transactions.iter().filter_map(|t| t.flashblocks_latency).collect();
-
-        if latencies.is_empty() {
-            return FlashblocksLatencyMetrics::default();
-        }
-
-        latencies.sort();
-
-        let len = latencies.len();
-        let sum: Duration = latencies.iter().sum();
-        let mean = Duration::from_nanos((sum.as_nanos() / len as u128) as u64);
-
-        FlashblocksLatencyMetrics {
-            count: len as u64,
-            min: latencies[0],
-            max: latencies[len - 1],
-            mean,
-            p50: Self::percentile(&latencies, 50),
-            p90: Self::percentile(&latencies, 90),
-            p95: Self::percentile(&latencies, 95),
-            p99: Self::percentile(&latencies, 99),
         }
     }
 
@@ -226,8 +199,6 @@ pub struct MetricsSummary {
     pub block_latency: LatencyMetrics,
     /// Delay between block production time and receipt observation.
     pub block_receipt_delay: LatencyMetrics,
-    /// Flashblocks sequencer latency.
-    pub flashblocks_latency: FlashblocksLatencyMetrics,
     /// Throughput statistics.
     pub throughput: ThroughputMetrics,
     /// Rolling-window throughput percentiles (TPS and GPS).

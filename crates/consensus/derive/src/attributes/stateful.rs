@@ -104,7 +104,8 @@ where
             let (updates, errors) = sys_config.update_with_receipts(
                 &receipts,
                 self.rollup_cfg.l1_system_config_address,
-                self.rollup_cfg.is_ecotone_active(header.timestamp),
+                self.rollup_cfg
+                    .is_ecotone_active(self.rollup_cfg.l1_timestamp_to_l2_time(header.timestamp)),
             );
             for kind in &updates {
                 info!(target: "attributes", epoch = epoch.number, %kind, "Applied system config update");
@@ -130,13 +131,14 @@ where
         // Sanity check the L1 origin was correctly selected to maintain the time invariant
         // between L1 and L2.
         let next_l2_time = l2_parent.block_info.timestamp + self.rollup_cfg.block_time;
-        if next_l2_time < l1_header.timestamp {
+        let l1_header_l2_time = self.rollup_cfg.l1_timestamp_to_l2_time(l1_header.timestamp);
+        if next_l2_time < l1_header_l2_time {
             return Err(PipelineErrorKind::Reset(
                 BuilderError::BrokenTimeInvariant(
                     l2_parent.l1_origin,
                     next_l2_time,
                     BlockNumHash { hash: l1_header.hash_slow(), number: l1_header.number },
-                    l1_header.timestamp,
+                    l1_header_l2_time,
                 )
                 .into(),
             ));

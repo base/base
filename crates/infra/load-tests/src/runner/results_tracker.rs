@@ -13,8 +13,6 @@ use crate::metrics::TransactionMetrics;
 
 /// Maximum canonical receipt entries retained from recent blocks.
 const MAX_RECEIPT_CACHE_SIZE: usize = 100_000;
-/// Maximum flashblock entries retained from recent stream events.
-const MAX_FLASHBLOCK_CACHE_SIZE: usize = 50_000;
 
 /// A transaction accepted by a submission RPC.
 #[derive(Debug, Clone, Copy)]
@@ -51,15 +49,6 @@ pub struct BlockReceipt {
     pub success: bool,
 }
 
-/// Transaction data observed from the builder flashblocks broadcast stream.
-#[derive(Debug, Clone, Copy)]
-pub struct FlashblockInclusion {
-    /// Transaction hash.
-    pub tx_hash: TxHash,
-    /// When the load test client received the flashblock transaction notification.
-    pub included_at: Instant,
-}
-
 /// Tracks submitted transactions and turns inclusion observations into metrics.
 #[derive(Debug, Clone)]
 pub struct ResultsTracker {
@@ -70,9 +59,7 @@ pub struct ResultsTracker {
 struct ResultsTrackerInner {
     pending: HashMap<TxHash, PendingTransaction>,
     block_receipts: HashMap<TxHash, BlockReceiptInclusion>,
-    flashblocks: HashMap<TxHash, Instant>,
     receipt_eviction_queue: VecDeque<TxHash>,
-    flashblock_eviction_queue: VecDeque<TxHash>,
     unreported_confirmations: VecDeque<TransactionMetrics>,
     in_flight_per_sender: HashMap<Address, u64>,
     total_in_flight: u64,
@@ -82,8 +69,6 @@ struct ResultsTrackerInner {
 struct PendingTransaction {
     from: Address,
     submit_time: Instant,
-    /// Whether in-flight accounting was already released (e.g. by flashblock confirmation).
-    in_flight_released: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -105,9 +90,7 @@ impl ResultsTracker {
             inner: Arc::new(RwLock::new(ResultsTrackerInner {
                 pending: HashMap::new(),
                 block_receipts: HashMap::new(),
-                flashblocks: HashMap::new(),
                 receipt_eviction_queue: VecDeque::new(),
-                flashblock_eviction_queue: VecDeque::new(),
                 unreported_confirmations: VecDeque::new(),
                 in_flight_per_sender,
                 total_in_flight: 0,
@@ -127,11 +110,7 @@ impl ResultsTracker {
 
             inner.pending.insert(
                 transaction.tx_hash,
-                PendingTransaction {
-                    from: transaction.from,
-                    submit_time,
-                    in_flight_released: false,
-                },
+                PendingTransaction { from: transaction.from, submit_time },
             );
             inner
                 .in_flight_per_sender
@@ -141,32 +120,6 @@ impl ResultsTracker {
             inner.total_in_flight = inner.total_in_flight.saturating_add(1);
             inner.confirm_if_ready(transaction.tx_hash);
         }
-    }
-
-    /// Records transaction inclusions observed from the flashblock stream.
-    ///
-    /// When a pending transaction is seen in a flashblock, its in-flight slot is released
-    /// immediately so the sender can submit new transactions without waiting for the slower
-    /// canonical block receipt.
-    pub fn on_new_flashblock(&self, inclusions: Vec<FlashblockInclusion>) {
-        let mut inner = self.inner.write();
-
-        for inclusion in inclusions {
-            if let Entry::Vacant(e) = inner.flashblocks.entry(inclusion.tx_hash) {
-                e.insert(inclusion.included_at);
-                inner.flashblock_eviction_queue.push_back(inclusion.tx_hash);
-            }
-
-            if let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash)
-                && !pending.in_flight_released
-            {
-                pending.in_flight_released = true;
-                let from = pending.from;
-                inner.decrement_in_flight(&from);
-            }
-        }
-
-        inner.evict_flashblocks();
     }
 
     /// Records a newly observed canonical block and its receipts.
@@ -194,10 +147,6 @@ impl ResultsTracker {
     }
 
     /// Expires submitted transactions that were not observed in a canonical block.
-    ///
-    /// Removes all pending entries older than `max_age`, regardless of whether their
-    /// in-flight slot was already released. Returns the number of entries that were
-    /// NOT previously confirmed by a flashblock (true failures).
     pub fn expire_pending(&self, max_age: Duration) -> u64 {
         let now = Instant::now();
         let mut inner = self.inner.write();
@@ -209,17 +158,14 @@ impl ResultsTracker {
             })
             .collect();
 
-        let mut unconfirmed_count = 0u64;
+        let expired_count = expired.len() as u64;
         for tx_hash in expired {
-            if let Some(pending) = inner.pending.remove(&tx_hash)
-                && !pending.in_flight_released
-            {
+            if let Some(pending) = inner.pending.remove(&tx_hash) {
                 inner.decrement_in_flight(&pending.from);
-                unconfirmed_count += 1;
             }
         }
 
-        unconfirmed_count
+        expired_count
     }
 
     /// Drains confirmed metrics that have not yet been consumed by the runner.
@@ -264,15 +210,9 @@ impl ResultsTrackerInner {
         let block_receipt_delay = receipt
             .block_time
             .map(|block_time| receipt.observed_at.saturating_duration_since(block_time));
-        let flashblocks_latency = self
-            .flashblocks
-            .remove(&tx_hash)
-            .and_then(|included_at| included_at.checked_duration_since(pending.submit_time));
-
         let mut metrics = TransactionMetrics::new(
             tx_hash,
             block_latency,
-            flashblocks_latency,
             receipt.gas_used,
             receipt.effective_gas_price,
             Some(receipt.block_number),
@@ -282,9 +222,7 @@ impl ResultsTrackerInner {
         metrics.reverted = !receipt.success;
 
         self.block_receipts.remove(&tx_hash);
-        if !pending.in_flight_released {
-            self.decrement_in_flight(&pending.from);
-        }
+        self.decrement_in_flight(&pending.from);
         self.unreported_confirmations.push_back(metrics);
     }
 
@@ -300,17 +238,6 @@ impl ResultsTrackerInner {
             match self.receipt_eviction_queue.pop_front() {
                 Some(old) => {
                     self.block_receipts.remove(&old);
-                }
-                None => break,
-            }
-        }
-    }
-
-    fn evict_flashblocks(&mut self) {
-        while self.flashblocks.len() > MAX_FLASHBLOCK_CACHE_SIZE {
-            match self.flashblock_eviction_queue.pop_front() {
-                Some(old) => {
-                    self.flashblocks.remove(&old);
                 }
                 None => break,
             }
@@ -386,112 +313,5 @@ mod tests {
         assert!(metrics[0].reverted, "reverted flag should be set");
         assert_eq!(metrics[0].gas_used, 45_000);
         assert_eq!(tracker.total_in_flight(), 0);
-    }
-
-    #[test]
-    fn joins_flashblock_latency() {
-        let from = address!("0000000000000000000000000000000000000001");
-        let tx_hash = TxHash::repeat_byte(2);
-        let tracker = ResultsTracker::new(&[from]);
-
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
-        tracker
-            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
-        tracker.on_new_block(
-            BlockObservation {
-                number: 8,
-                block_time: Some(Instant::now()),
-                observed_at: Instant::now(),
-            },
-            vec![BlockReceipt {
-                tx_hash,
-                block_number: 8,
-                gas_used: 21_000,
-                effective_gas_price: 1_000_000_000,
-                success: true,
-            }],
-        );
-
-        let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1);
-        assert!(metrics[0].flashblocks_latency.is_some());
-    }
-
-    #[test]
-    fn flashblock_releases_in_flight_before_block_receipt() {
-        let from = address!("0000000000000000000000000000000000000001");
-        let tx_hash = TxHash::repeat_byte(4);
-        let tracker = ResultsTracker::new(&[from]);
-
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
-        assert_eq!(tracker.total_in_flight(), 1);
-        assert_eq!(tracker.in_flight_for(&from), 1);
-
-        tracker
-            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
-        assert_eq!(tracker.total_in_flight(), 0, "flashblock should release in-flight slot");
-        assert_eq!(tracker.in_flight_for(&from), 0);
-
-        // Block receipt arrives later — should not double-decrement.
-        let block_time = Instant::now() + Duration::from_millis(500);
-        tracker.on_new_block(
-            BlockObservation {
-                number: 10,
-                block_time: Some(block_time),
-                observed_at: block_time + Duration::from_millis(100),
-            },
-            vec![BlockReceipt {
-                tx_hash,
-                block_number: 10,
-                gas_used: 112_000,
-                effective_gas_price: 1_000_000_000,
-                success: true,
-            }],
-        );
-
-        assert_eq!(tracker.total_in_flight(), 0, "block receipt should not double-decrement");
-        let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1, "metrics should still be produced from block receipt");
-        assert!(metrics[0].flashblocks_latency.is_some());
-    }
-
-    #[test]
-    fn duplicate_flashblock_does_not_double_release() {
-        let from = address!("0000000000000000000000000000000000000001");
-        let tx_hash = TxHash::repeat_byte(5);
-        let tracker = ResultsTracker::new(&[from]);
-
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
-        assert_eq!(tracker.total_in_flight(), 1);
-
-        tracker
-            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
-        assert_eq!(tracker.total_in_flight(), 0);
-
-        // Duplicate flashblock event for same tx.
-        tracker
-            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
-        assert_eq!(tracker.total_in_flight(), 0, "duplicate flashblock should not underflow");
-    }
-
-    #[test]
-    fn expire_pending_cleans_up_flashblock_released_entries() {
-        let from = address!("0000000000000000000000000000000000000001");
-        let tx_hash = TxHash::repeat_byte(0xe0);
-        let tracker = ResultsTracker::new(&[from]);
-
-        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
-        assert_eq!(tracker.pending_count(), 1);
-
-        // Flashblock confirms it — releases in-flight but keeps the pending entry.
-        tracker
-            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
-        assert_eq!(tracker.pending_count(), 1, "pending entry should still exist");
-        assert_eq!(tracker.total_in_flight(), 0);
-
-        // expire_pending should remove flashblock-released entries too.
-        let expired = tracker.expire_pending(Duration::ZERO);
-        assert_eq!(expired, 0, "flashblock-released tx is not a true failure");
-        assert_eq!(tracker.pending_count(), 0, "pending entry should be cleaned up");
     }
 }

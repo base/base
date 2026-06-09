@@ -1,4 +1,4 @@
-//! Priority fee estimation based on resource consumption in flashblocks.
+//! Priority fee estimation based on resource consumption in segments.
 //!
 //! This module provides the core algorithm for estimating the priority fee needed
 //! to achieve inclusion in a block, based on historical transaction data.
@@ -32,15 +32,15 @@ pub enum EstimateError {
 ///
 /// These limits mirror the builder's budget semantics.
 ///
-/// Execution time resets for each flashblock, matching the builder's
-/// `flashblock_execution_time_limit_us` and `reset_flashblock_execution_time()`.
+/// Execution time resets for each segment, matching the builder's
+/// `segment_execution_time_limit_us` and `reset_segment_execution_time()`.
 /// Gas, DA bytes, and state root time accumulate across the block against
-/// cumulative per-flashblock targets derived from the whole-block budget.
+/// cumulative per-segment targets derived from the whole-block budget.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ResourceLimits {
     /// Gas budget for the whole block.
     pub gas_used: Option<u64>,
-    /// Execution time budget per flashblock in microseconds.
+    /// Execution time budget per segment in microseconds.
     pub execution_time_us: Option<u128>,
     /// State root computation budget for the whole block in microseconds.
     pub state_root_time_us: Option<u128>,
@@ -60,7 +60,7 @@ impl ResourceLimits {
     }
 }
 
-/// Resources that influence flashblock inclusion ordering.
+/// Resources that influence segment inclusion ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ResourceKind {
     /// Gas consumption.
@@ -75,7 +75,7 @@ pub enum ResourceKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResourceBudgetBehavior {
-    ResetsEachFlashblock,
+    ResetsEachSegment,
     AccumulatesUntilBlockEnd,
 }
 
@@ -87,12 +87,12 @@ impl ResourceKind {
 
     /// Returns how this resource budget behaves in the builder.
     ///
-    /// Execution time resets each flashblock, while gas, DA bytes, and state root time
+    /// Execution time resets each segment, while gas, DA bytes, and state root time
     /// accumulate across the block against growing cumulative targets in the tx-pool
-    /// flashblock loop.
+    /// segment loop.
     const fn budget_behavior(self) -> ResourceBudgetBehavior {
         match self {
-            Self::ExecutionTime => ResourceBudgetBehavior::ResetsEachFlashblock,
+            Self::ExecutionTime => ResourceBudgetBehavior::ResetsEachSegment,
             Self::GasUsed | Self::StateRootTime | Self::DataAvailability => {
                 ResourceBudgetBehavior::AccumulatesUntilBlockEnd
             }
@@ -220,14 +220,14 @@ impl ResourceEstimates {
     }
 }
 
-/// Estimates for a specific flashblock index.
+/// Estimates for a specific segment index.
 #[derive(Debug, Clone)]
-pub struct FlashblockResourceEstimates {
-    /// Flashblock index in the pending flashblock stream.
+pub struct SegmentResourceEstimates {
+    /// Segment index in the tx-pool segment schedule.
     ///
-    /// The base flashblock at index `0` is excluded from estimation because the builder's
+    /// The base segment at index `0` is excluded from estimation because the builder's
     /// metered tx-pool budgeting loop starts at index `1`.
-    pub flashblock_index: u64,
+    pub segment_index: u64,
     /// Per-resource estimates.
     pub estimates: ResourceEstimates,
 }
@@ -237,12 +237,12 @@ pub struct FlashblockResourceEstimates {
 pub struct BlockPriorityEstimates {
     /// Block number.
     pub block_number: u64,
-    /// Per-flashblock estimates for the scheduled tx-pool flashblocks (`1..=target`).
-    pub flashblocks: Vec<FlashblockResourceEstimates>,
-    /// Minimum recommended fee across all flashblocks (easiest inclusion).
-    pub min_across_flashblocks: ResourceEstimates,
-    /// Maximum recommended fee across all flashblocks (most competitive).
-    pub max_across_flashblocks: ResourceEstimates,
+    /// Per-segment estimates for the scheduled tx-pool segments (`1..=target`).
+    pub segments: Vec<SegmentResourceEstimates>,
+    /// Minimum recommended fee across all segments (easiest inclusion).
+    pub min_across_segments: ResourceEstimates,
+    /// Maximum recommended fee across all segments (most competitive).
+    pub max_across_segments: ResourceEstimates,
 }
 
 /// Priority fee estimate aggregated across multiple recent blocks.
@@ -256,8 +256,8 @@ pub struct RollingPriorityEstimate {
     pub priority_fee: U256,
 }
 
-const TARGET_FLASHBLOCKS_PER_BLOCK_NON_ZERO_MSG: &str =
-    "target_flashblocks_per_block must be greater than 0";
+const TARGET_SEGMENTS_PER_BLOCK_NON_ZERO_MSG: &str =
+    "target_segments_per_block must be greater than 0";
 
 pub(crate) const fn assert_valid_percentile(percentile: f64) {
     if !(percentile >= 0.0 && percentile <= 1.0) {
@@ -266,8 +266,8 @@ pub(crate) const fn assert_valid_percentile(percentile: f64) {
 }
 
 #[derive(Debug)]
-struct FlashblockEstimateInput<'a> {
-    flashblock_index: u64,
+struct SegmentEstimateInput<'a> {
+    segment_index: u64,
     transactions: Vec<&'a MeteredTransaction>,
 }
 
@@ -279,48 +279,48 @@ struct EstimatedBlock {
 
 #[derive(Debug)]
 struct BlockEstimateState<'a> {
-    flashblock_inputs: Vec<FlashblockEstimateInput<'a>>,
+    segment_inputs: Vec<SegmentEstimateInput<'a>>,
     prefix_transactions: Vec<Vec<&'a MeteredTransaction>>,
-    flashblock_estimates: Vec<FlashblockResourceEstimates>,
-    min_across_flashblocks: ResourceEstimates,
-    max_across_flashblocks: ResourceEstimates,
+    segment_estimates: Vec<SegmentResourceEstimates>,
+    min_across_segments: ResourceEstimates,
+    max_across_segments: ResourceEstimates,
 }
 
 impl<'a> BlockEstimateState<'a> {
-    fn new(block_metrics: &'a BlockMetrics, target_flashblocks_per_block: usize) -> Option<Self> {
-        let flashblock_inputs =
-            collect_scheduled_flashblock_inputs(block_metrics, target_flashblocks_per_block);
-        if flashblock_inputs.iter().all(|flashblock| flashblock.transactions.is_empty()) {
+    fn new(block_metrics: &'a BlockMetrics, target_segments_per_block: usize) -> Option<Self> {
+        let segment_inputs =
+            collect_scheduled_segment_inputs(block_metrics, target_segments_per_block);
+        if segment_inputs.iter().all(|segment| segment.transactions.is_empty()) {
             return None;
         }
 
-        let prefix_transactions = collect_sorted_transaction_prefixes(&flashblock_inputs);
-        let flashblock_estimates = flashblock_inputs
+        let prefix_transactions = collect_sorted_transaction_prefixes(&segment_inputs);
+        let segment_estimates = segment_inputs
             .iter()
-            .map(|flashblock| FlashblockResourceEstimates {
-                flashblock_index: flashblock.flashblock_index,
+            .map(|segment| SegmentResourceEstimates {
+                segment_index: segment.segment_index,
                 estimates: ResourceEstimates::default(),
             })
             .collect();
 
         Some(Self {
-            flashblock_inputs,
+            segment_inputs,
             prefix_transactions,
-            flashblock_estimates,
-            min_across_flashblocks: ResourceEstimates::default(),
-            max_across_flashblocks: ResourceEstimates::default(),
+            segment_estimates,
+            min_across_segments: ResourceEstimates::default(),
+            max_across_segments: ResourceEstimates::default(),
         })
     }
 
     fn record_estimate(
         &mut self,
         resource: ResourceKind,
-        flashblock_position: usize,
+        segment_position: usize,
         estimate: ResourceEstimate,
     ) {
-        update_min_estimate(&mut self.min_across_flashblocks, resource, &estimate);
-        update_max_estimate(&mut self.max_across_flashblocks, resource, &estimate);
-        self.flashblock_estimates[flashblock_position].estimates.set(resource, estimate);
+        update_min_estimate(&mut self.min_across_segments, resource, &estimate);
+        update_max_estimate(&mut self.max_across_segments, resource, &estimate);
+        self.segment_estimates[segment_position].estimates.set(resource, estimate);
     }
 
     fn into_estimated_block(
@@ -331,42 +331,42 @@ impl<'a> BlockEstimateState<'a> {
         EstimatedBlock {
             estimates: BlockPriorityEstimates {
                 block_number,
-                flashblocks: self.flashblock_estimates,
-                min_across_flashblocks: self.min_across_flashblocks,
-                max_across_flashblocks: self.max_across_flashblocks,
+                segments: self.segment_estimates,
+                min_across_segments: self.min_across_segments,
+                max_across_segments: self.max_across_segments,
             },
             rolling_summary,
         }
     }
 }
 
-/// Computes resource fee estimates based on cached flashblock metering data.
+/// Computes resource fee estimates based on cached segment metering data.
 #[derive(Debug)]
 pub struct PriorityFeeEstimator {
     cache: Arc<RwLock<MeteringCache>>,
     percentile: f64,
     limits: ResourceLimits,
     default_priority_fee: U256,
-    target_flashblocks_per_block: usize,
+    target_segments_per_block: usize,
 }
 
 impl PriorityFeeEstimator {
     /// Creates a new estimator referencing the shared metering cache.
     ///
     /// # Parameters
-    /// - `cache`: Shared cache containing recent flashblock metering data.
+    /// - `cache`: Shared cache containing recent segment metering data.
     /// - `percentile`: Point in the fee distribution (among transactions above threshold)
     ///   to use for the recommended fee.
     /// - `limits`: Configured resource capacity limits.
     /// - `default_priority_fee`: Fee to return when a resource is not congested.
-    /// - `target_flashblocks_per_block`: Number of tx-pool flashblocks the builder budgets
-    ///   per block. This excludes the initial base flashblock at index `0`.
+    /// - `target_segments_per_block`: Number of tx-pool segments the builder budgets
+    ///   per block. This excludes the initial base segment at index `0`.
     pub const fn new(
         cache: Arc<RwLock<MeteringCache>>,
         percentile: f64,
         limits: ResourceLimits,
         default_priority_fee: U256,
-        target_flashblocks_per_block: usize,
+        target_segments_per_block: usize,
     ) -> Self {
         assert_valid_percentile(percentile);
         Self {
@@ -374,8 +374,8 @@ impl PriorityFeeEstimator {
             percentile,
             limits,
             default_priority_fee,
-            target_flashblocks_per_block: NonZeroUsize::new(target_flashblocks_per_block)
-                .expect(TARGET_FLASHBLOCKS_PER_BLOCK_NON_ZERO_MSG)
+            target_segments_per_block: NonZeroUsize::new(target_segments_per_block)
+                .expect(TARGET_SEGMENTS_PER_BLOCK_NON_ZERO_MSG)
                 .get(),
         }
     }
@@ -431,10 +431,10 @@ impl PriorityFeeEstimator {
         self.ensure_capacity(resource, demand, limit)?;
 
         let mut rolling_summary = None;
-        for flashblock_position in 0..state.flashblock_inputs.len() {
+        for segment_position in 0..state.segment_inputs.len() {
             let estimate = self.estimate_resource(
                 resource,
-                &state.flashblock_inputs[flashblock_position].transactions,
+                &state.segment_inputs[segment_position].transactions,
                 demand,
                 limit,
             )?;
@@ -445,10 +445,10 @@ impl PriorityFeeEstimator {
                 rolling_summary = Some(estimate.clone());
             }
 
-            state.record_estimate(resource, flashblock_position, estimate);
+            state.record_estimate(resource, segment_position, estimate);
         }
 
-        Ok(rolling_summary.expect("flashblock_inputs are non-empty"))
+        Ok(rolling_summary.expect("segment_inputs are non-empty"))
     }
 
     fn estimate_accumulating_resource(
@@ -458,14 +458,14 @@ impl PriorityFeeEstimator {
         demand: u128,
         total_limit: u128,
     ) -> Result<ResourceEstimate, EstimateError> {
-        let block_end_limit = limit_at_block_end(total_limit, self.target_flashblocks_per_block);
+        let block_end_limit = limit_at_block_end(total_limit, self.target_segments_per_block);
         self.ensure_capacity(resource, demand, block_end_limit)?;
 
-        for flashblock_position in 0..state.flashblock_inputs.len() {
-            let deadline_limit = cumulative_limit_for_flashblock(
+        for segment_position in 0..state.segment_inputs.len() {
+            let deadline_limit = cumulative_limit_for_segment(
                 total_limit,
-                state.flashblock_inputs[flashblock_position].flashblock_index,
-                self.target_flashblocks_per_block,
+                state.segment_inputs[segment_position].segment_index,
+                self.target_segments_per_block,
             );
             if demand > deadline_limit {
                 continue;
@@ -473,11 +473,11 @@ impl PriorityFeeEstimator {
 
             let estimate = self.estimate_resource(
                 resource,
-                state.prefix_transactions[flashblock_position].as_slice(),
+                state.prefix_transactions[segment_position].as_slice(),
                 demand,
                 deadline_limit,
             )?;
-            state.record_estimate(resource, flashblock_position, estimate);
+            state.record_estimate(resource, segment_position, estimate);
         }
 
         let block_end_transactions = state
@@ -488,9 +488,9 @@ impl PriorityFeeEstimator {
         let block_end_estimate =
             self.estimate_resource(resource, block_end_transactions, demand, block_end_limit)?;
 
-        if state.min_across_flashblocks.get(resource).is_none() {
-            update_min_estimate(&mut state.min_across_flashblocks, resource, &block_end_estimate);
-            update_max_estimate(&mut state.max_across_flashblocks, resource, &block_end_estimate);
+        if state.min_across_segments.get(resource).is_none() {
+            update_min_estimate(&mut state.min_across_segments, resource, &block_end_estimate);
+            update_max_estimate(&mut state.max_across_segments, resource, &block_end_estimate);
         }
 
         Ok(block_end_estimate)
@@ -500,7 +500,7 @@ impl PriorityFeeEstimator {
     /// the most recent block in the cache is used.
     ///
     /// Returns `Ok(None)` if the cache is empty, the requested block is not cached,
-    /// or no transactions exist in the cached tx-pool flashblocks.
+    /// or no transactions exist in the cached tx-pool segments.
     ///
     /// Returns `Err` if the bundle's demand exceeds any resource's capacity limit.
     pub fn estimate_for_block(
@@ -527,7 +527,7 @@ impl PriorityFeeEstimator {
     ) -> Result<Option<EstimatedBlock>, EstimateError> {
         let block_number = block_metrics.block_number;
         let Some(mut state) =
-            BlockEstimateState::new(block_metrics, self.target_flashblocks_per_block)
+            BlockEstimateState::new(block_metrics, self.target_segments_per_block)
         else {
             return Ok(None);
         };
@@ -539,7 +539,7 @@ impl PriorityFeeEstimator {
             };
 
             let resource_summary = match resource.budget_behavior() {
-                ResourceBudgetBehavior::ResetsEachFlashblock => self.estimate_resetting_resource(
+                ResourceBudgetBehavior::ResetsEachSegment => self.estimate_resetting_resource(
                     resource,
                     &mut state,
                     demand_value,
@@ -620,43 +620,38 @@ impl PriorityFeeEstimator {
     }
 }
 
-fn collect_scheduled_flashblock_inputs<'a>(
+fn collect_scheduled_segment_inputs<'a>(
     block_metrics: &'a BlockMetrics,
-    target_flashblocks_per_block: usize,
-) -> Vec<FlashblockEstimateInput<'a>> {
-    let transactions_by_flashblock: BTreeMap<u64, Vec<&MeteredTransaction>> = block_metrics
-        .flashblocks()
-        .filter(|flashblock| flashblock.flashblock_index > 0)
-        .map(|flashblock| {
-            (flashblock.flashblock_index, flashblock.transactions().iter().collect::<Vec<_>>())
-        })
+    target_segments_per_block: usize,
+) -> Vec<SegmentEstimateInput<'a>> {
+    let transactions_by_segment: BTreeMap<u64, Vec<&MeteredTransaction>> = block_metrics
+        .segments()
+        .filter(|segment| segment.segment_index > 0)
+        .map(|segment| (segment.segment_index, segment.transactions().iter().collect::<Vec<_>>()))
         .collect();
 
-    // Late FCUs can cause the builder to emit fewer flashblocks for a given block, but this
-    // estimator still mirrors the configured tx-pool flashblock target rather than inferring the
-    // reduced count from cached data. Any scheduled flashblocks that were never emitted are
+    // Late FCUs can cause the builder to emit fewer segments for a given block, but this
+    // estimator still mirrors the configured tx-pool segment target rather than inferring the
+    // reduced count from cached data. Any scheduled segments that were never emitted are
     // therefore modeled as empty inputs.
-    (1..=target_flashblocks_per_block as u64)
-        .map(|flashblock_index| FlashblockEstimateInput {
-            flashblock_index,
-            transactions: transactions_by_flashblock
-                .get(&flashblock_index)
-                .cloned()
-                .unwrap_or_default(),
+    (1..=target_segments_per_block as u64)
+        .map(|segment_index| SegmentEstimateInput {
+            segment_index,
+            transactions: transactions_by_segment.get(&segment_index).cloned().unwrap_or_default(),
         })
         .collect()
 }
 
 fn collect_sorted_transaction_prefixes<'a>(
-    flashblocks: &[FlashblockEstimateInput<'a>],
+    segments: &[SegmentEstimateInput<'a>],
 ) -> Vec<Vec<&'a MeteredTransaction>> {
-    let total_tx_count = flashblocks.iter().map(|flashblock| flashblock.transactions.len()).sum();
-    let mut prefixes = Vec::with_capacity(flashblocks.len());
+    let total_tx_count = segments.iter().map(|segment| segment.transactions.len()).sum();
+    let mut prefixes = Vec::with_capacity(segments.len());
     let mut running_transactions = Vec::with_capacity(total_tx_count);
 
-    for flashblock in flashblocks {
+    for segment in segments {
         running_transactions =
-            merge_transactions_desc(running_transactions, flashblock.transactions.as_slice());
+            merge_transactions_desc(running_transactions, segment.transactions.as_slice());
         prefixes.push(running_transactions.clone());
     }
 
@@ -685,30 +680,26 @@ fn merge_transactions_desc<'a>(
 }
 
 /// Mirrors the builder's cumulative target math:
-/// `per_batch = total_limit / flashblocks_per_block`, then the tx-pool flashblock deadline
-/// is `per_batch * flashblock_index`.
+/// `per_batch = total_limit / segments_per_block`, then the tx-pool segment deadline
+/// is `per_batch * segment_index`.
 ///
 /// This intentionally preserves the builder's integer division. If `total_limit` is not evenly
-/// divisible by `total_flashblock_count`, the block-end deadline is slightly below `total_limit`.
-const fn cumulative_limit_for_flashblock(
+/// divisible by `total_segment_count`, the block-end deadline is slightly below `total_limit`.
+const fn cumulative_limit_for_segment(
     total_limit: u128,
-    flashblock_index: u64,
-    total_flashblock_count: usize,
+    segment_index: u64,
+    total_segment_count: usize,
 ) -> u128 {
-    if total_flashblock_count == 0 {
+    if total_segment_count == 0 {
         return 0;
     }
 
-    let per_flashblock_limit = total_limit / total_flashblock_count as u128;
-    per_flashblock_limit.saturating_mul(flashblock_index as u128)
+    let per_segment_limit = total_limit / total_segment_count as u128;
+    per_segment_limit.saturating_mul(segment_index as u128)
 }
 
-const fn limit_at_block_end(total_limit: u128, total_flashblock_count: usize) -> u128 {
-    cumulative_limit_for_flashblock(
-        total_limit,
-        total_flashblock_count as u64,
-        total_flashblock_count,
-    )
+const fn limit_at_block_end(total_limit: u128, total_segment_count: usize) -> u128 {
+    cumulative_limit_for_segment(total_limit, total_segment_count as u64, total_segment_count)
 }
 
 const fn estimate_competitiveness_key(
@@ -1103,22 +1094,22 @@ mod tests {
 
     fn setup_estimator_with_target(
         limits: ResourceLimits,
-        target_flashblocks_per_block: usize,
+        target_segments_per_block: usize,
     ) -> (Arc<RwLock<MeteringCache>>, PriorityFeeEstimator) {
-        let cache = Arc::new(RwLock::new(MeteringCache::new(4, target_flashblocks_per_block + 1)));
+        let cache = Arc::new(RwLock::new(MeteringCache::new(4, target_segments_per_block + 1)));
         let estimator = PriorityFeeEstimator::new(
             Arc::clone(&cache),
             0.5,
             limits,
             DEFAULT_FEE,
-            target_flashblocks_per_block,
+            target_segments_per_block,
         );
         (cache, estimator)
     }
 
     #[test]
-    #[should_panic(expected = "target_flashblocks_per_block must be greater than 0")]
-    fn estimator_rejects_zero_target_flashblocks_per_block() {
+    #[should_panic(expected = "target_segments_per_block must be greater than 0")]
+    fn estimator_rejects_zero_target_segments_per_block() {
         let _ = setup_estimator_with_target(DEFAULT_LIMITS, 0);
     }
 
@@ -1143,7 +1134,7 @@ mod tests {
             estimator.estimate_for_block(Some(1), demand).expect("no error").expect("cached block");
 
         assert_eq!(estimates.block_number, 1);
-        let gas_estimate = estimates.max_across_flashblocks.gas_used.expect("gas estimate present");
+        let gas_estimate = estimates.max_across_segments.gas_used.expect("gas estimate present");
         assert_eq!(gas_estimate.threshold_priority_fee, U256::from(10));
     }
 
@@ -1316,7 +1307,7 @@ mod tests {
     }
 
     #[test]
-    fn collect_sorted_transaction_prefixes_merges_each_flashblock_into_descending_prefixes() {
+    fn collect_sorted_transaction_prefixes_merges_each_segment_into_descending_prefixes() {
         let tx_100 = tx(100, 1);
         let tx_95 = tx(95, 1);
         let tx_90 = tx(90, 1);
@@ -1324,13 +1315,13 @@ mod tests {
         let tx_70 = tx(70, 1);
         let tx_60 = tx(60, 1);
 
-        let flashblocks = vec![
-            FlashblockEstimateInput { flashblock_index: 1, transactions: vec![&tx_100, &tx_80] },
-            FlashblockEstimateInput { flashblock_index: 2, transactions: vec![&tx_90, &tx_70] },
-            FlashblockEstimateInput { flashblock_index: 3, transactions: vec![&tx_95, &tx_60] },
+        let segments = vec![
+            SegmentEstimateInput { segment_index: 1, transactions: vec![&tx_100, &tx_80] },
+            SegmentEstimateInput { segment_index: 2, transactions: vec![&tx_90, &tx_70] },
+            SegmentEstimateInput { segment_index: 3, transactions: vec![&tx_95, &tx_60] },
         ];
 
-        let prefixes = collect_sorted_transaction_prefixes(&flashblocks);
+        let prefixes = collect_sorted_transaction_prefixes(&segments);
 
         let priorities: Vec<Vec<U256>> = prefixes
             .iter()
@@ -1355,7 +1346,7 @@ mod tests {
     }
 
     #[test]
-    fn estimate_for_block_resetting_resources_use_local_flashblock_competition() {
+    fn estimate_for_block_resetting_resources_use_local_segment_competition() {
         let limits = ResourceLimits {
             gas_used: None,
             execution_time_us: Some(30),
@@ -1375,17 +1366,11 @@ mod tests {
         let result =
             estimator.estimate_for_block(Some(1), demand).expect("no error").expect("block exists");
 
-        assert_eq!(result.flashblocks.len(), 2);
-        let first = result.flashblocks[0]
-            .estimates
-            .execution_time
-            .as_ref()
-            .expect("execution time estimate");
-        let second = result.flashblocks[1]
-            .estimates
-            .execution_time
-            .as_ref()
-            .expect("execution time estimate");
+        assert_eq!(result.segments.len(), 2);
+        let first =
+            result.segments[0].estimates.execution_time.as_ref().expect("execution time estimate");
+        let second =
+            result.segments[1].estimates.execution_time.as_ref().expect("execution time estimate");
 
         assert_eq!(first.threshold_priority_fee, U256::from(100));
         assert_eq!(second.threshold_priority_fee, U256::from(80));
@@ -1411,7 +1396,7 @@ mod tests {
             estimator.estimate_for_block(Some(1), demand).expect("no error").expect("block exists");
 
         let execution_summary =
-            result.max_across_flashblocks.execution_time.as_ref().expect("execution time summary");
+            result.max_across_segments.execution_time.as_ref().expect("execution time summary");
         assert_eq!(execution_summary.recommended_priority_fee, DEFAULT_FEE);
         assert_eq!(execution_summary.total_transactions, 2);
         assert_eq!(execution_summary.threshold_tx_count, 2);
@@ -1461,17 +1446,14 @@ mod tests {
         let result =
             estimator.estimate_for_block(None, demand).expect("no error").expect("block exists");
 
-        assert_eq!(result.flashblocks.len(), 4);
-        assert!(result.flashblocks[0].estimates.gas_used.is_none());
+        assert_eq!(result.segments.len(), 4);
+        assert!(result.segments[0].estimates.gas_used.is_none());
 
-        let later_flashblock = result.flashblocks[1]
-            .estimates
-            .gas_used
-            .as_ref()
-            .expect("gas estimate for later flashblock");
-        assert_eq!(later_flashblock.threshold_priority_fee, U256::from(100));
+        let later_segment =
+            result.segments[1].estimates.gas_used.as_ref().expect("gas estimate for later segment");
+        assert_eq!(later_segment.threshold_priority_fee, U256::from(100));
 
-        let block_summary = result.max_across_flashblocks.gas_used.expect("gas summary");
+        let block_summary = result.max_across_segments.gas_used.expect("gas summary");
         assert_eq!(block_summary.threshold_priority_fee, U256::from(100));
     }
 
@@ -1502,7 +1484,7 @@ mod tests {
     }
 
     #[test]
-    fn estimate_for_block_ignores_base_flashblock_for_budgeted_resources() {
+    fn estimate_for_block_ignores_base_segment_for_budgeted_resources() {
         let limits = ResourceLimits {
             gas_used: Some(20),
             execution_time_us: None,
@@ -1520,11 +1502,11 @@ mod tests {
         let result =
             estimator.estimate_for_block(Some(1), demand).expect("no error").expect("block exists");
 
-        let gas_estimate = result.flashblocks[0]
+        let gas_estimate = result.segments[0]
             .estimates
             .gas_used
             .as_ref()
-            .expect("gas estimate for first tx-pool flashblock");
+            .expect("gas estimate for first tx-pool segment");
         assert_eq!(gas_estimate.threshold_priority_fee, DEFAULT_FEE);
         assert_eq!(gas_estimate.recommended_priority_fee, DEFAULT_FEE);
     }

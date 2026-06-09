@@ -50,22 +50,20 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
     /// [`OnlineBlobProvider`] will attempt to load them dynamically at runtime if they are not
     /// provided.
     ///
-    /// ## Panics
-    /// Panics if the genesis time or slot interval cannot be loaded from the beacon client.
-    pub async fn init(beacon_client: B) -> Self {
+    /// Returns an error if the genesis time or slot interval cannot be loaded from the beacon
+    /// client.
+    pub async fn init(beacon_client: B) -> Result<Self, BlobProviderError> {
         let genesis_time = beacon_client
             .genesis_time()
             .await
             .map(|r| r.data.genesis_time)
-            .map_err(|e| BlobProviderError::Backend(e.to_string()))
-            .expect("Failed to load genesis time from beacon client");
+            .map_err(|e| BlobProviderError::Backend(e.to_string()))?;
         let slot_interval = beacon_client
             .slot_interval()
             .await
             .map(|r| r.data.seconds_per_slot)
-            .map_err(|e| BlobProviderError::Backend(e.to_string()))
-            .expect("Failed to load slot interval from beacon client");
-        Self { beacon_client, genesis_time, slot_interval }
+            .map_err(|e| BlobProviderError::Backend(e.to_string()))?;
+        Ok(Self { beacon_client, genesis_time, slot_interval })
     }
 
     /// Computes the slot for the given timestamp.
@@ -225,6 +223,8 @@ mod tests {
     enum MockBeaconError {
         SlotNotFound,
         BlobNotFound(B256),
+        GenesisUnavailable,
+        SlotIntervalUnavailable,
     }
 
     impl std::fmt::Display for MockBeaconError {
@@ -232,6 +232,8 @@ mod tests {
             match self {
                 Self::SlotNotFound => write!(f, "slot not found"),
                 Self::BlobNotFound(h) => write!(f, "blob not found: {h}"),
+                Self::GenesisUnavailable => write!(f, "genesis unavailable"),
+                Self::SlotIntervalUnavailable => write!(f, "slot interval unavailable"),
             }
         }
     }
@@ -245,6 +247,8 @@ mod tests {
     struct MockBeaconClient {
         blobs: HashMap<B256, Blob>,
         fail_with_slot_not_found: bool,
+        fail_genesis_time: bool,
+        fail_slot_interval: bool,
     }
 
     #[async_trait]
@@ -256,10 +260,16 @@ mod tests {
         }
 
         async fn slot_interval(&self) -> Result<APIConfigResponse, Self::Error> {
+            if self.fail_slot_interval {
+                return Err(MockBeaconError::SlotIntervalUnavailable);
+            }
             Ok(APIConfigResponse::new(12))
         }
 
         async fn genesis_time(&self) -> Result<APIGenesisResponse, Self::Error> {
+            if self.fail_genesis_time {
+                return Err(MockBeaconError::GenesisUnavailable);
+            }
             Ok(APIGenesisResponse::new(0))
         }
 
@@ -289,6 +299,28 @@ mod tests {
         let kzg_blob = c_kzg::Blob::new(blob.0);
         let commitment = kzg_settings.get().blob_to_kzg_commitment(&kzg_blob).unwrap();
         kzg_to_versioned_hash(commitment.as_slice())
+    }
+
+    /// Verifies that blob provider initialization returns loaded beacon timing values.
+    #[tokio::test]
+    async fn test_init_loads_beacon_timing() {
+        let provider = OnlineBlobProvider::init(MockBeaconClient::default()).await.unwrap();
+
+        assert_eq!(provider.genesis_time, 0);
+        assert_eq!(provider.slot_interval, 12);
+    }
+
+    /// Verifies that blob provider initialization returns a backend error instead of panicking.
+    #[tokio::test]
+    async fn test_init_returns_beacon_backend_error() {
+        let mock = MockBeaconClient { fail_genesis_time: true, ..Default::default() };
+
+        let result = OnlineBlobProvider::init(mock).await;
+
+        assert!(
+            matches!(&result, Err(BlobProviderError::Backend(message)) if message == "genesis unavailable"),
+            "init must return a backend error for beacon timing failures, got {result:?}"
+        );
     }
 
     /// An empty `blob_hashes` slice must return `Ok(vec![])` without touching the beacon client.

@@ -102,6 +102,18 @@ impl BlockHandler {
     /// <https://specs.base.org/protocol/consensus/p2p#block-validation>
     const MAX_BLOCKS_TO_KEEP: usize = 5;
 
+    /// Number of seconds a gossiped block may be ahead of the local clock.
+    const TIMESTAMP_FUTURE_WINDOW_SECONDS: u64 = 5;
+
+    /// Number of seconds a gossiped block may lag the local clock.
+    const TIMESTAMP_PAST_WINDOW_SECONDS: u64 = 60;
+
+    /// Number of seconds a millisecond-timestamp devnet block may lag the local clock.
+    ///
+    /// Local 200ms devnets must emit every missed slot after a stall. Keeping the production
+    /// 60-second past window for those configs prevents validators from accepting catch-up blocks.
+    const MILLIS_DEVNET_TIMESTAMP_PAST_WINDOW_SECONDS: u64 = 24 * 60 * 60;
+
     /// Determines if a block is valid.
     ///
     /// We validate the block according to the rules defined here:
@@ -164,13 +176,27 @@ impl BlockHandler {
         &mut self,
         envelope: &NetworkPayloadEnvelope,
     ) -> Result<(), BlockInvalidError> {
-        let current_timestamp =
-            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        let current_time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        let current_timestamp = if self.rollup_config.uses_millisecond_timestamps() {
+            let current_millis = current_time.as_millis();
+            if current_millis > u128::from(u64::MAX) { u64::MAX } else { current_millis as u64 }
+        } else {
+            current_time.as_secs()
+        };
+        let future_window =
+            self.rollup_config.seconds_to_l2_time(Self::TIMESTAMP_FUTURE_WINDOW_SECONDS);
+        let past_window_seconds = if self.rollup_config.uses_millisecond_timestamps() {
+            Self::MILLIS_DEVNET_TIMESTAMP_PAST_WINDOW_SECONDS
+        } else {
+            Self::TIMESTAMP_PAST_WINDOW_SECONDS
+        };
+        let past_window = self.rollup_config.seconds_to_l2_time(past_window_seconds);
 
         // The timestamp is at most 5 seconds in the future.
-        let is_future = envelope.payload.timestamp() > current_timestamp + 5;
+        let is_future =
+            envelope.payload.timestamp() > current_timestamp.saturating_add(future_window);
         // The timestamp is at most 60 seconds in the past.
-        let is_past = envelope.payload.timestamp() < current_timestamp - 60;
+        let is_past = envelope.payload.timestamp() < current_timestamp.saturating_sub(past_window);
 
         // CHECK: The timestamp is not too far in the future or past.
         if is_future || is_past {
@@ -319,7 +345,7 @@ pub(crate) mod tests {
     use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_consensus::BaseTxEnvelope;
-    use base_common_genesis::RollupConfig;
+    use base_common_genesis::{ChainGenesis, RollupConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
 
     use super::*;
@@ -435,6 +461,73 @@ pub(crate) mod tests {
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
             RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
+            unsafe_signer,
+        );
+
+        assert!(handler.block_valid(&envelope).is_ok());
+    }
+
+    /// Generates a valid block with a millisecond timestamp and ensures it is accepted.
+    #[test]
+    fn test_block_valid_millisecond_timestamp() {
+        let mut block = v1_valid_block();
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        block.header.timestamp = now.as_millis() as u64;
+
+        let v1 = ExecutionPayloadV1::from_block_slow(&block);
+
+        let payload = BaseExecutionPayload::V1(v1);
+        let envelope = NetworkPayloadEnvelope {
+            payload,
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: None,
+        };
+
+        let msg = envelope.payload_hash.signature_message(8453);
+        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
+        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
+        let mut handler = BlockHandler::new(
+            RollupConfig {
+                genesis: ChainGenesis { l2_time: block.header.timestamp, ..Default::default() },
+                block_time: 200,
+                l2_chain_id: Chain::base_mainnet(),
+                ..Default::default()
+            },
+            unsafe_signer,
+        );
+
+        assert!(handler.block_valid(&envelope).is_ok());
+    }
+
+    /// Millisecond-timestamp devnets accept catch-up blocks more than 60 seconds behind wall time.
+    #[test]
+    fn test_block_valid_millisecond_timestamp_allows_devnet_catchup() {
+        let mut block = v1_valid_block();
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        let one_hour_millis = RollupConfig::MILLISECONDS_PER_SECOND * 60 * 60;
+        block.header.timestamp = (now.as_millis() as u64).saturating_sub(one_hour_millis);
+
+        let v1 = ExecutionPayloadV1::from_block_slow(&block);
+
+        let payload = BaseExecutionPayload::V1(v1);
+        let envelope = NetworkPayloadEnvelope {
+            payload,
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: None,
+        };
+
+        let msg = envelope.payload_hash.signature_message(8453);
+        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
+        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
+        let mut handler = BlockHandler::new(
+            RollupConfig {
+                genesis: ChainGenesis { l2_time: block.header.timestamp, ..Default::default() },
+                block_time: 200,
+                l2_chain_id: Chain::base_mainnet(),
+                ..Default::default()
+            },
             unsafe_signer,
         );
 

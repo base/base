@@ -1,6 +1,6 @@
 [package]
 name = "base-access-lists"
-description = "FBAL library crate"
+description = "Block access list library crate"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

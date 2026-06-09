@@ -13,7 +13,10 @@ use crate::{ChainGenesis, FeeConfig, HardForkConfig};
 pub struct RollupConfig {
     /// The genesis state of the rollup.
     pub genesis: ChainGenesis,
-    /// The block time of the L2, in seconds.
+    /// The block time of the L2.
+    ///
+    /// Existing configs encode this in seconds. Millisecond-timestamp configs encode this in
+    /// milliseconds.
     pub block_time: u64,
     /// Sequencer batches may not be more than `MaxSequencerDrift` seconds after
     /// the L1 timestamp of the sequencing window end.
@@ -182,6 +185,52 @@ macro_rules! rollup_fork_methods {
 }
 
 impl RollupConfig {
+    /// Number of milliseconds in one second.
+    pub const MILLISECONDS_PER_SECOND: u64 = 1_000;
+
+    /// Timestamp values at or above this threshold are treated as Unix milliseconds.
+    ///
+    /// Existing production and test configs use Unix seconds. Local 200ms devnet configs convert
+    /// the L2 genesis timestamp into Unix milliseconds, which puts it above this threshold.
+    pub const MILLISECOND_TIMESTAMP_THRESHOLD: u64 = 100_000_000_000;
+
+    /// Returns true if this rollup config represents L2 timestamps in milliseconds.
+    pub const fn uses_millisecond_timestamps(&self) -> bool {
+        self.genesis.l2_time >= Self::MILLISECOND_TIMESTAMP_THRESHOLD
+    }
+
+    /// Returns `seconds` in the same timestamp unit used by this rollup config.
+    pub const fn seconds_to_l2_time(&self, seconds: u64) -> u64 {
+        if self.uses_millisecond_timestamps() {
+            seconds.saturating_mul(Self::MILLISECONDS_PER_SECOND)
+        } else {
+            seconds
+        }
+    }
+
+    /// Converts an L1 block timestamp into the timestamp unit used by L2 blocks.
+    pub const fn l1_timestamp_to_l2_time(&self, timestamp: u64) -> u64 {
+        self.seconds_to_l2_time(timestamp)
+    }
+
+    /// Returns the configured L2 block time as milliseconds for wall-clock scheduling.
+    pub const fn block_time_duration_millis(&self) -> u64 {
+        if self.uses_millisecond_timestamps() {
+            self.block_time
+        } else {
+            self.block_time.saturating_mul(Self::MILLISECONDS_PER_SECOND)
+        }
+    }
+
+    /// Returns an L2 block timestamp as Unix milliseconds for wall-clock scheduling.
+    pub const fn timestamp_duration_millis(&self, timestamp: u64) -> u64 {
+        if self.uses_millisecond_timestamps() {
+            timestamp
+        } else {
+            timestamp.saturating_mul(Self::MILLISECONDS_PER_SECOND)
+        }
+    }
+
     rollup_fork_methods! {
         is_regolith_active,
         is_first_regolith_block,
@@ -259,11 +308,12 @@ impl RollupConfig {
 
     /// Returns the max sequencer drift for the given timestamp.
     pub fn max_sequencer_drift(&self, timestamp: u64) -> u64 {
-        if self.is_fjord_active(timestamp) {
+        let drift_seconds = if self.is_fjord_active(timestamp) {
             Self::FJORD_MAX_SEQUENCER_DRIFT
         } else {
             self.max_sequencer_drift
-        }
+        };
+        self.seconds_to_l2_time(drift_seconds)
     }
 
     /// Returns the max rlp bytes per channel for the given timestamp.

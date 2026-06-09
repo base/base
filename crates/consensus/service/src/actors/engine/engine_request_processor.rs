@@ -40,7 +40,7 @@ pub trait EngineRequestReceiver: Send + Sync {
 /// path in [`EngineProcessor::start`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BootstrapRole {
-    /// Pure validator — seed engine state from reth's latest head, no forkchoice update.
+    /// Pure validator — probe or seed engine state from reth's latest head with zeroed safe heads.
     Validator,
     /// Active sequencer — drive forkchoice at genesis or probe the EL with real heads.
     ActiveSequencer,
@@ -515,17 +515,50 @@ where
 
     /// Bootstrap path for pure validators.
     ///
-    /// Seeds engine state from reth's current head so sync-status RPC never returns
-    /// zeros, but intentionally skips sending a forkchoice update.  `el_sync_finished`
-    /// is left `false` and will be set by the first gossip `InsertTask` FCU.
-    async fn bootstrap_validator(&mut self, head: Option<L2BlockInfo>) {
+    /// At genesis, this only seeds engine state so sync-status RPC never returns zeros.
+    /// Beyond genesis, it probes the EL with reth's current unsafe head and zeroed
+    /// safe/finalized heads. This avoids importing reth's reported safe/finalized labels
+    /// while still allowing a validator with an already-canonical latest block to leave
+    /// the EL-sync wait without relying on receiving the immediate next gossip block.
+    async fn bootstrap_validator(&mut self, head: Option<L2BlockInfo>, at_genesis: bool) {
         let Some(head) = head else { return };
         let seed = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
-        self.engine.seed_state(seed);
+
+        if at_genesis {
+            self.engine.seed_state(seed);
+            info!(
+                target: "engine",
+                unsafe_head = %head.block_info.number,
+                "Bootstrap: validator seeded genesis engine state"
+            );
+            return;
+        }
+
+        let el_confirmed = match self
+            .engine
+            .probe_el_sync(Arc::clone(&self.client), Arc::clone(&self.rollup), seed)
+            .await
+        {
+            Ok(confirmed) => confirmed,
+            Err(err) => {
+                warn!(
+                    target: "engine",
+                    error = ?err,
+                    "Bootstrap: validator EL sync probe failed, seeding state"
+                );
+                false
+            }
+        };
+
+        if !el_confirmed {
+            self.engine.seed_state(seed);
+        }
+
         info!(
             target: "engine",
+            el_confirmed,
             unsafe_head = %head.block_info.number,
-            "Bootstrap: validator seeded engine state, awaiting gossip for EL sync"
+            "Bootstrap: validator probed EL sync"
         );
     }
 
@@ -700,7 +733,7 @@ where
             let role = self.resolve_bootstrap_role().await;
             let opt_head = reth_head.ok().flatten();
             match role {
-                BootstrapRole::Validator => self.bootstrap_validator(opt_head).await,
+                BootstrapRole::Validator => self.bootstrap_validator(opt_head, at_genesis).await,
                 BootstrapRole::ConductorFollower => {
                     self.bootstrap_conductor_follower(opt_head).await
                 }
@@ -1382,8 +1415,8 @@ mod tests {
     /// FCU response the engine sync state is seeded with those values, so `safe_head` becomes
     /// block 50 rather than staying zeroed.
     ///
-    /// After the fix, validators take the follower path and send a FCU with only the unsafe
-    /// head, leaving safe/finalized zeroed and not disrupting EL snap-sync.
+    /// After the fix, validators probe with only the unsafe head, leaving safe/finalized
+    /// zeroed and not importing reth's reported safe/finalized labels.
     ///
     /// This test FAILS on unfixed main and PASSES after the fix lands.
     #[tokio::test]
@@ -1402,8 +1435,8 @@ mod tests {
                 .build(),
         );
 
-        // No derivation calls: el_sync_finished stays false on the fixed validator path so
-        // mark_el_sync_complete_and_notify_derivation_actor never fires.
+        // No derivation calls: this test exercises bootstrap directly, before the outer
+        // processor loop observes el_sync_finished and notifies derivation.
         let mock_derivation = MockEngineDerivationClient::new();
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
@@ -1411,7 +1444,7 @@ mod tests {
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
 
         // Validator mode: unsafe_head_tx = None.
-        let processor = EngineProcessor::new(
+        let mut processor = EngineProcessor::new(
             Arc::clone(&client),
             Arc::new(RollupConfig::default()),
             mock_derivation,
@@ -1424,19 +1457,19 @@ mod tests {
             },
         );
 
-        let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = processor.start(req_rx);
+        processor.bootstrap_validator(Some(head), false).await;
 
-        // Close the channel so the task exits after bootstrap + one drain.
-        drop(req_tx);
-        let _ = handle.await;
-
-        // After the fix: validators take the seed-only path; el_sync_finished stays false
-        // and safe/finalized heads are never populated from reth's reported values.
+        // After the fix: validators probe with zeroed safe/finalized heads, so a Valid
+        // response can mark EL sync complete without using reth's reported safe/finalized.
         let state = state_rx.borrow();
         assert!(
-            !state.el_sync_finished,
-            "validator must not set el_sync_finished during bootstrap"
+            state.el_sync_finished,
+            "validator should set el_sync_finished when the zeroed-head probe is Valid"
+        );
+        assert_eq!(
+            state.sync_state.unsafe_head().block_info.number,
+            100,
+            "unsafe head should be set from reth's latest"
         );
         assert_eq!(
             state.sync_state.safe_head(),
@@ -1453,21 +1486,18 @@ mod tests {
     }
 
     /// Verifies that a validator node (`unsafe_head_tx` = None, no conductor) seeds engine
-    /// state without sending a bootstrap FCU or setting `el_sync_finished`.
+    /// state when the zeroed-head bootstrap probe reports that the EL is still syncing.
     ///
-    /// The validator path must not probe reth — doing so would trivially return Valid
-    /// (reth has its own head from the snapshot), prematurely setting `el_sync_finished`
-    /// and triggering the engine reset that sends non-zero safe/finalized.  Instead,
-    /// `el_sync_finished` is left false and will be set by the first gossip `InsertTask`
-    /// FCU.
+    /// In this case, `el_sync_finished` is left false and will be set by a later Valid
+    /// FCU, while sync-status can still report reth's current unsafe head.
     #[tokio::test]
-    async fn bootstrap_beyond_genesis_validator_seeds_without_probing_el_sync() {
+    async fn bootstrap_beyond_genesis_validator_seeds_when_el_sync_probe_is_syncing() {
         let head = test_block_info(100);
 
-        // No FCU response configured — no FCU should be sent during bootstrap.
         let client = Arc::new(
             test_engine_client_builder()
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_fork_choice_updated_v3_response(syncing_fcu())
                 .build(),
         );
 
@@ -1479,7 +1509,7 @@ mod tests {
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
 
-        let processor = EngineProcessor::new(
+        let mut processor = EngineProcessor::new(
             Arc::clone(&client),
             Arc::new(RollupConfig::default()),
             mock_derivation,
@@ -1492,14 +1522,9 @@ mod tests {
             },
         );
 
-        let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = processor.start(req_rx);
+        processor.bootstrap_validator(Some(head), false).await;
 
-        // Close the channel so the task exits after bootstrap + one drain.
-        drop(req_tx);
-        let _ = handle.await;
-
-        // el_sync_finished must remain false — only a gossip InsertTask FCU may set it.
+        // el_sync_finished must remain false when the zeroed-head probe returns Syncing.
         let state = state_rx.borrow();
         assert!(
             !state.el_sync_finished,
@@ -1909,7 +1934,7 @@ mod tests {
             Arc::new(NoopCheckpointWriter),
         );
 
-        processor.bootstrap_validator(Some(reth_latest)).await;
+        processor.bootstrap_validator(Some(reth_latest), false).await;
         processor.handle_external_unsafe_l2_block(unsafe_payload_with_l1_info(
             reth_latest.block_info.number + 1,
             reth_latest.block_info.hash,

@@ -17,10 +17,10 @@ pub struct ParsedBundle {
     pub txs: Vec<Recovered<BaseTxEnvelope>>,
     /// The target block number for inclusion.
     pub block_number: u64,
-    /// Minimum flashblock number for inclusion.
-    pub flashblock_number_min: Option<u64>,
-    /// Maximum flashblock number for inclusion.
-    pub flashblock_number_max: Option<u64>,
+    /// Minimum sub-block number for inclusion.
+    pub sub_block_number_min: Option<u64>,
+    /// Maximum sub-block number for inclusion.
+    pub sub_block_number_max: Option<u64>,
     /// Minimum timestamp for inclusion.
     pub min_timestamp: Option<u64>,
     /// Maximum timestamp for inclusion.
@@ -60,8 +60,8 @@ impl TryFrom<Bundle> for ParsedBundle {
         Ok(Self {
             txs,
             block_number: bundle.block_number,
-            flashblock_number_min: bundle.flashblock_number_min,
-            flashblock_number_max: bundle.flashblock_number_max,
+            sub_block_number_min: bundle.sub_block_number_min,
+            sub_block_number_max: bundle.sub_block_number_max,
             min_timestamp: bundle.min_timestamp,
             max_timestamp: bundle.max_timestamp,
             reverting_tx_hashes: bundle.reverting_tx_hashes,
@@ -91,8 +91,8 @@ mod tests {
         let bundle = Bundle {
             txs: vec![tx_bytes.into()],
             block_number: 100,
-            flashblock_number_min: Some(1),
-            flashblock_number_max: Some(5),
+            sub_block_number_min: Some(1),
+            sub_block_number_max: Some(5),
             min_timestamp: Some(1000),
             max_timestamp: Some(2000),
             reverting_tx_hashes: vec![],
@@ -103,8 +103,8 @@ mod tests {
         let parsed: ParsedBundle = bundle.try_into().unwrap();
         assert_eq!(parsed.txs.len(), 1);
         assert_eq!(parsed.block_number, 100);
-        assert_eq!(parsed.flashblock_number_min, Some(1));
-        assert_eq!(parsed.flashblock_number_max, Some(5));
+        assert_eq!(parsed.sub_block_number_min, Some(1));
+        assert_eq!(parsed.sub_block_number_max, Some(5));
         assert_eq!(parsed.min_timestamp, Some(1000));
         assert_eq!(parsed.max_timestamp, Some(2000));
         assert!(parsed.replacement_uuid.is_none());

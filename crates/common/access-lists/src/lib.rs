@@ -11,6 +11,6 @@ mod builder;
 mod db;
 mod types;
 
-pub use builder::{AccountChangesBuilder, FlashblockAccessListBuilder};
-pub use db::FBALBuilderDb;
-pub use types::FlashblockAccessList;
+pub use builder::{AccountChangesBuilder, BlockAccessListBuilder};
+pub use db::AccessListBuilderDb;
+pub use types::BlockAccessList;

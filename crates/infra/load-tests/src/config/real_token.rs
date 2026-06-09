@@ -262,7 +262,6 @@ mod tests {
     fn parse_real_token_setup_for_random_direction_swap_parity() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 chain_id: 8453
 real_token_setup:
   enabled: true
@@ -312,7 +311,6 @@ transactions:
     fn real_token_setup_requires_mainnet_guard() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 real_token_setup:
   enabled: true
   weth: "0x4200000000000000000000000000000000000006"
@@ -342,7 +340,6 @@ transactions:
     fn real_token_setup_rejects_non_pair_swap_tokens() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
 real_token_setup:
   enabled: true
   allow_chain_id_8453: true

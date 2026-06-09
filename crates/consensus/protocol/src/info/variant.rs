@@ -105,7 +105,9 @@ impl L1BlockInfoTx {
                     // not present, and L1 has activated pectra, the Prague blob fee schedule is used
                     // immediately.
                     (rollup_config.hardforks.pectra_blob_schedule_time.is_none() ||
-                        rollup_config.is_pectra_blob_schedule_active(l1_header.timestamp)) =>
+                        rollup_config.is_pectra_blob_schedule_active(
+                            rollup_config.l1_timestamp_to_l2_time(l1_header.timestamp),
+                        )) =>
                 {
                     BlobParams::prague()
                 }

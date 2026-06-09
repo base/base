@@ -1,4 +1,4 @@
-//! Unified test harness combining node and engine helpers, plus optional flashblocks adapter.
+//! Unified test harness combining node and engine helpers.
 
 use std::{sync::Arc, time::Duration};
 

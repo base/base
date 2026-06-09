@@ -3,11 +3,11 @@
 <a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
 
-Types for transaction bundles used in Base's flashblocks infrastructure. Provides types for raw bundles, parsed bundles with decoded transactions, accepted bundles with metering data, and bundle cancellation.
+Types for transaction bundles used in Base's bundle infrastructure. Provides types for raw bundles, parsed bundles with decoded transactions, accepted bundles with metering data, and bundle cancellation.
 
 ## Overview
 
-- **`Bundle`**: Raw bundle type for API requests, mirrors the `eth_sendBundle` format with support for flashblock targeting.
+- **`Bundle`**: Raw bundle type for API requests, mirrors the `eth_sendBundle` format with support for sub-block targeting.
 - **`ParsedBundle`**: Decoded bundle with recovered transaction signers, created from raw bundles.
 - **`AcceptedBundle`**: Validated and metered bundle ready for inclusion, includes simulation results.
 - **`MeterBundleResponse`**: Simulation response containing gas usage, coinbase diff, and per-transaction results.

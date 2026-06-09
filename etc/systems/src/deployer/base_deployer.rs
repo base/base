@@ -12,7 +12,7 @@ use testcontainers::{
 };
 use url::Url;
 
-use super::artifacts::DeploymentArtifacts;
+use super::{artifacts::DeploymentArtifacts, rollup_config::RollupConfigPatcher};
 use crate::{
     config::{self, BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER},
     images::OP_DEPLOYER_IMAGE,
@@ -113,6 +113,8 @@ impl DeployerContainer {
     /// only succeed when the L1 node is running and producing blocks.
     pub fn deploy(&self) -> Result<DeploymentArtifacts> {
         if DeploymentArtifacts::exists_in(&self.output_dir) {
+            RollupConfigPatcher::patch_dir(&self.output_dir)
+                .wrap_err("Existing deployment artifacts failed to patch")?;
             return self.artifacts().wrap_err("Existing deployment artifacts failed to load");
         }
 
@@ -144,6 +146,9 @@ impl DeployerContainer {
         }
 
         let _container = request.start().wrap_err("Failed to run op-deployer container")?;
+
+        RollupConfigPatcher::patch_dir(&self.output_dir)
+            .wrap_err("Failed to patch rollup config genesis hash")?;
 
         self.artifacts().wrap_err("Failed to load deployment artifacts")
     }
@@ -215,6 +220,58 @@ op-deployer inspect rollup \
   --workdir \"$WORKDIR\" \
   \"$L2_CHAIN_ID\" \
   > \"$OUTPUT_DIR/rollup.json\"
+
+L2_BLOCK_TIME_MS=\"${{L2_BLOCK_TIME_MS:-200}}\"
+L2_GENESIS_TIME_SECONDS=$(jq -re '.genesis.l2_time' \"$OUTPUT_DIR/rollup.json\")
+L2_GENESIS_TIME_MS=$((L2_GENESIS_TIME_SECONDS * 1000))
+L2_GENESIS_TIME_MS_HEX=$(printf \"0x%x\" \"$L2_GENESIS_TIME_MS\")
+
+TMP_ROLLUP=$(mktemp)
+jq \
+  --argjson block_time_ms \"$L2_BLOCK_TIME_MS\" \
+  --argjson l2_genesis_time_ms \"$L2_GENESIS_TIME_MS\" \
+  --argjson millis_per_second 1000 \
+  'def to_millis: if . == null then null elif . == 0 then 0 else . * $millis_per_second end;
+   def maybe_to_millis(path): if getpath(path) == null then . else setpath(path; getpath(path) | to_millis) end;
+   .block_time = $block_time_ms
+   | .genesis.l2_time = $l2_genesis_time_ms
+   | maybe_to_millis([\"regolith_time\"])
+   | maybe_to_millis([\"canyon_time\"])
+   | maybe_to_millis([\"delta_time\"])
+   | maybe_to_millis([\"ecotone_time\"])
+   | maybe_to_millis([\"fjord_time\"])
+   | maybe_to_millis([\"granite_time\"])
+   | maybe_to_millis([\"holocene_time\"])
+   | maybe_to_millis([\"pectra_blob_schedule_time\"])
+   | maybe_to_millis([\"isthmus_time\"])
+   | maybe_to_millis([\"jovian_time\"])' \
+  \"$OUTPUT_DIR/rollup.json\" \
+  > \"$TMP_ROLLUP\"
+mv \"$TMP_ROLLUP\" \"$OUTPUT_DIR/rollup.json\"
+
+TMP_GENESIS=$(mktemp)
+jq \
+  --arg timestamp \"$L2_GENESIS_TIME_MS_HEX\" \
+  --argjson millis_per_second 1000 \
+  'def to_millis: if . == null then null elif . == 0 then 0 else . * $millis_per_second end;
+   def maybe_to_millis(path): if getpath(path) == null then . else setpath(path; getpath(path) | to_millis) end;
+   .timestamp = $timestamp
+   | maybe_to_millis([\"config\", \"regolithTime\"])
+   | maybe_to_millis([\"config\", \"canyonTime\"])
+   | maybe_to_millis([\"config\", \"deltaTime\"])
+   | maybe_to_millis([\"config\", \"ecotoneTime\"])
+   | maybe_to_millis([\"config\", \"fjordTime\"])
+   | maybe_to_millis([\"config\", \"graniteTime\"])
+   | maybe_to_millis([\"config\", \"holoceneTime\"])
+   | maybe_to_millis([\"config\", \"isthmusTime\"])
+   | maybe_to_millis([\"config\", \"jovianTime\"])
+   | maybe_to_millis([\"config\", \"shanghaiTime\"])
+   | maybe_to_millis([\"config\", \"cancunTime\"])
+   | maybe_to_millis([\"config\", \"pragueTime\"])
+   | maybe_to_millis([\"config\", \"osakaTime\"])' \
+  \"$OUTPUT_DIR/genesis.json\" \
+  > \"$TMP_GENESIS\"
+mv \"$TMP_GENESIS\" \"$OUTPUT_DIR/genesis.json\"
 
 op-deployer inspect l1 \
   --workdir \"$WORKDIR\" \

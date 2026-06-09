@@ -59,13 +59,11 @@ transaction_submission_rpcs:
 query_rpc: "http://localhost:8545"
 # Optional: clear pending transactions from these admin RPC nodes for all sender addresses.
 txpool_nodes: []
-flashblocks_ws: "ws://localhost:7111"
 sender_count: 10
 target_gps: 2100000
 duration: "30s"
 ```
 
-`flashblocks_ws` is required for builder flashblocks broadcast latency data.
 `transaction_submission_rpcs` accepts either a single URL string or a list; submit batches are
 distributed across the configured HTTP endpoints.
 `txpool_nodes` is optional and defaults to an empty list; when present, the load tester calls

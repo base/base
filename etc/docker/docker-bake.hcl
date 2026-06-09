@@ -33,7 +33,6 @@ group "rust-services" {
     "builder",
     "consensus",
     "proposer",
-    "websocket-proxy",
     "ingress-rpc",
     "audit-archiver",
     "batcher",
@@ -103,12 +102,6 @@ target "proposer" {
   inherits = ["_rust-service-common"]
   target = "proposer"
   tags = ["base-proposer:local"]
-}
-
-target "websocket-proxy" {
-  inherits = ["_rust-service-common"]
-  target = "websocket-proxy"
-  tags = ["websocket-proxy:local"]
 }
 
 target "ingress-rpc" {

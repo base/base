@@ -19,7 +19,7 @@ This crate provides the core block validation pipeline for the Base node. It imp
   - Post-execution consensus validation
   - Invalid block hook invocation
 
-- **`CachedExecutor`**: A block executor wrapper that attempts to reuse cached execution results from a `CachedExecutionProvider` (e.g., from flashblocks). Falls back to full EVM execution when cache misses occur.
+- **`CachedExecutor`**: A block executor wrapper that attempts to reuse cached execution results from a `CachedExecutionProvider`. Falls back to full EVM execution when cache misses occur.
 
 - **`CachedExecutionProvider`**: A trait for providers that supply pre-computed transaction execution results, enabling skip-ahead execution when prior results are available.
 
@@ -40,7 +40,7 @@ This crate provides the core block validation pipeline for the Base node. It imp
 
 - **Deferred Trie Tasks**: After validation, spawns a background task to sort and merge trie updates and changesets so the validation hot path returns without blocking.
 
-- **Cached Execution**: Integrates with `CachedExecutionProvider` to skip EVM re-execution for transactions whose results are already known (e.g., from flashblock pre-validation).
+- **Cached Execution**: Integrates with `CachedExecutionProvider` to skip EVM re-execution for transactions whose results are already known.
 
 ## Usage
 
@@ -81,16 +81,16 @@ use base_common_evm::{BaseHaltReason, BaseTxResult};
 use base_engine_tree::CachedExecutionProvider;
 
 #[derive(Debug, Clone)]
-struct MyFlashblockCache { /* ... */ }
+struct MyCachedExecutionProvider { /* ... */ }
 
-impl CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>> for MyFlashblockCache {
+impl CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>> for MyCachedExecutionProvider {
     fn get_cached_execution_for_tx(
         &self,
         parent_block_hash: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
     ) -> Option<BaseTxResult<BaseHaltReason, OpTxType>> {
-        // Look up cached result from flashblock execution
+        // Look up cached result from prior execution
         self.cache.get(start_state_root, tx_hash)
     }
 }
@@ -124,7 +124,6 @@ This crate builds on top of several Reth and Base components:
 ## Related Crates
 
 - **`base-engine`**: Engine validator builder that constructs `BaseEngineValidator` instances
-- **`base-flashblocks`**: Provides cached execution results that integrate with `CachedExecutor`
 - **`base-client-node`**: Node builder extensions that wire up the full validation pipeline
 
 ## License

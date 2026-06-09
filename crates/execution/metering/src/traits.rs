@@ -80,7 +80,7 @@ pub trait MeteringApi {
     #[method(name = "setMeteringEnabled")]
     async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()>;
 
-    /// Clears all pending metering information.
+    /// Clears all metering information.
     #[method(name = "clearMeteringInformation")]
     async fn clear_metering_information(&self) -> RpcResult<()>;
 }

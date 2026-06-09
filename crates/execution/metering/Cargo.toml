@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 # workspace
 base-bundles.workspace = true
-base-flashblocks.workspace = true
 base-node-runner.workspace = true
 
 # reth
@@ -34,7 +33,6 @@ revm-bytecode.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
-alloy-rpc-types-engine.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 
@@ -52,10 +50,7 @@ base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 
 # misc
-lru.workspace = true
 eyre.workspace = true
-tokio.workspace = true
-arc-swap.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 derive_more.workspace = true
@@ -65,7 +60,6 @@ tracing = { workspace = true, features = ["std"] }
 [dev-dependencies]
 # workspace
 base-test-utils.workspace = true
-base-common-flashblocks.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # reth
@@ -92,6 +86,7 @@ base-common-rpc-types.workspace = true
 # misc
 url.workspace = true
 rand.workspace = true
+tokio.workspace = true
 serde_json.workspace = true
 
 [features]

@@ -7,22 +7,22 @@ use revm::{
     state::Bytecode,
 };
 
-use crate::FlashblockAccessList;
+use crate::BlockAccessList;
 
-/// A builder type for [`FlashblockAccessList`]
+/// A builder type for [`BlockAccessList`]
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct FlashblockAccessListBuilder {
+pub struct BlockAccessListBuilder {
     /// Mapping from Address -> [`AccountChangesBuilder`]
     pub changes: HashMap<Address, AccountChangesBuilder>,
 }
 
-impl FlashblockAccessListBuilder {
-    /// Creates a new [`FlashblockAccessListBuilder`]
+impl BlockAccessListBuilder {
+    /// Creates a new [`BlockAccessListBuilder`]
     pub fn new() -> Self {
         Self { changes: Default::default() }
     }
 
-    /// Merges another [`FlashblockAccessListBuilder`] with this one
+    /// Merges another [`BlockAccessListBuilder`] with this one
     pub fn merge(&mut self, other: Self) {
         for (address, changes) in other.changes {
             self.changes
@@ -32,12 +32,12 @@ impl FlashblockAccessListBuilder {
         }
     }
 
-    /// Consumes the builder and produces a [`FlashblockAccessList`]
-    pub fn build(self, min_tx_index: u64, max_tx_index: u64) -> FlashblockAccessList {
+    /// Consumes the builder and produces a [`BlockAccessList`]
+    pub fn build(self, min_tx_index: u64, max_tx_index: u64) -> BlockAccessList {
         let mut changes: Vec<_> = self.changes.into_iter().map(|(k, v)| v.build(k)).collect();
         changes.sort_unstable_by_key(|a| a.address);
 
-        FlashblockAccessList::build(changes, min_tx_index, max_tx_index)
+        BlockAccessList::build(changes, min_tx_index, max_tx_index)
     }
 }
 

@@ -51,7 +51,9 @@ where
             .channel
             .as_ref()
             .map(|c| {
-                c.open_block_number() + self.cfg.channel_timeout(origin.timestamp) < origin.number
+                c.open_block_number()
+                    + self.cfg.channel_timeout(self.cfg.l1_timestamp_to_l2_time(origin.timestamp))
+                    < origin.number
             })
             .unwrap_or_default();
 
@@ -100,7 +102,8 @@ where
 
         if let Some(channel) = self.channel.as_mut() {
             // Track the number of blocks until the channel times out.
-            let timeout = channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp);
+            let timeout = channel.open_block_number()
+                + self.cfg.channel_timeout(self.cfg.l1_timestamp_to_l2_time(origin.timestamp));
             let margin = timeout.saturating_sub(origin.number) as f64;
             Metrics::pipeline_channel_timeout().set(margin);
 
@@ -139,7 +142,8 @@ where
             let size = channel.size() as f64;
             Metrics::pipeline_channel_mem().set(size);
 
-            let max_rlp_bytes_per_channel = if self.cfg.is_fjord_active(origin.timestamp) {
+            let origin_l2_time = self.cfg.l1_timestamp_to_l2_time(origin.timestamp);
+            let max_rlp_bytes_per_channel = if self.cfg.is_fjord_active(origin_l2_time) {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
             } else {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK

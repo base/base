@@ -10,6 +10,7 @@ use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 use url::Url;
 
 use crate::config::ResolvedChainConfig;
@@ -71,14 +72,24 @@ impl RpcCommand {
             tokio::pin!(execution_exit);
             tokio::pin!(consensus_exit);
 
+            info!(target: "base_rpc", "base rpc services started");
+
             let result = tokio::select! {
                 result = &mut execution_exit => {
+                    info!(
+                        target: "base_rpc",
+                        "execution node exited, stopping embedded consensus"
+                    );
                     consensus_cancellation.cancel();
                     let consensus_result = consensus_exit.await;
                     result?;
                     consensus_result
                 }
                 result = &mut consensus_exit => {
+                    info!(
+                        target: "base_rpc",
+                        "embedded consensus exited, stopping execution node"
+                    );
                     let consensus_result = result;
                     task_executor
                         .initiate_graceful_shutdown()
@@ -92,6 +103,7 @@ impl RpcCommand {
             };
 
             drop(execution_node);
+            info!(target: "base_rpc", "base rpc command exiting");
             result
         })
     }
@@ -176,7 +188,6 @@ mod tests {
             "--rpc.txfeecap=0",
             "--rpc.gascap=600000000",
             "--rpc.eth-proof-window=1209600",
-            "--flashblocks-url=ws://base-builder:7111",
             "--bootnodes=enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303",
             "--rollup.discovery.v4",
             "--l1-eth-rpc",

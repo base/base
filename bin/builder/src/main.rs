@@ -7,7 +7,7 @@ pub mod cli;
 
 use std::sync::Arc;
 
-use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
+use base_builder_core::BuilderApiExtension;
 use base_builder_metering::MeteringStoreExtension;
 use base_execution_cli::Cli;
 use base_node_runner::BaseNodeRunner;
@@ -38,8 +38,7 @@ fn main() {
 
         let mut runner = BaseNodeRunner::new(rollup_args)
             .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .with_service_builder(FlashblocksServiceBuilder(builder_config));
+            .with_gas_limit_config(gas_limit_config);
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(());

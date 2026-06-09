@@ -14,21 +14,21 @@ pub struct Bundle {
     #[serde(with = "alloy_serde::quantity")]
     pub block_number: u64,
 
-    /// Minimum flashblock number for inclusion.
+    /// Minimum sub-block number for inclusion.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
         skip_serializing_if = "Option::is_none"
     )]
-    pub flashblock_number_min: Option<u64>,
+    pub sub_block_number_min: Option<u64>,
 
-    /// Maximum flashblock number for inclusion.
+    /// Maximum sub-block number for inclusion.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
         skip_serializing_if = "Option::is_none"
     )]
-    pub flashblock_number_max: Option<u64>,
+    pub sub_block_number_max: Option<u64>,
 
     /// Minimum timestamp for inclusion.
     #[serde(
@@ -68,8 +68,8 @@ mod tests {
         let bundle = Bundle::default();
         assert!(bundle.txs.is_empty());
         assert_eq!(bundle.block_number, 0);
-        assert!(bundle.flashblock_number_min.is_none());
-        assert!(bundle.flashblock_number_max.is_none());
+        assert!(bundle.sub_block_number_min.is_none());
+        assert!(bundle.sub_block_number_max.is_none());
         assert!(bundle.min_timestamp.is_none());
         assert!(bundle.max_timestamp.is_none());
         assert!(bundle.reverting_tx_hashes.is_empty());
@@ -82,8 +82,8 @@ mod tests {
         let bundle = Bundle {
             txs: vec![],
             block_number: 12345,
-            flashblock_number_min: Some(1),
-            flashblock_number_max: Some(5),
+            sub_block_number_min: Some(1),
+            sub_block_number_max: Some(5),
             min_timestamp: Some(1000),
             max_timestamp: Some(2000),
             reverting_tx_hashes: vec![],
@@ -94,8 +94,8 @@ mod tests {
         let json = serde_json::to_string(&bundle).unwrap();
         assert!(json.contains("\"blockNumber\":\"0x3039\""));
         // Optional fields serialize as integers, not hex
-        assert!(json.contains("\"flashblockNumberMin\":1"));
-        assert!(json.contains("\"flashblockNumberMax\":5"));
+        assert!(json.contains("\"subBlockNumberMin\":1"));
+        assert!(json.contains("\"subBlockNumberMax\":5"));
         assert!(json.contains("\"replacementUuid\":\"test-uuid\""));
 
         let deserialized: Bundle = serde_json::from_str(&json).unwrap();
@@ -111,8 +111,8 @@ mod tests {
 
         let bundle: Bundle = serde_json::from_str(json).unwrap();
         assert_eq!(bundle.block_number, 1);
-        assert!(bundle.flashblock_number_min.is_none());
-        assert!(bundle.flashblock_number_max.is_none());
+        assert!(bundle.sub_block_number_min.is_none());
+        assert!(bundle.sub_block_number_max.is_none());
         assert!(bundle.min_timestamp.is_none());
         assert!(bundle.max_timestamp.is_none());
     }

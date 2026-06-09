@@ -22,6 +22,8 @@ where
 {
     /// The ecotone timestamp.
     pub ecotone_timestamp: Option<u64>,
+    /// Whether rollup timestamps are encoded as Unix milliseconds.
+    pub millisecond_timestamps: bool,
     /// The blob source.
     pub blob_source: BlobSource<C, B>,
     /// The calldata source.
@@ -39,13 +41,19 @@ where
         calldata_source: CalldataSource<C>,
         cfg: &RollupConfig,
     ) -> Self {
-        Self { ecotone_timestamp: cfg.hardforks.ecotone_time, blob_source, calldata_source }
+        Self {
+            ecotone_timestamp: cfg.hardforks.ecotone_time,
+            millisecond_timestamps: cfg.uses_millisecond_timestamps(),
+            blob_source,
+            calldata_source,
+        }
     }
 
     /// Instantiates a new [`EthereumDataSource`] from parts.
     pub fn new_from_parts(provider: C, blobs: B, cfg: &RollupConfig) -> Self {
         Self {
             ecotone_timestamp: cfg.hardforks.ecotone_time,
+            millisecond_timestamps: cfg.uses_millisecond_timestamps(),
             blob_source: BlobSource::new(provider.clone(), blobs, cfg.batch_inbox_address),
             calldata_source: CalldataSource::new(provider, cfg.batch_inbox_address),
         }
@@ -65,8 +73,12 @@ where
         block_ref: &BlockInfo,
         batcher_address: Address,
     ) -> PipelineResult<Self::Item> {
-        let ecotone_enabled =
-            self.ecotone_timestamp.map(|e| block_ref.timestamp >= e).unwrap_or(false);
+        let block_ref_time = if self.millisecond_timestamps {
+            block_ref.timestamp.saturating_mul(RollupConfig::MILLISECONDS_PER_SECOND)
+        } else {
+            block_ref.timestamp
+        };
+        let ecotone_enabled = self.ecotone_timestamp.map(|e| block_ref_time >= e).unwrap_or(false);
         if ecotone_enabled {
             self.blob_source.next(block_ref, batcher_address).await
         } else {

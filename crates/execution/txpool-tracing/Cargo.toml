@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # workspace
-base-flashblocks.workspace = true
 base-node-runner.workspace = true
 
 # reth
@@ -43,7 +42,6 @@ derive_more = { workspace = true, features = ["display"] }
 # workspace
 base-test-utils.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-flashblocks-node = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }

@@ -252,7 +252,6 @@ impl SystemTestStackBuilder {
                     builder_ws_port: Some(config.ports.l2_builder_ws),
                     builder_auth_port: Some(config.ports.l2_builder_auth),
                     builder_p2p_port: Some(config.ports.l2_builder_p2p),
-                    builder_flashblocks_port: Some(config.ports.l2_builder_flashblocks),
                     client_http_port: Some(config.ports.l2_client_http),
                     client_ws_port: Some(config.ports.l2_client_ws),
                     client_auth_port: Some(config.ports.l2_client_auth),

@@ -63,7 +63,8 @@ where
                 self.prev.next_data().await?.ok_or(PipelineError::ChannelReaderEmpty.temp())?;
 
             let origin = self.prev.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-            let fjord_active = self.cfg.is_fjord_active(origin.timestamp);
+            let origin_l2_time = self.cfg.l1_timestamp_to_l2_time(origin.timestamp);
+            let fjord_active = self.cfg.is_fjord_active(origin_l2_time);
             let max_rlp_bytes_per_channel = if fjord_active {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
             } else {

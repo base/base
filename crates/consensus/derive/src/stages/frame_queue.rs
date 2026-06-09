@@ -55,7 +55,8 @@ where
 
     /// Returns if holocene is active.
     pub fn is_holocene_active(&self, origin: BlockInfo) -> bool {
-        self.rollup_config.is_holocene_active(origin.timestamp)
+        self.rollup_config
+            .is_holocene_active(self.rollup_config.l1_timestamp_to_l2_time(origin.timestamp))
     }
 
     /// Prunes frames if Holocene is active.

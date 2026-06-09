@@ -1,6 +1,8 @@
 target/
+**/target/
 assets/
 .devnet/
+.devnet.stale-*/
 .git/
 .github/
 .idea/

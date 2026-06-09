@@ -23,21 +23,21 @@ pub struct AcceptedBundle {
     #[serde(with = "alloy_serde::quantity")]
     pub block_number: u64,
 
-    /// Minimum flashblock number for inclusion.
+    /// Minimum sub-block number for inclusion.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
         skip_serializing_if = "Option::is_none"
     )]
-    pub flashblock_number_min: Option<u64>,
+    pub sub_block_number_min: Option<u64>,
 
-    /// Maximum flashblock number for inclusion.
+    /// Maximum sub-block number for inclusion.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
         skip_serializing_if = "Option::is_none"
     )]
-    pub flashblock_number_max: Option<u64>,
+    pub sub_block_number_max: Option<u64>,
 
     /// Minimum timestamp for inclusion.
     #[serde(
@@ -78,8 +78,8 @@ impl AcceptedBundle {
             uuid: bundle.replacement_uuid.unwrap_or_else(Uuid::new_v4),
             txs: bundle.txs,
             block_number: bundle.block_number,
-            flashblock_number_min: bundle.flashblock_number_min,
-            flashblock_number_max: bundle.flashblock_number_max,
+            sub_block_number_min: bundle.sub_block_number_min,
+            sub_block_number_max: bundle.sub_block_number_max,
             min_timestamp: bundle.min_timestamp,
             max_timestamp: bundle.max_timestamp,
             reverting_tx_hashes: bundle.reverting_tx_hashes,
@@ -100,8 +100,8 @@ impl From<AcceptedBundle> for ParsedBundle {
         Self {
             txs: accepted_bundle.txs,
             block_number: accepted_bundle.block_number,
-            flashblock_number_min: accepted_bundle.flashblock_number_min,
-            flashblock_number_max: accepted_bundle.flashblock_number_max,
+            sub_block_number_min: accepted_bundle.sub_block_number_min,
+            sub_block_number_max: accepted_bundle.sub_block_number_max,
             min_timestamp: accepted_bundle.min_timestamp,
             max_timestamp: accepted_bundle.max_timestamp,
             reverting_tx_hashes: accepted_bundle.reverting_tx_hashes,
@@ -181,8 +181,8 @@ mod tests {
         let bundle = Bundle {
             txs: vec![tx_bytes.into()],
             block_number: 100,
-            flashblock_number_min: Some(1),
-            flashblock_number_max: Some(5),
+            sub_block_number_min: Some(1),
+            sub_block_number_max: Some(5),
             min_timestamp: Some(1000),
             max_timestamp: Some(2000),
             ..Default::default()
@@ -196,8 +196,8 @@ mod tests {
         assert_eq!(back_to_parsed.txs.len(), 1);
         assert_eq!(back_to_parsed.txs[0].tx_hash(), tx_hash);
         assert_eq!(back_to_parsed.block_number, 100);
-        assert_eq!(back_to_parsed.flashblock_number_min, Some(1));
-        assert_eq!(back_to_parsed.flashblock_number_max, Some(5));
+        assert_eq!(back_to_parsed.sub_block_number_min, Some(1));
+        assert_eq!(back_to_parsed.sub_block_number_max, Some(5));
         assert_eq!(back_to_parsed.min_timestamp, Some(1000));
         assert_eq!(back_to_parsed.max_timestamp, Some(2000));
     }

@@ -4,7 +4,7 @@
 //! - Builder execution layer (in-process, produces blocks and sequences transactions)
 //! - Consensus layer (in-process, derives L2 blocks from L1 data)
 //! - Batcher (in-process, submits L2 transaction batches to L1)
-//! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
+//! - Client execution layer (in-process, follows canonical L2 blocks)
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
@@ -112,7 +112,6 @@ impl L2Stack {
             ws_port: container_config.and_then(|c| c.builder_ws_port),
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
-            flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -172,7 +171,6 @@ impl L2Stack {
             genesis_json: config.l2_genesis.clone(),
             jwt_secret: config.jwt_secret,
             builder_rpc_url: builder.rpc_url()?.to_string(),
-            builder_flashblocks_url: builder.flashblocks_url(),
             builder_p2p_enode: builder.p2p_enode(),
             http_port: container_config.and_then(|c| c.client_http_port),
             ws_port: container_config.and_then(|c| c.client_ws_port),

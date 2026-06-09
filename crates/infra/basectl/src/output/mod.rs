@@ -13,8 +13,7 @@ pub use json::{JsonOutput, TimestampJson};
 
 mod render;
 pub use render::{
-    L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_gas_usage_bar,
-    render_l1_blocks_table,
+    L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_l1_blocks_table,
 };
 
 mod table;

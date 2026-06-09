@@ -30,7 +30,6 @@ use base_common_evm::{
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseRethReceiptBuilder;
-use base_flashblocks::FlashblocksState;
 use base_node_core::{BaseEngineTypes, engine::BasePostExecutionValidator};
 use reth_chain_state::{DeferredTrieData, ExecutedBlock, LazyOverlay};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
@@ -84,7 +83,7 @@ use revm_primitives::Address;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 
 use crate::cached_execution::{
-    CachedExecutionProvider, CachedExecutor, FlashblocksCachedExecutionProvider,
+    CachedExecutionProvider, CachedExecutor, NoopCachedExecutionProvider,
 };
 
 /// A helper type that provides reusable payload validation logic for network-specific validators.
@@ -1607,21 +1606,12 @@ where
 pub struct BaseEngineValidatorBuilder<EV> {
     /// The payload validator builder used to create the engine validator.
     payload_validator_builder: EV,
-
-    /// The flashblocks state used to create the engine validator.
-    flashblocks_state: Option<Arc<FlashblocksState>>,
 }
 
 impl<EV> BaseEngineValidatorBuilder<EV> {
     /// Creates a new instance with the given payload validator builder.
     pub const fn new(payload_validator_builder: EV) -> Self {
-        Self { payload_validator_builder, flashblocks_state: None }
-    }
-
-    /// Sets the flashblocks state used to create the engine validator.
-    pub fn with_flashblocks_state(mut self, flashblocks_state: Arc<FlashblocksState>) -> Self {
-        self.flashblocks_state = Some(flashblocks_state);
-        self
+        Self { payload_validator_builder }
     }
 }
 
@@ -1655,12 +1645,8 @@ where
     EV: PayloadValidatorBuilder<Node>,
     EV::Validator: BasePostExecutionValidator<<Node::Types as NodeTypes>::Payload>,
 {
-    type EngineValidator = BaseEngineValidator<
-        Node::Provider,
-        Node::Evm,
-        EV::Validator,
-        FlashblocksCachedExecutionProvider,
-    >;
+    type EngineValidator =
+        BaseEngineValidator<Node::Provider, Node::Evm, EV::Validator, NoopCachedExecutionProvider>;
 
     async fn build_tree_validator(
         self,
@@ -1678,7 +1664,7 @@ where
             validator,
             tree_config,
             invalid_block_hook,
-            FlashblocksCachedExecutionProvider::new(self.flashblocks_state.clone()),
+            NoopCachedExecutionProvider,
             changeset_cache,
             ctx.node.task_executor().clone(),
         ))

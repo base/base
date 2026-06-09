@@ -16,8 +16,6 @@ txpool_nodes:
   - "http://localhost:7545"
   - "http://localhost:8545"
 
-# Builder flashblocks broadcast WebSocket endpoint
-flashblocks_ws: "ws://localhost:7111"
 
 # Number of sender accounts
 sender_count: 100

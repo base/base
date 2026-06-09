@@ -4,7 +4,7 @@ mod block;
 mod cli;
 mod sync_status;
 
-use basectl_cli::{MonitoringConfig, ViewId, run_app, run_flashblocks_json};
+use basectl_cli::{MonitoringConfig, ViewId, run_app};
 use clap::{CommandFactory, Parser};
 
 #[tokio::main]
@@ -35,9 +35,6 @@ async fn main() -> anyhow::Result<()> {
                 raw,
             )
             .await
-        }
-        Some(cli::Commands::Flashblocks) => {
-            run_flashblocks_json(MonitoringConfig::load(config).await?).await
         }
         None => {
             cli::Cli::command().print_help()?;

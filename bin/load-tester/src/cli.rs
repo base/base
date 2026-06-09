@@ -299,11 +299,6 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             "Block Receipt Delay: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
             brd.min, brd.p50, brd.mean, brd.p99, brd.max
         );
-        let fb = &summary.flashblocks_latency;
-        println!(
-            "FB Latency:    min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
-            fb.min, fb.p50, fb.mean, fb.p99, fb.max, fb.count
-        );
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
         let br = &summary.block_range;
         match (br.first_block, br.last_block) {

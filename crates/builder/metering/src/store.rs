@@ -116,7 +116,7 @@ impl MeteringProvider for MeteringStore {
             return;
         }
 
-        // Atomically record the first unmetered inclusion. Later flashblock
+        // Atomically record the first unmetered inclusion. Later build
         // iterations must not overwrite the original timestamp.
         self.needed_at.entry_by_ref(tx_hash).or_insert(Instant::now());
     }
@@ -173,7 +173,7 @@ mod tests {
             gas_fees: U256::from(123),
             results: vec![],
             state_block_number: 4,
-            state_flashblock_index: None,
+            state_sub_block_index: None,
             total_gas_used: gas_used,
             total_execution_time_us: 533,
             state_root_time_us: 0,

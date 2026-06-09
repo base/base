@@ -210,7 +210,8 @@ impl Host {
         let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
             self.config.prover.l1_beacon_url.clone(),
         ))
-        .await;
+        .await
+        .map_err(|e| HostError::Custom(format!("failed to initialize blob provider: {e}")))?;
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
 
         Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })

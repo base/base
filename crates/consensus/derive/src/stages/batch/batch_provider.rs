@@ -62,16 +62,17 @@ where
     /// Attempts to update the active stage of the mux.
     pub fn attempt_update(&mut self) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+        let origin_l2_time = self.cfg.l1_timestamp_to_l2_time(origin.timestamp);
         if let Some(prev) = self.prev.take() {
             // On the first call to `attempt_update`, we need to determine the active stage to
             // initialize the mux with.
-            if self.cfg.is_holocene_active(origin.timestamp) {
+            if self.cfg.is_holocene_active(origin_l2_time) {
                 self.batch_validator = Some(BatchValidator::new(Arc::clone(&self.cfg), prev));
             } else {
                 self.batch_queue =
                     Some(BatchQueue::new(Arc::clone(&self.cfg), prev, self.provider.clone()));
             }
-        } else if self.batch_queue.is_some() && self.cfg.is_holocene_active(origin.timestamp) {
+        } else if self.batch_queue.is_some() && self.cfg.is_holocene_active(origin_l2_time) {
             // If the batch queue is active and Holocene is also active, transition to the batch
             // validator.
             let batch_queue = self.batch_queue.take().expect("Must have batch queue");
@@ -79,7 +80,7 @@ where
             bv.l1_blocks = batch_queue.l1_blocks;
             bv.origin = batch_queue.origin;
             self.batch_validator = Some(bv);
-        } else if self.batch_validator.is_some() && !self.cfg.is_holocene_active(origin.timestamp) {
+        } else if self.batch_validator.is_some() && !self.cfg.is_holocene_active(origin_l2_time) {
             // If the batch validator is active, and Holocene is not active, it indicates an L1
             // reorg around Holocene activation. Transition back to the batch queue
             // until Holocene re-activates.

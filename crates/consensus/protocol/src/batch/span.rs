@@ -432,7 +432,8 @@ impl SpanBatch {
                     origin_advanced = true;
                 }
             }
-            if batch_timestamp < l1_origin.timestamp {
+            let l1_origin_l2_time = cfg.l1_timestamp_to_l2_time(l1_origin.timestamp);
+            if batch_timestamp < l1_origin_l2_time {
                 warn!(
                     target: "batch_span",
                     "batch timestamp is less than L1 origin timestamp, l2_timestamp: {}, l1_timestamp: {}, origin: {:?}",
@@ -444,8 +445,8 @@ impl SpanBatch {
             }
 
             // Check if we ran out of sequencer time drift
-            let max_drift = cfg.max_sequencer_drift(l1_origin.timestamp);
-            if batch_timestamp > l1_origin.timestamp + max_drift {
+            let max_drift = cfg.max_sequencer_drift(l1_origin_l2_time);
+            if batch_timestamp > l1_origin_l2_time + max_drift {
                 if batch.transactions.is_empty() {
                     // If the sequencer is co-operating by producing an empty batch,
                     // then allow the batch if it was the right thing to do to maintain the L2 time
@@ -460,7 +461,9 @@ impl SpanBatch {
                             );
                             return BatchValidity::Undecided;
                         }
-                        if batch_timestamp >= l1_blocks[origin_index + 1].timestamp {
+                        if batch_timestamp
+                            >= cfg.l1_timestamp_to_l2_time(l1_blocks[origin_index + 1].timestamp)
+                        {
                             // check if the next L1 origin could have been adopted
                             warn!(
                                 target: "batch_span",
@@ -482,7 +485,7 @@ impl SpanBatch {
                     warn!(
                         target: "batch_span",
                         "batch exceeded sequencer time drift, sequencer must adopt new L1 origin to include transactions again, max_time: {}",
-                        l1_origin.timestamp + max_drift
+                        l1_origin_l2_time + max_drift
                     );
                     return BatchValidity::Drop(BatchDropReason::SequencerDriftExceeded);
                 }
@@ -621,7 +624,8 @@ impl SpanBatch {
             }
             batch_origin = l1_origins[1];
         }
-        if !cfg.is_delta_active(batch_origin.timestamp) {
+        let batch_origin_timestamp = cfg.l1_timestamp_to_l2_time(batch_origin.timestamp);
+        if !cfg.is_delta_active(batch_origin_timestamp) {
             warn!(
                 target: "batch_span",
                 "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta hard fork",
@@ -640,7 +644,7 @@ impl SpanBatch {
             );
 
             // After holocene is activated, gaps are disallowed.
-            if cfg.is_holocene_active(inclusion_block.timestamp) {
+            if cfg.is_holocene_active(cfg.l1_timestamp_to_l2_time(inclusion_block.timestamp)) {
                 return (BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene), None);
             }
             return (BatchValidity::Future, None);
@@ -649,7 +653,8 @@ impl SpanBatch {
         // Drop the batch if it has no new blocks after the safe head.
         if self.final_timestamp() < next_timestamp {
             warn!(target: "batch_span", "span batch has no new blocks after safe head");
-            return if cfg.is_holocene_active(inclusion_block.timestamp) {
+            return if cfg.is_holocene_active(cfg.l1_timestamp_to_l2_time(inclusion_block.timestamp))
+            {
                 (BatchValidity::Past, None)
             } else {
                 (BatchValidity::Drop(BatchDropReason::SpanBatchNoNewBlocksPreHolocene), None)

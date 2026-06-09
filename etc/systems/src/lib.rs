@@ -25,7 +25,7 @@ mod containers;
 pub use containers::{L1_BEACON_HTTP_PORT, L1_BEACON_NAME, L1_RETH_NAME, L1_VALIDATOR_NAME};
 
 mod deployer;
-pub use deployer::{DeployerContainer, DeploymentArtifacts, RoleAddresses};
+pub use deployer::{DeployerContainer, DeploymentArtifacts, RoleAddresses, RollupConfigPatcher};
 
 mod docker;
 pub use docker::{

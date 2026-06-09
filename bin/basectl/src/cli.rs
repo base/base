@@ -18,9 +18,7 @@ pub(crate) struct Cli {
     /// config and instead asks this URL for the live raft membership, then
     /// polls all discovered peers via templated ports.
     ///
-    /// Only applies to the conductor view (and views that embed it, like the
-    /// command center). Ignored by `flashblocks` and other non-TUI
-    /// subcommands.
+    /// Only applies to the conductor view.
     #[arg(
         long = "conductor-rpc",
         env = "BASECTL_CONDUCTOR_RPC",
@@ -89,9 +87,6 @@ pub(crate) enum Commands {
         #[arg(long, requires = "json")]
         raw: bool,
     },
-    /// Stream flashblocks as JSON lines.
-    #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
-    Flashblocks,
 }
 
 /// TUI monitor views.
@@ -100,15 +95,9 @@ pub(crate) enum MonitorCommands {
     /// Chain configuration operations
     #[command(visible_alias = "c")]
     Config,
-    /// Flashblocks monitor
-    #[command(visible_alias = "f")]
-    Flashblocks,
     /// DA (Data Availability) backlog monitor
     #[command(visible_alias = "d")]
     Da,
-    /// Command center (combined view)
-    #[command(visible_alias = "cc")]
-    CommandCenter,
     /// HA conductor cluster monitor
     #[command(visible_alias = "co")]
     Conductor,
@@ -124,9 +113,7 @@ impl MonitorCommands {
     pub(crate) const fn view_id(&self) -> ViewId {
         match self {
             Self::Config => ViewId::Config,
-            Self::Flashblocks => ViewId::Flashblocks,
             Self::Da => ViewId::DaMonitor,
-            Self::CommandCenter => ViewId::CommandCenter,
             Self::Conductor => ViewId::Conductor,
             Self::Pods => ViewId::Pods,
             Self::Upgrades => ViewId::Upgrades,

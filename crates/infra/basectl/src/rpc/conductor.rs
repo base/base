@@ -363,8 +363,8 @@ pub enum ConductorPollUpdate {
     /// server list on every change.
     Membership(Arc<ClusterMembership>),
     /// New peer list synthesised from a `Discover` source after a membership
-    /// change. Subscribers may use this to update displayed config (e.g.
-    /// flashblocks URL routing) without restarting the poller.
+    /// change. Subscribers may use this to update displayed config without
+    /// restarting the poller.
     NodeListRefreshed(Vec<ConductorNodeConfig>),
 }
 

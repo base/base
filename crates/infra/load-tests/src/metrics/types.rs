@@ -12,8 +12,6 @@ pub struct TransactionMetrics {
     pub block_latency: Option<Duration>,
     /// Time from block production to receipt observation by the block watcher.
     pub block_receipt_delay: Option<Duration>,
-    /// Time from submission to sequencer acceptance.
-    pub flashblocks_latency: Option<Duration>,
     /// Gas used by the transaction.
     pub gas_used: u64,
     /// Gas price in wei.
@@ -32,7 +30,6 @@ impl TransactionMetrics {
     pub const fn new(
         tx_hash: TxHash,
         block_latency: Option<Duration>,
-        flashblocks_latency: Option<Duration>,
         gas_used: u64,
         gas_price: u128,
         block_number: Option<u64>,
@@ -41,7 +38,6 @@ impl TransactionMetrics {
             tx_hash,
             block_latency,
             block_receipt_delay: None,
-            flashblocks_latency,
             gas_used,
             gas_price,
             block_number,
@@ -173,27 +169,6 @@ impl BlockRange {
         }
         Some(BLOCK_INTERVAL * (self.block_count - 1) as u32)
     }
-}
-
-/// Aggregated flashblocks latency percentiles.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct FlashblocksLatencyMetrics {
-    /// Transactions with flashblocks data.
-    pub count: u64,
-    /// Minimum latency observed.
-    pub min: Duration,
-    /// Maximum latency observed.
-    pub max: Duration,
-    /// Mean latency.
-    pub mean: Duration,
-    /// Median latency.
-    pub p50: Duration,
-    /// 90th percentile latency.
-    pub p90: Duration,
-    /// 95th percentile latency.
-    pub p95: Duration,
-    /// 99th percentile latency.
-    pub p99: Duration,
 }
 
 /// Test configuration included in the JSON output (excludes URLs and secrets).

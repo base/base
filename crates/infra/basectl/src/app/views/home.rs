@@ -33,13 +33,6 @@ const MIN_TWO_COLUMN_WIDTH: u16 = 88;
 
 const MENU_ITEMS: &[MenuItem] = &[
     MenuItem {
-        key: 'a',
-        label: "Command Center",
-        description: "Combined view of all monitors",
-        badge: None,
-        view_id: Some(ViewId::CommandCenter),
-    },
-    MenuItem {
         key: 'c',
         label: "Config",
         description: "View chain configuration and L1 SystemConfig",
@@ -52,13 +45,6 @@ const MENU_ITEMS: &[MenuItem] = &[
         description: "Data availability backlog monitor",
         badge: None,
         view_id: Some(ViewId::DaMonitor),
-    },
-    MenuItem {
-        key: 'f',
-        label: "Flashblocks",
-        description: "Subscribe to flashblocks stream",
-        badge: None,
-        view_id: Some(ViewId::Flashblocks),
     },
     MenuItem {
         key: 'h',
@@ -92,10 +78,8 @@ const MENU_ITEMS: &[MenuItem] = &[
 ];
 
 const KEYBINDINGS: &[Keybinding] = &[
-    Keybinding { key: "a", description: "Command Center" },
     Keybinding { key: "c", description: "Config" },
     Keybinding { key: "d", description: "DA Monitor" },
-    Keybinding { key: "f", description: "Flashblocks" },
     Keybinding { key: "h", description: "HA Conductor" },
     Keybinding { key: "o", description: "Pods" },
     Keybinding { key: "p", description: "Proofs" },
@@ -133,10 +117,8 @@ impl View for HomeView {
 
     fn handle_key(&mut self, key: KeyEvent, _resources: &mut Resources) -> Action {
         match key.code {
-            KeyCode::Char('a') => Action::SwitchView(ViewId::CommandCenter),
             KeyCode::Char('c') => Action::SwitchView(ViewId::Config),
             KeyCode::Char('d') => Action::SwitchView(ViewId::DaMonitor),
-            KeyCode::Char('f') => Action::SwitchView(ViewId::Flashblocks),
             KeyCode::Char('h') => Action::SwitchView(ViewId::Conductor),
             KeyCode::Char('o') => Action::SwitchView(ViewId::Pods),
             KeyCode::Char('p') => Action::SwitchView(ViewId::Proofs),

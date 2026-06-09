@@ -6,12 +6,12 @@ use revm::{
 };
 use tracing::error;
 
-use crate::builder::FlashblockAccessListBuilder;
+use crate::builder::BlockAccessListBuilder;
 
 /// A [`Database`] implementation that builds an access list based on reads and writes
-/// Use [`FBALBuilderDb::finish`] to build and retrieve the access list
+/// Use [`AccessListBuilderDb::finish`] to build and retrieve the access list
 #[derive(Debug)]
-pub struct FBALBuilderDb<DB>
+pub struct AccessListBuilderDb<DB>
 where
     DB: DatabaseCommit + Database,
 {
@@ -20,19 +20,19 @@ where
     /// Transaction index of the transaction currently being executed
     index: u64,
     /// Builder for the access list
-    access_list: FlashblockAccessListBuilder,
+    access_list: BlockAccessListBuilder,
     /// The most recent error generated during a commit attempt
     /// We need to store this as [`DatabaseCommit`] does not return an error
-    /// and we need to return it on [`FBALBuilderDb::finish`] as that implies
+    /// and we need to return it on [`AccessListBuilderDb::finish`] as that implies
     /// we weren't able to construct the access list properly
     error: Option<<Self as Database>::Error>,
 }
 
-impl<DB> FBALBuilderDb<DB>
+impl<DB> AccessListBuilderDb<DB>
 where
     DB: DatabaseCommit + Database,
 {
-    /// Creates a new instance of [`FBALBuilderDb`] with the given underlying database
+    /// Creates a new instance of [`AccessListBuilderDb`] with the given underlying database
     pub fn new(db: DB) -> Self {
         Self { db, index: 0, access_list: Default::default(), error: None }
     }
@@ -122,7 +122,7 @@ where
 
     /// Consumes the database and returns the access list back as well as the most recent
     /// error during committing if any
-    pub fn finish(self) -> Result<FlashblockAccessListBuilder, <Self as Database>::Error> {
+    pub fn finish(self) -> Result<BlockAccessListBuilder, <Self as Database>::Error> {
         if let Some(e) = self.error {
             return Err(e);
         }
@@ -131,7 +131,7 @@ where
     }
 }
 
-impl<DB> Database for FBALBuilderDb<DB>
+impl<DB> Database for AccessListBuilderDb<DB>
 where
     DB: DatabaseCommit + Database,
 {
@@ -161,13 +161,13 @@ where
     }
 }
 
-impl<DB> DatabaseCommit for FBALBuilderDb<DB>
+impl<DB> DatabaseCommit for AccessListBuilderDb<DB>
 where
     DB: DatabaseCommit + Database,
 {
     fn commit(&mut self, changes: AddressMap<Account>) {
         if let Err(e) = self.try_commit(changes) {
-            error!(error = ?e, "Failed to commit changes via FBALBuilderDb");
+            error!(error = ?e, "Failed to commit changes via AccessListBuilderDb");
             self.error = Some(e);
         }
     }

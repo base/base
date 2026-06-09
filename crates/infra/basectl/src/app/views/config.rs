@@ -84,7 +84,6 @@ fn render_chain_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
 
     let fields: &[(&str, &str)] = &[
         ("RPC", config.rpc.as_str()),
-        ("Flashblocks WS", config.flashblocks_ws.as_str()),
         ("L1 RPC", config.l1_rpc.as_str()),
         (
             "Consensus Node RPC",

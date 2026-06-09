@@ -26,8 +26,6 @@ Opens the interactive TUI. With no subcommand, opens the Home view.
 | `monitor` | | TUI Home view |
 | `monitor conductor` | `co` | HA conductor cluster monitor |
 | `monitor da` | `d` | DA backlog monitor |
-| `monitor flashblocks` | `f` | Flashblocks TUI monitor |
-| `monitor command-center` | `cc` | Combined command center view |
 | `monitor upgrades` | `u` | Network upgrade activation countdown and history |
 | `monitor config` | `c` | Chain configuration view |
 
@@ -95,11 +93,6 @@ is one of `caught_up` (within ±N blocks of the reference, where N is the
 | `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`, `tipReference` object, `elSyncInfo` with `processedBlocks` / `remainingBlocks`) instead of the key-value table. |
 | `--raw` | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`. |
 
-### `basectl flashblocks`
-
-Streams live flashblocks as newline-delimited JSON to stdout. For the
-interactive view, use `basectl monitor flashblocks`.
-
 ## Examples
 
 ```sh
@@ -111,9 +104,6 @@ basectl -c devnet monitor
 
 # Open the conductor view directly
 basectl monitor conductor
-
-# Stream flashblocks as JSONL on sepolia
-basectl -c sepolia flashblocks
 
 # Inspect the latest block on sepolia
 basectl -c sepolia block latest

@@ -1638,15 +1638,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arc-swap"
-version = "1.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a3a1fd6f75306b68087b831f025c712524bcb19aad54e557b1129cfa0a2b207"
-dependencies = [
- "rustversion",
-]
-
-[[package]]
 name = "archery"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2982,9 +2973,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core 0.5.6",
- "base64 0.22.1",
  "bytes",
- "form_urlencoded",
  "futures-util",
  "http 1.4.0",
  "http-body 1.0.1",
@@ -3000,11 +2989,8 @@ dependencies = [
  "serde_core",
  "serde_json",
  "serde_path_to_error",
- "serde_urlencoded",
- "sha1 0.10.6",
  "sync_wrapper 1.0.2",
  "tokio",
- "tokio-tungstenite 0.29.0",
  "tower 0.5.3",
  "tower-layer",
  "tower-service",
@@ -3405,12 +3391,10 @@ dependencies = [
  "async-trait",
  "base-access-lists",
  "base-builder-core",
- "base-builder-publish",
  "base-bundles",
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
- "base-common-flashblocks",
  "base-common-flz",
  "base-common-network",
  "base-common-rpc-types",
@@ -3519,26 +3503,6 @@ dependencies = [
  "base-node-runner",
  "jsonrpsee",
  "moka",
- "tracing",
-]
-
-[[package]]
-name = "base-builder-publish"
-version = "0.0.0"
-dependencies = [
- "base-metrics",
- "base-ring-buffer",
- "criterion",
- "futures",
- "http 1.4.0",
- "metrics",
- "parking_lot",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tokio-util",
  "tracing",
 ]
 
@@ -3717,22 +3681,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "base-common-flashblocks"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth 2.0.5",
- "alloy-serde 2.0.5",
- "brotli",
- "bytes",
- "rstest",
- "serde",
- "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -4302,12 +4250,10 @@ dependencies = [
  "alloy-rpc-types-eth 2.0.5",
  "base-common-consensus",
  "base-common-evm",
- "base-common-flashblocks",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
  "base-execution-evm",
- "base-flashblocks",
  "base-node-core",
  "crossbeam-channel",
  "derive_more 2.1.1",
@@ -4373,8 +4319,6 @@ dependencies = [
  "base-execution-consensus",
  "base-execution-evm",
  "base-execution-trie",
- "base-flashblocks",
- "base-flashblocks-node",
  "base-metering",
  "base-node-core",
  "base-node-runner",
@@ -4691,119 +4635,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-flashblocks"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.0.5",
- "alloy-eips 2.0.5",
- "alloy-evm",
- "alloy-network 2.0.5",
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-rpc-types 2.0.5",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth 2.0.5",
- "alloy-serde 2.0.5",
- "arc-swap",
- "base-common-chains",
- "base-common-consensus",
- "base-common-evm",
- "base-common-flashblocks",
- "base-common-flz",
- "base-common-network",
- "base-common-rpc-types",
- "base-common-rpc-types-engine",
- "base-execution-chainspec",
- "base-execution-evm",
- "base-execution-rpc",
- "base-metrics",
- "derive_more 2.1.1",
- "futures",
- "imbl",
- "jsonrpsee",
- "jsonrpsee-types",
- "metrics",
- "rayon",
- "reth-chainspec",
- "reth-evm",
- "reth-primitives-traits",
- "reth-provider",
- "reth-revm",
- "reth-rpc",
- "reth-rpc-convert",
- "reth-rpc-eth-api",
- "reth-rpc-eth-types",
- "reth-tasks",
- "revm",
- "revm-database",
- "rstest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.28.0",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "base-flashblocks-node"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.0.5",
- "alloy-contract 2.0.5",
- "alloy-eips 2.0.5",
- "alloy-genesis 2.0.5",
- "alloy-network 2.0.5",
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-rpc-client 2.0.5",
- "alloy-rpc-types 2.0.5",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth 2.0.5",
- "alloy-signer 2.0.5",
- "alloy-sol-macro",
- "alloy-sol-types",
- "base-common-consensus",
- "base-common-flashblocks",
- "base-common-network",
- "base-common-rpc-types",
- "base-engine-tree",
- "base-execution-chainspec",
- "base-flashblocks",
- "base-flashblocks-node",
- "base-node-core",
- "base-node-runner",
- "base-test-utils",
- "criterion",
- "derive_more 2.1.1",
- "eyre",
- "futures",
- "rand 0.9.4",
- "rayon",
- "reth-chain-state",
- "reth-chainspec",
- "reth-db",
- "reth-db-common",
- "reth-evm",
- "reth-primitives-traits",
- "reth-provider",
- "reth-revm",
- "reth-rpc-eth-api",
- "reth-testing-utils",
- "reth-tracing",
- "reth-transaction-pool",
- "revm",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.28.0",
- "tracing",
- "tracing-subscriber 0.3.23",
-]
-
-[[package]]
 name = "base-health"
 version = "0.0.0"
 dependencies = [
@@ -4876,7 +4707,6 @@ dependencies = [
  "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "alloy-sol-types",
- "base-common-flashblocks",
  "base-common-network",
  "base-common-precompiles",
  "base-tx-manager",
@@ -4893,7 +4723,6 @@ dependencies = [
  "serde_yaml",
  "thiserror 2.0.18",
  "tokio",
- "tokio-tungstenite 0.28.0",
  "tokio-util",
  "tracing",
  "tracing-indicatif",
@@ -4911,19 +4740,15 @@ dependencies = [
  "alloy-network 2.0.5",
  "alloy-primitives",
  "alloy-rpc-client 2.0.5",
- "alloy-rpc-types-engine",
  "alloy-rpc-types-eth 2.0.5",
  "alloy-sol-types",
- "arc-swap",
  "base-bundles",
  "base-common-consensus",
  "base-common-evm",
- "base-common-flashblocks",
  "base-common-flz",
  "base-common-rpc-types",
  "base-execution-chainspec",
  "base-execution-evm",
- "base-flashblocks",
  "base-metrics",
  "base-node-core",
  "base-node-runner",
@@ -4931,7 +4756,6 @@ dependencies = [
  "derive_more 2.1.1",
  "eyre",
  "jsonrpsee",
- "lru 0.16.4",
  "metrics",
  "parking_lot",
  "rand 0.9.4",
@@ -6198,8 +6022,6 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-rpc",
  "base-execution-txpool",
- "base-flashblocks",
- "base-flashblocks-node",
  "base-node-core",
  "base-node-runner",
  "base-proof-rpc",
@@ -6219,6 +6041,7 @@ dependencies = [
  "nanoid",
  "rand 0.9.4",
  "reqwest 0.13.3",
+ "reth-chainspec",
  "reth-db",
  "reth-node-builder",
  "reth-node-core",
@@ -6322,8 +6145,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "base-common-consensus",
- "base-flashblocks",
- "base-flashblocks-node",
  "base-metrics",
  "base-node-runner",
  "base-test-utils",
@@ -6540,7 +6361,6 @@ dependencies = [
  "arboard",
  "base-common-chains",
  "base-common-consensus",
- "base-common-flashblocks",
  "base-common-genesis",
  "base-common-network",
  "base-common-precompiles",
@@ -6557,7 +6377,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tokio",
- "tokio-tungstenite 0.28.0",
  "tracing",
  "url",
 ]
@@ -10504,17 +10323,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc627f471c528ff0c4a49e1d5e60450c8f6461dd6d10ba9dcd3a61d3dff7728d"
 dependencies = [
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "hostname"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
-dependencies = [
- "cfg-if",
- "libc",
- "windows-link 0.2.1",
 ]
 
 [[package]]
@@ -22998,27 +22806,13 @@ checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
 dependencies = [
  "futures-util",
  "log",
- "native-tls",
  "rustls 0.23.40",
  "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
- "tokio-native-tls",
  "tokio-rustls 0.26.4",
  "tungstenite 0.28.0",
  "webpki-roots 0.26.11",
-]
-
-[[package]]
-name = "tokio-tungstenite"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
-dependencies = [
- "futures-util",
- "log",
- "tokio",
- "tungstenite 0.29.0",
 ]
 
 [[package]]
@@ -23753,29 +23547,12 @@ dependencies = [
  "http 1.4.0",
  "httparse",
  "log",
- "native-tls",
  "rand 0.9.4",
  "rustls 0.23.40",
  "rustls-pki-types",
  "sha1 0.10.6",
  "thiserror 2.0.18",
  "utf-8",
-]
-
-[[package]]
-name = "tungstenite"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
-dependencies = [
- "bytes",
- "data-encoding",
- "http 1.4.0",
- "httparse",
- "log",
- "rand 0.9.4",
- "sha1 0.10.6",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -24528,47 +24305,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
 dependencies = [
  "rustls-pki-types",
-]
-
-[[package]]
-name = "websocket-proxy"
-version = "0.0.0"
-dependencies = [
- "axum 0.8.9",
- "backoff",
- "base-metrics",
- "brotli",
- "futures",
- "http 1.4.0",
- "metrics",
- "reqwest 0.13.3",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "websocket-proxy-bin"
-version = "0.0.0"
-dependencies = [
- "axum 0.8.9",
- "base-cli-utils",
- "base-metrics",
- "brotli",
- "clap",
- "dotenvy",
- "futures",
- "hostname",
- "metrics-exporter-prometheus",
- "serde",
- "tokio",
- "tokio-util",
- "tracing",
- "websocket-proxy",
 ]
 
 [[package]]

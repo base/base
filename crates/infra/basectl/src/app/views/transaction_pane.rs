@@ -22,7 +22,7 @@ use crate::{
 pub struct TransactionPane {
     /// The block number whose transactions are displayed.
     pub block_number: u64,
-    /// Display title (e.g. "Block 123" or "Flashblock `123::2`").
+    /// Display title (e.g. "Block 123").
     title_prefix: String,
     transactions: Vec<TxSummary>,
     table_state: TableState,
@@ -30,7 +30,7 @@ pub struct TransactionPane {
     load_error: Option<String>,
     rx: Option<mpsc::Receiver<Result<Vec<TxSummary>, String>>>,
     abort_handle: Option<tokio::task::AbortHandle>,
-    /// Optional range to slice the fetched transactions (for flashblock-specific views).
+    /// Optional range to slice the fetched transactions.
     tx_range: Option<Range<usize>>,
     /// Block explorer base URL for opening transactions in a browser (e.g.
     /// `https://basescan.org`).
@@ -62,7 +62,7 @@ impl TransactionPane {
     /// Creates a new pane that immediately begins fetching transactions for `block_number`.
     ///
     /// If `tx_range` is provided, only the specified slice of the block's transactions
-    /// will be displayed (used for flashblock-specific views).
+    /// will be displayed.
     pub fn new(
         block_number: u64,
         title_prefix: String,
@@ -120,11 +120,8 @@ impl TransactionPane {
 
     /// Creates a pane for a full block using an authoritative RPC fetch.
     ///
-    /// DA block inspection intentionally avoids relying on streamed flashblock
-    /// caches, which may be incomplete after reconnects or message gaps.
+    /// DA block inspection uses authoritative RPC data.
     pub fn for_block(block_number: u64, l2_rpc: &str, explorer_base_url: Option<&str>) -> Self {
-        // DA block inspection should default to authoritative RPC data.
-        // Streamed flashblock caches can be incomplete during reconnects or gaps.
         Self::new(block_number, format!("Block {block_number}"), l2_rpc, None, explorer_base_url)
     }
 

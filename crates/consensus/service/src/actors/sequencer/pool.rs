@@ -37,8 +37,9 @@ impl PoolActivation {
 
         // If the next L2 block is beyond the sequencer drift threshold, we must produce an empty
         // block.
+        let l1_origin_l2_time = self.rollup_config.l1_timestamp_to_l2_time(l1_origin.timestamp);
         if attributes.payload_attributes.timestamp
-            > l1_origin.timestamp + self.rollup_config.max_sequencer_drift(l1_origin.timestamp)
+            > l1_origin_l2_time + self.rollup_config.max_sequencer_drift(l1_origin_l2_time)
         {
             warn!(
                 target: "sequencer",

@@ -5,11 +5,10 @@
 //! and easier debugging while maintaining the same external interface as [`BuilderContainer`].
 
 use core::net::{Ipv4Addr, SocketAddr};
-use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
+use std::{any::Any, path::PathBuf, sync::Arc};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
@@ -47,8 +46,6 @@ pub struct InProcessBuilderConfig {
     pub auth_port: Option<u16>,
     /// Optional fixed P2P port (uses random if None).
     pub p2p_port: Option<u16>,
-    /// Optional fixed Flashblocks port (uses random if None).
-    pub flashblocks_port: Option<u16>,
 }
 
 /// An in-process builder node that replaces Docker-based `BuilderContainer`.
@@ -59,7 +56,6 @@ pub struct InProcessBuilder {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     engine_addr: SocketAddr,
-    flashblocks_port: u16,
     p2p_port: u16,
     data_dir: PathBuf,
     _node_exit_future: NodeExitFuture,
@@ -81,7 +77,6 @@ impl std::fmt::Debug for InProcessBuilder {
             .field("http_api_addr", &self.http_api_addr)
             .field("ws_api_addr", &self.ws_api_addr)
             .field("engine_addr", &self.engine_addr)
-            .field("flashblocks_port", &self.flashblocks_port)
             .field("p2p_port", &self.p2p_port)
             .finish_non_exhaustive()
     }
@@ -105,19 +100,6 @@ impl InProcessBuilder {
 
         let chain_spec = parse_genesis(&config.genesis_json)?;
 
-        let flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
-        let builder_config = BuilderConfig {
-            block_time: Duration::from_millis(2000),
-            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
-            flashblocks_interval: Duration::from_millis(200),
-            ..Default::default()
-        };
-
-        let flashblocks_ws_addr = builder_config.flashblocks_ws_addr;
-
-        let da_config = builder_config.da_config.clone();
-        let gas_limit_config = builder_config.gas_limit_config.clone();
-
         let rollup_args = RollupArgs::default();
 
         let base_node = BaseNode::new(rollup_args.clone());
@@ -126,12 +108,7 @@ impl InProcessBuilder {
             _,
             base_execution_rpc::BaseEthApiBuilder,
             base_node_core::BasePayloadValidatorBuilder,
-        > = base_node
-            .add_ons_builder()
-            .with_sequencer(rollup_args.sequencer.clone())
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
-            .build();
+        > = base_node.add_ons_builder().with_sequencer(rollup_args.sequencer.clone()).build();
 
         let (db, _db_path) = create_test_db(&data_path)?;
 
@@ -142,12 +119,7 @@ impl InProcessBuilder {
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_types::<BaseNode>()
-            .with_components(
-                base_node
-                    .components()
-                    .pool(pool_component(&rollup_args))
-                    .payload(FlashblocksServiceBuilder(builder_config)),
-            )
+            .with_components(base_node.components().pool(pool_component(&rollup_args)))
             .with_add_ons(addons)
             .on_component_initialized(move |_ctx| Ok(()))
             // Register the builder API RPC module (base_insertValidatedTransaction)
@@ -176,7 +148,6 @@ impl InProcessBuilder {
             http_api_addr,
             ws_api_addr,
             engine_addr,
-            flashblocks_port: flashblocks_ws_addr.port(),
             p2p_port,
             data_dir: data_path,
             _node_exit_future: node_exit_future,
@@ -198,11 +169,6 @@ impl InProcessBuilder {
     /// Returns the WebSocket URL.
     pub fn ws_url(&self) -> Result<Url> {
         Url::parse(&format!("ws://{}", self.ws_api_addr)).wrap_err("Failed to parse WebSocket URL")
-    }
-
-    /// Returns the Flashblocks WebSocket URL.
-    pub fn flashblocks_url(&self) -> String {
-        format!("ws://127.0.0.1:{}/", self.flashblocks_port)
     }
 
     /// Returns the P2P enode URL with actual bound port.
@@ -233,11 +199,6 @@ impl InProcessBuilder {
     /// Returns the P2P enode URL for Docker containers using testcontainers host port exposure.
     pub fn host_p2p_enode(&self) -> String {
         format!("enode://{BUILDER_ENODE_ID}@{}:{}", crate::host::host_address(), self.p2p_port)
-    }
-
-    /// Returns the Flashblocks URL for Docker containers using testcontainers host port exposure.
-    pub fn host_flashblocks_url(&self) -> String {
-        format!("ws://{}:{}/", crate::host::host_address(), self.flashblocks_port)
     }
 }
 

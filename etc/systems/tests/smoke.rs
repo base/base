@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_consensus::SignableTransaction;
-use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
@@ -148,6 +148,23 @@ async fn send_l2_transaction_via_client(
     assert_eq!(receipt.inner.from, sender_address);
     assert_eq!(receipt.inner.to, Some(recipient));
 
+    let client_receipt = timeout(TX_RECEIPT_TIMEOUT, async {
+        loop {
+            if let Some(receipt) = client_provider.get_transaction_receipt(tx_hash).await? {
+                return Ok::<_, eyre::Error>(receipt);
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+    })
+    .await
+    .wrap_err("Transaction receipt timed out on client")?
+    .wrap_err("Failed to get client transaction receipt")?;
+
+    assert_eq!(client_receipt.inner.transaction_hash, tx_hash);
+    assert!(client_receipt.inner.block_number.is_some(), "Client receipt should have block number");
+    assert_eq!(client_receipt.inner.from, sender_address);
+    assert_eq!(client_receipt.inner.to, Some(recipient));
+
     Ok(())
 }
 
@@ -194,7 +211,7 @@ async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
 }
 
 #[tokio::test]
-async fn smoke_test_client_pending_state_via_flashblocks() -> Result<()> {
+async fn smoke_test_client_canonical_state_follows_builder() -> Result<()> {
     let _guard = SMOKE_TEST_LOCK.lock().await;
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
@@ -229,40 +246,26 @@ async fn smoke_test_client_pending_state_via_flashblocks() -> Result<()> {
     .await
     .wrap_err("Client block sync timed out")??;
 
-    let mut matches = 0;
-    let required_matches = 3;
+    let mut close_samples = 0;
+    let required_close_samples = 3;
 
     for _ in 0..10 {
-        let builder_pending = get_pending_block_number(&builder_provider).await?;
-        let client_pending = get_pending_block_number(&client_provider).await?;
+        let builder_block = builder_provider.get_block_number().await?;
+        let client_block = client_provider.get_block_number().await?;
 
-        let diff = (builder_pending as i64 - client_pending as i64).abs();
+        let diff = (builder_block as i64 - client_block as i64).abs();
 
         if diff <= 1 {
-            matches += 1;
-            if matches >= required_matches {
+            close_samples += 1;
+            if close_samples >= required_close_samples {
                 return Ok(());
             }
         } else {
-            matches = 0;
+            close_samples = 0;
         }
 
         sleep(Duration::from_millis(250)).await;
     }
 
-    eyre::bail!(
-        "Client pending state not tracking builder - only got {matches}/{required_matches} matches"
-    );
-}
-
-async fn get_pending_block_number(provider: &RootProvider<Base>) -> Result<u64> {
-    let block = provider
-        .get_block_by_number(BlockNumberOrTag::Pending)
-        .await
-        .wrap_err("Failed to get pending block")?;
-
-    match block {
-        Some(b) => Ok(b.header.number),
-        None => Ok(0),
-    }
+    eyre::bail!("Client canonical head did not track builder head")
 }

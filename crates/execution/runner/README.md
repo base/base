@@ -16,7 +16,6 @@ aliases for building modular node extensions.
 - **`BaseProvider`**: Type alias for the blockchain provider instance.
 
 Configuration types are located in their respective feature crates:
-- **`FlashblocksConfig`**: in `base-flashblocks` crate
 - **`TxpoolConfig`**: in `base-txpool` crate
 
 ## Usage

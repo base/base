@@ -70,7 +70,7 @@ pub struct RollupArgs {
 
     /// Maximum number of inflight EIP-7702 delegated account transactions per sender in the
     /// txpool. Reth defaults to 1, which prevents delegated accounts from submitting multiple
-    /// transactions within a block (e.g. buy + approve in a single Flashblock).
+    /// transactions within a block (e.g. buy + approve in one canonical block).
     #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 1)]
     pub max_inflight_delegated_slots: usize,
 

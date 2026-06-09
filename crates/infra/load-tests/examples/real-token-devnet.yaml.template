@@ -10,7 +10,6 @@ query_rpc: "http://localhost:8545"
 txpool_nodes:
   - "http://localhost:7545"
   - "http://localhost:8545"
-flashblocks_ws: "ws://localhost:7111"
 
 sender_count: 10
 target_gps: 20000000

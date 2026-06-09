@@ -9,6 +9,7 @@ L2_DATA_DIR="${L2_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 L2_BASE_AZUL_BLOCK="${L2_BASE_AZUL_BLOCK:-}"
 L2_BASE_BERYL_BLOCK="${L2_BASE_BERYL_BLOCK:-}"
+L2_BLOCK_TIME_MS="${L2_BLOCK_TIME_MS:-200}"
 L2_ACTIVATION_ADMIN_ADDR="${L2_ACTIVATION_ADMIN_ADDR:-$SEQUENCER_ADDR}"
 L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-1111111111111111111111111111111111111111111111111111111111111111}"
 L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
@@ -32,11 +33,16 @@ if [ -n "$L2_BASE_BERYL_BLOCK" ] && ! [[ "$L2_BASE_BERYL_BLOCK" =~ ^[0-9]+$ ]]; 
   echo "ERROR: L2_BASE_BERYL_BLOCK must be a non-negative integer when set, got: $L2_BASE_BERYL_BLOCK"
   exit 1
 fi
+if ! [[ "$L2_BLOCK_TIME_MS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: L2_BLOCK_TIME_MS must be a positive integer, got: $L2_BLOCK_TIME_MS"
+  exit 1
+fi
 
 echo "=== L2 Genesis Generator (Live Deployment) ==="
 echo "L1 RPC URL: $L1_RPC_URL"
 echo "L1 Chain ID: $L1_CHAIN_ID"
 echo "L2 Chain ID: $L2_CHAIN_ID"
+echo "L2 block time: ${L2_BLOCK_TIME_MS}ms"
 echo "Activation admin address: $L2_ACTIVATION_ADMIN_ADDR"
 if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
   echo "Base Azul activation block: $L2_BASE_AZUL_BLOCK"
@@ -162,6 +168,77 @@ jq \
   >"$TMP_GENESIS"
 replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
 echo "Patched activation admin into genesis config"
+
+L2_GENESIS_TIME_SECONDS=$(jq -re '.genesis.l2_time' "$OUTPUT_DIR/rollup.json")
+L2_GENESIS_TIME_MS=$((L2_GENESIS_TIME_SECONDS * 1000))
+L2_GENESIS_TIME_MS_HEX=$(printf "0x%x" "$L2_GENESIS_TIME_MS")
+
+TMP_ROLLUP=$(mktemp)
+jq \
+  --argjson block_time_ms "$L2_BLOCK_TIME_MS" \
+  --argjson l2_genesis_time_ms "$L2_GENESIS_TIME_MS" \
+  --argjson millis_per_second 1000 \
+  '
+  def to_millis:
+    if . == null then null
+    elif . == 0 then 0
+    else . * $millis_per_second
+    end;
+  def maybe_to_millis(path):
+    if getpath(path) == null then .
+    else setpath(path; getpath(path) | to_millis)
+    end;
+  .block_time = $block_time_ms
+  | .genesis.l2_time = $l2_genesis_time_ms
+  | maybe_to_millis(["regolith_time"])
+  | maybe_to_millis(["canyon_time"])
+  | maybe_to_millis(["delta_time"])
+  | maybe_to_millis(["ecotone_time"])
+  | maybe_to_millis(["fjord_time"])
+  | maybe_to_millis(["granite_time"])
+  | maybe_to_millis(["holocene_time"])
+  | maybe_to_millis(["pectra_blob_schedule_time"])
+  | maybe_to_millis(["isthmus_time"])
+  | maybe_to_millis(["jovian_time"])
+  ' \
+  "$OUTPUT_DIR/rollup.json" \
+  >"$TMP_ROLLUP"
+mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+
+TMP_GENESIS=$(mktemp)
+jq \
+  --arg timestamp "$L2_GENESIS_TIME_MS_HEX" \
+  --argjson millis_per_second 1000 \
+  '
+  def to_millis:
+    if . == null then null
+    elif . == 0 then 0
+    else . * $millis_per_second
+    end;
+  def maybe_to_millis(path):
+    if getpath(path) == null then .
+    else setpath(path; getpath(path) | to_millis)
+    end;
+  .timestamp = $timestamp
+  | maybe_to_millis(["config", "regolithTime"])
+  | maybe_to_millis(["config", "canyonTime"])
+  | maybe_to_millis(["config", "deltaTime"])
+  | maybe_to_millis(["config", "ecotoneTime"])
+  | maybe_to_millis(["config", "fjordTime"])
+  | maybe_to_millis(["config", "graniteTime"])
+  | maybe_to_millis(["config", "holoceneTime"])
+  | maybe_to_millis(["config", "isthmusTime"])
+  | maybe_to_millis(["config", "jovianTime"])
+  | maybe_to_millis(["config", "shanghaiTime"])
+  | maybe_to_millis(["config", "cancunTime"])
+  | maybe_to_millis(["config", "pragueTime"])
+  | maybe_to_millis(["config", "osakaTime"])
+  ' \
+  "$OUTPUT_DIR/genesis.json" \
+  >"$TMP_GENESIS"
+mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+
+echo "Converted L2 genesis/config timestamps to milliseconds"
 
 L2_BLOCK_TIME=$(jq -re '.block_time' "$OUTPUT_DIR/rollup.json")
 L2_GENESIS_TIME=$(jq -re '.genesis.l2_time' "$OUTPUT_DIR/rollup.json")

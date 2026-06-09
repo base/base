@@ -28,6 +28,8 @@ x-sequencer-cl-base: &sequencer-cl-base
 x-conductor-base: &conductor-base
   image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-conductor:v0.9.2
   entrypoint: ["op-conductor"]
+  environment:
+    - OP_CONDUCTOR_LOG_LEVEL=warn
 
 x-sequencer-healthcheck: &sequencer-healthcheck
   interval: 250ms
@@ -91,6 +93,7 @@ services:
       - Sequencer
       - --sequencer.l1-confs
       - "0"
+      - --sequencer.stopped
       - --conductor.rpc
       - http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
       - --p2p.sequencer.key
@@ -134,7 +137,6 @@ services:
       - "${L2_SEQ1_AUTH_PORT}:${L2_SEQ1_AUTH_PORT}"                     # Auth RPC (Engine API)
       - "${L2_SEQ1_P2P_PORT}:${L2_SEQ1_P2P_PORT}"                       # P2P
       - "${L2_SEQ1_P2P_PORT}:${L2_SEQ1_P2P_PORT}/udp"                   # Discovery
-      - "${L2_SEQ1_FLASHBLOCKS_PORT}:${L2_SEQ1_FLASHBLOCKS_PORT}"       # Flashblocks
       - "${L2_SEQ1_METRICS_PORT}:${L2_SEQ1_METRICS_PORT}"               # Metrics
     volumes:
       - ../../.devnet/l2/sequencer-1:/data
@@ -168,10 +170,7 @@ services:
       - --p2p-secret-key-hex=${SEQ1_P2P_KEY}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
-      - --flashblocks.addr=0.0.0.0
-      - --flashblocks.port=${L2_SEQ1_FLASHBLOCKS_PORT}
-      - --flashblocks.block-time=200
-      - --rollup.chain-block-time=2000
+      - --rollup.chain-block-time=${L2_BLOCK_TIME_MS}
       - --metrics=0.0.0.0:${L2_SEQ1_METRICS_PORT}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
@@ -272,7 +271,6 @@ services:
       - "${L2_SEQ2_AUTH_PORT}:${L2_SEQ2_AUTH_PORT}"                     # Auth RPC (Engine API)
       - "${L2_SEQ2_P2P_PORT}:${L2_SEQ2_P2P_PORT}"                       # P2P
       - "${L2_SEQ2_P2P_PORT}:${L2_SEQ2_P2P_PORT}/udp"                   # Discovery
-      - "${L2_SEQ2_FLASHBLOCKS_PORT}:${L2_SEQ2_FLASHBLOCKS_PORT}"       # Flashblocks
       - "${L2_SEQ2_METRICS_PORT}:${L2_SEQ2_METRICS_PORT}"               # Metrics
     volumes:
       - ../../.devnet/l2/sequencer-2:/data
@@ -306,10 +304,7 @@ services:
       - --p2p-secret-key-hex=${SEQ2_P2P_KEY}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
-      - --flashblocks.addr=0.0.0.0
-      - --flashblocks.port=${L2_SEQ2_FLASHBLOCKS_PORT}
-      - --flashblocks.block-time=200
-      - --rollup.chain-block-time=2000
+      - --rollup.chain-block-time=${L2_BLOCK_TIME_MS}
       - --metrics=0.0.0.0:${L2_SEQ2_METRICS_PORT}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
@@ -519,10 +514,13 @@ services:
         condition: service_healthy
       op-conductor-2:
         condition: service_healthy
+      base-builder-cl:
+        condition: service_healthy
     environment:
       - CONDUCTOR0_URL=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
       - CONDUCTOR1_URL=http://op-conductor-1:${CONDUCTOR1_RPC_PORT}
       - CONDUCTOR2_URL=http://op-conductor-2:${CONDUCTOR2_RPC_PORT}
       - CONDUCTOR1_RAFT_ADDR=op-conductor-1:${CONDUCTOR1_RAFT_PORT}
       - CONDUCTOR2_RAFT_ADDR=op-conductor-2:${CONDUCTOR2_RAFT_PORT}
+      - LEADER_CONSENSUS_URL=http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
     entrypoint: ["/usr/local/bin/setup-conductor.sh"]

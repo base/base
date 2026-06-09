@@ -3,10 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::Bytes;
-use chrono::{DateTime, Local};
-
-use crate::rpc::{L1BlockInfo, TxSummary};
+use crate::rpc::L1BlockInfo;
 
 /// Size of a single blob in bytes (128 `KiB`).
 pub const BLOB_SIZE: u64 = 128 * 1024;
@@ -24,43 +21,6 @@ pub const RATE_WINDOW_5M: Duration = Duration::from_secs(300);
 /// Number of recent L1 blocks used for blob share and target usage calculations.
 pub const L1_BLOCK_WINDOW: usize = 10;
 
-/// A single flashblock entry displayed in the TUI.
-#[derive(Clone, Debug)]
-pub struct FlashblockEntry {
-    /// L2 block number.
-    pub block_number: u64,
-    /// Flashblock index within the block.
-    pub index: u64,
-    /// Number of transactions in this flashblock.
-    pub tx_count: usize,
-    /// Cumulative gas used up to this flashblock.
-    pub gas_used: u64,
-    /// Block gas limit.
-    pub gas_limit: u64,
-    /// Base fee per gas in wei, if available.
-    pub base_fee: Option<u128>,
-    /// Previous block's base fee for delta display.
-    pub prev_base_fee: Option<u128>,
-    /// Local timestamp when this flashblock was received.
-    pub timestamp: DateTime<Local>,
-    /// Time difference in milliseconds from the previous flashblock.
-    pub time_diff_ms: Option<i64>,
-    /// Raw EIP-2718 encoded transaction bytes, decoded lazily on demand.
-    pub raw_txs: Vec<Bytes>,
-}
-
-impl FlashblockEntry {
-    /// Decodes the raw transaction bytes into summaries on demand.
-    ///
-    /// This avoids the expensive k256 ECDSA signer recovery on the hot path.
-    pub fn decode_txs(&self) -> Vec<TxSummary> {
-        crate::rpc::decode_flashblock_transactions(
-            &self.raw_txs,
-            self.base_fee.and_then(|f| u64::try_from(f).ok()),
-        )
-    }
-}
-
 /// An L2 block's data availability contribution.
 #[derive(Clone, Debug)]
 pub struct BlockContribution {
@@ -70,7 +30,7 @@ pub struct BlockContribution {
     pub da_bytes: u64,
     /// Unix timestamp of the block.
     pub timestamp: u64,
-    /// Total transaction count accumulated from flashblocks.
+    /// Total transaction count for this block.
     pub tx_count: usize,
 }
 

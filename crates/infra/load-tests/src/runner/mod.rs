@@ -12,16 +12,11 @@ pub use rate_limiter::RateLimiter;
 mod backoff;
 pub use backoff::AdaptiveBackoff;
 
-mod flashblock_watcher;
-pub use flashblock_watcher::FlashblockWatcher;
-
 mod block_watcher;
 pub use block_watcher::BlockWatcher;
 
 mod results_tracker;
-pub use results_tracker::{
-    BlockObservation, BlockReceipt, FlashblockInclusion, ResultsTracker, SentTransaction,
-};
+pub use results_tracker::{BlockObservation, BlockReceipt, ResultsTracker, SentTransaction};
 
 mod submission;
 pub use submission::{

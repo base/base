@@ -58,22 +58,22 @@ where
     /// Attempts to update the active stage of the mux.
     pub fn attempt_update(&mut self) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+        let origin_l2_time = self.cfg.l1_timestamp_to_l2_time(origin.timestamp);
         if let Some(prev) = self.prev.take() {
             // On the first call to `attempt_update`, we need to determine the active stage to
             // initialize the mux with.
-            if self.cfg.is_holocene_active(origin.timestamp) {
+            if self.cfg.is_holocene_active(origin_l2_time) {
                 self.channel_assembler = Some(ChannelAssembler::new(Arc::clone(&self.cfg), prev));
             } else {
                 self.channel_bank = Some(ChannelBank::new(Arc::clone(&self.cfg), prev));
             }
-        } else if self.channel_bank.is_some() && self.cfg.is_holocene_active(origin.timestamp) {
+        } else if self.channel_bank.is_some() && self.cfg.is_holocene_active(origin_l2_time) {
             // If the channel bank is active and Holocene is also active, transition to the channel
             // assembler.
             let channel_bank = self.channel_bank.take().expect("Must have channel bank");
             self.channel_assembler =
                 Some(ChannelAssembler::new(Arc::clone(&self.cfg), channel_bank.prev));
-        } else if self.channel_assembler.is_some() && !self.cfg.is_holocene_active(origin.timestamp)
-        {
+        } else if self.channel_assembler.is_some() && !self.cfg.is_holocene_active(origin_l2_time) {
             // If the channel assembler is active, and Holocene is not active, it indicates an L1
             // reorg around Holocene activation. Transition back to the channel bank
             // until Holocene re-activates.

@@ -16,8 +16,6 @@ workspace = true
 base-bundles.workspace = true
 base-node-runner.workspace = true
 base-access-lists.workspace = true
-base-builder-publish.workspace = true
-base-common-flashblocks.workspace = true
 
 # reth
 reth-db.workspace = true
@@ -232,7 +230,3 @@ test-utils = [
 	"rlimit",
 	"testcontainers",
 ]
-
-[[bench]]
-name = "state_root"
-harness = false

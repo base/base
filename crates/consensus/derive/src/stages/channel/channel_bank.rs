@@ -64,7 +64,8 @@ where
     pub fn prune(&mut self) -> PipelineResult<()> {
         let mut total_size = self.size();
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-        let max_channel_bank_size = if self.cfg.is_fjord_active(origin.timestamp) {
+        let origin_l2_time = self.cfg.l1_timestamp_to_l2_time(origin.timestamp);
+        let max_channel_bank_size = if self.cfg.is_fjord_active(origin_l2_time) {
             FJORD_MAX_CHANNEL_BANK_SIZE
         } else {
             MAX_CHANNEL_BANK_SIZE
@@ -94,7 +95,8 @@ where
         };
 
         // Check if the channel is not timed out. If it has, ignore the frame.
-        if current_channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp)
+        if current_channel.open_block_number()
+            + self.cfg.channel_timeout(self.cfg.l1_timestamp_to_l2_time(origin.timestamp))
             < origin.number
         {
             warn!(
@@ -130,7 +132,9 @@ where
         let channel =
             self.channels.get(&first).ok_or(PipelineError::ChannelProviderEmpty.crit())?;
         let origin = self.origin().ok_or(PipelineError::ChannelProviderEmpty.crit())?;
-        if channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp) < origin.number
+        if channel.open_block_number()
+            + self.cfg.channel_timeout(self.cfg.l1_timestamp_to_l2_time(origin.timestamp))
+            < origin.number
         {
             warn!(
                 target: "channel_bank",
@@ -147,7 +151,8 @@ where
         // If no channel is available, we return `PipelineError::Eof`.
         // Canyon is activated when the first L1 block whose time >= CanyonTime, not on the L2
         // timestamp.
-        if !self.cfg.is_canyon_active(origin.timestamp) {
+        let origin_l2_time = self.cfg.l1_timestamp_to_l2_time(origin.timestamp);
+        if !self.cfg.is_canyon_active(origin_l2_time) {
             return self.try_read_channel_at_index(0).map(Some);
         }
 
@@ -165,7 +170,8 @@ where
             self.channels.get(&channel_id).ok_or(PipelineError::ChannelProviderEmpty.crit())?;
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
 
-        let timed_out = channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp)
+        let timed_out = channel.open_block_number()
+            + self.cfg.channel_timeout(self.cfg.l1_timestamp_to_l2_time(origin.timestamp))
             < origin.number;
         if timed_out || !channel.is_ready() {
             return Err(PipelineError::Eof.temp());

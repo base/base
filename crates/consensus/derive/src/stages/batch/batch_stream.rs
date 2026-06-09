@@ -68,7 +68,7 @@ where
     /// origin timestamp and holocene activation timestamp.
     pub fn is_active(&self) -> PipelineResult<bool> {
         let origin = self.prev.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-        Ok(self.config.is_holocene_active(origin.timestamp))
+        Ok(self.config.is_holocene_active(self.config.l1_timestamp_to_l2_time(origin.timestamp)))
     }
 
     /// Gets a [`SingleBatch`] from the in-memory buffer.

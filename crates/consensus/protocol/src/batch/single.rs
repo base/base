@@ -41,14 +41,15 @@ impl SingleBatch {
         inclusion_block: &BlockInfo,
     ) -> BatchValidity {
         let next_timestamp = l2_safe_head.block_info.timestamp + cfg.block_time;
+        let inclusion_l2_time = cfg.l1_timestamp_to_l2_time(inclusion_block.timestamp);
         if self.timestamp > next_timestamp {
-            if cfg.is_holocene_active(inclusion_block.timestamp) {
+            if cfg.is_holocene_active(inclusion_l2_time) {
                 return BatchValidity::Drop(BatchDropReason::FutureTimestampHolocene);
             }
             return BatchValidity::Future;
         }
         if self.timestamp < next_timestamp {
-            if cfg.is_holocene_active(inclusion_block.timestamp) {
+            if cfg.is_holocene_active(inclusion_l2_time) {
                 return BatchValidity::Past;
             }
             return BatchValidity::Drop(BatchDropReason::PastTimestampPreHolocene);
@@ -117,13 +118,14 @@ impl SingleBatch {
             return BatchValidity::Drop(BatchDropReason::EpochHashMismatch);
         }
 
-        if self.timestamp < batch_origin.timestamp {
+        let batch_origin_timestamp = cfg.l1_timestamp_to_l2_time(batch_origin.timestamp);
+        if self.timestamp < batch_origin_timestamp {
             return BatchValidity::Drop(BatchDropReason::TimestampBeforeL1Origin);
         }
 
         // Check if we ran out of sequencer time drift
-        let max_drift = cfg.max_sequencer_drift(batch_origin.timestamp);
-        let max = if let Some(max) = batch_origin.timestamp.checked_add(max_drift) {
+        let max_drift = cfg.max_sequencer_drift(batch_origin_timestamp);
+        let max = if let Some(max) = batch_origin_timestamp.checked_add(max_drift) {
             max
         } else {
             return BatchValidity::Drop(BatchDropReason::SequencerDriftOverflow);
@@ -147,7 +149,7 @@ impl SingleBatch {
                 }
                 let next_origin = l1_blocks[1];
                 // Check if the next L1 Origin could have been adopted
-                if self.timestamp >= next_origin.timestamp {
+                if self.timestamp >= cfg.l1_timestamp_to_l2_time(next_origin.timestamp) {
                     return BatchValidity::Drop(
                         BatchDropReason::SequencerDriftNotAdoptedNextOrigin,
                     );

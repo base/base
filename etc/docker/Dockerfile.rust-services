@@ -102,14 +102,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base-proposer-bin --bin base-proposer && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-proposer /app/base-proposer
 
-FROM source AS websocket-proxy-builder
-ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=websocket-proxy-target,sharing=locked \
-    cargo build --profile $PROFILE --package websocket-proxy-bin --bin websocket-proxy && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/websocket-proxy /app/websocket-proxy
-
 FROM source AS ingress-rpc-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -148,7 +140,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl && \
+    apt-get install -y --no-install-recommends ca-certificates curl jq && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
@@ -175,10 +167,6 @@ FROM runtime-base AS proposer
 COPY --from=proposer-builder /app/base-proposer ./base-proposer
 EXPOSE 9090
 ENTRYPOINT ["./base-proposer"]
-
-FROM runtime-base AS websocket-proxy
-COPY --from=websocket-proxy-builder /app/websocket-proxy ./websocket-proxy
-ENTRYPOINT ["./websocket-proxy"]
 
 FROM runtime-base AS ingress-rpc
 COPY --from=ingress-rpc-builder /app/ingress-rpc ./ingress-rpc

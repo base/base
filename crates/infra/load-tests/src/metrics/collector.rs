@@ -21,7 +21,6 @@ pub struct MetricsCollector {
     failure_reasons: HashMap<String, u64>,
     rolling: RollingWindow,
     block_receipt_delay_rolling: RollingWindow,
-    flashblocks_rolling: RollingWindow,
     throughput_samples: Vec<ThroughputSample>,
 }
 
@@ -36,7 +35,6 @@ impl MetricsCollector {
             failure_reasons: HashMap::new(),
             rolling: RollingWindow::new(),
             block_receipt_delay_rolling: RollingWindow::new(),
-            flashblocks_rolling: RollingWindow::new(),
             throughput_samples: Vec::new(),
         }
     }
@@ -62,9 +60,6 @@ impl MetricsCollector {
             self.rolling.push(metrics.gas_used, latency, at);
         } else {
             self.rolling.push_gas(metrics.gas_used, at);
-        }
-        if let Some(flashblocks_latency) = metrics.flashblocks_latency {
-            self.flashblocks_rolling.push_latency(flashblocks_latency, at);
         }
         if let Some(block_receipt_delay) = metrics.block_receipt_delay {
             self.block_receipt_delay_rolling.push_latency(block_receipt_delay, at);
@@ -133,7 +128,6 @@ impl MetricsCollector {
         self.failure_reasons.clear();
         self.rolling = RollingWindow::new();
         self.block_receipt_delay_rolling = RollingWindow::new();
-        self.flashblocks_rolling = RollingWindow::new();
         self.throughput_samples.clear();
     }
 
@@ -163,11 +157,6 @@ impl MetricsCollector {
     /// Returns the rolling 30s (p50, p99) latency percentiles.
     pub fn rolling_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.rolling.p50_p99()
-    }
-
-    /// Rolling 30s flashblocks (p50, p99).
-    pub fn rolling_flashblocks_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
-        self.flashblocks_rolling.p50_p99()
     }
 
     /// Rolling 30s block receipt delay (p50, p99).

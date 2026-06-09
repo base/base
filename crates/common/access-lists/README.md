@@ -1,38 +1,36 @@
-# `base-fbal`
+# `base-access-lists`
 
-A library to build and process Flashblock-level Access Lists (FBALs).
-
-See the [Flashblocks API overview](https://docs.base.org/base-chain/flashblocks/api-reference) for the stream payloads these access lists are derived from.
+A library to build and process block access lists.
 
 ## Overview
 
 This crate provides types and utilities for tracking account and storage changes during EVM transaction execution, producing access lists that can be used by downstream consumers to understand exactly what state was read or modified.
 
-- `FBALBuilderDb<DB>` - A database wrapper that tracks reads and writes during transaction execution.
-- `FlashblockAccessListBuilder` - A builder pattern for constructing access lists from tracked changes.
-- `FlashblockAccessList` - The final access list containing all account changes, storage changes, and metadata.
+- `AccessListBuilderDb<DB>` - A database wrapper that tracks reads and writes during transaction execution.
+- `BlockAccessListBuilder` - A builder pattern for constructing access lists from tracked changes.
+- `BlockAccessList` - The final access list containing all account changes, storage changes, and metadata.
 
 ## Usage
 
-Wrap your database with `FBALBuilderDb`, execute transactions, then call `finish()` to retrieve the builder:
+Wrap your database with `AccessListBuilderDb`, execute transactions, then call `finish()` to retrieve the builder:
 
 ```rust,ignore
-use base_fbal::{FBALBuilderDb, FlashblockAccessList};
+use base_access_lists::{AccessListBuilderDb, BlockAccessList};
 use revm::database::InMemoryDB;
 
 // Create a wrapped database
 let db = InMemoryDB::default();
-let mut fbal_db = FBALBuilderDb::new(db);
+let mut access_list_db = AccessListBuilderDb::new(db);
 
 // Execute transactions, calling set_index() before each one
 for (i, tx) in transactions.into_iter().enumerate() {
-    fbal_db.set_index(i as u64);
-    // ... execute transaction with fbal_db ...
-    fbal_db.commit(state_changes);
+    access_list_db.set_index(i as u64);
+    // ... execute transaction with access_list_db ...
+    access_list_db.commit(state_changes);
 }
 
 // Build the access list
-let builder = fbal_db.finish()?;
+let builder = access_list_db.finish()?;
 let access_list = builder.build(0, max_tx_index);
 ```
 

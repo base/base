@@ -280,8 +280,9 @@ where
                         else {
                             return Ok(());
                         };
-                        let ecotone_active =
-                            self.rollup_config.is_ecotone_active(derivation_block.timestamp);
+                        let ecotone_active = self.rollup_config.is_ecotone_active(
+                            self.rollup_config.l1_timestamp_to_l2_time(derivation_block.timestamp),
+                        );
                         for log in logs {
                             let sys_cfg_log = SystemConfigLog::new(log.into(), ecotone_active);
                             if let Ok(SystemConfigUpdate::UnsafeBlockSigner(UnsafeBlockSignerUpdate { unsafe_block_signer })) = sys_cfg_log.build() {

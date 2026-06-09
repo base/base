@@ -16,6 +16,7 @@ use testcontainers::{
 
 use crate::{
     config::{BATCHER, BUILDER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER},
+    deployer::RollupConfigPatcher,
     network::{ensure_network_exists, network_name},
 };
 
@@ -379,6 +380,9 @@ impl SetupContainer {
             self.output_dir.join("l2/genesis.json").exists(),
             "L2 genesis.json was not generated"
         );
+
+        RollupConfigPatcher::patch_dir(self.output_dir.join("l2"))
+            .wrap_err("Failed to patch rollup config genesis hash")?;
 
         Ok(L2DeploymentOutput { output_dir: self.output_dir.clone() })
     }

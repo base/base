@@ -161,7 +161,7 @@ impl GossipDriverBuilder {
         let signer_recv = self.signer;
         let rollup_config = self.rollup_config;
         let l2_chain_id = rollup_config.l2_chain_id;
-        let block_time = rollup_config.block_time;
+        let block_time = rollup_config.block_time_duration_millis();
 
         let (signer_tx, signer_rx) = watch::channel(signer_recv);
 

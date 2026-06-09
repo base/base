@@ -6,6 +6,7 @@ CONDUCTOR1_URL="${CONDUCTOR1_URL:-http://op-conductor-1:6546}"
 CONDUCTOR2_URL="${CONDUCTOR2_URL:-http://op-conductor-2:6547}"
 CONDUCTOR1_RAFT_ADDR="${CONDUCTOR1_RAFT_ADDR:-op-conductor-1:5051}"
 CONDUCTOR2_RAFT_ADDR="${CONDUCTOR2_RAFT_ADDR:-op-conductor-2:5052}"
+LEADER_CONSENSUS_URL="${LEADER_CONSENSUS_URL:-http://base-builder-cl:7549}"
 
 echo "=== Conductor Cluster Setup ==="
 
@@ -33,6 +34,27 @@ wait_for_rpc "$CONDUCTOR0_URL" "op-conductor-0"
 wait_for_rpc "$CONDUCTOR1_URL" "op-conductor-1"
 wait_for_rpc "$CONDUCTOR2_URL" "op-conductor-2"
 
+wait_for_consensus_rpc() {
+  local url="$1"
+  local name="$2"
+  local max_retries=120
+  local count=0
+  echo "Waiting for $name at $url..."
+  until curl -s --max-time 2 -X POST "$url" \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"optimism_syncStatus","params":[],"id":1}' \
+    | jq -er '.result.unsafe_l2.hash | select(. != "0x0000000000000000000000000000000000000000000000000000000000000000")' \
+    >/dev/null 2>&1; do
+    count=$((count + 1))
+    if [ $count -ge $max_retries ]; then
+      echo "ERROR: $name unsafe head not ready after $max_retries retries"
+      exit 1
+    fi
+    sleep 0.5
+  done
+  echo "$name is ready"
+}
+
 echo ""
 echo "=== Adding sequencer-1 as Raft voter ==="
 curl -s -X POST "$CONDUCTOR0_URL" \
@@ -50,6 +72,23 @@ echo "=== Verifying cluster membership ==="
 curl -s -X POST "$CONDUCTOR0_URL" \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"conductor_clusterMembership","params":[],"id":1}' | jq .
+
+echo ""
+echo "=== Starting leader sequencer ==="
+wait_for_consensus_rpc "$LEADER_CONSENSUS_URL" "base-builder-cl"
+UNSAFE_HEAD=$(curl -s --max-time 2 -X POST "$LEADER_CONSENSUS_URL" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"optimism_syncStatus","params":[],"id":1}' \
+  | jq -er '.result.unsafe_l2.hash')
+curl -s -X POST "$LEADER_CONSENSUS_URL" \
+  -H 'Content-Type: application/json' \
+  -d "{\"jsonrpc\":\"2.0\",\"method\":\"admin_startSequencer\",\"params\":[\"$UNSAFE_HEAD\"],\"id\":1}" | jq .
+
+echo ""
+echo "=== Resuming conductor cluster ==="
+curl -s -X POST "$CONDUCTOR0_URL" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"conductor_resume","params":[],"id":1}' | jq .
 
 echo ""
 echo "=== Conductor cluster setup complete ==="

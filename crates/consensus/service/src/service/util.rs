@@ -21,6 +21,7 @@ macro_rules! spawn_and_wait {
         // Check if the actor is present, and spawn it if it is.
         $(
             if let Some((actor, context)) = $actor {
+                let actor_name = std::any::type_name_of_val(&actor).to_string();
                 let cancellation = $cancellation.clone();
                 task_handles.spawn(async move {
                     // This guard ensures that the cancellation token is cancelled when the actor is
@@ -32,9 +33,9 @@ macro_rules! spawn_and_wait {
                     let _guard = cancellation.drop_guard();
 
                     if let Err(e) = actor.start(context).await {
-                        return Err(format!("{e:?}"));
+                        return Err(format!("{actor_name}: {e:?}"));
                     }
-                    Ok(())
+                    Ok(actor_name)
                 });
             }
         )*
@@ -52,7 +53,13 @@ macro_rules! spawn_and_wait {
                 }
                 result = task_handles.join_next() => {
                     match result {
-                        Some(Ok(Ok(()))) => { /* Actor completed successfully */ }
+                        Some(Ok(Ok(actor_name))) => {
+                            info!(
+                                target: "rollup_node",
+                                actor = %actor_name,
+                                "Node actor completed successfully"
+                            );
+                        }
                         Some(Ok(Err(e))) => {
                             error!(target: "rollup_node", error = %e, "Critical error in sub-routine");
                             // Cancel all tasks and gracefully shutdown.
