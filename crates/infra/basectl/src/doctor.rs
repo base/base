@@ -1,3 +1,5 @@
+//! Diagnostic checks and report types for `basectl doctor`.
+
 use std::{
     collections::BTreeMap,
     fs,
