@@ -80,6 +80,18 @@ base_metrics::define_metrics! {
     #[label(method)]
     #[label(variant)]
     internal_call_bytes: histogram,
+    #[describe("Beryl native precompile response payload byte size")]
+    #[label(precompile)]
+    #[label(method)]
+    #[label(variant)]
+    #[label(status)]
+    output_bytes: histogram,
+    #[describe("Cumulative gas consumed by Beryl native precompile calls")]
+    #[label(precompile)]
+    #[label(method)]
+    #[label(variant)]
+    #[label(status)]
+    gas_consumed_total: counter,
 }
 
 #[cfg(test)]
@@ -130,6 +142,15 @@ impl PrecompileCallObserver for BerylPrecompileMetricsObserver {
             .record(outcome.state_gas_used as f64);
             BerylPrecompileMetrics::gas_refunded(call.precompile, method.clone(), variant, status)
                 .record(gas_refunded);
+            BerylPrecompileMetrics::output_bytes(call.precompile, method.clone(), variant, status)
+                .record(outcome.output_bytes as f64);
+            BerylPrecompileMetrics::gas_consumed_total(
+                call.precompile,
+                method.clone(),
+                variant,
+                status,
+            )
+            .increment(outcome.gas_used);
 
             if let Some(duration_seconds) = outcome.duration_seconds {
                 BerylPrecompileMetrics::duration_seconds(

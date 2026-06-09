@@ -112,6 +112,8 @@ pub struct PrecompileCallOutcome {
     pub duration_seconds: Option<f64>,
     /// Optional bounded error class.
     pub error: Option<BerylErrorKind>,
+    /// Output payload byte length.
+    pub output_bytes: usize,
 }
 
 impl PrecompileCallOutcome {
@@ -130,6 +132,7 @@ impl PrecompileCallOutcome {
                 gas_refunded: 0,
                 duration_seconds,
                 error: Some(BerylErrorKind::from_precompile_error(error)),
+                output_bytes: 0,
             },
         }
     }
@@ -158,6 +161,7 @@ impl PrecompileCallOutcome {
             gas_refunded: output.gas_refunded,
             duration_seconds,
             error,
+            output_bytes: output.bytes.len(),
         }
     }
 }
