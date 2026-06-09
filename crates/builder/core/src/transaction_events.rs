@@ -256,6 +256,9 @@ pub(crate) fn emit_builder_payload_event(
     if let Some(block_hash) = ctx.block_hash {
         event_id = event_id.part("block_hash", block_hash);
     }
+    if let Some(flashblock_index) = ctx.flashblock_index {
+        event_id = event_id.part("flashblock_index", flashblock_index);
+    }
 
     let mut event = TransactionEvent::new(
         event_id.finish(),
@@ -410,6 +413,35 @@ mod tests {
         assert_eq!(event.data["transaction_count"], 0);
         assert!(event.tx_hash.is_none());
         assert!(event.validate().is_ok());
+    }
+
+    #[test]
+    fn payload_event_id_includes_flashblock_index_when_present() {
+        let sink = Arc::new(RecordingSink::default());
+        let shared = SharedBuilderTransactionEventSink::new(sink.clone());
+        let mut first = context();
+        first.flashblock_index = Some(1);
+        let mut second = context();
+        second.flashblock_index = Some(2);
+
+        emit_builder_payload_event(
+            Some(&shared),
+            first,
+            TransactionEventType::BuilderFlashblockStarted,
+            Map::new(),
+        );
+        emit_builder_payload_event(
+            Some(&shared),
+            second,
+            TransactionEventType::BuilderFlashblockStarted,
+            Map::new(),
+        );
+
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_ne!(events[0].event_id, events[1].event_id);
+        assert_eq!(events[0].data["flashblock_index"], 1);
+        assert_eq!(events[1].data["flashblock_index"], 2);
     }
 
     #[test]

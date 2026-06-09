@@ -183,6 +183,9 @@ Builder:
 - `BUILDER_REJECTED`
 - `BUILDER_INCLUDED`
 - `BUILDER_PAYLOAD_FINALIZED`
+- `BUILDER_FLASHBLOCK_STARTED`
+- `BUILDER_FLASHBLOCK_PUBLISHED`
+- `BUILDER_FLASHBLOCK_BUILD_STOPPED`
 
 Builder caveat: `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`, and
 `BUILDER_REJECTED` are emitted per payload-building attempt and include
@@ -201,6 +204,14 @@ the payload contains no user transactions. It includes `data.parent_hash`,
 `data.timestamp`, but it has the same canonicality caveat: it means the builder
 computed a final payload with state root, not that the payload was later
 observed as canonical or consensus-finalized.
+`BUILDER_FLASHBLOCK_STARTED`, `BUILDER_FLASHBLOCK_PUBLISHED`, and
+`BUILDER_FLASHBLOCK_BUILD_STOPPED` are payload/flashblock-scoped events. They
+include top-level `payload_id` and `block_number`, plus `data.parent_hash`,
+`data.flashblock_index`, and `data.target_flashblock_count`. Published events
+also include top-level `block_hash`, `data.transaction_count`, `data.byte_size`,
+`data.build_duration_ms`, and `data.canonicality = "not_observed_by_builder"`.
+Build-stopped events use `data.reason` to distinguish control-flow stops such
+as payload resolution winning before publish.
 
 ## Event ID Guidance
 
