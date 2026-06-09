@@ -99,7 +99,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         // Charge CREATE equivalent costs whenever code is written to an account that had no code,
         // regardless of its balance. A prefunded account (balance > 0, no code) passes the
         // factory's collision check (which only rejects accounts that already have code), but
-        // must still pay the state-creation costs for the new code object.
+        // must still pay G_create and the keccak hash cost.
         let is_new_code = {
             let state_load = self
                 .internals
@@ -114,8 +114,6 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-            self.deduct_state_gas(self.gas_params.create_state_gas())?;
-            self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
 
         self.internals
@@ -473,74 +471,46 @@ mod tests {
         assert_eq!(provider.gas_used(), 0);
     }
 
-    /// `set_code` on a brand-new account must charge both `create_state_gas` and
-    /// `code_deposit_state_gas` against the state-gas counter.
+    /// `set_code` on a prefunded account (balance > 0, no code) must succeed and deploy
+    /// the code. The factory collision check only rejects accounts that already have code,
+    /// so a prefunded address can reach `set_code` and the `is_empty_code_hash()` predicate
+    /// must fire correctly regardless of balance.
     #[test]
-    fn set_code_new_account_charges_create_and_deposit_state_gas() {
-        let mut provider = amsterdam_provider();
-        let addr = Address::from([0x42u8; 20]);
-        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
-        let code_len = code.len();
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
-
-        provider.set_code(addr, code).unwrap();
-
-        let expected = gas_params.create_state_gas() + gas_params.code_deposit_state_gas(code_len);
-        assert!(expected > 0, "AMSTERDAM state gas must be non-zero");
-        assert_eq!(provider.state_gas_used(), expected);
-    }
-
-    /// `set_code` on a prefunded account (balance > 0, no code) must charge the same
-    /// create costs as a fully empty account. The factory collision check only rejects
-    /// accounts that already have code, so a prefunded address can reach `set_code`
-    /// and must not be undercharged.
-    #[test]
-    fn set_code_prefunded_account_charges_same_as_empty_account() {
+    fn set_code_prefunded_account_deploys_code() {
         let mut provider = amsterdam_provider();
         let addr = Address::from([0x43u8; 20]);
         let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
-        let code_len = code.len();
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
 
-        // Pre-fund the address with a non-zero balance but no code.
-        // `is_empty()` returns false for this account; `is_empty_code_hash()` returns true.
         provider.set_balance(addr, U256::from(1u64));
-
         provider.set_code(addr, code).unwrap();
 
-        let expected = gas_params.create_state_gas() + gas_params.code_deposit_state_gas(code_len);
-        assert!(expected > 0, "AMSTERDAM state gas must be non-zero");
-        assert_eq!(
-            provider.state_gas_used(),
-            expected,
-            "prefunded account must be charged the same create costs as an empty account"
+        assert!(
+            provider.get_account_info(addr).and_then(|i| i.code.as_ref()).is_some(),
+            "prefunded account must have code after set_code"
         );
     }
 
-    /// `set_code` on an already-initialised account must NOT charge any additional
-    /// state gas (the account and its metadata already exist in the trie).
+    /// `set_code` on an account that already has code must replace it without error.
     #[test]
-    fn set_code_existing_account_skips_state_gas() {
+    fn set_code_existing_account_replaces_code() {
         let mut provider = amsterdam_provider();
         let addr = Address::from([0x42u8; 20]);
-        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code1 = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code2 = Bytecode::new_raw([0x60u8, 0x01].as_ref().into());
+        let expected_hash = code2.hash_slow();
 
-        // First call creates the account and charges state gas.
-        provider.set_code(addr, code.clone()).unwrap();
-        let after_first = provider.state_gas_used();
-        assert!(after_first > 0);
+        provider.set_code(addr, code1).unwrap();
+        provider.set_code(addr, code2).unwrap();
 
-        // Second call updates an existing account; state gas must not increase.
-        provider.set_code(addr, code).unwrap();
         assert_eq!(
-            provider.state_gas_used(),
-            after_first,
-            "state_gas_used must not increase for an existing account"
+            provider.get_account_info(addr).map(|i| i.code_hash),
+            Some(expected_hash),
+            "second set_code must replace the stored code hash"
         );
     }
 
     #[test]
-    fn set_code_static_context_reverts_before_state_gas_or_code_mutation() {
+    fn set_code_static_context_reverts_before_code_mutation() {
         let mut provider = amsterdam_provider();
         provider.set_static(true);
         let addr = Address::from([0x42u8; 20]);
@@ -549,7 +519,6 @@ mod tests {
         let err = provider.set_code(addr, code).unwrap_err();
 
         assert_eq!(err, BasePrecompileError::StaticCallViolation);
-        assert_eq!(provider.state_gas_used(), 0);
         assert!(provider.get_account_info(addr).is_none());
     }
 }

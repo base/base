@@ -93,14 +93,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             return Err(BasePrecompileError::StaticCallViolation);
         }
 
-        let code_len = code.len();
-        // Mirror the production is_new_code check: charge create costs whenever code is
-        // written to an account with no existing code, regardless of its balance.
-        let is_new_code = self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
-        if is_new_code {
-            self.deduct_state_gas(self.gas_params.create_state_gas())?;
-            self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
-        }
         let account = self.accounts.entry(address).or_default();
         account.code_hash = code.hash_slow();
         account.code = Some(code);
