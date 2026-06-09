@@ -353,7 +353,6 @@ impl Tracker {
                     TxpoolEventData {
                         time_pending_to_flashblock_inclusion: Some(time_pending_to_fb_inclusion),
                         inclusion_signal: Some("flashblock_pending_block"),
-                        canonicality: Some("not_observed_by_txpool_tracing"),
                         ..Default::default()
                     },
                 ));
@@ -514,9 +513,6 @@ impl Tracker {
         if let Some(inclusion_signal) = event_data.inclusion_signal {
             data.insert("inclusion_signal".to_string(), json!(inclusion_signal));
         }
-        if let Some(canonicality) = event_data.canonicality {
-            data.insert("canonicality".to_string(), json!(canonicality));
-        }
         if let Some(overflow_reason) = event_data.overflow_reason {
             data.insert("overflow_reason".to_string(), json!(overflow_reason));
         }
@@ -568,7 +564,6 @@ struct TxpoolEventData {
     time_pending_to_flashblock_inclusion: Option<Duration>,
     inclusion: Option<BlockInclusion>,
     inclusion_signal: Option<&'static str>,
-    canonicality: Option<&'static str>,
     overflow_reason: Option<&'static str>,
 }
 

@@ -829,7 +829,6 @@ where
                             "block_hash".to_string(),
                             serde_json::json!(format!("{:#x}", fb_payload.diff.block_hash)),
                         ),
-                        ("canonicality".to_string(), serde_json::json!("not_observed_by_builder")),
                     ]),
                 );
                 BuilderMetrics::flashblock_build_duration().record(flashblock_build_duration);
@@ -1040,7 +1039,6 @@ where
                 ("gas_limit".to_string(), serde_json::json!(block.gas_limit)),
                 ("timestamp".to_string(), serde_json::json!(block.timestamp)),
                 ("inclusion_signal".to_string(), serde_json::json!("builder_finalized_payload")),
-                ("canonicality".to_string(), serde_json::json!("not_observed_by_builder")),
             ]),
         );
 
@@ -1069,7 +1067,6 @@ where
                         "inclusion_signal".to_string(),
                         serde_json::json!("builder_finalized_payload"),
                     ),
-                    ("canonicality".to_string(), serde_json::json!("not_observed_by_builder")),
                 ]),
             );
         }

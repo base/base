@@ -192,26 +192,29 @@ Builder caveat: `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`, and
 `payload_id`, `block_number`, and `flashblock_index` when applicable. The same
 transaction can therefore produce multiple decision events across flashblocks.
 `BUILDER_INCLUDED` is emitted when the builder finalizes the payload it can
-serve via `engine_getPayload`; the builder does not independently observe later
-canonical chain inclusion, so these events include
-`data.inclusion_signal = "builder_finalized_payload"` and
-`data.canonicality = "not_observed_by_builder"`. The payload loop emits nonce
-and validation skips as `BUILDER_REJECTED` rather than inventing replacement
-relationships. `BUILDER_PAYLOAD_FINALIZED` is emitted once for each built
-payload and links `payload_id` to the builder's block hash and number even when
-the payload contains no user transactions. It includes `data.parent_hash`,
+serve via `engine_getPayload` and includes
+`data.inclusion_signal = "builder_finalized_payload"`. The payload loop emits
+nonce and validation skips as `BUILDER_REJECTED` rather than inventing
+replacement relationships. `BUILDER_PAYLOAD_FINALIZED` is emitted once for each
+built payload and links `payload_id` to the builder's block hash and number even
+when the payload contains no user transactions. It includes `data.parent_hash`,
 `data.transaction_count`, `data.gas_used`, `data.gas_limit`, and
-`data.timestamp`, but it has the same canonicality caveat: it means the builder
-computed a final payload with state root, not that the payload was later
-observed as canonical or consensus-finalized.
+`data.timestamp`.
 `BUILDER_FLASHBLOCK_STARTED`, `BUILDER_FLASHBLOCK_PUBLISHED`, and
 `BUILDER_FLASHBLOCK_BUILD_STOPPED` are payload/flashblock-scoped events. They
 include top-level `payload_id` and `block_number`, plus `data.parent_hash`,
 `data.flashblock_index`, and `data.target_flashblock_count`. Published events
 also include top-level `block_hash`, `data.transaction_count`, `data.byte_size`,
-`data.build_duration_ms`, and `data.canonicality = "not_observed_by_builder"`.
-Build-stopped events use `data.reason` to distinguish control-flow stops such
-as payload resolution winning before publish.
+and `data.build_duration_ms`. Build-stopped events use `data.reason` to
+distinguish control-flow stops such as payload resolution winning before
+publish.
+
+Canonicality caveat: builder events are local payload construction signals, not
+canonical-chain or consensus-finality observations. A builder event with
+`block_hash` means the builder computed or published that payload shape; it does
+not by itself prove that the block later became canonical. Canonical block
+history should be linked through canonical-state observers such as txpool
+tracing by matching `block_hash`, `block_number`, and transaction hashes.
 
 ## Event ID Guidance
 
