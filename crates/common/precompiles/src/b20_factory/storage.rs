@@ -353,9 +353,12 @@ impl TokenCreateParams {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, address};
+    use alloy_primitives::{B256, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::{
+        Handler, HashMapStorageProvider, PrecompileStorageProvider, StorageCtx,
+    };
+    use revm::{context_interface::cfg::GasParams, primitives::hardfork::SpecId};
 
     use super::*;
     use crate::{
@@ -589,6 +592,33 @@ mod tests {
             let result = factory.create_b20(caller, b20_call(salt));
             assert!(result.is_err());
         });
+    }
+
+    /// A prefunded token address (balance > 0, no code) must cause `create_b20` to charge
+    /// state creation gas, not skip it. This is the regression test for BOP-320.
+    #[test]
+    fn test_create_token_at_prefunded_address_charges_state_gas() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_gas_params(GasParams::new_spec(SpecId::AMSTERDAM));
+
+        let caller = Address::repeat_byte(0x55);
+        let salt = B256::repeat_byte(0xF0);
+        let (token_addr, _) = B20Variant::B20.compute_address(caller, salt);
+
+        // Pre-fund the predicted token address. It has balance but no code, so the factory
+        // collision check passes (only rejects accounts with existing code). Without the fix,
+        // set_code would skip create costs because is_empty() returns false for prefunded accounts.
+        storage.set_balance(token_addr, U256::from(1u64));
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            factory.create_b20(caller, b20_call(salt)).unwrap();
+        });
+
+        assert!(
+            storage.state_gas_used() > 0,
+            "create state costs must be charged when deploying to a prefunded address"
+        );
     }
 
     #[test]

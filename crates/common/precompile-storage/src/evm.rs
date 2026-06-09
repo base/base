@@ -92,28 +92,29 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         // EIP-3541 / Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
-        // For new (empty) accounts charge the CREATE equivalent costs (Yellow Paper G_create).
-        let is_new_account = {
+        // Charge CREATE equivalent costs whenever code is written to an account that had no code,
+        // regardless of its balance. A prefunded account (balance > 0, no code) passes the
+        // factory's collision check (which only rejects accounts that already have code), but
+        // must still pay the state-creation costs for the new code object.
+        let is_new_code = {
             let state_load = self
                 .internals
                 .load_account(address)
                 .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-            state_load.data.info.is_empty()
+            state_load.data.info.is_empty_code_hash()
         };
 
-        if is_new_account {
+        if is_new_code {
             // Yellow Paper G_create: base cost for creating a new contract account.
             self.deduct_gas(self.gas_params.create_cost())?;
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-            // EIP-8037: both state gas charges are gated on is_new_account.
+            // EIP-8037: both state gas charges are gated on is_new_code.
             // create_state_gas covers the new account entry in the state trie.
             // code_deposit_state_gas covers the new code object. Replacing code on an
             // existing account is not a state-creating operation in the EIP-8037 model —
             // the code slot already occupies a trie node — so it is intentionally excluded.
-            // In practice, precompile set_code is only called during factory token creation,
-            // where the target address is always a fresh account.
             self.deduct_state_gas(self.gas_params.create_state_gas())?;
             self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
@@ -291,7 +292,7 @@ impl From<alloy_evm::EvmInternalsError> for BasePrecompileError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
+    use alloy_primitives::{Address, U256};
     use revm::{context_interface::cfg::GasParams, primitives::hardfork::SpecId, state::Bytecode};
 
     use crate::{hashmap::HashMapStorageProvider, provider::PrecompileStorageProvider};
@@ -317,6 +318,33 @@ mod tests {
         let expected = gas_params.create_state_gas() + gas_params.code_deposit_state_gas(code_len);
         assert!(expected > 0, "AMSTERDAM state gas must be non-zero");
         assert_eq!(provider.state_gas_used(), expected);
+    }
+
+    /// `set_code` on a prefunded account (balance > 0, no code) must charge the same
+    /// create costs as a fully empty account. The factory collision check only rejects
+    /// accounts that already have code, so a prefunded address can reach `set_code`
+    /// and must not be undercharged.
+    #[test]
+    fn set_code_prefunded_account_charges_same_as_empty_account() {
+        let mut provider = amsterdam_provider();
+        let addr = Address::from([0x43u8; 20]);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code_len = code.len();
+        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+
+        // Pre-fund the address with a non-zero balance but no code.
+        // is_empty() returns false for this account; is_empty_code_hash() returns true.
+        provider.set_balance(addr, U256::from(1u64));
+
+        provider.set_code(addr, code).unwrap();
+
+        let expected = gas_params.create_state_gas() + gas_params.code_deposit_state_gas(code_len);
+        assert!(expected > 0, "AMSTERDAM state gas must be non-zero");
+        assert_eq!(
+            provider.state_gas_used(),
+            expected,
+            "prefunded account must be charged the same create costs as an empty account"
+        );
     }
 
     /// `set_code` on an already-initialised account must NOT charge any additional
