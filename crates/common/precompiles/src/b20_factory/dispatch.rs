@@ -1,8 +1,8 @@
 //! ABI dispatch for the `B20Factory` precompile.
 
 use alloy_primitives::Bytes;
-use alloy_sol_types::{SolCall, SolValue};
-use base_precompile_storage::{BasePrecompileError, StorageCtx};
+use alloy_sol_types::SolCall;
+use base_precompile_storage::StorageCtx;
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -54,11 +54,10 @@ impl<'a> B20FactoryStorage<'a> {
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
-                let v = B20Variant::from_abi(call.variant).expect(
-                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
-                );
-                let hash = ctx.metered_keccak256(&(call.sender, call.salt).abi_encode())?;
-                let addr = v.compute_address_from_hash(hash).0;
+                let addr = B20Variant::from_abi(call.variant)
+                    .expect("abi_decode_validate rejects non-canonical discriminants")
+                    .compute_address(call.sender, call.salt)
+                    .0;
                 Ok(IB20Factory::getB20AddressCall::abi_encode_returns(&addr).into())
             }
             IB20Factory::IB20FactoryCalls::isB20(call) => {

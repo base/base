@@ -109,10 +109,9 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
         {
-            let call =
-                IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata).map_err(|error| {
-                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-                })?;
+            let call = IB20Stablecoin::IB20StablecoinCalls::abi_decode_validate(calldata).map_err(
+                |error| BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() },
+            )?;
             let label = call.as_label();
             return observer.observe(label, || self.handle_stablecoin_call(call));
         }

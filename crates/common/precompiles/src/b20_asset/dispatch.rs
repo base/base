@@ -106,9 +106,10 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Asset::IB20AssetCalls::valid_selector(selector)
         {
-            let call = IB20Asset::IB20AssetCalls::abi_decode(calldata).map_err(|error| {
-                BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-            })?;
+            let call =
+                IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
+                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+                })?;
             let label = call.as_label();
             let asset_observer = observer.clone();
             return observer.observe(label, move || {
