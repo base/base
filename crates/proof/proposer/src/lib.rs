@@ -24,7 +24,7 @@ mod proof_adapter;
 pub use proof_adapter::{DispatchedProof, ProofRequesterDispatcher, ProposerProofAdapter};
 
 mod proof_collector;
-pub use proof_collector::{CollectedProof, ProofCollector};
+pub use proof_collector::{CollectedProof, ProofCollector, TargetPoll};
 
 mod proof_submitter;
 pub use proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction};
