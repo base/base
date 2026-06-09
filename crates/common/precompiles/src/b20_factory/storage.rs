@@ -353,14 +353,15 @@ impl TokenCreateParams {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, address};
+    use alloy_primitives::{B256, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::{FromWord, Handler, HashMapStorageProvider, StorageCtx};
 
     use super::*;
     use crate::{
         ActivationFeature, ActivationRegistryStorage, B20SecurityStorage, B20Token,
         B20TokenStorage, IB20, Mintable, Permittable, Token, TokenAccounting, Transferable,
+        activation::slots as activation_slots,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -373,7 +374,23 @@ mod tests {
         );
     }
 
+    /// Writes `ACTIVATION_ADMIN` into the activation registry admin storage slot.
+    ///
+    /// This mirrors the genesis alloc injection that happens in production
+    /// ([`crate::ActivationRegistryStorage`] reads admin from storage, not from params).
+    fn write_activation_admin(storage: &mut HashMapStorageProvider) {
+        StorageCtx::enter(storage, |ctx| {
+            ctx.sstore(
+                ActivationRegistryStorage::ADDRESS,
+                activation_slots::ADMIN,
+                FromWord::to_word(&ACTIVATION_ADMIN),
+            )
+            .expect("admin storage write should succeed");
+        });
+    }
+
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
+        write_activation_admin(storage);
         storage.set_caller(ACTIVATION_ADMIN);
         for key in [
             ActivationFeature::B20Factory.id(),
@@ -382,7 +399,7 @@ mod tests {
             ActivationFeature::B20Security.id(),
         ] {
             StorageCtx::enter(storage, |ctx| {
-                ActivationRegistryStorage::new(ctx).activate(key, Some(ACTIVATION_ADMIN)).unwrap()
+                ActivationRegistryStorage::new(ctx).activate(key).unwrap()
             });
         }
     }

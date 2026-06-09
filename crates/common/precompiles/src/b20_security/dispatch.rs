@@ -676,13 +676,14 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_sol_types::{SolCall, SolEvent};
     use base_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, setup_storage,
+        BasePrecompileError, FromWord, HashMapStorageProvider, Result, StorageCtx, setup_storage,
     };
 
     use super::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY};
     use crate::{
         ActivationFeature, ActivationRegistryStorage, B20PausableFeature, B20TokenRole, IB20,
         PolicyHandle, PolicyRegistryStorage, Token, TokenAccounting,
+        activation::slots as activation_slots,
         b20_security::{B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting},
         common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
     };
@@ -703,11 +704,22 @@ mod tests {
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
+    fn write_activation_admin(storage: &mut HashMapStorageProvider) {
+        StorageCtx::enter(storage, |ctx| {
+            ctx.sstore(
+                ActivationRegistryStorage::ADDRESS,
+                activation_slots::ADMIN,
+                FromWord::to_word(&ACTIVATION_ADMIN),
+            )
+            .expect("admin storage write should succeed");
+        });
+    }
+
     fn activate_b20_security(storage: &mut HashMapStorageProvider) {
+        write_activation_admin(storage);
         storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
-            ActivationRegistryStorage::new(ctx)
-                .activate(ActivationFeature::B20Security.id(), Some(ACTIVATION_ADMIN))
+            ActivationRegistryStorage::new(ctx).activate(ActivationFeature::B20Security.id())
         })
         .unwrap();
     }

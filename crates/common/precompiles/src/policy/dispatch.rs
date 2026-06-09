@@ -76,21 +76,34 @@ impl PolicyRegistryStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, address};
     use alloy_sol_types::SolCall;
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::{FromWord, HashMapStorageProvider, StorageCtx};
 
     use crate::{
         ActivationFeature, ActivationRegistryStorage, IPolicyRegistry, PolicyRegistryStorage,
+        activation::slots as activation_slots,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
 
+    fn write_activation_admin(storage: &mut HashMapStorageProvider) {
+        StorageCtx::enter(storage, |ctx| {
+            ctx.sstore(
+                ActivationRegistryStorage::ADDRESS,
+                activation_slots::ADMIN,
+                FromWord::to_word(&ACTIVATION_ADMIN),
+            )
+            .expect("admin storage write should succeed");
+        });
+    }
+
     fn activate_policy_registry(storage: &mut HashMapStorageProvider) {
+        write_activation_admin(storage);
         storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
             ActivationRegistryStorage::new(ctx)
-                .activate(ActivationFeature::PolicyRegistry.id(), Some(ACTIVATION_ADMIN))
+                .activate(ActivationFeature::PolicyRegistry.id())
                 .unwrap()
         });
     }

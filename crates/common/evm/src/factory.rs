@@ -1,5 +1,4 @@
 use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
-use alloy_primitives::Address;
 use revm::{
     Context, Inspector,
     context::{BlockEnv, TxEnv},
@@ -16,28 +15,17 @@ use crate::{
 ///
 /// Base precompiles are eagerly flattened into a [`PrecompilesMap`] on construction so that
 /// precompile dispatch is a single hash-map lookup rather than a spec-aware branch on every call.
-#[derive(Debug, Clone, Copy)]
+///
+/// The activation registry admin is stored in genesis state rather than in the factory, ensuring
+/// all nodes with the same genesis hash agree on the admin without out-of-band configuration.
+#[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
-pub struct BaseEvmFactory {
-    /// Activation registry admin address.
-    activation_admin_address: Option<Address>,
-}
+pub struct BaseEvmFactory;
 
 impl BaseEvmFactory {
-    /// Creates a new [`BaseEvmFactory`] with the given activation registry admin address.
-    pub const fn new(activation_admin_address: Option<Address>) -> Self {
-        Self { activation_admin_address }
-    }
-
-    /// Returns the activation registry admin address.
-    pub const fn activation_admin_address(&self) -> Option<Address> {
-        self.activation_admin_address
-    }
-}
-
-impl Default for BaseEvmFactory {
-    fn default() -> Self {
-        Self::new(None)
+    /// Creates a new [`BaseEvmFactory`].
+    pub const fn new() -> Self {
+        Self
     }
 }
 
@@ -64,11 +52,7 @@ impl EvmFactory for BaseEvmFactory {
             .with_cfg(input.cfg_env)
             .build_base()
             .with_inspector(NoOpInspector {})
-            .with_precompiles(
-                BasePrecompiles::new_with_spec(spec_id)
-                    .with_activation_admin_address(self.activation_admin_address)
-                    .install(),
-            )
+            .with_precompiles(BasePrecompiles::new_with_spec(spec_id).install())
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -83,10 +67,6 @@ impl EvmFactory for BaseEvmFactory {
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
             .build_with_inspector(inspector)
-            .with_precompiles(
-                BasePrecompiles::new_with_spec(spec_id)
-                    .with_activation_admin_address(self.activation_admin_address)
-                    .install(),
-            )
+            .with_precompiles(BasePrecompiles::new_with_spec(spec_id).install())
     }
 }

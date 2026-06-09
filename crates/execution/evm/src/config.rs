@@ -110,13 +110,12 @@ impl<ChainSpec: Upgrades> BaseEvmConfig<ChainSpec> {
 impl<ChainSpec: Upgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, R> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
-        let activation_admin_address = chain_spec.as_ref().activation_admin_address();
         Self {
             block_assembler: BaseBlockAssembler::new(Arc::clone(&chain_spec)),
             executor_factory: BaseBlockExecutorFactory::new(
                 receipt_builder,
                 chain_spec,
-                BaseEvmFactory::new(activation_admin_address),
+                BaseEvmFactory::new(),
             ),
             _pd: PhantomData,
         }

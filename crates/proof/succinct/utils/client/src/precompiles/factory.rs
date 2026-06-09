@@ -1,7 +1,6 @@
 //! [`EvmFactory`] implementation for the EVM in the ZKVM environment.
 
 use alloy_evm::{Database, EvmEnv, EvmFactory};
-use alloy_primitives::Address;
 use base_common_evm::{
     BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
     Builder, DefaultBase,
@@ -16,34 +15,16 @@ use revm::{
 use super::BaseZkvmPrecompiles;
 
 /// Factory producing [`BaseEvm`]s with ZKVM-accelerated precompile overrides enabled.
-#[derive(Debug, Clone, Copy)]
-pub struct ZkvmBaseEvmFactory {
-    /// Activation registry admin address.
-    activation_admin_address: Option<Address>,
-}
+///
+/// The activation registry admin is stored in genesis state and read from EVM storage
+/// at runtime, so no admin address is carried in the factory.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ZkvmBaseEvmFactory;
 
 impl ZkvmBaseEvmFactory {
     /// Creates a new [`ZkvmBaseEvmFactory`].
     pub const fn new() -> Self {
-        Self::new_with_activation_admin_address(None)
-    }
-
-    /// Creates a new [`ZkvmBaseEvmFactory`] with the given activation registry admin address.
-    pub const fn new_with_activation_admin_address(
-        activation_admin_address: Option<Address>,
-    ) -> Self {
-        Self { activation_admin_address }
-    }
-
-    /// Returns the activation registry admin address.
-    pub const fn activation_admin_address(&self) -> Option<Address> {
-        self.activation_admin_address
-    }
-}
-
-impl Default for ZkvmBaseEvmFactory {
-    fn default() -> Self {
-        Self::new()
+        Self
     }
 }
 
@@ -70,10 +51,7 @@ impl EvmFactory for ZkvmBaseEvmFactory {
             .with_cfg(input.cfg_env)
             .build_base()
             .with_inspector(NoOpInspector {})
-            .with_precompiles(BaseZkvmPrecompiles::new_with_spec_and_activation_admin_address(
-                spec_id,
-                self.activation_admin_address,
-            ))
+            .with_precompiles(BaseZkvmPrecompiles::new_with_spec(spec_id))
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -88,9 +66,6 @@ impl EvmFactory for ZkvmBaseEvmFactory {
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
             .build_with_inspector(inspector)
-            .with_precompiles(BaseZkvmPrecompiles::new_with_spec_and_activation_admin_address(
-                spec_id,
-                self.activation_admin_address,
-            ))
+            .with_precompiles(BaseZkvmPrecompiles::new_with_spec(spec_id))
     }
 }

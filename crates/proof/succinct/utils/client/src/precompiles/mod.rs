@@ -79,52 +79,27 @@ const fn get_precompile_tracker_name(id: &PrecompileId) -> Option<&'static str> 
 }
 
 /// The ZKVM-cycle-tracking precompiles.
+///
+/// The activation registry admin is stored in genesis state and read from EVM storage at
+/// runtime, so no admin address is threaded through the precompile factory.
 #[derive(Debug)]
 pub struct BaseZkvmPrecompiles {
     /// The installed Base precompile map, with ZKVM-specific wrappers layered on top.
     inner: PrecompilesMap,
     /// The [`BaseSpecId`] of the precompiles.
     spec: BaseSpecId,
-    /// Activation registry admin address.
-    activation_admin_address: Option<Address>,
 }
 
 impl BaseZkvmPrecompiles {
     /// Create a new precompile provider with the given [`BaseSpecId`].
     #[inline]
     pub fn new_with_spec(spec: BaseSpecId) -> Self {
-        Self::new_with_spec_and_activation_admin_address(spec, None)
+        let inner = Self::installed_precompiles(spec);
+        Self { inner, spec }
     }
 
-    /// Create a new precompile provider with the given [`BaseSpecId`] and activation admin.
-    #[inline]
-    pub fn new_with_spec_and_activation_admin_address(
-        spec: BaseSpecId,
-        activation_admin_address: Option<Address>,
-    ) -> Self {
-        let inner = Self::installed_precompiles(spec, activation_admin_address);
-
-        Self { inner, spec, activation_admin_address }
-    }
-
-    /// Rebuilds this provider with `activation_admin_address`.
-    #[inline]
-    pub fn with_activation_admin_address(self, activation_admin_address: Option<Address>) -> Self {
-        Self::new_with_spec_and_activation_admin_address(self.spec, activation_admin_address)
-    }
-
-    /// Returns the activation registry admin address.
-    pub const fn activation_admin_address(&self) -> Option<Address> {
-        self.activation_admin_address
-    }
-
-    fn installed_precompiles(
-        spec: BaseSpecId,
-        activation_admin_address: Option<Address>,
-    ) -> PrecompilesMap {
-        let mut precompiles = BasePrecompiles::new_with_spec(spec)
-            .with_activation_admin_address(activation_admin_address)
-            .install();
+    fn installed_precompiles(spec: BaseSpecId) -> PrecompilesMap {
+        let mut precompiles = BasePrecompiles::new_with_spec(spec).install();
         Self::install_cycle_trackers(&mut precompiles);
         precompiles
     }
@@ -162,8 +137,7 @@ where
         if spec == self.spec {
             return false;
         }
-        *self =
-            Self::new_with_spec_and_activation_admin_address(spec, self.activation_admin_address);
+        *self = Self::new_with_spec(spec);
         true
     }
 
@@ -359,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn test_precompile_tracker_name_kzg_eval() {
+    fn test_precompile_tracker_name_kzg_point_eval() {
         assert_eq!(
             get_precompile_tracker_name(&PrecompileId::KzgPointEvaluation),
             Some(cycle_tracker::names::KZG_EVAL)
@@ -368,7 +342,6 @@ mod tests {
 
     #[test]
     fn test_unknown_precompile_returns_none() {
-        // SHA256 is a precompile but not accelerated/tracked
         assert_eq!(get_precompile_tracker_name(&PrecompileId::Sha256), None);
         assert_eq!(get_precompile_tracker_name(&PrecompileId::Identity), None);
     }
@@ -492,13 +465,11 @@ mod tests {
             jovian_set.precompiles().get(&p256_addr).expect("JOVIAN must have P256VERIFY");
         let azul_p256 = azul_set.precompiles().get(&p256_addr).expect("AZUL must have P256VERIFY");
 
-        // Legacy P256VERIFY costs 3,450 gas. With 5,000 gas it should succeed.
         assert!(
             jovian_p256.execute(&[], 5_000, 0).is_ok(),
             "JOVIAN P256VERIFY must succeed with 5,000 gas (legacy pricing, 3,450 base fee)",
         );
 
-        // Osaka P256VERIFY costs 6,900 gas. With 5,000 gas it must fail with OOG.
         let azul_result = azul_p256.execute(&[], 5_000, 0);
         assert!(
             matches!(&azul_result, Ok(output) if output.halt_reason().is_some()),
