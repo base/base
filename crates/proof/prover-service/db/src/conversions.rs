@@ -245,6 +245,7 @@ mod tests {
             claimed_at: Some(now),
             last_heartbeat_at: Some(now),
             error_message: None,
+            result_payload: None,
             created_at: now,
             updated_at: now,
             completed_at: None,

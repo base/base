@@ -600,6 +600,8 @@ pub struct ProofJob {
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     /// Error message when the job failed.
     pub error_message: Option<String>,
+    /// Stored protocol result payload once the job has completed.
+    pub result_payload: Option<serde_json::Value>,
     /// Timestamp when the job was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last update.
@@ -1111,6 +1113,7 @@ mod tests {
             claimed_at: Some(now),
             last_heartbeat_at: Some(now),
             error_message: None,
+            result_payload: None,
             created_at: now,
             updated_at: now,
             completed_at: None,

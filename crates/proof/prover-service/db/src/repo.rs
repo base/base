@@ -553,22 +553,6 @@ impl ProofRequestRepo {
         row.as_ref().map(row_to_proof_job).transpose()
     }
 
-    /// Fetch the stored `result_payload` for a canonical `session_id`, if any.
-    async fn stored_result_payload(&self, session_id: &str) -> Result<Option<serde_json::Value>> {
-        let row = sqlx::query(
-            r#"
-            SELECT result_payload
-            FROM proof_requests
-            WHERE COALESCE(session_id, id::text) = $1
-            "#,
-        )
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row.and_then(|row| row.get::<Option<serde_json::Value>, _>("result_payload")))
-    }
-
     /// Extend the lock for the currently owned worker proof job (`heartbeat`).
     pub async fn heartbeat_proof_job(&self, req: HeartbeatProofJob) -> Result<HeartbeatOutcome> {
         let session_id = canonical_session_id(&req.session_id)
@@ -645,8 +629,7 @@ impl ProofRequestRepo {
             && existing.lock_id == Some(req.lock_id)
             && existing.worker_id.as_deref() == Some(req.worker_id.as_str())
         {
-            let stored = self.stored_result_payload(&session_id).await?;
-            return Ok(if stored.as_ref() == Some(&result_payload) {
+            return Ok(if existing.result_payload.as_ref() == Some(&result_payload) {
                 SubmitProofOutcome::Completed(existing)
             } else {
                 SubmitProofOutcome::ResultConflict { job: existing }
@@ -1903,6 +1886,7 @@ fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
         claimed_at: row.get("claimed_at"),
         last_heartbeat_at: row.get("last_heartbeat_at"),
         error_message: base.error_message,
+        result_payload: base.result_payload,
         created_at: base.created_at,
         updated_at: base.updated_at,
         completed_at: base.completed_at,
