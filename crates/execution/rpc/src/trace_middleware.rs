@@ -102,7 +102,7 @@ where
         // The guard is dropped immediately after; the span retains the parent reference.
         let _guard = cx.map(|InboundOtelContext(ctx)| ctx.attach());
         let span =
-            tracing::info_span!("request", "span.kind" = "server", "rpc.method" = %req.method);
+            tracing::info_span!("request", "otel.kind" = "server", "rpc.method" = %req.method);
         drop(_guard);
         let inner = self.inner.clone();
         async move { inner.call(req).await }.instrument(span)
@@ -115,7 +115,7 @@ where
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
         let _guard = cx.map(|InboundOtelContext(ctx)| ctx.attach());
         let span =
-            tracing::info_span!("batch", "span.kind" = "server", "rpc.batch.len" = req.len());
+            tracing::info_span!("batch", "otel.kind" = "server", "rpc.batch.len" = req.len());
         drop(_guard);
         let inner = self.inner.clone();
         async move { inner.batch(req).await }.instrument(span)
@@ -128,7 +128,7 @@ where
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
         let _guard = cx.map(|InboundOtelContext(ctx)| ctx.attach());
         let span =
-            tracing::info_span!("notification", "span.kind" = "server", "rpc.method" = %req.method);
+            tracing::info_span!("notification", "otel.kind" = "server", "rpc.method" = %req.method);
         drop(_guard);
         let inner = self.inner.clone();
         async move { inner.notification(req).await }.instrument(span)
