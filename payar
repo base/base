@@ -1,0 +1,35 @@
+target/
+assets/
+.devnet/
+.git/
+.github/
+.idea/
+docs/
+.claude/
+.config/
+
+# Config/docs not needed in build context
+Justfile
+LICENSE
+/README.md
+/CHANGELOG.md
+clippy.toml
+deny.toml
+lychee.toml
+rustfmt.toml
+.gitignore
+
+# Docker config (dockerfiles are sent separately by compose, not from context)
+etc/docker/
+!etc/docker/nitro-enclave/
+!etc/docker/nitro-host/
+
+# Devnet tooling not needed in container builds
+etc/scripts/devnet/grafana/
+etc/scripts/devnet/load/
+etc/scripts/devnet/prometheus.yml
+etc/scripts/devnet/status.sh
+etc/scripts/devnet/accounts.sh
+etc/scripts/devnet/common.sh
+etc/scripts/devnet/smoke.sh
+etc/scripts/devnet/smoke.sh
