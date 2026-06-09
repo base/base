@@ -23,14 +23,15 @@ use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListen
 use base_protocol::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
 use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
     EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRpcProcessor, L1OriginSelector,
-    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
+    L1TxFormat, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder,
+    NetworkConfig, NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
     RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
@@ -51,8 +52,13 @@ pub struct L1Config {
     /// The L1 beacon client, or `None` when no beacon endpoint is configured (e.g. an L2
     /// parent chain with no blob DA, running calldata-only).
     pub beacon_client: Option<OnlineBeaconClient>,
-    /// The L1 engine provider.
+    /// Ethereum-typed L1 provider for origin selection, block fetching and the head/finalized
+    /// streams — format-agnostic reads only. The derivation reader is built from [`Self::l1_eth_rpc`].
     pub engine_provider: RootProvider,
+    /// L1 RPC URL, used to build the format-aware derivation reader.
+    pub l1_eth_rpc: Url,
+    /// The transaction format of the L1 chain (Ethereum or Base/OP).
+    pub l1_tx_format: L1TxFormat,
     /// How frequently to poll L1 for a new finalized block.
     ///
     /// The right value depends on the L1 finality cadence:
@@ -183,10 +189,11 @@ impl RollupNode {
     fn create_attributes_builder(
         &self,
     ) -> StatefulAttributesBuilder<AlloyChainProvider, AlloyL2ChainProvider> {
-        let l1_derivation_provider = AlloyChainProvider::new_with_trust(
-            self.l1_config.engine_provider.clone(),
+        let l1_derivation_provider = AlloyChainProvider::new_http_with_format(
+            self.l1_config.l1_eth_rpc.clone(),
             DERIVATION_PROVIDER_CACHE_SIZE,
             self.l1_config.trust_rpc,
+            self.l1_config.l1_tx_format,
         );
         let l2_derivation_provider = AlloyL2ChainProvider::new_with_trust(
             self.l2_provider.clone(),
@@ -208,10 +215,11 @@ impl RollupNode {
         l1_head_number: base_consensus_providers::L1HeadNumber,
     ) -> OnlinePipeline {
         // Create the caching L1/L2 EL providers for derivation.
-        let l1_derivation_provider = AlloyChainProvider::new_with_trust(
-            self.l1_config.engine_provider.clone(),
+        let l1_derivation_provider = AlloyChainProvider::new_http_with_format(
+            self.l1_config.l1_eth_rpc.clone(),
             DERIVATION_PROVIDER_CACHE_SIZE,
             self.l1_config.trust_rpc,
+            self.l1_config.l1_tx_format,
         );
         let l2_derivation_provider = AlloyL2ChainProvider::new_with_trust(
             self.l2_provider.clone(),

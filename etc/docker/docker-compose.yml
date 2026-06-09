@@ -429,6 +429,7 @@ services:
       - BASE_NODE_L1_BEACON
       - BASE_NODE_L1_CALLDATA_ONLY
       - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
+      - BASE_NODE_L1_TX_FORMAT
     entrypoint: /app/base-consensus
     command:
       - node
@@ -636,6 +637,7 @@ services:
       - BASE_NODE_L1_BEACON
       - BASE_NODE_L1_CALLDATA_ONLY
       - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
+      - BASE_NODE_L1_TX_FORMAT
     entrypoint: /app/base-consensus
     command:
       - node
@@ -713,6 +715,7 @@ services:
       - BASE_NODE_L1_BEACON
       - BASE_NODE_L1_CALLDATA_ONLY
       - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
+      - BASE_NODE_L1_TX_FORMAT
     entrypoint: /app/base
     command:
       - rpc

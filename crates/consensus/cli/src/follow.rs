@@ -251,6 +251,8 @@ impl ConsensusFollowNodeArgs {
             trust_rpc: self.config.l1_rpc_args.l1_trust_rpc,
             beacon_client: l1_beacon,
             engine_provider: RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
+            l1_eth_rpc: self.config.l1_rpc_args.l1_eth_rpc.clone(),
+            l1_tx_format: self.config.l1_rpc_args.l1_tx_format,
             finalized_poll_interval: L1Config::default_finalized_poll_interval(cfg.l1_chain_id),
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
         })

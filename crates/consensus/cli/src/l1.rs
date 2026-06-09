@@ -1,5 +1,6 @@
 //! L1 Client CLI arguments.
 
+use base_consensus_node::L1TxFormat;
 use eyre::WrapErr;
 use tracing::{info, warn};
 use url::Url;
@@ -38,6 +39,17 @@ pub struct L1ClientArgs {
     /// parent chain must batch via calldata (or alt-DA).
     #[arg(long, visible_alias = "l1.calldata-only", env = "BASE_NODE_L1_CALLDATA_ONLY")]
     pub l1_calldata_only: bool,
+    /// The transaction format of the L1 chain: `ethereum` (default) or `base`.
+    ///
+    /// `base` (an appchain settling to Base) carries deposit (`0x7E`)/EIP-8130 (`0x7D`) txs the
+    /// Ethereum envelopes can't deserialize; pair it with `--l1.calldata-only` (no beacon/blob DA).
+    #[arg(
+        long,
+        visible_alias = "l1.tx-format",
+        env = "BASE_NODE_L1_TX_FORMAT",
+        default_value_t = L1TxFormat::default()
+    )]
+    pub l1_tx_format: L1TxFormat,
     /// Duration in seconds of an L1 slot.
     ///
     /// This is an optional argument that can be used to use a fixed slot duration for l1 blocks
@@ -63,6 +75,7 @@ impl Default for L1ClientArgs {
             l1_trust_rpc: DEFAULT_L1_TRUST_RPC,
             l1_beacon: Some("http://localhost:5052".to_string()),
             l1_calldata_only: false,
+            l1_tx_format: L1TxFormat::default(),
             l1_slot_duration_override: None,
             l1_verifier_confs: 0,
         }
@@ -90,28 +103,45 @@ impl L1ClientArgs {
     /// - neither: error - the operator must state intent.
     /// - both: error - conflicting flags.
     pub fn validate(&self) -> eyre::Result<()> {
-        match (self.l1_beacon()?.is_some(), self.l1_calldata_only) {
-            (true, false) | (false, true) => Ok(()),
-            (false, false) => Err(eyre::eyre!(
-                "no L1 derivation mode selected: provide --l1.beacon <url> for the main Base chain, \
-                 or pass --l1.calldata-only for an appchain parent with no beacon API"
-            )),
-            (true, true) => Err(eyre::eyre!(
-                "conflicting L1 derivation modes: --l1.beacon and --l1.calldata-only are mutually \
-                 exclusive"
-            )),
+        let has_beacon = self.l1_beacon()?.is_some();
+        match (has_beacon, self.l1_calldata_only) {
+            (true, false) | (false, true) => {}
+            (false, false) => {
+                return Err(eyre::eyre!(
+                    "no L1 derivation mode selected: provide --l1.beacon <url> for the main Base \
+                     chain, or pass --l1.calldata-only for an appchain parent with no beacon API"
+                ));
+            }
+            (true, true) => {
+                return Err(eyre::eyre!(
+                    "conflicting L1 derivation modes: --l1.beacon and --l1.calldata-only are \
+                     mutually exclusive"
+                ));
+            }
         }
+
+        // A Base L1 has no beacon/blob DA, so reject a beacon URL paired with
+        // `--l1.tx-format base`.
+        if self.l1_tx_format == L1TxFormat::Base && has_beacon {
+            return Err(eyre::eyre!(
+                "--l1.tx-format base has no beacon/blob DA: do not pass --l1.beacon; run with \
+                 --l1.calldata-only"
+            ));
+        }
+
+        Ok(())
     }
 
-    /// Logs the active L1 derivation mode at startup. Call after [`Self::validate`], which has
-    /// already vetted the beacon URL.
+    /// Logs the active L1 derivation mode and L1 transaction format
+    /// at startup. Call after [`Self::validate`], which has already vetted the
+    /// beacon URL.
     pub fn log_derivation_mode(&self) {
         match self.l1_beacon().ok().flatten() {
             Some(beacon) => {
-                info!(target: "rollup_node", l1_beacon = %beacon, "L1 beacon mode: deriving blob-based batches")
+                info!(target: "rollup_node", l1_tx_format = %self.l1_tx_format, l1_beacon = %beacon, "L1 beacon mode: deriving blob-based batches")
             }
             None => {
-                warn!(target: "rollup_node", "L1 calldata-only mode: no beacon API configured; blob-based batches cannot be derived")
+                warn!(target: "rollup_node", l1_tx_format = %self.l1_tx_format, "L1 calldata-only mode: no beacon API configured; blob-based batches cannot be derived")
             }
         }
     }
@@ -147,6 +177,28 @@ mod tests {
     #[test]
     fn both_flags_are_an_error() {
         assert!(args(Some("http://localhost:5052"), true).validate().is_err());
+    }
+
+    #[test]
+    fn base_tx_format_with_beacon_is_an_error() {
+        // Base parent has no beacon DA: beacon URL is rejected even though beacon-mode alone is valid.
+        let mut a = args(Some("http://localhost:5052"), false);
+        a.l1_tx_format = L1TxFormat::Base;
+        assert!(a.validate().is_err());
+    }
+
+    #[test]
+    fn base_tx_format_calldata_only_is_valid() {
+        let mut a = args(None, true);
+        a.l1_tx_format = L1TxFormat::Base;
+        assert!(a.validate().is_ok());
+    }
+
+    #[test]
+    fn ethereum_tx_format_beacon_mode_is_valid() {
+        let mut a = args(Some("http://localhost:5052"), false);
+        a.l1_tx_format = L1TxFormat::Ethereum;
+        assert!(a.validate().is_ok());
     }
 
     #[test]

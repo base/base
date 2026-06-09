@@ -12,7 +12,7 @@ extern crate tracing;
 mod service;
 pub use service::{
     DerivationDelegateConfig, FollowNode, FollowNodeConfig, HEAD_STREAM_POLL_INTERVAL, L1Config,
-    L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
+    L1ConfigBuilder, L1TxFormat, NodeMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
 };
 
 mod follow;
