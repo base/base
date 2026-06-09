@@ -612,10 +612,43 @@ impl ProofRequestRepo {
         let session_id = canonical_session_id(&req.session_id)
             .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
 
-        // Read first to validate the result type and detect idempotent retries.
+        // Read first to classify ownership state and detect idempotent retries.
         let Some(existing) = self.get_proof_job_by_canonical_session_id(&session_id).await? else {
             return Ok(SubmitProofOutcome::NotFound);
         };
+
+        // Idempotent retry by the owning worker/lock; a differing payload conflicts.
+        if existing.job_status == ProofJobStatus::Succeeded
+            && existing.lock_id == Some(req.lock_id)
+            && existing.worker_id.as_deref() == Some(req.worker_id.as_str())
+        {
+            if let Err(reason) = existing.validate_submitted_result(&req.result) {
+                return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
+            }
+
+            let result_payload =
+                serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+
+            return Ok(if existing.result_payload.as_ref() == Some(&result_payload) {
+                SubmitProofOutcome::Completed(existing)
+            } else {
+                SubmitProofOutcome::ResultConflict { job: existing }
+            });
+        }
+        if matches!(existing.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
+            return Ok(SubmitProofOutcome::Terminal(existing));
+        }
+        if existing.job_status != ProofJobStatus::Claimed {
+            return Ok(SubmitProofOutcome::NotClaimed(existing));
+        }
+        if existing.lock_id != Some(req.lock_id)
+            || existing.worker_id.as_deref() != Some(req.worker_id.as_str())
+        {
+            return Ok(SubmitProofOutcome::StaleLock(existing));
+        }
+        if existing.lock_expires_at.is_none_or(|expires_at| expires_at <= Utc::now()) {
+            return Ok(SubmitProofOutcome::Expired(existing));
+        }
 
         if let Err(reason) = existing.validate_submitted_result(&req.result) {
             return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
@@ -623,18 +656,6 @@ impl ProofRequestRepo {
 
         let result_payload =
             serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
-
-        // Idempotent retry by the owning worker/lock; a differing payload conflicts.
-        if existing.job_status == ProofJobStatus::Succeeded
-            && existing.lock_id == Some(req.lock_id)
-            && existing.worker_id.as_deref() == Some(req.worker_id.as_str())
-        {
-            return Ok(if existing.result_payload.as_ref() == Some(&result_payload) {
-                SubmitProofOutcome::Completed(existing)
-            } else {
-                SubmitProofOutcome::ResultConflict { job: existing }
-            });
-        }
 
         let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&req.result);
         let submitted_lock_id = req.lock_id.to_string();

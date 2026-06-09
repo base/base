@@ -1643,6 +1643,21 @@ async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
         .expect("compressed job should be claimed");
     let lock_id = claimed.lock_id.expect("claimed job has lock");
 
+    // Non-owners are rejected before result-type validation, so mismatched
+    // submissions do not expose the job's expected proof result shape.
+    let stale_mismatch = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: claimed.session_id.clone(),
+            lock_id: Uuid::new_v4(),
+            worker_id: "non-owner".to_owned(),
+            result: ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![0x01].into() },
+            }),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale_mismatch, SubmitProofOutcome::StaleLock(_)));
+
     // A valid lock for a compressed job must not store a SNARK result.
     let mismatch = repo
         .complete_claimed_proof_job(CompleteClaimedProofJob {
