@@ -53,7 +53,6 @@ futures.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 
 eyre.workspace = true
-humantime.workspace = true
 url.workspace = true
 tokio.workspace = true
 backon.workspace = true
