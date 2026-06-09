@@ -89,12 +89,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve base/contracts l3-changes
+        id: contracts
+        run: |
+          contracts_commit="$(git ls-remote https://github.com/base/contracts.git refs/heads/l3-changes | cut -f1)"
+          test -n "$contracts_commit"
+          echo "commit=$contracts_commit" >> "$GITHUB_OUTPUT"
+
       - name: Build and push devnet-setup
         run: |
           docker buildx build \
             -f etc/docker/Dockerfile.devnet \
             -t ${{ env.REGISTRY_IMAGE }}:devnet-setup-sha-${{ github.sha }} \
             --platform linux/amd64 \
+            --build-arg CONTRACTS_COMMIT=${{ steps.contracts.outputs.commit }} \
             --push \
             --cache-from type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-l3-devnet-setup-linux-amd64 \
             --cache-to type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-l3-devnet-setup-linux-amd64,mode=max \
