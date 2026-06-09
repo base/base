@@ -110,7 +110,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
         {
             let call =
-                IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata).map_err(|error| {
+                IB20Stablecoin::IB20StablecoinCalls::abi_decode_validate(calldata).map_err(|error| {
                     BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
                 })?;
             let label = call.as_label();
