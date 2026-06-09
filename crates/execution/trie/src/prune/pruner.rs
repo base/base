@@ -20,21 +20,28 @@ pub struct BaseProofStoragePruner<P, H> {
     provider: BaseProofsStorage<P>,
     /// Reader to fetch block hash by block number
     block_hash_reader: H,
-    /// Keep at least these many recent blocks
-    min_block_interval: u64,
+    /// Keep at least these many recent blocks.
+    retention_blocks: u64,
     /// Maximum number of blocks to prune in one database transaction
     prune_batch_size: u64,
 }
 
 impl<P, H> BaseProofStoragePruner<P, H> {
     /// Create a new pruner.
-    pub const fn new(
+    pub fn new(
         provider: BaseProofsStorage<P>,
         block_hash_reader: H,
-        min_block_interval: u64,
+        retention_blocks: u64,
         prune_batch_size: u64,
-    ) -> Self {
-        Self { provider, block_hash_reader, min_block_interval, prune_batch_size }
+    ) -> Result<Self, &'static str> {
+        if prune_batch_size == 0 {
+            return Err("prune batch size must be greater than zero");
+        }
+        Ok(Self { provider, block_hash_reader, retention_blocks, prune_batch_size })
+    }
+
+    const fn target_earliest_block(&self, latest_block: u64) -> u64 {
+        latest_block.saturating_sub(self.retention_blocks)
     }
 }
 
@@ -43,7 +50,7 @@ where
     P: BaseProofsStore,
     H: BlockHashReader,
 {
-    fn run_inner(&self) -> BaseProofStoragePrunerResult {
+    pub fn run_inner(&self) -> BaseProofStoragePrunerResult {
         let latest_block_opt = self.provider.get_latest_block_number()?;
         if latest_block_opt.is_none() {
             trace!(target: "trie::pruner", "No latest blocks in the proof storage");
@@ -59,19 +66,27 @@ where
         let latest_block = latest_block_opt.unwrap().0;
         let earliest_block = earliest_block_opt.unwrap().0;
 
-        let interval = latest_block.saturating_sub(earliest_block);
-        if interval <= self.min_block_interval {
+        let target_earliest_block = self.target_earliest_block(latest_block);
+        info!(
+            target: "trie::pruner",
+            earliest_block,
+            latest_block,
+            target_earliest_block,
+            retention_blocks = self.retention_blocks,
+            prune_batch_size = self.prune_batch_size,
+            "Calculated proof storage pruning target",
+        );
+        if earliest_block >= target_earliest_block {
             trace!(target: "trie::pruner", "Nothing to prune");
             return Ok(PrunerOutput::default());
         }
-
-        // at this point `latest_block` is always greater than `min_block_interval`
-        let target_earliest_block = latest_block - self.min_block_interval;
 
         info!(
             target: "trie::pruner",
             from_block = earliest_block,
             to_block = target_earliest_block,
+            latest_block,
+            retention_blocks = self.retention_blocks,
            "Starting pruning proof storage",
         );
 
@@ -85,8 +100,18 @@ where
         // Prune in batches
         while current_earliest_block < target_earliest_block {
             // Calculate the end of this batch
-            let batch_end_block =
-                cmp::min(current_earliest_block + self.prune_batch_size, target_earliest_block);
+            let batch_end_block = cmp::min(
+                current_earliest_block.saturating_add(self.prune_batch_size),
+                target_earliest_block,
+            );
+            info!(
+                target: "trie::pruner",
+                start_block = current_earliest_block,
+                end_block = batch_end_block,
+                target_earliest_block,
+                batch_size = batch_end_block.saturating_sub(current_earliest_block),
+                "Starting proof storage prune batch",
+            );
 
             let batch_output = self.prune_batch(current_earliest_block, batch_end_block)?;
 
@@ -102,6 +127,26 @@ where
     /// Prunes a single batch of blocks.
     fn prune_batch(&self, start_block: u64, end_block: u64) -> Result<PrunerOutput, PrunerError> {
         let batch_start_time = Instant::now();
+        info!(
+            target: "trie::pruner",
+            start_block,
+            end_block,
+            "Resolving proof storage prune batch block hashes",
+        );
+        if end_block == 0 {
+            trace!(
+                target: "trie::pruner",
+                start_block,
+                end_block,
+                "Skipping proof storage prune batch at genesis block",
+            );
+            return Ok(PrunerOutput {
+                duration: batch_start_time.elapsed(),
+                start_block,
+                end_block,
+                ..Default::default()
+            });
+        }
 
         // Fetch the block hash for the new earliest block of this batch.
         //
@@ -126,7 +171,20 @@ where
             block: BlockNumHash { number: end_block, hash: new_earliest_block_hash },
         };
 
-        // Commit this batch
+        info!(
+            target: "trie::pruner",
+            start_block,
+            end_block,
+            block_hash = ?new_earliest_block_hash,
+            "Resolved proof storage prune batch block hashes",
+        );
+
+        info!(
+            target: "trie::pruner",
+            start_block,
+            end_block,
+            "Applying proof storage prune batch",
+        );
         let write_counts = self.provider.prune_earliest_state(block_with_parent)?;
 
         let duration = batch_start_time.elapsed();
@@ -171,7 +229,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{BlockStateDiff, db::MdbxProofsStorage};
+    use crate::{BlockStateDiff, db::RocksdbProofsStorage};
 
     mock! (
         #[derive(Debug)]
@@ -197,6 +255,20 @@ mod tests {
         keccak256(n.to_be_bytes())
     }
 
+    #[cfg(not(feature = "metrics"))]
+    fn clone_storage(
+        storage: &BaseProofsStorage<Arc<RocksdbProofsStorage>>,
+    ) -> BaseProofsStorage<Arc<RocksdbProofsStorage>> {
+        Arc::clone(storage)
+    }
+
+    #[cfg(feature = "metrics")]
+    fn clone_storage(
+        storage: &BaseProofsStorage<Arc<RocksdbProofsStorage>>,
+    ) -> BaseProofsStorage<Arc<RocksdbProofsStorage>> {
+        storage.clone()
+    }
+
     /// Build a block-with-parent for number `n` with deterministic hash.
     fn block(n: u64, parent: B256) -> BlockWithParent {
         BlockWithParent::new(parent, NumHash::new(n, b256(n)))
@@ -206,8 +278,8 @@ mod tests {
     async fn run_inner_and_and_verify_updated_state() {
         // --- env/store ---
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+            BaseProofsStorage::from(Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")));
 
         store.set_earliest_block_number(0, B256::ZERO).expect("set earliest");
 
@@ -400,7 +472,14 @@ mod tests {
             .withf(move |block_num| *block_num == 4)
             .returning(move |_| Ok(Some(b256(4))));
 
-        let pruner = BaseProofStoragePruner::new(store.clone(), block_hash_reader, 1, 1000);
+        block_hash_reader
+            .expect_block_hash()
+            .withf(move |block_num| *block_num == 3)
+            .returning(move |_| Ok(Some(b256(3))));
+
+        let pruner =
+            BaseProofStoragePruner::new(clone_storage(&store), block_hash_reader, 1, 1000)
+                .unwrap();
         let out = pruner.run_inner().expect("pruner ok");
         assert_eq!(out.start_block, 0);
         assert_eq!(out.end_block, 4, "pruned up to 4 (inclusive); new earliest is 4");
@@ -489,8 +568,8 @@ mod tests {
     #[tokio::test]
     async fn run_inner_where_latest_block_is_none() {
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+            BaseProofsStorage::from(Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")));
 
         let earliest = store.get_earliest_block_number().unwrap();
         let latest = store.get_latest_block_number().unwrap();
@@ -498,7 +577,7 @@ mod tests {
         assert!(latest.is_none());
 
         let block_hash_reader = MockBlockHashReader::new();
-        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 10, 1000);
+        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 10, 1000).unwrap();
         let out = pruner.run_inner().expect("ok");
         assert_eq!(out, PrunerOutput::default(), "should early-return default output");
     }
@@ -507,8 +586,8 @@ mod tests {
     #[tokio::test]
     async fn run_inner_earliest_none_real_db() {
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+            BaseProofsStorage::from(Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")));
 
         // Write a single block to set *latest* only.
         store
@@ -521,7 +600,7 @@ mod tests {
         assert_eq!(latest.unwrap().0, 3);
 
         let block_hash_reader = MockBlockHashReader::new();
-        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 1, 1000);
+        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 1, 1000).unwrap();
         let out = pruner.run_inner().expect("ok");
         assert_eq!(out, PrunerOutput::default(), "should early-return default output");
     }
@@ -530,8 +609,8 @@ mod tests {
     #[tokio::test]
     async fn run_inner_interval_too_small_real_db() {
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+            BaseProofsStorage::from(Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")));
 
         // Set earliest=4 explicitly
         let earliest_num = 4u64;
@@ -550,7 +629,7 @@ mod tests {
 
         // Require min_block_interval=2 (or greater) so interval < min
         let block_hash_reader = MockBlockHashReader::new();
-        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 2, 1000);
+        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 2, 1000).unwrap();
         let out = pruner.run_inner().expect("ok");
         assert_eq!(out, PrunerOutput::default(), "no pruning should occur");
     }
