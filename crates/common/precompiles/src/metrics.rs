@@ -649,8 +649,8 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        BerylCallOutcome, BerylErrorKind, BerylMetricLabels, BerylSelector, IB20, IB20Factory,
-        IPolicyRegistry,
+        BerylCallOutcome, BerylErrorKind, BerylMetricLabels, BerylSelector, CALLDATA_WORD_GAS,
+        IB20, IB20Factory, IPolicyRegistry,
     };
 
     #[test]
