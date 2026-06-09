@@ -32,9 +32,7 @@ mod beryl_metrics;
 pub use beryl_metrics::BerylPrecompileMetricsObserver;
 
 mod api;
-pub use api::{
-    BaseContext, BaseContextTr, BaseError, Builder, DefaultBase, install_base_precompiles_for_node,
-};
+pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};
 
 mod evm;
 pub use evm::BaseEvm;

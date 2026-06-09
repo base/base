@@ -10,16 +10,6 @@ use revm::{
 
 use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMetricsObserver};
 
-/// Installs Base precompiles for node execution with the production Beryl metrics observer.
-pub fn install_base_precompiles_for_node(
-    spec: BaseSpecId,
-    activation_admin_address: Option<Address>,
-) -> PrecompilesMap {
-    BasePrecompiles::new_with_spec(spec)
-        .with_activation_admin_address(activation_admin_address)
-        .install_with_observer(BerylPrecompileMetricsObserver)
-}
-
 /// Trait that allows constructing a [`BaseEvm`] from a [`BaseContext`].
 ///
 /// Implemented for [`BaseContext<DB>`] of any database. The resulting [`BaseEvm`]
@@ -31,6 +21,13 @@ pub trait Builder: Sized {
 
     /// Returns the active [`BaseSpecId`] for this builder.
     fn spec(&self) -> BaseSpecId;
+
+    /// Installs Base precompiles for node execution with the production Beryl metrics observer.
+    fn precompiles_for_node(&self, activation_admin_address: Option<Address>) -> PrecompilesMap {
+        BasePrecompiles::new_with_spec(self.spec())
+            .with_activation_admin_address(activation_admin_address)
+            .install_with_observer(BerylPrecompileMetricsObserver)
+    }
 
     /// Builds a [`BaseEvm`] with a `()` inspector. The inspect flag is `false`,
     /// so [`Inspector`][revm::Inspector] callbacks are never invoked via
@@ -47,7 +44,7 @@ pub trait Builder: Sized {
         self,
         activation_admin_address: Option<Address>,
     ) -> BaseEvm<Self::Db, (), PrecompilesMap> {
-        let precompiles = install_base_precompiles_for_node(self.spec(), activation_admin_address);
+        let precompiles = self.precompiles_for_node(activation_admin_address);
         self.build_base_with_precompiles(precompiles)
     }
 
@@ -76,7 +73,7 @@ pub trait Builder: Sized {
         inspector: INSP,
         activation_admin_address: Option<Address>,
     ) -> BaseEvm<Self::Db, INSP, PrecompilesMap> {
-        let precompiles = install_base_precompiles_for_node(self.spec(), activation_admin_address);
+        let precompiles = self.precompiles_for_node(activation_admin_address);
         self.build_with_inspector_and_precompiles(inspector, precompiles)
     }
 

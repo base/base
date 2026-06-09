@@ -12,7 +12,7 @@ use revm::precompile::PrecompileResult;
 
 use crate::{
     AssetAccounting, B20AssetStorage, B20AssetToken, B20TokenRole, BerylAuxiliaryMetrics,
-    BerylCallRecorder, BerylMetricLabels, Burnable, Configurable,
+    BerylCallRecorder, BerylMetricLabels, BerylSelector, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
@@ -103,7 +103,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         O: PrecompileCallObserver,
     {
         // Asset-specific and overridden selectors are caught here first.
-        if let Some(selector) = BerylMetricLabels::selector(calldata)
+        if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Asset::IB20AssetCalls::valid_selector(selector)
         {
             let call = IB20Asset::IB20AssetCalls::abi_decode(calldata).map_err(|error| {

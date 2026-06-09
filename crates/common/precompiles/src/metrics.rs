@@ -245,7 +245,7 @@ impl BerylErrorKind {
 
     /// Classifies ABI-encoded revert bytes into a bounded metric label.
     pub fn from_revert_bytes(bytes: &Bytes) -> Self {
-        let Some(selector) = BerylErrorClassifier::selector(bytes) else {
+        let Some(selector) = BerylSelector::selector(bytes.as_ref()) else {
             return Self::OtherRevert;
         };
 
@@ -339,19 +339,25 @@ impl BerylErrorKind {
     }
 }
 
-/// Helpers for working with ABI error selectors.
+/// Helpers for extracting ABI selectors from encoded data.
 #[derive(Debug, Clone, Copy)]
-pub struct BerylErrorClassifier;
+pub struct BerylSelector;
 
-impl BerylErrorClassifier {
-    /// Returns the ABI error selector from encoded revert bytes.
-    pub fn selector(bytes: &Bytes) -> Option<[u8; 4]> {
+impl BerylSelector {
+    /// Returns the ABI selector from encoded data, if present.
+    pub fn selector(bytes: &[u8]) -> Option<[u8; 4]> {
         let bytes = bytes.get(..4)?;
         let mut selector = [0u8; 4];
         selector.copy_from_slice(bytes);
         Some(selector)
     }
+}
 
+/// Helpers for working with ABI error selectors.
+#[derive(Debug, Clone, Copy)]
+pub struct BerylErrorClassifier;
+
+impl BerylErrorClassifier {
     /// Returns whether `selector` belongs to the ABI error type `E`.
     pub fn is_error_selector<E>(selector: [u8; 4]) -> bool
     where
@@ -366,14 +372,6 @@ impl BerylErrorClassifier {
 pub struct BerylMetricLabels;
 
 impl BerylMetricLabels {
-    /// Returns the ABI selector in calldata, if present.
-    pub fn selector(calldata: &[u8]) -> Option<[u8; 4]> {
-        let bytes = calldata.get(..4)?;
-        let mut selector = [0u8; 4];
-        selector.copy_from_slice(bytes);
-        Some(selector)
-    }
-
     /// Returns a B-20 method label from an existing stable call label.
     pub fn b20_method(label: &'static str) -> Cow<'static, str> {
         Cow::Borrowed(
@@ -397,7 +395,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for factory calldata.
     pub fn factory_method(calldata: &[u8]) -> Cow<'static, str> {
-        match Self::selector(calldata) {
+        match BerylSelector::selector(calldata) {
             Some(IB20Factory::createB20Call::SELECTOR) => Cow::Borrowed("createB20"),
             Some(IB20Factory::getB20AddressCall::SELECTOR) => Cow::Borrowed("getB20Address"),
             Some(IB20Factory::isB20Call::SELECTOR) => Cow::Borrowed("isB20"),
@@ -417,7 +415,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for activation-registry calldata.
     pub fn activation_method(calldata: &[u8]) -> Cow<'static, str> {
-        match Self::selector(calldata) {
+        match BerylSelector::selector(calldata) {
             Some(IActivationRegistry::isActivatedCall::SELECTOR) => Cow::Borrowed("isActivated"),
             Some(IActivationRegistry::checkActivatedCall::SELECTOR) => {
                 Cow::Borrowed("checkActivated")
@@ -436,7 +434,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for policy-registry calldata.
     pub fn policy_method(calldata: &[u8]) -> Cow<'static, str> {
-        match Self::selector(calldata) {
+        match BerylSelector::selector(calldata) {
             Some(IPolicyRegistry::createPolicyCall::SELECTOR) => Cow::Borrowed("createPolicy"),
             Some(IPolicyRegistry::createPolicyWithAccountsCall::SELECTOR) => {
                 Cow::Borrowed("createPolicyWithAccounts")
@@ -471,7 +469,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for asset B-20 calldata.
     pub fn b20_asset_method(calldata: &[u8]) -> Cow<'static, str> {
-        let Some(selector) = Self::selector(calldata) else {
+        let Some(selector) = BerylSelector::selector(calldata) else {
             return Self::unknown();
         };
         if let Some(method) = IB20Asset::IB20AssetCalls::name_by_selector(selector) {
@@ -494,7 +492,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for stablecoin B-20 calldata.
     pub fn b20_stablecoin_method(calldata: &[u8]) -> Cow<'static, str> {
-        let Some(selector) = Self::selector(calldata) else {
+        let Some(selector) = BerylSelector::selector(calldata) else {
             return Self::unknown();
         };
         if let Some(method) = IB20Stablecoin::IB20StablecoinCalls::name_by_selector(selector) {
@@ -646,8 +644,8 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        BerylCallOutcome, BerylErrorKind, BerylMetricLabels, IB20, IB20Factory, IPolicyRegistry,
-        metrics::BerylErrorClassifier,
+        BerylCallOutcome, BerylErrorKind, BerylMetricLabels, BerylSelector, IB20, IB20Factory,
+        IPolicyRegistry,
     };
 
     #[test]
@@ -696,9 +694,9 @@ mod tests {
 
     #[test]
     fn selector_extracts_revert_selector() {
-        let bytes = IB20::Unauthorized {}.abi_encode().into();
+        let bytes = IB20::Unauthorized {}.abi_encode();
         assert_eq!(
-            BerylErrorClassifier::selector(&bytes),
+            BerylSelector::selector(&bytes),
             Some(<IB20::Unauthorized as SolError>::SELECTOR)
         );
     }

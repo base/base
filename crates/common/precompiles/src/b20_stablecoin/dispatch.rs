@@ -13,7 +13,8 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    B20StablecoinToken, B20TokenRole, BerylCallRecorder, BerylMetricLabels, Burnable, Configurable,
+    B20StablecoinToken, B20TokenRole, BerylCallRecorder, BerylMetricLabels, BerylSelector,
+    Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
@@ -105,7 +106,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        if let Some(selector) = BerylMetricLabels::selector(calldata)
+        if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
         {
             let call =
