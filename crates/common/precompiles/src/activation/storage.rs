@@ -8,6 +8,13 @@ use revm::precompile::PrecompileResult;
 use crate::IActivationRegistry;
 
 /// Runtime activation registry for Base-native features.
+///
+/// # Bytecode marker
+///
+/// The `0xef` bytecode marker at `Self::ADDRESS` is written on first-ever activation and is an
+/// initialization sentinel only. It is NOT cleared on deactivation and MUST NOT be used to infer
+/// whether any feature is currently active. Use `isActivated(feature)` for authoritative
+/// activation state.
 #[contract(addr = Self::ADDRESS)]
 #[namespace("base.activation_registry")]
 pub struct ActivationRegistryStorage {
@@ -97,6 +104,9 @@ impl ActivationRegistryStorage<'_> {
     }
 
     /// Deactivates the feature.
+    ///
+    /// The initialization bytecode marker at `Self::ADDRESS` is intentionally preserved after
+    /// deactivation. Only the feature's storage slot is cleared.
     pub fn deactivate(
         &mut self,
         feature: B256,
@@ -524,5 +534,33 @@ mod tests {
 
         assert!(output.is_success());
         assert_eq!(output.gas_refunded, 0, "writing to a zero slot earns no refund");
+    }
+
+    #[test]
+    fn bytecode_marker_persists_after_deactivation_bop322() {
+        // BOP-322: code presence is an initialization marker only; it persists after deactivation
+        // by design. EXTCODESIZE/EXTCODEHASH at Self::ADDRESS must not be used as a liveness signal.
+        let mut storage = HashMapStorageProvider::new(1);
+
+        // Before any activation, no bytecode marker is present.
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert!(!ctx.has_bytecode(ActivationRegistryStorage::ADDRESS).unwrap());
+        });
+
+        activate_feature(&mut storage).unwrap();
+
+        // After activation both the bytecode marker and the feature flag are set.
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert!(ctx.has_bytecode(ActivationRegistryStorage::ADDRESS).unwrap());
+        });
+        assert_activated(&mut storage, true);
+
+        deactivate_feature(&mut storage).unwrap();
+
+        // After deactivation isActivated returns false, but the bytecode marker is preserved.
+        assert_activated(&mut storage, false);
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert!(ctx.has_bytecode(ActivationRegistryStorage::ADDRESS).unwrap());
+        });
     }
 }
