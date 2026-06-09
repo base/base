@@ -54,6 +54,7 @@ mod tests {
     const PAYER: Address = address!("0x2222222222222222222222222222222222222222");
     const SENDER_ACTOR_ID: B256 =
         b256!("0x3333333333333333333333333333333333333333333333333333333333333333");
+    const ORIGIN: Address = address!("0x9999999999999999999999999999999999999999");
 
     fn dispatch(storage: &mut HashMapStorageProvider, calldata: &[u8]) -> Vec<u8> {
         StorageCtx::enter(storage, |ctx| {
@@ -98,14 +99,22 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_returns_zero_when_unset() {
+    fn dispatch_falls_back_to_origin_when_unset() {
         let mut storage = HashMapStorageProvider::new(1);
+        storage.set_origin(ORIGIN);
 
         let sender =
             dispatch(&mut storage, &ITransactionContext::getTransactionSenderCall {}.abi_encode());
         assert_eq!(
             ITransactionContext::getTransactionSenderCall::abi_decode_returns(&sender).unwrap(),
-            Address::ZERO
+            ORIGIN
+        );
+
+        let payer =
+            dispatch(&mut storage, &ITransactionContext::getTransactionPayerCall {}.abi_encode());
+        assert_eq!(
+            ITransactionContext::getTransactionPayerCall::abi_decode_returns(&payer).unwrap(),
+            ORIGIN
         );
     }
 
