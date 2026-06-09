@@ -745,7 +745,7 @@ mod tests {
     fn beryl_chain_config_with_zero_activation_admin_is_rejected() {
         let mut config = ChainConfig::devnet().clone();
         config.beryl_timestamp = Some(0);
-        config.activation_admin_address = Some(Address::ZERO);
+        config.activation_admin_address = Address::ZERO;
 
         let err = BaseChainSpec::try_from(&config)
             .expect_err("Beryl chain config with zero activation admin should be rejected");

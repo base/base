@@ -246,7 +246,7 @@ impl BootInfo {
 
         let built_in_chain_config = base_common_chains::ChainConfig::by_chain_id(chain_id);
         let activation_admin_address =
-            built_in_chain_config.and_then(|config| config.activation_admin_address);
+            built_in_chain_config.map(|config| config.activation_admin_address);
 
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
@@ -435,7 +435,7 @@ mod tests {
 
         let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
 
-        assert_eq!(boot_info.activation_admin_address, chain_config.activation_admin_address);
+        assert_eq!(boot_info.activation_admin_address, Some(chain_config.activation_admin_address));
     }
 
     #[tokio::test]
