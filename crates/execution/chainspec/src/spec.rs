@@ -296,7 +296,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
             .to_chain_hardforks();
         Self::validate_beryl_activation_admin(
             &hardforks,
-            cfg.activation_admin_address,
+            Some(cfg.activation_admin_address),
             cfg.chain_id,
         )?;
         let genesis_header = match cfg.genesis_l2_hash {
@@ -335,7 +335,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
                 prune_delete_limit: cfg.prune_delete_limit,
                 ..Default::default()
             },
-            activation_admin_address: cfg.activation_admin_address,
+            activation_admin_address: Some(cfg.activation_admin_address),
         })
     }
 }
@@ -706,19 +706,6 @@ mod tests {
             .expect_err("Beryl genesis without activation admin should be rejected");
         assert!(
             matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id: id } if id == chain_id)
-        );
-    }
-
-    #[test]
-    fn beryl_chain_config_without_activation_admin_is_rejected() {
-        let mut config = ChainConfig::devnet().clone();
-        config.beryl_timestamp = Some(0);
-        config.activation_admin_address = None;
-
-        let err = BaseChainSpec::try_from(&config)
-            .expect_err("Beryl chain config without activation admin should be rejected");
-        assert!(
-            matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id } if chain_id == config.chain_id)
         );
     }
 
