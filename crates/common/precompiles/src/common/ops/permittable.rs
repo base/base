@@ -358,7 +358,7 @@ mod tests {
         assert!(args.recover_signer(B256::repeat_byte(0x11)).is_err());
     }
 
-    /// Regression test for BOP-334: high-s signatures must be rejected even though they would
+    /// Regression test: high-s signatures must be rejected even though they would
     /// recover the same owner address as the canonical low-s counterpart.
     /// The complementary case — canonical low-s is still accepted — is covered by
     /// `permit_args_recover_signer_returns_owner`.
