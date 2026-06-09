@@ -130,8 +130,8 @@ impl PolicyRegistryStorage<'_> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_primitives::{Address, Bytes, address};
-    use alloy_sol_types::{SolCall, SolError, SolValue};
+    use alloy_primitives::{Address, address};
+    use alloy_sol_types::{SolCall, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
