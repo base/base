@@ -155,6 +155,8 @@ pub enum TransactionEventType {
     BuilderRejected,
     #[serde(rename = "BUILDER_INCLUDED")]
     BuilderIncluded,
+    #[serde(rename = "BUILDER_PAYLOAD_FINALIZED")]
+    BuilderPayloadFinalized,
 }
 
 impl fmt::Display for TransactionEventType {
@@ -200,6 +202,7 @@ impl fmt::Display for TransactionEventType {
             Self::BuilderAccepted => "BUILDER_ACCEPTED",
             Self::BuilderRejected => "BUILDER_REJECTED",
             Self::BuilderIncluded => "BUILDER_INCLUDED",
+            Self::BuilderPayloadFinalized => "BUILDER_PAYLOAD_FINALIZED",
         };
         f.write_str(value)
     }

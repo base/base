@@ -61,7 +61,9 @@ use crate::{
         generator::{BlockCell, BuildArguments},
     },
     traits::{ClientBounds, PoolBounds},
-    transaction_events::{BuilderTransactionEventContext, emit_builder_transaction_event},
+    transaction_events::{
+        BuilderTransactionEventContext, emit_builder_payload_event, emit_builder_transaction_event,
+    },
 };
 
 type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
@@ -907,6 +909,33 @@ where
         let block = final_payload.block();
         let block_hash = block.hash();
         let block_number = block.number;
+        let transaction_count = block.body().transactions.len();
+        let payload_event_ctx = BuilderTransactionEventContext {
+            network: ctx.builder_config.transaction_event_network.clone(),
+            payload_id: ctx.payload_id().to_string(),
+            block_number,
+            block_hash: Some(block_hash),
+            parent_hash: ctx.parent_hash(),
+            flashblock_index: None,
+            target_flashblock_count: ctx.target_flashblock_count(),
+            ordering_position: None,
+            builder_mode: "flashblocks",
+            source_queue: "finalized_payload",
+        };
+        emit_builder_payload_event(
+            Some(sink),
+            payload_event_ctx,
+            TransactionEventType::BuilderPayloadFinalized,
+            serde_json::Map::from_iter([
+                ("transaction_count".to_string(), serde_json::json!(transaction_count)),
+                ("gas_used".to_string(), serde_json::json!(block.gas_used)),
+                ("gas_limit".to_string(), serde_json::json!(block.gas_limit)),
+                ("timestamp".to_string(), serde_json::json!(block.timestamp)),
+                ("inclusion_signal".to_string(), serde_json::json!("builder_finalized_payload")),
+                ("canonicality".to_string(), serde_json::json!("not_observed_by_builder")),
+            ]),
+        );
+
         for (position, tx) in block.body().transactions.iter().enumerate() {
             let event_ctx = BuilderTransactionEventContext {
                 network: ctx.builder_config.transaction_event_network.clone(),

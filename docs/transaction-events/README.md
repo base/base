@@ -182,6 +182,7 @@ Builder:
 - `BUILDER_ACCEPTED`
 - `BUILDER_REJECTED`
 - `BUILDER_INCLUDED`
+- `BUILDER_PAYLOAD_FINALIZED`
 
 Builder caveat: `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`, and
 `BUILDER_REJECTED` are emitted per payload-building attempt and include
@@ -193,7 +194,13 @@ canonical chain inclusion, so these events include
 `data.inclusion_signal = "builder_finalized_payload"` and
 `data.canonicality = "not_observed_by_builder"`. The payload loop emits nonce
 and validation skips as `BUILDER_REJECTED` rather than inventing replacement
-relationships.
+relationships. `BUILDER_PAYLOAD_FINALIZED` is emitted once for each built
+payload and links `payload_id` to the builder's block hash and number even when
+the payload contains no user transactions. It includes `data.parent_hash`,
+`data.transaction_count`, `data.gas_used`, `data.gas_limit`, and
+`data.timestamp`, but it has the same canonicality caveat: it means the builder
+computed a final payload with state root, not that the payload was later
+observed as canonical or consensus-finalized.
 
 ## Event ID Guidance
 

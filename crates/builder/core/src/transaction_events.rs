@@ -233,6 +233,63 @@ pub(crate) fn emit_builder_transaction_event(
     }
 }
 
+/// Emits one builder payload event if a sink is configured.
+pub(crate) fn emit_builder_payload_event(
+    sink: Option<&SharedBuilderTransactionEventSink>,
+    ctx: BuilderTransactionEventContext,
+    event_type: TransactionEventType,
+    mut data: Map<String, Value>,
+) {
+    let Some(sink) = sink else {
+        return;
+    };
+
+    let event_type_label = event_type.to_string();
+    let mut base_data = ctx.base_data();
+    base_data.append(&mut data);
+
+    let mut event_id = EventIdBuilder::new()
+        .part("producer", TransactionEventProducer::BaseBuilder)
+        .part("event_type", event_type)
+        .part("payload_id", &ctx.payload_id)
+        .part("block_number", ctx.block_number);
+    if let Some(block_hash) = ctx.block_hash {
+        event_id = event_id.part("block_hash", block_hash);
+    }
+
+    let mut event = TransactionEvent::new(
+        event_id.finish(),
+        Utc::now(),
+        TransactionEventProducer::BaseBuilder,
+        event_type,
+    )
+    .with_network(ctx.network)
+    .with_block_number(ctx.block_number)
+    .with_payload_id(ctx.payload_id)
+    .with_data(base_data);
+
+    if let Some(block_hash) = ctx.block_hash {
+        event = event.with_block_hash(block_hash);
+    }
+
+    match sink.try_write_event(&event) {
+        Ok(()) => {
+            BuilderMetrics::builder_transaction_events_emitted(event_type_label).increment(1);
+        }
+        Err(err) => {
+            BuilderMetrics::builder_transaction_events_dropped(event_type_label, "write")
+                .increment(1);
+            warn!(
+                target: "payload_builder",
+                error = %err,
+                event_type = %event.event_type,
+                payload_id = ?event.payload_id,
+                "failed to enqueue builder payload event"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -323,6 +380,36 @@ mod tests {
         let serialized = serde_json::to_string(event).unwrap();
         assert!(!serialized.contains("calldata"));
         assert!(!serialized.contains("raw_tx"));
+    }
+
+    #[test]
+    fn emits_builder_payload_event_with_block_join_fields() {
+        let sink = Arc::new(RecordingSink::default());
+        let shared = SharedBuilderTransactionEventSink::new(sink.clone());
+        let mut ctx = context();
+        let block_hash = B256::repeat_byte(0xbb);
+        ctx.block_hash = Some(block_hash);
+        ctx.flashblock_index = None;
+        ctx.ordering_position = None;
+
+        emit_builder_payload_event(
+            Some(&shared),
+            ctx,
+            TransactionEventType::BuilderPayloadFinalized,
+            Map::from_iter([("transaction_count".to_string(), json!(0))]),
+        );
+
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.event_type, TransactionEventType::BuilderPayloadFinalized);
+        assert_eq!(event.block_hash, Some(block_hash));
+        assert_eq!(event.block_number, Some(10));
+        assert_eq!(event.payload_id.as_deref(), Some("0x0102030405060708"));
+        assert_eq!(event.data["parent_hash"], format!("{:#x}", B256::repeat_byte(0xaa)));
+        assert_eq!(event.data["transaction_count"], 0);
+        assert!(event.tx_hash.is_none());
+        assert!(event.validate().is_ok());
     }
 
     #[test]
