@@ -44,9 +44,6 @@ pub struct ConsensusFollowNodeCommand {
 impl ConsensusFollowNodeCommand {
     /// Runs the standalone consensus follow-node command.
     pub fn run(mut self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        LogConfig::from(self.logging.clone())
-            .init_with_trace_args(&mut self.traces, &["libp2p_gossipsub=error"])?;
-
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
@@ -60,10 +57,25 @@ impl ConsensusFollowNodeCommand {
             None
         };
 
-        RuntimeManager::new().run_until_ctrl_c(async move {
-            let _upgrade_countdown_metrics =
-                metrics_config.map(CliMetrics::spawn_upgrade_countdown_recorder);
-            args.start().await
+        let manager = RuntimeManager::new();
+        let rt = manager.tokio_runtime()?;
+        rt.block_on(async {
+            LogConfig::from(self.logging.clone())
+                .init_with_trace_args(&mut self.traces, &["libp2p_gossipsub=error"])
+        })?;
+        rt.block_on(async move {
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
+                    Ok(())
+                }
+                res = async move {
+                    let _upgrade_countdown_metrics =
+                        metrics_config.map(CliMetrics::spawn_upgrade_countdown_recorder);
+                    args.start().await
+                } => res,
+            }
         })
     }
 }

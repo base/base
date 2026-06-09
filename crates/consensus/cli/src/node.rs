@@ -54,9 +54,6 @@ pub struct ConsensusNodeCommand {
 impl ConsensusNodeCommand {
     /// Runs the standalone consensus node command.
     pub fn run(mut self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        LogConfig::from(self.logging.clone())
-            .init_with_trace_args(&mut self.traces, &["libp2p_gossipsub=error"])?;
-
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
@@ -69,10 +66,27 @@ impl ConsensusNodeCommand {
         }
 
         let metrics_enabled = self.metrics.enabled;
-        RuntimeManager::new().run_until_ctrl_c(async move {
-            let _upgrade_countdown_metrics =
-                metrics_enabled.then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
-            args.start_with_overrides(cfg, Default::default()).await
+        let manager = RuntimeManager::new();
+        let rt = manager.tokio_runtime()?;
+        // Build the subscriber — including the gRPC OTLP layer — inside the main runtime
+        // so tonic's transport channel lives for the full program lifetime (reth pattern).
+        rt.block_on(async {
+            LogConfig::from(self.logging.clone())
+                .init_with_trace_args(&mut self.traces, &["libp2p_gossipsub=error"])
+        })?;
+        rt.block_on(async move {
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
+                    Ok(())
+                }
+                res = async move {
+                    let _upgrade_countdown_metrics = metrics_enabled
+                        .then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
+                    args.start_with_overrides(cfg, Default::default()).await
+                } => res,
+            }
         })
     }
 }
