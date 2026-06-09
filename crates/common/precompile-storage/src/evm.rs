@@ -114,11 +114,6 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-            // EIP-8037: both state gas charges are gated on is_new_code.
-            // create_state_gas covers the new account entry in the state trie.
-            // code_deposit_state_gas covers the new code object. Replacing code on an
-            // existing account is not a state-creating operation in the EIP-8037 model —
-            // the code slot already occupies a trie node — so it is intentionally excluded.
             self.deduct_state_gas(self.gas_params.create_state_gas())?;
             self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
