@@ -7,8 +7,11 @@ sol! {
     ///
     /// Exposes the resolved sender, payer, and sender actor id for the
     /// in-flight EIP-8130 transaction. On non-EIP-8130 transactions the
-    /// backing transient slots are unset and the getters return the zero
-    /// address / zero word.
+    /// backing transient slots are unset and the getters fall back to the
+    /// ambient origin: `getTransactionSender` and `getTransactionPayer`
+    /// return `tx.origin`, and `getTransactionSenderActorId` returns
+    /// `bytes32(bytes20(tx.origin))` (the address left-aligned in the high
+    /// 20 bytes).
     interface ITransactionContext {
         /// Precompile cannot be executed via delegatecall or callcode.
         error DelegateCallNotAllowed();

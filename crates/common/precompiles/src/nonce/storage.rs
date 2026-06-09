@@ -90,6 +90,13 @@ impl NonceManagerStorage<'_> {
         if nonce_key == Self::PROTOCOL_NONCE_KEY {
             return Err(BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
         }
+
+        // The nonce write and its NonceIncremented event must commit together;
+        // guard them with a checkpoint so a failure after the write (e.g. during
+        // event emission) reverts the advanced nonce rather than leaving it
+        // advanced without a log. The guard reverts on drop unless committed.
+        let checkpoint = self.storage.checkpoint();
+
         self.__initialize()?;
         let current = self.nonces.at(&account).at(&nonce_key).read()?;
         let new_nonce = current
@@ -101,6 +108,8 @@ impl NonceManagerStorage<'_> {
             nonceKey: nonce_key,
             newNonce: new_nonce,
         })?;
+
+        checkpoint.commit();
         Ok(new_nonce)
     }
 
