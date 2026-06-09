@@ -238,15 +238,14 @@ impl BaseChainSpec {
         activation_admin_address: Option<Address>,
         chain_id: u64,
     ) -> Result<(), BaseChainSpecError> {
-        if activation_admin_address.is_none()
-            && !matches!(hardforks.fork(BaseUpgrade::Beryl), ForkCondition::Never)
-        {
+        let beryl_scheduled =
+            !matches!(hardforks.fork(BaseUpgrade::Beryl), ForkCondition::Never);
+
+        if activation_admin_address.is_none() && beryl_scheduled {
             return Err(BaseChainSpecError::MissingActivationAdminAddress { chain_id });
         }
 
-        if matches!(activation_admin_address, Some(addr) if addr.is_zero())
-            && !matches!(hardforks.fork(BaseUpgrade::Beryl), ForkCondition::Never)
-        {
+        if matches!(activation_admin_address, Some(addr) if addr.is_zero()) && beryl_scheduled {
             return Err(BaseChainSpecError::ZeroActivationAdminAddress { chain_id });
         }
 
