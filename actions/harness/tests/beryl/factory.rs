@@ -386,11 +386,9 @@ async fn b20_factory_rejects_invalid_creation_parameters() {
     );
     let block5 = env.sequencer.build_next_block_with_transactions(vec![invalid_address]).await;
     assert!(env.user_tx_succeeded(&block5, 0), "invalid getB20Address probe tx must succeed");
-    assert!(env.probe_call_succeeded(probe), "invalid getB20Address staticcall must succeed");
-    assert_eq!(
-        env.probe_return_word(probe),
-        U256::ZERO,
-        "getB20Address(__Invalid) must return address(0)"
+    assert!(
+        !env.probe_call_succeeded(probe),
+        "getB20Address(__Invalid) staticcall must revert with strict ABI decoding"
     );
 
     env.derive_blocks([(block1, 1), (block2, 2), (block3, 3), (block4, 4), (block5, 5)], 5).await;
