@@ -1347,7 +1347,7 @@ mod tests {
         );
     }
 
-    /// Regression test for BOP-319: `getB20Address` and `createB20` must meter the
+    /// Regression test: `getB20Address` and `createB20` must meter the
     /// keccak256 hash used for address derivation.
     ///
     /// The dispatch arms now call `ctx.keccak256()` for recognized variants, charging
