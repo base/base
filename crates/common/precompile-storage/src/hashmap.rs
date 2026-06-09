@@ -347,10 +347,21 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     use super::*;
-    use crate::provider::PrecompileStorageProvider;
+    use crate::{error::BasePrecompileError, provider::PrecompileStorageProvider};
 
     const ADDR: Address = Address::ZERO;
     const KEY: U256 = U256::ZERO;
+
+    #[test]
+    fn set_code_static_violation_before_state_gas_charge() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.set_static(true);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+
+        assert_eq!(p.set_code(Address::ZERO, code), Err(BasePrecompileError::StaticCallViolation),);
+        // No state gas must have been charged.
+        assert_eq!(p.state_gas_used(), 0);
+    }
 
     #[test]
     fn refund_gas_accumulates_positive() {

@@ -461,6 +461,22 @@ mod tests {
         }
     }
 
+    /// `set_code` in a static context returns `StaticCallViolation` before any gas is charged.
+    #[test]
+    fn set_code_static_violation_before_gas_charge() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let gas = 1_000_000;
+        let mut provider = make_evm_provider(&mut ctx, gas_params, gas, true);
+
+        assert_eq!(
+            provider.set_code(Address::ZERO, Bytecode::new_raw([0x60u8, 0x00].as_ref().into())),
+            Err(BasePrecompileError::StaticCallViolation),
+        );
+        // No gas must have been consumed.
+        assert_eq!(provider.gas_used(), 0);
+    }
+
     /// `set_code` on a brand-new account must charge both `create_state_gas` and
     /// `code_deposit_state_gas` against the state-gas counter.
     #[test]
