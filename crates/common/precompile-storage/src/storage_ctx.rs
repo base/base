@@ -166,6 +166,10 @@ impl<'a> StorageCtx<'a> {
     pub fn is_static(&self) -> bool {
         self.with_storage(|s| s.is_static())
     }
+    /// Returns the native value (in wei) attached to this precompile call.
+    pub fn call_value(&self) -> U256 {
+        self.with_storage(|s| s.call_value())
+    }
     /// Returns the address that called this precompile.
     pub fn caller(&self) -> Address {
         self.with_storage(|s| s.caller())

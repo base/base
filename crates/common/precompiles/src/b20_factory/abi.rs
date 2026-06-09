@@ -32,6 +32,9 @@ sol! {
 
         // ── Errors ───────────────────────────────────────────────────────────
 
+        /// ETH was sent to a nonpayable factory function.
+        error NonPayable();
+
         /// A token already exists at the address derived from `(variant, msg.sender, salt)`.
         error TokenAlreadyExists(address token);
 

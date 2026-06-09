@@ -31,6 +31,7 @@ use crate::{
 pub struct EvmPrecompileStorageProvider<'a> {
     internals: alloy_evm::EvmInternals<'a>,
     caller: Address,
+    call_value: U256,
     gas: Gas,
     gas_params: GasParams,
     is_static: bool,
@@ -47,7 +48,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
     /// `gas_params` drives all EIP-2929/2200/3529 cost calculations.
     /// Pass [`GasParams::default`] when the active spec is unknown at call site.
     pub fn new(input: PrecompileInput<'a>, gas_params: GasParams) -> Self {
-        let PrecompileInput { gas, caller, is_static, internals, .. } = input;
+        let PrecompileInput { gas, caller, value, is_static, internals, .. } = input;
 
         let block_number = internals.block_env().number().to::<u64>();
         let timestamp = internals.block_env().timestamp();
@@ -57,6 +58,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
         Self {
             internals,
             caller,
+            call_value: value,
             gas: Gas::new(gas),
             gas_params,
             is_static,
@@ -271,6 +273,10 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
 
     fn is_static(&self) -> bool {
         self.is_static
+    }
+
+    fn call_value(&self) -> U256 {
+        self.call_value
     }
 
     fn caller(&self) -> Address {

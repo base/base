@@ -77,6 +77,9 @@ pub trait PrecompileStorageProvider {
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
 
+    /// Returns the native value (in wei) attached to this precompile call.
+    fn call_value(&self) -> U256;
+
     /// Returns the address that called this precompile.
     fn caller(&self) -> Address;
     /// Replaces the current caller address and returns the previous caller.

@@ -23,6 +23,7 @@ pub struct HashMapStorageProvider {
     beneficiary: Address,
     block_number: u64,
     caller: Address,
+    call_value: U256,
     is_static: bool,
     counter_sload: u64,
     counter_sstore: u64,
@@ -61,6 +62,7 @@ impl HashMapStorageProvider {
             beneficiary: Address::ZERO,
             block_number: 0,
             caller: Address::ZERO,
+            call_value: U256::ZERO,
             is_static: false,
             counter_sload: 0,
             counter_sstore: 0,
@@ -208,6 +210,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.is_static
     }
 
+    fn call_value(&self) -> U256 {
+        self.call_value
+    }
+
     fn caller(&self) -> alloy_primitives::Address {
         self.caller
     }
@@ -287,6 +293,11 @@ impl HashMapStorageProvider {
     /// Sets the caller address (test-utils only).
     pub const fn set_caller(&mut self, caller: Address) {
         self.caller = caller;
+    }
+
+    /// Sets the native call value in wei (test-utils only).
+    pub const fn set_call_value(&mut self, value: U256) {
+        self.call_value = value;
     }
 
     /// Sets whether the current call is static (test-utils only).
