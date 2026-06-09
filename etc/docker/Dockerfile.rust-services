@@ -61,11 +61,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/target,id=client-target,sharing=locked \
     cargo build --profile $PROFILE \
       --bin base-reth-node \
+      --bin base \
       --bin base-consensus \
       --bin basectl \
       --bin snapshotter && \
     target_dir="/app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")" && \
     cp "$target_dir/base-reth-node" /app/base-client && \
+    cp "$target_dir/base" /app/base && \
     cp "$target_dir/base-consensus" /app/base-consensus && \
     cp "$target_dir/basectl" /app/basectl && \
     cp "$target_dir/snapshotter" /app/snapshotter
@@ -154,6 +156,7 @@ WORKDIR /app
 
 FROM runtime-base AS client
 COPY --from=client-builder /app/base-client ./base-client
+COPY --from=client-builder /app/base ./base
 COPY --from=client-builder /app/base-consensus ./base-consensus
 COPY --from=client-builder /app/basectl ./basectl
 COPY --from=client-builder /app/snapshotter ./snapshotter
