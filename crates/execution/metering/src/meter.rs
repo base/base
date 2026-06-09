@@ -8,7 +8,10 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
-use base_common_evm::L1BlockInfo;
+use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
+};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
@@ -178,12 +181,19 @@ fn add_state_root_trie_update_counts(
 }
 
 /// Opcodes and precompiles to track during bundle metering.
+///
+/// This is for targeted transaction and bundle simulation. It is not the primary production
+/// failure-rate monitoring path for Beryl precompiles.
 #[derive(Debug, Clone, Default)]
 pub struct MeteredOpcodes {
     /// EVM opcodes to track.
     pub opcodes: HashSet<OpCode>,
     /// Precompile addresses to track, keyed by address with display name.
     pub precompiles: HashMap<Address, String>,
+    /// Whether to track dynamic Beryl B-20 asset-token precompile addresses.
+    pub beryl_b20_asset_precompiles: bool,
+    /// Whether to track dynamic Beryl B-20 stablecoin-token precompile addresses.
+    pub beryl_b20_stablecoin_precompiles: bool,
 }
 
 /// Constructs a precompile address from a `u16` value.
@@ -216,30 +226,96 @@ const PRECOMPILES: &[(&str, Address)] = &[
     ("P256VERIFY", precompile_addr(0x100)),
 ];
 
+const BERYL_B20_FACTORY_PRECOMPILE: &str = "BERYL_B20_FACTORY";
+const BERYL_ACTIVATION_REGISTRY_PRECOMPILE: &str = "BERYL_ACTIVATION_REGISTRY";
+const BERYL_POLICY_REGISTRY_PRECOMPILE: &str = "BERYL_POLICY_REGISTRY";
+const BERYL_B20_ASSET_PRECOMPILE: &str = "BERYL_B20_ASSET";
+const BERYL_B20_STABLECOIN_PRECOMPILE: &str = "BERYL_B20_STABLECOIN";
+
+/// Beryl singleton precompile names and their fixed addresses.
+const BERYL_PRECOMPILES: &[(&str, Address)] = &[
+    (BERYL_B20_FACTORY_PRECOMPILE, B20FactoryStorage::ADDRESS),
+    (BERYL_ACTIVATION_REGISTRY_PRECOMPILE, ActivationRegistryStorage::ADDRESS),
+    (BERYL_POLICY_REGISTRY_PRECOMPILE, PolicyRegistryStorage::ADDRESS),
+];
+
 impl MeteredOpcodes {
     /// Returns true if no opcodes or precompiles are configured.
     pub fn is_empty(&self) -> bool {
-        self.opcodes.is_empty() && self.precompiles.is_empty()
+        self.opcodes.is_empty()
+            && self.precompiles.is_empty()
+            && !self.beryl_b20_asset_precompiles
+            && !self.beryl_b20_stablecoin_precompiles
     }
 
-    /// Adds all known precompiles to the metered set.
+    /// Adds all known standard and Beryl precompiles to the metered set.
     pub fn with_all_precompiles(mut self) -> Self {
         for &(name, addr) in PRECOMPILES {
             self.precompiles.insert(addr, name.to_string());
         }
+        for &(name, addr) in BERYL_PRECOMPILES {
+            self.precompiles.insert(addr, name.to_string());
+        }
+        self.beryl_b20_asset_precompiles = true;
+        self.beryl_b20_stablecoin_precompiles = true;
         self
+    }
+
+    /// Returns a copy limited to the precompile set active in `spec`.
+    pub fn for_spec(mut self, spec: BaseSpecId) -> Self {
+        if spec.is_enabled_in(BaseUpgrade::Beryl) {
+            return self;
+        }
+
+        for &(_, addr) in BERYL_PRECOMPILES {
+            self.precompiles.remove(&addr);
+        }
+        self.beryl_b20_asset_precompiles = false;
+        self.beryl_b20_stablecoin_precompiles = false;
+        self
+    }
+
+    /// Returns the configured display name for a metered precompile address.
+    pub fn precompile_name(&self, address: Address) -> Option<&str> {
+        self.precompiles
+            .get(&address)
+            .map(String::as_str)
+            .or_else(|| self.beryl_b20_token_precompile_name(address))
+    }
+
+    /// Returns true when `address` is in the metered precompile set.
+    pub fn meters_precompile(&self, address: Address) -> bool {
+        self.precompile_name(address).is_some()
+    }
+
+    /// Returns the dynamic Beryl B-20 token precompile name for `address`, when enabled.
+    pub fn beryl_b20_token_precompile_name(&self, address: Address) -> Option<&'static str> {
+        match B20Variant::from_address(address) {
+            Some(B20Variant::Asset) if self.beryl_b20_asset_precompiles => {
+                Some(BERYL_B20_ASSET_PRECOMPILE)
+            }
+            Some(B20Variant::Stablecoin) if self.beryl_b20_stablecoin_precompiles => {
+                Some(BERYL_B20_STABLECOIN_PRECOMPILE)
+            }
+            _ => None,
+        }
     }
 
     /// Parses opcode and precompile name strings into a [`MeteredOpcodes`] filter.
     ///
-    /// Recognizes EVM opcode names (e.g., `SSTORE`, `CALL`) and precompile names
-    /// (e.g., `ECREC`, `BLAKE2F`). Matching is case-insensitive.
+    /// Recognizes EVM opcode names (e.g., `SSTORE`, `CALL`), fixed precompile
+    /// names (e.g., `ECREC`, `BLAKE2F`, `BERYL_B20_FACTORY`), and dynamic Beryl
+    /// B-20 token address family names (`BERYL_B20_ASSET`, `BERYL_B20_STABLECOIN`).
+    /// Matching is case-insensitive.
     pub fn parse(names: &[String]) -> EyreResult<Self> {
         let opcode_lookup: HashMap<&str, OpCode> =
             (0..=255u8).filter_map(|byte| OpCode::new(byte).map(|op| (op.as_str(), op))).collect();
 
-        let precompile_lookup: HashMap<&str, (Address, &str)> =
-            PRECOMPILES.iter().map(|&(name, addr)| (name, (addr, name))).collect();
+        let precompile_lookup: HashMap<&str, (Address, &str)> = PRECOMPILES
+            .iter()
+            .chain(BERYL_PRECOMPILES.iter())
+            .map(|&(name, addr)| (name, (addr, name)))
+            .collect();
 
         let mut result = Self::default();
         for name in names {
@@ -248,6 +324,10 @@ impl MeteredOpcodes {
                 result.opcodes.insert(opcode);
             } else if let Some(&(addr, display_name)) = precompile_lookup.get(upper.as_str()) {
                 result.precompiles.insert(addr, display_name.to_string());
+            } else if upper == BERYL_B20_ASSET_PRECOMPILE {
+                result.beryl_b20_asset_precompiles = true;
+            } else if upper == BERYL_B20_STABLECOIN_PRECOMPILE {
+                result.beryl_b20_stablecoin_precompiles = true;
             } else {
                 return Err(eyre!("unknown opcode or precompile: {name}"));
             }
@@ -414,8 +494,8 @@ where
         let evm_config = BaseEvmConfig::base(chain_spec);
         let evm_env = evm_config.next_evm_env(header, &attributes)?;
         let spec = evm_env.cfg_env.spec;
-        let precompile_addrs = metered_opcodes.precompiles.keys().copied().collect();
-        let inspector = MeteringInspector::new(precompile_addrs, metered_opcodes.opcodes.clone());
+        let metered_opcodes = metered_opcodes.clone().for_spec(spec);
+        let inspector = MeteringInspector::new(metered_opcodes.clone());
         let evm = evm_config.evm_with_env_and_inspector(&mut db, evm_env, inspector);
         let ctx = evm_config.context_for_next_block(header, attributes)?;
         let mut builder = evm_config.create_block_builder(evm, header, ctx);
@@ -465,12 +545,12 @@ where
                 .collect();
 
             for (addr, usage) in &precompile_data {
-                if let Some(name) = metered_opcodes.precompiles.get(addr)
+                if let Some(name) = metered_opcodes.precompile_name(*addr)
                     && usage.count > 0
                 {
                     opcode_gas.push(OpcodeGas {
                         contract_address: *addr,
-                        opcode: name.clone(),
+                        opcode: name.to_string(),
                         count: usage.count,
                         gas_used: usage.gas_used,
                     });
@@ -1188,6 +1268,84 @@ mod tests {
         let result = MeteredOpcodes::parse(&["CLZ".to_string(), "P256VERIFY".to_string()]).unwrap();
         assert_eq!(result.opcodes.len(), 1, "CLZ should be recognized as an opcode");
         assert!(result.precompiles.values().any(|n| n == "P256VERIFY"));
+    }
+
+    #[test]
+    fn metered_opcodes_parse_recognizes_beryl_precompiles() {
+        let result = MeteredOpcodes::parse(&[
+            "BERYL_B20_FACTORY".to_string(),
+            "beryl_b20_asset".to_string(),
+            "Beryl_B20_Stablecoin".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            result.precompile_name(B20FactoryStorage::ADDRESS),
+            Some(BERYL_B20_FACTORY_PRECOMPILE)
+        );
+        assert!(result.beryl_b20_asset_precompiles);
+        assert!(result.beryl_b20_stablecoin_precompiles);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn metered_opcodes_with_all_precompiles_includes_beryl_precompiles() {
+        let result = MeteredOpcodes::default().with_all_precompiles();
+        let (asset, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+        let (stablecoin, _) = B20Variant::Stablecoin
+            .compute_address(Address::repeat_byte(0x33), B256::repeat_byte(0x44));
+        let (unsupported, _) = B20Variant::compute_address_for_discriminant(
+            Address::repeat_byte(0x55),
+            2,
+            B256::repeat_byte(0x66),
+        );
+
+        assert_eq!(
+            result.precompile_name(B20FactoryStorage::ADDRESS),
+            Some(BERYL_B20_FACTORY_PRECOMPILE)
+        );
+        assert_eq!(
+            result.precompile_name(ActivationRegistryStorage::ADDRESS),
+            Some(BERYL_ACTIVATION_REGISTRY_PRECOMPILE)
+        );
+        assert_eq!(
+            result.precompile_name(PolicyRegistryStorage::ADDRESS),
+            Some(BERYL_POLICY_REGISTRY_PRECOMPILE)
+        );
+        assert_eq!(result.precompile_name(asset), Some(BERYL_B20_ASSET_PRECOMPILE));
+        assert_eq!(result.precompile_name(stablecoin), Some(BERYL_B20_STABLECOIN_PRECOMPILE));
+        assert_eq!(result.precompile_name(unsupported), None);
+    }
+
+    #[test]
+    fn metered_opcodes_for_spec_filters_beryl_before_activation() {
+        let result = MeteredOpcodes::default()
+            .with_all_precompiles()
+            .for_spec(BaseSpecId::new(BaseUpgrade::Azul));
+        let (asset, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+
+        assert_eq!(result.precompile_name(B20FactoryStorage::ADDRESS), None);
+        assert_eq!(result.precompile_name(ActivationRegistryStorage::ADDRESS), None);
+        assert_eq!(result.precompile_name(PolicyRegistryStorage::ADDRESS), None);
+        assert_eq!(result.precompile_name(asset), None);
+        assert!(result.precompile_name(precompile_addr(0x01)).is_some());
+    }
+
+    #[test]
+    fn metered_opcodes_for_spec_keeps_beryl_after_activation() {
+        let result = MeteredOpcodes::default()
+            .with_all_precompiles()
+            .for_spec(BaseSpecId::new(BaseUpgrade::Beryl));
+        let (asset, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+
+        assert_eq!(
+            result.precompile_name(B20FactoryStorage::ADDRESS),
+            Some(BERYL_B20_FACTORY_PRECOMPILE)
+        );
+        assert_eq!(result.precompile_name(asset), Some(BERYL_B20_ASSET_PRECOMPILE));
     }
 
     #[tokio::test]

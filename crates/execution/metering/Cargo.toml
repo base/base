@@ -16,6 +16,7 @@ workspace = true
 base-bundles.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-common-precompiles.workspace = true
 
 # reth
 reth-evm.workspace = true
