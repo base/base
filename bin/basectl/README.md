@@ -118,6 +118,38 @@ Important EL RPC note:
 - If the EL RPC does not expose those admin methods, `basectl p2p` degrades gracefully: EL peer count still appears, but EL endpoint fields or EL peer listings show as unavailable / `null`.
 - CL data comes from `opp2p_self`, `opp2p_peerStats`, and `opp2p_peers(true)` on the consensus RPC.
 
+### `basectl doctor`
+
+Runs read-only diagnostics for a single node and prints one row per check. The
+command exits `1` if any check fails, and exits `0` when checks only pass, warn,
+skip, or report informational context.
+
+Doctor reads the selected config the same way as the other non-TUI commands:
+built-in preset, optional YAML override, or explicit config path through global
+`-c/--config`. By default it uses the config's `rpc`, `l1_rpc`, and
+`consensus_node_rpc` values. Pass `--el-rpc` and `--cl-rpc` to point at a
+specific node when the config points at shared/public endpoints.
+
+Checks include declared network vs. live chain ID, p2p endpoint context,
+canonical bootnode config context, advertised endpoint sanity, EL/CL peer counts,
+EL head vs. public tip, safe-head recency, optional `reth.toml` headers/bodies
+limits, consensus-node RPC presence, and L1 RPC reachability. Doctor does not
+mutate node state and does not prove advertised ports are reachable from the
+public internet; it reports what can be observed from local config and exposed
+RPC metadata.
+
+| Flag | Description |
+|------|-------------|
+| `--el-rpc <URL>` | Override the execution-layer RPC URL used for local-node checks. Defaults to the selected config's `rpc` field. |
+| `--cl-rpc <URL>` | Override the consensus-node RPC URL. If omitted and the selected config has no `consensus_node_rpc`, CL-dependent checks are skipped with hints. |
+| `--reth-config <PATH>` | Path to the local `reth.toml` file. If omitted, the reth limits check is skipped. |
+| `--peer-warn-threshold <COUNT>` | Connected peer count below which EL/CL peer checks warn. Default `5`. |
+| `--head-lag-warn-blocks <BLOCKS>` | EL head lag behind the public tip above which doctor warns. Default `10`. |
+| `--head-lag-fail-blocks <BLOCKS>` | EL head lag behind the public tip above which doctor fails. Default `20`. |
+| `--safe-recency-warn-blocks <BLOCKS>` | Safe-head lag behind unsafe head above which doctor warns. Default `150`. |
+| `--safe-recency-fail-blocks <BLOCKS>` | Safe-head lag behind unsafe head above which doctor fails. Default `300`. |
+| `--json` | Emit a humanized JSON report with `inputs`, `summary`, and `checks` instead of pretty text. |
+
 ### `basectl flashblocks`
 
 Streams live flashblocks as newline-delimited JSON to stdout. For the
@@ -177,4 +209,13 @@ basectl -c sepolia p2p peers --el-rpc https://your-el.example/ --cl-rpc https://
 
 # If the EL RPC is restricted, EL peer count still works but EL admin-backed fields may be unavailable
 basectl -c sepolia p2p info --el-rpc https://your-public-el.example/ --cl-rpc https://your-cl.example/
+
+# Run doctor with values from the selected config
+basectl -c mainnet doctor
+
+# Run doctor against a specific node
+basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/
+
+# Include local reth headers/bodies limit validation and JSON output
+basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --reth-config /etc/reth/reth.toml --json
 ```
