@@ -2,6 +2,7 @@
 
 mod block;
 mod cli;
+mod doctor;
 mod p2p;
 mod sync_status;
 
@@ -39,6 +40,13 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(cli::Commands::P2p { command }) => {
             p2p::run(MonitoringConfig::load(config).await?, command).await
+        }
+        Some(cli::Commands::Doctor(args)) => {
+            let has_failures = doctor::run(MonitoringConfig::load(config).await?, args).await?;
+            if has_failures {
+                std::process::exit(1);
+            }
+            Ok(())
         }
         Some(cli::Commands::Flashblocks) => {
             run_flashblocks_json(MonitoringConfig::load(config).await?).await

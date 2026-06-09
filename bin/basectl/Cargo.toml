@@ -21,10 +21,8 @@ base-common-network = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-
-[dev-dependencies]
-serde_json = { workspace = true, features = ["std"] }

@@ -1,5 +1,7 @@
 //! Contains the CLI arguments for the basectl binary.
 
+use std::path::PathBuf;
+
 use basectl_cli::ViewId;
 use clap::{Args, Parser, Subcommand};
 use url::Url;
@@ -94,9 +96,49 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         command: P2pCommands,
     },
+    /// Run read-only diagnostics for a single node.
+    Doctor(DoctorArgs),
     /// Stream flashblocks as JSON lines.
     #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
     Flashblocks,
+}
+
+/// Flags for `basectl doctor`.
+#[derive(Debug, Args)]
+pub(crate) struct DoctorArgs {
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field. Pass this flag to diagnose
+    /// a specific node instead of a public preset RPC.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub(crate) el_rpc: Option<Url>,
+    /// Override the consensus-node RPC URL.
+    ///
+    /// If omitted and the selected config has no `consensus_node_rpc`, CL
+    /// checks are skipped with hints while EL/L1/config checks still run.
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub(crate) cl_rpc: Option<Url>,
+    /// Path to the local `reth.toml` file.
+    #[arg(long = "reth-config", value_name = "PATH")]
+    pub(crate) reth_config: Option<PathBuf>,
+    /// Connected peer count below which peer checks warn.
+    #[arg(long = "peer-warn-threshold", value_name = "COUNT", default_value_t = 5)]
+    pub(crate) peer_warn_threshold: u32,
+    /// EL head lag above which `el_head_vs_tip` warns.
+    #[arg(long = "head-lag-warn-blocks", value_name = "BLOCKS", default_value_t = 10)]
+    pub(crate) head_lag_warn_blocks: u64,
+    /// EL head lag above which `el_head_vs_tip` fails.
+    #[arg(long = "head-lag-fail-blocks", value_name = "BLOCKS", default_value_t = 20)]
+    pub(crate) head_lag_fail_blocks: u64,
+    /// Safe-head lag above which `safe_head_recency` warns.
+    #[arg(long = "safe-recency-warn-blocks", value_name = "BLOCKS", default_value_t = 150)]
+    pub(crate) safe_recency_warn_blocks: u64,
+    /// Safe-head lag above which `safe_head_recency` fails.
+    #[arg(long = "safe-recency-fail-blocks", value_name = "BLOCKS", default_value_t = 300)]
+    pub(crate) safe_recency_fail_blocks: u64,
+    /// Emit a humanized JSON report instead of pretty text.
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 /// Read-only p2p inspection commands.
