@@ -1347,15 +1347,6 @@ mod tests {
         );
     }
 
-    /// Regression test: `getB20Address` and `createB20` must meter the
-    /// keccak256 hash used for address derivation.
-    ///
-    /// The dispatch arms now call `ctx.keccak256()` for recognized variants, charging
-    /// KECCAK256 (30) + KECCAK256WORD * ceil(64 / 32) = 30 + 6 * 2 = 42 gas in production
-    /// EVM contexts. `HashMapStorageProvider::deduct_gas` is a no-op so the charge is not
-    /// observable here; full enforcement is verified by fork tests. This test confirms the
-    /// dispatch path reaches the keccak branch and returns the correct address, and that
-    /// the invalid-variant path returns zero without charging keccak.
     #[test]
     fn factory_address_hashing_is_metered_for_valid_variant() {
         let mut storage = HashMapStorageProvider::new(1);
