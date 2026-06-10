@@ -6,9 +6,7 @@ use std::{
 };
 
 use alloy_consensus::Header;
-use alloy_eips::{
-    BlockId, BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB,
-};
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB};
 use alloy_network::Network;
 use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
 use alloy_provider::Provider;
@@ -27,7 +25,8 @@ use tokio::sync::Semaphore;
 use tracing::{debug, warn};
 
 use crate::{
-    HostConfig, HostError, HostProviders, Metrics, Result, SharedKeyValueStore, store_ordered_trie,
+    HostConfig, HostError, HostProviders, L1PreimageProvider, Metrics, Result, SharedKeyValueStore,
+    store_ordered_trie,
 };
 
 const HOST_SERVER_TARGET: &str = "host_server";
@@ -637,25 +636,19 @@ impl L1HeaderPrefetcher {
             Err(_) => return false,
         };
 
-        let raw_header: Bytes = match self
-            .inner
-            .providers
-            .l1
-            .client()
-            .request("debug_getRawHeader", (BlockId::number(block_number),))
-            .await
-        {
-            Ok(raw_header) => raw_header,
-            Err(err) => {
-                debug!(
-                    target: HOST_SERVER_TARGET,
-                    block_number,
-                    error = %err,
-                    "l1 header prefetch skipped: failed to fetch raw header"
-                );
-                return false;
-            }
-        };
+        let raw_header: Bytes =
+            match self.inner.providers.l1.raw_header_by_number(block_number).await {
+                Ok(raw_header) => raw_header,
+                Err(err) => {
+                    debug!(
+                        target: HOST_SERVER_TARGET,
+                        block_number,
+                        error = %err,
+                        "l1 header prefetch skipped: failed to fetch raw header"
+                    );
+                    return false;
+                }
+            };
         let decoded_header = match Header::decode(&mut raw_header.as_ref()) {
             Ok(header) => header,
             Err(err) => {
@@ -941,8 +934,7 @@ async fn handle_hint_inner(
                 );
                 (raw_header, false)
             } else {
-                let raw_header: Bytes =
-                    providers.l1.client().request("debug_getRawHeader", [hash]).await?;
+                let raw_header: Bytes = providers.l1.raw_header_by_hash(hash).await?;
                 (raw_header, true)
             };
             let header = Header::decode(&mut raw_header.as_ref())?;
@@ -969,16 +961,7 @@ async fn handle_hint_inner(
             }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
-            let Block { transactions, .. } = providers
-                .l1
-                .get_block_by_hash(hash)
-                .full()
-                .await?
-                .ok_or(HostError::BlockNotFound)?;
-            let encoded_transactions = transactions
-                .into_transactions()
-                .map(|tx| tx.inner.encoded_2718())
-                .collect::<Vec<_>>();
+            let encoded_transactions = providers.l1.block_transaction_bytes_2718(hash).await?;
 
             store_ordered_trie(kv.as_ref(), encoded_transactions.as_slice()).await?;
         }
@@ -988,8 +971,7 @@ async fn handle_hint_inner(
             }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
-            let raw_receipts: Vec<Bytes> =
-                providers.l1.client().request("debug_getRawReceipts", [hash]).await?;
+            let raw_receipts = providers.l1.raw_receipts_by_hash(hash).await?;
 
             store_ordered_trie(kv.as_ref(), raw_receipts.as_slice()).await?;
         }
@@ -1093,7 +1075,7 @@ async fn handle_hint_inner(
                 .get_block_by_hash(hash)
                 .full()
                 .await?
-                .ok_or(HostError::BlockNotFound)?;
+                .ok_or_else(|| HostError::BlockNotFound(hash.to_string()))?;
 
             let encoded_transactions = transactions
                 .into_transactions()
@@ -1356,7 +1338,7 @@ mod tests {
             genesis_time: 0,
             slot_interval: 12,
         });
-        HostProviders { l1, blobs, l2 }
+        HostProviders { l1: base_consensus_providers::L1RpcProvider::Ethereum(l1), blobs, l2 }
     }
 
     fn test_providers(l2: RootProvider<Base>) -> HostProviders {

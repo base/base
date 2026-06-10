@@ -233,7 +233,7 @@ mod tests {
             genesis_time: 0,
             slot_interval: 12,
         });
-        HostProviders { l1, blobs, l2 }
+        HostProviders { l1: base_consensus_providers::L1RpcProvider::Ethereum(l1), blobs, l2 }
     }
 
     fn test_cfg() -> HostConfig {
