@@ -222,10 +222,7 @@ mod namespaced_layout {
                 U256::from(3)
             );
             assert_eq!(layout.policy.packed_flags.at(0).unwrap().unwrap().read().unwrap(), 0x1111);
-            assert_eq!(
-                layout.policy.packed_flags.at(16).unwrap().unwrap().read().unwrap(),
-                0x2222
-            );
+            assert_eq!(layout.policy.packed_flags.at(16).unwrap().unwrap().read().unwrap(), 0x2222);
             assert_eq!(layout.policy.amounts.read().unwrap(), amounts);
             assert_eq!(layout.total_supply.read().unwrap(), U256::from(1_000));
             assert_eq!(layout.policy_owner.read().unwrap(), policy_owner);
