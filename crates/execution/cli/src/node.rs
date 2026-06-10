@@ -221,8 +221,7 @@ impl ExecutionNodeRuntimeConfig {
         let data_dir = self.node_config.datadir();
         let db_path = data_dir.db();
         info!(target: "reth::cli", path = ?db_path, "Opening database");
-        let database =
-            init_db(db_path.clone(), self.node_config.db.database_args())?.with_metrics();
+        let database = init_db(db_path, self.node_config.db.database_args())?.with_metrics();
 
         let builder = NodeBuilder::new(self.node_config)
             .with_database(database)
