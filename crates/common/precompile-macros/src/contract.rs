@@ -23,8 +23,13 @@ impl syn::parse::Parse for ContractConfig {
         }
 
         let ident: Ident = input.parse()?;
-        if ident != "addr" && ident != "address" {
-            return Err(syn::Error::new(ident.span(), "only `addr` attribute is supported"));
+        if ident != "addr" {
+            return Err(syn::Error::new(
+                ident.span(),
+                format!(
+                    "unrecognized argument `{ident}`; supported arguments are: addr = \"0x...\""
+                ),
+            ));
         }
 
         input.parse::<Token![=]>()?;
