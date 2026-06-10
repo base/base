@@ -1,15 +1,22 @@
 //! Low-cardinality metadata for observing Beryl-native precompile calls.
 
-use alloc::{borrow::Cow, string::ToString};
+use alloc::borrow::Cow;
 #[cfg(feature = "std")]
 use std::time::Instant;
 
 use alloy_primitives::Bytes;
-use alloy_sol_types::{SolCall, SolError};
+use alloy_sol_types::SolError;
 use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileResult};
 
 use crate::{IActivationRegistry, IB20, IB20Asset, IB20Factory, IB20Stablecoin, IPolicyRegistry};
+
+macro_rules! matches_error_selector {
+    ($selector:expr, $($error:ty),+ $(,)?) => {{
+        let selector = $selector;
+        $(selector == <$error as SolError>::SELECTOR)||+
+    }};
+}
 
 /// Low-cardinality metadata for one Beryl-native precompile call.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,89 +256,76 @@ impl BerylErrorKind {
             return Self::OtherRevert;
         };
 
-        if BerylErrorClassifier::is_error_selector::<IActivationRegistry::StaticCallNotAllowed>(
-            selector,
-        ) {
+        if matches_error_selector!(selector, IActivationRegistry::StaticCallNotAllowed) {
             return Self::StaticWrite;
         }
-        if BerylErrorClassifier::is_error_selector::<IActivationRegistry::FeatureNotActivated>(
-            selector,
-        ) {
+        if matches_error_selector!(selector, IActivationRegistry::FeatureNotActivated) {
             return Self::FeatureInactive;
         }
-        if BerylErrorClassifier::is_error_selector::<IActivationRegistry::Unauthorized>(selector)
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::Unauthorized>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::Unauthorized>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::AccessControlUnauthorizedAccount>(
-                selector,
-            )
-        {
+        if matches_error_selector!(
+            selector,
+            IActivationRegistry::Unauthorized,
+            IPolicyRegistry::Unauthorized,
+            IB20::Unauthorized,
+            IB20::AccessControlUnauthorizedAccount,
+        ) {
             return Self::Unauthorized;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20::PolicyForbids>(selector) {
+        if matches_error_selector!(selector, IB20::PolicyForbids) {
             return Self::PolicyDenied;
         }
-        if BerylErrorClassifier::is_error_selector::<IPolicyRegistry::PolicyNotFound>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::PolicyNotFound>(selector)
+        if matches_error_selector!(selector, IPolicyRegistry::PolicyNotFound, IB20::PolicyNotFound,)
         {
             return Self::PolicyMissing;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20::ContractPaused>(selector) {
+        if matches_error_selector!(selector, IB20::ContractPaused) {
             return Self::Paused;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20Factory::TokenAlreadyExists>(selector) {
+        if matches_error_selector!(selector, IB20Factory::TokenAlreadyExists) {
             return Self::DuplicateCreate;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20Factory::InitCallFailed>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::InternalCallFailed>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::InternalCallMalformed>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::AnnouncementInProgress>(
-                selector,
-            )
-        {
+        if matches_error_selector!(
+            selector,
+            IB20Factory::InitCallFailed,
+            IB20Asset::InternalCallFailed,
+            IB20Asset::InternalCallMalformed,
+            IB20Asset::AnnouncementInProgress,
+        ) {
             return Self::InternalCallFailed;
         }
-        if BerylErrorClassifier::is_error_selector::<IB20Factory::InvalidVariant>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Factory::UnsupportedVersion>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Factory::MissingRequiredField>(
-                selector,
-            )
-            || BerylErrorClassifier::is_error_selector::<IB20Factory::InvalidCurrency>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Factory::InvalidDecimals>(selector)
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::IncompatiblePolicyType>(
-                selector,
-            )
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::ZeroAddress>(selector)
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::BatchSizeTooLarge>(
-                selector,
-            )
-            || BerylErrorClassifier::is_error_selector::<IPolicyRegistry::NoPendingAdmin>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::AnnouncementIdAlreadyUsed>(
-                selector,
-            )
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::InvalidMetadataKey>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::LengthMismatch>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20Asset::EmptyBatch>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidSender>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidReceiver>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidApprover>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidSpender>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidAmount>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::EmptyFeatureSet>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidSupplyCap>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::SupplyCapExceeded>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InsufficientAllowance>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InsufficientBalance>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::AccountNotBlocked>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::ExpiredSignature>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::InvalidSigner>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::LastAdminCannotRenounce>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::NotSoleAdmin>(selector)
-            || BerylErrorClassifier::is_error_selector::<IB20::AccessControlBadConfirmation>(
-                selector,
-            )
-            || BerylErrorClassifier::is_error_selector::<IB20::UnsupportedPolicyType>(selector)
-        {
+        if matches_error_selector!(
+            selector,
+            IB20Factory::InvalidVariant,
+            IB20Factory::UnsupportedVersion,
+            IB20Factory::MissingRequiredField,
+            IB20Factory::InvalidCurrency,
+            IB20Factory::InvalidDecimals,
+            IPolicyRegistry::IncompatiblePolicyType,
+            IPolicyRegistry::ZeroAddress,
+            IPolicyRegistry::BatchSizeTooLarge,
+            IPolicyRegistry::NoPendingAdmin,
+            IB20Asset::AnnouncementIdAlreadyUsed,
+            IB20Asset::InvalidMetadataKey,
+            IB20Asset::LengthMismatch,
+            IB20Asset::EmptyBatch,
+            IB20::InvalidSender,
+            IB20::InvalidReceiver,
+            IB20::InvalidApprover,
+            IB20::InvalidSpender,
+            IB20::InvalidAmount,
+            IB20::EmptyFeatureSet,
+            IB20::InvalidSupplyCap,
+            IB20::SupplyCapExceeded,
+            IB20::InsufficientAllowance,
+            IB20::InsufficientBalance,
+            IB20::AccountNotBlocked,
+            IB20::ExpiredSignature,
+            IB20::InvalidSigner,
+            IB20::LastAdminCannotRenounce,
+            IB20::NotSoleAdmin,
+            IB20::AccessControlBadConfirmation,
+            IB20::UnsupportedPolicyType,
+        ) {
             return Self::InvalidInput;
         }
 
@@ -351,13 +345,7 @@ impl BerylSelector {
         selector.copy_from_slice(bytes);
         Some(selector)
     }
-}
 
-/// Helpers for working with ABI error selectors.
-#[derive(Debug, Clone, Copy)]
-pub struct BerylErrorClassifier;
-
-impl BerylErrorClassifier {
     /// Returns whether `selector` belongs to the ABI error type `E`.
     pub fn is_error_selector<E>(selector: [u8; 4]) -> bool
     where
@@ -366,6 +354,12 @@ impl BerylErrorClassifier {
         selector == E::SELECTOR
     }
 }
+
+/// Backwards-compatible alias for ABI error-selector helpers.
+pub type BerylErrorClassifier = BerylSelector;
+
+/// Generated ABI helper for resolving method names by selector.
+pub type AbiSelectorNameLookup = fn([u8; 4]) -> Option<&'static str>;
 
 /// Method-label helpers for Beryl call observation.
 #[derive(Debug, Clone, Copy)]
@@ -388,6 +382,21 @@ impl BerylMetricLabels {
         Cow::Borrowed("unknown")
     }
 
+    /// Returns a method label by asking generated ABI call enums to resolve the selector.
+    pub fn selector_method(
+        calldata: &[u8],
+        name_by_selector: &[AbiSelectorNameLookup],
+    ) -> Cow<'static, str> {
+        let Some(selector) = BerylSelector::selector(calldata) else {
+            return Self::unknown();
+        };
+
+        name_by_selector
+            .iter()
+            .find_map(|lookup| lookup(selector))
+            .map_or_else(Self::unknown, Cow::Borrowed)
+    }
+
     /// Returns call metadata for factory calldata.
     pub fn factory_call(calldata: &[u8]) -> PrecompileCallMetric {
         PrecompileCallMetric::singleton("factory", Self::factory_method(calldata), calldata.len())
@@ -395,13 +404,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for factory calldata.
     pub fn factory_method(calldata: &[u8]) -> Cow<'static, str> {
-        match BerylSelector::selector(calldata) {
-            Some(IB20Factory::createB20Call::SELECTOR) => Cow::Borrowed("createB20"),
-            Some(IB20Factory::getB20AddressCall::SELECTOR) => Cow::Borrowed("getB20Address"),
-            Some(IB20Factory::isB20Call::SELECTOR) => Cow::Borrowed("isB20"),
-            Some(IB20Factory::isB20InitializedCall::SELECTOR) => Cow::Borrowed("isB20Initialized"),
-            _ => Self::unknown(),
-        }
+        Self::selector_method(calldata, &[IB20Factory::IB20FactoryCalls::name_by_selector])
     }
 
     /// Returns call metadata for activation-registry calldata.
@@ -415,16 +418,10 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for activation-registry calldata.
     pub fn activation_method(calldata: &[u8]) -> Cow<'static, str> {
-        match BerylSelector::selector(calldata) {
-            Some(IActivationRegistry::isActivatedCall::SELECTOR) => Cow::Borrowed("isActivated"),
-            Some(IActivationRegistry::checkActivatedCall::SELECTOR) => {
-                Cow::Borrowed("checkActivated")
-            }
-            Some(IActivationRegistry::adminCall::SELECTOR) => Cow::Borrowed("admin"),
-            Some(IActivationRegistry::activateCall::SELECTOR) => Cow::Borrowed("activate"),
-            Some(IActivationRegistry::deactivateCall::SELECTOR) => Cow::Borrowed("deactivate"),
-            _ => Self::unknown(),
-        }
+        Self::selector_method(
+            calldata,
+            &[IActivationRegistry::IActivationRegistryCalls::name_by_selector],
+        )
     }
 
     /// Returns call metadata for policy-registry calldata.
@@ -434,32 +431,7 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for policy-registry calldata.
     pub fn policy_method(calldata: &[u8]) -> Cow<'static, str> {
-        match BerylSelector::selector(calldata) {
-            Some(IPolicyRegistry::createPolicyCall::SELECTOR) => Cow::Borrowed("createPolicy"),
-            Some(IPolicyRegistry::createPolicyWithAccountsCall::SELECTOR) => {
-                Cow::Borrowed("createPolicyWithAccounts")
-            }
-            Some(IPolicyRegistry::stageUpdateAdminCall::SELECTOR) => {
-                Cow::Borrowed("stageUpdateAdmin")
-            }
-            Some(IPolicyRegistry::finalizeUpdateAdminCall::SELECTOR) => {
-                Cow::Borrowed("finalizeUpdateAdmin")
-            }
-            Some(IPolicyRegistry::renounceAdminCall::SELECTOR) => Cow::Borrowed("renounceAdmin"),
-            Some(IPolicyRegistry::updateAllowlistCall::SELECTOR) => {
-                Cow::Borrowed("updateAllowlist")
-            }
-            Some(IPolicyRegistry::updateBlocklistCall::SELECTOR) => {
-                Cow::Borrowed("updateBlocklist")
-            }
-            Some(IPolicyRegistry::isAuthorizedCall::SELECTOR) => Cow::Borrowed("isAuthorized"),
-            Some(IPolicyRegistry::policyExistsCall::SELECTOR) => Cow::Borrowed("policyExists"),
-            Some(IPolicyRegistry::policyAdminCall::SELECTOR) => Cow::Borrowed("policyAdmin"),
-            Some(IPolicyRegistry::pendingPolicyAdminCall::SELECTOR) => {
-                Cow::Borrowed("pendingPolicyAdmin")
-            }
-            _ => Self::unknown(),
-        }
+        Self::selector_method(calldata, &[IPolicyRegistry::IPolicyRegistryCalls::name_by_selector])
     }
 
     /// Returns call metadata for asset B-20 calldata.
@@ -469,16 +441,10 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for asset B-20 calldata.
     pub fn b20_asset_method(calldata: &[u8]) -> Cow<'static, str> {
-        let Some(selector) = BerylSelector::selector(calldata) else {
-            return Self::unknown();
-        };
-        if let Some(method) = IB20Asset::IB20AssetCalls::name_by_selector(selector) {
-            return Cow::Owned(method.to_string());
-        }
-        if let Some(method) = IB20::IB20Calls::name_by_selector(selector) {
-            return Cow::Owned(method.to_string());
-        }
-        Self::unknown()
+        Self::selector_method(
+            calldata,
+            &[IB20Asset::IB20AssetCalls::name_by_selector, IB20::IB20Calls::name_by_selector],
+        )
     }
 
     /// Returns call metadata for stablecoin B-20 calldata.
@@ -492,16 +458,13 @@ impl BerylMetricLabels {
 
     /// Returns the metric method label for stablecoin B-20 calldata.
     pub fn b20_stablecoin_method(calldata: &[u8]) -> Cow<'static, str> {
-        let Some(selector) = BerylSelector::selector(calldata) else {
-            return Self::unknown();
-        };
-        if let Some(method) = IB20Stablecoin::IB20StablecoinCalls::name_by_selector(selector) {
-            return Cow::Owned(method.to_string());
-        }
-        if let Some(method) = IB20::IB20Calls::name_by_selector(selector) {
-            return Cow::Owned(method.to_string());
-        }
-        Self::unknown()
+        Self::selector_method(
+            calldata,
+            &[
+                IB20Stablecoin::IB20StablecoinCalls::name_by_selector,
+                IB20::IB20Calls::name_by_selector,
+            ],
+        )
     }
 }
 
