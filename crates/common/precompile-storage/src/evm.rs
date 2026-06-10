@@ -557,7 +557,7 @@ mod tests {
 
         // Build a database that stores the account's bytecode so the journal can fetch it.
         let mut db = CacheDB::new(EmptyDB::default());
-        db.insert_account_info(addr, AccountInfo::new(U256::ZERO, 0, code_hash, code.clone()));
+        db.insert_account_info(addr, AccountInfo::new(U256::ZERO, 0, code_hash, code));
 
         let mut ctx = EthEvmContext::new(db, SpecId::AMSTERDAM);
         let mut observed_code: Option<Bytecode> = None;
