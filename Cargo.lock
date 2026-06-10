@@ -5990,6 +5990,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-prover-service-bin"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-prover-service",
+ "base-prover-service-db",
+ "base-prover-service-protocol",
+ "clap",
+ "eyre",
+ "jsonrpsee",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-prover-service-client"
 version = "0.0.0"
 dependencies = [

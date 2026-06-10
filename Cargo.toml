@@ -16,6 +16,7 @@ members = [
   "bin/prover/nitro-enclave",
   "bin/prover/snark-e2e",
   "bin/prover/zk",
+  "bin/prover/service",
   "crates/consensus/*",
   "crates/proof/mpt",
   "crates/proof/proof",
@@ -71,6 +72,7 @@ default-members = [
   "bin/prover/nitro-enclave",
   "bin/prover/zk",
   "bin/prover/snark-e2e",
+  "bin/prover/service",
   "bin/prover-registrar",
 ]
 
