@@ -61,8 +61,6 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
             where
                 A: serde::de::MapAccess<'de>,
             {
-                use alloc::string::String;
-
                 use alloy_primitives::{U64, map::HashMap};
 
                 enum Fields {
