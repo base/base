@@ -83,11 +83,14 @@ impl<'a, T: StorableType, const N: usize> ArrayHandler<'a, T, N> {
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = packing::calc_element_loc(index, T::BYTES);
             (
-                base_slot + U256::from(location.offset_slots),
+                base_slot.checked_add(U256::from(location.offset_slots)).expect("slot overflow"),
                 LayoutCtx::packed(location.offset_bytes),
             )
         } else {
-            (base_slot + U256::from(index * T::SLOTS), LayoutCtx::FULL)
+            (
+                base_slot.checked_add(U256::from(index * T::SLOTS)).expect("slot overflow"),
+                LayoutCtx::FULL,
+            )
         };
         T::handle(slot, layout_ctx, address, storage)
     }

@@ -134,7 +134,9 @@ where
     fn delete<S: StorageOps>(storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
         let values: Vec<T> = Vec::load(storage, slot, LayoutCtx::FULL)?;
         for value in values {
-            let pos_slot = value.mapping_slot(slot + U256::ONE);
+            let pos_slot = value.mapping_slot(
+                slot.checked_add(U256::ONE).ok_or(BasePrecompileError::SlotOverflow)?,
+            );
             <U256 as Storable>::delete(storage, pos_slot, LayoutCtx::FULL)?;
         }
         <Vec<T> as Storable>::delete(storage, slot, ctx)
@@ -154,10 +156,14 @@ where
     T: Storable + StorageKey + Eq + Clone + Ord,
 {
     /// Creates a new handler for the set at the given base slot.
-    pub fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+    pub const fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
         Self {
             values: VecHandler::new(base_slot, address, storage),
-            positions: MappingHandler::new(base_slot + U256::ONE, address, storage),
+            positions: MappingHandler::new(
+                base_slot.checked_add(U256::ONE).expect("slot overflow"),
+                address,
+                storage,
+            ),
             base_slot,
             address,
             storage,

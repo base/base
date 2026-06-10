@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use alloy_primitives::{Address, U256};
 
 use crate::{
-    error::Result,
+    error::{BasePrecompileError, Result},
     packing::FieldLocation,
     provider::{Handler, LayoutCtx, Storable, StorableType, StorageOps},
     storage_ctx::StorageCtx,
@@ -41,19 +41,21 @@ impl<'a, T> Slot<'a, T> {
 
     /// Creates a full-slot accessor at `base_slot + offset_slots`.
     #[inline]
-    pub const fn new_at_offset(
+    pub fn new_at_offset(
         base_slot: U256,
         offset_slots: usize,
         address: Address,
         storage: StorageCtx<'a>,
-    ) -> Self {
-        Self {
-            slot: base_slot.saturating_add(U256::from_limbs([offset_slots as u64, 0, 0, 0])),
+    ) -> Result<Self> {
+        Ok(Self {
+            slot: base_slot
+                .checked_add(U256::from_limbs([offset_slots as u64, 0, 0, 0]))
+                .ok_or(BasePrecompileError::SlotOverflow)?,
             ctx: LayoutCtx::FULL,
             address,
             storage,
             _ty: PhantomData,
-        }
+        })
     }
 
     /// Creates a packed-field accessor using a [`FieldLocation`] from `#[derive(Storable)]`.
@@ -63,18 +65,20 @@ impl<'a, T> Slot<'a, T> {
         loc: FieldLocation,
         address: Address,
         storage: StorageCtx<'a>,
-    ) -> Self
+    ) -> Result<Self>
     where
         T: StorableType,
     {
         debug_assert!(T::IS_PACKABLE, "`fn new_at_loc` can only be used with packable types");
-        Self {
-            slot: base_slot.saturating_add(U256::from_limbs([loc.offset_slots as u64, 0, 0, 0])),
+        Ok(Self {
+            slot: base_slot
+                .checked_add(U256::from_limbs([loc.offset_slots as u64, 0, 0, 0]))
+                .ok_or(BasePrecompileError::SlotOverflow)?,
             ctx: LayoutCtx::packed(loc.offset_bytes),
             address,
             storage,
             _ty: PhantomData,
-        }
+        })
     }
 
     /// Returns the storage slot number.
@@ -249,7 +253,7 @@ mod tests {
             let base = pair_key.mapping_slot(U256::ZERO);
             let test_addr = Address::from([0x22; 20]);
 
-            let mut slot = Slot::<Address>::new_at_offset(base, 0, address, ctx);
+            let mut slot = Slot::<Address>::new_at_offset(base, 0, address, ctx)?;
             slot.write(test_addr)?;
             assert_eq!(slot.read()?, test_addr);
             slot.delete()?;
