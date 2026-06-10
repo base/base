@@ -10,7 +10,10 @@ use alloc::string::ToString;
 use alloy_evm::precompiles::PrecompileInput;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{
-    context::{Block, journaled_state::JournalCheckpoint},
+    context::{
+        Block,
+        journaled_state::{JournalCheckpoint, account::JournaledAccountTr},
+    },
     context_interface::cfg::GasParams,
     interpreter::gas::{Gas, KECCAK256, KECCAK256WORD, LOG},
     primitives::keccak256,
@@ -128,13 +131,17 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
-        // Extract is_cold and clone AccountInfo before releasing the internals borrow.
+        // Load the account AND its bytecode so that `info.code` is always hydrated.
+        // Using `load_account` alone leaves `code: None` for accounts with real bytecode
+        // because the journal only populates `code_hash` lazily; `load_account_code`
+        // forces the cold-code fetch from the database, matching upstream behaviour and
+        // ensuring cold-code-load gas is charged (PSRC #23).
         let (info, is_cold) = {
             let state_load = self
                 .internals
-                .load_account(address)
+                .load_account_code(address)
                 .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-            (state_load.data.info.clone(), state_load.is_cold)
+            (state_load.data.account().info.clone(), state_load.is_cold)
         };
 
         // EIP-2929: warm base cost always charged (100)
@@ -316,8 +323,10 @@ mod tests {
     use alloy_evm::{EvmInternals, eth::EthEvmContext, precompiles::PrecompileInput};
     use alloy_primitives::{Address, U256};
     use revm::{
-        context_interface::cfg::GasParams, database::EmptyDB, primitives::hardfork::SpecId,
-        state::Bytecode,
+        context_interface::cfg::GasParams,
+        database::{CacheDB, EmptyDB},
+        primitives::hardfork::SpecId,
+        state::{AccountInfo, Bytecode},
     };
 
     use crate::{
@@ -530,5 +539,57 @@ mod tests {
 
         assert_eq!(err, BasePrecompileError::StaticCallViolation);
         assert!(provider.get_account_info(addr).is_none());
+    }
+
+    /// `with_account_info` must populate `info.code` for accounts that carry bytecode (PSRC #23).
+    ///
+    /// The journal loads `code_hash` eagerly but defers the actual bytecode fetch to an explicit
+    /// `load_code` call. Before this fix, `with_account_info` called `load_account` (no code fetch)
+    /// so the `AccountInfo` handed to the callback always had `code: None` even when the account
+    /// holds real bytecode. This test confirms the fix: after switching to `load_account_code`,
+    /// the callback receives a fully-hydrated `info` with `code: Some(...)`.
+    #[test]
+    fn with_account_info_hydrates_code_for_accounts_with_bytecode() {
+        let gas_params = GasParams::default();
+        let addr = Address::repeat_byte(0x42);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code_hash = code.hash_slow();
+
+        // Build a database that stores the account's bytecode so the journal can fetch it.
+        let mut db = CacheDB::new(EmptyDB::default());
+        db.insert_account_info(addr, AccountInfo::new(U256::ZERO, 0, code_hash, code.clone()));
+
+        let mut ctx = EthEvmContext::new(db, SpecId::AMSTERDAM);
+        let mut observed_code: Option<Bytecode> = None;
+
+        {
+            let input = PrecompileInput {
+                data: &[],
+                gas: 1_000_000,
+                reservoir: 0,
+                caller: Address::ZERO,
+                value: U256::ZERO,
+                target_address: addr,
+                is_static: false,
+                bytecode_address: addr,
+                internals: EvmInternals::from_context(&mut ctx),
+            };
+            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params);
+            provider
+                .with_account_info(addr, &mut |info| {
+                    observed_code = info.code.clone();
+                })
+                .unwrap();
+        }
+
+        assert!(
+            observed_code.is_some(),
+            "with_account_info must hydrate info.code for accounts with bytecode"
+        );
+        assert_eq!(
+            observed_code.unwrap().hash_slow(),
+            code_hash,
+            "hydrated bytecode hash must match the stored code hash"
+        );
     }
 }
