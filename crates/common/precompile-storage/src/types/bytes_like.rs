@@ -194,9 +194,8 @@ where
         let mut data = Vec::new();
 
         for i in 0..chunks {
-            let slot = slot_start
-                .checked_add(U256::from(i))
-                .ok_or(BasePrecompileError::SlotOverflow)?;
+            let slot =
+                slot_start.checked_add(U256::from(i)).ok_or(BasePrecompileError::SlotOverflow)?;
             let chunk_value = storage.load(slot)?;
             let chunk_bytes = chunk_value.to_be_bytes::<32>();
             let bytes_to_take = if i == chunks - 1 { length - (i * 32) } else { 32 };
@@ -221,9 +220,8 @@ fn store_bytes_like<S: StorageOps>(bytes: &[u8], storage: &mut S, base_slot: U25
         let chunks = calc_chunks(length);
 
         for i in 0..chunks {
-            let slot = slot_start
-                .checked_add(U256::from(i))
-                .ok_or(BasePrecompileError::SlotOverflow)?;
+            let slot =
+                slot_start.checked_add(U256::from(i)).ok_or(BasePrecompileError::SlotOverflow)?;
             let chunk_start = i * 32;
             let chunk_end = (chunk_start + 32).min(length);
             let chunk = &bytes[chunk_start..chunk_end];
@@ -247,9 +245,7 @@ fn delete_bytes_like<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<
         let chunks = calc_chunks(length);
         for i in 0..chunks {
             storage.store(
-                slot_start
-                    .checked_add(U256::from(i))
-                    .ok_or(BasePrecompileError::SlotOverflow)?,
+                slot_start.checked_add(U256::from(i)).ok_or(BasePrecompileError::SlotOverflow)?,
                 U256::ZERO,
             )?;
         }

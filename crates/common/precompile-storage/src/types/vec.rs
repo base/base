@@ -198,16 +198,12 @@ where
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = calc_element_loc(index, T::BYTES);
             (
-                data_start
-                    .checked_add(U256::from(location.offset_slots))
-                    .expect("slot overflow"),
+                data_start.checked_add(U256::from(location.offset_slots)).expect("slot overflow"),
                 LayoutCtx::packed(location.offset_bytes),
             )
         } else {
             (
-                data_start
-                    .checked_add(U256::from(index * T::SLOTS))
-                    .expect("slot overflow"),
+                data_start.checked_add(U256::from(index * T::SLOTS)).expect("slot overflow"),
                 LayoutCtx::FULL,
             )
         };

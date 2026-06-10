@@ -135,8 +135,8 @@ where
         let values: Vec<T> = Vec::load(storage, slot, LayoutCtx::FULL)?;
         for value in values {
             let pos_slot = value.mapping_slot(
-            slot.checked_add(U256::ONE).ok_or(BasePrecompileError::SlotOverflow)?,
-        );
+                slot.checked_add(U256::ONE).ok_or(BasePrecompileError::SlotOverflow)?,
+            );
             <U256 as Storable>::delete(storage, pos_slot, LayoutCtx::FULL)?;
         }
         <Vec<T> as Storable>::delete(storage, slot, ctx)
