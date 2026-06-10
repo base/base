@@ -280,17 +280,37 @@ impl StandardBaseRethNode {
         Ok(())
     }
 
+    /// Validates standalone execution-node upgrade signal arguments before node setup.
+    ///
+    /// A standalone `base-reth-node` has no derived L1 RPC (unlike `base rpc` and the consensus
+    /// node), so a configured contract requires an explicit `--upgrade-signal.l1-rpc`. This holds
+    /// for every mode, including the default metrics-only mode, which still polls the contract.
+    pub fn validate_upgrade_signal_args(rollup_args: &RollupArgs) -> eyre::Result<()> {
+        if rollup_args.upgrade_signal.contract_address.is_some()
+            && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none()
+        {
+            eyre::bail!(
+                "--upgrade-signal.contract (env BASE_NODE_UPGRADE_SIGNAL_CONTRACT) requires \
+                 --upgrade-signal.l1-rpc (env BASE_NODE_UPGRADE_SIGNAL_L1_RPC) for base-reth-node; \
+                 every mode, including the default metrics-only mode, reads the contract over L1"
+            );
+        }
+
+        Ok(())
+    }
+
     fn upgrade_signal_config(
         rollup_args: &RollupArgs,
     ) -> eyre::Result<Option<ExecutionUpgradeSignalConfig>> {
         let Some(signal_config) = rollup_args.upgrade_signal.config()? else {
             return Ok(None);
         };
-        let Some(l1_rpc) = rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone() else {
-            eyre::bail!(
-                "--upgrade-signal.contract requires --upgrade-signal.l1-rpc for base-reth-node"
-            );
-        };
+        Self::validate_upgrade_signal_args(rollup_args)?;
+        let l1_rpc = rollup_args
+            .upgrade_signal_l1_rpc
+            .upgrade_signal_l1_rpc
+            .clone()
+            .expect("validated by validate_upgrade_signal_args");
 
         Ok(Some(ExecutionUpgradeSignalConfig { signal_config, l1_rpc }))
     }
@@ -298,6 +318,8 @@ impl StandardBaseRethNode {
     /// Builds a runner with the standard Base execution-node extensions installed.
     pub fn runner(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
         let rollup_args = args.rpc.rollup_args.clone();
+        // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
+        Self::validate_upgrade_signal_args(&rollup_args)?;
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
 
         // Create flashblocks config first so we can share its state with metering.

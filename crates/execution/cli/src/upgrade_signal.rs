@@ -1,18 +1,18 @@
 //! Execution-node upgrade signal schedule application.
 
 use alloy_provider::RootProvider;
+use base_common_genesis::BaseUpgrade;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalApplySummary,
-    UpgradeSignalConfig, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalRefresher,
+    AlloyUpgradeSignalReader, UpgradeSignalApplySummary, UpgradeSignalConfig,
+    UpgradeSignalDefaults, UpgradeSignalMonitor, UpgradeSignalRefresher,
     UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation, UpgradeSignalSchedule,
-    UpgradeSignalStateUpdate,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
 use reth_chainspec::EthChainSpec;
 use reth_rpc_server_types::RethRpcModule;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use url::Url;
 
 /// Configuration for execution-node upgrade signal schedule reads.
@@ -46,84 +46,29 @@ impl ExecutionUpgradeSignal {
         let reader = AlloyUpgradeSignalReader::new(
             RootProvider::new_http(config.l1_rpc.clone()),
             config.signal_config.contract_address,
-        );
-        let schedule = match reader.read_schedule(&config.signal_config.hardfork_ids).await {
-            Ok(schedule) => schedule,
-            Err(error) => return Err(error.into()),
-        };
-        UpgradeSignalMetrics::record_schedule(&schedule);
-        for signal in &schedule.signals {
-            info!(
-                target: "upgrade_signal",
-                hardfork_id = %signal.hardfork_id,
-                activation_timestamp = signal.activation_timestamp,
-                minimum_protocol_version = %signal.protocol_version,
-                node_protocol_version = %config.signal_config.node_protocol_version,
-                l1_block_number = signal.l1_block_number,
-                "read dynamic upgrade signal for execution startup"
-            );
-        }
-        let application_schedule = config.signal_config.application_schedule(&schedule);
-        config.signal_config.validate_schedule_protocol_versions(&application_schedule)?;
+        )
+        .with_block_tag(config.signal_config.l1_block_tag);
+        let application_schedule = config
+            .signal_config
+            .read_validated_application_schedule(&reader, "execution startup")
+            .await?;
 
         Self::apply_schedule_to_chain_spec(chain_spec, &application_schedule)?;
 
         Ok(())
     }
 
-    /// Applies a contract-backed hardfork activation schedule to an execution chain spec.
+    /// Applies a contract-backed upgrade activation schedule to an execution chain spec.
     pub fn apply_schedule_to_chain_spec(
         chain_spec: &mut BaseChainSpec,
         schedule: &UpgradeSignalSchedule,
     ) -> eyre::Result<usize> {
-        let mut applied = 0;
-        let mut cleared = 0;
-        for signal in &schedule.signals {
-            let Some(timestamp) = signal.positive_activation_timestamp() else {
-                if !chain_spec.try_clear_hardfork_activation_timestamp(&signal.hardfork_id)? {
-                    debug!(
-                        target: "upgrade_signal",
-                        hardfork_id = %signal.hardfork_id,
-                        activation_timestamp = signal.activation_timestamp,
-                        "ignored unsupported execution hardfork signal"
-                    );
-                    continue;
-                }
-                cleared += 1;
-                info!(
-                    target: "upgrade_signal",
-                    hardfork_id = %signal.hardfork_id,
-                    "cleared upgrade signal from execution chain spec"
-                );
-                continue;
-            };
-            if !chain_spec.try_set_hardfork_activation_timestamp(&signal.hardfork_id, timestamp)? {
-                debug!(
-                    target: "upgrade_signal",
-                    hardfork_id = %signal.hardfork_id,
-                    activation_timestamp = timestamp,
-                    "ignored unsupported execution hardfork signal"
-                );
-                continue;
-            }
-            applied += 1;
-            info!(
-                target: "upgrade_signal",
-                hardfork_id = %signal.hardfork_id,
-                activation_timestamp = timestamp,
-                "applied upgrade signal to execution chain spec"
-            );
-        }
-        chain_spec.refresh_genesis_header();
-        info!(
-            target: "upgrade_signal",
-            applied_hardforks = applied,
-            cleared_hardforks = cleared,
-            configured_hardforks = schedule.signals.len(),
-            "applied upgrade signal schedule to execution chain spec"
-        );
+        let chain_id = chain_spec.chain().id();
+        let summary =
+            UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, schedule, chain_spec)?;
+        summary.log("execution chain spec");
 
-        Ok(applied)
+        Ok(summary.applied_hardforks)
     }
 
     /// Validates that a runtime schedule can be applied to this execution chain spec.
@@ -200,11 +145,14 @@ impl ExecutionUpgradeSignal {
         }
 
         let chain_id = ctx.config().chain.chain().id();
+        // Execution validates each refresh against the live chain spec in
+        // `refresh_runtime_upgrade_signal`, so the shared refresher itself stays unvalidated.
         let refresher = ExecutionUpgradeSignalRuntimeRefresher::new(
             UpgradeSignalRefresher::new(
                 config.signal_config,
                 RootProvider::new_http(config.l1_rpc),
                 chain_id,
+                UpgradeSignalRuntimeValidation::disabled(),
             ),
             ctx.config().chain.as_ref().clone(),
         );
@@ -253,31 +201,15 @@ impl ExecutionUpgradeSignalMetricsExtension {
     pub async fn poll_l1_signal(
         monitor: &mut UpgradeSignalMonitor,
         reader: &AlloyUpgradeSignalReader,
-        hardfork_ids: &[String],
+        hardfork_ids: &[BaseUpgrade],
     ) {
-        match reader.read_schedule(hardfork_ids).await {
-            Ok(schedule) => {
-                let updates = monitor.update_schedule(schedule);
-                let updated_hardforks = updates
-                    .iter()
-                    .filter(|update| matches!(update, UpgradeSignalStateUpdate::Changed))
-                    .count();
-                if updated_hardforks > 0 {
-                    info!(
-                        target: "upgrade_signal",
-                        updated_hardforks,
-                        "observed live L1 upgrade signal update"
-                    );
-                }
-            }
-            Err(error) => {
-                warn!(
-                    target: "upgrade_signal",
-                    error = %error,
-                    hardfork_ids = ?hardfork_ids,
-                    "failed to read live L1 upgrade signal metrics"
-                );
-            }
+        let updated_hardforks = monitor.poll(reader, hardfork_ids).await;
+        if updated_hardforks > 0 {
+            info!(
+                target: "upgrade_signal",
+                updated_hardforks,
+                "observed live L1 upgrade signal update"
+            );
         }
     }
 }
@@ -299,14 +231,15 @@ impl BaseNodeExtension for ExecutionUpgradeSignalMetricsExtension {
             let reader = AlloyUpgradeSignalReader::new(
                 RootProvider::new_http(config.l1_rpc.clone()),
                 config.signal_config.contract_address,
-            );
+            )
+            .with_block_tag(config.signal_config.l1_block_tag);
             let hardfork_ids = config.signal_config.hardfork_ids;
             let mut monitor = UpgradeSignalMonitor::new(&hardfork_ids);
             let executor = ctx.task_executor;
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {
-                    let mut interval = tokio::time::interval(DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL);
+                    let mut interval = tokio::time::interval(UpgradeSignalDefaults::POLL_INTERVAL);
                     let mut signal = Box::pin(signal);
 
                     loop {
@@ -341,12 +274,12 @@ mod tests {
 
     use super::*;
 
-    fn schedule(signals: &[(&str, u64)]) -> UpgradeSignalSchedule {
+    fn schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
             signals
                 .iter()
                 .map(|(hardfork_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
-                    hardfork_id: hardfork_id.to_string(),
+                    hardfork_id: *hardfork_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: Default::default(),
                     l1_block_number: 1,
@@ -366,7 +299,7 @@ mod tests {
 
         let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             &mut chain_spec,
-            &schedule(&[("canyon", 40), ("azul", 42)]),
+            &schedule(&[(BaseUpgrade::Canyon, 40), (BaseUpgrade::Azul, 42)]),
         )
         .unwrap();
 
@@ -388,7 +321,7 @@ mod tests {
 
         let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             &mut chain_spec,
-            &schedule(&[("azul", 0)]),
+            &schedule(&[(BaseUpgrade::Azul, 0)]),
         )
         .unwrap();
 
@@ -408,7 +341,7 @@ mod tests {
 
         let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             &mut chain_spec,
-            &schedule(&[("delta", 42)]),
+            &schedule(&[(BaseUpgrade::Delta, 42)]),
         )
         .unwrap();
 
@@ -423,7 +356,7 @@ mod tests {
 
         let error = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             &mut chain_spec,
-            &schedule(&[("beryl", 42)]),
+            &schedule(&[(BaseUpgrade::Beryl, 42)]),
         )
         .unwrap_err();
 

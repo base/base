@@ -8,3 +8,6 @@ pub use sink::{RuntimeRegistrySink, UpgradeSignalRuntimeApplier};
 
 mod summary;
 pub use summary::{UpgradeSignalApplyAction, UpgradeSignalApplyChange, UpgradeSignalApplySummary};
+
+mod validation;
+pub use validation::UpgradeSignalRuntimeValidation;

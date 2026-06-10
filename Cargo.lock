@@ -4405,6 +4405,7 @@ dependencies = [
  "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-genesis",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",

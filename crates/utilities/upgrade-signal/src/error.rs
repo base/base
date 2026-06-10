@@ -41,6 +41,12 @@ pub enum UpgradeSignalError {
         /// Node protocol version supported by this binary.
         node_protocol_version: String,
     },
+    /// A runtime Beryl schedule was requested without a known activation admin address.
+    #[error("missing activation admin address for Beryl-enabled chain ID: {chain_id}")]
+    MissingActivationAdminAddress {
+        /// L2 chain ID whose runtime schedule was validated.
+        chain_id: u64,
+    },
 }
 
 impl UpgradeSignalError {
@@ -75,5 +81,10 @@ impl UpgradeSignalError {
             minimum_protocol_version: minimum_protocol_version.to_string(),
             node_protocol_version: node_protocol_version.to_string(),
         }
+    }
+
+    /// Creates a missing activation admin address error.
+    pub const fn missing_activation_admin_address(chain_id: u64) -> Self {
+        Self::MissingActivationAdminAddress { chain_id }
     }
 }
