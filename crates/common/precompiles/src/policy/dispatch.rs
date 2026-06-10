@@ -136,7 +136,7 @@ impl PolicyRegistryStorage<'_> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_primitives::{Address, address};
+    use alloy_primitives::{Address, Bytes, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
@@ -630,9 +630,6 @@ mod tests {
         .expect("dispatch must not fatally error");
 
         assert!(out.is_revert());
-        assert_eq!(
-            out.bytes,
-            alloy_primitives::Bytes::from(IPolicyRegistry::NonPayable {}.abi_encode())
-        );
+        assert_eq!(out.bytes, Bytes::from(IPolicyRegistry::NonPayable {}.abi_encode()));
     }
 }
