@@ -496,6 +496,7 @@ pub async fn run_rollup_config_poller(
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_upgrades = None;
     let mut initialized = false;
+    let mut poll_failing = false;
 
     loop {
         interval.tick().await;
@@ -508,9 +509,18 @@ pub async fn run_rollup_config_poller(
                         consensus_rpc = %consensus_rpc,
                         "failed to poll live rollup config"
                     );
+                    // Surface the first failure of a streak so a stalled upgrades view is visible
+                    // instead of silently never updating.
+                    if !poll_failing {
+                        let _ = toast_tx.try_send(Toast::warning(
+                            "Rollup config poll failed; upgrades view may be stale",
+                        ));
+                    }
+                    poll_failing = true;
                     continue;
                 }
             };
+        poll_failing = false;
 
         if last_upgrades.as_ref() == Some(&config.upgrades) {
             continue;
