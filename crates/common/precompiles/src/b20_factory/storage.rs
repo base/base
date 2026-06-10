@@ -386,7 +386,6 @@ mod tests {
     use revm::state::Bytecode;
 
     use super::FACTORY_MARKER_CODE_HASH;
-
     use crate::{
         ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
         B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20TokenRole, B20Variant, IB20,
