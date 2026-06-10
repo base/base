@@ -28,6 +28,9 @@ pub use handler::{BaseHandler, IsTxError};
 mod precompiles;
 pub use precompiles::BasePrecompiles;
 
+mod beryl_metrics;
+pub use beryl_metrics::BerylPrecompileMetricsObserver;
+
 mod api;
 pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};
 

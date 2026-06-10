@@ -13,7 +13,7 @@
 /// # Attributes
 ///
 /// - `#[describe("...")]` — required per-field; human-readable description.
-/// - `#[label(name)]` — optional per-field (may be repeated up to 2x).
+/// - `#[label(name)]` — optional per-field (may be repeated up to 4x).
 /// - `#[label(name = "...")]` — optional per-field string label name.
 /// - `#[label(name = "...", default = ["..."])]` — optional per-field labeled zero values.
 /// - `#[no_zero]` — optional per-field; opts the metric out of the auto-generated
@@ -179,6 +179,48 @@ macro_rules! __define_metric_fn {
         #[allow(unused)]
         pub fn $field<S1, S2>(_: S1, _: S2) -> $crate::NoopMetric { $crate::NoopMetric }
     };
+    (@emit $macro_name:ident $ret:ident @fn3 {$($scope:ident).+}, $field:ident, $l1:expr, $l2:expr, $l3:expr) => {
+        #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
+        #[cfg(feature = "metrics")]
+        pub fn $field(
+            label0: impl Into<::metrics::SharedString>,
+            label1: impl Into<::metrics::SharedString>,
+            label2: impl Into<::metrics::SharedString>,
+        ) -> ::metrics::$ret {
+            ::metrics::$macro_name!(
+                concat!($(stringify!($scope), ".",)+ stringify!($field)),
+                $l1 => label0,
+                $l2 => label1,
+                $l3 => label2
+            )
+        }
+        #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
+        #[cfg(not(feature = "metrics"))]
+        #[inline(always)]
+        pub fn $field<S1, S2, S3>(_: S1, _: S2, _: S3) -> $crate::NoopMetric { $crate::NoopMetric }
+    };
+    (@emit $macro_name:ident $ret:ident @fn4 {$($scope:ident).+}, $field:ident, $l1:expr, $l2:expr, $l3:expr, $l4:expr) => {
+        #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
+        #[cfg(feature = "metrics")]
+        pub fn $field(
+            label0: impl Into<::metrics::SharedString>,
+            label1: impl Into<::metrics::SharedString>,
+            label2: impl Into<::metrics::SharedString>,
+            label3: impl Into<::metrics::SharedString>,
+        ) -> ::metrics::$ret {
+            ::metrics::$macro_name!(
+                concat!($(stringify!($scope), ".",)+ stringify!($field)),
+                $l1 => label0,
+                $l2 => label1,
+                $l3 => label2,
+                $l4 => label3
+            )
+        }
+        #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
+        #[cfg(not(feature = "metrics"))]
+        #[inline(always)]
+        pub fn $field<S1, S2, S3, S4>(_: S1, _: S2, _: S3, _: S4) -> $crate::NoopMetric { $crate::NoopMetric }
+    };
     (@emit $macro_name:ident $ret:ident @fn1 {$($scope:ident).+}, $field:ident, $l:expr) => {
         #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
         #[cfg(feature = "metrics")]
@@ -253,8 +295,26 @@ macro_rules! __metric_label_keys {
     (@collect ($scope:tt, $field:ident, histogram) [$l1:expr, $l2:expr,] ) => {
         $crate::__define_metric_fn!(@emit histogram Histogram @fn2 $scope, $field, $l1, $l2);
     };
-    (@collect ($scope:tt, $field:ident, $kind:ident) [$l1:expr, $l2:expr, $l3:expr $(, $rest:expr)*,] ) => {
-        ::core::compile_error!("define_metrics! supports at most 2 #[label(...)] attributes per metric");
+    (@collect ($scope:tt, $field:ident, counter) [$l1:expr, $l2:expr, $l3:expr,] ) => {
+        $crate::__define_metric_fn!(@emit counter Counter @fn3 $scope, $field, $l1, $l2, $l3);
+    };
+    (@collect ($scope:tt, $field:ident, gauge) [$l1:expr, $l2:expr, $l3:expr,] ) => {
+        $crate::__define_metric_fn!(@emit gauge Gauge @fn3 $scope, $field, $l1, $l2, $l3);
+    };
+    (@collect ($scope:tt, $field:ident, histogram) [$l1:expr, $l2:expr, $l3:expr,] ) => {
+        $crate::__define_metric_fn!(@emit histogram Histogram @fn3 $scope, $field, $l1, $l2, $l3);
+    };
+    (@collect ($scope:tt, $field:ident, counter) [$l1:expr, $l2:expr, $l3:expr, $l4:expr,] ) => {
+        $crate::__define_metric_fn!(@emit counter Counter @fn4 $scope, $field, $l1, $l2, $l3, $l4);
+    };
+    (@collect ($scope:tt, $field:ident, gauge) [$l1:expr, $l2:expr, $l3:expr, $l4:expr,] ) => {
+        $crate::__define_metric_fn!(@emit gauge Gauge @fn4 $scope, $field, $l1, $l2, $l3, $l4);
+    };
+    (@collect ($scope:tt, $field:ident, histogram) [$l1:expr, $l2:expr, $l3:expr, $l4:expr,] ) => {
+        $crate::__define_metric_fn!(@emit histogram Histogram @fn4 $scope, $field, $l1, $l2, $l3, $l4);
+    };
+    (@collect ($scope:tt, $field:ident, $kind:ident) [$l1:expr, $l2:expr, $l3:expr, $l4:expr, $l5:expr $(, $rest:expr)*,] ) => {
+        ::core::compile_error!("define_metrics! supports at most 4 #[label(...)] attributes per metric");
     };
 }
 
@@ -342,6 +402,37 @@ macro_rules! __metric_zero_defaults {
             }
         }
     };
+    (@collect ($field:ident, $kind:ident) [(@defaults [$($d1:expr),*]) (@defaults [$($d2:expr),*]) (@defaults [$($d3:expr),*])] ) => {
+        {
+            let label1_values = [$(::metrics::SharedString::from($d1)),*];
+            let label2_values = [$(::metrics::SharedString::from($d2)),*];
+            let label3_values = [$(::metrics::SharedString::from($d3)),*];
+            for label1 in &label1_values {
+                for label2 in &label2_values {
+                    for label3 in &label3_values {
+                        $crate::__zero_metric_call_3!($field, $kind, label1.clone(), label2.clone(), label3.clone());
+                    }
+                }
+            }
+        }
+    };
+    (@collect ($field:ident, $kind:ident) [(@defaults [$($d1:expr),*]) (@defaults [$($d2:expr),*]) (@defaults [$($d3:expr),*]) (@defaults [$($d4:expr),*])] ) => {
+        {
+            let label1_values = [$(::metrics::SharedString::from($d1)),*];
+            let label2_values = [$(::metrics::SharedString::from($d2)),*];
+            let label3_values = [$(::metrics::SharedString::from($d3)),*];
+            let label4_values = [$(::metrics::SharedString::from($d4)),*];
+            for label1 in &label1_values {
+                for label2 in &label2_values {
+                    for label3 in &label3_values {
+                        for label4 in &label4_values {
+                            $crate::__zero_metric_call_4!($field, $kind, label1.clone(), label2.clone(), label3.clone(), label4.clone());
+                        }
+                    }
+                }
+            }
+        }
+    };
     // Mixed default/non-default labeled metrics are intentionally left uninitialized.
     (@collect ($field:ident, $kind:ident) [$($labels:tt)+] ) => {};
 }
@@ -370,4 +461,30 @@ macro_rules! __zero_metric_call_2 {
         Self::$field($label1, $label2).set(0.0);
     };
     ($field:ident, histogram, $label1:expr, $label2:expr) => {};
+}
+
+/// Internal — zeroes a three-label metric.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __zero_metric_call_3 {
+    ($field:ident, counter, $label1:expr, $label2:expr, $label3:expr) => {
+        Self::$field($label1, $label2, $label3).absolute(0);
+    };
+    ($field:ident, gauge, $label1:expr, $label2:expr, $label3:expr) => {
+        Self::$field($label1, $label2, $label3).set(0.0);
+    };
+    ($field:ident, histogram, $label1:expr, $label2:expr, $label3:expr) => {};
+}
+
+/// Internal — zeroes a four-label metric.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __zero_metric_call_4 {
+    ($field:ident, counter, $label1:expr, $label2:expr, $label3:expr, $label4:expr) => {
+        Self::$field($label1, $label2, $label3, $label4).absolute(0);
+    };
+    ($field:ident, gauge, $label1:expr, $label2:expr, $label3:expr, $label4:expr) => {
+        Self::$field($label1, $label2, $label3, $label4).set(0.0);
+    };
+    ($field:ident, histogram, $label1:expr, $label2:expr, $label3:expr, $label4:expr) => {};
 }
