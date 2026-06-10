@@ -517,6 +517,65 @@ mod namespaced_fields {
     }
 }
 
+mod struct_level_attribute_passthrough {
+    //! Verifies that `#[contract]` forwards all struct-level attributes except its own
+    //! `#[namespace]` to the generated layout struct — doc comments, `#[allow]`, `#[cfg_attr]`.
+
+    mod allow_and_doc {
+        use alloy_primitives::{Address, U256, address};
+        use base_precompile_macros::contract;
+        use base_precompile_storage::{Handler, StorageCtx, setup_storage};
+
+        const ATTR_ADDR: Address = address!("0000000000000000000000000000000000007777");
+
+        /// User-supplied doc comment on the contract struct.
+        ///
+        /// The macro must forward this rather than replace it with the generic fallback.
+        #[allow(dead_code)]
+        #[contract(addr = ATTR_ADDR)]
+        pub struct AttrForwardStorage {
+            pub value: U256,
+            pub flag: bool,
+        }
+
+        #[test]
+        fn allow_and_doc_attrs_are_forwarded_to_generated_struct() {
+            let (mut storage, _) = setup_storage();
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut layout = AttrForwardStorage::new(ctx);
+                layout.value.write(U256::from(42u64)).unwrap();
+                layout.flag.write(true).unwrap();
+                assert_eq!(layout.value.read().unwrap(), U256::from(42u64));
+                assert!(layout.flag.read().unwrap());
+            });
+        }
+    }
+
+    mod cfg_attr {
+        use alloy_primitives::{Address, address};
+        use base_precompile_macros::contract;
+        use base_precompile_storage::{Handler, StorageCtx, setup_storage};
+
+        const CFG_ATTR_ADDR: Address = address!("0000000000000000000000000000000000007778");
+
+        #[cfg_attr(test, allow(dead_code))]
+        #[contract(addr = CFG_ATTR_ADDR)]
+        pub struct CfgAttrForwardStorage {
+            pub x: Address,
+        }
+
+        #[test]
+        fn cfg_attr_is_forwarded_to_generated_struct() {
+            let (mut storage, _) = setup_storage();
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut layout = CfgAttrForwardStorage::new(ctx);
+                layout.x.write(Address::from([0xab; 20])).unwrap();
+                assert_eq!(layout.x.read().unwrap(), Address::from([0xab; 20]));
+            });
+        }
+    }
+}
+
 mod packed_slot_layout {
     //! End-to-end bit-level verification of multi-field packed storage slots.
     //!
