@@ -122,7 +122,7 @@ impl StatusPoller {
                     Ok(RetryOutcome::Skipped) => {
                         warn!(
                             proof_request_id = %request.id,
-                            "Stuck request no longer PENDING — already claimed or transitioned"
+                            "Stuck request no longer eligible for retry"
                         );
                     }
                     Err(e) => {
