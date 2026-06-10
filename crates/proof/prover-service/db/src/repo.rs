@@ -10,9 +10,9 @@ use crate::{
     CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
     CreateProofRequestValidationError, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
     HeartbeatProofJob, JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
-    ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome, SessionStatus,
-    SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
-    canonical_session_id,
+    ProofRequestPage, ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome,
+    SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
+    WorkerSessionUpsert, ZkVmKind, canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -1088,6 +1088,135 @@ impl ProofRequestRepo {
         .await?;
 
         row.map(|r| row_to_proof_session(&r)).transpose()
+    }
+
+    /// Record (insert or update) the backend session for a claimed worker job.
+    ///
+    /// Authorized via the worker fencing token like [`Self::heartbeat_proof_job`],
+    /// then upserts the single active `(proof_request_id, session_type)` row
+    /// guarded by migration `009`'s partial unique index.
+    pub async fn record_worker_proof_session(
+        &self,
+        req: WorkerSessionUpsert,
+    ) -> Result<RecordSessionOutcome> {
+        let session_id = canonical_session_id(&req.session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+
+        // Captured before the `FOR UPDATE` read, which can block under contention,
+        // so the expiry comparison can't drift past `lock_expires_at` while waiting.
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await?;
+
+        let claim = sqlx::query(
+            r#"
+            SELECT id, job_status, lock_id, worker_id, lock_expires_at
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(claim) = claim else {
+            return Ok(RecordSessionOutcome::NotFound);
+        };
+
+        let proof_request_id: Uuid = claim.get("id");
+        let job_status_str: &str = claim.get("job_status");
+        let job_status = ProofJobStatus::try_from(job_status_str).map_err(|e| {
+            sqlx::Error::Protocol(format!("Unknown job_status '{job_status_str}': {e}"))
+        })?;
+        let lock_id: Option<Uuid> = claim.get("lock_id");
+        let worker_id: Option<String> = claim.get("worker_id");
+        let lock_expires_at: Option<chrono::DateTime<Utc>> = claim.get("lock_expires_at");
+
+        match ClaimAuth::classify(
+            JobLockState {
+                status: job_status,
+                lock_id,
+                worker_id: worker_id.as_deref(),
+                lock_expires_at,
+            },
+            req.lock_id,
+            &req.worker_id,
+            now,
+        ) {
+            ClaimAuth::Authorized => {}
+            ClaimAuth::Terminal => return Ok(RecordSessionOutcome::Terminal),
+            ClaimAuth::NotClaimed => return Ok(RecordSessionOutcome::NotClaimed),
+            ClaimAuth::StaleLock => return Ok(RecordSessionOutcome::StaleLock),
+            ClaimAuth::Expired => return Ok(RecordSessionOutcome::Expired),
+        }
+
+        // `FOR UPDATE` above serializes the find-then-write: only the lock holder
+        // reaches here, so at most one active row exists per session type.
+        let active_id: Option<i64> = sqlx::query(
+            r#"
+            SELECT id
+            FROM proof_sessions
+            WHERE proof_request_id = $1
+              AND session_type = $2
+              AND status IN ('SUBMITTING', 'RUNNING')
+            "#,
+        )
+        .bind(proof_request_id)
+        .bind(req.session_type.as_str())
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|r| r.get("id"));
+
+        let row = if let Some(active_id) = active_id {
+            sqlx::query(
+                r#"
+                UPDATE proof_sessions
+                SET backend_session_id = $1,
+                    status = $2,
+                    error_message = $4,
+                    completed_at = CASE
+                        WHEN $2 IN ('COMPLETED', 'FAILED') THEN NOW()
+                        ELSE completed_at
+                    END
+                WHERE id = $3
+                RETURNING id, proof_request_id, session_type, backend_session_id,
+                          status, error_message, metadata, created_at, completed_at
+                "#,
+            )
+            .bind(&req.backend_session_id)
+            .bind(req.status.as_str())
+            .bind(active_id)
+            .bind(&req.error_message)
+            .fetch_one(&mut *tx)
+            .await?
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO proof_sessions (
+                    proof_request_id, session_type, backend_session_id, status, error_message,
+                    metadata, completed_at
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, NULL,
+                    CASE WHEN $4 IN ('COMPLETED', 'FAILED') THEN NOW() ELSE NULL END
+                )
+                RETURNING id, proof_request_id, session_type, backend_session_id,
+                          status, error_message, metadata, created_at, completed_at
+                "#,
+            )
+            .bind(proof_request_id)
+            .bind(req.session_type.as_str())
+            .bind(&req.backend_session_id)
+            .bind(req.status.as_str())
+            .bind(&req.error_message)
+            .fetch_one(&mut *tx)
+            .await?
+        };
+
+        let session = row_to_proof_session(&row)?;
+        tx.commit().await?;
+
+        Ok(RecordSessionOutcome::Recorded(session))
     }
 
     /// Get all running sessions (for polling)

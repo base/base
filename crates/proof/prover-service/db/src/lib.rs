@@ -13,8 +13,9 @@ pub use models::{
     CreateProofRequestValidationError, CreateProofSession, DerivedProofRequestFields,
     FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, JobLockState, ProofJob,
     ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
-    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
-    UpdateProofSession, UpdateReceipt, ZkVmKind, canonical_session_id,
+    ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType,
+    SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
+    canonical_session_id,
 };
 
 mod repo;
