@@ -251,7 +251,10 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{Header, Receipt, TxReceipt};
-    use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
+    use alloy_eips::{
+        eip2718::Encodable2718,
+        eip7685::{EMPTY_REQUESTS_HASH, Requests},
+    };
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
     use base_common_chains::BaseUpgrade;
@@ -621,6 +624,7 @@ mod tests {
         let header = Header {
             timestamp: JOVIAN_TIMESTAMP,
             blob_gas_used: Some(BLOB_GAS_USED),
+            requests_hash: Some(EMPTY_REQUESTS_HASH),
             ..Default::default()
         };
 
