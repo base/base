@@ -1150,6 +1150,11 @@ where
 
     /// Computes the next collector target from a current block.
     pub fn next_target_block(&self, current_block: u64) -> Option<u64> {
+        if self.runtime.block_interval == 0 {
+            error!("Block interval must be non-zero");
+            return None;
+        }
+
         current_block.checked_add(self.runtime.block_interval).map_or_else(
             || {
                 error!(
@@ -1173,8 +1178,26 @@ mod tests {
     use super::*;
     use crate::{
         proof_adapter::ProofRequesterDispatcher,
-        test_utils::{MockProofRequester, MockRollupClient, test_sync_status},
+        proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
+        proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
+        test_utils::{
+            MockL1, MockL2, MockOutputProposer, MockProofRequester, MockRollupClient,
+            test_sync_status,
+        },
     };
+
+    #[derive(Debug)]
+    struct NoopRecovery;
+
+    #[async_trait]
+    impl ProofCollectorRecoveryProvider for NoopRecovery {
+        async fn recover_latest_state(
+            &self,
+            _cache: &mut Option<ProofRecoveryCache>,
+        ) -> Result<RecoveredState, ProposerError> {
+            Ok(recovered(0))
+        }
+    }
 
     fn recovered(block: u64) -> RecoveredState {
         RecoveredState {
@@ -1193,6 +1216,60 @@ mod tests {
             max_safe_block: None,
         });
         ProofCollector::aws_nitro(proof_requester, rollup_client, block_interval, 4)
+    }
+
+    fn make_orchestrator(
+        block_interval: u64,
+    ) -> ProofCollectorOrchestrator<MockL1, MockL2, MockRollupClient, NoopRecovery> {
+        let proof_requester: Arc<dyn ProofRequesterProvider> =
+            Arc::new(MockProofRequester::default());
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(0, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let collector = ProofCollector::target_poller_aws_nitro(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup_client),
+        );
+        let dispatcher = ProofDispatcher::aws_nitro(
+            proof_requester,
+            Arc::clone(&l1),
+            l2,
+            Arc::clone(&rollup_client),
+            ProofDispatcherConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                intermediate_block_interval: 300,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+        let submitter = ProofSubmitter::new(
+            Arc::new(MockOutputProposer),
+            rollup_client,
+            l1,
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                block_interval,
+                intermediate_block_interval: 300,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        );
+
+        ProofCollectorOrchestrator::new(
+            collector,
+            dispatcher,
+            submitter,
+            Arc::new(NoopRecovery),
+            ProofCollectorRuntimeConfig {
+                block_interval,
+                max_retries: 3,
+                submit_timeout: std::time::Duration::from_secs(60),
+            },
+        )
     }
 
     #[test]
@@ -1241,6 +1318,13 @@ mod tests {
         let targets = collector.collectable_targets(&recovered(0), 100, |_| false);
 
         assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn orchestrator_next_target_block_returns_none_for_zero_interval() {
+        let orchestrator = make_orchestrator(0);
+
+        assert_eq!(orchestrator.next_target_block(100), None);
     }
 
     /// Restart/recovery: the collector derives the prover-service session id
