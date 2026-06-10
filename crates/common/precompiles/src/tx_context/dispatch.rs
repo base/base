@@ -7,17 +7,25 @@ use revm::precompile::PrecompileResult;
 
 use crate::{
     ITransactionContext::{self, ITransactionContextCalls as C},
-    macros::{decode_precompile_call, deduct_calldata_cost},
+    macros::decode_precompile_call,
     tx_context::storage::TxContextStorage,
 };
+
+/// Per-word calldata gas charge (`G_SHA3WORD`), matching common Base precompile dispatch.
+const CALLDATA_WORD_GAS: u64 = 6;
 
 impl TxContextStorage<'_> {
     /// ABI-dispatches transaction context calldata.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        deduct_calldata_cost!(ctx, calldata);
+        let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
+        if let Err(error) = ctx.deduct_gas(calldata_cost) {
+            return error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+        }
+        // These getters never produce a gas refund, so the refund arg is 0.
         self.inner(calldata).into_precompile_result(
             ctx.gas_used(),
             ctx.state_gas_used(),
+            0,
             |output| output,
         )
     }

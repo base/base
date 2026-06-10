@@ -7,9 +7,12 @@ use revm::precompile::PrecompileResult;
 
 use crate::{
     INonceManager::{self, INonceManagerCalls as C},
-    macros::{decode_precompile_call, deduct_calldata_cost},
+    macros::decode_precompile_call,
     nonce::storage::NonceManagerStorage,
 };
+
+/// Per-word calldata gas charge (`G_SHA3WORD`), matching common Base precompile dispatch.
+const CALLDATA_WORD_GAS: u64 = 6;
 
 impl NonceManagerStorage<'_> {
     /// ABI-dispatches nonce manager calldata.
@@ -18,10 +21,15 @@ impl NonceManagerStorage<'_> {
     /// nonce-mutating entry points (`increment_nonce`, `check_and_mark_expiring_nonce`)
     /// are driven by the EIP-8130 execution layer, not by EVM calls.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        deduct_calldata_cost!(ctx, calldata);
+        let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
+        if let Err(error) = ctx.deduct_gas(calldata_cost) {
+            return error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+        }
+        // `getNonce` is a read-only getter and never produces a gas refund.
         self.inner(calldata).into_precompile_result(
             ctx.gas_used(),
             ctx.state_gas_used(),
+            0,
             |output| output,
         )
     }
