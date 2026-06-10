@@ -5797,6 +5797,7 @@ dependencies = [
  "async-trait",
  "base-proof-zk-host",
  "base-prover-service-protocol",
+ "tokio",
 ]
 
 [[package]]

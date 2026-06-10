@@ -18,3 +18,6 @@ base-prover-service-protocol.workspace = true
 
 # async
 async-trait.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
