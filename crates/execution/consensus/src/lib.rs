@@ -78,14 +78,14 @@ where
         block: &RecoveredBlock<N::Block>,
         result: &BlockExecutionResult<N::Receipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
-        block_access_list_hash: Option<B256>,
+        _block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
         validate_block_post_execution(
             block.header(),
             &self.chain_spec,
             result,
             receipt_root_bloom,
-            block_access_list_hash,
+            None,
         )
     }
 }

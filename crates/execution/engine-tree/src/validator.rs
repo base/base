@@ -1133,7 +1133,7 @@ where
             block,
             output,
             receipt_root_bloom,
-            block.header().block_access_list_hash(),
+            None,
         ) {
             // call post-block hook
             self.on_invalid_block(parent_block, block, output, None, ctx.state_mut());
