@@ -346,7 +346,7 @@ mod tests {
         let (mut storage, contract_addr) = setup_storage();
         StorageCtx::enter(&mut storage, |ctx| {
             let base = U256::from(500u64);
-            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx).unwrap();
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
 
             let a = Address::from([0x11; 20]);
             let b = Address::from([0x22; 20]);
@@ -373,7 +373,7 @@ mod tests {
         let (mut storage, contract_addr) = setup_storage();
         StorageCtx::enter(&mut storage, |ctx| {
             let base = U256::from(600u64);
-            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx).unwrap();
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
 
             let addrs: Vec<Address> = (0..5u8).map(|i| Address::from([i; 20])).collect();
             let set = Set::from(addrs.clone());
@@ -409,7 +409,7 @@ mod tests {
         let (mut storage, contract_addr) = setup_storage();
         StorageCtx::enter(&mut storage, |ctx| {
             let base = U256::from(700u64);
-            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx).unwrap();
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
 
             // Use disjoint ranges so first and second share no elements.
             let first: Vec<Address> = (0..initial).map(|i| Address::from([i; 20])).collect();
