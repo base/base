@@ -481,7 +481,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::MdbxProofsStorage;
+    use crate::RocksdbProofsStorage;
 
     /// Helper function to create a key
     fn k(b: u8) -> B256 {
@@ -509,7 +509,7 @@ mod tests {
     fn test_initialize_hashed_accounts() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let storage = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         // Insert test accounts into database
         let tx = db.tx_mut().unwrap();
@@ -560,7 +560,7 @@ mod tests {
     fn test_initialize_hashed_storage() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let storage = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         // Insert test storage into database
         let tx = db.tx_mut().unwrap();
@@ -619,7 +619,7 @@ mod tests {
     fn test_initialize_accounts_trie() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let storage = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         // Insert test trie nodes into database
         let tx = db.tx_mut().unwrap();
@@ -657,7 +657,7 @@ mod tests {
     fn test_initialize_storages_trie() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let storage = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         // Insert test storage trie nodes into database
         let tx = db.tx_mut().unwrap();
@@ -726,7 +726,7 @@ mod tests {
     fn test_full_initialize_run() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let storage = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         // Insert some test data
         let tx = db.tx_mut().unwrap();
@@ -807,7 +807,7 @@ mod tests {
     fn test_initialize_run_skips_if_already_done() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let storage = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         // set and commit initial state anchor
         storage
@@ -840,7 +840,7 @@ mod tests {
     fn test_initialize_resumes_hashed_accounts_with_no_dups() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let store = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let store = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         store.set_initial_state_anchor(BlockNumHash::new(0, B256::default())).expect("set anchor");
 
@@ -920,7 +920,7 @@ mod tests {
     fn test_initialize_resumes_hashed_storages_with_no_dups() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let store = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let store = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         store.set_initial_state_anchor(BlockNumHash::new(0, B256::default())).expect("set anchor");
 
@@ -1011,7 +1011,7 @@ mod tests {
     fn test_initialize_resumes_accounts_trie_with_no_dups() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let store = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let store = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         store.set_initial_state_anchor(BlockNumHash::new(0, B256::default())).expect("set anchor");
 
@@ -1079,7 +1079,7 @@ mod tests {
     fn test_initialize_resumes_storages_trie_with_no_dups() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
-        let store = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        let store = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env"));
 
         store.set_initial_state_anchor(BlockNumHash::new(0, B256::default())).expect("set anchor");
 

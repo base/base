@@ -90,7 +90,9 @@ pub trait BaseProofsStore: Send + Sync + Debug {
         Self: 'tx;
 
     /// Transaction type used by request-scoped cursor factories.
-    type Tx: Debug + Send + Sync;
+    type Tx<'tx>: Debug + Send + Sync
+    where
+        Self: 'tx;
 
     /// Get the earliest block number and hash that has been stored
     ///
@@ -103,70 +105,136 @@ pub trait BaseProofsStore: Send + Sync + Debug {
 
     /// Get a trie cursor for the storage backend
     fn storage_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>;
 
     /// Get a trie cursor for the account backend
     fn account_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>;
 
     /// Get a storage cursor for the storage backend
     fn storage_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>;
 
     /// Get an account hashed cursor for the storage backend
     fn account_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>;
 
     /// Open a transaction for a request-scoped cursor factory.
-    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx>;
+    fn ro_tx<'tx>(&'tx self) -> BaseProofsStorageResult<Self::Tx<'tx>>;
 
     /// Storage trie cursor reusing `tx`.
-    fn storage_trie_cursor_with_tx<'tx>(
+    fn storage_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
     where
-        Self: 'tx;
+        Self: 'db,
+        'db: 'tx;
 
     /// Account trie cursor reusing `tx`.
-    fn account_trie_cursor_with_tx<'tx>(
+    fn account_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
     where
-        Self: 'tx;
+        Self: 'db,
+        'db: 'tx;
 
     /// Storage hashed cursor reusing `tx`.
-    fn storage_hashed_cursor_with_tx<'tx>(
+    fn storage_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
     where
-        Self: 'tx;
+        Self: 'db,
+        'db: 'tx;
 
     /// Account hashed cursor reusing `tx`.
-    fn account_hashed_cursor_with_tx<'tx>(
+    fn account_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
     where
-        Self: 'tx;
+        Self: 'db,
+        'db: 'tx;
+
+    /// Read an exact account leaf by hashed key.
+    fn account_by_hashed_key(
+        &self,
+        hashed_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>> {
+        let tx = self.ro_tx()?;
+        self.account_by_hashed_key_with_tx(&tx, hashed_key, max_block_number)
+    }
+
+    /// Read an exact account leaf by hashed key, reusing `tx`.
+    fn account_by_hashed_key_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        hashed_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        let mut cursor = self.account_hashed_cursor_with_tx(tx, max_block_number)?;
+        Ok(cursor
+            .seek(hashed_key)?
+            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+    }
+
+    /// Read an exact storage leaf by hashed address and hashed storage key.
+    fn storage_by_hashed_key(
+        &self,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>> {
+        let tx = self.ro_tx()?;
+        self.storage_by_hashed_key_with_tx(
+            &tx,
+            hashed_address,
+            hashed_storage_key,
+            max_block_number,
+        )
+    }
+
+    /// Read an exact storage leaf by hashed address and hashed storage key, reusing `tx`.
+    fn storage_by_hashed_key_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        let mut cursor =
+            self.storage_hashed_cursor_with_tx(tx, hashed_address, max_block_number)?;
+        Ok(cursor
+            .seek(hashed_storage_key)?
+            .and_then(|(key, value)| (key == hashed_storage_key).then_some(value)))
+    }
 
     /// Store a batch of trie updates.
     ///

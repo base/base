@@ -1,9 +1,9 @@
 //! Provider for external proofs storage
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::OnceLock};
 
-use alloy_primitives::keccak256;
-use derive_more::Constructor;
+use alloy_primitives::{keccak256, map::HashMap};
+use parking_lot::Mutex;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
@@ -34,7 +34,6 @@ use crate::{
 };
 
 /// State provider for external proofs storage.
-#[derive(Constructor)]
 pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
     /// Historical state provider for non-state related tasks.
     latest: Box<dyn StateProvider + Send + 'a>,
@@ -44,6 +43,47 @@ pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
 
     /// Max block number that can be used for state lookups.
     block_number: BlockNumber,
+
+    /// Request-scoped read transaction for EVM account and storage reads.
+    tx: OnceLock<Result<Storage::Tx<'a>, BaseProofsStorageError>>,
+
+    /// Request-scoped cache for hashed account addresses.
+    hashed_addresses: OnceLock<Mutex<HashMap<Address, B256>>>,
+}
+
+impl<'a, Storage: BaseProofsStore> BaseProofsStateProviderRef<'a, Storage> {
+    /// Creates a state provider over external proofs storage.
+    pub const fn new(
+        latest: Box<dyn StateProvider + Send + 'a>,
+        storage: &'a BaseProofsStorage<Storage>,
+        block_number: BlockNumber,
+    ) -> Self {
+        Self {
+            latest,
+            storage,
+            block_number,
+            tx: OnceLock::new(),
+            hashed_addresses: OnceLock::new(),
+        }
+    }
+
+    fn tx(&self) -> ProviderResult<&Storage::Tx<'a>> {
+        match self.tx.get_or_init(|| self.storage.ro_tx()) {
+            Ok(tx) => Ok(tx),
+            Err(error) => Err(error.clone().into()),
+        }
+    }
+
+    fn hashed_address(&self, address: Address) -> B256 {
+        let cache = self.hashed_addresses.get_or_init(Default::default);
+        if let Some(hashed_address) = cache.lock().get(&address) {
+            return *hashed_address;
+        }
+
+        let hashed_address = keccak256(address.0);
+        cache.lock().insert(address, hashed_address);
+        hashed_address
+    }
 }
 
 impl<'a, Storage> Debug for BaseProofsStateProviderRef<'a, Storage>
@@ -205,14 +245,11 @@ impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
 
 impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<'a, Storage> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
-        let hashed_key = keccak256(address.0);
-        Ok(self
-            .storage
-            .account_hashed_cursor(self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+        let hashed_key = self.hashed_address(*address);
+        let tx = self.tx()?;
+        self.storage
+            .account_by_hashed_key_with_tx(tx, hashed_key, self.block_number)
+            .map_err(Into::<ProviderError>::into)
     }
 }
 
@@ -242,14 +279,13 @@ mod tests {
     #[test]
     fn test_base_proofs_state_provider_ref_debug() {
         let latest: Box<dyn StateProvider + Send> = Box::<NoopProvider>::default();
-        let storage: crate::BaseProofsStorage<InMemoryProofsStorage> =
-            InMemoryProofsStorage::new().into();
+        let storage: crate::BaseProofsStorage<InMemoryProofsStorage> = InMemoryProofsStorage::new();
         let block_number = 42u64;
 
         let provider = BaseProofsStateProviderRef::new(latest, &storage, block_number);
 
         assert_eq!(
-            format!("{:?}", provider),
+            format!("{provider:?}"),
             "BaseProofsStateProviderRef { storage: InMemoryProofsStorage { inner: RwLock { data: InMemoryStorageInner { account_branches: {}, storage_branches: {}, hashed_accounts: {}, hashed_storages: {}, trie_updates: {}, post_states: {}, earliest_block: None, anchor_block: None } } }, block_number: 42 }"
         );
     }
