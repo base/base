@@ -167,6 +167,9 @@ fn parse_add_target(raw: &str) -> Result<AddTarget> {
     if target.is_empty() {
         bail!("peer target cannot be empty");
     }
+    if target.starts_with('/') {
+        return Ok(AddTarget::Multiaddr(target.to_string()));
+    }
 
     let bootnode = BootNode::parse_bootnode(target)
         .with_context(|| format!("parsing peer target `{target}` as enode or ENR"))?;
@@ -221,31 +224,15 @@ struct PeerActionJson {
     target: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     accepted: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ok: Option<bool>,
 }
 
 impl PeerActionJson {
     fn el(network: &str, action: &'static str, target: String, accepted: bool) -> Self {
-        Self {
-            network: network.to_string(),
-            action,
-            layer: "el",
-            target,
-            accepted: Some(accepted),
-            ok: None,
-        }
+        Self { network: network.to_string(), action, layer: "el", target, accepted: Some(accepted) }
     }
 
     fn cl(network: &str, action: &'static str, target: String) -> Self {
-        Self {
-            network: network.to_string(),
-            action,
-            layer: "cl",
-            target,
-            accepted: None,
-            ok: Some(true),
-        }
+        Self { network: network.to_string(), action, layer: "cl", target, accepted: None }
     }
 }
 
@@ -553,6 +540,16 @@ mod tests {
     #[test]
     fn parse_add_target_rejects_garbage() {
         assert!(parse_add_target("not-a-peer").is_err());
+    }
+
+    #[test]
+    fn parse_add_target_routes_multiaddr_to_cl() {
+        let multiaddr = "/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample";
+
+        assert_eq!(
+            parse_add_target(multiaddr).unwrap(),
+            AddTarget::Multiaddr(multiaddr.to_string())
+        );
     }
 
     #[test]

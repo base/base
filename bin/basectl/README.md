@@ -103,7 +103,8 @@ consensus layers.
 - `basectl p2p info` shows the advertised endpoint per layer plus peer counts.
 - `basectl p2p peers` shows the connected peer list per layer.
 - `basectl p2p add-peer <TARGET>` connects one peer. `enode://...` routes to
-  the execution layer; `enr:...` routes to the consensus layer.
+  the execution layer; `enr:...` or `/.../p2p/<peer-id>` routes to the
+  consensus layer.
 - `basectl p2p remove-peer <TARGET>` disconnects one peer. `enode://...` routes
   to the execution layer; any other non-empty target is treated as a bare
   consensus libp2p peer ID. ENR records and multiaddrs are rejected for removal.
@@ -230,6 +231,9 @@ basectl -c sepolia p2p add-peer enode://<node-id>@203.0.113.10:30303 --el-rpc ht
 
 # Connect a consensus peer non-interactively and emit JSON
 basectl -c sepolia p2p add-peer enr:<record> --cl-rpc https://your-cl.example/ --yes --json | jq .
+
+# Connect a consensus peer by raw libp2p multiaddr
+basectl -c sepolia p2p add-peer /ip4/203.0.113.10/tcp/9000/p2p/16Uiu2HAm... --cl-rpc https://your-cl.example/ --yes
 
 # Remove a consensus peer by bare libp2p peer ID
 basectl -c sepolia p2p remove-peer 16Uiu2HAm... --cl-rpc https://your-cl.example/

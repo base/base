@@ -182,7 +182,7 @@ pub(crate) struct P2pArgs {
 /// Shared flags for destructive `basectl p2p` subcommands.
 #[derive(Debug, Args)]
 pub(crate) struct DestructivePeerArgs {
-    /// Peer target. `enode://...` routes to EL; CL uses ENR for add and peer ID for remove.
+    /// Peer target. `enode://...` routes to EL; CL uses ENR or multiaddr for add and peer ID for remove.
     #[arg(value_name = "TARGET")]
     pub(crate) target: String,
     /// Override the execution-layer RPC URL.
