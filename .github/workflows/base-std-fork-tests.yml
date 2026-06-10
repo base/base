@@ -68,6 +68,47 @@ jobs:
           echo "BASE_STD_DIR=$workdir/base-std" >> "$GITHUB_ENV"
           echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
 
+          # Capture commit SHAs for the running comment and final results.
+          base_std_sha=$(git -C "$workdir/base-std" rev-parse HEAD)
+          base_anvil_sha=$(git -C "$workdir/base-anvil" rev-parse HEAD)
+          echo "BASE_STD_SHA=$base_std_sha" >> "$GITHUB_ENV"
+          echo "BASE_ANVIL_SHA=$base_anvil_sha" >> "$GITHUB_ENV"
+
+      - name: Post "running" comment on PR
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          marker="<!-- fork-test-results -->"
+          versions="| Dependency | Ref | Commit |
+          |---|---|---|
+          | [base-std](https://github.com/base/base-std) | \`${BASE_STD_REF}\` | [\`${BASE_STD_SHA:0:8}\`](https://github.com/base/base-std/commit/${BASE_STD_SHA}) |
+          | [base-anvil](https://github.com/base/base-anvil) | \`${BASE_ANVIL_REF}\` | [\`${BASE_ANVIL_SHA:0:8}\`](https://github.com/base/base-anvil/commit/${BASE_ANVIL_SHA}) |"
+
+          body=$(printf '%s\n\n%s\n\n%s\n\n[View run](%s)' \
+            "${marker}" \
+            "### 🔄 base-std fork tests: running..." \
+            "${versions}" \
+            "${WORKFLOW_RUN_URL}")
+
+          existing_id=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" \
+            | head -1)
+
+          if [ -n "$existing_id" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing_id}" \
+              -X PATCH --field body="$body" > /dev/null
+          else
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --field body="$body" > /dev/null
+          fi
+
       - name: Build patched base-anvil binaries
         shell: bash
         env:
@@ -102,51 +143,69 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
           output="$RUNNER_TEMP/fork-test-output.txt"
-          # `grep -c` prints the count (0 when there are no matches) and exits
-          # non-zero on no match, so `|| echo 0` would append a second line and
-          # break the arithmetic below. Use `|| true` and default any
-          # empty/missing value (e.g. when the output file is absent) to 0.
           passed=$(grep -c '\[PASS\]' "$output" 2>/dev/null || true)
           failed=$(grep -c '\[FAIL' "$output" 2>/dev/null || true)
           passed=${passed:-0}
           failed=${failed:-0}
           marker="<!-- fork-test-results -->"
 
+          # Version table included in every outcome so reviewers always know what was tested.
+          base_std_sha="${BASE_STD_SHA:-unknown}"
+          base_anvil_sha="${BASE_ANVIL_SHA:-unknown}"
+          base_std_ref="${BASE_STD_REF:-unknown}"
+          base_anvil_ref="${BASE_ANVIL_REF:-unknown}"
+          if [ "${base_std_sha}" != "unknown" ]; then
+            base_std_link="[\`${base_std_sha:0:8}\`](https://github.com/base/base-std/commit/${base_std_sha})"
+          else
+            base_std_link="\`unknown\`"
+          fi
+          if [ "${base_anvil_sha}" != "unknown" ]; then
+            base_anvil_link="[\`${base_anvil_sha:0:8}\`](https://github.com/base/base-anvil/commit/${base_anvil_sha})"
+          else
+            base_anvil_link="\`unknown\`"
+          fi
+          versions="| Dependency | Ref | Commit |
+          |---|---|---|
+          | [base-std](https://github.com/base/base-std) | \`${base_std_ref}\` | ${base_std_link} |
+          | [base-anvil](https://github.com/base/base-anvil) | \`${base_anvil_ref}\` | ${base_anvil_link} |"
+
           if [ ! -s "$output" ] || [ "$((passed + failed))" -eq 0 ]; then
-            body=$(printf '%s\n\n%s\n\n%s' \
+            body=$(printf '%s\n\n%s\n\n%s\n\n%s' \
               "${marker}" \
               "### ❌ base-std fork tests did not run" \
-              "The build or setup step failed before any tests could execute. Check the [workflow logs](${WORKFLOW_RUN_URL}) for details.")
+              "The build or setup step failed before any tests could execute. Check the [workflow logs](${WORKFLOW_RUN_URL}) for details." \
+              "${versions}")
           elif [ "$failed" -eq 0 ]; then
-            body=$(printf '%s\n\n%s\n\n%s' \
+            body=$(printf '%s\n\n%s\n\n%s\n\n%s' \
               "${marker}" \
               "### ✅ base-std fork tests: all ${passed} passed" \
-              "base/base is fully in sync with the base-std spec.")
+              "base/base is fully in sync with the base-std spec." \
+              "${versions}")
           else
             failing=$(grep '\[FAIL' "$output" \
               | sed 's/\x1B\[[0-9;]*m//g' \
               | sed 's/^\[FAIL: \(.*\)\] \(.*\) (runs.*$/- **\2**: `\1`/' \
               | sort -u || true)
-            body=$(printf '%s\n\n%s\n\n%s\n\n<details>\n<summary>Failing tests</summary>\n\n%s\n\n</details>' \
+            body=$(printf '%s\n\n%s\n\n%s\n\n%s\n\n<details>\n<summary>Failing tests</summary>\n\n%s\n\n</details>' \
               "${marker}" \
               "### ❌ base-std fork tests: ${failed} failed, ${passed} passed" \
               "base/base diverges from the base-std spec." \
+              "${versions}" \
               "${failing}")
           fi
 
-          pr="${{ github.event.pull_request.number }}"
-          repo="${{ github.repository }}"
-
-          existing_id=$(gh api "repos/${repo}/issues/${pr}/comments" \
+          existing_id=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
             --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" \
             | head -1)
 
           if [ -n "$existing_id" ]; then
-            gh api "repos/${repo}/issues/comments/${existing_id}" \
+            gh api "repos/${REPO}/issues/comments/${existing_id}" \
               -X PATCH --field body="$body" > /dev/null
           else
-            gh api "repos/${repo}/issues/${pr}/comments" \
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
               --field body="$body" > /dev/null
           fi
