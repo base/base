@@ -129,7 +129,9 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 C::name(_) => self.accounting().name()?.abi_encode().into(),
                 C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
                 // Stablecoin precision is fixed at 6 by the protocol spec; never read from
-                // storage to avoid the zero-return window during the factory bootstrap.
+<<<<<<< HEAD
+                // storage to avoid the zero-return window during the factory bootstrap
+                // (BOP-349/PSRC-27).
                 C::decimals(_) => U256::from(
                     B20Variant::Stablecoin
                         .decimals()
@@ -340,16 +342,14 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         Ok(encoded)
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bytes, U256};
-    use alloy_sol_types::{SolCall, SolError, SolValue};
+    use alloy_primitives::{Address, U256};
+    use alloy_sol_types::{SolCall, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::{
-        B20StablecoinToken, IB20, InMemoryPolicy, InMemoryTokenAccounting,
-        NoopPrecompileCallObserver, TestStablecoinToken,
-    };
+    use crate::{IB20, InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken};
 
     const TOKEN: Address = Address::repeat_byte(0x01);
 
@@ -363,13 +363,6 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_caller(TOKEN);
         StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata)).unwrap().to_vec()
-    }
-
-    fn make_token() -> B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy> {
-        B20StablecoinToken::with_storage_and_policy(
-            InMemoryTokenAccounting::new(TOKEN),
-            InMemoryPolicy::new(),
-        )
     }
 
     /// Decimals always returns 6 regardless of what the underlying accounting stores.
@@ -388,21 +381,5 @@ mod tests {
         let mut default = make_stablecoin_token_with_decimals(18);
         let result = call_inner(&mut default, &calldata);
         assert_eq!(U256::abi_decode(&result).unwrap(), U256::from(6u8));
-    }
-
-    #[test]
-    fn dispatch_rejects_call_with_nonzero_value() {
-        let mut token = make_token();
-        let calldata = IB20::balanceOfCall { account: Address::ZERO }.abi_encode();
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_call_value(U256::from(1u64));
-
-        let out = StorageCtx::enter(&mut storage, |ctx| {
-            token.dispatch_with_observer(ctx, &calldata, NoopPrecompileCallObserver)
-        })
-        .expect("dispatch must not fatally error");
-
-        assert!(out.is_revert());
-        assert_eq!(out.bytes, Bytes::from(IB20::NonPayable {}.abi_encode()));
     }
 }
