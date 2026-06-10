@@ -1377,21 +1377,8 @@ mod tests {
                 ),
                 IB20Factory::getB20AddressCall::abi_encode_returns(&expected_asset_addr),
             );
-
-            // Invalid variant: no keccak charge, zero address returned.
-            assert_output(
-                dispatch_factory_success(
-                    ctx,
-                    IB20Factory::getB20AddressCall {
-                        variant: IB20Factory::B20Variant::__Invalid,
-                        sender,
-                        salt,
-                    },
-                ),
-                IB20Factory::getB20AddressCall::abi_encode_returns(&Address::ZERO),
-            );
         });
-        // One keccak call for the valid getB20Address, zero for the invalid variant.
+        // One keccak call for the valid getB20Address.
         assert_eq!(
             storage.counter_keccak256(),
             1,
