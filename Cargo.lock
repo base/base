@@ -5791,6 +5791,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-zk-host"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base-prover-service-protocol",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "base-proofs-extension"
 version = "0.0.0"
 dependencies = [
@@ -6015,6 +6025,14 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "base-prover-service-worker-host"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base-prover-service-protocol",
 ]
 
 [[package]]
