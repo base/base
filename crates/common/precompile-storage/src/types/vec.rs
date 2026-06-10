@@ -12,7 +12,7 @@ use alloy_primitives::{Address, U256, keccak256};
 
 use crate::{
     error::{BasePrecompileError, Result},
-    packing::{PackedSlot, calc_element_loc, calc_packed_slot_count},
+    packing::{PackedSlot, calc_element_loc, calc_packed_slot_count, create_element_mask},
     provider::{Handler, Layout, LayoutCtx, Storable, StorableType, StorageOps},
     types::{HandlerCache, Slot},
 };
@@ -278,13 +278,24 @@ where
             // mix of kept and removed elements and require element-by-element clearing.
             let first_full_tail_slot = new_len.div_ceil(elems_per_slot);
 
-            // Clear individual elements in the partial boundary slot (if any).
-            // These share a physical slot with kept elements, so we must use a
-            // read-modify-write to avoid overwriting adjacent live data.
+            // Clear elements in the partial boundary slot (if any) with a single
+            // SLOAD + mask + SSTORE. These elements share the slot with kept elements,
+            // so we compute one combined clear-mask for all removed positions and apply
+            // it in one read-modify-write rather than one per element.
             let boundary_slot_end = (first_full_tail_slot * elems_per_slot).min(old_len);
-            for index in new_len..boundary_slot_end {
-                let mut elem = Self::compute_handler(data_start, self.address, self.storage, index);
-                elem.delete()?;
+            if boundary_slot_end > new_len {
+                let boundary_slot_addr = data_start + U256::from(new_len / elems_per_slot);
+                let current = self.storage.sload(self.address, boundary_slot_addr)?;
+                let mut combined_clear_mask = U256::ZERO;
+                for index in new_len..boundary_slot_end {
+                    let byte_offset = (index % elems_per_slot) * T::BYTES;
+                    combined_clear_mask |= create_element_mask(T::BYTES) << (byte_offset * 8);
+                }
+                self.storage.sstore(
+                    self.address,
+                    boundary_slot_addr,
+                    current & !combined_clear_mask,
+                )?;
             }
 
             // Zero all fully-removed tail slots in a single store each.
