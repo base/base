@@ -855,4 +855,23 @@ mod tests {
             BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: inner_call })
         );
     }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        use alloy_sol_types::SolError;
+        use crate::NoopPrecompileCallObserver;
+
+        let mut token = make_token();
+        let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
+        let mut storage = storage_with_caller(ALICE);
+        storage.set_call_value(U256::from(1u64));
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            token.dispatch_with_observer(ctx, &calldata, NoopPrecompileCallObserver)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        assert_eq!(out.bytes, Bytes::from(IB20::NonPayable {}.abi_encode()));
+    }
 }

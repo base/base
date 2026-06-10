@@ -612,4 +612,26 @@ mod tests {
             assert!(out.is_revert(), "createPolicy must revert when feature is deactivated");
         }
     }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(alloy_primitives::U256::from(1u64));
+        let calldata =
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID }
+                .abi_encode();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        assert_eq!(
+            out.bytes,
+            alloy_primitives::Bytes::from(alloy_sol_types::SolError::abi_encode(
+                &IPolicyRegistry::NonPayable {},
+            ))
+        );
+    }
 }
