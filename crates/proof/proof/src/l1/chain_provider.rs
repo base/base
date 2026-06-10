@@ -7,6 +7,8 @@ use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
+use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
+use base_common_genesis::L1TxFormat;
 use base_consensus_derive::ChainProvider;
 use base_proof_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
@@ -21,12 +23,14 @@ pub struct OracleL1ChainProvider<T: CommsClient> {
     pub l1_head: B256,
     /// The preimage oracle client.
     pub oracle: Arc<T>,
+    /// L1 format for tx and receipt decoding.
+    pub l1_tx_format: L1TxFormat,
 }
 
 impl<T: CommsClient> OracleL1ChainProvider<T> {
     /// Creates a new [`OracleL1ChainProvider`] with the given boot information and oracle client.
-    pub const fn new(l1_head: B256, oracle: Arc<T>) -> Self {
-        Self { l1_head, oracle }
+    pub const fn new(l1_head: B256, oracle: Arc<T>, l1_tx_format: L1TxFormat) -> Self {
+        Self { l1_head, oracle, l1_tx_format }
     }
 }
 
@@ -78,9 +82,15 @@ impl<T: CommsClient + Sync + Send> ChainProvider for OracleL1ChainProvider<T> {
         // Decode the receipts within the receipts trie.
         let receipts = trie_walker
             .into_iter()
-            .map(|(_, rlp)| {
-                let envelope = ReceiptEnvelope::decode_2718(&mut rlp.as_ref())?;
-                Ok(envelope.as_receipt().expect("Infallible").clone())
+            .map(|(_, rlp)| match self.l1_tx_format {
+                L1TxFormat::Base => {
+                    let envelope = BaseReceiptEnvelope::decode_2718(&mut rlp.as_ref())?;
+                    Ok(Receipt::from(envelope))
+                }
+                L1TxFormat::Ethereum => {
+                    let envelope = ReceiptEnvelope::decode_2718(&mut rlp.as_ref())?;
+                    Ok(envelope.as_receipt().expect("Infallible").clone())
+                }
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(OracleProviderError::Rlp)?;
@@ -110,11 +120,17 @@ impl<T: CommsClient + Sync + Send> ChainProvider for OracleL1ChainProvider<T> {
         // Decode the transactions within the transactions trie.
         let transactions = trie_walker
             .into_iter()
-            .map(|(_, rlp)| {
-                // note: not short-handed for error type coercion w/ `?`.
-                let rlp = TxEnvelope::decode_2718(&mut rlp.as_ref())?;
-                Ok(rlp)
+            .map(|(_, rlp)| match self.l1_tx_format {
+                L1TxFormat::Base => {
+                    let envelope = BaseTxEnvelope::decode_2718(&mut rlp.as_ref())?;
+                    Ok(TxEnvelope::try_from(envelope).ok())
+                }
+                L1TxFormat::Ethereum => {
+                    let envelope = TxEnvelope::decode_2718(&mut rlp.as_ref())?;
+                    Ok(Some(envelope))
+                }
             })
+            .filter_map(Result::transpose)
             .collect::<Result<Vec<_>, _>>()
             .map_err(OracleProviderError::Rlp)?;
 
@@ -139,5 +155,138 @@ impl<T: CommsClient> TrieProvider for OracleL1ChainProvider<T> {
             )
             .map_err(OracleProviderError::Rlp)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, Bytes, Sealable, TxKind, U256, keccak256};
+    use alloy_rlp::Encodable;
+    use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, OpTxType, TxDeposit};
+    use base_proof_mpt::ordered_trie_with_encoder;
+    use base_proof_preimage::{
+        PreimageKey,
+        errors::{PreimageOracleError, PreimageOracleResult},
+    };
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct MockOracle {
+        data: Arc<Vec<(PreimageKey, Vec<u8>)>>,
+    }
+
+    impl MockOracle {
+        fn new(data: Vec<(PreimageKey, Vec<u8>)>) -> Self {
+            Self { data: Arc::new(data) }
+        }
+    }
+
+    #[async_trait]
+    impl base_proof_preimage::PreimageOracleClient for MockOracle {
+        async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
+            self.data
+                .iter()
+                .find_map(|(entry_key, value)| (*entry_key == key).then(|| value.clone()))
+                .ok_or(PreimageOracleError::KeyNotFound)
+        }
+
+        async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
+            let value = self.get(key).await?;
+            if value.len() != buf.len() {
+                return Err(PreimageOracleError::BufferLengthMismatch(buf.len(), value.len()));
+            }
+
+            buf.copy_from_slice(&value);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl base_proof_preimage::HintWriterClient for MockOracle {
+        async fn write(&self, _hint: &str) -> PreimageOracleResult<()> {
+            Ok(())
+        }
+    }
+
+    fn trie_root_and_preimages(values: &[Vec<u8>]) -> (B256, Vec<(PreimageKey, Vec<u8>)>) {
+        let mut trie = ordered_trie_with_encoder(values, |value, buf| {
+            buf.put_slice(value.as_ref());
+        });
+        let root = trie.root();
+        let preimages = trie
+            .take_proof_nodes()
+            .into_inner()
+            .into_values()
+            .map(|value| {
+                let hash = keccak256(value.as_ref());
+                (PreimageKey::new_keccak256(*hash), value.into())
+            })
+            .collect();
+        (root, preimages)
+    }
+
+    fn header_preimage(header: &Header) -> (B256, Vec<u8>) {
+        let hash = header.hash_slow();
+        let mut encoded = Vec::new();
+        header.encode(&mut encoded);
+        (hash, encoded)
+    }
+
+    fn base_deposit_tx_2718() -> Vec<u8> {
+        let tx = TxDeposit {
+            source_hash: B256::repeat_byte(0x01),
+            from: Address::repeat_byte(0x02),
+            mint: 1,
+            gas_limit: 2,
+            to: TxKind::Call(Address::repeat_byte(0x03)),
+            value: U256::from(4_u64),
+            input: Bytes::from(vec![5]),
+            is_system_transaction: false,
+        };
+        BaseTxEnvelope::Deposit(tx.seal_slow()).encoded_2718()
+    }
+
+    fn base_deposit_receipt_2718() -> Vec<u8> {
+        BaseReceiptEnvelope::from_parts(true, 100, vec![], OpTxType::Deposit, Some(1), Some(2))
+            .encoded_2718()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_format_block_decodes_and_drops_deposit() {
+        let txs = vec![base_deposit_tx_2718()];
+        let (transactions_root, mut preimages) = trie_root_and_preimages(&txs);
+        let header = Header { transactions_root, number: 42, timestamp: 1, ..Default::default() };
+        let (hash, encoded_header) = header_preimage(&header);
+        preimages.push((PreimageKey::new_keccak256(*hash), encoded_header));
+        let oracle = Arc::new(MockOracle::new(preimages));
+        let mut provider = OracleL1ChainProvider::new(hash, oracle, L1TxFormat::Base);
+
+        let (info, txs) = provider.block_info_and_transactions_by_hash(hash).await.unwrap();
+
+        assert_eq!(info.number, 42);
+        assert!(
+            txs.is_empty(),
+            "the deposit is verified in the trie and then dropped during down-conversion"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_format_receipts_decode_and_preserve_deposit() {
+        let receipts = vec![base_deposit_receipt_2718()];
+        let (receipts_root, mut preimages) = trie_root_and_preimages(&receipts);
+        let header = Header { receipts_root, number: 42, timestamp: 1, ..Default::default() };
+        let (hash, encoded_header) = header_preimage(&header);
+        preimages.push((PreimageKey::new_keccak256(*hash), encoded_header));
+        let oracle = Arc::new(MockOracle::new(preimages));
+        let mut provider = OracleL1ChainProvider::new(hash, oracle, L1TxFormat::Base);
+
+        let receipts = provider.receipts_by_hash(hash).await.unwrap();
+
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].cumulative_gas_used, 100);
     }
 }

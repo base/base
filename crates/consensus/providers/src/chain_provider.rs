@@ -3,10 +3,10 @@
 use std::{boxed::Box, num::NonZeroUsize, vec::Vec};
 
 use alloy_consensus::{Header, Receipt, TxEnvelope};
-use alloy_eips::BlockId;
+use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::{Network, Provider, RootProvider};
-use alloy_rpc_client::RpcClient;
+use alloy_provider::{Network, Provider, RootProvider, network::BlockResponse};
+use alloy_rpc_client::{ClientRef, RpcClient};
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_consensus::BaseReceiptEnvelope;
@@ -41,7 +41,7 @@ pub struct AlloyChainProvider {
 /// Base has deposit (`0x7E`) and EIP-8130 (`0x7D`) txs that Ethereum lacks — so the full-decode
 /// path is necessarily format-specific.
 #[derive(Debug, Clone)]
-enum TypedL1Provider {
+pub enum TypedL1Provider {
     /// Ethereum-typed provider; decodes standard blocks including EIP-4844.
     Ethereum(RootProvider),
     /// Base/OP-typed provider; decodes deposit and EIP-8130 entries the Ethereum envelopes reject.
@@ -49,6 +49,25 @@ enum TypedL1Provider {
 }
 
 impl TypedL1Provider {
+    /// Returns the RPC client used by the underlying provider.
+    pub fn client(&self) -> ClientRef<'_> {
+        match self {
+            Self::Ethereum(p) => p.client(),
+            Self::Base(p) => p.client(),
+        }
+    }
+
+    /// Fetches raw 2718 transaction bytes for every transaction trie entry.
+    pub async fn block_transaction_bytes_2718(
+        &self,
+        hash: B256,
+    ) -> Result<Vec<Vec<u8>>, AlloyChainProviderError> {
+        match self {
+            Self::Ethereum(p) => fetch_block_transactions_2718(p, hash).await,
+            Self::Base(p) => fetch_block_transactions_2718(p, hash).await,
+        }
+    }
+
     /// Returns the latest block number.
     async fn get_block_number(&self) -> Result<u64, RpcError<TransportErrorKind>> {
         match self {
@@ -85,9 +104,10 @@ impl TypedL1Provider {
                 Self::Ethereum(p) => {
                     p.get_block_by_hash(hash).await.map(|b| b.map(|b| b.header.into_consensus()))
                 }
-                Self::Base(p) => {
-                    p.get_block_by_hash(hash).await.map(|b| b.map(|b| b.header.into_consensus()))
-                }
+                Self::Base(p) => p
+                    .get_block_by_hash(hash)
+                    .await
+                    .map(|b| b.map(|b| b.header.into_inner().into_consensus())),
             }
         })
         .inspect_err(|_e| {
@@ -107,7 +127,7 @@ impl TypedL1Provider {
                 Self::Base(p) => p
                     .get_block_by_number(number.into())
                     .await
-                    .map(|b| b.map(|b| b.header.into_consensus())),
+                    .map(|b| b.map(|b| b.header.into_inner().into_consensus())),
             }
         })
         .inspect_err(|_e| {
@@ -139,9 +159,8 @@ impl TypedL1Provider {
     /// Fetches a full block and returns its consensus [`Header`] and transactions.
     ///
     /// On a Base L1, deposit (`0x7E`) and EIP-8130 (`0x7D`) txs have no Ethereum representation,
-    /// so [`TxEnvelope::try_from`] drops them. This is required for safety: it keeps an L1 deposit
-    /// out of the batcher-auth path (deposits are never batcher submissions, and L1→L2 deposits
-    /// derive from receipts).
+    /// so [`TxEnvelope::try_from`] drops them. L3 batcher submissions cannot use EIP-8130 until
+    /// the DA pipeline can inspect Base envelopes directly.
     async fn header_and_transactions_by_hash(
         &self,
         hash: B256,
@@ -149,7 +168,7 @@ impl TypedL1Provider {
         match self {
             Self::Base(p) => {
                 let block = fetch_full_block(p, hash).await?;
-                let header = block.header.into_consensus();
+                let header = block.header.into_inner().into_consensus();
                 let transactions = block
                     .transactions
                     .into_transactions()
@@ -208,6 +227,22 @@ async fn fetch_full_block<N: Network>(
         Metrics::chain_rpc_errors("block_by_hash").increment(1);
     })?
     .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))
+}
+
+async fn fetch_block_transactions_2718<N: Network>(
+    provider: &RootProvider<N>,
+    hash: B256,
+) -> Result<Vec<Vec<u8>>, AlloyChainProviderError>
+where
+    N::TxEnvelope: Encodable2718,
+{
+    let block = fetch_full_block(provider, hash).await?;
+    let transactions = block
+        .transactions()
+        .as_transactions()
+        .ok_or(AlloyChainProviderError::TransactionBodiesUnavailable(hash))?;
+
+    Ok(transactions.iter().map(|tx| tx.as_ref().encoded_2718()).collect())
 }
 
 impl AlloyChainProvider {
@@ -331,6 +366,9 @@ pub enum AlloyChainProviderError {
     /// Block not found.
     #[error("Block not found: {0}")]
     BlockNotFound(BlockId),
+    /// Full block response contained hashes, not transaction bodies.
+    #[error("Block transaction bodies unavailable: {0}")]
+    TransactionBodiesUnavailable(B256),
     /// Failed to convert RPC receipts into consensus receipts.
     #[error("Failed to convert RPC receipts into consensus receipts: {0}")]
     ReceiptsConversion(B256),
@@ -359,6 +397,9 @@ impl From<AlloyChainProviderError> for PipelineErrorKind {
                     "Failed to convert RPC receipts into consensus receipts".to_string(),
                 ))
             }
+            AlloyChainProviderError::TransactionBodiesUnavailable(hash) => Self::Temporary(
+                PipelineError::Provider(format!("L1 block transaction bodies unavailable: {hash}")),
+            ),
         }
     }
 }
@@ -617,6 +658,34 @@ mod tests {
             txs.is_empty(),
             "the 0x7e deposit must be decoded then dropped from the down-converted transactions"
         );
+    }
+
+    #[tokio::test]
+    async fn base_format_block_transaction_bytes_keep_deposit() {
+        let server = MockServer::start_async().await;
+        let block = base_block_with_deposit();
+        let mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByHash"}"#);
+                then.respond_with(move |req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_response(req, block.clone()))
+                        .build()
+                });
+            })
+            .await;
+
+        let url: url::Url = server.url("/").parse().unwrap();
+        let provider = TypedL1Provider::Base(RootProvider::<Base>::new_http(url));
+        let txs = provider.block_transaction_bytes_2718(B256::repeat_byte(0x11)).await.unwrap();
+
+        mock.assert_calls_async(1).await;
+        assert_eq!(txs.len(), 1, "host preimage tx fetch must retain trie entries");
+        assert_eq!(txs[0].first().copied(), Some(0x7e));
     }
 
     /// Regression: a Base-format `0x7e` deposit receipt must decode and be kept — unlike the tx

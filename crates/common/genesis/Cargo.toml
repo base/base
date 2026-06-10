@@ -17,6 +17,7 @@ workspace = true
 # Alloy
 alloy-eips.workspace = true
 alloy-chains.workspace = true
+alloy-genesis.workspace = true
 alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
 alloy-hardforks.workspace = true
@@ -26,7 +27,7 @@ alloy-primitives.workspace = true
 spin.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-derive_more = { workspace = true, features = ["display", "from", "try_from"] }
+derive_more = { workspace = true, features = ["display", "from", "from_str", "try_from"] }
 
 # `arbitrary` feature
 arbitrary = { workspace = true, features = ["derive"], optional = true }
@@ -49,6 +50,7 @@ std = [
 	"alloy-chains/std",
 	"alloy-consensus/std",
 	"alloy-eips/std",
+	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"derive_more/std",

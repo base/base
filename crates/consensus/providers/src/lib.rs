@@ -6,6 +6,8 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+pub use base_common_genesis::L1TxFormat;
+
 mod l1_rpc;
 pub use l1_rpc::{L1_RPC_TIMEOUT, L1RpcProvider};
 
@@ -24,7 +26,7 @@ pub use blobs::{
 };
 
 mod chain_provider;
-pub use chain_provider::{AlloyChainProvider, AlloyChainProviderError};
+pub use chain_provider::{AlloyChainProvider, AlloyChainProviderError, TypedL1Provider};
 
 mod conf_depth;
 pub use conf_depth::{ConfDepthProvider, L1HeadNumber};
@@ -34,6 +36,3 @@ pub use l2_chain_provider::{AlloyL2ChainProvider, AlloyL2ChainProviderError};
 
 mod pipeline;
 pub use pipeline::OnlinePipeline;
-
-mod tx_format;
-pub use tx_format::L1TxFormat;

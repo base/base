@@ -234,7 +234,12 @@ mod tests {
             slot_interval: 12,
         });
         let l2_node = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
-        HostProviders { l1, blobs, l2, l2_node }
+        HostProviders {
+            l1: base_consensus_providers::TypedL1Provider::Ethereum(l1),
+            blobs,
+            l2,
+            l2_node,
+        }
     }
 
     fn test_cfg() -> HostConfig {

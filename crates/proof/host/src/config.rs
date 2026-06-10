@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
+use alloy_eips::BlockId;
 use alloy_genesis::ChainConfig;
+use alloy_primitives::{B256, Bytes};
 use alloy_provider::RootProvider;
+use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_providers::L1BlobProvider;
+use base_consensus_providers::{L1BlobProvider, TypedL1Provider};
 use base_proof_primitives::ProofRequest;
 use serde::Serialize;
 
@@ -12,13 +15,41 @@ use serde::Serialize;
 #[derive(Debug, Clone)]
 pub struct HostProviders {
     /// The L1 EL provider.
-    pub l1: RootProvider,
+    pub l1: TypedL1Provider,
     /// The L1 blob provider (beacon-backed, or calldata-only when no beacon is configured).
     pub blobs: L1BlobProvider,
     /// The L2 EL provider.
     pub l2: RootProvider<Base>,
     /// The L2 rollup RPC provider.
     pub l2_node: RootProvider,
+}
+
+/// Supplies raw L1 data needed to populate preimage storage.
+#[async_trait]
+pub(crate) trait L1PreimageProvider {
+    /// Fetches a raw L1 header by hash.
+    async fn raw_header_by_hash(&self, hash: B256) -> crate::Result<Bytes>;
+
+    /// Fetches a raw L1 header by block number.
+    async fn raw_header_by_number(&self, block_number: u64) -> crate::Result<Bytes>;
+
+    /// Fetches raw L1 receipts by block hash.
+    async fn raw_receipts_by_hash(&self, hash: B256) -> crate::Result<Vec<Bytes>>;
+}
+
+#[async_trait]
+impl L1PreimageProvider for TypedL1Provider {
+    async fn raw_header_by_hash(&self, hash: B256) -> crate::Result<Bytes> {
+        Ok(self.client().request("debug_getRawHeader", [hash]).await?)
+    }
+
+    async fn raw_header_by_number(&self, block_number: u64) -> crate::Result<Bytes> {
+        Ok(self.client().request("debug_getRawHeader", (BlockId::number(block_number),)).await?)
+    }
+
+    async fn raw_receipts_by_hash(&self, hash: B256) -> crate::Result<Vec<Bytes>> {
+        Ok(self.client().request("debug_getRawReceipts", [hash]).await?)
+    }
 }
 
 /// Static infrastructure config — set once at startup, reused across proofs.

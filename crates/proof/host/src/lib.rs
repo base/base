@@ -4,6 +4,7 @@ mod error;
 pub use error::{HostError, Result};
 
 mod config;
+pub(crate) use config::L1PreimageProvider;
 pub use config::{HostConfig, HostProviders, ProverConfig};
 
 mod host;

@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use alloy_provider::{Network, RootProvider};
 use base_common_evm::BaseEvmFactory;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{L1TxFormat, RollupConfig};
 use base_common_network::Base;
-use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
+use base_consensus_providers::{
+    L1BlobProvider, TypedL1Provider, OnlineBeaconClient, OnlineBlobProvider,
+};
 use base_optimism_rpc::OptimismRollupProviderExt;
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
@@ -237,15 +239,31 @@ impl Host {
 
     /// Creates the providers required for the host backend.
     pub async fn create_providers(&self) -> Result<HostProviders> {
-        let l1_provider = rpc_provider(&self.config.prover.l1_eth_url).await?;
-        let blob_provider = match self
+        let l1_tx_format = L1TxFormat::from_l1_config(&self.config.prover.l1_config);
+        let l1_beacon_url = self
             .config
             .prover
             .l1_beacon_url
             .as_deref()
             .map(str::trim)
-            .filter(|url| !url.is_empty())
-        {
+            .filter(|url| !url.is_empty());
+
+        if l1_tx_format == L1TxFormat::Base && l1_beacon_url.is_some() {
+            return Err(HostError::Custom(
+                "Base-format L1 config has no beacon/blob DA; run with calldata-only L1 derivation"
+                    .into(),
+            ));
+        }
+
+        let l1_provider = match l1_tx_format {
+            L1TxFormat::Ethereum => {
+                TypedL1Provider::Ethereum(rpc_provider(&self.config.prover.l1_eth_url).await?)
+            }
+            L1TxFormat::Base => {
+                TypedL1Provider::Base(rpc_provider::<Base>(&self.config.prover.l1_eth_url).await?)
+            }
+        };
+        let blob_provider = match l1_beacon_url {
             Some(url) => L1BlobProvider::beacon(
                 OnlineBlobProvider::init(OnlineBeaconClient::new_http(url.to_string())).await,
             ),
@@ -267,4 +285,42 @@ async fn rpc_provider<N: Network>(url: &str) -> Result<RootProvider<N>> {
     RootProvider::connect(url)
         .await
         .map_err(|e| HostError::Custom(format!("failed to connect to RPC at {url}: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_genesis::ChainConfig;
+    use base_common_genesis::RollupConfig;
+    use base_proof_primitives::ProofRequest;
+    use serde_json::json;
+
+    use super::*;
+
+    fn test_config(l1_config: ChainConfig, l1_beacon_url: Option<String>) -> HostConfig {
+        HostConfig {
+            request: ProofRequest::default(),
+            prover: crate::ProverConfig {
+                l1_eth_url: "http://127.0.0.1:1".to_string(),
+                l2_eth_url: "http://127.0.0.1:1".to_string(),
+                l2_node_url: "http://127.0.0.1:1".to_string(),
+                l1_beacon_url,
+                l2_chain_id: 0,
+                rollup_config: RollupConfig::default(),
+                l1_config,
+                enable_experimental_witness_endpoint: false,
+            },
+            data_dir: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn base_l1_config_rejects_beacon_provider() {
+        let mut l1_config = ChainConfig::default();
+        l1_config.extra_fields.insert("optimism".to_string(), json!({}));
+        let host = Host::new(test_config(l1_config, Some("http://127.0.0.1:1".to_string())));
+
+        let err = host.create_providers().await.expect_err("Base beacon mode should reject");
+
+        assert!(matches!(err, HostError::Custom(message) if message.contains("calldata-only")));
+    }
 }

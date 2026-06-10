@@ -3,6 +3,7 @@ use std::array::TryFromSliceError;
 use alloy_primitives::B256;
 use alloy_rlp::Error as RlpError;
 use alloy_transport::TransportError;
+use base_consensus_providers::AlloyChainProviderError;
 use base_proof_client::FaultProofProgramError;
 use base_proof_preimage::errors::{PreimageOracleError, WitnessOracleError};
 use thiserror::Error;
@@ -18,7 +19,7 @@ pub enum HostError {
     Custom(String),
     /// Block not found error.
     #[error("Block not found: {0}")]
-    BlockNotFound(B256),
+    BlockNotFound(String),
     /// Invalid hint data length.
     #[error("Invalid hint data length")]
     InvalidHintDataLength,
@@ -126,4 +127,15 @@ pub enum HostError {
     /// IO error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+impl From<AlloyChainProviderError> for HostError {
+    fn from(error: AlloyChainProviderError) -> Self {
+        match error {
+            AlloyChainProviderError::BlockNotFound(id) => Self::BlockNotFound(id.to_string()),
+            AlloyChainProviderError::Transport(error) => Self::Transport(error),
+            AlloyChainProviderError::TransactionBodiesUnavailable(_)
+            | AlloyChainProviderError::ReceiptsConversion(_) => Self::Custom(error.to_string()),
+        }
+    }
 }
