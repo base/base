@@ -3,7 +3,8 @@ use base_prover_service_db::{
     canonical_session_id,
 };
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, ZkProofResult, ZkVm,
+    GetProofRequest, GetProofResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofResult, ProofStatus,
+    ZkProofResult, ZkVm,
 };
 use jsonrpsee::core::RpcResult;
 use tracing::{Instrument, info};
@@ -76,7 +77,7 @@ impl ProverServiceServer {
             .get_by_session_id(&session_id)
             .await
             .map_err(|e| internal(format!("Database error: {e}")))?
-            .ok_or_else(|| not_found("Proof request not found"))?;
+            .ok_or_else(|| not_found(PROOF_REQUEST_NOT_FOUND_MESSAGE))?;
         let proof_request_id = proof_req.id;
 
         info!(
@@ -103,7 +104,7 @@ impl ProverServiceServer {
                     .get(proof_request_id)
                     .await
                     .map_err(|e| internal(format!("Database error: {e}")))?
-                    .ok_or_else(|| not_found("Proof request not found"))?;
+                    .ok_or_else(|| not_found(PROOF_REQUEST_NOT_FOUND_MESSAGE))?;
 
                 match updated_proof_req.status {
                     DbProofStatus::Succeeded => (

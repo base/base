@@ -25,8 +25,9 @@ use base_proof_rpc::{
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind as ApiProofRequestKind,
+    ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    TeeKind, TeeProofResult,
 };
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
@@ -452,7 +453,7 @@ impl ProofRequesterProvider for MockProofRequester {
             ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(
                 ErrorObjectOwned::owned(
                     ProverServiceClientError::ERROR_NOT_FOUND,
-                    "Proof request not found",
+                    PROOF_REQUEST_NOT_FOUND_MESSAGE,
                     None::<()>,
                 ),
             ))

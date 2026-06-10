@@ -1,5 +1,6 @@
 //! Shared prover-service client error types.
 
+use base_prover_service_protocol::PROOF_REQUEST_NOT_FOUND_MESSAGE;
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorCode};
 use thiserror::Error;
 
@@ -71,7 +72,7 @@ impl ProverServiceClientError {
     #[must_use]
     pub fn is_not_found(&self) -> bool {
         let Self::RpcTransport(JsonRpcClientError::Call(call)) = self else { return false };
-        call.code() == Self::ERROR_NOT_FOUND && call.message() == "Proof request not found"
+        call.code() == Self::ERROR_NOT_FOUND && call.message() == PROOF_REQUEST_NOT_FOUND_MESSAGE
     }
 
     /// Returns `true` when the JSON-RPC error is classified as transient.
@@ -164,14 +165,14 @@ mod tests {
 
     #[test]
     fn is_not_found_matches_only_missing_session_not_found() {
-        let not_found =
-            rpc_call_error(ProverServiceClientError::ERROR_NOT_FOUND, "Proof request not found");
+        let not_found = rpc_call_error(
+            ProverServiceClientError::ERROR_NOT_FOUND,
+            PROOF_REQUEST_NOT_FOUND_MESSAGE,
+        );
         assert!(not_found.is_not_found());
 
-        let missing_result = rpc_call_error(
-            ProverServiceClientError::ERROR_NOT_FOUND,
-            "proof result not available",
-        );
+        let missing_result =
+            rpc_call_error(ProverServiceClientError::ERROR_NOT_FOUND, "proof result not available");
         assert!(!missing_result.is_not_found());
 
         let other_call = rpc_call_error(ProverServiceClientError::ERROR_UNAVAILABLE, "down");

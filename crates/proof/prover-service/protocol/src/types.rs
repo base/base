@@ -5,6 +5,9 @@ use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// JSON-RPC error message returned when a proof request session cannot be found.
+pub const PROOF_REQUEST_NOT_FOUND_MESSAGE: &str = "Proof request not found";
+
 /// Type of proof requested from the prover service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
