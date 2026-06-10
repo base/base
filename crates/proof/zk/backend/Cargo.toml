@@ -1,0 +1,20 @@
+[package]
+name = "base-proof-zk-backend"
+description = "ZK proving backends for prover-service workers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-proof-zk-host.workspace = true
+base-prover-service-protocol.workspace = true
+
+# async
+async-trait.workspace = true

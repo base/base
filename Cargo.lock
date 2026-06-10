@@ -5791,6 +5791,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-zk-backend"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base-proof-zk-host",
+ "base-prover-service-protocol",
+]
+
+[[package]]
 name = "base-proof-zk-host"
 version = "0.0.0"
 dependencies = [
