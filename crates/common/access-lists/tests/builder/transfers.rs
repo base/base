@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use alloy_eip7928::BlockAccessIndex;
+
 use super::{
     AccountInfo, BaseTransaction, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER, TxEnv, TxKind, U256,
     execute_txns_build_access_list,
@@ -162,6 +164,9 @@ fn test_multiple_transfers() {
     let tx_indices: Vec<_> =
         sender_changes.nonce_changes.iter().map(|nc| nc.block_access_index).collect();
     for i in 0..10u64 {
-        assert!(tx_indices.contains(&i), "Tx index {i} should be present in nonce changes");
+        assert!(
+            tx_indices.contains(&BlockAccessIndex(i)),
+            "Tx index {i} should be present in nonce changes"
+        );
     }
 }

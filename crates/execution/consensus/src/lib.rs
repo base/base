@@ -16,7 +16,7 @@ use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, Header, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_primitives::B64;
+use alloy_primitives::{B64, B256};
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use base_execution_chainspec::BaseChainSpec;
@@ -78,8 +78,15 @@ where
         block: &RecoveredBlock<N::Block>,
         result: &BlockExecutionResult<N::Receipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
+        block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
-        validate_block_post_execution(block.header(), &self.chain_spec, result, receipt_root_bloom)
+        validate_block_post_execution(
+            block.header(),
+            &self.chain_spec,
+            result,
+            receipt_root_bloom,
+            block_access_list_hash,
+        )
     }
 }
 
@@ -432,6 +439,7 @@ mod tests {
                 &block,
                 &result,
                 None,
+                None,
             );
 
         // validate blob, it should pass blob gas used validation
@@ -498,6 +506,7 @@ mod tests {
                 &beacon_consensus,
                 &block,
                 &result,
+                None,
                 None,
             );
 
