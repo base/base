@@ -400,6 +400,7 @@ mod tests {
             base_fee_per_gas: Some(1337),
             withdrawals_root: Some(proofs::calculate_withdrawals_root(&[])),
             blob_gas_used: Some(BLOB_GAS_USED),
+            requests_hash: Some(EMPTY_REQUESTS_HASH),
             transactions_root: proofs::calculate_transaction_root(std::slice::from_ref(
                 &transaction,
             )),
