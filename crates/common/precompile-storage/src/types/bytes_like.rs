@@ -13,7 +13,7 @@
 use alloc::{format, string::String, vec::Vec};
 use core::marker::PhantomData;
 
-use alloy_primitives::{Address, Bytes, U256, keccak256};
+use alloy_primitives::{Address, Bytes, U256};
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -168,11 +168,11 @@ impl StorageKey for String {
     }
 
     #[inline]
-    fn mapping_slot(&self, slot: U256) -> U256 {
+    fn mapping_key_buffer(&self, slot: U256) -> Vec<u8> {
         let mut buf = Vec::with_capacity(self.len() + 32);
         buf.extend_from_slice(self.as_bytes());
         buf.extend_from_slice(&slot.to_be_bytes::<32>());
-        U256::from_be_bytes(keccak256(buf).0)
+        buf
     }
 }
 
@@ -189,7 +189,7 @@ where
     let length = calc_string_length(base_value, is_long)?;
 
     if is_long {
-        let slot_start = calc_data_slot(base_slot);
+        let slot_start = calc_data_slot(storage, base_slot)?;
         let chunks = calc_chunks(length);
         let mut data = Vec::new();
 
@@ -215,7 +215,7 @@ fn store_bytes_like<S: StorageOps>(bytes: &[u8], storage: &mut S, base_slot: U25
         storage.store(base_slot, encode_short_string(bytes))
     } else {
         storage.store(base_slot, encode_long_string_length(length))?;
-        let slot_start = calc_data_slot(base_slot);
+        let slot_start = calc_data_slot(storage, base_slot)?;
         let chunks = calc_chunks(length);
 
         for i in 0..chunks {
@@ -239,7 +239,7 @@ fn delete_bytes_like<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<
 
     if is_long {
         let length = calc_string_length(base_value, true)?;
-        let slot_start = calc_data_slot(base_slot);
+        let slot_start = calc_data_slot(storage, base_slot)?;
         let chunks = calc_chunks(length);
         for i in 0..chunks {
             storage.store(slot_start + U256::from(i), U256::ZERO)?;
@@ -250,8 +250,8 @@ fn delete_bytes_like<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<
 }
 
 #[inline]
-fn calc_data_slot(base_slot: U256) -> U256 {
-    U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0)
+fn calc_data_slot<S: StorageOps>(storage: &S, base_slot: U256) -> Result<U256> {
+    Ok(U256::from_be_bytes(storage.metered_keccak256(&base_slot.to_be_bytes::<32>())?.0))
 }
 
 #[inline]
@@ -336,10 +336,15 @@ mod tests {
 
     #[test]
     fn test_calc_data_slot_matches_manual_keccak() {
-        let base_slot = U256::from(42u64);
-        let data_slot = calc_data_slot(base_slot);
-        let expected = U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0);
-        assert_eq!(data_slot, expected);
+        use alloy_primitives::keccak256;
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base_slot = U256::from(42u64);
+            let slot = crate::types::Slot::<U256>::new(base_slot, address, ctx);
+            let data_slot = calc_data_slot(&slot, base_slot).unwrap();
+            let expected = U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0);
+            assert_eq!(data_slot, expected);
+        });
     }
 
     #[test]

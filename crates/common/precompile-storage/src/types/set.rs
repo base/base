@@ -134,7 +134,9 @@ where
     fn delete<S: StorageOps>(storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
         let values: Vec<T> = Vec::load(storage, slot, LayoutCtx::FULL)?;
         for value in values {
-            let pos_slot = value.mapping_slot(slot + U256::ONE);
+            let pos_slot = U256::from_be_bytes(
+                storage.metered_keccak256(&value.mapping_key_buffer(slot + U256::ONE))?.0,
+            );
             <U256 as Storable>::delete(storage, pos_slot, LayoutCtx::FULL)?;
         }
         <Vec<T> as Storable>::delete(storage, slot, ctx)
@@ -184,7 +186,7 @@ where
     where
         T: StorageKey + Eq + Clone + Ord,
     {
-        self.positions.at(value).read().map(|pos| pos != 0)
+        self.positions.at(value)?.read().map(|pos| pos != 0)
     }
 
     /// Inserts a value into the set. Returns `true` if newly inserted, `false` if already present.
@@ -197,7 +199,7 @@ where
             return Ok(false);
         }
         let length = self.values.len()?;
-        self.positions.at_mut(&value).write(checked_position(length)?)?;
+        self.positions.at_mut(&value)?.write(checked_position(length)?)?;
         self.values.push(value)?;
         Ok(true)
     }
@@ -208,7 +210,7 @@ where
         T: StorageKey + Eq + Clone + Ord,
         T::Handler<'a>: Handler<T>,
     {
-        let position = self.positions.at(value).read()?;
+        let position = self.positions.at(value)?.read()?;
         if position == 0 {
             return Ok(false);
         }
@@ -219,14 +221,14 @@ where
 
         if index != last_index {
             let last_value = self.values.at_with_len(last_index, len)?.read()?;
-            self.positions.at_mut(&last_value).write(position)?;
+            self.positions.at_mut(&last_value)?.write(position)?;
             self.values.at_mut_with_len(index, len)?.write(last_value)?;
         }
 
         self.values.at_mut_with_len(last_index, len)?.delete()?;
         Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
             .write(U256::from(last_index))?;
-        self.positions.at_mut(value).delete()?;
+        self.positions.at_mut(value)?.delete()?;
         Ok(true)
     }
 
@@ -278,11 +280,11 @@ where
 
         for i in 0..old_len {
             let old_value = self.values.at_with_len(i, old_len)?.read()?;
-            self.positions.at_mut(&old_value).delete()?;
+            self.positions.at_mut(&old_value)?.delete()?;
         }
 
         for (index, new_value) in value.0.into_iter().enumerate() {
-            self.positions.at_mut(&new_value).write(checked_position(index)?)?;
+            self.positions.at_mut(&new_value)?.write(checked_position(index)?)?;
             self.values.at_mut_with_len(index, new_len)?.write(new_value)?;
         }
 
@@ -302,7 +304,7 @@ where
         let len = self.len()?;
         for i in 0..len {
             let value = self.values.at_with_len(i, len)?.read()?;
-            self.positions.at_mut(&value).delete()?;
+            self.positions.at_mut(&value)?.delete()?;
         }
         self.values.delete()
     }

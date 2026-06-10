@@ -20,7 +20,7 @@
 
 use alloc::format;
 
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 
 use crate::{
     error::Result,
@@ -45,6 +45,10 @@ impl StorageOps for PackedSlot {
     fn store(&mut self, _slot: U256, value: U256) -> Result<()> {
         self.0 = value;
         Ok(())
+    }
+
+    fn metered_keccak256(&self, _data: &[u8]) -> Result<B256> {
+        unreachable!("PackedSlot is only used for packable primitives; dynamic types never reach this path")
     }
 }
 

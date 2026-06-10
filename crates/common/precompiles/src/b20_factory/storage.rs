@@ -1407,11 +1407,12 @@ mod tests {
                 IB20Factory::getB20AddressCall::abi_encode_returns(&expected_asset_addr),
             );
         });
-        // One keccak call for the valid getB20Address.
+        // keccak is now charged for every mapping slot derivation in addition to the
+        // address hash, so the count is > 1. We assert the exact count to catch regressions.
         assert_eq!(
             storage.counter_keccak256(),
-            1,
-            "getB20Address must call keccak256 exactly once for a valid variant"
+            3,
+            "getB20Address must call keccak256 for address derivation and mapping slot lookups"
         );
 
         // createB20 also meters the keccak hash for valid variants. Verify the token
@@ -1431,8 +1432,8 @@ mod tests {
         });
         assert_eq!(
             storage.counter_keccak256(),
-            1,
-            "createB20 must call keccak256 exactly once for a valid variant"
+            4,
+            "createB20 must call keccak256 for address derivation and all mapping slot writes"
         );
     }
 }

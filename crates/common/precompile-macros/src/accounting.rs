@@ -330,7 +330,7 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 ::base_precompile_storage::Handler::read(
                     self.asset
                         .extra_metadata
-                        .at(&::alloc::string::String::from(key)),
+                        .at(&::alloc::string::String::from(key))?,
                 )
             }
 
@@ -341,10 +341,10 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
             ) -> ::base_precompile_storage::Result<()> {
                 let key = ::alloc::string::String::from(key);
                 if value.is_empty() {
-                    ::base_precompile_storage::Handler::delete(self.asset.extra_metadata.at_mut(&key))
+                    ::base_precompile_storage::Handler::delete(self.asset.extra_metadata.at_mut(&key)?)
                 } else {
                     ::base_precompile_storage::Handler::write(
-                        self.asset.extra_metadata.at_mut(&key),
+                        self.asset.extra_metadata.at_mut(&key)?,
                         value,
                     )
                 }
@@ -357,7 +357,7 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 ::base_precompile_storage::Handler::read(
                     self.asset
                         .used_announcement_ids
-                        .at(&::alloc::string::String::from(id)),
+                        .at(&::alloc::string::String::from(id))?,
                 )
             }
 
@@ -368,7 +368,7 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 ::base_precompile_storage::Handler::write(
                     self.asset
                         .used_announcement_ids
-                        .at_mut(&::alloc::string::String::from(id)),
+                        .at_mut(&::alloc::string::String::from(id))?,
                     true,
                 )
             }
