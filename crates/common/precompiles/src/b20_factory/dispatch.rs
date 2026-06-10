@@ -26,14 +26,14 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
-        // All factory selectors are nonpayable: reject any call that attaches ETH.
-        // The guard fires before calldata-cost deduction so value-bearing calls pay
-        // zero gas before reverting, matching Solidity's nonpayable semantics.
-        if !ctx.call_value().is_zero() {
-            return ctx.error_result(BasePrecompileError::revert(IB20Factory::NonPayable {}));
-        }
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
+        if !ctx.call_value().is_zero() {
+            return recorder.record_base_error_result(
+                ctx,
+                BasePrecompileError::revert(IB20Factory::NonPayable {}),
+            );
+        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
@@ -79,5 +79,32 @@ impl<'a> B20FactoryStorage<'a> {
                 Ok(IB20Factory::isB20InitializedCall::abi_encode_returns(&initialized).into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+    use alloy_sol_types::{SolCall, SolError};
+    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+
+    use crate::{B20FactoryStorage, IB20Factory};
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(U256::from(1u64));
+        let calldata = IB20Factory::isB20Call { token: Address::ZERO }.abi_encode();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            B20FactoryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        assert_eq!(
+            out.bytes,
+            alloy_primitives::Bytes::from(IB20Factory::NonPayable {}.abi_encode())
+        );
     }
 }

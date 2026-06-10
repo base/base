@@ -38,6 +38,10 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     {
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::b20_asset_call(calldata));
+        if !ctx.call_value().is_zero() {
+            return recorder
+                .record_base_error_result(ctx, BasePrecompileError::revert(IB20::NonPayable {}));
+        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
@@ -477,7 +481,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_primitives::{Address, Bytes, U256};
-    use alloy_sol_types::{SolCall, SolEvent};
+    use alloy_sol_types::{SolCall, SolError, SolEvent};
     use base_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, Result, StorageCtx,
     };
@@ -485,8 +489,9 @@ mod tests {
     use crate::{
         ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
         B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset, InMemoryPolicy,
-        InMemoryTokenAccounting, PrecompileCallMetric, PrecompileCallObserver,
-        PrecompileCallOutcome, PrecompileCallStatus, Token, TokenAccounting,
+        InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
+        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
+        TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
@@ -851,5 +856,21 @@ mod tests {
             err,
             BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: inner_call })
         );
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut token = make_token();
+        let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
+        let mut storage = storage_with_caller(ALICE);
+        storage.set_call_value(U256::from(1u64));
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            token.dispatch_with_observer(ctx, &calldata, NoopPrecompileCallObserver)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        assert_eq!(out.bytes, Bytes::from(IB20::NonPayable {}.abi_encode()));
     }
 }

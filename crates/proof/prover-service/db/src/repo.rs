@@ -6,12 +6,13 @@ use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult, CreateProofRequest,
-    CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
-    CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, ProofJob,
-    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
-    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
-    UpdateProofSession, UpdateReceipt, ZkVmKind, canonical_session_id,
+    ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult,
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    CreateProofRequestValidationError, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
+    HeartbeatProofJob, JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
+    ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome, SessionStatus,
+    SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
+    canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -588,20 +589,23 @@ impl ProofRequestRepo {
             return Ok(HeartbeatOutcome::NotFound);
         };
 
-        if matches!(job.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
-            return Ok(HeartbeatOutcome::Terminal(job));
+        match ClaimAuth::classify(
+            JobLockState {
+                status: job.job_status,
+                lock_id: job.lock_id,
+                worker_id: job.worker_id.as_deref(),
+                lock_expires_at: job.lock_expires_at,
+            },
+            req.lock_id,
+            &req.worker_id,
+            Utc::now(),
+        ) {
+            ClaimAuth::Authorized => Ok(HeartbeatOutcome::Unknown(job)),
+            ClaimAuth::Terminal => Ok(HeartbeatOutcome::Terminal(job)),
+            ClaimAuth::NotClaimed => Ok(HeartbeatOutcome::NotClaimed(job)),
+            ClaimAuth::StaleLock => Ok(HeartbeatOutcome::StaleLock(job)),
+            ClaimAuth::Expired => Ok(HeartbeatOutcome::Expired(job)),
         }
-        if job.job_status != ProofJobStatus::Claimed {
-            return Ok(HeartbeatOutcome::NotClaimed(job));
-        }
-        if job.lock_id != Some(req.lock_id) || job.worker_id.as_deref() != Some(&req.worker_id) {
-            return Ok(HeartbeatOutcome::StaleLock(job));
-        }
-        if job.lock_expires_at.is_none_or(|expires_at| expires_at <= Utc::now()) {
-            return Ok(HeartbeatOutcome::Expired(job));
-        }
-
-        Ok(HeartbeatOutcome::Unknown(job))
     }
 
     /// Complete the currently owned worker proof job (`submitProof`).
@@ -1053,6 +1057,37 @@ impl ProofRequestRepo {
         .await?;
 
         rows.iter().map(row_to_proof_session).collect()
+    }
+
+    /// Get the active (`SUBMITTING` or `RUNNING`) backend session for a public
+    /// proof `session_id` and `session_type`, so a worker can resume an in-flight
+    /// backend job instead of starting a new one. Migration `009`'s partial unique
+    /// index guarantees at most one active row per `(proof_request_id, session_type)`.
+    pub async fn get_active_session(
+        &self,
+        session_id: &str,
+        session_type: SessionType,
+    ) -> Result<Option<ProofSession>> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT ps.id, ps.proof_request_id, ps.session_type, ps.backend_session_id,
+                   ps.status, ps.error_message, ps.metadata, ps.created_at, ps.completed_at
+            FROM proof_sessions ps
+            JOIN proof_requests pr ON pr.id = ps.proof_request_id
+            WHERE COALESCE(pr.session_id, pr.id::text) = $1
+              AND ps.session_type = $2
+              AND ps.status IN ('SUBMITTING', 'RUNNING')
+            "#,
+        )
+        .bind(&session_id)
+        .bind(session_type.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|r| row_to_proof_session(&r)).transpose()
     }
 
     /// Get all running sessions (for polling)

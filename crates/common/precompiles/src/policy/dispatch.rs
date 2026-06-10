@@ -1,6 +1,6 @@
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::StorageCtx;
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -32,6 +32,12 @@ impl PolicyRegistryStorage<'_> {
     {
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::policy_call(calldata));
+        if !ctx.call_value().is_zero() {
+            return recorder.record_base_error_result(
+                ctx,
+                BasePrecompileError::revert(IPolicyRegistry::NonPayable {}),
+            );
+        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
@@ -130,8 +136,8 @@ impl PolicyRegistryStorage<'_> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_primitives::{Address, address};
-    use alloy_sol_types::{SolCall, SolValue};
+    use alloy_primitives::{Address, Bytes, address};
+    use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
@@ -608,5 +614,22 @@ mod tests {
             .unwrap();
             assert!(out.is_revert(), "createPolicy must revert when feature is deactivated");
         }
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(alloy_primitives::U256::from(1u64));
+        let calldata =
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID }
+                .abi_encode();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        assert_eq!(out.bytes, Bytes::from(IPolicyRegistry::NonPayable {}.abi_encode()));
     }
 }
