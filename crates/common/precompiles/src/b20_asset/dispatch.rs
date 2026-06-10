@@ -490,7 +490,8 @@ mod tests {
         ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
         B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset, InMemoryPolicy,
         InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
-        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token, TokenAccounting,
+        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
+        TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;

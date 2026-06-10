@@ -29,8 +29,10 @@ impl<'a> B20FactoryStorage<'a> {
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
         if !ctx.call_value().is_zero() {
-            return recorder
-                .record_base_error_result(ctx, BasePrecompileError::revert(IB20Factory::NonPayable {}));
+            return recorder.record_base_error_result(
+                ctx,
+                BasePrecompileError::revert(IB20Factory::NonPayable {}),
+            );
         }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
