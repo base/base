@@ -402,7 +402,7 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     use super::*;
-    use crate::{error::BasePrecompileError, provider::PrecompileStorageProvider};
+    use crate::provider::PrecompileStorageProvider;
 
     const ADDR: Address = Address::ZERO;
     const KEY: U256 = U256::ZERO;
