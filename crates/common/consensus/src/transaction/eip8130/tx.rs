@@ -54,8 +54,10 @@ pub struct TxEip8130 {
     /// Unix-seconds expiry timestamp; `0` means no expiry.
     pub expiry: u64,
     /// Max priority fee per gas (tip) the sender is willing to pay.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub max_priority_fee_per_gas: u128,
     /// Max total fee per gas (base + tip cap) the sender is willing to pay.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub max_fee_per_gas: u128,
     /// Gas limit for the entire AA transaction execution.
     pub gas_limit: u64,
@@ -537,5 +539,50 @@ mod tests {
         tx2.rlp_encode(&mut buf);
         let payer_hash_v2 = keccak256(&buf);
         assert_eq!(payer_hash_v1, payer_hash_v2);
+    }
+
+    /// Proves that EIP-8130 transactions can be deserialized through the
+    /// `BaseTxEnvelope` tagged-enum path with hex-string quantity fields.
+    ///
+    /// Without `#[serde(with = "alloy_serde::quantity")]` on the u128 fee
+    /// fields, this test fails with:
+    ///   "u128 is not supported"
+    /// because serde's internal Content buffer (used for internally-tagged
+    /// enums) cannot handle u128 deserialization.
+    ///
+    /// See: <https://github.com/serde-rs/serde/issues/2230>
+    #[cfg(feature = "serde")]
+    #[test]
+    fn eip8130_deserializes_through_envelope() {
+        use crate::BaseTxEnvelope;
+
+        let json = serde_json::json!({
+            "type": "0x7d",
+            "tx": {
+                "chainId": 1,
+                "sender": null,
+                "nonceKey": "0x0",
+                "nonceSequence": 1,
+                "expiry": 0,
+                "maxPriorityFeePerGas": "0x3b9aca00",
+                "maxFeePerGas": "0x3b9aca00",
+                "gasLimit": 21000,
+                "accountChanges": [],
+                "calls": [],
+                "payer": null
+            },
+            "senderAuth": "0x",
+            "payerAuth": "0x"
+        });
+
+        let result = serde_json::from_value::<BaseTxEnvelope>(json);
+        assert!(
+            result.is_ok(),
+            "EIP-8130 envelope deserialization failed: {:#}",
+            result.unwrap_err()
+        );
+
+        let envelope = result.unwrap();
+        assert!(matches!(envelope, BaseTxEnvelope::Eip8130(_)));
     }
 }
