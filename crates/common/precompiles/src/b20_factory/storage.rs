@@ -1,6 +1,6 @@
 use alloc::{string::ToString, vec::Vec};
 
-use alloy_primitives::{Address, Bytes, U256, address};
+use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Result};
@@ -50,14 +50,19 @@ impl<'a> B20FactoryStorage<'a> {
         caller: Address,
         call: IB20Factory::createB20Call,
     ) -> Result<Address> {
-        self.create_b20_with_observer(caller, call, NoopPrecompileCallObserver)
+        let address_hash = keccak256((caller, call.salt).abi_encode());
+        self.create_b20_with_observer(call, address_hash, NoopPrecompileCallObserver)
     }
 
     /// Creates a token at a deterministic address and records observer-only metrics.
+    ///
+    /// `address_hash` must be `keccak256(abi_encode(caller, call.salt))`. The caller is
+    /// responsible for computing this hash (and charging gas via `ctx.metered_keccak256`
+    /// before calling this method from a dispatch context).
     pub fn create_b20_with_observer<O>(
         &mut self,
-        caller: Address,
         call: IB20Factory::createB20Call,
+        address_hash: B256,
         observer: O,
     ) -> Result<Address>
     where
@@ -70,7 +75,7 @@ impl<'a> B20FactoryStorage<'a> {
         let params = TokenCreateParams::decode(variant, &call.params)?;
         Self::check_version(params.version(), variant)?;
         params.validate()?;
-        let (token_address, _) = variant.compute_address(caller, call.salt);
+        let (token_address, _) = variant.compute_address_from_hash(address_hash);
 
         let already_deployed =
             self.storage.with_account_info(token_address, |info| Ok(!info.is_empty_code_hash()))?;

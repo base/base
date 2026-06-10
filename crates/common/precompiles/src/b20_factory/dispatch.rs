@@ -1,6 +1,6 @@
 //! ABI dispatch for the `B20Factory` precompile.
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
@@ -53,15 +53,15 @@ impl<'a> B20FactoryStorage<'a> {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
                 let variant = B20Variant::from_abi(call.variant);
-                // Charge keccak gas for address derivation only when the variant is valid.
-                // Invalid variants are rejected in create_b20_with_observer before
-                // compute_address runs, so no keccak hash occurs on the revert path.
-                // compute_address re-encodes (caller, salt) internally to stay ctx-free;
-                // the resulting double allocation is intentional.
-                if variant.is_some() {
-                    ctx.keccak256(&(caller, call.salt).abi_encode())?;
-                }
-                let token = self.create_b20_with_observer(caller, call, observer.clone())?;
+                // Charge keccak gas and capture the hash only for valid variants.
+                // Invalid variants are rejected by create_b20_with_observer before the
+                // address is needed; B256::ZERO is passed as a sentinel in that case.
+                let address_hash = if variant.is_some() {
+                    ctx.metered_keccak256(&(caller, call.salt).abi_encode())?
+                } else {
+                    B256::ZERO
+                };
+                let token = self.create_b20_with_observer(call, address_hash, observer.clone())?;
                 if let Some(variant) = variant {
                     observer.record_b20_created(variant.as_label());
                 }
@@ -73,7 +73,7 @@ impl<'a> B20FactoryStorage<'a> {
                 // still charged for recognized variants and OOG can terminate the call frame).
                 let addr = match B20Variant::from_abi(call.variant) {
                     Some(v) => {
-                        let hash = ctx.keccak256(&(call.sender, call.salt).abi_encode())?;
+                        let hash = ctx.metered_keccak256(&(call.sender, call.salt).abi_encode())?;
                         v.compute_address_from_hash(hash).0
                     }
                     None => Address::ZERO,

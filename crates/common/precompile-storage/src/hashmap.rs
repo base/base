@@ -185,7 +185,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(())
     }
 
-    fn keccak256(
+    fn metered_keccak256(
         &mut self,
         data: &[u8],
     ) -> core::result::Result<alloy_primitives::B256, BasePrecompileError> {

@@ -133,7 +133,7 @@ impl B20Variant {
 
     /// Computes the deterministic token address from a pre-computed `keccak256(creator, salt)` hash.
     ///
-    /// Use when the hash is already available (e.g. after charging keccak gas via `ctx.keccak256`)
+    /// Use when the hash is already available (e.g. after charging keccak gas via `ctx.metered_keccak256`)
     /// to avoid re-encoding and re-hashing.
     pub fn compute_address_from_hash(self, hash: B256) -> (Address, [u8; 9]) {
         let mut tail = [0u8; 9];

@@ -294,7 +294,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         self.internals.checkpoint_revert(checkpoint);
     }
 
-    fn keccak256(&mut self, data: &[u8]) -> Result<B256> {
+    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256> {
         let num_words =
             u64::try_from(data.len().div_ceil(32)).map_err(|_| BasePrecompileError::OutOfGas)?;
         let price = KECCAK256WORD

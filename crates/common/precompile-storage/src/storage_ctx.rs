@@ -190,8 +190,8 @@ impl<'a> StorageCtx<'a> {
     }
 
     /// Computes keccak256 and charges the appropriate gas.
-    pub fn keccak256(&self, data: &[u8]) -> Result<B256> {
-        self.try_with_storage(|s| s.keccak256(data))
+    pub fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+        self.try_with_storage(|s| s.metered_keccak256(data))
     }
 
     /// Creates a journal checkpoint and returns a RAII guard that auto-reverts on drop.
