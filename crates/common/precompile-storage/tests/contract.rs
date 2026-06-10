@@ -592,10 +592,10 @@ mod packed_slot_layout {
     /// A layout where four sub-word primitives share a single storage slot.
     ///
     /// Packing order (low-to-high bytes within the slot):
-    /// - `low_byte`  : u8  → offset_bytes 0, bits  [0..7]
-    /// - `mid_short` : u16 → offset_bytes 1, bits  [8..23]
-    /// - `mid_int`   : u32 → offset_bytes 3, bits  [24..55]
-    /// - `high_long` : u64 → offset_bytes 7, bits  [56..119]
+    /// - `low_byte`  : u8  → `offset_bytes` 0, bits  [0..7]
+    /// - `mid_short` : u16 → `offset_bytes` 1, bits  [8..23]
+    /// - `mid_int`   : u32 → `offset_bytes` 3, bits  [24..55]
+    /// - `high_long` : u64 → `offset_bytes` 7, bits  [56..119]
     ///
     /// Total: 15 bytes → all packed into slot 0.
     /// `big_val` (U256, full slot) goes to slot 1.
