@@ -1,7 +1,7 @@
 //! Storage layout and constants for the EIP-8130 transaction context precompile.
 
 use alloy_primitives::{Address, B256, U256, address};
-use base_precompile_storage::{Result, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 
 /// Transient-storage-backed view of the in-flight EIP-8130 transaction context.
 ///
@@ -90,8 +90,14 @@ impl<'a> TxContextStorage<'a> {
     /// non-zero (sender/payer are recovered addresses; the actor id derives from
     /// the sender). The getters depend on this: a zero slot unambiguously means
     /// "unset" and selects the `tx.origin` fallback, so writing a zero field here
-    /// would make it indistinguishable from an unset one. The debug assertions
-    /// below pin the invariant; callers must uphold it.
+    /// would make it indistinguishable from an unset one and silently
+    /// misattribute the transaction. This identity boundary is enforced at
+    /// runtime in all builds (see Errors), not just via debug assertions.
+    ///
+    /// # Errors
+    /// Returns [`BasePrecompileError::assert_failed`] if `sender`, `payer`, or
+    /// `sender_actor_id` is zero, failing the transaction rather than corrupting
+    /// sender/payer attribution.
     ///
     /// # Gas
     /// The three `tstore` writes are intentionally not checkpointed: transient
@@ -104,9 +110,14 @@ impl<'a> TxContextStorage<'a> {
         payer: Address,
         sender_actor_id: B256,
     ) -> Result<()> {
-        debug_assert!(!sender.is_zero(), "EIP-8130 resolved sender must be non-zero");
-        debug_assert!(!payer.is_zero(), "EIP-8130 resolved payer must be non-zero");
-        debug_assert!(!sender_actor_id.is_zero(), "EIP-8130 sender actor id must be non-zero");
+        // Identity boundary: a zero field is indistinguishable from an unset
+        // transient slot and would silently misattribute the transaction to
+        // tx.origin via the getter fallback. Reject it at runtime (in all builds)
+        // so a buggy caller fails the transaction rather than corrupting
+        // sender/payer attribution.
+        if sender.is_zero() || payer.is_zero() || sender_actor_id.is_zero() {
+            return Err(BasePrecompileError::assert_failed());
+        }
         self.storage.tstore(
             Self::ADDRESS,
             Self::SENDER_SLOT,
@@ -179,6 +190,18 @@ mod tests {
             assert_eq!(view.sender().unwrap(), SENDER);
             assert_eq!(view.payer().unwrap(), PAYER);
             assert_eq!(view.sender_actor_id().unwrap(), SENDER_ACTOR_ID);
+        });
+    }
+
+    #[test]
+    fn set_context_rejects_zero_fields() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut view = TxContextStorage::new(ctx);
+            assert!(view.set_context(Address::ZERO, PAYER, SENDER_ACTOR_ID).is_err());
+            assert!(view.set_context(SENDER, Address::ZERO, SENDER_ACTOR_ID).is_err());
+            assert!(view.set_context(SENDER, PAYER, B256::ZERO).is_err());
         });
     }
 
