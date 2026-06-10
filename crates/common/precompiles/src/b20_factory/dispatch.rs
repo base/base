@@ -52,19 +52,14 @@ impl<'a> B20FactoryStorage<'a> {
         match decode_precompile_call!(calldata, IB20Factory::IB20FactoryCalls) {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
-                let variant = B20Variant::from_abi(call.variant);
-                // Charge keccak gas and capture the hash only for valid variants.
-                // Invalid variants are rejected by create_b20_with_observer before the
-                // address is needed; B256::ZERO is passed as a sentinel in that case.
-                let address_hash = if variant.is_some() {
-                    ctx.metered_keccak256(&(caller, call.salt).abi_encode())?
-                } else {
-                    B256::ZERO
-                };
+                // abi_decode_validate rejects non-canonical discriminants before dispatch,
+                // so from_abi returning None here would be an internal invariant violation.
+                let variant = B20Variant::from_abi(call.variant).expect(
+                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
+                );
+                let address_hash = ctx.metered_keccak256(&(caller, call.salt).abi_encode())?;
                 let token = self.create_b20_with_observer(call, address_hash, observer.clone())?;
-                if let Some(variant) = variant {
-                    observer.record_b20_created(variant.as_label());
-                }
+                observer.record_b20_created(variant.as_label());
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
