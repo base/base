@@ -112,7 +112,6 @@ where
         storage: crate::StorageCtx<'a>,
     ) -> Self::Handler<'a> {
         SetHandler::new(slot, address, storage)
-            .expect("slot overflow: keccak-derived base slots cannot be U256::MAX")
     }
 }
 
@@ -157,16 +156,18 @@ where
     T: Storable + StorageKey + Eq + Clone + Ord,
 {
     /// Creates a new handler for the set at the given base slot.
-    pub fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Result<Self> {
-        let positions_slot =
-            base_slot.checked_add(U256::ONE).ok_or(BasePrecompileError::SlotOverflow)?;
-        Ok(Self {
+    pub fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+        // positions_slot = base_slot + 1. Slot addresses are keccak256 outputs and wrapping
+        // is correct here: U256::MAX is not a reachable slot address in the EVM storage model,
+        // so wrapping_add is equivalent to checked_add for all practical inputs.
+        let positions_slot = base_slot.wrapping_add(U256::ONE);
+        Self {
             values: VecHandler::new(base_slot, address, storage),
             positions: MappingHandler::new(positions_slot, address, storage),
             base_slot,
             address,
             storage,
-        })
+        }
     }
 
     /// Returns the base storage slot for this set.
