@@ -20,9 +20,6 @@ inputs:
   sp1-version:
     description: SP1 release tag used when sp1 is enabled (matches etc/just/succinct.just)
     default: "v6.2.3"
-  elf-cache:
-    description: Restore/save the ELF cache keyed on crates/proof/succinct/elf/manifest.toml
-    default: "false"
   mold:
     description: Install mold linker
     default: "false"
@@ -132,15 +129,6 @@ runs:
       uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
       with:
         version: stable
-
-    - name: Restore ELF cache
-      if: inputs.elf-cache == 'true'
-      uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
-      with:
-        path: |
-          crates/proof/succinct/elf/range-elf-embedded
-          crates/proof/succinct/elf/aggregation-elf
-        key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/proof/succinct/elf/manifest.toml') }}
 
     - name: Install SP1 toolchain
       if: inputs.sp1 == 'true'

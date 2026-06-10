@@ -106,9 +106,10 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Asset::IB20AssetCalls::valid_selector(selector)
         {
-            let call = IB20Asset::IB20AssetCalls::abi_decode(calldata).map_err(|error| {
-                BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-            })?;
+            let call =
+                IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
+                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+                })?;
             let label = call.as_label();
             let asset_observer = observer.clone();
             return observer.observe(label, move || {
@@ -438,6 +439,13 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             .encode_log_data(),
         )?;
 
+        // Each internal call is dispatched via `inner_with_privilege`, a direct Rust function
+        // call. Unlike the base-std Solidity reference which routes each `internalCalls` entry
+        // through a DELEGATECALL (~100 gas opcode overhead + memory expansion), the native
+        // precompile replaces the entire EVM execution path so per-opcode call overhead does not
+        // apply. The cheaper batched cost is intentional: the native precompile pays for the
+        // storage work of each sub-call (the same SLOAD/SSTORE operations as the Solidity
+        // reference) but not for EVM call-frame overhead that exists only in the interpreter.
         for call in &internal_calls {
             let call_bytes: &[u8] = call.as_ref();
             if call_bytes.len() < 4 {
@@ -448,8 +456,14 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             if call_bytes[..4] == IB20Asset::announceCall::SELECTOR {
                 return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
             }
-            self.inner_with_privilege(ctx, call_bytes, privileged).map_err(|_| {
-                BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: call.clone() })
+            self.inner_with_privilege(ctx, call_bytes, privileged).map_err(|err| {
+                if err.is_system_error() {
+                    err
+                } else {
+                    BasePrecompileError::revert(IB20Asset::InternalCallFailed {
+                        call: call.clone(),
+                    })
+                }
             })?;
         }
 
@@ -784,6 +798,58 @@ mod tests {
         assert_eq!(
             token.to_scaled_balance(U256::from(2u64)).unwrap_err(),
             BasePrecompileError::under_overflow()
+        );
+    }
+
+    /// System errors produced by an inner `announce` call must propagate unchanged and must
+    /// not be wrapped as [`IB20Asset::InternalCallFailed`]. A deliberately overflowing
+    /// `toScaledBalance` produces `Panic(UnderOverflow)`, which `is_system_error()` returns
+    /// `true` for.
+    #[test]
+    fn announce_inner_system_error_propagates_unchanged() {
+        let mut token = make_token();
+        // Any balance > 1 overflows when multiplied by this multiplier.
+        token.accounting_mut().multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
+        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, ALICE), true);
+
+        let inner_call = Bytes::from(
+            IB20Asset::toScaledBalanceCall { rawBalance: U256::from(2u64) }.abi_encode(),
+        );
+        let calldata = IB20Asset::announceCall {
+            internalCalls: alloc::vec![inner_call],
+            id: String::from("test-sys-err"),
+            description: String::from("test"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::under_overflow());
+    }
+
+    /// A non-system revert produced by an inner `announce` call must be wrapped as
+    /// [`IB20Asset::InternalCallFailed`], preserving the original calldata in the error field.
+    #[test]
+    fn announce_inner_ordinary_revert_wraps_as_internal_call_failed() {
+        let mut token = make_token();
+        // ALICE has OPERATOR_ROLE (needed for announce) but not MINT_ROLE (needed for mint).
+        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, ALICE), true);
+
+        let inner_call = Bytes::from(IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode());
+        let calldata = IB20Asset::announceCall {
+            internalCalls: alloc::vec![inner_call.clone()],
+            id: String::from("test-ord-revert"),
+            description: String::from("test"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: inner_call })
         );
     }
 }

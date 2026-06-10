@@ -7,7 +7,7 @@ _succinct_dir := justfile_directory() / "crates/proof/succinct"
 default:
     @just --justfile {{ source_file() }} --list
 
-# Ensure the ELF cache matches `elf/manifest.toml`. No-op on hit; rebuilds on miss.
+# Ensure the ELF cache has the required SP1 ELFs. No-op on hit; rebuilds on miss.
 # Prepend this to any recipe that compiles `base-proof-succinct-elfs` so local and CI
 # builds pick up the ELFs just like `just build::contracts` handles contracts.
 ensure-elfs:
@@ -15,35 +15,25 @@ ensure-elfs:
     set -euo pipefail
     repo="{{ _repo_root }}"
     here="{{ _succinct_dir }}"
-    script="$repo/etc/scripts/local/check-elf-manifest.py"
-    manifest="$here/elf/manifest.toml"
     cache_dir="$here/elf"
-    status=$(python3 "$script" "$manifest" "$cache_dir" || true)
-    case "$status" in
-        match) echo "ELF cache up to date (manifest matches)";;
-        *)
-            echo "ELF cache stale or missing ($status); rebuilding..."
-            ( cd "$repo" && just succinct build-elfs )
-            result=$(python3 "$script" "$manifest" "$cache_dir")
-            if [ "$result" != "match" ]; then
-                echo "error: freshly built ELFs do not match manifest.toml ($result)." >&2
-                python3 "$script" --print-hashes "$manifest" "$cache_dir" >&2
-                echo "       If this is a legitimate change, run 'just succinct write-manifest' and commit." >&2
-                exit 1
-            fi
-            ;;
-    esac
-
-# Overwrite manifest.toml's sha256 fields from the current ELF cache. Run after
-# intentionally changing the SP1 programs.
-write-manifest:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    repo="{{ _repo_root }}"
-    here="{{ _succinct_dir }}"
-    python3 "$repo/etc/scripts/local/check-elf-manifest.py" \
-        --write "$here/elf/manifest.toml" "$here/elf"
-    echo "Updated manifest.toml. Commit the change."
+    missing=()
+    for elf in range-elf-embedded aggregation-elf; do
+        if [ ! -s "$cache_dir/$elf" ]; then
+            missing+=("$elf")
+        fi
+    done
+    if [ "${#missing[@]}" -eq 0 ]; then
+        echo "ELF cache has required artifacts"
+        exit 0
+    fi
+    echo "ELF cache missing required artifact(s): ${missing[*]}; rebuilding..."
+    ( cd "$repo" && just succinct build-elfs )
+    for elf in range-elf-embedded aggregation-elf; do
+        if [ ! -s "$cache_dir/$elf" ]; then
+            echo "error: missing ELF after rebuild: $cache_dir/$elf" >&2
+            exit 1
+        fi
+    done
 
 # Build all SP1 ELF files (range + aggregation)
 build-elfs: build-range-elf build-agg-elf
@@ -52,6 +42,7 @@ build-elfs: build-range-elf build-agg-elf
 build-range-elf:
     #!/usr/bin/env bash
     set -euo pipefail
+    mkdir -p "{{ _succinct_dir }}/elf"
     cd "{{ _succinct_dir }}/programs/range/ethereum"
     {{ _cargo_prove }} prove build \
         --elf-name range-elf-embedded \
@@ -64,6 +55,7 @@ build-range-elf:
 build-agg-elf:
     #!/usr/bin/env bash
     set -euo pipefail
+    mkdir -p "{{ _succinct_dir }}/elf"
     cd "{{ _succinct_dir }}/programs/aggregation"
     {{ _cargo_prove }} prove build \
         --elf-name aggregation-elf \
@@ -80,12 +72,25 @@ clean-elfs:
     here="{{ _succinct_dir }}"
     rm -f "$here/elf/range-elf-embedded" "$here/elf/aggregation-elf" "$here/elf"/*.bin
 
-# Print range and aggregation verification key hashes as a markdown table
-vkeys:
+# Print range and aggregation verification key hashes as a markdown table.
+vkeys mode="":
     #!/usr/bin/env bash
     set -euo pipefail
+    case "{{ mode }}" in
+        "")
+            just succinct ensure-elfs
+            ;;
+        --build)
+            just succinct clean-elfs
+            just succinct build-elfs
+            ;;
+        *)
+            echo "usage: just succinct vkeys [--build]" >&2
+            exit 2
+            ;;
+    esac
     echo "Generating verification key hashes..."
-    ETH_OUTPUT=$(RUST_LOG=error cargo run -p base-proof-succinct-scripts --bin config --release 2>&1)
+    ETH_OUTPUT=$(BASE_SUCCINCT_ELF_REQUIRE=1 RUST_LOG=error cargo run -p base-proof-succinct-scripts --bin config --release 2>&1)
     ETH_RANGE=$(echo "$ETH_OUTPUT" | grep "Range Verification Key Hash" | awk '{print $NF}')
     AGG_KEY=$(echo "$ETH_OUTPUT" | grep "Aggregation Verification Key Hash" | awk '{print $NF}')
     echo ""

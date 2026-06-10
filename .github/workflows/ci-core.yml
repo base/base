@@ -131,7 +131,6 @@ jobs:
           mold: "true"
           foundry: "true"
           sp1: "true"
-          elf-cache: "true"
           rust-cache-shared-key: "stable"
           rust-cache-save: ${{ inputs.save_rust_cache }}
       - name: Run build
@@ -190,7 +189,6 @@ jobs:
           mold: "true"
           foundry: "true"
           sp1: "true"
-          elf-cache: "true"
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
           rust-cache-save: ${{ inputs.save_rust_cache }}
@@ -303,7 +301,6 @@ jobs:
           mold: "true"
           foundry: "true"
           sp1: "true"
-          elf-cache: "true"
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
       - name: Clear prior JUnit report

@@ -63,18 +63,7 @@ impl ProofRequestRepo {
         Ok(prepared.id)
     }
 
-    /// Atomically create a proof request for the worker API queue.
-    ///
-    /// New requests are inserted into `proof_requests` with `job_status = 'PENDING'`
-    /// by the schema default. External workers claim these rows via
-    /// [`Self::claim_next_proof_job`].
-    ///
-    /// On `session_id` conflict, lock the row `FOR UPDATE` and branch on state:
-    /// parameter mismatch -> [`CreateProofRequestError::IdCollision`];
-    /// `CREATED` / `PENDING` / `RUNNING` / `SUCCEEDED` -> [`CreateProofRequestOutcome::Replayed`];
-    /// `FAILED` with room under `max_retries` -> reset, bump `retry_count`,
-    /// and make the job claimable again ([`CreateProofRequestOutcome::Requeued`]);
-    /// `FAILED` at cap -> [`CreateProofRequestOutcome::RetryExhausted`].
+    /// Atomically create or replay a proof request for the worker API queue.
     pub async fn create_for_worker_queue(
         &self,
         req: CreateProofRequest,
@@ -519,17 +508,8 @@ impl ProofRequestRepo {
 
     /// Atomically claim the next eligible worker proof job (`getNextProof`).
     ///
-    /// Selects the lowest-start-block job whose `api_proof_type` matches the
-    /// worker and whose capability discriminator (`tee_kind` for TEE, `zk_vm` for
-    /// ZK) is in the worker's advertised set. A job is claimable when it is
-    /// `PENDING`, or when it is `CLAIMED` with an expired lock and still under the
-    /// reclaim budget (`attempt < max_attempts`). The row is locked with
-    /// `FOR UPDATE SKIP LOCKED` so concurrent workers never claim the same job.
-    ///
-    /// On success the job transitions to `job_status = 'CLAIMED'` and requester
-    /// `status = 'RUNNING'`, with a freshly rotated `lock_id`, incremented
-    /// `attempt`, and an extended `lock_expires_at`. Returns `None` when no job is
-    /// eligible (including when the worker advertises no matching capabilities).
+    /// Expired claims are reclaimable while `attempt < max_attempts`. Rows are
+    /// locked with `FOR UPDATE SKIP LOCKED` so concurrent workers do not double-claim.
     pub async fn claim_next_proof_job(&self, req: ClaimProofJob) -> Result<Option<ProofJob>> {
         let lock_id = Uuid::new_v4();
         let sql = claim_query(req.api_proof_type);
@@ -574,11 +554,6 @@ impl ProofRequestRepo {
     }
 
     /// Extend the lock for the currently owned worker proof job (`heartbeat`).
-    ///
-    /// The update is guarded by `session_id`, `job_status = 'CLAIMED'`, `lock_id`,
-    /// `worker_id`, and an unexpired `lock_expires_at`. A stale worker cannot
-    /// revive an expired or reclaimed job because the update only succeeds for the
-    /// current fencing token.
     pub async fn heartbeat_proof_job(&self, req: HeartbeatProofJob) -> Result<HeartbeatOutcome> {
         let session_id = canonical_session_id(&req.session_id)
             .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
@@ -630,19 +605,58 @@ impl ProofRequestRepo {
     }
 
     /// Complete the currently owned worker proof job (`submitProof`).
-    ///
-    /// The ownership guard matches [`Self::heartbeat_proof_job`]. On success the
-    /// worker job and requester proof both transition to `SUCCEEDED`,
-    /// `result_payload` stores the protocol result, and ZK results are mirrored
-    /// into legacy receipt columns for compatibility.
     pub async fn complete_claimed_proof_job(
         &self,
         req: CompleteClaimedProofJob,
     ) -> Result<SubmitProofOutcome> {
         let session_id = canonical_session_id(&req.session_id)
             .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+
+        // Read first to classify ownership state and detect idempotent retries.
+        let Some(existing) = self.get_proof_job_by_canonical_session_id(&session_id).await? else {
+            return Ok(SubmitProofOutcome::NotFound);
+        };
+
+        // Idempotent retry by the owning worker/lock; a differing payload conflicts.
+        if existing.job_status == ProofJobStatus::Succeeded
+            && existing.lock_id == Some(req.lock_id)
+            && existing.worker_id.as_deref() == Some(req.worker_id.as_str())
+        {
+            if let Err(reason) = existing.validate_submitted_result(&req.result) {
+                return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
+            }
+
+            let result_payload =
+                serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+
+            return Ok(if existing.result_payload.as_ref() == Some(&result_payload) {
+                SubmitProofOutcome::Completed(existing)
+            } else {
+                SubmitProofOutcome::ResultConflict { job: existing }
+            });
+        }
+        if matches!(existing.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
+            return Ok(SubmitProofOutcome::Terminal(existing));
+        }
+        if existing.job_status != ProofJobStatus::Claimed {
+            return Ok(SubmitProofOutcome::NotClaimed(existing));
+        }
+        if existing.lock_id != Some(req.lock_id)
+            || existing.worker_id.as_deref() != Some(req.worker_id.as_str())
+        {
+            return Ok(SubmitProofOutcome::StaleLock(existing));
+        }
+        if existing.lock_expires_at.is_none_or(|expires_at| expires_at <= Utc::now()) {
+            return Ok(SubmitProofOutcome::Expired(existing));
+        }
+
+        if let Err(reason) = existing.validate_submitted_result(&req.result) {
+            return Ok(SubmitProofOutcome::ResultMismatch { job: existing, reason });
+        }
+
         let result_payload =
             serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+
         let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&req.result);
         let submitted_lock_id = req.lock_id.to_string();
         let columns = PROOF_JOB_RETURNING_COLUMNS;
@@ -686,6 +700,21 @@ impl ProofRequestRepo {
             return Ok(SubmitProofOutcome::NotFound);
         };
 
+        // Re-check idempotency after a concurrent submit wins the row lock.
+        if job.job_status == ProofJobStatus::Succeeded
+            && job.lock_id == Some(req.lock_id)
+            && job.worker_id.as_deref() == Some(req.worker_id.as_str())
+        {
+            if let Err(reason) = job.validate_submitted_result(&req.result) {
+                return Ok(SubmitProofOutcome::ResultMismatch { job, reason });
+            }
+
+            return Ok(if job.result_payload.as_ref() == Some(&result_payload) {
+                SubmitProofOutcome::Completed(job)
+            } else {
+                SubmitProofOutcome::ResultConflict { job }
+            });
+        }
         if matches!(job.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
             return Ok(SubmitProofOutcome::Terminal(job));
         }
@@ -702,13 +731,7 @@ impl ProofRequestRepo {
         Ok(SubmitProofOutcome::Unknown(job))
     }
 
-    /// Terminally fail expired worker jobs that have exhausted their claim attempts.
-    ///
-    /// Worker execution failure is represented by lock expiry. Jobs remain
-    /// reclaimable while `attempt < max_attempts`; once an expired claim reaches
-    /// the budget, this reaper transition marks both the worker job and requester
-    /// proof `FAILED` and stores `error_message`. The update is batched and uses
-    /// `FOR UPDATE SKIP LOCKED` to avoid locking the full expired backlog.
+    /// Terminally fail expired worker jobs with `attempt >= max_attempts`.
     pub async fn fail_expired_proof_jobs(
         &self,
         req: FailExpiredProofJobs<'_>,
@@ -1899,6 +1922,7 @@ fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
         claimed_at: row.get("claimed_at"),
         last_heartbeat_at: row.get("last_heartbeat_at"),
         error_message: base.error_message,
+        result_payload: base.result_payload,
         created_at: base.created_at,
         updated_at: base.updated_at,
         completed_at: base.completed_at,

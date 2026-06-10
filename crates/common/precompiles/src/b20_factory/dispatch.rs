@@ -1,8 +1,8 @@
 //! ABI dispatch for the `B20Factory` precompile.
 
-use alloy_primitives::{Address, Bytes};
-use alloy_sol_types::SolCall;
-use base_precompile_storage::StorageCtx;
+use alloy_primitives::Bytes;
+use alloy_sol_types::{SolCall, SolValue};
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -26,6 +26,12 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
+        // All factory selectors are nonpayable: reject any call that attaches ETH.
+        // The guard fires before calldata-cost deduction so value-bearing calls pay
+        // zero gas before reverting, matching Solidity's nonpayable semantics.
+        if !ctx.call_value().is_zero() {
+            return ctx.error_result(BasePrecompileError::revert(IB20Factory::NonPayable {}));
+        }
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
@@ -46,19 +52,22 @@ impl<'a> B20FactoryStorage<'a> {
         match decode_precompile_call!(calldata, IB20Factory::IB20FactoryCalls) {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
-                let variant = B20Variant::from_abi(call.variant);
-                let token = self.create_b20_with_observer(caller, call, observer.clone())?;
-                if let Some(variant) = variant {
-                    observer.record_b20_created(variant.as_label());
-                }
+                // abi_decode_validate rejects non-canonical discriminants before dispatch,
+                // so from_abi returning None here would be an internal invariant violation.
+                let variant = B20Variant::from_abi(call.variant).expect(
+                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
+                );
+                let address_hash = ctx.metered_keccak256(&(caller, call.salt).abi_encode())?;
+                let token = self.create_b20_with_observer(call, address_hash, observer.clone())?;
+                observer.record_b20_created(variant.as_label());
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
-                // Returns zero for an unrecognized variant to match base-std, which documents
-                // this function as "Never reverts."
-                let addr = B20Variant::from_abi(call.variant)
-                    .map(|v| v.compute_address(call.sender, call.salt).0)
-                    .unwrap_or(Address::ZERO);
+                let v = B20Variant::from_abi(call.variant).expect(
+                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
+                );
+                let hash = ctx.metered_keccak256(&(call.sender, call.salt).abi_encode())?;
+                let addr = v.compute_address_from_hash(hash).0;
                 Ok(IB20Factory::getB20AddressCall::abi_encode_returns(&addr).into())
             }
             IB20Factory::IB20FactoryCalls::isB20(call) => {

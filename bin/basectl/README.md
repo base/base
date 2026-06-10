@@ -95,6 +95,29 @@ is one of `caught_up` (within ±N blocks of the reference, where N is the
 | `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`, `tipReference` object, `elSyncInfo` with `processedBlocks` / `remainingBlocks`) instead of the key-value table. |
 | `--raw` | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`. |
 
+### `basectl p2p`
+
+Read-only P2P inspection commands for execution and consensus layers.
+
+- `basectl p2p info` shows the advertised endpoint per layer plus peer counts.
+- `basectl p2p peers` shows the connected peer list per layer.
+
+Both commands support:
+
+| Flag | Description |
+|------|-------------|
+| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field. |
+| `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
+| `--json` | Emit humanized JSON instead of the pretty table output. |
+| `--raw` | With `--json`, emit raw nested RPC payloads instead of the humanized summary. Errors at parse time if used without `--json`. |
+
+Important EL RPC note:
+
+- EL peer count comes from `net_peerCount`, so it works on many restricted or public-style EL RPCs.
+- EL advertised endpoint data (`admin_nodeInfo`) and EL peer listings (`admin_peers`) require an admin-enabled EL RPC.
+- If the EL RPC does not expose those admin methods, `basectl p2p` degrades gracefully: EL peer count still appears, but EL endpoint fields or EL peer listings show as unavailable / `null`.
+- CL data comes from `opp2p_self`, `opp2p_peerStats`, and `opp2p_peers(true)` on the consensus RPC.
+
 ### `basectl flashblocks`
 
 Streams live flashblocks as newline-delimited JSON to stdout. For the
@@ -145,4 +168,13 @@ basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/
 
 # Humanized JSON shows precomputed safe-head lag for downstream tooling
 basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/ --json | jq '{safeLagSeconds, safeLagBlocks, elActivelySyncing}'
+
+# P2P endpoint summary for a node
+basectl -c sepolia p2p info --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/
+
+# P2P peers as JSON
+basectl -c sepolia p2p peers --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --json | jq '{el: .el | length, cl: .cl | length}'
+
+# If the EL RPC is restricted, EL peer count still works but EL admin-backed fields may be unavailable
+basectl -c sepolia p2p info --el-rpc https://your-public-el.example/ --cl-rpc https://your-cl.example/
 ```

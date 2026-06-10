@@ -241,6 +241,40 @@ where
         self.swarm.connected_peers().count()
     }
 
+    /// Aborts pending outbound dials that exceeded the connection gate timeout.
+    ///
+    /// Established peers are removed from pending bookkeeping but are not disconnected.
+    pub fn clear_expired_pending_connections(&mut self) -> usize {
+        let expired = self.connection_gate.expired_pending_dials();
+        let mut cleared = 0;
+
+        for (peer_id, age) in expired {
+            if self.swarm.connected_peers().any(|connected| connected == &peer_id) {
+                self.connection_gate.remove_dial(&peer_id);
+                debug!(
+                    target: "gossip",
+                    peer_id = %peer_id,
+                    pending_dial_age_seconds = age.as_secs_f64(),
+                    "Cleared pending dial bookkeeping for connected peer"
+                );
+                cleared += 1;
+                continue;
+            }
+
+            let _ = self.swarm.disconnect_peer_id(peer_id);
+            self.connection_gate.remove_dial(&peer_id);
+            debug!(
+                target: "gossip",
+                peer_id = %peer_id,
+                pending_dial_age_seconds = age.as_secs_f64(),
+                "Aborted expired pending outbound dial"
+            );
+            cleared += 1;
+        }
+
+        cleared
+    }
+
     /// Dials the given [`Enr`].
     pub fn dial(&mut self, enr: Enr) {
         let validation = EnrValidation::validate(&enr, self.handler.rollup_config.l2_chain_id.id());
@@ -577,10 +611,10 @@ mod tests {
         let mut driver = test_driver();
 
         driver.dial_multiaddr(addr);
-        assert!(driver.connection_gate.current_dials.contains(&peer_id));
+        assert!(driver.connection_gate.current_dials.contains_key(&peer_id));
 
         assert_eq!(driver.clear_pending_connections(), 1);
-        assert!(!driver.connection_gate.current_dials.contains(&peer_id));
+        assert!(!driver.connection_gate.current_dials.contains_key(&peer_id));
 
         let event = tokio::time::timeout(Duration::from_secs(1), driver.next())
             .await
@@ -615,11 +649,11 @@ mod tests {
         listener_addr.push(libp2p::multiaddr::Protocol::P2p(listener_peer_id));
 
         dialer.dial_multiaddr(listener_addr);
-        assert!(dialer.connection_gate.current_dials.contains(&listener_peer_id));
+        assert!(dialer.connection_gate.current_dials.contains_key(&listener_peer_id));
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         while tokio::time::Instant::now() < deadline
-            && dialer.connection_gate.current_dials.contains(&listener_peer_id)
+            && dialer.connection_gate.current_dials.contains_key(&listener_peer_id)
         {
             tokio::select! {
                 event = dialer.next() => {
@@ -636,7 +670,7 @@ mod tests {
             }
         }
 
-        assert!(!dialer.connection_gate.current_dials.contains(&listener_peer_id));
+        assert!(!dialer.connection_gate.current_dials.contains_key(&listener_peer_id));
     }
 
     #[test]

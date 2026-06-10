@@ -65,7 +65,7 @@ macro_rules! decode_precompile_call {
             }
         };
 
-        match <$call_ty as ::alloy_sol_types::SolInterface>::abi_decode(calldata) {
+        match <$call_ty as ::alloy_sol_types::SolInterface>::abi_decode_validate(calldata) {
             Ok(call) => call,
             Err(error)
                 if <$call_ty as ::alloy_sol_types::SolInterface>::valid_selector(selector) =>
@@ -132,5 +132,23 @@ mod tests {
         let call = decode_policy_call(&calldata).unwrap();
 
         assert!(matches!(call, IPolicyRegistry::IPolicyRegistryCalls::policyExists(_)));
+    }
+
+    #[test]
+    fn decode_precompile_call_rejects_dirty_padding_bytes() {
+        // policyExists(uint64 policyId) encodes policyId as a right-aligned 32-byte word.
+        // Injecting 0xFF into the high-padding byte triggers abi_decode_validate's canonical
+        // check, confirming the macro uses the validating decoder.
+        let mut calldata = IPolicyRegistry::policyExistsCall { policyId: 0 }.abi_encode();
+        calldata[4] = 0xFF;
+        let err = decode_policy_call(&calldata).unwrap_err();
+
+        assert!(matches!(
+            err,
+            BasePrecompileError::AbiDecodeFailed {
+                selector: IPolicyRegistry::policyExistsCall::SELECTOR,
+                ..
+            }
+        ));
     }
 }

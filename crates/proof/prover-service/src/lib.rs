@@ -30,7 +30,7 @@ pub use request::{ExecutionStats, ProveBlockRequest};
 #[cfg(feature = "rpc-server")]
 mod server;
 #[cfg(feature = "rpc-server")]
-pub use server::ProverServiceServer;
+pub use server::{ProverServiceServer, ServerConfig, WorkerApiConfig};
 
 #[cfg(feature = "rpc-client")]
 mod snark_e2e;

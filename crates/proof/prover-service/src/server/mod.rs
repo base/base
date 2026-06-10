@@ -12,31 +12,72 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObjectOwned},
 };
 
-use crate::ProofRequestManager;
+use crate::{ProofRequestManager, WorkerQueueConfig};
 
 mod get_proof;
 mod list_proofs;
 mod prove_block_range;
+mod worker_api;
 
 const ERROR_NOT_FOUND: i32 = -32004;
 const ERROR_UNAVAILABLE: i32 = -32014;
 const ERROR_RESOURCE_EXHAUSTED: i32 = -32016;
 const ERROR_FAILED_PRECONDITION: i32 = -32017;
 
-/// JSON-RPC server implementing the requester API trait.
+/// Lock duration tuning for the worker job API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkerApiConfig {
+    /// Lock duration applied when a worker requests `0` seconds.
+    pub default_lock_duration_seconds: u32,
+    /// Upper bound a worker-requested lock duration is clamped to.
+    pub max_lock_duration_seconds: u32,
+}
+
+impl WorkerApiConfig {
+    /// Create worker API tuning.
+    pub const fn new(default_lock_duration_seconds: u32, max_lock_duration_seconds: u32) -> Self {
+        let config = Self { default_lock_duration_seconds, max_lock_duration_seconds };
+        config.validate();
+        config
+    }
+
+    /// Panics if the default lock duration exceeds the max.
+    pub const fn validate(&self) {
+        assert!(
+            self.default_lock_duration_seconds <= self.max_lock_duration_seconds,
+            "default lock duration must not exceed max lock duration"
+        );
+    }
+}
+
+impl Default for WorkerApiConfig {
+    fn default() -> Self {
+        Self::new(300, 3600)
+    }
+}
+
+/// Tuning for the prover service JSON-RPC server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerConfig {
+    /// Shared `retry_count` cap with [`crate::worker::StatusPoller`].
+    pub max_proof_retries: i32,
+    /// Worker job lock-duration tuning.
+    pub worker: WorkerApiConfig,
+    /// Shared worker-claim reclaim budget.
+    pub worker_queue: WorkerQueueConfig,
+}
+
+/// JSON-RPC server implementing the requester and worker API traits.
 #[derive(Clone)]
 pub struct ProverServiceServer {
     repo: ProofRequestRepo,
     manager: ProofRequestManager,
-    /// Shared `retry_count` cap with [`crate::worker::StatusPoller`] (same as `retry_or_fail_stuck_request`).
-    max_proof_retries: i32,
+    config: ServerConfig,
 }
 
 impl fmt::Debug for ProverServiceServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProverServiceServer")
-            .field("max_proof_retries", &self.max_proof_retries)
-            .finish_non_exhaustive()
+        f.debug_struct("ProverServiceServer").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
@@ -45,9 +86,10 @@ impl ProverServiceServer {
     pub const fn new(
         repo: ProofRequestRepo,
         manager: ProofRequestManager,
-        max_proof_retries: i32,
+        config: ServerConfig,
     ) -> Self {
-        Self { repo, manager, max_proof_retries }
+        config.worker.validate();
+        Self { repo, manager, config }
     }
 }
 
@@ -113,4 +155,25 @@ fn record_rpc_result<T>(method: &str, start: std::time::Instant, result: &RpcRes
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
     crate::metrics::inc_requests(method, success, status_code);
     crate::metrics::record_response_latency(method, success, elapsed_ms);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkerApiConfig;
+
+    #[test]
+    fn worker_api_config_new_accepts_valid_durations() {
+        let config = WorkerApiConfig::new(300, 3600);
+
+        assert_eq!(
+            config,
+            WorkerApiConfig { default_lock_duration_seconds: 300, max_lock_duration_seconds: 3600 }
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "default lock duration must not exceed max lock duration")]
+    fn worker_api_config_new_rejects_default_greater_than_max() {
+        let _ = WorkerApiConfig::new(3601, 3600);
+    }
 }

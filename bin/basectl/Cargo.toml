@@ -27,4 +27,4 @@ base-protocol = { workspace = true, features = ["serde", "std"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [dev-dependencies]
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }

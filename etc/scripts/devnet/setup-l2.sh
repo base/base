@@ -16,6 +16,14 @@ L2_EL_BOOTNODE_ENODE="${L2_EL_BOOTNODE_ENODE:-enode://4f355bdcb7cc0af728ef3cceb9
 L2_CL_BOOTNODE_P2P_KEY="${L2_CL_BOOTNODE_P2P_KEY:-2222222222222222222222222222222222222222222222222222222222222222}"
 L2_CL_BOOTNODE_ENR_PATH="${L2_CL_BOOTNODE_ENR_PATH:-/bootnodes/cl-bootnode.enr}"
 
+replace_output_file() {
+  local source_file="$1"
+  local destination_file="$2"
+
+  chmod 0644 "$source_file"
+  mv "$source_file" "$destination_file"
+}
+
 if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
   exit 1
@@ -152,7 +160,7 @@ jq \
   '.config.activationAdminAddress = $activation_admin' \
   "$OUTPUT_DIR/genesis.json" \
   >"$TMP_GENESIS"
-mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
 echo "Patched activation admin into genesis config"
 
 L2_BLOCK_TIME=$(jq -re '.block_time' "$OUTPUT_DIR/rollup.json")
@@ -173,7 +181,7 @@ if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
     '.base = ((.base // {}) + {azul: $azul_time})' \
     "$OUTPUT_DIR/rollup.json" \
     >"$TMP_ROLLUP"
-  mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
 
   TMP_GENESIS=$(mktemp)
   jq \
@@ -182,7 +190,7 @@ if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
     | .config.base = ((.config.base // {}) + {azul: $azul_time})' \
     "$OUTPUT_DIR/genesis.json" \
     >"$TMP_GENESIS"
-  mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
 
   echo "Patched Base Azul activation into rollup and genesis configs"
 else
@@ -209,7 +217,7 @@ if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
     '.base = ((.base // {}) + {beryl: $beryl_time})' \
     "$OUTPUT_DIR/rollup.json" \
     >"$TMP_ROLLUP"
-  mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
 
   TMP_GENESIS=$(mktemp)
   jq \
@@ -217,7 +225,7 @@ if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
     '.config.base = ((.config.base // {}) + {beryl: $beryl_time})' \
     "$OUTPUT_DIR/genesis.json" \
     >"$TMP_GENESIS"
-  mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
 
   echo "Patched Base Beryl activation into rollup and genesis configs"
 else

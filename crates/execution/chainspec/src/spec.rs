@@ -31,6 +31,12 @@ pub enum BaseChainSpecError {
         /// Chain ID whose Beryl-enabled configuration lacks an activation admin address.
         chain_id: u64,
     },
+    /// Beryl is scheduled but the activation registry admin address is `Address::ZERO`.
+    #[error("activation admin address must not be zero for Beryl-enabled chain ID: {chain_id}")]
+    ZeroActivationAdminAddress {
+        /// Chain ID whose Beryl-enabled configuration has a zero activation admin address.
+        chain_id: u64,
+    },
 }
 
 /// Genesis info extracted from a Base genesis config.
@@ -226,16 +232,21 @@ impl BaseChainSpec {
         Ok(Self { inner: value, activation_admin_address })
     }
 
-    /// Validates that Beryl-enabled chains include an activation registry admin address.
+    /// Validates that Beryl-enabled chains have a valid activation registry admin address:
+    /// present (not `None`) and non-zero.
     pub fn validate_beryl_activation_admin(
         hardforks: &ChainHardforks,
         activation_admin_address: Option<Address>,
         chain_id: u64,
     ) -> Result<(), BaseChainSpecError> {
-        if activation_admin_address.is_none()
-            && !matches!(hardforks.fork(BaseUpgrade::Beryl), ForkCondition::Never)
-        {
+        let beryl_scheduled = !matches!(hardforks.fork(BaseUpgrade::Beryl), ForkCondition::Never);
+
+        if activation_admin_address.is_none() && beryl_scheduled {
             return Err(BaseChainSpecError::MissingActivationAdminAddress { chain_id });
+        }
+
+        if matches!(activation_admin_address, Some(addr) if addr.is_zero()) && beryl_scheduled {
+            return Err(BaseChainSpecError::ZeroActivationAdminAddress { chain_id });
         }
 
         Ok(())
@@ -285,7 +296,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
             .to_chain_hardforks();
         Self::validate_beryl_activation_admin(
             &hardforks,
-            cfg.activation_admin_address,
+            Some(cfg.activation_admin_address),
             cfg.chain_id,
         )?;
         let genesis_header = match cfg.genesis_l2_hash {
@@ -324,7 +335,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
                 prune_delete_limit: cfg.prune_delete_limit,
                 ..Default::default()
             },
-            activation_admin_address: cfg.activation_admin_address,
+            activation_admin_address: Some(cfg.activation_admin_address),
         })
     }
 }
@@ -458,7 +469,7 @@ mod tests {
     use alloy_consensus::proofs::storage_root_unhashed;
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
-    use alloy_primitives::{B256, U256, address, b256};
+    use alloy_primitives::{Address, B256, U256, address, b256};
     use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
@@ -699,19 +710,6 @@ mod tests {
     }
 
     #[test]
-    fn beryl_chain_config_without_activation_admin_is_rejected() {
-        let mut config = ChainConfig::devnet().clone();
-        config.beryl_timestamp = Some(0);
-        config.activation_admin_address = None;
-
-        let err = BaseChainSpec::try_from(&config)
-            .expect_err("Beryl chain config without activation admin should be rejected");
-        assert!(
-            matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id } if chain_id == config.chain_id)
-        );
-    }
-
-    #[test]
     fn beryl_builder_without_activation_admin_is_rejected() {
         let chain_id = ChainConfig::mainnet().chain_id;
         let err = BaseChainSpecBuilder::base_mainnet()
@@ -722,6 +720,51 @@ mod tests {
 
         assert!(
             matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id: id } if id == chain_id)
+        );
+    }
+
+    #[test]
+    fn beryl_genesis_with_zero_activation_admin_is_rejected() {
+        let chain_id = 987_654;
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = chain_id;
+        genesis.config.extra_fields.insert("base".to_string(), serde_json::json!({ "beryl": 0 }));
+        genesis.config.extra_fields.insert(
+            "activationAdminAddress".to_string(),
+            serde_json::json!("0x0000000000000000000000000000000000000000"),
+        );
+
+        let err = BaseChainSpec::try_from_genesis(genesis)
+            .expect_err("Beryl genesis with zero activation admin should be rejected");
+        assert!(
+            matches!(err, BaseChainSpecError::ZeroActivationAdminAddress { chain_id: id } if id == chain_id)
+        );
+    }
+
+    #[test]
+    fn beryl_chain_config_with_zero_activation_admin_is_rejected() {
+        let mut config = ChainConfig::devnet().clone();
+        config.beryl_timestamp = Some(0);
+        config.activation_admin_address = Address::ZERO;
+
+        let err = BaseChainSpec::try_from(&config)
+            .expect_err("Beryl chain config with zero activation admin should be rejected");
+        assert!(
+            matches!(err, BaseChainSpecError::ZeroActivationAdminAddress { chain_id } if chain_id == config.chain_id)
+        );
+    }
+
+    #[test]
+    fn beryl_builder_with_zero_activation_admin_is_rejected() {
+        let chain_id = ChainConfig::mainnet().chain_id;
+        let err = BaseChainSpecBuilder::base_mainnet()
+            .optional_activation_admin_address(Some(Address::ZERO))
+            .beryl_activated()
+            .try_build()
+            .expect_err("Beryl builder with zero activation admin should be rejected");
+
+        assert!(
+            matches!(err, BaseChainSpecError::ZeroActivationAdminAddress { chain_id: id } if id == chain_id)
         );
     }
 

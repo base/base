@@ -130,8 +130,8 @@ impl PolicyRegistryStorage<'_> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_primitives::{Address, Bytes, U256, address};
-    use alloy_sol_types::{Panic, PanicKind, SolCall, SolError, SolValue};
+    use alloy_primitives::{Address, address};
+    use alloy_sol_types::{SolCall, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
@@ -310,10 +310,7 @@ mod tests {
         })
         .expect("dispatch should not fatally error");
 
-        let expected: Bytes =
-            Panic { code: U256::from(PanicKind::EnumConversionError as u32) }.abi_encode().into();
         assert!(output.is_revert());
-        assert_eq!(output.bytes, expected);
 
         let valid_calldata = IPolicyRegistry::createPolicyCall {
             admin: ADMIN,

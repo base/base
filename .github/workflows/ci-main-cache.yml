@@ -29,9 +29,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 2
-      - name: Detect SP1 ELF input changes
-        id: elf-inputs
-        run: python3 etc/scripts/ci/check-succinct-elf-inputs.py
       - uses: ./.github/actions/setup
         with:
           free-disk: "true"
@@ -39,14 +36,7 @@ jobs:
           mold: "true"
           foundry: "true"
           sp1: "true"
-          elf-cache: "true"
           rust-cache-shared-key: "stable"
           rust-cache-save: "true"
       - name: Build CI cache
-        if: steps.elf-inputs.outputs.needs_rebuild != 'true'
         run: just build::ci
-      - name: Build CI cache with stubbed SP1 ELFs
-        if: steps.elf-inputs.outputs.needs_rebuild == 'true'
-        run: |
-          just build::contracts
-          BASE_SUCCINCT_ELF_STUB=1 cargo build --locked --workspace --all-targets --profile ci

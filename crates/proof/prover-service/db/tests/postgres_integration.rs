@@ -1576,20 +1576,110 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
             .expect("stored result should deserialize");
     assert_eq!(stored, result);
 
-    let duplicate = repo
+    // An identical retry from the same worker/lock is idempotent.
+    let replay = repo
         .complete_claimed_proof_job(CompleteClaimedProofJob {
-            session_id: uppercase_session_id,
+            session_id: uppercase_session_id.clone(),
+            lock_id,
+            worker_id: "submit-worker".to_owned(),
+            result: result.clone(),
+        })
+        .await
+        .unwrap();
+    let SubmitProofOutcome::Completed(replayed) = replay else {
+        panic!("identical retry should be idempotent");
+    };
+    assert_eq!(replayed.job_status, ProofJobStatus::Succeeded);
+    assert_eq!(
+        repo.get(id).await.unwrap().unwrap().stark_receipt.as_deref(),
+        Some(&[0xca, 0xfe][..])
+    );
+
+    // Same worker/lock, different payload: conflict, stored result kept.
+    let conflict = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: uppercase_session_id.clone(),
             lock_id,
             worker_id: "submit-worker".to_owned(),
             result: compressed_result(vec![0xba, 0xad]),
         })
         .await
         .unwrap();
-    assert!(matches!(duplicate, SubmitProofOutcome::Terminal(_)));
+    assert!(matches!(conflict, SubmitProofOutcome::ResultConflict { .. }));
     assert_eq!(
         repo.get(id).await.unwrap().unwrap().stark_receipt.as_deref(),
         Some(&[0xca, 0xfe][..])
     );
+
+    // A retry that no longer owns the lock still sees a terminal job.
+    let foreign = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: uppercase_session_id,
+            lock_id: Uuid::new_v4(),
+            worker_id: "submit-worker".to_owned(),
+            result: result.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(foreign, SubmitProofOutcome::Terminal(_)));
+    assert_eq!(
+        repo.get(id).await.unwrap().unwrap().stark_receipt.as_deref(),
+        Some(&[0xca, 0xfe][..])
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("mismatch-worker", 3))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    let lock_id = claimed.lock_id.expect("claimed job has lock");
+
+    // Non-owners are rejected before result-type validation, so mismatched
+    // submissions do not expose the job's expected proof result shape.
+    let stale_mismatch = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: claimed.session_id.clone(),
+            lock_id: Uuid::new_v4(),
+            worker_id: "non-owner".to_owned(),
+            result: ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![0x01].into() },
+            }),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale_mismatch, SubmitProofOutcome::StaleLock(_)));
+
+    // A valid lock for a compressed job must not store a SNARK result.
+    let mismatch = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: claimed.session_id.clone(),
+            lock_id,
+            worker_id: "mismatch-worker".to_owned(),
+            result: ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![0x01].into() },
+            }),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(mismatch, SubmitProofOutcome::ResultMismatch { .. }));
+
+    // The job is left untouched.
+    let job = repo
+        .get_proof_job_by_session_id(&claimed.session_id)
+        .await
+        .unwrap()
+        .expect("job still exists");
+    assert_eq!(job.job_status, ProofJobStatus::Claimed);
+    assert!(repo.get(id).await.unwrap().unwrap().result_payload.is_none());
 }
 
 #[tokio::test]
