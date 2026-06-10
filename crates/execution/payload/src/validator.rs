@@ -65,7 +65,7 @@ where
     ChainSpec: Upgrades,
     T: SignedTransaction,
 {
-    let ExecutionData { payload, sidecar } = payload;
+    let ExecutionData { payload, sidecar, .. } = payload;
 
     let expected_hash = payload.block_hash();
 

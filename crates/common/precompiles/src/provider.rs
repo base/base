@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, string::String};
+use alloc::string::String;
 
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
@@ -9,7 +9,7 @@ use revm::{
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{self, Precompiles, bn254, modexp, secp256r1},
-    primitives::{OnceLock, hardfork::SpecId},
+    primitives::{AddressSet, OnceLock, hardfork::SpecId},
 };
 
 use crate::{
@@ -242,7 +242,7 @@ where
     }
 
     #[inline]
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
+    fn warm_addresses(&self) -> &AddressSet {
         self.inner.warm_addresses()
     }
 

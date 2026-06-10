@@ -23,7 +23,6 @@ use base_common_flashblocks::{
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
-use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -1089,8 +1088,8 @@ where
             },
             state: state.take_bundle(),
         }),
-        hashed_state: Either::Left(Arc::new(hashed_state)),
-        trie_updates: Either::Left(Arc::new(trie_output)),
+        hashed_state: Arc::new(hashed_state),
+        trie_updates: Arc::new(trie_output),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 
@@ -1180,7 +1179,13 @@ where
     state.transition_state = untouched_transition_state;
 
     Ok((
-        BaseBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed)),
+        BaseBuiltPayload::new(
+            ctx.payload_id(),
+            sealed_block,
+            info.total_fees,
+            Some(executed),
+            None,
+        ),
         fb_payload,
     ))
 }
