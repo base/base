@@ -10,7 +10,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BASE_ANVIL_REF: base-anvil-fork
+  # Pinned base-anvil commit so this job is decoupled from base-anvil-fork
+  # branch movement. Bump in lockstep with base/base's reth/revm version; a
+  # cutover to a new base-anvil (e.g. reth 2.3.0) rides in the same base/base PR.
+  BASE_ANVIL_REF: 85f5a0e2867cb88c55e9af29b348511f91cbc383
   BASE_STD_REF: main
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
@@ -62,8 +65,9 @@ jobs:
           gh repo clone base/base-std "$workdir/base-std" -- \
             --depth 1 --single-branch --branch "$BASE_STD_REF" \
             --recurse-submodules --shallow-submodules
-          git clone --depth 1 --single-branch --branch "$BASE_ANVIL_REF" \
+          git clone --filter=blob:none --no-checkout \
             https://github.com/base/base-anvil.git "$workdir/base-anvil"
+          git -C "$workdir/base-anvil" checkout --detach "$BASE_ANVIL_REF"
 
           echo "BASE_STD_DIR=$workdir/base-std" >> "$GITHUB_ENV"
           echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
