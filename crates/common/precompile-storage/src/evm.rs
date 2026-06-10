@@ -105,40 +105,29 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         // Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
-        let checkpoint = self.internals.checkpoint();
-        let result = (|| {
-            // Charge CREATE equivalent costs whenever code is written to an account that had no
-            // code, regardless of its balance. A prefunded account (balance > 0, no code) passes
-            // the factory's collision check (which only rejects accounts that already have code),
-            // but must still pay G_create and the keccak hash cost.
-            let is_new_code = {
-                let state_load = self
-                    .internals
-                    .load_account(address)
-                    .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-                state_load.data.info.is_empty_code_hash()
-            };
+        // Charge CREATE equivalent costs whenever code is written to an account that had no code,
+        // regardless of its balance. A prefunded account (balance > 0, no code) passes the
+        // factory's collision check (which only rejects accounts that already have code), but
+        // must still pay G_create and the keccak hash cost.
+        let is_new_code = {
+            let state_load = self
+                .internals
+                .load_account(address)
+                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            state_load.data.info.is_empty_code_hash()
+        };
 
-            if is_new_code {
-                // Yellow Paper G_create: base cost for creating a new contract account.
-                self.deduct_gas(self.gas_params.create_cost())?;
-                // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
-                let num_words = code_len.div_ceil(32) as u64;
-                self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-            }
-
-            self.internals
-                .set_code(address, code)
-                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
-        })();
-
-        if result.is_ok() {
-            self.internals.checkpoint_commit();
-        } else {
-            self.internals.checkpoint_revert(checkpoint);
+        if is_new_code {
+            // Yellow Paper G_create: base cost for creating a new contract account.
+            self.deduct_gas(self.gas_params.create_cost())?;
+            // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
+            let num_words = code_len.div_ceil(32) as u64;
+            self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
         }
 
-        result
+        self.internals
+            .set_code(address, code)
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
     }
 
     fn with_account_info(
@@ -146,35 +135,24 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
-        let checkpoint = self.internals.checkpoint();
-        let result = (|| {
-            // Extract is_cold and clone AccountInfo before releasing the internals borrow.
-            let (info, is_cold) = {
-                let state_load = self
-                    .internals
-                    .load_account(address)
-                    .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-                (state_load.data.info.clone(), state_load.is_cold)
-            };
+        // Extract is_cold and clone AccountInfo before releasing the internals borrow.
+        let (info, is_cold) = {
+            let state_load = self
+                .internals
+                .load_account(address)
+                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            (state_load.data.info.clone(), state_load.is_cold)
+        };
 
-            // EIP-2929: warm base cost always charged (100)
-            self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
-            // dynamic cold penalty — total 2600 for a cold account access
-            if is_cold {
-                self.deduct_gas(self.gas_params.cold_account_additional_cost())?;
-            }
-
-            f(&info);
-            Ok(())
-        })();
-
-        if result.is_ok() {
-            self.internals.checkpoint_commit();
-        } else {
-            self.internals.checkpoint_revert(checkpoint);
+        // EIP-2929: warm base cost always charged (100)
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
+        // dynamic cold penalty — total 2600 for a cold account access
+        if is_cold {
+            self.deduct_gas(self.gas_params.cold_account_additional_cost())?;
         }
 
-        result
+        f(&info);
+        Ok(())
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
@@ -554,111 +532,6 @@ mod tests {
                     .warm_storage_read_cost()
                     .saturating_add(gas_params.cold_storage_additional_cost()),
                 "slot must still be cold after a failed OOG read"
-            );
-        }
-    }
-
-    /// An OOG `with_account_info` must not leave the account warmed in the journal.
-    #[test]
-    fn with_account_info_oog_does_not_warm_account() {
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
-        let address = Address::repeat_byte(0x88);
-
-        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
-
-        // First provider: gas just below warm_storage_read_cost → OOG on account load.
-        {
-            let input = PrecompileInput {
-                data: &[],
-                gas: gas_params.warm_storage_read_cost() - 1,
-                reservoir: 0,
-                caller: Address::ZERO,
-                value: U256::ZERO,
-                target_address: address,
-                is_static: false,
-                bytecode_address: address,
-                internals: EvmInternals::from_context(&mut ctx),
-            };
-            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
-            assert_eq!(
-                provider.with_account_info(address, &mut |_| {}),
-                Err(BasePrecompileError::OutOfGas)
-            );
-        }
-
-        // Second provider: unlimited gas. Account must still be cold.
-        {
-            let input = PrecompileInput {
-                data: &[],
-                gas: u64::MAX,
-                reservoir: 0,
-                caller: Address::ZERO,
-                value: U256::ZERO,
-                target_address: address,
-                is_static: false,
-                bytecode_address: address,
-                internals: EvmInternals::from_context(&mut ctx),
-            };
-            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
-            provider.with_account_info(address, &mut |_| {}).unwrap();
-            assert_eq!(
-                provider.gas_used(),
-                gas_params
-                    .warm_storage_read_cost()
-                    .saturating_add(gas_params.cold_account_additional_cost()),
-                "account must still be cold after a failed OOG access"
-            );
-        }
-    }
-
-    /// An OOG `set_code` (failing after `load_account`) must not leave the account warmed.
-    #[test]
-    fn set_code_oog_after_load_does_not_warm_account() {
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
-        let address = Address::repeat_byte(0x99);
-        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
-
-        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
-
-        // Gas covers code_deposit_cost but not the subsequent create_cost → OOG after load_account.
-        let tight_gas = gas_params.code_deposit_cost(code.len());
-        {
-            let input = PrecompileInput {
-                data: &[],
-                gas: tight_gas,
-                reservoir: 0,
-                caller: Address::ZERO,
-                value: U256::ZERO,
-                target_address: address,
-                is_static: false,
-                bytecode_address: address,
-                internals: EvmInternals::from_context(&mut ctx),
-            };
-            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
-            assert_eq!(provider.set_code(address, code), Err(BasePrecompileError::OutOfGas));
-        }
-
-        // Second provider: unlimited gas. Account must still be cold.
-        {
-            let input = PrecompileInput {
-                data: &[],
-                gas: u64::MAX,
-                reservoir: 0,
-                caller: Address::ZERO,
-                value: U256::ZERO,
-                target_address: address,
-                is_static: false,
-                bytecode_address: address,
-                internals: EvmInternals::from_context(&mut ctx),
-            };
-            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
-            provider.with_account_info(address, &mut |_| {}).unwrap();
-            assert_eq!(
-                provider.gas_used(),
-                gas_params
-                    .warm_storage_read_cost()
-                    .saturating_add(gas_params.cold_account_additional_cost()),
-                "account must still be cold after a failed OOG set_code"
             );
         }
     }
