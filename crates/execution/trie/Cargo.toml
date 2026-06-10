@@ -86,6 +86,10 @@ criterion = { workspace = true, features = ["html_reports"] }
 name = "witness_reads"
 harness = false
 
+[[bench]]
+name = "deep_history_reads"
+harness = false
+
 [features]
 serde-bincode-compat = [
 	"alloy-consensus/serde-bincode-compat",

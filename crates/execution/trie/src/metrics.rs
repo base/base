@@ -569,6 +569,27 @@ where
     }
 
     #[inline]
+    fn store_storage_branches_bulk(
+        &self,
+        entries: Vec<(B256, Vec<(Nibbles, Option<BranchNodeCompact>)>)>,
+    ) -> BaseProofsStorageResult<()> {
+        let count: usize = entries.iter().map(|(_, v)| v.len()).sum();
+        let start = Instant::now();
+        let result = self.storage.store_storage_branches_bulk(entries);
+        let duration = start.elapsed();
+
+        if count > 0 {
+            self.metrics.record_duration_per_item(
+                StorageOperation::StoreStorageBranch,
+                duration,
+                count,
+            );
+        }
+
+        result
+    }
+
+    #[inline]
     fn store_hashed_accounts(
         &self,
         accounts: Vec<(B256, Option<Account>)>,
@@ -598,6 +619,27 @@ where
         let count = storages.len();
         let start = Instant::now();
         let result = self.storage.store_hashed_storages(hashed_address, storages);
+        let duration = start.elapsed();
+
+        if count > 0 {
+            self.metrics.record_duration_per_item(
+                StorageOperation::StoreHashedStorage,
+                duration,
+                count,
+            );
+        }
+
+        result
+    }
+
+    #[inline]
+    fn store_hashed_storages_bulk(
+        &self,
+        entries: Vec<(B256, Vec<(B256, U256)>)>,
+    ) -> BaseProofsStorageResult<()> {
+        let count: usize = entries.iter().map(|(_, v)| v.len()).sum();
+        let start = Instant::now();
+        let result = self.storage.store_hashed_storages_bulk(entries);
         let duration = start.elapsed();
 
         if count > 0 {

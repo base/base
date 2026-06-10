@@ -14,7 +14,7 @@ use reth_ethereum_primitives as _;
 pub mod api;
 pub use api::{
     BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStore,
-    BlockStateDiff,
+    BlockStateDiff, StorageBranchEntries,
 };
 
 pub mod initialize;
