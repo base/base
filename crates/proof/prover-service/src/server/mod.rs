@@ -12,7 +12,7 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObjectOwned},
 };
 
-use crate::{ProofRequestManager, WorkerQueueConfig};
+use crate::WorkerQueueConfig;
 
 mod get_proof;
 mod list_proofs;
@@ -71,7 +71,6 @@ pub struct ServerConfig {
 #[derive(Clone)]
 pub struct ProverServiceServer {
     repo: ProofRequestRepo,
-    manager: ProofRequestManager,
     config: ServerConfig,
 }
 
@@ -83,13 +82,9 @@ impl fmt::Debug for ProverServiceServer {
 
 impl ProverServiceServer {
     /// Create a new prover service server.
-    pub const fn new(
-        repo: ProofRequestRepo,
-        manager: ProofRequestManager,
-        config: ServerConfig,
-    ) -> Self {
+    pub const fn new(repo: ProofRequestRepo, config: ServerConfig) -> Self {
         config.worker.validate();
-        Self { repo, manager, config }
+        Self { repo, config }
     }
 }
 

@@ -1278,7 +1278,6 @@ impl ProofRequestRepo {
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
             FROM proof_requests pr
             WHERE pr.status = 'PENDING'
-              AND pr.proof_type IS NOT NULL
               AND pr.updated_at < NOW() - INTERVAL '1 minute' * $1
               AND NOT EXISTS (
                   SELECT 1 FROM proof_sessions ps
