@@ -353,7 +353,7 @@ impl HashMapStorageProvider {
         self.gas_deducted
     }
 
-    /// Returns the number of times [`PrecompileStorageProvider::keccak256`] was called.
+    /// Returns the number of times [`PrecompileStorageProvider::metered_keccak256`] was called.
     pub const fn counter_keccak256(&self) -> u64 {
         self.counter_keccak256
     }
