@@ -22,6 +22,7 @@ use alloy_rpc_types_engine::{
 pub use v5::BaseExecutionPayloadEnvelopeV5;
 
 use crate::BaseExecutionPayloadSidecar;
+use alloc::string::String;
 
 /// An execution payload, which can be either [`ExecutionPayloadV2`], [`ExecutionPayloadV3`], or
 /// [`BaseExecutionPayloadV4`].
