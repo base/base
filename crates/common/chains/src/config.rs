@@ -424,7 +424,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     isthmus_timestamp: 1_744_905_600,
     jovian_timestamp: 1_763_568_001,
     azul_timestamp: Some(1_776_708_000),
-    beryl_timestamp: None,
+    beryl_timestamp: Some(1_781_805_600),
     cobalt_timestamp: None,
 
     genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
