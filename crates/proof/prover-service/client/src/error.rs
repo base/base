@@ -65,12 +65,13 @@ impl ProverServiceClientError {
 
     /// Returns `true` when the prover service responded that the session does not exist.
     ///
-    /// The proposer's self-driving loop uses this to distinguish "no session yet,
-    /// dispatch needed" from other transient or terminal errors.
+    /// The proposer uses this to distinguish "no session yet, dispatch needed"
+    /// from other `NOT_FOUND` cases, such as a succeeded session whose result
+    /// payload is unexpectedly unavailable.
     #[must_use]
     pub fn is_not_found(&self) -> bool {
         let Self::RpcTransport(JsonRpcClientError::Call(call)) = self else { return false };
-        call.code() == Self::ERROR_NOT_FOUND
+        call.code() == Self::ERROR_NOT_FOUND && call.message() == "Proof request not found"
     }
 
     /// Returns `true` when the JSON-RPC error is classified as transient.
@@ -162,9 +163,16 @@ mod tests {
     }
 
     #[test]
-    fn is_not_found_matches_only_call_with_not_found_code() {
-        let not_found = rpc_call_error(ProverServiceClientError::ERROR_NOT_FOUND, "missing");
+    fn is_not_found_matches_only_missing_session_not_found() {
+        let not_found =
+            rpc_call_error(ProverServiceClientError::ERROR_NOT_FOUND, "Proof request not found");
         assert!(not_found.is_not_found());
+
+        let missing_result = rpc_call_error(
+            ProverServiceClientError::ERROR_NOT_FOUND,
+            "proof result not available",
+        );
+        assert!(!missing_result.is_not_found());
 
         let other_call = rpc_call_error(ProverServiceClientError::ERROR_UNAVAILABLE, "down");
         assert!(!other_call.is_not_found());
