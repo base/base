@@ -1,0 +1,2 @@
+FROM postgres:17-alpine
+COPY crates/proof/zk/db/migrations /docker-entrypoint-initdb.d/

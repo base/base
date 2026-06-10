@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [client, base, builder, consensus, batcher, zk-prover]
+        target: [client, base, builder, consensus, batcher, zk-prover, zk-prover-postgres]
 
     runs-on: ubuntu-24.04
 

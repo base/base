@@ -42,7 +42,7 @@ group "rust-services" {
 }
 
 group "devnet" {
-  targets = ["builder", "consensus", "client", "base", "batcher", "zk-prover"]
+  targets = ["builder", "consensus", "client", "base", "batcher", "zk-prover", "zk-prover-postgres"]
 }
 
 group "ingress" {
@@ -145,4 +145,10 @@ target "zk-prover" {
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
     "type=registry,ref=${REGISTRY_IMAGE}:cache-zk-prover-${PLATFORM_PAIR}",
   ]
+}
+
+target "zk-prover-postgres" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.zk-prover-postgres"
+  tags = ["zk-prover-postgres:local"]
 }

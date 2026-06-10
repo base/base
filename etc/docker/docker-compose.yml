@@ -785,7 +785,10 @@ services:
     restart: unless-stopped
 
   zk-prover-postgres:
-    image: postgres:17-alpine
+    image: zk-prover-postgres:local
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.zk-prover-postgres
     container_name: zk-prover-postgres
     ports:
       - "${ZK_PROVER_POSTGRES_PORT}:5432"
@@ -795,7 +798,6 @@ services:
       - POSTGRES_PASSWORD=prover
     volumes:
       - ../../.devnet/zk-prover/postgres:/var/lib/postgresql/data
-      - ../../crates/proof/zk/db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
       interval: 250ms
