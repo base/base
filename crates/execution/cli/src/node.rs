@@ -277,18 +277,9 @@ pub struct ExecutionNodeLaunchConfig {
 impl ExecutionNodeLaunchConfig {
     /// Converts this standard launch config into the shared runtime config plus standard args.
     pub fn into_runtime_config(self) -> (ExecutionNodeRuntimeConfig, StandardNodeArgs) {
-        let Self {
-            node_config,
-            standard,
-            with_unused_ports,
-            upgrade_signal_startup,
-        } = self;
+        let Self { node_config, standard, with_unused_ports, upgrade_signal_startup } = self;
         (
-            ExecutionNodeRuntimeConfig {
-                node_config,
-                with_unused_ports,
-                upgrade_signal_startup,
-            },
+            ExecutionNodeRuntimeConfig { node_config, with_unused_ports, upgrade_signal_startup },
             standard,
         )
     }

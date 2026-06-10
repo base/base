@@ -1,7 +1,9 @@
 use alloy_provider::RootProvider;
 use tracing::info;
 
-use super::{UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier};
+use super::{
+    UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation,
+};
 use crate::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalSchedule,
 };
@@ -15,6 +17,8 @@ pub struct UpgradeSignalRefresher {
     pub reader: AlloyUpgradeSignalReader,
     /// L2 chain ID whose runtime fork view is updated.
     pub chain_id: u64,
+    /// Runtime schedule validation context.
+    pub runtime_validation: UpgradeSignalRuntimeValidation,
 }
 
 impl UpgradeSignalRefresher {
@@ -23,17 +27,24 @@ impl UpgradeSignalRefresher {
         config: UpgradeSignalConfig,
         l1_provider: RootProvider,
         chain_id: u64,
+        runtime_validation: UpgradeSignalRuntimeValidation,
     ) -> Self {
         let reader = AlloyUpgradeSignalReader::new(l1_provider, config.contract_address)
             .with_block_tag(config.l1_block_tag);
-        Self { config, reader, chain_id }
+        Self { config, reader, chain_id, runtime_validation }
     }
 
     /// Reads, metrics-records, logs, and validates the current L1 schedule.
     pub async fn read_validated_schedule(
         &self,
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
-        self.config.read_validated_application_schedule(&self.reader, "runtime refresh").await
+        let application_schedule = self
+            .config
+            .read_validated_application_schedule(&self.reader, "runtime refresh")
+            .await?;
+        self.runtime_validation.validate_schedule(self.chain_id, &application_schedule)?;
+
+        Ok(application_schedule)
     }
 
     /// Reads, validates, metrics-records, logs, and applies the current L1 schedule.
