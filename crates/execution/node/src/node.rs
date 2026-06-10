@@ -1,6 +1,7 @@
 //! Base Node types config.
 
 use std::{
+    collections::HashMap,
     marker::PhantomData,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
@@ -31,14 +32,17 @@ use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
     BaseTransactionValidator, TimestampedTransaction,
 };
+use futures::StreamExt;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_evm::ConfigureEvm;
 use reth_network::{
-    NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, NetworkPrimitives,
-    PeersInfo, types::BasicNetworkPrimitives,
+    DiscoveredEvent, DiscoveryEvent, NetworkConfig, NetworkConfigBuilder,
+    NetworkEventListenerProvider, NetworkHandle, NetworkManager, NetworkPrimitives, PeersInfo,
+    events::{NetworkPeersEvents, PeerEvent},
+    types::BasicNetworkPrimitives,
 };
-use reth_network_peers::NodeRecord;
+use reth_network_peers::{NodeRecord, PeerId};
 use reth_node_api::{
     AddOnsContext, BuildNextEnv, EngineTypes, FullNodeComponents, HeaderTy, NodeAddOns,
     NodePrimitives, PayloadAttributesBuilder, PayloadTypes, PrimitivesTy, TxTy,
@@ -62,7 +66,7 @@ use reth_primitives_traits::{SealedHeader, header::HeaderMut};
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
-use reth_tracing::tracing::{debug, info};
+use reth_tracing::tracing::{debug, info, warn};
 use reth_transaction_pool::{
     EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
     TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
@@ -84,6 +88,151 @@ pub const BASE_DISCV5_BOOTNODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(5
 
 /// Retry count for discv5 ENR requests during bootstrap on regular execution nodes.
 pub const BASE_DISCV5_BOOTNODE_REQUEST_RETRIES: u8 = 3;
+
+fn bootnode_socket(record: &NodeRecord, port: u16) -> SocketAddr {
+    SocketAddr::new(record.address, port)
+}
+
+fn bootnode_sockets(records: &[NodeRecord]) -> Vec<(SocketAddr, SocketAddr)> {
+    records
+        .iter()
+        .map(|bootnode| {
+            (
+                bootnode_socket(bootnode, bootnode.tcp_port),
+                bootnode_socket(bootnode, bootnode.udp_port),
+            )
+        })
+        .collect()
+}
+
+fn bootnode_records_by_peer_id(
+    bootnodes: Vec<NodeRecord>,
+) -> Arc<HashMap<PeerId, Vec<NodeRecord>>> {
+    let mut bootnodes_by_peer_id = HashMap::<PeerId, Vec<NodeRecord>>::new();
+    for bootnode in bootnodes {
+        bootnodes_by_peer_id.entry(bootnode.id).or_default().push(bootnode);
+    }
+    Arc::new(bootnodes_by_peer_id)
+}
+
+fn log_configured_bootnodes(bootnodes: &HashMap<PeerId, Vec<NodeRecord>>) {
+    if bootnodes.is_empty() {
+        return;
+    }
+
+    let bootnode_sockets = bootnodes
+        .iter()
+        .map(|(peer_id, records)| (*peer_id, bootnode_sockets(records)))
+        .collect::<Vec<_>>();
+
+    info!(
+        target: "net::bootnodes",
+        request_timeout = ?BASE_DISCV5_BOOTNODE_REQUEST_TIMEOUT,
+        request_retries = BASE_DISCV5_BOOTNODE_REQUEST_RETRIES,
+        bootnode_count = bootnode_sockets.len(),
+        bootnodes = ?bootnode_sockets,
+        "configured execution bootnodes"
+    );
+}
+
+fn spawn_bootnode_event_logs<N: NetworkPrimitives>(
+    network: &NetworkHandle<N>,
+    bootnodes: Arc<HashMap<PeerId, Vec<NodeRecord>>>,
+) {
+    if bootnodes.is_empty() {
+        return;
+    }
+
+    let mut discovery_events = network.discovery_listener();
+    let discovery_bootnodes = Arc::clone(&bootnodes);
+    tokio::spawn(async move {
+        while let Some(event) = discovery_events.next().await {
+            match event {
+                DiscoveryEvent::NewNode(DiscoveredEvent::EventQueued {
+                    peer_id,
+                    addr,
+                    fork_id,
+                }) => {
+                    if let Some(bootnodes) = discovery_bootnodes.get(&peer_id) {
+                        info!(
+                            target: "net::bootnodes",
+                            peer_id = ?peer_id,
+                            configured_addrs = ?bootnode_sockets(bootnodes),
+                            discovered_addr = ?addr,
+                            fork_id = ?fork_id,
+                            "bootnode discovery queued"
+                        );
+                    }
+                }
+                DiscoveryEvent::EnrForkId(record, fork_id) => {
+                    if let Some(bootnodes) = discovery_bootnodes.get(&record.id) {
+                        info!(
+                            target: "net::bootnodes",
+                            peer_id = ?record.id,
+                            configured_addrs = ?bootnode_sockets(bootnodes),
+                            enr_tcp = %bootnode_socket(&record, record.tcp_port),
+                            enr_udp = %bootnode_socket(&record, record.udp_port),
+                            fork_id = ?fork_id,
+                            "bootnode enr fork id received"
+                        );
+                    }
+                }
+            }
+        }
+    });
+
+    let mut peer_events = network.peer_events();
+    tokio::spawn(async move {
+        while let Some(event) = peer_events.next().await {
+            match event {
+                PeerEvent::SessionEstablished(info) => {
+                    if let Some(bootnodes) = bootnodes.get(&info.peer_id) {
+                        info!(
+                            target: "net::bootnodes",
+                            peer_id = ?info.peer_id,
+                            configured_addrs = ?bootnode_sockets(bootnodes),
+                            remote_addr = %info.remote_addr,
+                            client_version = %info.client_version,
+                            peer_kind = ?info.peer_kind,
+                            "bootnode peer session established"
+                        );
+                    }
+                }
+                PeerEvent::SessionClosed { peer_id, reason } => {
+                    if let Some(bootnodes) = bootnodes.get(&peer_id) {
+                        warn!(
+                            target: "net::bootnodes",
+                            peer_id = ?peer_id,
+                            configured_addrs = ?bootnode_sockets(bootnodes),
+                            reason = ?reason,
+                            "bootnode peer session closed"
+                        );
+                    }
+                }
+                PeerEvent::PeerAdded(peer_id) => {
+                    if let Some(bootnodes) = bootnodes.get(&peer_id) {
+                        info!(
+                            target: "net::bootnodes",
+                            peer_id = ?peer_id,
+                            configured_addrs = ?bootnode_sockets(bootnodes),
+                            "bootnode added to peer set"
+                        );
+                    }
+                }
+                PeerEvent::PeerRemoved(peer_id) => {
+                    if let Some(bootnodes) = bootnodes.get(&peer_id) {
+                        info!(
+                            target: "net::bootnodes",
+                            peer_id = ?peer_id,
+                            configured_addrs = ?bootnode_sockets(bootnodes),
+                            "bootnode removed from peer set"
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
 pub trait BaseNodeTypes:
@@ -1292,9 +1441,20 @@ where
         ctx: &BuilderContext<Node>,
         pool: Pool,
     ) -> eyre::Result<Self::Network> {
+        let bootnodes = ctx
+            .config()
+            .network
+            .resolved_bootnodes()
+            .or_else(|| ctx.chain_spec().bootnodes())
+            .unwrap_or_default();
         let network_config = self.network_config(ctx)?;
         let network = NetworkManager::builder(network_config).await?;
         let handle = ctx.start_network(network, pool);
+        let bootnodes = bootnode_records_by_peer_id(bootnodes);
+
+        log_configured_bootnodes(&bootnodes);
+        spawn_bootnode_event_logs(&handle, bootnodes);
+
         info!(target: "reth::cli", enode=%handle.local_node_record(), "P2P networking initialized");
 
         Ok(handle)
