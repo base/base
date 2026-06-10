@@ -603,7 +603,12 @@ where
         if let Err(error) = &result {
             self.record_base_error(error);
         }
-        let result = result.into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), encode_ok);
+        let result = result.into_precompile_result(
+            ctx.gas_used(),
+            ctx.state_gas_used(),
+            ctx.gas_refunded(),
+            encode_ok,
+        );
         self.record_result(&result);
         result
     }
