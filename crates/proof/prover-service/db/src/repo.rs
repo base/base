@@ -1059,6 +1059,37 @@ impl ProofRequestRepo {
         rows.iter().map(row_to_proof_session).collect()
     }
 
+    /// Get the active (`SUBMITTING` or `RUNNING`) backend session for a public
+    /// proof `session_id` and `session_type`, so a worker can resume an in-flight
+    /// backend job instead of starting a new one. Migration `009`'s partial unique
+    /// index guarantees at most one active row per `(proof_request_id, session_type)`.
+    pub async fn get_active_session(
+        &self,
+        session_id: &str,
+        session_type: SessionType,
+    ) -> Result<Option<ProofSession>> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT ps.id, ps.proof_request_id, ps.session_type, ps.backend_session_id,
+                   ps.status, ps.error_message, ps.metadata, ps.created_at, ps.completed_at
+            FROM proof_sessions ps
+            JOIN proof_requests pr ON pr.id = ps.proof_request_id
+            WHERE COALESCE(pr.session_id, pr.id::text) = $1
+              AND ps.session_type = $2
+              AND ps.status IN ('SUBMITTING', 'RUNNING')
+            "#,
+        )
+        .bind(&session_id)
+        .bind(session_type.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(|r| row_to_proof_session(&r)).transpose()
+    }
+
     /// Get all running sessions (for polling)
     pub async fn get_running_sessions(&self) -> Result<Vec<ProofSession>> {
         let rows = sqlx::query(
