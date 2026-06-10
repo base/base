@@ -27,7 +27,10 @@ mod proof_collector;
 pub use proof_collector::{CollectedProof, ProofCollector, TargetPoll};
 
 mod proof_dispatcher;
-pub use proof_dispatcher::{ProofDispatchAttempt, ProofDispatcher, ProofDispatcherConfig};
+pub use proof_dispatcher::{
+    ProofDispatchAttempt, ProofDispatchOutcome, ProofDispatcher, ProofDispatcherConfig,
+    ProofDispatcherRuntimeConfig, ProofDispatcherState, ProofDispatcherTickResult,
+};
 
 mod proof_submitter;
 pub use proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction};
