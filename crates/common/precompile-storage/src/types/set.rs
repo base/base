@@ -156,7 +156,7 @@ where
     T: Storable + StorageKey + Eq + Clone + Ord,
 {
     /// Creates a new handler for the set at the given base slot.
-    pub fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+    pub const fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
         // positions_slot = base_slot + 1. Slot addresses are keccak256 outputs and wrapping
         // is correct here: U256::MAX is not a reachable slot address in the EVM storage model,
         // so wrapping_add is equivalent to checked_add for all practical inputs.
