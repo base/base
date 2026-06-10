@@ -1823,6 +1823,8 @@ async fn test_record_worker_proof_session_records_resumes_and_updates() {
     assert_eq!(claimed.id, id);
     let session_id = claimed.session_id.clone();
     let lock_id = claimed.lock_id.expect("claimed job has lock");
+    let backend_id = format!("cluster-proof-{}", Uuid::new_v4());
+    let updated_backend_id = format!("cluster-proof-{}", Uuid::new_v4());
 
     assert!(repo.get_active_session(&session_id, SessionType::Stark).await.unwrap().is_none());
 
@@ -1832,7 +1834,7 @@ async fn test_record_worker_proof_session_records_resumes_and_updates() {
             lock_id,
             worker_id: "session-record-worker".to_owned(),
             session_type: SessionType::Stark,
-            backend_session_id: "cluster-proof-1".to_owned(),
+            backend_session_id: backend_id.clone(),
             status: SessionStatus::Running,
             error_message: None,
         })
@@ -1841,7 +1843,7 @@ async fn test_record_worker_proof_session_records_resumes_and_updates() {
     let RecordSessionOutcome::Recorded(session) = recorded else {
         panic!("record should succeed for the current lock holder");
     };
-    assert_eq!(session.backend_session_id, "cluster-proof-1");
+    assert_eq!(session.backend_session_id, backend_id);
     assert_eq!(session.status, SessionStatus::Running);
 
     let active = repo
@@ -1849,7 +1851,7 @@ async fn test_record_worker_proof_session_records_resumes_and_updates() {
         .await
         .unwrap()
         .expect("running session should be active");
-    assert_eq!(active.backend_session_id, "cluster-proof-1");
+    assert_eq!(active.backend_session_id, backend_id);
 
     // Re-recording updates the single active row in place rather than inserting a new one.
     let updated = repo
@@ -1858,23 +1860,44 @@ async fn test_record_worker_proof_session_records_resumes_and_updates() {
             lock_id,
             worker_id: "session-record-worker".to_owned(),
             session_type: SessionType::Stark,
-            backend_session_id: "cluster-proof-1".to_owned(),
-            status: SessionStatus::Failed,
-            error_message: Some("cluster proof crashed".to_owned()),
+            backend_session_id: updated_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
         })
         .await
         .unwrap();
     assert!(matches!(updated, RecordSessionOutcome::Recorded(_)));
 
-    // Terminal sessions are no longer "active", and the failure reason persists.
-    assert!(repo.get_active_session(&session_id, SessionType::Stark).await.unwrap().is_none());
+    for status in [SessionStatus::Completed, SessionStatus::Failed] {
+        let terminal_status = repo
+            .record_worker_proof_session(WorkerSessionUpsert {
+                session_id: session_id.clone(),
+                lock_id,
+                worker_id: "session-record-worker".to_owned(),
+                session_type: SessionType::Stark,
+                backend_session_id: format!("cluster-proof-{}", Uuid::new_v4()),
+                status,
+                error_message: Some("terminal status should not be written".to_owned()),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(terminal_status, RecordSessionOutcome::TerminalSessionStatus));
+    }
+
+    let active = repo
+        .get_active_session(&session_id, SessionType::Stark)
+        .await
+        .unwrap()
+        .expect("running session should stay active after terminal status rejection");
+    assert_eq!(active.backend_session_id, updated_backend_id);
+
     let stored = repo
-        .get_session_by_backend_id("cluster-proof-1")
+        .get_session_by_backend_id(&updated_backend_id)
         .await
         .unwrap()
         .expect("session row should persist");
-    assert_eq!(stored.status, SessionStatus::Failed);
-    assert_eq!(stored.error_message.as_deref(), Some("cluster proof crashed"));
+    assert_eq!(stored.status, SessionStatus::Running);
+    assert!(stored.error_message.is_none());
     assert_eq!(stored.proof_request_id, id);
 }
 
