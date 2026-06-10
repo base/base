@@ -175,6 +175,7 @@ base-common-precompiles = { path = "crates/common/precompiles", default-features
 base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
 
 # Builder
+base-builder-cli = { path = "crates/builder/cli" }
 base-builder-core = { path = "crates/builder/core" }
 base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }

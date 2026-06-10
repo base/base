@@ -148,7 +148,7 @@ mod tests {
             panic!("expected rpc command");
         };
 
-        assert_eq!(rpc.execution.network.port, 30333);
+        assert_eq!(rpc.execution.node.network.port, 30333);
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 9546);
     }
 
@@ -225,8 +225,8 @@ mod tests {
             panic!("expected rpc command");
         };
 
-        assert_eq!(rpc.execution.rpc.auth_ipc_path, "/data/engine.ipc");
-        assert_eq!(rpc.execution.network.port, 30303);
+        assert_eq!(rpc.execution.node.rpc.auth_ipc_path, "/data/engine.ipc");
+        assert_eq!(rpc.execution.node.network.port, 30303);
         assert!(rpc.execution_chain.is_some());
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 8549);
         assert_eq!(rpc.consensus.p2p_flags.network.listen_tcp_port, 8003);

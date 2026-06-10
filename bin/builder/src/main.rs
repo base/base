@@ -3,17 +3,16 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-pub mod cli;
-
 use std::sync::Arc;
 
+use base_builder_cli::Args;
 use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
 use base_execution_cli::Cli;
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 
-type BuilderCli = Cli<cli::Args>;
+type BuilderCli = Cli<Args>;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
