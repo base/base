@@ -471,6 +471,7 @@ mod tests {
         let mut rollup_config_value =
             serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
         rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
+        rollup_config_value["base"]["beryl"] = serde_json::Value::Null;
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
