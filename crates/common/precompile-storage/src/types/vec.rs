@@ -189,25 +189,29 @@ where
     }
 
     #[inline]
-    fn compute_handler(
+    fn try_compute_handler(
         data_start: U256,
         address: Address,
         storage: crate::StorageCtx<'a>,
         index: usize,
-    ) -> T::Handler<'a> {
+    ) -> Result<T::Handler<'a>> {
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = calc_element_loc(index, T::BYTES);
             (
-                data_start.checked_add(U256::from(location.offset_slots)).expect("slot overflow"),
+                data_start
+                    .checked_add(U256::from(location.offset_slots))
+                    .ok_or(BasePrecompileError::SlotOverflow)?,
                 LayoutCtx::packed(location.offset_bytes),
             )
         } else {
             (
-                data_start.checked_add(U256::from(index * T::SLOTS)).expect("slot overflow"),
+                data_start
+                    .checked_add(U256::from(index * T::SLOTS))
+                    .ok_or(BasePrecompileError::SlotOverflow)?,
                 LayoutCtx::FULL,
             )
         };
-        T::handle(slot, layout_ctx, address, storage)
+        Ok(T::handle(slot, layout_ctx, address, storage))
     }
 
     /// Returns a handler for the element at the given index, or `None` if out of bounds.
@@ -216,11 +220,9 @@ where
             return Ok(None);
         }
         let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
-        Ok(Some(
-            self.cache.get_or_insert(&index, || {
-                Self::compute_handler(data_start, address, storage, index)
-            }),
-        ))
+        Ok(Some(self.cache.get_or_try_insert(&index, || {
+            Self::try_compute_handler(data_start, address, storage, index)
+        })?))
     }
 
     /// Pushes a new element to the end of the vector.
@@ -235,7 +237,7 @@ where
             return Err(BasePrecompileError::Fatal("Vec is at max capacity".into()));
         }
         let mut elem_slot =
-            Self::compute_handler(self.data_slot(), self.address, self.storage, length);
+            Self::try_compute_handler(self.data_slot(), self.address, self.storage, length)?;
         elem_slot.write(value)?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
         length_slot.write(U256::from(length + 1))
@@ -254,12 +256,93 @@ where
         }
         let last_index = length - 1;
         let mut elem_slot =
-            Self::compute_handler(self.data_slot(), self.address, self.storage, last_index);
+            Self::try_compute_handler(self.data_slot(), self.address, self.storage, last_index)?;
         let element = elem_slot.read()?;
         elem_slot.delete()?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
         length_slot.write(U256::from(last_index))?;
         Ok(Some(element))
+    }
+
+    /// Shortens the vector to `new_len` elements, clearing all vacated storage slots.
+    ///
+    /// If `new_len` is greater than or equal to the current length, this has no effect.
+    /// Each element slot is explicitly zeroed before the length counter is decremented,
+    /// preventing stale tail data from being exposed by a future length-slot corruption.
+    ///
+    /// For packed element types (`T::BYTES <= 16`), elements in the "boundary" slot (the
+    /// last slot that contains both kept and removed elements) are cleared individually
+    /// using read-modify-write. Slots that are fully removed are zeroed in a single store.
+    pub fn truncate(&self, new_len: usize) -> Result<()>
+    where
+        T: Storable,
+        T::Handler<'a>: Handler<T>,
+    {
+        let old_len = self.len()?;
+        if new_len >= old_len {
+            return Ok(());
+        }
+        let data_start = self.data_slot();
+        if T::BYTES <= 16 {
+            let elems_per_slot = 32 / T::BYTES;
+            // `first_full_tail_slot` is the index of the first slot that contains only
+            // elements being removed (no kept elements). Slots before it may contain a
+            // mix of kept and removed elements and require element-by-element clearing.
+            let first_full_tail_slot = new_len.div_ceil(elems_per_slot);
+
+            // Clear elements in the partial boundary slot (if any) with a single
+            // SLOAD + mask + SSTORE. These elements share the slot with kept elements,
+            // so we compute one combined clear-mask for all removed positions and apply
+            // it in one read-modify-write rather than one per element.
+            let boundary_slot_end = (first_full_tail_slot * elems_per_slot).min(old_len);
+            if boundary_slot_end > new_len {
+                let boundary_slot_addr = data_start
+                    .checked_add(U256::from(new_len / elems_per_slot))
+                    .ok_or(BasePrecompileError::SlotOverflow)?;
+                let current = self.storage.sload(self.address, boundary_slot_addr)?;
+                let mut combined_clear_mask = U256::ZERO;
+                for index in new_len..boundary_slot_end {
+                    let byte_offset = (index % elems_per_slot) * T::BYTES;
+                    combined_clear_mask |= create_element_mask(T::BYTES) << (byte_offset * 8);
+                }
+                self.storage.sstore(
+                    self.address,
+                    boundary_slot_addr,
+                    current & !combined_clear_mask,
+                )?;
+            }
+
+            // Zero all fully-removed tail slots in a single store each.
+            let last_slot = calc_packed_slot_count(old_len, T::BYTES);
+            for slot_idx in first_full_tail_slot..last_slot {
+                let slot_addr = data_start
+                    .checked_add(U256::from(slot_idx))
+                    .ok_or(BasePrecompileError::SlotOverflow)?;
+                self.storage.sstore(self.address, slot_addr, U256::ZERO)?;
+            }
+        } else {
+            // Unpacked types: each element occupies one or more full slots;
+            // delegate to the element handler's delete to zero every occupied slot.
+            for index in new_len..old_len {
+                let mut elem =
+                    Self::try_compute_handler(data_start, self.address, self.storage, index)?;
+                elem.delete()?;
+            }
+        }
+        // Update the length counter only after all vacated slots are cleared.
+        let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
+        length_slot.write(U256::from(new_len))
+    }
+
+    /// Clears the vector, removing all elements and zeroing all data slots.
+    ///
+    /// Equivalent to `truncate(0)`. Matches Solidity's `delete arr` semantics.
+    pub fn clear(&self) -> Result<()>
+    where
+        T: Storable,
+        T::Handler<'a>: Handler<T>,
+    {
+        self.truncate(0)
     }
 }
 
@@ -280,9 +363,9 @@ where
             ));
         }
         let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
-        Ok(self
-            .cache
-            .get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index)))
+        self.cache.get_or_try_insert(&index, || {
+            Self::try_compute_handler(data_start, address, storage, index)
+        })
     }
 
     /// Mutable variant of [`at_with_len`].
@@ -298,9 +381,9 @@ where
             ));
         }
         let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
-        Ok(self.cache.get_or_insert_mut(&index, || {
-            Self::compute_handler(data_start, address, storage, index)
-        }))
+        self.cache.get_or_try_insert_mut(&index, || {
+            Self::try_compute_handler(data_start, address, storage, index)
+        })
     }
 }
 

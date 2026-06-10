@@ -73,6 +73,10 @@ impl<'a, T: StorableType, const N: usize> ArrayHandler<'a, T, N> {
         )
     }
 
+    // Called from `Index` and `IndexMut` impls, which return `&T` / `&mut T` — not `Result`.
+    // The `Index` trait is infallible by design, so error propagation is impossible here.
+    // Overflow is unreachable in practice: `base_slot` is a keccak256 output (never U256::MAX)
+    // and `N` is a compile-time constant bounded by the `storable_arrays!` macro (N ≤ 32).
     #[inline]
     fn compute_handler(
         base_slot: U256,
@@ -83,12 +87,16 @@ impl<'a, T: StorableType, const N: usize> ArrayHandler<'a, T, N> {
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = packing::calc_element_loc(index, T::BYTES);
             (
-                base_slot.checked_add(U256::from(location.offset_slots)).expect("slot overflow"),
+                base_slot
+                    .checked_add(U256::from(location.offset_slots))
+                    .expect("slot overflow: unreachable for keccak-derived slots with N ≤ 32"),
                 LayoutCtx::packed(location.offset_bytes),
             )
         } else {
             (
-                base_slot.checked_add(U256::from(index * T::SLOTS)).expect("slot overflow"),
+                base_slot
+                    .checked_add(U256::from(index * T::SLOTS))
+                    .expect("slot overflow: unreachable for keccak-derived slots with N ≤ 32"),
                 LayoutCtx::FULL,
             )
         };

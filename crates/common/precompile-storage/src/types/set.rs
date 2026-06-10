@@ -112,6 +112,7 @@ where
         storage: crate::StorageCtx<'a>,
     ) -> Self::Handler<'a> {
         SetHandler::new(slot, address, storage)
+            .expect("slot overflow: keccak-derived base slots cannot be U256::MAX")
     }
 }
 
@@ -156,18 +157,16 @@ where
     T: Storable + StorageKey + Eq + Clone + Ord,
 {
     /// Creates a new handler for the set at the given base slot.
-    pub const fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
-        Self {
+    pub fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Result<Self> {
+        let positions_slot =
+            base_slot.checked_add(U256::ONE).ok_or(BasePrecompileError::SlotOverflow)?;
+        Ok(Self {
             values: VecHandler::new(base_slot, address, storage),
-            positions: MappingHandler::new(
-                base_slot.checked_add(U256::ONE).expect("slot overflow"),
-                address,
-                storage,
-            ),
+            positions: MappingHandler::new(positions_slot, address, storage),
             base_slot,
             address,
             storage,
-        }
+        })
     }
 
     /// Returns the base storage slot for this set.
@@ -346,7 +345,7 @@ mod tests {
         let (mut storage, contract_addr) = setup_storage();
         StorageCtx::enter(&mut storage, |ctx| {
             let base = U256::from(500u64);
-            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx).unwrap();
 
             let a = Address::from([0x11; 20]);
             let b = Address::from([0x22; 20]);
@@ -373,7 +372,7 @@ mod tests {
         let (mut storage, contract_addr) = setup_storage();
         StorageCtx::enter(&mut storage, |ctx| {
             let base = U256::from(600u64);
-            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx).unwrap();
 
             let addrs: Vec<Address> = (0..5u8).map(|i| Address::from([i; 20])).collect();
             let set = Set::from(addrs.clone());
@@ -386,7 +385,21 @@ mod tests {
             }
         });
     }
-    /// (`initial_size`, `final_size`) - covers grow, shrink, and equal-size rewrite.
+
+    #[test]
+    fn test_set_transient_methods_return_err() {
+        let (mut storage, contract_addr) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(800u64);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
+
+            assert!(handler.t_read().is_err());
+            assert!(handler.t_write(Set::default()).is_err());
+            assert!(handler.t_delete().is_err());
+        });
+    }
+
+    /// (`initial_size`, `final_size`) -- covers grow, shrink, and equal-size rewrite.
     #[rstest]
     #[case(3, 7)] // grow
     #[case(7, 3)] // shrink
@@ -395,7 +408,7 @@ mod tests {
         let (mut storage, contract_addr) = setup_storage();
         StorageCtx::enter(&mut storage, |ctx| {
             let base = U256::from(700u64);
-            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx).unwrap();
 
             // Use disjoint ranges so first and second share no elements.
             let first: Vec<Address> = (0..initial).map(|i| Address::from([i; 20])).collect();
