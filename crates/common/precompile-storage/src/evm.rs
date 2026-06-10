@@ -156,10 +156,6 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
-        // Checkpoint before the read so that an OOG failure reverts the slot warming.
-        // Without this, `internals.sload` would mark the slot warm in the revm journal
-        // before gas is deducted; a subsequent OOG would leave the spurious warm entry
-        // behind, breaking EIP-2929 cold-slot accounting for any later access.
         let checkpoint = self.internals.checkpoint();
         let result = (|| {
             let s = self
