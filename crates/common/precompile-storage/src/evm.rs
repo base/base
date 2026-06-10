@@ -387,7 +387,7 @@ mod tests {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
         // Large margin covers the stipend guard + cold sstore costs (~2600 gas).
         let gas = gas_params.call_stipend() + 1_000_000;
-        let mut provider = make_evm_provider(&mut ctx, gas_params.clone(), gas, false);
+        let mut provider = make_evm_provider(&mut ctx, gas_params, gas, false);
 
         assert!(provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)).is_ok());
     }
