@@ -1,7 +1,7 @@
 //! ABI dispatch for the `B20Factory` precompile.
 
 use alloy_primitives::Bytes;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
@@ -52,18 +52,22 @@ impl<'a> B20FactoryStorage<'a> {
         match decode_precompile_call!(calldata, IB20Factory::IB20FactoryCalls) {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
-                let variant = B20Variant::from_abi(call.variant);
-                let token = self.create_b20_with_observer(caller, call, observer.clone())?;
-                if let Some(variant) = variant {
-                    observer.record_b20_created(variant.as_label());
-                }
+                // abi_decode_validate rejects non-canonical discriminants before dispatch,
+                // so from_abi returning None here would be an internal invariant violation.
+                let variant = B20Variant::from_abi(call.variant).expect(
+                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
+                );
+                let address_hash = ctx.metered_keccak256(&(caller, call.salt).abi_encode())?;
+                let token = self.create_b20_with_observer(call, address_hash, observer.clone())?;
+                observer.record_b20_created(variant.as_label());
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
-                let addr = B20Variant::from_abi(call.variant)
-                    .expect("abi_decode_validate rejects non-canonical discriminants")
-                    .compute_address(call.sender, call.salt)
-                    .0;
+                let v = B20Variant::from_abi(call.variant).expect(
+                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
+                );
+                let hash = ctx.metered_keccak256(&(call.sender, call.salt).abi_encode())?;
+                let addr = v.compute_address_from_hash(hash).0;
                 Ok(IB20Factory::getB20AddressCall::abi_encode_returns(&addr).into())
             }
             IB20Factory::IB20FactoryCalls::isB20(call) => {

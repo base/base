@@ -1,6 +1,6 @@
 use alloc::{string::ToString, vec::Vec};
 
-use alloy_primitives::{Address, B256, Bytes, U256, address, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Result};
@@ -54,14 +54,19 @@ impl<'a> B20FactoryStorage<'a> {
         caller: Address,
         call: IB20Factory::createB20Call,
     ) -> Result<Address> {
-        self.create_b20_with_observer(caller, call, NoopPrecompileCallObserver)
+        let address_hash = keccak256((caller, call.salt).abi_encode());
+        self.create_b20_with_observer(call, address_hash, NoopPrecompileCallObserver)
     }
 
     /// Creates a token at a deterministic address and records observer-only metrics.
+    ///
+    /// `address_hash` must be `keccak256(abi_encode(caller, call.salt))`. The caller is
+    /// responsible for computing this hash (and charging gas via `ctx.metered_keccak256`
+    /// before calling this method from a dispatch context).
     pub fn create_b20_with_observer<O>(
         &mut self,
-        caller: Address,
         call: IB20Factory::createB20Call,
+        address_hash: B256,
         observer: O,
     ) -> Result<Address>
     where
@@ -1377,6 +1382,57 @@ mod tests {
         assert_eq!(
             event.decimals, 12,
             "B20Created.decimals must equal init.decimals, not any variant constant"
+        );
+    }
+
+    #[test]
+    fn factory_address_hashing_is_metered_for_valid_variant() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let sender = Address::repeat_byte(0x20);
+        let salt = B256::repeat_byte(0x30);
+        let (expected_asset_addr, _) = B20Variant::Asset.compute_address(sender, salt);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            // Valid variant: keccak is charged and the correct address is returned.
+            assert_output(
+                dispatch_factory_success(
+                    ctx,
+                    IB20Factory::getB20AddressCall {
+                        variant: IB20Factory::B20Variant::ASSET,
+                        sender,
+                        salt,
+                    },
+                ),
+                IB20Factory::getB20AddressCall::abi_encode_returns(&expected_asset_addr),
+            );
+        });
+        // One keccak call for the valid getB20Address.
+        assert_eq!(
+            storage.counter_keccak256(),
+            1,
+            "getB20Address must call keccak256 exactly once for a valid variant"
+        );
+
+        // createB20 also meters the keccak hash for valid variants. Verify the token
+        // is created at the same address that getB20Address predicted.
+        storage.reset_counters();
+        storage.set_caller(sender);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let call = create_call(
+                IB20Factory::B20Variant::ASSET,
+                token_params("Metered Token", "MTR"),
+                salt,
+            );
+            assert_output(
+                dispatch_factory_success(ctx, call),
+                IB20Factory::createB20Call::abi_encode_returns(&expected_asset_addr),
+            );
+        });
+        assert_eq!(
+            storage.counter_keccak256(),
+            1,
+            "createB20 must call keccak256 exactly once for a valid variant"
         );
     }
 }

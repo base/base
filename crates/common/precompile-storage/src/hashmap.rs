@@ -29,6 +29,7 @@ pub struct HashMapStorageProvider {
     counter_sload: u64,
     counter_sstore: u64,
     gas_deducted: u64,
+    counter_keccak256: u64,
     snapshots: Vec<Snapshot>,
     gas_params: GasParams,
     state_gas_used: u64,
@@ -73,6 +74,7 @@ impl HashMapStorageProvider {
             counter_sload: 0,
             counter_sstore: 0,
             gas_deducted: 0,
+            counter_keccak256: 0,
             gas_params: GasParams::default(),
             state_gas_used: 0,
             gas_refunded: 0,
@@ -361,7 +363,12 @@ impl HashMapStorageProvider {
         self.gas_deducted
     }
 
-    /// Resets the SLOAD/SSTORE counters (test-utils only).
+    /// Returns the number of times [`PrecompileStorageProvider::metered_keccak256`] was called.
+    pub const fn counter_keccak256(&self) -> u64 {
+        self.counter_keccak256
+    }
+
+    /// Resets the SLOAD/SSTORE/keccak256 counters (test-utils only).
     pub const fn reset_counters(&mut self) {
         self.counter_sload = 0;
         self.counter_sstore = 0;
