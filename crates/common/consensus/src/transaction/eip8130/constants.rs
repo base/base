@@ -10,10 +10,9 @@ use alloy_primitives::{Address, U256, address};
 /// is type-anchored (per repo convention: "the public API exports types, not loose
 /// functions").
 ///
-/// Spec status (as of writing): EIP-8130 is in Draft. Several numeric constants
-/// are marked TBD in the spec; concrete values used here are project choices
-/// that can be renumbered when the spec finalizes.
-/// for rationale.
+/// Spec status (as of writing): EIP-8130 is in Draft. The transaction and payer
+/// type bytes below are pinned to the EIP-8130 constant-table values
+/// (`AA_TX_TYPE = 0x7B`, `AA_PAYER_TYPE = 0x7C`).
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug)]
@@ -22,21 +21,18 @@ pub struct Eip8130Constants;
 impl Eip8130Constants {
     /// [EIP-2718] transaction type byte for AA transactions (`EIP8130_TX_TYPE`).
     ///
-    /// Spec value: TBD. We use `0x7D`, picked to live in the high "OP-style"
-    /// type-byte range adjacent to (but distinct from) the deposit type `0x7E`,
-    /// and to be easy to renumber once the EIP finalizes.
+    /// Pinned to the EIP-8130 constant-table value `AA_TX_TYPE = 0x7B`.
     ///
     /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
-    pub const EIP8130_TX_TYPE: u8 = 0x7D;
+    pub const EIP8130_TX_TYPE: u8 = 0x7B;
 
     /// Magic prefix byte for payer signature domain separation (`EIP8130_PAYER_TYPE`).
     ///
     /// Used in the payer signature preimage:
     /// `keccak256(EIP8130_PAYER_TYPE || rlp([...fields through calls...]))`.
     ///
-    /// Spec value: TBD. We use `0xFA`, distinct from any registered EIP-2718
-    /// transaction type byte to prevent cross-domain reuse.
-    pub const EIP8130_PAYER_TYPE: u8 = 0xFA;
+    /// Pinned to the EIP-8130 constant-table value `AA_PAYER_TYPE = 0x7C`.
+    pub const EIP8130_PAYER_TYPE: u8 = 0x7C;
 
     /// Base intrinsic gas cost for any AA transaction (`EIP8130_BASE_COST`).
     pub const EIP8130_BASE_COST: u64 = 15_000;
@@ -91,14 +87,16 @@ impl Eip8130Constants {
     /// `actor_change` operation byte: revoke an existing actor.
     pub const ACTOR_CHANGE_REVOKE: u8 = 0x02;
 
-    /// Lower-bound verifier address. The `ECRECOVER_VERIFIER` native is fixed at
-    /// `address(1)`; verifier addresses smaller than this are reserved.
-    pub const ECRECOVER_VERIFIER: Address = address!("0x0000000000000000000000000000000000000001");
+    /// Lower-bound authenticator address. The `ECRECOVER_AUTHENTICATOR` native is fixed at
+    /// `address(1)`; authenticator addresses smaller than this are reserved.
+    pub const ECRECOVER_AUTHENTICATOR: Address =
+        address!("0x0000000000000000000000000000000000000001");
 
-    /// Sentinel verifier address indicating an actor slot has been revoked
+    /// Sentinel authenticator address indicating an actor slot has been revoked
     /// (`type(uint160).max`). Submitting authentication data prefixed with this
-    /// verifier MUST be rejected.
-    pub const REVOKED_VERIFIER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
+    /// authenticator MUST be rejected.
+    pub const REVOKED_AUTHENTICATOR: Address =
+        address!("0xffffffffffffffffffffffffffffffffffffffff");
 
     /// Maximum number of `ConfigChange` entries the mempool accepts in a single
     /// transaction. The spec marks this as a node policy ("Nodes SHOULD enforce

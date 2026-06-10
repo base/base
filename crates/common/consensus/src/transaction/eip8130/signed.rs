@@ -40,12 +40,12 @@ pub struct Eip8130Signed {
     /// On the EOA path (`tx.sender == None`) this is a 65-byte ECDSA signature
     /// (`r || s || v`) over [`TxEip8130::sender_signature_hash`].
     /// On the configured-actor path (`tx.sender == Some(_)`) this is
-    /// `verifier(20) || verifier_data`.
+    /// `authenticator(20) || authenticator_data`.
     sender_auth: Bytes,
     /// Payer authentication payload, or empty for self-pay.
     ///
     /// When `tx.payer.is_some()` this carries the payer's authorization,
-    /// formatted as `verifier(20) || verifier_data` and validated against
+    /// formatted as `authenticator(20) || authenticator_data` and validated against
     /// [`TxEip8130::payer_signature_hash`] (with the resolved sender substituted).
     /// When `tx.payer.is_none()` this is empty.
     payer_auth: Bytes,

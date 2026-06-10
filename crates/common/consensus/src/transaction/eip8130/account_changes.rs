@@ -78,9 +78,9 @@ impl Scope {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct InitialActor {
-    /// Address of the verifier contract (e.g. an ERC-1271 verifier).
-    pub verifier: Address,
-    /// Actor identifier passed to the verifier.
+    /// Address of the authenticator contract (e.g. an ERC-1271 authenticator).
+    pub authenticator: Address,
+    /// Actor identifier passed to the authenticator.
     pub actor_id: B256,
     /// Scope bitmask granted to this actor.
     pub scope: Scope,
@@ -124,8 +124,8 @@ impl ActorChangeType {
 pub struct ActorChange {
     /// Operation (authorize / revoke).
     pub change_type: ActorChangeType,
-    /// Verifier contract address.
-    pub verifier: Address,
+    /// Authenticator contract address.
+    pub authenticator: Address,
     /// Actor identifier.
     pub actor_id: B256,
     /// Scope bitmask (relevant for `Authorize`; ignored on `Revoke`).
@@ -135,7 +135,7 @@ pub struct ActorChange {
 impl ActorChange {
     fn rlp_fields_len(&self) -> usize {
         self.change_type.op_byte().length()
-            + self.verifier.length()
+            + self.authenticator.length()
             + self.actor_id.length()
             + self.scope.length()
     }
@@ -147,7 +147,7 @@ impl Encodable for ActorChange {
         let header = Header { list: true, payload_length: fields_len };
         header.encode(out);
         self.change_type.op_byte().encode(out);
-        self.verifier.encode(out);
+        self.authenticator.encode(out);
         self.actor_id.encode(out);
         self.scope.encode(out);
     }
@@ -168,7 +168,7 @@ impl Decodable for ActorChange {
         let op = u8::decode(buf)?;
         let change_type = ActorChangeType::from_op_byte(op)
             .ok_or(alloy_rlp::Error::Custom("invalid ActorChange op byte"))?;
-        let verifier = Address::decode(buf)?;
+        let authenticator = Address::decode(buf)?;
         let actor_id = B256::decode(buf)?;
         let scope = Scope::decode(buf)?;
         let consumed = started_len - buf.len();
@@ -178,7 +178,7 @@ impl Decodable for ActorChange {
                 got: consumed,
             });
         }
-        Ok(Self { change_type, verifier, actor_id, scope })
+        Ok(Self { change_type, authenticator, actor_id, scope })
     }
 }
 
@@ -333,7 +333,7 @@ mod tests {
     fn actor_change_rlp_roundtrip() {
         let oc = ActorChange {
             change_type: ActorChangeType::Authorize,
-            verifier: address!("0x00000000000000000000000000000000000000aa"),
+            authenticator: address!("0x00000000000000000000000000000000000000aa"),
             actor_id: b256!("0x1111111111111111111111111111111111111111111111111111111111111111"),
             scope: Scope(Eip8130Constants::SCOPE_SIGNATURE | Eip8130Constants::SCOPE_SENDER),
         };
@@ -350,7 +350,7 @@ mod tests {
             user_salt: b256!("0x2222222222222222222222222222222222222222222222222222222222222222"),
             code: bytes!("6080604052"),
             initial_actors: vec![InitialActor {
-                verifier: address!("0x00000000000000000000000000000000000000bb"),
+                authenticator: address!("0x00000000000000000000000000000000000000bb"),
                 actor_id: b256!(
                     "0x3333333333333333333333333333333333333333333333333333333333333333"
                 ),
@@ -372,7 +372,7 @@ mod tests {
             sequence: 7,
             actor_changes: vec![ActorChange {
                 change_type: ActorChangeType::Revoke,
-                verifier: address!("0x00000000000000000000000000000000000000cc"),
+                authenticator: address!("0x00000000000000000000000000000000000000cc"),
                 actor_id: b256!(
                     "0x4444444444444444444444444444444444444444444444444444444444444444"
                 ),

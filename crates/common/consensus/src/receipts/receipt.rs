@@ -38,7 +38,7 @@ pub enum BaseReceipt<T = Log> {
     #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
     Deposit(DepositReceipt<T>),
     /// EIP-8130 Account Abstraction receipt
-    #[cfg_attr(feature = "serde", serde(rename = "0x7d", alias = "0x7D"))]
+    #[cfg_attr(feature = "serde", serde(rename = "0x7b", alias = "0x7B"))]
     Eip8130(Receipt<T>),
 }
 

@@ -404,7 +404,7 @@ mod tests {
         };
         let rpc_tx = Transaction::from_transaction(recovered, tx_info);
 
-        assert_eq!(rpc_tx.ty(), 0x7D);
+        assert_eq!(rpc_tx.ty(), 0x7B);
         assert_eq!(rpc_tx.deposit_nonce, None);
         assert_eq!(rpc_tx.deposit_receipt_version, None);
         assert_eq!(rpc_tx.inner.inner.signer(), Address::with_last_byte(0x11));
@@ -412,7 +412,7 @@ mod tests {
         let serialized = serde_json::to_string(&rpc_tx).expect("serialize eip-8130 rpc tx");
         let value: serde_json::Value = serde_json::from_str(&serialized).unwrap();
 
-        assert_eq!(value["type"], "0x7d", "tx type byte exposed in RPC response");
+        assert_eq!(value["type"], "0x7b", "tx type byte exposed in RPC response");
         assert_eq!(value["from"], "0x0000000000000000000000000000000000000011");
         assert_eq!(value["blockNumber"], "0x64");
         assert_eq!(value["transactionIndex"], "0x0");

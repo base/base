@@ -191,7 +191,7 @@ where
     /// - ensures tx is not eip4844
     /// - for eip8130 (account abstraction): rejects local-origin submissions and enforces the
     ///   structural admission gate from [`Self::validate_eip8130_structural`] before the inner
-    ///   Eth checks; verifier dispatch, account state lookups, and fork gating are not yet
+    ///   Eth checks; authenticator dispatch, account state lookups, and fork gating are not yet
     ///   performed
     /// - ensures that the account has enough balance to cover the L1 gas cost
     pub async fn validate_one_with_state(
@@ -217,7 +217,7 @@ where
     }
 
     /// Runs the mempool admission checks that apply to EIP-8130 (account
-    /// abstraction) transactions without requiring verifier dispatch, account
+    /// abstraction) transactions without requiring authenticator dispatch, account
     /// state lookups, or fork activation. Mirrors the structural invariants
     /// listed in EIP-8130 § Validation and § Nonce-Free Mode.
     fn validate_eip8130_structural(
@@ -243,7 +243,7 @@ where
 
     /// Checks the `sender_auth` field carries enough bytes for either the EOA
     /// recovery path (65-byte signature) or the configured-actor auth path
-    /// (`verifier_address || verifier_payload`) and that the verifier address
+    /// (`authenticator_address || authenticator_payload`) and that the authenticator address
     /// is not the sentinel revoked marker.
     fn validate_sender_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
         let auth = signed.sender_auth();
@@ -256,12 +256,12 @@ where
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
         } else {
-            // Configured-actor path: leading 20 bytes are the verifier address.
+            // Configured-actor path: leading 20 bytes are the authenticator address.
             if auth.len() < 20 {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
-            let verifier = Address::from_slice(&auth[..20]);
-            if Self::verifier_out_of_range(&verifier) {
+            let authenticator = Address::from_slice(&auth[..20]);
+            if Self::authenticator_out_of_range(&authenticator) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
         }
@@ -269,7 +269,7 @@ where
     }
 
     /// Ensures `payer_auth` is present iff a `payer` is set, and that its
-    /// verifier prefix sits in the live policy range (above the reserved
+    /// authenticator prefix sits in the live policy range (above the reserved
     /// floor, below the revoked sentinel).
     fn validate_payer_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
         let payer_present = signed.tx().payer.is_some();
@@ -282,29 +282,29 @@ where
             if auth.len() < 20 {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
-            let verifier = Address::from_slice(&auth[..20]);
-            if Self::verifier_out_of_range(&verifier) {
+            let authenticator = Address::from_slice(&auth[..20]);
+            if Self::authenticator_out_of_range(&authenticator) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
         }
         Ok(())
     }
 
-    /// Returns `true` when `verifier` falls outside the live mempool policy
+    /// Returns `true` when `authenticator` falls outside the live mempool policy
     /// range. Mirrors the check in [`Self::validate_actor_iter`] so all three
     /// auth surfaces (`sender_auth`, `payer_auth`, `cfg.auth`, and per-actor
-    /// verifiers) reject the reserved `< ECRECOVER_VERIFIER` window and the
-    /// `REVOKED_VERIFIER` sentinel identically.
-    fn verifier_out_of_range(verifier: &Address) -> bool {
-        *verifier < Eip8130Constants::ECRECOVER_VERIFIER
-            || *verifier == Eip8130Constants::REVOKED_VERIFIER
+    /// authenticators) reject the reserved `< ECRECOVER_AUTHENTICATOR` window and the
+    /// `REVOKED_AUTHENTICATOR` sentinel identically.
+    fn authenticator_out_of_range(authenticator: &Address) -> bool {
+        *authenticator < Eip8130Constants::ECRECOVER_AUTHENTICATOR
+            || *authenticator == Eip8130Constants::REVOKED_AUTHENTICATOR
     }
 
     /// Walks `account_changes` and enforces structural invariants:
     /// at most one `Create` (and only as the first entry), at most one
     /// `Delegation`, `ConfigChange` count capped at
     /// [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`], chain-binding on
-    /// config changes, and per-entry well-formedness. Verifier-address bounds
+    /// config changes, and per-entry well-formedness. Authenticator-address bounds
     /// and actor-id uniqueness are enforced on both `Create.initial_actors`
     /// and `ConfigChange.actor_changes` via
     /// [`Self::validate_actor_iter`].
@@ -326,7 +326,7 @@ where
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                     Self::validate_actor_iter(&create.initial_actors, |o| {
-                        (&o.verifier, &o.actor_id)
+                        (&o.authenticator, &o.actor_id)
                     })?;
                 }
                 AccountChange::ConfigChange(cfg) => {
@@ -340,11 +340,13 @@ where
                     if cfg.auth.len() < 20 {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    let cfg_verifier = Address::from_slice(&cfg.auth[..20]);
-                    if Self::verifier_out_of_range(&cfg_verifier) {
+                    let cfg_authenticator = Address::from_slice(&cfg.auth[..20]);
+                    if Self::authenticator_out_of_range(&cfg_authenticator) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    Self::validate_actor_iter(&cfg.actor_changes, |o| (&o.verifier, &o.actor_id))?;
+                    Self::validate_actor_iter(&cfg.actor_changes, |o| {
+                        (&o.authenticator, &o.actor_id)
+                    })?;
                 }
                 AccountChange::Delegation(_) => {
                     delegation_count += 1;
@@ -360,9 +362,9 @@ where
     /// Shared validation for any actor-bearing slice (`initial_actors` on
     /// `Create`, `actor_changes` on `ConfigChange`). Enforces that the slice
     /// length is bounded by [`Eip8130Constants::MAX_ACTORS_PER_ENTRY`] (anti-DoS
-    /// cap on memory + work spent on duplicate detection), that every verifier
-    /// address is at or above the `ECRECOVER_VERIFIER` floor, never equals the
-    /// `REVOKED_VERIFIER` sentinel, and that no two entries share the same
+    /// cap on memory + work spent on duplicate detection), that every authenticator
+    /// address is at or above the `ECRECOVER_AUTHENTICATOR` floor, never equals the
+    /// `REVOKED_AUTHENTICATOR` sentinel, and that no two entries share the same
     /// `actor_id`.
     fn validate_actor_iter<T>(
         actors: &[T],
@@ -373,8 +375,8 @@ where
         }
         let mut seen = BTreeSet::new();
         for entry in actors {
-            let (verifier, actor_id) = project(entry);
-            if Self::verifier_out_of_range(verifier) {
+            let (authenticator, actor_id) = project(entry);
+            if Self::authenticator_out_of_range(authenticator) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
             if !seen.insert(*actor_id) {
@@ -498,9 +500,9 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        AccountChange, BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, ConfigChange,
-        CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor, ActorChange,
-        ActorChangeType, Scope, TxDeposit, TxEip8130,
+        AccountChange, ActorChange, ActorChangeType, BasePrimitives, BaseTransactionSigned,
+        BaseTxEnvelope, ConfigChange, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed,
+        InitialActor, Scope, TxDeposit, TxEip8130,
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
@@ -763,19 +765,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_configured_actor_with_revoked_verifier() {
+    fn rejects_eip8130_configured_actor_with_revoked_authenticator() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
-        // 20-byte verifier prefix == REVOKED_VERIFIER, followed by an empty payload.
-        let auth = Bytes::from(Eip8130Constants::REVOKED_VERIFIER.to_vec());
+        // 20-byte authenticator prefix == REVOKED_AUTHENTICATOR, followed by an empty payload.
+        let auth = Bytes::from(Eip8130Constants::REVOKED_AUTHENTICATOR.to_vec());
         let signed = Eip8130Signed::new(tx, auth, Bytes::new());
         assert_unsupported(TestValidator::validate_sender_auth(&signed));
     }
 
-    // Regression: configured-actor path must reject the reserved verifier
-    // range below `ECRECOVER_VERIFIER`, matching `validate_actor_iter`.
+    // Regression: configured-actor path must reject the reserved authenticator
+    // range below `ECRECOVER_AUTHENTICATOR`, matching `validate_actor_iter`.
     // `address(0)` is the canonical reserved value.
     #[test]
-    fn rejects_eip8130_configured_actor_with_reserved_verifier() {
+    fn rejects_eip8130_configured_actor_with_reserved_authenticator() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let auth = Bytes::from(Address::ZERO.to_vec());
         let signed = Eip8130Signed::new(tx, auth, Bytes::new());
@@ -805,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_payer_verifier_reserved() {
+    fn rejects_eip8130_payer_authenticator_reserved() {
         let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(
             tx,
@@ -816,25 +818,25 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_payer_verifier_revoked() {
+    fn rejects_eip8130_payer_authenticator_revoked() {
         let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(
             tx,
             Bytes::from_static(&[0u8; 65]),
-            Bytes::from(Eip8130Constants::REVOKED_VERIFIER.to_vec()),
+            Bytes::from(Eip8130Constants::REVOKED_AUTHENTICATOR.to_vec()),
         );
         assert_unsupported(TestValidator::validate_payer_auth(&signed));
     }
 
-    /// Returns a verifier address comfortably above the `ECRECOVER_VERIFIER` floor
-    /// and distinct from the `REVOKED_VERIFIER` sentinel.
-    fn ok_verifier() -> Address {
+    /// Returns a authenticator address comfortably above the `ECRECOVER_AUTHENTICATOR` floor
+    /// and distinct from the `REVOKED_AUTHENTICATOR` sentinel.
+    fn ok_authenticator() -> Address {
         Address::repeat_byte(0x42)
     }
 
     fn make_initial_actor(actor_id_byte: u8) -> InitialActor {
         InitialActor {
-            verifier: ok_verifier(),
+            authenticator: ok_authenticator(),
             actor_id: B256::repeat_byte(actor_id_byte),
             scope: Scope::UNRESTRICTED,
         }
@@ -921,9 +923,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_create_with_actor_verifier_below_floor() {
+    fn rejects_eip8130_create_with_actor_authenticator_below_floor() {
         let mut entry = make_valid_create_entry();
-        entry.initial_actors[0].verifier = Address::ZERO;
+        entry.initial_actors[0].authenticator = Address::ZERO;
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
@@ -935,9 +937,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_create_with_revoked_actor_verifier() {
+    fn rejects_eip8130_create_with_revoked_actor_authenticator() {
         let mut entry = make_valid_create_entry();
-        entry.initial_actors[0].verifier = Eip8130Constants::REVOKED_VERIFIER;
+        entry.initial_actors[0].authenticator = Eip8130Constants::REVOKED_AUTHENTICATOR;
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
@@ -986,7 +988,7 @@ mod tests {
             chain_id: 0,
             sequence: 0,
             actor_changes: Vec::new(),
-            auth: Bytes::from(ok_verifier().to_vec()),
+            auth: Bytes::from(ok_authenticator().to_vec()),
         }
     }
 
@@ -1021,13 +1023,13 @@ mod tests {
         ));
     }
 
-    // Mirrors the `sender_auth`/`payer_auth` rejection of a `REVOKED_VERIFIER`
-    // prefix: the per-`ConfigChange` `auth` blob must use a live verifier so the
+    // Mirrors the `sender_auth`/`payer_auth` rejection of a `REVOKED_AUTHENTICATOR`
+    // prefix: the per-`ConfigChange` `auth` blob must use a live authenticator so the
     // mempool never propagates a config-change scoped to a revoked authority.
     #[test]
-    fn rejects_eip8130_config_change_with_revoked_verifier_in_auth() {
+    fn rejects_eip8130_config_change_with_revoked_authenticator_in_auth() {
         let cfg = ConfigChange {
-            auth: Bytes::from(Eip8130Constants::REVOKED_VERIFIER.to_vec()),
+            auth: Bytes::from(Eip8130Constants::REVOKED_AUTHENTICATOR.to_vec()),
             ..make_valid_config_change()
         };
         let tx = TxEip8130 {
@@ -1041,11 +1043,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_config_change_with_revoked_verifier_in_actor_changes() {
+    fn rejects_eip8130_config_change_with_revoked_authenticator_in_actor_changes() {
         let cfg = ConfigChange {
             actor_changes: vec![ActorChange {
                 change_type: ActorChangeType::Revoke,
-                verifier: Eip8130Constants::REVOKED_VERIFIER,
+                authenticator: Eip8130Constants::REVOKED_AUTHENTICATOR,
                 actor_id: B256::repeat_byte(0x01),
                 scope: Scope::UNRESTRICTED,
             }],
@@ -1066,7 +1068,7 @@ mod tests {
         let dup_id = B256::repeat_byte(0x07);
         let mk = |id| ActorChange {
             change_type: ActorChangeType::Authorize,
-            verifier: ok_verifier(),
+            authenticator: ok_authenticator(),
             actor_id: id,
             scope: Scope::UNRESTRICTED,
         };
@@ -1089,7 +1091,7 @@ mod tests {
         let actor_changes = (0..(Eip8130Constants::MAX_ACTORS_PER_ENTRY + 1))
             .map(|i| ActorChange {
                 change_type: ActorChangeType::Authorize,
-                verifier: ok_verifier(),
+                authenticator: ok_authenticator(),
                 actor_id: B256::repeat_byte(i as u8),
                 scope: Scope::UNRESTRICTED,
             })
