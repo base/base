@@ -242,6 +242,11 @@ mod tests {
                 BaseUpgrade::Azul,
             ),
             (
+                Chain::base_sepolia(),
+                ChainConfig::sepolia().beryl_timestamp.unwrap(),
+                BaseUpgrade::Beryl,
+            ),
+            (
                 Chain::from_id(ChainConfig::zeronet().chain_id),
                 ChainConfig::zeronet().beryl_timestamp.unwrap(),
                 BaseUpgrade::Beryl,
