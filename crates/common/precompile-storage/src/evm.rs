@@ -129,9 +129,9 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
         // Extract is_cold and clone AccountInfo before releasing the internals borrow.
-        // load_account is sufficient: every caller only reads is_empty_code_hash(), which
-        // inspects code_hash (always eagerly populated) not the bytecode bytes. Using
-        // load_account_code would fetch bytecode from the database unnecessarily.
+        // load_account is sufficient: every caller only needs code_hash — never info.code.
+        // code_hash is always eagerly populated; load_account_code would fetch bytecode from
+        // the database unnecessarily.
         let (info, is_cold) = {
             let state_load = self
                 .internals
