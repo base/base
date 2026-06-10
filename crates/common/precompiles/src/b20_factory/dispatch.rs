@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::StorageCtx;
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -26,6 +26,12 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
+        // All factory selectors are nonpayable: reject any call that attaches ETH.
+        // The guard fires before calldata-cost deduction so value-bearing calls pay
+        // zero gas before reverting, matching Solidity's nonpayable semantics.
+        if !ctx.call_value().is_zero() {
+            return ctx.error_result(BasePrecompileError::revert(IB20Factory::NonPayable {}));
+        }
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
