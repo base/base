@@ -9,3 +9,4 @@ interface.
 ## Backends
 
 - `MockZkProver`: instant placeholder proofs for exercising the full worker flow.
+- `DryRunZkProver`: instant completion with an empty proof payload.
