@@ -85,11 +85,18 @@ where
         if T::BYTES <= 16 {
             let slot_count = calc_packed_slot_count(length, T::BYTES);
             for slot_idx in 0..slot_count {
-                storage.store(data_start + U256::from(slot_idx), U256::ZERO)?;
+                storage.store(
+                    data_start
+                        .checked_add(U256::from(slot_idx))
+                        .ok_or(BasePrecompileError::SlotOverflow)?,
+                    U256::ZERO,
+                )?;
             }
         } else {
             for elem_idx in 0..length {
-                let elem_slot = data_start + U256::from(elem_idx * T::SLOTS);
+                let elem_slot = data_start
+                    .checked_add(U256::from(elem_idx * T::SLOTS))
+                    .ok_or(BasePrecompileError::SlotOverflow)?;
                 T::delete(storage, elem_slot, LayoutCtx::FULL)?;
             }
         }
@@ -191,11 +198,14 @@ where
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = calc_element_loc(index, T::BYTES);
             (
-                data_start + U256::from(location.offset_slots),
+                data_start.checked_add(U256::from(location.offset_slots)).expect("slot overflow"),
                 LayoutCtx::packed(location.offset_bytes),
             )
         } else {
-            (data_start + U256::from(index * T::SLOTS), LayoutCtx::FULL)
+            (
+                data_start.checked_add(U256::from(index * T::SLOTS)).expect("slot overflow"),
+                LayoutCtx::FULL,
+            )
         };
         T::handle(slot, layout_ctx, address, storage)
     }
@@ -400,7 +410,9 @@ where
     let mut current_offset = 0;
 
     for slot_idx in 0..slot_count {
-        let slot_addr = data_start + U256::from(slot_idx);
+        let slot_addr = data_start
+            .checked_add(U256::from(slot_idx))
+            .ok_or(BasePrecompileError::SlotOverflow)?;
         let slot_value = storage.load(slot_addr)?;
         let slot_packed = PackedSlot(slot_value);
 
@@ -439,7 +451,9 @@ where
     let slot_count = calc_packed_slot_count(elements.len(), byte_count);
 
     for slot_idx in 0..slot_count {
-        let slot_addr = data_start + U256::from(slot_idx);
+        let slot_addr = data_start
+            .checked_add(U256::from(slot_idx))
+            .ok_or(BasePrecompileError::SlotOverflow)?;
         let start_elem = slot_idx * elements_per_slot;
         let end_elem = (start_elem + elements_per_slot).min(elements.len());
         let slot_value = build_packed_slot(&elements[start_elem..end_elem], byte_count)?;
@@ -469,7 +483,9 @@ where
 {
     let mut result = Vec::new();
     for index in 0..length {
-        let elem_slot = data_start + U256::from(index * T::SLOTS);
+        let elem_slot = data_start
+            .checked_add(U256::from(index * T::SLOTS))
+            .ok_or(BasePrecompileError::SlotOverflow)?;
         result.push(T::load(storage, elem_slot, LayoutCtx::FULL)?);
     }
     Ok(result)
@@ -481,7 +497,9 @@ where
     S: StorageOps,
 {
     for (idx, elem) in elements.iter().enumerate() {
-        let elem_slot = data_start + U256::from(idx * T::SLOTS);
+        let elem_slot = data_start
+            .checked_add(U256::from(idx * T::SLOTS))
+            .ok_or(BasePrecompileError::SlotOverflow)?;
         elem.store(storage, elem_slot, LayoutCtx::FULL)?;
     }
     Ok(())
