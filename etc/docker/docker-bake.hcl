@@ -7,7 +7,7 @@ variable "ZK_PROVER_PROFILE" {
 }
 
 variable "RUST_VERSION" {
-  default = "1.93"
+  default = "1.94.1"
 }
 
 variable "BASE_SUCCINCT_ELF_REQUIRE" {
