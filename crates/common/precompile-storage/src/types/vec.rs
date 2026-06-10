@@ -167,13 +167,6 @@ where
     /// return the cached result for free.
     #[inline]
     pub fn data_slot(&self) -> Result<U256> {
-        self.cached_data_start()
-    }
-
-    /// Returns `keccak256(len_slot)`, computing and metering it on first call and
-    /// returning the cached value on all subsequent calls.
-    #[inline]
-    fn cached_data_start(&self) -> Result<U256> {
         if let Some(&cached) = self.data_start.get() {
             return Ok(cached);
         }
@@ -225,7 +218,7 @@ where
         if index >= self.len()? {
             return Ok(None);
         }
-        let data_start = self.cached_data_start()?;
+        let data_start = self.data_slot()?;
         let (address, storage) = (self.address, self.storage);
         Ok(Some(self.cache.get_or_insert(&index, || {
             Self::compute_handler(data_start, address, storage, index)
@@ -244,7 +237,7 @@ where
             return Err(BasePrecompileError::Fatal("Vec is at max capacity".into()));
         }
         let mut elem_slot =
-            Self::compute_handler(self.cached_data_start()?, self.address, self.storage, length);
+            Self::compute_handler(self.data_slot()?, self.address, self.storage, length);
         elem_slot.write(value)?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
         length_slot.write(U256::from(length + 1))
@@ -263,7 +256,7 @@ where
         }
         let last_index = length - 1;
         let mut elem_slot = Self::compute_handler(
-            self.cached_data_start()?,
+            self.data_slot()?,
             self.address,
             self.storage,
             last_index,
@@ -292,7 +285,7 @@ where
                 "vec index out of bounds: position invariant violated".into(),
             ));
         }
-        let data_start = self.cached_data_start()?;
+        let data_start = self.data_slot()?;
         let (address, storage) = (self.address, self.storage);
         Ok(self.cache.get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index)))
     }
@@ -309,7 +302,7 @@ where
                 "vec index out of bounds: position invariant violated".into(),
             ));
         }
-        let data_start = self.cached_data_start()?;
+        let data_start = self.data_slot()?;
         let (address, storage) = (self.address, self.storage);
         Ok(self.cache.get_or_insert_mut(&index, || Self::compute_handler(data_start, address, storage, index)))
     }
