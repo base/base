@@ -60,35 +60,21 @@ impl Eip8130Contracts {
     // Account implementations (init code embeds `ACCOUNT_CONFIG`)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Default wallet implementation auto-delegated to EOAs (`DEFAULT_ACCOUNT_ADDRESS`).
+    /// Default wallet implementation, used as the target of default EOA delegation.
     pub const DEFAULT_ACCOUNT: Address = address!("0x124b52d5D57a76ed064c414975beA11Beffe0251");
 
     /// keccak256 of the `DEFAULT_ACCOUNT` deployment init code.
     pub const DEFAULT_ACCOUNT_INIT_CODE_HASH: B256 =
         b256!("0xcabcfd4783f18c6b043f02dbea18dc611fb9fec737477884620a83e2de25c898");
 
-    /// Wallet variant that blocks ETH transfers when locked (higher mempool rate limits).
+    /// Wallet variant that blocks ETH transfers when locked, granting higher
+    /// EIP-8130 mempool access (rate limits).
     pub const DEFAULT_HIGH_RATE_ACCOUNT: Address =
         address!("0x13dD0F222cCF60B7C08a95C2d1FcC85A38DD675D");
 
     /// keccak256 of the `DEFAULT_HIGH_RATE_ACCOUNT` deployment init code.
     pub const DEFAULT_HIGH_RATE_ACCOUNT_INIT_CODE_HASH: B256 =
         b256!("0x9496825d45d5185c429df2ee447c2a47b0b3240ef91bfbfe82a2e55a71815bd3");
-
-    /// Backward-compatible ERC-4337 account implementation.
-    pub const ERC4337_ACCOUNT: Address = address!("0x9748aeA1e1762E50a4d8927777FeDB63A2Ef06C0");
-
-    /// keccak256 of the `ERC4337_ACCOUNT` deployment init code (embeds the
-    /// ERC-4337 v0.7 EntryPoint in addition to `ACCOUNT_CONFIG`).
-    pub const ERC4337_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0xdaf67d73c20c5e9cbd989cc443a9a056cf7d74f27d8dd9f14404adf9558b0287");
-
-    /// UUPS-upgradeable account implementation.
-    pub const UPGRADEABLE_ACCOUNT: Address = address!("0xD9C5aA253332D71Ab471f122307Bc528E861646f");
-
-    /// keccak256 of the `UPGRADEABLE_ACCOUNT` deployment init code.
-    pub const UPGRADEABLE_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0x1669129014aa72a7db02721804318d93b2da8c13427a0b927791ccb4f5f1a91e");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Canonical authenticators (accepted on the EIP-8130 block-validation path)
@@ -112,7 +98,7 @@ impl Eip8130Contracts {
     pub const P256_AUTHENTICATOR_INIT_CODE_HASH: B256 =
         b256!("0x87b9a0dbffce118797e1d133f563f99697396c9b447becb900157f60197adea0");
 
-    /// secp256r1 / P-256 (WebAuthn) authenticator contract.
+    /// secp256r1 / P-256 (`WebAuthn`) authenticator contract.
     pub const WEBAUTHN_AUTHENTICATOR: Address =
         address!("0x1CB75BE39Fb950202BF4239010534B86EdA66c31");
 
@@ -129,30 +115,11 @@ impl Eip8130Contracts {
     pub const DELEGATE_AUTHENTICATOR_INIT_CODE_HASH: B256 =
         b256!("0xa1980fff3bbb86a0d4ea4593ae921c8292f4b33254851db8406b098eb5db49ec");
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Non-canonical (deployed, but MUST NOT be allowlisted)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// Always-valid authenticator — a keyless-relay example/test helper.
-    ///
-    /// **Not canonical.** It authenticates any signature, so allowlisting it on
-    /// the EIP-8130 path would let anyone spend any account that registers it. It
-    /// is deliberately excluded from [`Self::CANONICAL_AUTHENTICATORS`]; the
-    /// constant exists only so the address is documented and explicitly recognized
-    /// as non-canonical.
-    pub const ALWAYS_VALID_AUTHENTICATOR: Address =
-        address!("0x520fBA4840729CB57b3Dc7B40D548AcF354DBA25");
-
-    /// keccak256 of the `ALWAYS_VALID_AUTHENTICATOR` deployment init code.
-    pub const ALWAYS_VALID_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0x7d0e1321e0ef97b569f703a36a202121eb13e3fc50f026a006f016260361da0f");
-
     /// The canonical authenticator allowlist: the deployed `IAuthenticator`
     /// contracts a compliant node accepts on the EIP-8130 block-validation path.
     ///
-    /// Deliberately excludes [`Self::ALWAYS_VALID_AUTHENTICATOR`]. Native EOA
-    /// ecrecover (`address(1)`) is a separate protocol-reserved path and is not a
-    /// deployed contract, so it is not listed here.
+    /// Native EOA ecrecover (`address(1)`) is a separate protocol-reserved path
+    /// and is not a deployed contract, so it is not listed here.
     ///
     /// The exact membership (including whether the native ecrecover sentinel and
     /// the `K1_AUTHENTICATOR` contract are both accepted, and how enshrinement is
@@ -192,11 +159,6 @@ mod tests {
                 Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT,
                 Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT_INIT_CODE_HASH,
             ),
-            (Eip8130Contracts::ERC4337_ACCOUNT, Eip8130Contracts::ERC4337_ACCOUNT_INIT_CODE_HASH),
-            (
-                Eip8130Contracts::UPGRADEABLE_ACCOUNT,
-                Eip8130Contracts::UPGRADEABLE_ACCOUNT_INIT_CODE_HASH,
-            ),
             (Eip8130Contracts::K1_AUTHENTICATOR, Eip8130Contracts::K1_AUTHENTICATOR_INIT_CODE_HASH),
             (
                 Eip8130Contracts::P256_AUTHENTICATOR,
@@ -210,10 +172,6 @@ mod tests {
                 Eip8130Contracts::DELEGATE_AUTHENTICATOR,
                 Eip8130Contracts::DELEGATE_AUTHENTICATOR_INIT_CODE_HASH,
             ),
-            (
-                Eip8130Contracts::ALWAYS_VALID_AUTHENTICATOR,
-                Eip8130Contracts::ALWAYS_VALID_AUTHENTICATOR_INIT_CODE_HASH,
-            ),
         ];
         for (expected, init_code_hash) in cases {
             let derived =
@@ -223,16 +181,11 @@ mod tests {
     }
 
     #[test]
-    fn always_valid_is_not_canonical() {
-        assert!(
-            !Eip8130Contracts::is_canonical_authenticator(
-                &Eip8130Contracts::ALWAYS_VALID_AUTHENTICATOR
-            ),
-            "AlwaysValidAuthenticator must never be in the canonical allowlist"
-        );
+    fn canonical_authenticator_membership() {
         assert_eq!(Eip8130Contracts::CANONICAL_AUTHENTICATORS.len(), 4);
         for auth in Eip8130Contracts::CANONICAL_AUTHENTICATORS {
             assert!(Eip8130Contracts::is_canonical_authenticator(&auth));
         }
+        assert!(!Eip8130Contracts::is_canonical_authenticator(&Address::ZERO));
     }
 }
