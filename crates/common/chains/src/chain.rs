@@ -237,7 +237,10 @@ mod tests {
             base_sepolia_forks[Azul],
             ForkCondition::Timestamp(ChainConfig::sepolia().azul_timestamp.unwrap())
         );
-        assert_eq!(base_sepolia_forks[Beryl], ForkCondition::Never);
+        assert_eq!(
+            base_sepolia_forks[Beryl],
+            ForkCondition::Timestamp(ChainConfig::sepolia().beryl_timestamp.unwrap())
+        );
         assert_eq!(base_sepolia_forks[Cobalt], ForkCondition::Never);
     }
 
@@ -302,6 +305,12 @@ mod tests {
 
     #[test]
     fn is_beryl_active_at_timestamp() {
+        let base_sepolia_forks = ChainUpgrades::sepolia();
+        assert!(!base_sepolia_forks.is_beryl_active_at_timestamp(0));
+        assert!(!base_sepolia_forks.is_beryl_active_at_timestamp(1_781_805_599));
+        assert!(base_sepolia_forks.is_beryl_active_at_timestamp(1_781_805_600));
+        assert!(base_sepolia_forks.is_beryl_active_at_timestamp(u64::MAX));
+
         let zeronet_forks = ChainUpgrades::zeronet();
         assert!(!zeronet_forks.is_beryl_active_at_timestamp(0));
         assert!(!zeronet_forks.is_beryl_active_at_timestamp(1_780_678_799));
