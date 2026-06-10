@@ -19,8 +19,8 @@ use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
     CreateProofRequestOutcome, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
     HeartbeatProofJob, ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
-    RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession,
-    UpdateReceipt, ZkVmKind,
+    RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
+    UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
@@ -1801,4 +1801,221 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
         .await
         .unwrap();
     assert!(final_batch.is_empty());
+}
+
+// ============================================================
+// Worker backend session tracking (`record_worker_proof_session` / `get_active_session`)
+// ============================================================
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_record_worker_proof_session_records_resumes_and_updates() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("session-record-worker", 3))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(claimed.id, id);
+    let session_id = claimed.session_id.clone();
+    let lock_id = claimed.lock_id.expect("claimed job has lock");
+
+    assert!(repo.get_active_session(&session_id, SessionType::Stark).await.unwrap().is_none());
+
+    let recorded = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-record-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "cluster-proof-1".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    let RecordSessionOutcome::Recorded(session) = recorded else {
+        panic!("record should succeed for the current lock holder");
+    };
+    assert_eq!(session.backend_session_id, "cluster-proof-1");
+    assert_eq!(session.status, SessionStatus::Running);
+
+    let active = repo
+        .get_active_session(&session_id, SessionType::Stark)
+        .await
+        .unwrap()
+        .expect("running session should be active");
+    assert_eq!(active.backend_session_id, "cluster-proof-1");
+
+    // Re-recording updates the single active row in place rather than inserting a new one.
+    let updated = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-record-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "cluster-proof-1".to_owned(),
+            status: SessionStatus::Failed,
+            error_message: Some("cluster proof crashed".to_owned()),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(updated, RecordSessionOutcome::Recorded(_)));
+
+    // Terminal sessions are no longer "active", and the failure reason persists.
+    assert!(repo.get_active_session(&session_id, SessionType::Stark).await.unwrap().is_none());
+    let stored = repo
+        .get_session_by_backend_id("cluster-proof-1")
+        .await
+        .unwrap()
+        .expect("session row should persist");
+    assert_eq!(stored.status, SessionStatus::Failed);
+    assert_eq!(stored.error_message.as_deref(), Some("cluster proof crashed"));
+    assert_eq!(stored.proof_request_id, id);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_record_worker_proof_session_guards_ownership() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("session-guard-worker", 3))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    let session_id = claimed.session_id.clone();
+    let lock_id = claimed.lock_id.expect("claimed job has lock");
+
+    let not_found = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: Uuid::new_v4().to_string(),
+            lock_id,
+            worker_id: "session-guard-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(not_found, RecordSessionOutcome::NotFound));
+
+    let stale = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id: Uuid::new_v4(),
+            worker_id: "session-guard-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale, RecordSessionOutcome::StaleLock));
+
+    expire_lock(&pool, id).await;
+    let expired = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id,
+            lock_id,
+            worker_id: "session-guard-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(expired, RecordSessionOutcome::Expired));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_record_worker_proof_session_rejects_not_claimed_and_terminal() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_compressed_jobs(&repo).await;
+
+    // Terminal: a job that exhausts its retry budget fails terminally and can no
+    // longer accept a worker session write.
+    let terminal_id = repo.create(compressed_request()).await.unwrap();
+    let terminal_claim = repo
+        .claim_next_proof_job(compressed_claim("session-terminal-worker", 1))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(terminal_claim.id, terminal_id);
+    let terminal_session_id = terminal_claim.session_id.clone();
+    let terminal_lock = terminal_claim.lock_id.expect("claimed job has lock");
+    expire_lock(&pool, terminal_id).await;
+    let failed = repo
+        .fail_expired_proof_jobs(FailExpiredProofJobs {
+            max_attempts: 1,
+            batch_size: 100,
+            error_message: "retry budget exhausted",
+        })
+        .await
+        .unwrap();
+    assert!(failed.iter().any(|job| job.id == terminal_id), "job should fail terminally");
+
+    let terminal = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: terminal_session_id,
+            lock_id: terminal_lock,
+            worker_id: "session-terminal-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(terminal, RecordSessionOutcome::Terminal));
+
+    // NotClaimed: a job that has been released back to the pending pool (e.g.
+    // after a reclaim) is no longer claimed, so the original holder's token is
+    // rejected before the lock columns are even consulted.
+    let pending_id = repo.create(compressed_request()).await.unwrap();
+    let pending_claim = repo
+        .claim_next_proof_job(compressed_claim("session-pending-worker", 2))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(pending_claim.id, pending_id);
+    let pending_session_id = pending_claim.session_id.clone();
+    let pending_lock = pending_claim.lock_id.expect("claimed job has lock");
+    // Release the job back to PENDING and clear its lock, as a requeue would.
+    sqlx::query(
+        "UPDATE proof_requests
+         SET job_status = 'PENDING', lock_id = NULL, worker_id = NULL, lock_expires_at = NULL
+         WHERE id = $1",
+    )
+    .bind(pending_id)
+    .execute(&pool)
+    .await
+    .expect("release to pending should succeed");
+
+    let not_claimed = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: pending_session_id,
+            lock_id: pending_lock,
+            worker_id: "session-pending-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(not_claimed, RecordSessionOutcome::NotClaimed));
 }
