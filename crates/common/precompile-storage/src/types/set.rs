@@ -134,8 +134,8 @@ where
     fn delete<S: StorageOps>(storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
         let values: Vec<T> = Vec::load(storage, slot, LayoutCtx::FULL)?;
         for value in values {
-            let buf = value.mapping_key_buffer(slot + U256::ONE);
-            let pos_slot = U256::from_be_bytes(storage.metered_keccak256(&buf)?.0);
+            let pos_slot =
+                U256::from_be_bytes(value.metered_mapping_slot(slot + U256::ONE, storage)?.0);
             <U256 as Storable>::delete(storage, pos_slot, LayoutCtx::FULL)?;
         }
         <Vec<T> as Storable>::delete(storage, slot, ctx)

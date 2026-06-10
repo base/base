@@ -178,6 +178,14 @@ impl StorageKey for String {
 
 // -- HELPER FUNCTIONS ---------------------------------------------------------
 
+/// Computes keccak256 of `base_slot` (as 32-byte big-endian) and charges the appropriate gas.
+///
+/// Returns the slot where long-string/bytes data begins, following the Solidity layout.
+#[inline]
+fn calc_data_slot<S: StorageOps>(storage: &S, base_slot: U256) -> Result<U256> {
+    Ok(U256::from_be_bytes(storage.metered_keccak256(&base_slot.to_be_bytes::<32>())?.0))
+}
+
 #[inline]
 fn load_bytes_like<T, S, F>(storage: &S, base_slot: U256, into: F) -> Result<T>
 where
@@ -189,8 +197,7 @@ where
     let length = calc_string_length(base_value, is_long)?;
 
     if is_long {
-        let slot_start =
-            U256::from_be_bytes(storage.metered_keccak256(&base_slot.to_be_bytes::<32>())?.0);
+        let slot_start = calc_data_slot(storage, base_slot)?;
         let chunks = calc_chunks(length);
         let mut data = Vec::new();
 
@@ -216,8 +223,7 @@ fn store_bytes_like<S: StorageOps>(bytes: &[u8], storage: &mut S, base_slot: U25
         storage.store(base_slot, encode_short_string(bytes))
     } else {
         storage.store(base_slot, encode_long_string_length(length))?;
-        let slot_start =
-            U256::from_be_bytes(storage.metered_keccak256(&base_slot.to_be_bytes::<32>())?.0);
+        let slot_start = calc_data_slot(storage, base_slot)?;
         let chunks = calc_chunks(length);
 
         for i in 0..chunks {
@@ -241,8 +247,7 @@ fn delete_bytes_like<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<
 
     if is_long {
         let length = calc_string_length(base_value, true)?;
-        let slot_start =
-            U256::from_be_bytes(storage.metered_keccak256(&base_slot.to_be_bytes::<32>())?.0);
+        let slot_start = calc_data_slot(storage, base_slot)?;
         let chunks = calc_chunks(length);
         for i in 0..chunks {
             storage.store(slot_start + U256::from(i), U256::ZERO)?;
@@ -302,11 +307,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::{hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx};
-
-    fn calc_data_slot(base_slot: U256) -> U256 {
-        U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0)
-    }
+    use crate::{hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx, types::Slot};
 
     fn arb_safe_slot() -> impl Strategy<Value = U256> {
         any::<[u64; 4]>()
@@ -339,10 +340,14 @@ mod tests {
 
     #[test]
     fn test_calc_data_slot_matches_manual_keccak() {
-        let base_slot = U256::from(42u64);
-        let data_slot = calc_data_slot(base_slot);
-        let expected = U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0);
-        assert_eq!(data_slot, expected);
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base_slot = U256::from(42u64);
+            let slot = Slot::<U256>::new(base_slot, address, ctx);
+            let data_slot = calc_data_slot(&slot, base_slot).unwrap();
+            let expected = U256::from_be_bytes(keccak256(base_slot.to_be_bytes::<32>()).0);
+            assert_eq!(data_slot, expected);
+        });
     }
 
     #[test]

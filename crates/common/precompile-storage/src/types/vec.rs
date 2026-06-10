@@ -47,8 +47,7 @@ where
             return Ok(Self::new());
         }
 
-        let data_start =
-            U256::from_be_bytes(storage.metered_keccak256(&len_slot.to_be_bytes::<32>())?.0);
+        let data_start = calc_data_slot(storage, len_slot)?;
         if T::BYTES <= 16 {
             load_packed_elements(storage, data_start, length, T::BYTES)
         } else {
@@ -64,8 +63,7 @@ where
             return Ok(());
         }
 
-        let data_start =
-            U256::from_be_bytes(storage.metered_keccak256(&len_slot.to_be_bytes::<32>())?.0);
+        let data_start = calc_data_slot(storage, len_slot)?;
         if T::BYTES <= 16 {
             store_packed_elements(self, storage, data_start, T::BYTES)
         } else {
@@ -83,8 +81,7 @@ where
             return Ok(());
         }
 
-        let data_start =
-            U256::from_be_bytes(storage.metered_keccak256(&len_slot.to_be_bytes::<32>())?.0);
+        let data_start = calc_data_slot(storage, len_slot)?;
         if T::BYTES <= 16 {
             let slot_count = calc_packed_slot_count(length, T::BYTES);
             for slot_idx in 0..slot_count {
@@ -163,9 +160,8 @@ where
     /// Returns the slot where element data begins (`keccak256(len_slot)`).
     #[inline]
     pub fn data_slot(&self) -> Result<U256> {
-        Ok(U256::from_be_bytes(
-            self.storage.metered_keccak256(&self.len_slot.to_be_bytes::<32>())?.0,
-        ))
+        let slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
+        calc_data_slot(&slot, self.len_slot)
     }
 
     #[inline]
@@ -299,6 +295,14 @@ where
     }
 }
 
+/// Computes keccak256 of `len_slot` (as 32-byte big-endian) and charges the appropriate gas.
+///
+/// Returns the slot where dynamic array element data begins, following the Solidity layout.
+#[inline]
+pub(crate) fn calc_data_slot<S: StorageOps>(storage: &S, len_slot: U256) -> Result<U256> {
+    Ok(U256::from_be_bytes(storage.metered_keccak256(&len_slot.to_be_bytes::<32>())?.0))
+}
+
 #[inline]
 fn load_checked_len<S: StorageOps>(storage: &S, slot: U256) -> Result<usize> {
     let raw = storage.load(slot)?;
@@ -418,10 +422,6 @@ mod tests {
     use super::*;
     use crate::{hashmap::setup_storage, packing::gen_word_from, storage_ctx::StorageCtx};
 
-    fn calc_data_slot(len_slot: U256) -> U256 {
-        U256::from_be_bytes(keccak256(len_slot.to_be_bytes::<32>()).0)
-    }
-
     #[test]
     fn test_vec_empty_roundtrip() {
         let (mut storage, address) = setup_storage();
@@ -460,7 +460,7 @@ mod tests {
             let length = U256::handle(len_slot, LayoutCtx::FULL, address, ctx).read().unwrap();
             assert_eq!(length, U256::from(5u64));
 
-            let data_start = calc_data_slot(len_slot);
+            let data_start = VecHandler::<u8>::new(len_slot, address, ctx).data_slot().unwrap();
             let slot_data = U256::handle(data_start, LayoutCtx::FULL, address, ctx).read().unwrap();
             let expected = gen_word_from(&["0x32", "0x28", "0x1e", "0x14", "0x0a"]);
             assert_eq!(slot_data, expected, "u8 packing should match Solidity layout");
@@ -469,10 +469,13 @@ mod tests {
 
     #[test]
     fn test_vec_data_slot_derivation() {
-        let len_slot = U256::from(42u64);
-        let data_slot = calc_data_slot(len_slot);
-        let expected = U256::from_be_bytes(keccak256(len_slot.to_be_bytes::<32>()).0);
-        assert_eq!(data_slot, expected);
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(42u64);
+            let data_slot = VecHandler::<U256>::new(len_slot, address, ctx).data_slot().unwrap();
+            let expected = U256::from_be_bytes(keccak256(len_slot.to_be_bytes::<32>()).0);
+            assert_eq!(data_slot, expected);
+        });
     }
 
     #[test]

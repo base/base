@@ -356,4 +356,13 @@ pub trait StorageKey: sealed::OnlyPrimitives {
         let buf = self.mapping_key_buffer(slot);
         U256::from_be_bytes(keccak256(&buf).0)
     }
+
+    /// Computes `keccak256(key_buffer)` via the metered hash in `storage`, charging gas.
+    ///
+    /// Equivalent to [`mapping_slot`](Self::mapping_slot) but routes through `StorageOps`
+    /// so the keccak cost is deducted from the EVM gas meter.
+    fn metered_mapping_slot<S: StorageOps>(&self, base_slot: U256, storage: &S) -> Result<B256> {
+        let buf = self.mapping_key_buffer(base_slot);
+        storage.metered_keccak256(&buf)
+    }
 }
