@@ -4,6 +4,7 @@ use alloy_primitives::{Address, LogData, U256};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     context_interface::cfg::GasParams,
+    interpreter::gas::{KECCAK256, KECCAK256WORD},
     state::{AccountInfo, Bytecode},
 };
 
@@ -93,6 +94,16 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), BasePrecompileError> {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
+        }
+
+        let code_len = code.len();
+        self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
+
+        let is_new_code = self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
+        if is_new_code {
+            self.deduct_gas(self.gas_params.create_cost())?;
+            let num_words = code_len.div_ceil(32) as u64;
+            self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
         }
 
         let account = self.accounts.entry(address).or_default();
