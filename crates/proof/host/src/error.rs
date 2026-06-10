@@ -18,8 +18,8 @@ pub enum HostError {
     #[error("{0}")]
     Custom(String),
     /// Block not found error.
-    #[error("Block not found")]
-    BlockNotFound,
+    #[error("Block not found: {0}")]
+    BlockNotFound(String),
     /// Invalid hint data length.
     #[error("Invalid hint data length")]
     InvalidHintDataLength,
@@ -132,7 +132,7 @@ pub enum HostError {
 impl From<AlloyChainProviderError> for HostError {
     fn from(error: AlloyChainProviderError) -> Self {
         match error {
-            AlloyChainProviderError::BlockNotFound(_) => Self::BlockNotFound,
+            AlloyChainProviderError::BlockNotFound(id) => Self::BlockNotFound(id.to_string()),
             AlloyChainProviderError::Transport(error) => Self::Transport(error),
             AlloyChainProviderError::TransactionBodiesUnavailable(_)
             | AlloyChainProviderError::ReceiptsConversion(_) => Self::Custom(error.to_string()),
