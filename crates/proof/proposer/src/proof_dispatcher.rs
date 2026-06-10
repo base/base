@@ -367,6 +367,11 @@ where
 
     /// Computes the next dispatch target from a current block and interval.
     pub fn next_target_block(current_block: u64, block_interval: u64) -> Option<u64> {
+        if block_interval == 0 {
+            error!("Block interval must be non-zero");
+            return None;
+        }
+
         current_block.checked_add(block_interval).map_or_else(
             || {
                 error!(current_block, block_interval, "Overflow computing next target block");
@@ -494,6 +499,14 @@ mod tests {
         assert_eq!(requester.requests.lock().unwrap().len(), 3);
         assert_eq!(state.cursor.map(|cursor| cursor.l2_block_number), Some(400));
         assert!(state.retry_counts.is_empty());
+    }
+
+    #[test]
+    fn next_target_block_returns_none_for_zero_interval() {
+        assert_eq!(
+            ProofDispatcher::<MockL1, MockL2, MockRollupClient>::next_target_block(100, 0),
+            None
+        );
     }
 
     #[tokio::test]
