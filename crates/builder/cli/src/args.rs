@@ -1,4 +1,4 @@
-//! Contains the CLI arguments
+//! Builder CLI arguments and config conversion helpers.
 
 use core::{net::SocketAddr, time::Duration};
 
@@ -231,13 +231,15 @@ impl Args {
 mod tests {
     use std::sync::Arc;
 
+    use alloy_primitives::{B256, TxHash, U256};
+    use base_builder_core::{MeteringProvider, NoopMeteringProvider};
+    use base_bundles::MeterBundleResponse;
     use rstest::rstest;
 
     use super::*;
 
     fn convert(args: Args) -> BuilderConfig {
-        let metering_provider: SharedMeteringProvider =
-            Arc::new(base_builder_core::NoopMeteringProvider);
+        let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
         args.into_builder_config(metering_provider).expect("conversion should succeed")
     }
 
@@ -293,9 +295,6 @@ mod tests {
 
     #[test]
     fn metering_data_written_to_provider_is_readable_from_config() {
-        use alloy_primitives::{B256, TxHash, U256};
-        use base_bundles::MeterBundleResponse;
-
         let metering_provider: SharedMeteringProvider =
             Arc::new(MeteringStore::new(true, 100, Duration::from_secs(30)));
         let args = Args { enable_resource_metering: true, ..Default::default() };
@@ -344,10 +343,6 @@ mod tests {
 
     #[test]
     fn metering_store_ttl_propagates_to_store() {
-        use alloy_primitives::{B256, TxHash, U256};
-        use base_builder_core::MeteringProvider;
-        use base_bundles::MeterBundleResponse;
-
         let args = Args {
             metering_store_ttl_secs: 60,
             enable_resource_metering: true,
