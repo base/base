@@ -7,6 +7,7 @@
 //! - **Data slots**: Start at `keccak256(len_slot)`; elements packed where possible.
 
 use alloc::vec::Vec;
+use core::cell::OnceCell;
 
 use alloy_primitives::{Address, U256};
 
@@ -105,6 +106,9 @@ pub struct VecHandler<'a, T: Storable> {
     address: Address,
     storage: crate::StorageCtx<'a>,
     cache: HandlerCache<usize, T::Handler<'a>>,
+    /// Cached result of `keccak256(len_slot)`. Computed once on first access;
+    /// free on all subsequent calls within the same handler instance.
+    data_start: OnceCell<U256>,
 }
 
 impl<T> Handler<Vec<T>> for VecHandler<'_, T>
@@ -144,7 +148,7 @@ where
     /// Creates a new handler for the vector at the given length slot and contract address.
     #[inline]
     pub const fn new(len_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
-        Self { len_slot, address, storage, cache: HandlerCache::new() }
+        Self { len_slot, address, storage, cache: HandlerCache::new(), data_start: OnceCell::new() }
     }
 
     const fn max_index() -> usize {
@@ -159,12 +163,24 @@ where
 
     /// Returns the slot where element data begins (`keccak256(len_slot)`).
     ///
-    /// Charges keccak gas on every call. Prefer element access via [`at`](Self::at) /
-    /// [`at_with_len`](Self::at_with_len) which only charge gas on cache miss.
+    /// Keccak gas is charged at most once per handler instance; subsequent calls
+    /// return the cached result for free.
     #[inline]
     pub fn data_slot(&self) -> Result<U256> {
+        self.cached_data_start()
+    }
+
+    /// Returns `keccak256(len_slot)`, computing and metering it on first call and
+    /// returning the cached value on all subsequent calls.
+    #[inline]
+    fn cached_data_start(&self) -> Result<U256> {
+        if let Some(&cached) = self.data_start.get() {
+            return Ok(cached);
+        }
         let slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
-        calc_data_slot(&slot, self.len_slot)
+        let start = calc_data_slot(&slot, self.len_slot)?;
+        let _ = self.data_start.set(start);
+        Ok(start)
     }
 
     #[inline]
@@ -205,18 +221,15 @@ where
     }
 
     /// Returns a handler for the element at the given index, or `None` if out of bounds.
-    ///
-    /// Keccak gas is charged only on cache miss (first access for a given index).
     pub fn at(&self, index: usize) -> Result<Option<&T::Handler<'a>>> {
         if index >= self.len()? {
             return Ok(None);
         }
-        let (len_slot, address, storage) = (self.len_slot, self.address, self.storage);
-        Ok(Some(self.cache.get_or_try_insert(&index, || -> Result<_> {
-            let slot = Slot::<U256>::new(len_slot, address, storage);
-            let data_start = calc_data_slot(&slot, len_slot)?;
-            Ok(Self::compute_handler(data_start, address, storage, index))
-        })?))
+        let data_start = self.cached_data_start()?;
+        let (address, storage) = (self.address, self.storage);
+        Ok(Some(self.cache.get_or_insert(&index, || {
+            Self::compute_handler(data_start, address, storage, index)
+        })))
     }
 
     /// Pushes a new element to the end of the vector.
@@ -230,9 +243,8 @@ where
         if length >= Self::max_index() {
             return Err(BasePrecompileError::Fatal("Vec is at max capacity".into()));
         }
-        let slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
-        let data_start = calc_data_slot(&slot, self.len_slot)?;
-        let mut elem_slot = Self::compute_handler(data_start, self.address, self.storage, length);
+        let mut elem_slot =
+            Self::compute_handler(self.cached_data_start()?, self.address, self.storage, length);
         elem_slot.write(value)?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
         length_slot.write(U256::from(length + 1))
@@ -250,9 +262,12 @@ where
             return Ok(None);
         }
         let last_index = length - 1;
-        let slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
-        let data_start = calc_data_slot(&slot, self.len_slot)?;
-        let mut elem_slot = Self::compute_handler(data_start, self.address, self.storage, last_index);
+        let mut elem_slot = Self::compute_handler(
+            self.cached_data_start()?,
+            self.address,
+            self.storage,
+            last_index,
+        );
         let element = elem_slot.read()?;
         elem_slot.delete()?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
@@ -270,7 +285,6 @@ where
     ///
     /// Callers must supply a `len` freshly read from `self.len()` and not invalidated by a
     /// subsequent `push`/`pop`. Returns `Err(Fatal)` if `index >= len`.
-    /// Keccak gas is charged only on cache miss (first access for a given index).
     #[inline]
     pub(crate) fn at_with_len(&self, index: usize, len: usize) -> Result<&T::Handler<'a>> {
         if index >= len {
@@ -278,15 +292,12 @@ where
                 "vec index out of bounds: position invariant violated".into(),
             ));
         }
-        let (len_slot, address, storage) = (self.len_slot, self.address, self.storage);
-        self.cache.get_or_try_insert(&index, || -> Result<_> {
-            let slot = Slot::<U256>::new(len_slot, address, storage);
-            let data_start = calc_data_slot(&slot, len_slot)?;
-            Ok(Self::compute_handler(data_start, address, storage, index))
-        })
+        let data_start = self.cached_data_start()?;
+        let (address, storage) = (self.address, self.storage);
+        Ok(self.cache.get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index)))
     }
 
-    /// Mutable variant of [`at_with_len`]. Keccak gas is charged only on cache miss.
+    /// Mutable variant of [`at_with_len`].
     #[inline]
     pub(crate) fn at_mut_with_len(
         &mut self,
@@ -298,12 +309,9 @@ where
                 "vec index out of bounds: position invariant violated".into(),
             ));
         }
-        let (len_slot, address, storage) = (self.len_slot, self.address, self.storage);
-        self.cache.get_or_try_insert_mut(&index, || -> Result<_> {
-            let slot = Slot::<U256>::new(len_slot, address, storage);
-            let data_start = calc_data_slot(&slot, len_slot)?;
-            Ok(Self::compute_handler(data_start, address, storage, index))
-        })
+        let data_start = self.cached_data_start()?;
+        let (address, storage) = (self.address, self.storage);
+        Ok(self.cache.get_or_insert_mut(&index, || Self::compute_handler(data_start, address, storage, index)))
     }
 }
 
