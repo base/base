@@ -124,9 +124,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
                 self.deduct_gas(self.gas_params.create_cost())?;
                 // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
                 let num_words = code_len.div_ceil(32) as u64;
-                self.deduct_gas(
-                    KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)),
-                )?;
+                self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
             }
 
             self.internals
@@ -637,10 +635,7 @@ mod tests {
                 internals: EvmInternals::from_context(&mut ctx),
             };
             let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
-            assert_eq!(
-                provider.set_code(address, code),
-                Err(BasePrecompileError::OutOfGas)
-            );
+            assert_eq!(provider.set_code(address, code), Err(BasePrecompileError::OutOfGas));
         }
 
         // Second provider: unlimited gas. Account must still be cold.
