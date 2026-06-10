@@ -1,6 +1,6 @@
 use alloc::{string::ToString, vec::Vec};
 
-use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, address, b256, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Result};
@@ -32,6 +32,14 @@ const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
 
 /// Initial multiplier storage value. Reads treat zero as WAD precision (1:1).
 const INITIAL_MULTIPLIER: U256 = U256::ZERO;
+
+/// Keccak-256 of the single-byte factory marker bytecode `[0xef]` deployed by `createB20`.
+///
+/// `isB20Initialized` checks for this exact hash rather than merely non-empty code, preventing
+/// false positives from genesis state or migration code that injects arbitrary bytecode at a
+/// B-20 prefix address without going through the factory.
+const FACTORY_MARKER_CODE_HASH: B256 =
+    b256!("309b8896ee4c1ff7ec1966155373dee42663b6b40c3fedc70ba501684848d2a3");
 
 /// The B-20 token factory precompile.
 #[contract(addr = Self::ADDRESS)]
@@ -113,11 +121,14 @@ impl<'a> B20FactoryStorage<'a> {
     /// Returns whether `token` is a B-20 address that has been initialized by this factory.
     ///
     /// Returns `false` for addresses without the B-20 prefix, even if they have bytecode.
+    /// Returns `false` for B-20 prefix addresses whose code hash does not match the factory
+    /// marker (`keccak256([0xef])`), preventing false positives from genesis state or migration
+    /// code that injects arbitrary bytecode at a B-20 prefix address without calling `createB20`.
     pub fn is_b20_initialized(&self, token: Address) -> Result<bool> {
         if !B20Variant::has_b20_prefix(token) {
             return Ok(false);
         }
-        self.storage.with_account_info(token, |info| Ok(!info.is_empty_code_hash()))
+        self.storage.with_account_info(token, |info| Ok(info.code_hash == FACTORY_MARKER_CODE_HASH))
     }
 
     fn init_stablecoin<O>(
@@ -372,6 +383,9 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use revm::state::Bytecode;
+
+    use super::FACTORY_MARKER_CODE_HASH;
 
     use crate::{
         ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
@@ -917,6 +931,35 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let factory = B20FactoryStorage::new(ctx);
             assert!(!factory.is_b20(random_addr).unwrap());
+        });
+    }
+
+    #[test]
+    fn test_factory_marker_code_hash_constant_matches_keccak256_of_marker_byte() {
+        use alloy_primitives::keccak256;
+        assert_eq!(
+            FACTORY_MARKER_CODE_HASH,
+            keccak256([0xef_u8]),
+            "FACTORY_MARKER_CODE_HASH must equal keccak256([0xef])"
+        );
+    }
+
+    #[test]
+    fn test_is_b20_initialized_rejects_arbitrary_code_at_b20_prefix_address() {
+        let caller = Address::repeat_byte(0x55);
+        let salt = B256::repeat_byte(0x22);
+        let (addr, _) = B20Variant::Asset.compute_address(caller, salt);
+        let mut storage = HashMapStorageProvider::new(1);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            ctx.set_code(addr, Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00]))).unwrap();
+
+            let factory = B20FactoryStorage::new(ctx);
+            assert!(factory.is_b20(addr).unwrap(), "address must have B20 prefix");
+            assert!(
+                !factory.is_b20_initialized(addr).unwrap(),
+                "arbitrary code at B20-prefix address must not be reported as factory-initialized"
+            );
         });
     }
 
