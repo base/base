@@ -3,7 +3,7 @@ use std::cmp;
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use reth_provider::BlockHashReader;
 use tokio::time::Instant;
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
 use crate::{
     BaseProofsStorage, BaseProofsStore,
@@ -59,6 +59,15 @@ where
         };
 
         let target_earliest_block = self.target_earliest_block(latest_block);
+        info!(
+            target: "trie::pruner",
+            earliest_block,
+            latest_block,
+            target_earliest_block,
+            retention_blocks = self.retention_blocks,
+            prune_batch_size = self.prune_batch_size,
+            "Calculated proof storage pruning target",
+        );
         if earliest_block >= target_earliest_block {
             trace!(target: "trie::pruner", "Nothing to prune");
             return Ok(PrunerOutput::default());
@@ -110,7 +119,7 @@ where
     /// Prunes a single batch of blocks.
     fn prune_batch(&self, start_block: u64, end_block: u64) -> Result<PrunerOutput, PrunerError> {
         let batch_start_time = Instant::now();
-        debug!(
+        info!(
             target: "trie::pruner",
             start_block,
             end_block,
@@ -154,7 +163,7 @@ where
             block: BlockNumHash { number: end_block, hash: new_earliest_block_hash },
         };
 
-        debug!(
+        info!(
             target: "trie::pruner",
             start_block,
             end_block,
@@ -162,7 +171,7 @@ where
             "Resolved proof storage prune batch block hashes",
         );
 
-        debug!(
+        info!(
             target: "trie::pruner",
             start_block,
             end_block,
@@ -196,7 +205,6 @@ where
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -215,7 +223,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{BlockStateDiff, db::MdbxProofsStorage};
+    use crate::{BlockStateDiff, db::RocksdbProofsStorage};
 
     mock! (
         #[derive(Debug)]
@@ -250,8 +258,8 @@ mod tests {
     async fn run_inner_and_and_verify_updated_state() {
         // --- env/store ---
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+            BaseProofsStorage::from(Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")));
 
         store.set_earliest_block_number(0, B256::ZERO).expect("set earliest");
 
@@ -533,8 +541,8 @@ mod tests {
     #[tokio::test]
     async fn run_inner_where_latest_block_is_none() {
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+            BaseProofsStorage::from(Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")));
 
         let earliest = store.get_earliest_block_number().unwrap();
         let latest = store.get_latest_block_number().unwrap();
@@ -551,8 +559,8 @@ mod tests {
     #[tokio::test]
     async fn run_inner_earliest_none_real_db() {
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+            BaseProofsStorage::from(Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")));
 
         // Write a single block to set *latest* only.
         store
@@ -574,8 +582,8 @@ mod tests {
     #[tokio::test]
     async fn run_inner_interval_too_small_real_db() {
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+            BaseProofsStorage::from(Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")));
 
         // Set earliest=4 explicitly
         let earliest_num = 4u64;

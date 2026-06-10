@@ -29,7 +29,7 @@ pub use in_memory::{
 pub mod db;
 pub use db::{
     MdbxAccountCursor, MdbxBatchSession, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor,
-    RocksdbAccountCursor, RocksdbProofsCompression, RocksdbProofsStorage,
+    RocksdbAccountCursor, RocksdbBatchSession, RocksdbProofsCompression, RocksdbProofsStorage,
     RocksdbProofsStorageOptions, RocksdbReadSnapshot, RocksdbStorageCursor, RocksdbTrieCursor,
 };
 

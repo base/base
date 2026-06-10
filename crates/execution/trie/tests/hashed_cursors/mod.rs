@@ -535,14 +535,8 @@ fn test_exact_storage_reads_do_not_return_lower_bound_neighbor<
         vec![(left_key, U256::from(100)), (right_key, U256::from(300))],
     )?;
 
-    assert_eq!(
-        storage_exact(&storage, hashed_address, left_key, 100)?,
-        Some(U256::from(100))
-    );
-    assert_eq!(
-        storage_exact(&storage, hashed_address, right_key, 100)?,
-        Some(U256::from(300))
-    );
+    assert_eq!(storage_exact(&storage, hashed_address, left_key, 100)?, Some(U256::from(100)));
+    assert_eq!(storage_exact(&storage, hashed_address, right_key, 100)?, Some(U256::from(300)));
     assert_eq!(storage_exact(&storage, hashed_address, missing_key, 100)?, None);
 
     Ok(())
@@ -639,7 +633,10 @@ fn test_rocksdb_exact_reads_use_supplied_snapshot() -> Result<(), BaseProofsStor
     assert_eq!(k, storage_key);
     assert_eq!(v, U256::from(10));
 
-    assert_eq!(storage_exact(&storage.storage, hashed_address, storage_key, 2)?, Some(U256::from(20)));
+    assert_eq!(
+        storage_exact(&storage.storage, hashed_address, storage_key, 2)?,
+        Some(U256::from(20))
+    );
 
     Ok(())
 }
