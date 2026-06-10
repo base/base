@@ -1073,6 +1073,69 @@ pub enum SubmitProofOutcome {
     Unknown(ProofJob),
 }
 
+/// A proof job's current lock columns, as read under a row lock, against which a
+/// worker write is authorized.
+///
+/// Grouping the job-side values keeps them from being confused with the
+/// worker-supplied fencing token at `ClaimAuth::classify` call sites.
+#[derive(Debug, Clone, Copy)]
+pub struct JobLockState<'a> {
+    /// Current lifecycle status of the job.
+    pub status: ProofJobStatus,
+    /// Active lock identifier, set while the job is claimed.
+    pub lock_id: Option<Uuid>,
+    /// Worker that currently holds the lock, if any.
+    pub worker_id: Option<&'a str>,
+    /// When the active lock expires, if any.
+    pub lock_expires_at: Option<DateTime<Utc>>,
+}
+
+/// Result of checking a worker's fencing token against a claimed job's lock.
+///
+/// Shared by `heartbeat_proof_job` and `record_worker_proof_session` so both
+/// authorize worker writes against identical lock rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimAuth {
+    /// The requesting worker holds the active lock; the write may proceed.
+    Authorized,
+    /// The job has already reached a terminal state.
+    Terminal,
+    /// The job is not currently claimed.
+    NotClaimed,
+    /// The lock is held by another worker or has been rotated.
+    StaleLock,
+    /// The lock has expired.
+    Expired,
+}
+
+impl ClaimAuth {
+    /// Classify a worker claim from a job's current lock columns (`job`) against
+    /// the fencing token (`req_lock_id`, `req_worker_id`) the worker presented.
+    ///
+    /// `now` is supplied by the caller so the expiry check stays pure and
+    /// deterministically testable.
+    pub fn classify(
+        job: JobLockState<'_>,
+        req_lock_id: Uuid,
+        req_worker_id: &str,
+        now: DateTime<Utc>,
+    ) -> Self {
+        if matches!(job.status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
+            return Self::Terminal;
+        }
+        if job.status != ProofJobStatus::Claimed {
+            return Self::NotClaimed;
+        }
+        if job.lock_id != Some(req_lock_id) || job.worker_id != Some(req_worker_id) {
+            return Self::StaleLock;
+        }
+        if job.lock_expires_at.is_none_or(|expires_at| expires_at <= now) {
+            return Self::Expired;
+        }
+        Self::Authorized
+    }
+}
+
 /// Parameters for terminally failing expired worker jobs that exhausted attempts.
 #[derive(Debug, Clone)]
 pub struct FailExpiredProofJobs<'a> {
@@ -1212,5 +1275,68 @@ mod tests {
         });
 
         assert!(job.validate_submitted_result(&result).is_err());
+    }
+
+    #[test]
+    fn claim_auth_classify_covers_every_branch() {
+        let now = Utc::now();
+        let lock = Uuid::new_v4();
+        let worker = "worker-1";
+        let unexpired = Some(now + chrono::Duration::seconds(30));
+
+        let claimed = |lock_id, worker_id, lock_expires_at| JobLockState {
+            status: ProofJobStatus::Claimed,
+            lock_id,
+            worker_id,
+            lock_expires_at,
+        };
+
+        let authorized =
+            ClaimAuth::classify(claimed(Some(lock), Some(worker), unexpired), lock, worker, now);
+        assert_eq!(authorized, ClaimAuth::Authorized);
+
+        for status in [ProofJobStatus::Succeeded, ProofJobStatus::Failed] {
+            let job = JobLockState {
+                status,
+                lock_id: Some(lock),
+                worker_id: Some(worker),
+                lock_expires_at: unexpired,
+            };
+            assert_eq!(ClaimAuth::classify(job, lock, worker, now), ClaimAuth::Terminal);
+        }
+
+        let pending = JobLockState {
+            status: ProofJobStatus::Pending,
+            lock_id: Some(lock),
+            worker_id: Some(worker),
+            lock_expires_at: unexpired,
+        };
+        assert_eq!(ClaimAuth::classify(pending, lock, worker, now), ClaimAuth::NotClaimed);
+
+        let wrong_lock = ClaimAuth::classify(
+            claimed(Some(Uuid::new_v4()), Some(worker), unexpired),
+            lock,
+            worker,
+            now,
+        );
+        assert_eq!(wrong_lock, ClaimAuth::StaleLock);
+
+        let wrong_worker = ClaimAuth::classify(
+            claimed(Some(lock), Some("worker-2"), unexpired),
+            lock,
+            worker,
+            now,
+        );
+        assert_eq!(wrong_worker, ClaimAuth::StaleLock);
+
+        // Expiry is evaluated against the supplied `now`, so the boundary is
+        // deterministic: an `expires_at` equal to `now` counts as expired.
+        let expired =
+            ClaimAuth::classify(claimed(Some(lock), Some(worker), Some(now)), lock, worker, now);
+        assert_eq!(expired, ClaimAuth::Expired);
+
+        let missing_expiry =
+            ClaimAuth::classify(claimed(Some(lock), Some(worker), None), lock, worker, now);
+        assert_eq!(missing_expiry, ClaimAuth::Expired);
     }
 }
