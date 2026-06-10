@@ -68,16 +68,11 @@ impl<'a> B20FactoryStorage<'a> {
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
-                // Returns zero for an unrecognized variant to match base-std, which documents
-                // this function as "Never reverts" (meaning no ABI revert; keccak gas is
-                // still charged for recognized variants and OOG can terminate the call frame).
-                let addr = match B20Variant::from_abi(call.variant) {
-                    Some(v) => {
-                        let hash = ctx.metered_keccak256(&(call.sender, call.salt).abi_encode())?;
-                        v.compute_address_from_hash(hash).0
-                    }
-                    None => Address::ZERO,
-                };
+                let v = B20Variant::from_abi(call.variant).expect(
+                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
+                );
+                let hash = ctx.metered_keccak256(&(call.sender, call.salt).abi_encode())?;
+                let addr = v.compute_address_from_hash(hash).0;
                 Ok(IB20Factory::getB20AddressCall::abi_encode_returns(&addr).into())
             }
             IB20Factory::IB20FactoryCalls::isB20(call) => {
