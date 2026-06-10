@@ -38,13 +38,14 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        if !ctx.call_value().is_zero() {
-            return ctx.error_result(BasePrecompileError::revert(IB20::NonPayable {}));
-        }
         let mut recorder = BerylCallRecorder::start(
             observer.clone(),
             BerylMetricLabels::b20_stablecoin_call(calldata),
         );
+        if !ctx.call_value().is_zero() {
+            return recorder
+                .record_base_error_result(ctx, BasePrecompileError::revert(IB20::NonPayable {}));
+        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }

@@ -36,11 +36,12 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        if !ctx.call_value().is_zero() {
-            return ctx.error_result(BasePrecompileError::revert(IB20::NonPayable {}));
-        }
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::b20_asset_call(calldata));
+        if !ctx.call_value().is_zero() {
+            return recorder
+                .record_base_error_result(ctx, BasePrecompileError::revert(IB20::NonPayable {}));
+        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
@@ -489,8 +490,7 @@ mod tests {
         ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
         B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset, InMemoryPolicy,
         InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
-        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
-        TokenAccounting,
+        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token, TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;

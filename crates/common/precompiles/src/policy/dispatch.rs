@@ -30,11 +30,14 @@ impl PolicyRegistryStorage<'_> {
     where
         O: PrecompileCallObserver,
     {
-        if !ctx.call_value().is_zero() {
-            return ctx.error_result(BasePrecompileError::revert(IPolicyRegistry::NonPayable {}));
-        }
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::policy_call(calldata));
+        if !ctx.call_value().is_zero() {
+            return recorder.record_base_error_result(
+                ctx,
+                BasePrecompileError::revert(IPolicyRegistry::NonPayable {}),
+            );
+        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
@@ -629,9 +632,9 @@ mod tests {
         assert!(out.is_revert());
         assert_eq!(
             out.bytes,
-            alloy_primitives::Bytes::from(alloy_sol_types::SolError::abi_encode(
-                &IPolicyRegistry::NonPayable {},
-            ))
+            alloy_primitives::Bytes::from(
+                alloy_sol_types::SolError::abi_encode(&IPolicyRegistry::NonPayable {})
+            )
         );
     }
 }
