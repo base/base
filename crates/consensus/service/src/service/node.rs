@@ -551,15 +551,17 @@ impl RollupNode {
         let upgrade_signal_refresher =
             self.upgrade_signal_metrics_config.clone().and_then(|config| {
                 config.mode.allows_runtime_admin().then(|| {
-                    let refresher = UpgradeSignalRefresher::new(
+                    // No caller-supplied validation (standalone CL) falls back to fail-closed, so
+                    // a positive Beryl signal is rejected rather than applied unguarded.
+                    let runtime_validation = self
+                        .upgrade_signal_runtime_validation
+                        .unwrap_or_else(UpgradeSignalRuntimeValidation::fail_closed);
+                    UpgradeSignalRefresher::new(
                         config,
                         self.l1_config.engine_provider.clone(),
                         self.config.l2_chain_id.id(),
-                    );
-                    match self.upgrade_signal_runtime_validation {
-                        Some(validation) => refresher.with_runtime_validation(validation),
-                        None => refresher,
-                    }
+                        runtime_validation,
+                    )
                 })
             });
         // Create the sequencer if needed

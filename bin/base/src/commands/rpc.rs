@@ -13,13 +13,12 @@ use base_execution_cli::{
     ExecutionNodeArgs, ExecutionUpgradeSignal, chainspec::chain_value_parser,
 };
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalMetrics,
-    UpgradeSignalRuntimeValidation, UpgradeSignalStartupMode,
+    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalRuntimeValidation,
+    UpgradeSignalStartupMode,
 };
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
 use url::Url;
 
 use crate::config::ResolvedChainConfig;
@@ -140,7 +139,7 @@ impl RpcCommand {
         })
     }
 
-    fn consensus_overrides(
+    const fn consensus_overrides(
         l2_engine_rpc: Url,
         upgrade_signal_runtime_validation: UpgradeSignalRuntimeValidation,
     ) -> ConsensusNodeOverrides {
@@ -151,7 +150,7 @@ impl RpcCommand {
         }
     }
 
-    fn upgrade_signal_runtime_validation(
+    const fn upgrade_signal_runtime_validation(
         execution_chain: &BaseChainSpec,
     ) -> UpgradeSignalRuntimeValidation {
         UpgradeSignalRuntimeValidation::with_activation_admin_address(
@@ -168,30 +167,12 @@ impl RpcCommand {
         let reader = AlloyUpgradeSignalReader::new(
             RootProvider::new_http(l1_rpc),
             signal_config.contract_address,
-        );
-        let schedule = match reader.read_schedule(&signal_config.hardfork_ids).await {
-            Ok(schedule) => schedule,
-            Err(error) => {
-                UpgradeSignalMetrics::record_l1_read_errors(&signal_config.hardfork_ids);
-                return Err(error.into());
-            }
-        };
+        )
+        .with_block_tag(signal_config.l1_block_tag);
+        let application_schedule = signal_config
+            .read_validated_application_schedule(&reader, "integrated startup")
+            .await?;
 
-        UpgradeSignalMetrics::record_schedule(&schedule);
-        for signal in &schedule.signals {
-            info!(
-                target: "upgrade_signal",
-                hardfork_id = %signal.hardfork_id,
-                activation_timestamp = signal.activation_timestamp,
-                minimum_protocol_version = %signal.protocol_version,
-                node_protocol_version = %signal_config.node_protocol_version,
-                l1_block_number = signal.l1_block_number,
-                "read dynamic upgrade signal for integrated startup"
-            );
-        }
-
-        let application_schedule = signal_config.application_schedule(&schedule);
-        signal_config.validate_schedule_protocol_versions(&application_schedule)?;
         ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             Arc::make_mut(execution_chain),
             &application_schedule,
@@ -226,8 +207,7 @@ mod tests {
     use std::process::Command;
 
     use base_consensus_cli::ConsensusNodeConfigArgs;
-    use base_execution_chainspec::BaseChainSpec;
-    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use clap::Parser;
 
     use super::RpcCommand;

@@ -1,12 +1,13 @@
 //! Upgrade signal metrics observer actor.
 
 use alloy_provider::RootProvider;
+use base_common_genesis::BaseUpgrade;
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalConfig,
-    UpgradeSignalError, UpgradeSignalMonitor, UpgradeSignalStateUpdate,
+    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalError,
+    UpgradeSignalMonitor,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::NodeActor;
 
@@ -15,8 +16,8 @@ use crate::NodeActor;
 pub struct UpgradeSignalMetricsActor {
     /// L1 upgrade signal reader.
     pub reader: AlloyUpgradeSignalReader,
-    /// Hardfork IDs read from the L1 contract.
-    pub hardfork_ids: Vec<String>,
+    /// Contract-backed upgrades read from the L1 contract.
+    pub hardfork_ids: Vec<BaseUpgrade>,
     /// Live metrics state.
     pub monitor: UpgradeSignalMonitor,
     /// Cancellation token shared with the rollup node.
@@ -30,7 +31,8 @@ impl UpgradeSignalMetricsActor {
         l1_provider: RootProvider,
         cancellation: CancellationToken,
     ) -> Self {
-        let reader = AlloyUpgradeSignalReader::new(l1_provider, config.contract_address);
+        let reader = AlloyUpgradeSignalReader::new(l1_provider, config.contract_address)
+            .with_block_tag(config.l1_block_tag);
         let monitor = UpgradeSignalMonitor::new(&config.hardfork_ids);
 
         Self { reader, hardfork_ids: config.hardfork_ids, monitor, cancellation }
@@ -38,29 +40,13 @@ impl UpgradeSignalMetricsActor {
 
     /// Polls L1 upgrade signal state and records metrics without mutating local config.
     pub async fn poll_l1_signal(&mut self) {
-        match self.reader.read_schedule(&self.hardfork_ids).await {
-            Ok(schedule) => {
-                let updates = self.monitor.update_schedule(schedule);
-                let updated_hardforks = updates
-                    .iter()
-                    .filter(|update| matches!(update, UpgradeSignalStateUpdate::Changed))
-                    .count();
-                if updated_hardforks > 0 {
-                    info!(
-                        target: "upgrade_signal",
-                        updated_hardforks,
-                        "observed live L1 upgrade signal update"
-                    );
-                }
-            }
-            Err(error) => {
-                warn!(
-                    target: "upgrade_signal",
-                    error = %error,
-                    hardfork_ids = ?self.hardfork_ids,
-                    "failed to read live L1 upgrade signal metrics"
-                );
-            }
+        let updated_signals = self.monitor.poll(&self.reader, &self.hardfork_ids).await;
+        if updated_signals > 0 {
+            info!(
+                target: "upgrade_signal",
+                updated_signals,
+                "observed live L1 upgrade signal update"
+            );
         }
     }
 }
@@ -71,7 +57,7 @@ impl NodeActor for UpgradeSignalMetricsActor {
     type Error = UpgradeSignalError;
 
     async fn start(mut self, _ctx: ()) -> Result<(), Self::Error> {
-        let mut interval = tokio::time::interval(DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL);
+        let mut interval = tokio::time::interval(UpgradeSignalDefaults::POLL_INTERVAL);
 
         loop {
             tokio::select! {

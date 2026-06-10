@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
 use base_common_consensus::{
     DepositSourceDomain, L1InfoDepositSource, Predeploys, SystemAddresses, TxDeposit,
 };
-use base_common_genesis::{ContractUpgrade, RollupConfig, SystemConfig};
+use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
@@ -106,7 +106,7 @@ impl L1BlockInfoTx {
                     // not present, and L1 has activated pectra, the Prague blob fee schedule is used
                     // immediately.
                     (rollup_config
-                        .contract_upgrade_activation_timestamp(ContractUpgrade::PectraBlobSchedule)
+                        .contract_upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)
                         .is_none() ||
                         rollup_config.is_pectra_blob_schedule_active(l1_header.timestamp)) =>
                 {
@@ -916,7 +916,7 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
         RuntimeUpgradeRegistry::set_activation_timestamp(
             chain_id,
-            ContractUpgrade::PectraBlobSchedule,
+            BaseUpgrade::PectraBlobSchedule,
             3,
         );
 
