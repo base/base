@@ -448,6 +448,13 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
         self.begin_announcement();
 
+        // Each internal call is dispatched via `inner_with_privilege`, a direct Rust function
+        // call. Unlike the base-std Solidity reference which routes each `internalCalls` entry
+        // through a DELEGATECALL (~100 gas opcode overhead + memory expansion), the native
+        // precompile replaces the entire EVM execution path so per-opcode call overhead does not
+        // apply. The cheaper batched cost is intentional: the native precompile pays for the
+        // storage work of each sub-call (the same SLOAD/SSTORE operations as the Solidity
+        // reference) but not for EVM call-frame overhead that exists only in the interpreter.
         for call in &internal_calls {
             let call_bytes: &[u8] = call.as_ref();
             if call_bytes.len() < 4 {

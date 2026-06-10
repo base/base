@@ -254,12 +254,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         JournalCheckpoint { log_i: 0, journal_i: idx, selfdestructed_i: 0 }
     }
 
-    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) {
-        assert_eq!(
-            checkpoint.journal_i,
-            self.snapshots.len() - 1,
-            "out-of-order checkpoint commit (expected top of stack)"
-        );
+    fn checkpoint_commit(&mut self) {
+        assert!(!self.snapshots.is_empty(), "checkpoint_commit called with no active checkpoint");
         self.snapshots.pop();
     }
 
