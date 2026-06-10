@@ -1,7 +1,23 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::TxHash;
 use serde::{Deserialize, Serialize};
+
+/// Submission outcome counts collected during a load test, passed as a single
+/// input bundle to `MetricsAggregator::summarize`.
+#[derive(Debug, Clone, Copy)]
+pub struct SubmissionStats<'a> {
+    /// Total transactions submitted.
+    pub submitted: u64,
+    /// Total transactions that failed (e.g. rejected, expired without
+    /// confirmation).
+    pub failed: u64,
+    /// Failure reason counts, used to surface the top-N reasons in the summary.
+    pub failure_reasons: &'a HashMap<String, u64>,
+}
 
 /// Metrics for a single transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,12 +196,12 @@ impl BlockRange {
 ///
 /// The observed window is defined as transactions confirmed in blocks
 /// `[first_block, first_block + expected_block_count - 1]`, where
-/// `expected_block_count = reference_duration.as_secs() / 2` and
+/// `expected_block_count = reference_duration.as_secs() / BLOCK_INTERVAL` and
 /// `reference_duration` is the configured test duration when known and
 /// falls back to the observed wall-clock duration otherwise.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ObservedWindowMetrics {
-    /// Expected observed-window block count = `reference_duration.as_secs() / 2`.
+    /// Expected observed-window block count = `reference_duration.as_secs() / BLOCK_INTERVAL`.
     /// For a 30s test this is 15.
     pub expected_block_count: u64,
     /// Block range of confirmed transactions that fell inside the observed

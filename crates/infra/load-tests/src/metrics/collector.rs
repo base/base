@@ -7,8 +7,8 @@ use alloy_primitives::TxHash;
 use tracing::debug;
 
 use super::{
-    ConfigSummary, MetricsAggregator, MetricsSummary, RollingWindow, ThroughputSample,
-    TransactionMetrics,
+    ConfigSummary, MetricsAggregator, MetricsSummary, RollingWindow, SubmissionStats,
+    ThroughputSample, TransactionMetrics,
 };
 
 /// Collects transaction metrics during test execution.
@@ -122,9 +122,11 @@ impl MetricsCollector {
         aggregator.summarize(
             wall_clock_duration,
             configured_duration,
-            self.submitted_count,
-            self.failed_count,
-            &self.failure_reasons,
+            SubmissionStats {
+                submitted: self.submitted_count,
+                failed: self.failed_count,
+                failure_reasons: &self.failure_reasons,
+            },
             &self.throughput_samples,
             config,
         )

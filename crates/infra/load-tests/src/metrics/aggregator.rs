@@ -1,11 +1,11 @@
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use super::{
     BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    ObservedWindowMetrics, TailMetrics, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
-    TransactionMetrics, types::BLOCK_INTERVAL,
+    ObservedWindowMetrics, SubmissionStats, TailMetrics, ThroughputMetrics, ThroughputPercentiles,
+    ThroughputSample, TransactionMetrics, types::BLOCK_INTERVAL,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -35,14 +35,12 @@ impl<'a> MetricsAggregator<'a> {
         &self,
         wall_clock_duration: Duration,
         configured_duration: Option<Duration>,
-        submitted: u64,
-        failed: u64,
-        failure_reasons: &HashMap<String, u64>,
+        submission: SubmissionStats<'_>,
         throughput_samples: &[ThroughputSample],
         config: Option<ConfigSummary>,
     ) -> MetricsSummary {
         let mut top_failure_reasons: Vec<(String, u64)> =
-            failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            submission.failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
         top_failure_reasons.sort_by(|a, b| b.1.cmp(&a.1));
         top_failure_reasons.truncate(3);
 
@@ -53,7 +51,11 @@ impl<'a> MetricsAggregator<'a> {
         let throughput_duration = block_range.block_time_duration().unwrap_or(wall_clock_duration);
         let reference_duration = configured_duration.unwrap_or(wall_clock_duration);
 
-        let observed_window = Self::compute_observed_window(self.transactions, reference_duration);
+        let observed_window = Self::compute_observed_window(
+            self.transactions,
+            reference_duration,
+            block_range.first_block,
+        );
         let tail = configured_duration.map(|_| {
             Self::compute_tail(
                 self.transactions,
@@ -73,8 +75,8 @@ impl<'a> MetricsAggregator<'a> {
             throughput: Self::compute_throughput(
                 self.transactions,
                 throughput_duration,
-                submitted,
-                failed,
+                submission.submitted,
+                submission.failed,
             ),
             throughput_percentiles: Self::compute_throughput_percentiles(&tps_values, &gps_values),
             throughput_timeseries: throughput_samples.to_vec(),
@@ -85,18 +87,21 @@ impl<'a> MetricsAggregator<'a> {
     }
 
     /// Computes the observed reporting window:
-    /// `expected_block_count = reference_duration.as_secs() / 2`, starting at
-    /// `first_block`. TPS / GPS denominator = `expected_block_count *
+    /// `expected_block_count = reference_duration.as_secs() / BLOCK_INTERVAL.as_secs()`,
+    /// starting at `first_block`. TPS / GPS denominator = `expected_block_count *
     /// BLOCK_INTERVAL` (real L2 wall-time spanned by those expected blocks).
+    ///
+    /// `first_block` is taken from the caller's pre-computed full block range
+    /// to avoid re-scanning `transactions`.
     fn compute_observed_window(
         transactions: &[TransactionMetrics],
         reference_duration: Duration,
+        first_block: Option<u64>,
     ) -> ObservedWindowMetrics {
-        let expected_block_count = reference_duration.as_secs() / 2;
+        let expected_block_count = reference_duration.as_secs() / BLOCK_INTERVAL.as_secs();
         let duration =
             Duration::from_secs(expected_block_count.saturating_mul(BLOCK_INTERVAL.as_secs()));
-        let full_range = Self::compute_block_range(transactions);
-        let Some(first_block) = full_range.first_block else {
+        let Some(first_block) = first_block else {
             return ObservedWindowMetrics {
                 expected_block_count,
                 duration,
@@ -105,16 +110,12 @@ impl<'a> MetricsAggregator<'a> {
         };
 
         let end_block = first_block.saturating_add(expected_block_count.saturating_sub(1));
+        let in_window = |t: &&TransactionMetrics| t.block_number.is_some_and(|b| b <= end_block);
 
-        let filtered: Vec<TransactionMetrics> = transactions
+        let (confirmed_count, total_gas) = transactions
             .iter()
-            .filter(|t| t.block_number.is_some_and(|b| b <= end_block))
-            .cloned()
-            .collect();
-
-        let block_range = Self::compute_block_range(&filtered);
-        let confirmed_count = filtered.len() as u64;
-        let total_gas: u64 = filtered.iter().map(|t| t.gas_used).sum();
+            .filter(in_window)
+            .fold((0u64, 0u64), |(n, gas), t| (n + 1, gas + t.gas_used));
         let duration_secs = duration.as_secs_f64();
         let (tps, gps) = if duration_secs > 0.0 {
             (confirmed_count as f64 / duration_secs, total_gas as f64 / duration_secs)
@@ -124,14 +125,18 @@ impl<'a> MetricsAggregator<'a> {
 
         ObservedWindowMetrics {
             expected_block_count,
-            block_range,
+            block_range: Self::compute_block_range(transactions.iter().filter(in_window)),
             duration,
             confirmed_count,
             tps,
             gps,
-            block_latency: Self::compute_block_latency(&filtered),
-            block_receipt_delay: Self::compute_block_receipt_delay(&filtered),
-            flashblocks_latency: Self::compute_flashblocks_latency(&filtered),
+            block_latency: Self::compute_block_latency(transactions.iter().filter(in_window)),
+            block_receipt_delay: Self::compute_block_receipt_delay(
+                transactions.iter().filter(in_window),
+            ),
+            flashblocks_latency: Self::compute_flashblocks_latency(
+                transactions.iter().filter(in_window),
+            ),
         }
     }
 
@@ -151,19 +156,16 @@ impl<'a> MetricsAggregator<'a> {
 
         let observed_window_end_block =
             first_block.saturating_add(observed_window_expected_block_count.saturating_sub(1));
+        let is_tail =
+            |t: &&TransactionMetrics| t.block_number.is_some_and(|b| b > observed_window_end_block);
 
-        let tail: Vec<TransactionMetrics> = transactions
-            .iter()
-            .filter(|t| t.block_number.is_some_and(|b| b > observed_window_end_block))
-            .cloned()
-            .collect();
-
-        let count = tail.len() as u64;
+        let count = transactions.iter().filter(is_tail).count() as u64;
         let confirmed_pct =
             if total_confirmed > 0 { (count as f64 / total_confirmed as f64) * 100.0 } else { 0.0 };
 
-        let mut time_past: Vec<Duration> = tail
+        let mut time_past: Vec<Duration> = transactions
             .iter()
+            .filter(is_tail)
             .filter_map(|t| t.block_number)
             .map(|b| BLOCK_INTERVAL * (b - observed_window_end_block) as u32)
             .collect();
@@ -172,16 +174,22 @@ impl<'a> MetricsAggregator<'a> {
             observed_window_end_block: Some(observed_window_end_block),
             count,
             confirmed_pct,
-            block_range: Self::compute_block_range(&tail),
+            block_range: Self::compute_block_range(transactions.iter().filter(is_tail)),
             time_past_observed_window: Self::compute_duration_metrics(&mut time_past),
-            block_latency: Self::compute_block_latency(&tail),
-            block_receipt_delay: Self::compute_block_receipt_delay(&tail),
-            flashblocks_latency: Self::compute_flashblocks_latency(&tail),
+            block_latency: Self::compute_block_latency(transactions.iter().filter(is_tail)),
+            block_receipt_delay: Self::compute_block_receipt_delay(
+                transactions.iter().filter(is_tail),
+            ),
+            flashblocks_latency: Self::compute_flashblocks_latency(
+                transactions.iter().filter(is_tail),
+            ),
         }
     }
 
-    fn compute_block_range(transactions: &[TransactionMetrics]) -> BlockRange {
-        let mut iter = transactions.iter().filter_map(|t| t.block_number);
+    fn compute_block_range<'t>(
+        transactions: impl IntoIterator<Item = &'t TransactionMetrics>,
+    ) -> BlockRange {
+        let mut iter = transactions.into_iter().filter_map(|t| t.block_number);
         let Some(first) = iter.next() else {
             return BlockRange::default();
         };
@@ -189,16 +197,20 @@ impl<'a> MetricsAggregator<'a> {
         BlockRange { first_block: Some(min), last_block: Some(max), block_count: max - min + 1 }
     }
 
-    fn compute_block_latency(transactions: &[TransactionMetrics]) -> LatencyMetrics {
+    fn compute_block_latency<'t>(
+        transactions: impl IntoIterator<Item = &'t TransactionMetrics>,
+    ) -> LatencyMetrics {
         let mut latencies: Vec<Duration> =
-            transactions.iter().filter_map(|t| t.block_latency).collect();
+            transactions.into_iter().filter_map(|t| t.block_latency).collect();
 
         Self::compute_duration_metrics(&mut latencies)
     }
 
-    fn compute_block_receipt_delay(transactions: &[TransactionMetrics]) -> LatencyMetrics {
+    fn compute_block_receipt_delay<'t>(
+        transactions: impl IntoIterator<Item = &'t TransactionMetrics>,
+    ) -> LatencyMetrics {
         let mut latencies: Vec<Duration> =
-            transactions.iter().filter_map(|t| t.block_receipt_delay).collect();
+            transactions.into_iter().filter_map(|t| t.block_receipt_delay).collect();
 
         Self::compute_duration_metrics(&mut latencies)
     }
@@ -224,11 +236,11 @@ impl<'a> MetricsAggregator<'a> {
         }
     }
 
-    fn compute_flashblocks_latency(
-        transactions: &[TransactionMetrics],
+    fn compute_flashblocks_latency<'t>(
+        transactions: impl IntoIterator<Item = &'t TransactionMetrics>,
     ) -> FlashblocksLatencyMetrics {
         let mut latencies: Vec<Duration> =
-            transactions.iter().filter_map(|t| t.flashblocks_latency).collect();
+            transactions.into_iter().filter_map(|t| t.flashblocks_latency).collect();
 
         if latencies.is_empty() {
             return FlashblocksLatencyMetrics::default();

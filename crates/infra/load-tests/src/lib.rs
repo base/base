@@ -21,7 +21,8 @@ mod metrics;
 pub use metrics::{
     BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
     MetricsAggregator, MetricsCollector, MetricsSummary, ObservedWindowMetrics, RollingWindow,
-    TailMetrics, ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    SubmissionStats, TailMetrics, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    TransactionMetrics,
 };
 
 mod workload;
