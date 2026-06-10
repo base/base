@@ -581,7 +581,7 @@ where
     }
 
     /// Computes the calldata gas cost for the given calldata slice.
-    pub fn calldata_gas_cost(calldata: &[u8]) -> u64 {
+    pub const fn calldata_gas_cost(calldata: &[u8]) -> u64 {
         (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS)
     }
 
