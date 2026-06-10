@@ -137,7 +137,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_primitives::{Address, address};
-    use alloy_sol_types::{SolCall, SolValue};
+    use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
