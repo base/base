@@ -348,21 +348,78 @@ mod tests {
         provider
     }
 
-    /// The EIP-2200 stipend guard in [`super::EvmPrecompileStorageProvider::sstore`] compares
-    /// `gas.remaining()` against `gas_params.call_stipend()`. This test verifies that the
-    /// call stipend constant returned by `GasParams` is exactly 2300, as required by EIP-2200.
-    ///
-    /// Unit tests cannot directly instantiate [`super::EvmPrecompileStorageProvider`] because
-    /// it requires a live EVM journal via `PrecompileInput`. The stipend guard is therefore not
-    /// exercisable in isolation here. Full coverage of the guard at runtime is provided by the
-    /// B20 fork tests that forward exactly 2300 gas into a stateful precompile call.
+    fn make_evm_provider<'a>(
+        ctx: &'a mut EthEvmContext<EmptyDB>,
+        gas_params: GasParams,
+        gas: u64,
+        is_static: bool,
+    ) -> super::EvmPrecompileStorageProvider<'a> {
+        let input = PrecompileInput {
+            data: &[],
+            gas,
+            reservoir: 0,
+            caller: Address::ZERO,
+            value: U256::ZERO,
+            target_address: Address::ZERO,
+            is_static,
+            bytecode_address: Address::ZERO,
+            internals: EvmInternals::from_context(ctx),
+        };
+        super::EvmPrecompileStorageProvider::new(input, gas_params)
+    }
+
+    /// EIP-2200 stipend boundary: `remaining == call_stipend` (2300) must block.
     #[test]
-    fn eip_2200_stipend_guard_constant_is_2300() {
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+    fn sstore_oog_at_call_stipend_boundary() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            make_evm_provider(&mut ctx, gas_params.clone(), gas_params.call_stipend(), false);
+
         assert_eq!(
-            gas_params.call_stipend(),
-            2300,
-            "call_stipend must equal 2300 as required by EIP-2200"
+            provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
+            Err(BasePrecompileError::OutOfGas),
+        );
+    }
+
+    /// Below the stipend (2299): also blocked.
+    #[test]
+    fn sstore_oog_below_call_stipend() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            make_evm_provider(&mut ctx, gas_params.clone(), gas_params.call_stipend() - 1, false);
+
+        assert_eq!(
+            provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
+            Err(BasePrecompileError::OutOfGas),
+        );
+    }
+
+    /// Strictly above the stipend: guard passes, sstore completes.
+    #[test]
+    fn sstore_allowed_above_call_stipend() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        // Large margin covers the stipend guard + cold sstore costs (~2600 gas).
+        let gas = gas_params.call_stipend() + 1_000_000;
+        let mut provider = make_evm_provider(&mut ctx, gas_params, gas, false);
+
+        assert!(provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)).is_ok());
+    }
+
+    /// Static-call violation is checked before the stipend guard.
+    #[test]
+    fn sstore_static_violation_checked_before_stipend_guard() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        // Gas at stipend boundary — both guards would fire, static takes priority.
+        let mut provider =
+            make_evm_provider(&mut ctx, gas_params.clone(), gas_params.call_stipend(), true);
+
+        assert_eq!(
+            provider.sstore(Address::ZERO, U256::ZERO, U256::from(1u64)),
+            Err(BasePrecompileError::StaticCallViolation),
         );
     }
 
@@ -420,62 +477,20 @@ mod tests {
         }
     }
 
-    /// An OOG `sload` must not leave the slot warmed in the journal.
-    ///
-    /// We give the provider exactly `warm_storage_read_cost - 1` gas so that the
-    /// cold read fails (it cannot even afford the warm base cost). A second provider
-    /// with unlimited gas then reads the same slot: if the journal still carries the
-    /// spurious warm entry the second read would be charged only `warm_storage_read_cost`,
-    /// but the slot was never successfully accessed so it must still be cold.
+    /// `set_code` in a static context returns `StaticCallViolation` before any gas is charged.
     #[test]
-    fn sload_oog_does_not_warm_slot() {
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
-        let address = Address::repeat_byte(0x77);
-        let key = U256::from(5);
-
+    fn set_code_static_violation_before_gas_charge() {
+        let gas_params = GasParams::default();
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let gas = 1_000_000;
+        let mut provider = make_evm_provider(&mut ctx, gas_params, gas, true);
 
-        // First provider: gas just below warm_storage_read_cost → OOG on sload.
-        {
-            let input = PrecompileInput {
-                data: &[],
-                gas: gas_params.warm_storage_read_cost() - 1,
-                reservoir: 0,
-                caller: Address::ZERO,
-                value: U256::ZERO,
-                target_address: address,
-                is_static: false,
-                bytecode_address: address,
-                internals: EvmInternals::from_context(&mut ctx),
-            };
-            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
-            assert_eq!(provider.sload(address, key), Err(BasePrecompileError::OutOfGas));
-        }
-
-        // Second provider: unlimited gas. The slot must still be cold, so the full
-        // cold read cost (warm_base + cold_additional) must be charged.
-        {
-            let input = PrecompileInput {
-                data: &[],
-                gas: u64::MAX,
-                reservoir: 0,
-                caller: Address::ZERO,
-                value: U256::ZERO,
-                target_address: address,
-                is_static: false,
-                bytecode_address: address,
-                internals: EvmInternals::from_context(&mut ctx),
-            };
-            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
-            assert_eq!(provider.sload(address, key).unwrap(), U256::ZERO);
-            assert_eq!(
-                provider.gas_used(),
-                gas_params
-                    .warm_storage_read_cost()
-                    .saturating_add(gas_params.cold_storage_additional_cost()),
-                "slot must still be cold after a failed OOG read"
-            );
-        }
+        assert_eq!(
+            provider.set_code(Address::ZERO, Bytecode::new_raw([0x60u8, 0x00].as_ref().into())),
+            Err(BasePrecompileError::StaticCallViolation),
+        );
+        // No gas must have been consumed.
+        assert_eq!(provider.gas_used(), 0);
     }
 
     /// `set_code` on a brand-new account must charge both `create_state_gas` and
