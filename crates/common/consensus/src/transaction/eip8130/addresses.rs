@@ -29,7 +29,8 @@ use alloy_primitives::{Address, B256, address, b256};
 ///
 /// See the [module docs](self) for the (important) caveat that these are
 /// provisional Base Sepolia values that change with the contract bytecode.
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Eip8130Contracts;
 
 impl Eip8130Contracts {
@@ -137,6 +138,7 @@ impl Eip8130Contracts {
     /// This intentionally does not account for the native ecrecover sentinel
     /// (`address(1)`), which is handled separately by the protocol; see the
     /// allowlist docs for the TBD around final membership.
+    #[must_use]
     pub fn is_canonical_authenticator(authenticator: &Address) -> bool {
         Self::CANONICAL_AUTHENTICATORS.contains(authenticator)
     }
