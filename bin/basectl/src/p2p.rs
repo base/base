@@ -187,12 +187,7 @@ fn warn_ignored_rpc_override(
     layer: PeerLayer,
 ) {
     if override_url.is_some() {
-        tracing::warn!(
-            flag = %flag,
-            target_kind = %target_kind,
-            routed_to = %layer.as_str(),
-            "RPC override ignored for target kind"
-        );
+        eprintln!("warning: {flag} is ignored for {target_kind} (routed to {})", layer.as_str());
     }
 }
 
@@ -270,14 +265,10 @@ fn parse_remove_target(raw: &str) -> Result<RemoveTarget> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PeerActionJson {
-    network: String,
-    action: PeerAction,
-    layer: PeerLayer,
-    target: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    accepted: Option<bool>,
+#[serde(untagged, rename_all = "camelCase")]
+enum PeerActionJson {
+    El { network: String, action: PeerAction, layer: PeerLayer, target: String, accepted: bool },
+    Cl { network: String, action: PeerAction, layer: PeerLayer, target: String },
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -307,17 +298,11 @@ impl PeerLayer {
 
 impl PeerActionJson {
     fn el(network: &str, action: PeerAction, target: String, accepted: bool) -> Self {
-        Self {
-            network: network.to_string(),
-            action,
-            layer: PeerLayer::El,
-            target,
-            accepted: Some(accepted),
-        }
+        Self::El { network: network.to_string(), action, layer: PeerLayer::El, target, accepted }
     }
 
     fn cl(network: &str, action: PeerAction, target: String) -> Self {
-        Self { network: network.to_string(), action, layer: PeerLayer::Cl, target, accepted: None }
+        Self::Cl { network: network.to_string(), action, layer: PeerLayer::Cl, target }
     }
 }
 
@@ -332,26 +317,26 @@ fn print_peer_action(action: &PeerActionJson, json: bool) -> Result<()> {
 
 fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
     let mut stdout = io::stdout().lock();
-    match (action.layer, action.action) {
-        (PeerLayer::El, PeerAction::Add) => {
-            let accepted = action.accepted.expect("EL actions always carry `accepted`");
-            if accepted {
-                writeln!(stdout, "OK EL accepted peer {}", action.target)?;
+    match action {
+        PeerActionJson::El { action: PeerAction::Add, target, accepted, .. } => {
+            if *accepted {
+                writeln!(stdout, "OK EL accepted peer {target}")?;
             } else {
-                writeln!(stdout, "OK EL did not accept peer {}", action.target)?;
+                writeln!(stdout, "OK EL did not accept peer {target}")?;
             }
         }
-        (PeerLayer::El, PeerAction::Remove) => {
-            let accepted = action.accepted.expect("EL actions always carry `accepted`");
-            if accepted {
-                writeln!(stdout, "OK EL removed peer {}", action.target)?;
+        PeerActionJson::El { action: PeerAction::Remove, target, accepted, .. } => {
+            if *accepted {
+                writeln!(stdout, "OK EL removed peer {target}")?;
             } else {
-                writeln!(stdout, "OK EL did not remove peer {}", action.target)?;
+                writeln!(stdout, "OK EL did not remove peer {target}")?;
             }
         }
-        (PeerLayer::Cl, PeerAction::Add) => writeln!(stdout, "OK CL connected {}", action.target)?,
-        (PeerLayer::Cl, PeerAction::Remove) => {
-            writeln!(stdout, "OK CL disconnected {}", action.target)?;
+        PeerActionJson::Cl { action: PeerAction::Add, target, .. } => {
+            writeln!(stdout, "OK CL connected {target}")?;
+        }
+        PeerActionJson::Cl { action: PeerAction::Remove, target, .. } => {
+            writeln!(stdout, "OK CL disconnected {target}")?;
         }
     }
     Ok(())
