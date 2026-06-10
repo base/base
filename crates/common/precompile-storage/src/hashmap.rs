@@ -29,7 +29,6 @@ pub struct HashMapStorageProvider {
     counter_sload: u64,
     counter_sstore: u64,
     gas_deducted: u64,
-    counter_keccak256: u64,
     snapshots: Vec<Snapshot>,
     gas_params: GasParams,
     state_gas_used: u64,
@@ -74,7 +73,6 @@ impl HashMapStorageProvider {
             counter_sload: 0,
             counter_sstore: 0,
             gas_deducted: 0,
-            counter_keccak256: 0,
             gas_params: GasParams::default(),
             state_gas_used: 0,
             gas_refunded: 0,
@@ -105,21 +103,13 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
 
         let code_len = code.len();
-        let is_new_account = self.accounts.get(&address).is_none_or(AccountInfo::is_empty);
-        let has_empty_code =
-            self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
-        if has_empty_code {
+        let is_new_code = self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
+        if is_new_code {
             self.deduct_gas(self.gas_params.create_cost())?;
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-        }
-        if is_new_account {
-            self.deduct_state_gas(self.gas_params.create_state_gas())?;
-        }
-        if has_empty_code {
-            self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
 
         let account = self.accounts.entry(address).or_default();
@@ -371,12 +361,7 @@ impl HashMapStorageProvider {
         self.gas_deducted
     }
 
-    /// Returns the number of times [`PrecompileStorageProvider::metered_keccak256`] was called.
-    pub const fn counter_keccak256(&self) -> u64 {
-        self.counter_keccak256
-    }
-
-    /// Resets the SLOAD/SSTORE/keccak256 counters (test-utils only).
+    /// Resets the SLOAD/SSTORE counters (test-utils only).
     pub const fn reset_counters(&mut self) {
         self.counter_sload = 0;
         self.counter_sstore = 0;
