@@ -11,12 +11,9 @@
 //!
 //! Tests are marked `#[ignore]` so they're skipped by default.
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 
-use base_prover_service::{
-    BackendRegistry, ProofRequestManager, ProverServiceServer, ServerConfig, WorkerApiConfig,
-    WorkerQueueConfig,
-};
+use base_prover_service::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CreateProofRequest, DatabaseConfig, ProofRequestRepo,
     ProofStatus as DbProofStatus, ZkVmKind,
@@ -75,8 +72,7 @@ impl RunningServer {
             worker: WorkerApiConfig::default(),
             worker_queue: WorkerQueueConfig::default(),
         };
-        let manager = ProofRequestManager::new(repo.clone(), Arc::new(BackendRegistry::new()));
-        let server = ProverServiceServer::new(repo, manager, config);
+        let server = ProverServiceServer::new(repo, config);
 
         let mut module = ProverWorkerApiServer::into_rpc(server.clone());
         module
