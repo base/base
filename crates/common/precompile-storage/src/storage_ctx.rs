@@ -281,6 +281,11 @@ pub struct CheckpointGuard<'a> {
 
 impl CheckpointGuard<'_> {
     /// Commits all state changes since the checkpoint.
+    ///
+    /// Uses `borrow_mut` (panicking) intentionally: `commit` is an explicit
+    /// caller action, so a conflicting borrow here is a logic bug that should
+    /// surface loudly. Contrast with `drop` below, which uses `try_borrow_mut`
+    /// because `drop` may run during unwinding where a second panic would abort.
     pub fn commit(mut self) {
         if self.checkpoint.take().is_some() {
             self.storage.with_storage(|s| s.checkpoint_commit());
