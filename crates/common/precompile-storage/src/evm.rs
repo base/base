@@ -285,8 +285,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         self.internals.checkpoint()
     }
 
-    fn checkpoint_commit(&mut self, _checkpoint: JournalCheckpoint) {
-        // alloy-evm's checkpoint_commit pops the top checkpoint; the arg is unused.
+    fn checkpoint_commit(&mut self) {
         self.internals.checkpoint_commit();
     }
 
