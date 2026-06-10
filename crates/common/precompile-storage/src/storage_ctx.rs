@@ -291,7 +291,9 @@ impl CheckpointGuard<'_> {
 impl Drop for CheckpointGuard<'_> {
     fn drop(&mut self) {
         if let Some(cp) = self.checkpoint.take() {
-            self.storage.with_storage(|s| s.checkpoint_revert(cp));
+            if let Ok(mut guard) = self.storage.storage.try_borrow_mut() {
+                guard.checkpoint_revert(cp);
+            }
         }
     }
 }
