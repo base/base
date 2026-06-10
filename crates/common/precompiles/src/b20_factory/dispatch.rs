@@ -1,6 +1,6 @@
 //! ABI dispatch for the `B20Factory` precompile.
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::Bytes;
 use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
