@@ -23,6 +23,7 @@ pub struct HashMapStorageProvider {
     timestamp: U256,
     beneficiary: Address,
     block_number: u64,
+    origin: Address,
     caller: Address,
     call_value: U256,
     is_static: bool,
@@ -68,6 +69,7 @@ impl HashMapStorageProvider {
             ),
             beneficiary: Address::ZERO,
             block_number: 0,
+            origin: Address::ZERO,
             caller: Address::ZERO,
             call_value: U256::ZERO,
             is_static: false,
@@ -97,6 +99,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn block_number(&self) -> u64 {
         self.block_number
+    }
+
+    fn origin(&self) -> Address {
+        self.origin
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), BasePrecompileError> {
@@ -331,6 +337,11 @@ impl HashMapStorageProvider {
     /// Sets the native call value in wei (test-utils only).
     pub const fn set_call_value(&mut self, value: U256) {
         self.call_value = value;
+    }
+
+    /// Overrides the transaction origin (`tx.origin`) (test-utils only).
+    pub const fn set_origin(&mut self, origin: Address) {
+        self.origin = origin;
     }
 
     /// Sets whether the current call is static (test-utils only).

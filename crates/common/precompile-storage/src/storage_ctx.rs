@@ -107,6 +107,10 @@ impl<'a> StorageCtx<'a> {
     pub fn block_number(&self) -> u64 {
         self.with_storage(|s| s.block_number())
     }
+    /// Returns the transaction origin (`tx.origin`).
+    pub fn origin(&self) -> Address {
+        self.with_storage(|s| s.origin())
+    }
 
     /// Sets the bytecode at the given address.
     pub fn set_code(&self, address: Address, code: Bytecode) -> Result<()> {
@@ -178,10 +182,8 @@ impl<'a> StorageCtx<'a> {
     /// Executes `f` with a temporary caller override, restoring the previous caller on exit.
     pub fn with_caller<R>(&self, caller: Address, f: impl FnOnce() -> R) -> R {
         let previous = self.with_storage(|s| s.replace_caller(caller));
-        let guard = CallerGuard { storage: *self, previous: Some(previous) };
-        let result = f();
-        drop(guard);
-        result
+        let _guard = CallerGuard { storage: *self, previous: Some(previous) };
+        f()
     }
 
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
@@ -264,9 +266,14 @@ struct CallerGuard<'a> {
 impl Drop for CallerGuard<'_> {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            self.storage.with_storage(|s| {
-                s.replace_caller(previous);
-            });
+            match self.storage.storage.try_borrow_mut() {
+                Ok(mut guard) => {
+                    guard.replace_caller(previous);
+                }
+                Err(_) => tracing::warn!(
+                    "skipping caller restore: RefCell already borrowed (likely during unwind)"
+                ),
+            }
         }
     }
 }
@@ -283,6 +290,11 @@ pub struct CheckpointGuard<'a> {
 
 impl CheckpointGuard<'_> {
     /// Commits all state changes since the checkpoint.
+    ///
+    /// Uses `borrow_mut` (panicking) intentionally: `commit` is an explicit
+    /// caller action, so a conflicting borrow here is a logic bug that should
+    /// surface loudly. Contrast with `drop` below, which uses `try_borrow_mut`
+    /// because `drop` may run during unwinding where a second panic would abort.
     pub fn commit(mut self) {
         if self.checkpoint.take().is_some() {
             self.storage.with_storage(|s| s.checkpoint_commit());
@@ -293,7 +305,12 @@ impl CheckpointGuard<'_> {
 impl Drop for CheckpointGuard<'_> {
     fn drop(&mut self) {
         if let Some(cp) = self.checkpoint.take() {
-            self.storage.with_storage(|s| s.checkpoint_revert(cp));
+            match self.storage.storage.try_borrow_mut() {
+                Ok(mut guard) => guard.checkpoint_revert(cp),
+                Err(_) => tracing::warn!(
+                    "skipping checkpoint revert: RefCell already borrowed (likely during unwind)"
+                ),
+            }
         }
     }
 }

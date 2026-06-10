@@ -13,8 +13,9 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, NoopPrecompileCallObserver,
-    PolicyRegistryPrecompile, PrecompileCallObserver, bls12_381, bn254_pair,
+    ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, NonceManager,
+    NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver, TxContext,
+    bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -191,6 +192,11 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         O: PrecompileCallObserver,
     {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
+        // The `observer` only applies to the dynamic, address-derived B-20 token
+        // precompiles resolved at call time via `BerylLookup`. Every directly
+        // installed precompile below — Beryl's factory/registries and Cobalt's
+        // EIP-8130 precompiles alike — uses plain `install`; none is observed, by
+        // design, since metrics are scoped to the B-20 token call path.
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             B20Factory::install_with_observer(&mut precompiles, observer.clone());
             BerylLookup::install_with_observer(&mut precompiles, observer.clone());
@@ -200,6 +206,10 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
                 self.activation_admin_address,
                 observer,
             );
+        }
+        if self.spec.upgrade() >= BaseUpgrade::Cobalt {
+            TxContext::install(&mut precompiles);
+            NonceManager::install(&mut precompiles);
         }
         precompiles
     }
@@ -261,8 +271,8 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        ActivationRegistryStorage, B20FactoryStorage, B20Variant, BasePrecompiles, bls12_381,
-        bn254_pair,
+        ActivationRegistryStorage, B20FactoryStorage, B20Variant, BasePrecompiles,
+        NonceManagerStorage, TxContextStorage, bls12_381, bn254_pair,
     };
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
@@ -550,5 +560,25 @@ mod tests {
         let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Beryl).install();
 
         assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());
+    }
+
+    #[rstest]
+    #[case::azul(BaseUpgrade::Azul, false)]
+    #[case::beryl(BaseUpgrade::Beryl, false)]
+    #[case::cobalt(BaseUpgrade::Cobalt, true)]
+    fn tx_context_is_installed_at_cobalt(#[case] spec: BaseUpgrade, #[case] expected: bool) {
+        let precompiles = BasePrecompiles::new_with_spec(spec).install();
+
+        assert_eq!(precompiles.get(&TxContextStorage::ADDRESS).is_some(), expected);
+    }
+
+    #[rstest]
+    #[case::azul(BaseUpgrade::Azul, false)]
+    #[case::beryl(BaseUpgrade::Beryl, false)]
+    #[case::cobalt(BaseUpgrade::Cobalt, true)]
+    fn nonce_manager_is_installed_at_cobalt(#[case] spec: BaseUpgrade, #[case] expected: bool) {
+        let precompiles = BasePrecompiles::new_with_spec(spec).install();
+
+        assert_eq!(precompiles.get(&NonceManagerStorage::ADDRESS).is_some(), expected);
     }
 }

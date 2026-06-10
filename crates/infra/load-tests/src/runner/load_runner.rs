@@ -53,8 +53,8 @@ use crate::{
 const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const SUBMIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
-const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(60);
-const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(65);
+const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
+const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(200);
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
@@ -1424,7 +1424,11 @@ impl LoadRunner {
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
-        Ok(self.collector.summarize(last_confirmed_at, self.config_summary.clone()))
+        Ok(self.collector.summarize(
+            last_confirmed_at,
+            self.config.duration,
+            self.config_summary.clone(),
+        ))
     }
 
     fn build_snapshot(

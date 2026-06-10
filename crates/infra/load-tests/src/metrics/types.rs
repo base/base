@@ -1,7 +1,23 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::TxHash;
 use serde::{Deserialize, Serialize};
+
+/// Submission outcome counts collected during a load test, passed as a single
+/// input bundle to `MetricsAggregator::summarize`.
+#[derive(Debug, Clone, Copy)]
+pub struct SubmissionStats<'a> {
+    /// Total transactions submitted.
+    pub submitted: u64,
+    /// Total transactions that failed (e.g. rejected, expired without
+    /// confirmation).
+    pub failed: u64,
+    /// Failure reason counts, used to surface the top-N reasons in the summary.
+    pub failure_reasons: &'a HashMap<String, u64>,
+}
 
 /// Metrics for a single transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,7 +164,7 @@ pub struct ThroughputSample {
 }
 
 /// L2 block interval (2 seconds per block).
-const BLOCK_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const BLOCK_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Range of block numbers in which test transactions were included.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -173,6 +189,76 @@ impl BlockRange {
         }
         Some(BLOCK_INTERVAL * (self.block_count - 1) as u32)
     }
+}
+
+/// Throughput + latency over the clean reporting window (the expected first
+/// portion of the test, before any inclusion tail).
+///
+/// The observed window is defined as transactions confirmed in blocks
+/// `[first_block, first_block + expected_block_count - 1]`, where
+/// `expected_block_count = reference_duration.as_secs() / BLOCK_INTERVAL` and
+/// `reference_duration` is the configured test duration when known and
+/// falls back to the observed wall-clock duration otherwise.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ObservedWindowMetrics {
+    /// Expected observed-window block count = `reference_duration.as_secs() / BLOCK_INTERVAL`.
+    /// For a 30s test this is 15.
+    pub expected_block_count: u64,
+    /// Block range of confirmed transactions that fell inside the observed
+    /// window. May be smaller than `expected_block_count` blocks if inclusion
+    /// gaps left some expected blocks empty of test txs.
+    pub block_range: BlockRange,
+    /// Expected observed-window wall-time = `expected_block_count * BLOCK_INTERVAL`.
+    /// For a 30s test (15 expected blocks at 2s/block), this is 30s of L2 time.
+    /// Used as the denominator for `tps` and `gps`.
+    pub duration: Duration,
+    /// Confirmed transactions inside the observed window.
+    pub confirmed_count: u64,
+    /// Transactions per second = `confirmed_count / duration.as_secs_f64()`
+    /// (denominator is the expected observed-window in L2 wall-time).
+    pub tps: f64,
+    /// Gas per second over the observed window (same denominator as `tps`).
+    pub gps: f64,
+    /// Block production latency (submit→inclusion) for observed-window transactions.
+    pub block_latency: LatencyMetrics,
+    /// Delay between block production and receipt observation by the block
+    /// watcher, for observed-window transactions.
+    pub block_receipt_delay: LatencyMetrics,
+    /// Flashblocks sequencer latency for observed-window transactions.
+    pub flashblocks_latency: FlashblocksLatencyMetrics,
+}
+
+/// Inclusion-delay metrics for transactions that landed past the observed
+/// window — i.e. straggler receipts that the chain produced well after the
+/// clean reporting window.
+///
+/// A transaction is "tail" iff its block number is strictly greater than
+/// `observed_window_end_block` (the upper bound of the observed window).
+/// Only populated when `configured_duration` is provided to
+/// `MetricsAggregator::summarize`; continuous runs produce `None`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TailMetrics {
+    /// Upper bound of the observed window =
+    /// `first_block + observed_window_expected_block_count - 1`. Transactions
+    /// with `block_number > observed_window_end_block` are classified as tail.
+    /// `None` when the dataset is empty.
+    pub observed_window_end_block: Option<u64>,
+    /// Number of confirmed transactions in the tail.
+    pub count: u64,
+    /// Tail count as a percentage of total confirmed transactions.
+    pub confirmed_pct: f64,
+    /// Block range covered by the tail.
+    pub block_range: BlockRange,
+    /// Per-tx wall-time the block landed past `observed_window_end_block`,
+    /// derived from `(block_number - observed_window_end_block) * BLOCK_INTERVAL`.
+    pub time_past_observed_window: LatencyMetrics,
+    /// Submit→inclusion latency for tail transactions only.
+    pub block_latency: LatencyMetrics,
+    /// Delay between block production and receipt observation by the block
+    /// watcher, for tail transactions only.
+    pub block_receipt_delay: LatencyMetrics,
+    /// Flashblocks sequencer latency for tail transactions only.
+    pub flashblocks_latency: FlashblocksLatencyMetrics,
 }
 
 /// Aggregated flashblocks latency percentiles.

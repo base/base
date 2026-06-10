@@ -46,6 +46,33 @@ impl ProofRequesterDispatcher {
         request: PrimitiveProofRequest,
     ) -> Result<DispatchedProof, ProposerError> {
         let request = ProposerProofAdapter::tee_prove_block_range_request(request, self.tee_kind);
+        self.dispatch_prepared(request).await
+    }
+
+    /// Submits a TEE proof request under an explicit session id.
+    ///
+    /// Used for discard retries. The normal proposer session id is keyed only
+    /// by claimed output root so restarts can rediscover in-flight work, but a
+    /// discarded `Succeeded` session cannot be requeued by replaying that same
+    /// id. A retry-specific id lets the proposer obtain a genuinely fresh TEE
+    /// proof for the same output root.
+    pub async fn dispatch_tee_with_session_id(
+        &self,
+        request: PrimitiveProofRequest,
+        session_id: String,
+    ) -> Result<DispatchedProof, ProposerError> {
+        let request = ProposerProofAdapter::tee_prove_block_range_request_with_session_id(
+            request,
+            self.tee_kind,
+            session_id,
+        );
+        self.dispatch_prepared(request).await
+    }
+
+    async fn dispatch_prepared(
+        &self,
+        request: ProveBlockRangeRequest,
+    ) -> Result<DispatchedProof, ProposerError> {
         let response = self
             .requester
             .prove_block_range(request)
@@ -97,12 +124,37 @@ impl ProposerProofAdapter {
         ProofSessionId::derive(Self::SESSION_NAMESPACE, Self::tee_session_label(tee_kind), root)
     }
 
+    /// Derives a TEE proof retry session id for a discarded proof.
+    pub fn tee_discard_retry_session_id(
+        request: &PrimitiveProofRequest,
+        tee_kind: TeeKind,
+        attempt: u32,
+    ) -> String {
+        let label = Self::tee_session_label(tee_kind);
+        let l1_head_number = request.l1_head_number.to_be_bytes();
+        let attempt = attempt.to_be_bytes();
+        ProofSessionId::derive_from_components(
+            Self::SESSION_NAMESPACE,
+            label,
+            &[request.claimed_l2_output_root.as_slice(), &l1_head_number, &attempt],
+        )
+    }
+
     /// Builds a prover-service request for a TEE proposal proof.
     pub fn tee_prove_block_range_request(
         request: PrimitiveProofRequest,
         tee_kind: TeeKind,
     ) -> ProveBlockRangeRequest {
         let session_id = Self::tee_session_id(&request, tee_kind);
+        Self::tee_prove_block_range_request_with_session_id(request, tee_kind, session_id)
+    }
+
+    /// Builds a prover-service request for a TEE proposal proof with a caller-supplied session id.
+    pub const fn tee_prove_block_range_request_with_session_id(
+        request: PrimitiveProofRequest,
+        tee_kind: TeeKind,
+        session_id: String,
+    ) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
@@ -251,6 +303,38 @@ mod tests {
         assert_eq!(
             ProposerProofAdapter::tee_session_id(&first, TeeKind::AwsNitro),
             ProposerProofAdapter::tee_session_id(&second, TeeKind::AwsNitro)
+        );
+    }
+
+    #[test]
+    fn tee_discard_retry_session_id_differs_from_root_session() {
+        let request = test_request(B256::repeat_byte(0xaa));
+
+        assert_ne!(
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 1),
+            ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro),
+        );
+    }
+
+    #[test]
+    fn tee_discard_retry_session_id_changes_by_attempt() {
+        let request = test_request(B256::repeat_byte(0xaa));
+
+        assert_ne!(
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 1),
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 2),
+        );
+    }
+
+    #[test]
+    fn tee_discard_retry_session_id_changes_by_l1_head_number() {
+        let first = test_request(B256::repeat_byte(0xaa));
+        let mut second = first.clone();
+        second.l1_head_number += 1;
+
+        assert_ne!(
+            ProposerProofAdapter::tee_discard_retry_session_id(&first, TeeKind::AwsNitro, 1),
+            ProposerProofAdapter::tee_discard_retry_session_id(&second, TeeKind::AwsNitro, 1),
         );
     }
 
