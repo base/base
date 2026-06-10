@@ -1099,6 +1099,10 @@ impl ProofRequestRepo {
         &self,
         req: WorkerSessionUpsert,
     ) -> Result<RecordSessionOutcome> {
+        if req.status.is_terminal() {
+            return Ok(RecordSessionOutcome::TerminalSessionStatus);
+        }
+
         let session_id = canonical_session_id(&req.session_id)
             .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
 
@@ -1173,11 +1177,7 @@ impl ProofRequestRepo {
                 UPDATE proof_sessions
                 SET backend_session_id = $1,
                     status = $2,
-                    error_message = $4,
-                    completed_at = CASE
-                        WHEN $2 IN ('COMPLETED', 'FAILED') THEN NOW()
-                        ELSE completed_at
-                    END
+                    error_message = $4
                 WHERE id = $3
                 RETURNING id, proof_request_id, session_type, backend_session_id,
                           status, error_message, metadata, created_at, completed_at
@@ -1197,8 +1197,7 @@ impl ProofRequestRepo {
                     metadata, completed_at
                 )
                 VALUES (
-                    $1, $2, $3, $4, $5, NULL,
-                    CASE WHEN $4 IN ('COMPLETED', 'FAILED') THEN NOW() ELSE NULL END
+                    $1, $2, $3, $4, $5, NULL, NULL
                 )
                 RETURNING id, proof_request_id, session_type, backend_session_id,
                           status, error_message, metadata, created_at, completed_at

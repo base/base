@@ -131,6 +131,11 @@ impl SessionStatus {
             Self::Failed => "FAILED",
         }
     }
+
+    /// Whether this status represents a terminal backend session.
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Failed)
+    }
 }
 
 impl std::fmt::Display for SessionStatus {
@@ -1125,6 +1130,8 @@ pub enum RecordSessionOutcome {
     Expired,
     /// The job is already terminal.
     Terminal,
+    /// The requested session status is terminal and must be coordinated with job completion.
+    TerminalSessionStatus,
 }
 
 /// Result of checking a worker's fencing token against a claimed job's lock.
