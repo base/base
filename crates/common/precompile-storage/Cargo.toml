@@ -26,6 +26,7 @@ base-precompile-macros.workspace = true
 
 # misc
 thiserror.workspace = true
+tracing.workspace = true
 derive_more = { workspace = true, features = ["from", "try_into"] }
 
 [dev-dependencies]
@@ -46,5 +47,6 @@ std = [
 	"derive_more/std",
 	"revm/std",
 	"thiserror/std",
+	"tracing/std",
 ]
 test-utils = [ "std" ]
