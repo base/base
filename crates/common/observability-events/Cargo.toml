@@ -29,5 +29,5 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [features]
-default = ["metrics"]
-metrics = ["base-metrics/metrics", "dep:metrics"]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]
