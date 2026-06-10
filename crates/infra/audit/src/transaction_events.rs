@@ -181,12 +181,29 @@ pub struct PgTransactionEventSink {
 }
 
 impl PgTransactionEventSink {
-    /// Connects to Postgres and runs migrations.
+    /// Connects to Postgres without running migrations.
     pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
-        let pool =
-            PgPoolOptions::new().max_connections(max_connections).connect(database_url).await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
+        // RDS IAM auth tokens are only validated when a connection opens; open
+        // connections remain usable after token expiry. sqlx does not expose a
+        // pre-connect password callback, so the IAM-auth deployment path passes
+        // a fresh startup token and keeps the physical pool connections open.
+        // If the pool is fully dropped after token expiry, the process should be
+        // restarted so a new token is minted before rebuilding the pool.
+        let pool = PgPoolOptions::new()
+            .max_connections(max_connections)
+            .min_connections(max_connections)
+            .max_lifetime(None)
+            .idle_timeout(None)
+            .connect(database_url)
+            .await?;
         Ok(Self { pool })
+    }
+
+    /// Runs pending Postgres migrations.
+    pub async fn migrate(database_url: &str) -> Result<()> {
+        let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
+        sqlx::migrate!("./migrations").run(&pool).await?;
+        Ok(())
     }
 
     /// Creates a sink from an existing pool.

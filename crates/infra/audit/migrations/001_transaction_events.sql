@@ -40,3 +40,10 @@ CREATE INDEX IF NOT EXISTS transaction_events_bundle_hash_event_time_idx
 CREATE INDEX IF NOT EXISTS transaction_events_bundle_id_event_time_idx
     ON transaction_events ((data->>'bundle_id'), event_time)
     WHERE data ? 'bundle_id';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'audit_archiver') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE ON transaction_events TO audit_archiver;
+    END IF;
+END $$;

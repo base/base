@@ -29,11 +29,28 @@ enum S3ConfigType {
     Manual,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Command {
+    Serve,
+    Migrate,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum MigrationDirection {
+    Up,
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    #[arg(value_enum, default_value_t = Command::Serve)]
+    command: Command,
+
+    #[arg(value_enum)]
+    migration_direction: Option<MigrationDirection>,
+
     #[arg(long, env = "TIPS_AUDIT_S3_BUCKET")]
-    s3_bucket: String,
+    s3_bucket: Option<String>,
 
     #[command(flatten)]
     log: LogArgs,
@@ -145,8 +162,38 @@ async fn main() -> Result<()> {
         .init()
         .expect("Failed to install Prometheus exporter");
 
+    if matches!(args.command, Command::Migrate) {
+        run_migrations(&args).await?;
+        return Ok(());
+    }
+
+    run_server(args).await
+}
+
+async fn run_migrations(args: &Args) -> Result<()> {
+    if !matches!(args.migration_direction, Some(MigrationDirection::Up)) {
+        anyhow::bail!("migration command requires an explicit direction: migrate up");
+    }
+
+    let postgres_url = args
+        .postgres_url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_POSTGRES_URL must be set for migrations"))?;
+
+    info!("Running audit archiver Postgres migrations");
+    PgTransactionEventSink::migrate(postgres_url).await?;
+    info!("Audit archiver Postgres migrations complete");
+    Ok(())
+}
+
+async fn run_server(args: Args) -> Result<()> {
+    let s3_bucket = args
+        .s3_bucket
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_S3_BUCKET must be set for serve"))?;
+
     info!(
-        s3_bucket = %args.s3_bucket,
+        s3_bucket = %s3_bucket,
         metrics_addr = %args.metrics.addr,
         metrics_port = args.metrics.port,
         rpc_port = args.rpc_port,
@@ -160,7 +207,6 @@ async fn main() -> Result<()> {
     );
 
     let s3_client = create_s3_client(&args).await?;
-    let s3_bucket = args.s3_bucket.clone();
     let writer = S3EventReaderWriter::new(s3_client, s3_bucket);
 
     let dedup_cache: Cache<String, ()> = Cache::builder()
