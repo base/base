@@ -471,22 +471,27 @@ mod tests {
         assert_eq!(provider.gas_used(), 0);
     }
 
-    /// `set_code` on a prefunded account (balance > 0, no code) must succeed and deploy
-    /// the code. The factory collision check only rejects accounts that already have code,
-    /// so a prefunded address can reach `set_code` and the `is_empty_code_hash()` predicate
-    /// must fire correctly regardless of balance.
+    /// `set_code` on a prefunded account (balance > 0, no code) must charge the same gas
+    /// as a fully empty account. Before the fix, `is_empty()` returned false for prefunded
+    /// accounts, silently skipping G_create and the keccak hash cost (~32 036 gas).
     #[test]
-    fn set_code_prefunded_account_deploys_code() {
-        let mut provider = amsterdam_provider();
+    fn set_code_prefunded_account_charges_same_gas_as_empty_account() {
         let addr = Address::from([0x43u8; 20]);
         let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
 
-        provider.set_balance(addr, U256::from(1u64));
-        provider.set_code(addr, code).unwrap();
+        let mut empty_provider = amsterdam_provider();
+        empty_provider.set_code(addr, code.clone()).unwrap();
+        let gas_for_empty = empty_provider.gas_deducted();
 
-        assert!(
-            provider.get_account_info(addr).and_then(|i| i.code.as_ref()).is_some(),
-            "prefunded account must have code after set_code"
+        let mut prefunded_provider = amsterdam_provider();
+        prefunded_provider.set_balance(addr, U256::from(1u64));
+        prefunded_provider.set_code(addr, code).unwrap();
+        let gas_for_prefunded = prefunded_provider.gas_deducted();
+
+        assert!(gas_for_empty > 0, "set_code must charge non-zero gas");
+        assert_eq!(
+            gas_for_empty, gas_for_prefunded,
+            "prefunded account must pay identical gas to an empty account"
         );
     }
 

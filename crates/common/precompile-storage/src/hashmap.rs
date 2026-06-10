@@ -26,6 +26,7 @@ pub struct HashMapStorageProvider {
     is_static: bool,
     counter_sload: u64,
     counter_sstore: u64,
+    gas_deducted: u64,
     snapshots: Vec<Snapshot>,
     gas_params: GasParams,
     state_gas_used: u64,
@@ -64,6 +65,7 @@ impl HashMapStorageProvider {
             is_static: false,
             counter_sload: 0,
             counter_sstore: 0,
+            gas_deducted: 0,
             gas_params: GasParams::default(),
             state_gas_used: 0,
             gas_refunded: 0,
@@ -163,7 +165,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(self.transient.get(&(address, key)).copied().unwrap_or(U256::ZERO))
     }
 
-    fn deduct_gas(&mut self, _gas: u64) -> Result<(), BasePrecompileError> {
+    fn deduct_gas(&mut self, gas: u64) -> Result<(), BasePrecompileError> {
+        self.gas_deducted = self.gas_deducted.saturating_add(gas);
         Ok(())
     }
 
@@ -311,6 +314,11 @@ impl HashMapStorageProvider {
     /// Returns the SSTORE counter (test-utils only).
     pub const fn counter_sstore(&self) -> u64 {
         self.counter_sstore
+    }
+
+    /// Returns the total gas deducted via [`PrecompileStorageProvider::deduct_gas`] (test-utils only).
+    pub const fn gas_deducted(&self) -> u64 {
+        self.gas_deducted
     }
 
     /// Resets the SLOAD/SSTORE counters (test-utils only).
