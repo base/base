@@ -560,7 +560,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
 
     use alloy_primitives::{Address, B256};
 
@@ -576,6 +576,49 @@ mod tests {
             output_root: B256::ZERO,
             l2_block_number: block,
         }
+    }
+
+    fn make_collector(block_interval: u64) -> ProofCollector<MockRollupClient> {
+        let proof_requester: Arc<dyn ProofRequesterProvider> =
+            Arc::new(MockProofRequester::default());
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(0, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        ProofCollector::aws_nitro(proof_requester, rollup_client, block_interval, 4)
+    }
+
+    #[test]
+    fn collectable_targets_returns_next_expected_blocks_excluding_proved_and_submitting() {
+        let collector = make_collector(100);
+
+        let proved: BTreeSet<u64> = [200, 400].into_iter().collect();
+        let submitting: Option<u64> = Some(300);
+
+        let targets = collector.collectable_targets(&recovered(100), 700, |t| {
+            proved.contains(&t) || submitting == Some(t)
+        });
+
+        assert_eq!(targets, vec![500, 600, 700]);
+    }
+
+    #[test]
+    fn collectable_targets_returns_all_eligible_targets_up_to_safe_head() {
+        let collector = make_collector(100);
+
+        let targets = collector.collectable_targets(&recovered(100), 1000, |_| false);
+
+        assert_eq!(targets, vec![200, 300, 400, 500, 600, 700, 800, 900, 1000]);
+    }
+
+    #[test]
+    fn collectable_targets_returns_empty_when_safe_head_below_first_target() {
+        let collector = make_collector(100);
+
+        let targets = collector.collectable_targets(&recovered(500), 550, |_| false);
+
+        assert!(targets.is_empty());
     }
 
     #[test]
