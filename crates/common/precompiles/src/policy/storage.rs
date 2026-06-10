@@ -102,7 +102,7 @@ impl PolicyRegistryStorage<'_> {
     }
 
     fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
-        let packed: PackedPolicy = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
+        let packed: PackedPolicy = PackedPolicy::from_raw(self.policies.at(&policy_id)?.read()?);
         if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
@@ -177,8 +177,8 @@ impl PolicyRegistryStorage<'_> {
         );
         self.__initialize()?;
         let builtin = PackedPolicy::new(Address::ZERO).into_u256();
-        self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(builtin)?;
-        self.policies.at_mut(&Self::ALWAYS_BLOCK_ID).write(builtin)?;
+        self.policies.at_mut(&Self::ALWAYS_ALLOW_ID)?.write(builtin)?;
+        self.policies.at_mut(&Self::ALWAYS_BLOCK_ID)?.write(builtin)?;
         self.next_counter.write(Self::BUILTIN_POLICY_COUNT)?;
         Ok(Self::BUILTIN_POLICY_COUNT)
     }
@@ -202,7 +202,7 @@ impl PolicyRegistryStorage<'_> {
         }
         self.next_counter.write(counter + 1)?;
         let policy_id = Self::make_id(policy_type_u8, counter);
-        self.policies.at_mut(&policy_id).write(PackedPolicy::new(admin).into_u256())?;
+        self.policies.at_mut(&policy_id)?.write(PackedPolicy::new(admin).into_u256())?;
 
         let caller = self.storage.caller();
         self.emit_event(IPolicyRegistry::PolicyCreated {
@@ -231,7 +231,7 @@ impl PolicyRegistryStorage<'_> {
         let policy_id = self.create_policy_inner(admin, policy_type, policy_type_u8)?;
         let caller = self.storage.caller();
         for account in &accounts {
-            self.members.at_mut(&policy_id).at_mut(account).write(true)?;
+            self.members.at_mut(&policy_id)?.at_mut(account)?.write(true)?;
         }
         match policy_type {
             PolicyType::ALLOWLIST => self.emit_event(IPolicyRegistry::AllowlistUpdated {
@@ -257,9 +257,9 @@ impl PolicyRegistryStorage<'_> {
     pub fn stage_update_admin(&mut self, policy_id: u64, new_admin: Address) -> Result<()> {
         let (_, caller) = self.require_admin(policy_id)?;
         if new_admin == Address::ZERO {
-            self.pending_admins.at_mut(&policy_id).delete()?;
+            self.pending_admins.at_mut(&policy_id)?.delete()?;
         } else {
-            self.pending_admins.at_mut(&policy_id).write(new_admin)?;
+            self.pending_admins.at_mut(&policy_id)?.write(new_admin)?;
         }
         self.emit_event(IPolicyRegistry::PolicyAdminStaged {
             policyId: policy_id,
@@ -272,7 +272,7 @@ impl PolicyRegistryStorage<'_> {
     /// Completes a pending admin transfer; caller must be the staged pending admin.
     pub fn finalize_update_admin(&mut self, policy_id: u64) -> Result<()> {
         let packed = self.require_custom(policy_id)?;
-        let pending = self.pending_admins.at(&policy_id).read()?;
+        let pending = self.pending_admins.at(&policy_id)?.read()?;
         if pending == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::NoPendingAdmin {}));
         }
@@ -281,8 +281,8 @@ impl PolicyRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
         let previous_admin = packed.admin();
-        self.policies.at_mut(&policy_id).write(packed.with_admin(caller).into_u256())?;
-        self.pending_admins.at_mut(&policy_id).delete()?;
+        self.policies.at_mut(&policy_id)?.write(packed.with_admin(caller).into_u256())?;
+        self.pending_admins.at_mut(&policy_id)?.delete()?;
         self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
             policyId: policy_id,
             previousAdmin: previous_admin,
@@ -294,8 +294,8 @@ impl PolicyRegistryStorage<'_> {
     /// Clears the admin of `policy_id`, leaving it permanently un-administered.
     pub fn renounce_admin(&mut self, policy_id: u64) -> Result<()> {
         let (packed, caller) = self.require_admin(policy_id)?;
-        self.policies.at_mut(&policy_id).write(packed.with_admin(Address::ZERO).into_u256())?;
-        self.pending_admins.at_mut(&policy_id).delete()?;
+        self.policies.at_mut(&policy_id)?.write(packed.with_admin(Address::ZERO).into_u256())?;
+        self.pending_admins.at_mut(&policy_id)?.delete()?;
         self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
             policyId: policy_id,
             previousAdmin: caller,
@@ -355,9 +355,9 @@ impl PolicyRegistryStorage<'_> {
         Self::require_account_batch_size(accounts)?;
         for account in accounts {
             if add {
-                self.members.at_mut(&policy_id).at_mut(account).write(true)?;
+                self.members.at_mut(&policy_id)?.at_mut(account)?.write(true)?;
             } else {
-                self.members.at_mut(&policy_id).at_mut(account).delete()?;
+                self.members.at_mut(&policy_id)?.at_mut(account)?.delete()?;
             }
         }
         Ok(caller)
@@ -387,7 +387,7 @@ impl PolicyRegistryStorage<'_> {
         // If the slot is unwritten the mapping returns false, which naturally gives:
         //   ALLOWLIST  => false  (no members => not authorized)
         //   BLOCKLIST  => !false (no members blocked => authorized)
-        let member = self.members.at(&policy_id).at(&account).read()?;
+        let member = self.members.at(&policy_id)?.at(&account)?.read()?;
         match Self::policy_id_type(policy_id) {
             Self::ALLOWLIST_TYPE => Ok(member),
             Self::BLOCKLIST_TYPE => Ok(!member),
@@ -410,7 +410,7 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
         }
-        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
+        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id)?.read()?);
         Ok(packed.exists())
     }
 
@@ -422,7 +422,7 @@ impl PolicyRegistryStorage<'_> {
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(Address::ZERO);
         }
-        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
+        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id)?.read()?);
         if !packed.exists() {
             return Ok(Address::ZERO);
         }
@@ -441,7 +441,7 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(Address::ZERO);
         }
-        self.pending_admins.at(&policy_id).read()
+        self.pending_admins.at(&policy_id)?.read()
     }
 }
 
@@ -1398,7 +1398,7 @@ mod tests {
             [PolicyRegistryStorage::ALWAYS_ALLOW_ID, PolicyRegistryStorage::ALWAYS_BLOCK_ID]
         {
             StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx).pending_admins.at_mut(&policy_id).write(NEW_ADMIN)
+                PolicyRegistryStorage::new(ctx).pending_admins.at_mut(&policy_id)?.write(NEW_ADMIN)
             })
             .unwrap();
 
@@ -1424,7 +1424,7 @@ mod tests {
         StorageCtx::enter(&mut s, |ctx| {
             PolicyRegistryStorage::new(ctx)
                 .pending_admins
-                .at_mut(&counter_one_blocklist)
+                .at_mut(&counter_one_blocklist)?
                 .write(NEW_ADMIN)
         })
         .unwrap();

@@ -563,9 +563,9 @@ fn access_target(field_name: &Ident, keys: &[Ident], mutator: bool) -> TokenStre
     let mut target = quote! { self.#field_name };
     for key in keys {
         target = if mutator {
-            quote! { #target.at_mut(&#key) }
+            quote! { #target.at_mut(&#key)? }
         } else {
-            quote! { #target.at(&#key) }
+            quote! { #target.at(&#key)? }
         };
     }
     target

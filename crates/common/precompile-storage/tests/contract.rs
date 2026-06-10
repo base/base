@@ -55,14 +55,14 @@ fn test_contract_macro_basic_roundtrip() {
         assert_eq!(token.total_supply.read().unwrap(), U256::from(1_000_000u64));
 
         // Write and read a mapping entry
-        token.balances.at_mut(&alice).write(U256::from(500u64)).unwrap();
-        assert_eq!(token.balances.at(&alice).read().unwrap(), U256::from(500u64));
-        assert_eq!(token.balances.at(&bob).read().unwrap(), U256::ZERO);
+        token.balances.at_mut(&alice).unwrap().write(U256::from(500u64)).unwrap();
+        assert_eq!(token.balances.at(&alice).unwrap().read().unwrap(), U256::from(500u64));
+        assert_eq!(token.balances.at(&bob).unwrap().read().unwrap(), U256::ZERO);
 
         // Nested mapping
-        token.allowances[alice][bob].write(U256::from(100u64)).unwrap();
-        assert_eq!(token.allowances[alice][bob].read().unwrap(), U256::from(100u64));
-        assert_eq!(token.allowances[bob][alice].read().unwrap(), U256::ZERO);
+        token.allowances.at_mut(&alice).unwrap().at_mut(&bob).unwrap().write(U256::from(100u64)).unwrap();
+        assert_eq!(token.allowances.at(&alice).unwrap().at(&bob).unwrap().read().unwrap(), U256::from(100u64));
+        assert_eq!(token.allowances.at(&bob).unwrap().at(&alice).unwrap().read().unwrap(), U256::ZERO);
     });
 }
 
@@ -108,7 +108,7 @@ fn test_contract_mapping_slot_derivation() {
     StorageCtx::enter(&mut storage, |ctx| {
         let mut token = TestToken::new(ctx);
         let write_value = U256::from(42u64);
-        token.balances.at_mut(&alice).write(write_value).unwrap();
+        token.balances.at_mut(&alice).unwrap().write(write_value).unwrap();
 
         // Verify the raw storage slot matches the expected derivation.
         let raw = ctx.sload(TEST_ADDR, expected).unwrap();
@@ -125,13 +125,13 @@ fn test_contract_multiple_instances_independent() {
 
     StorageCtx::enter(&mut storage1, |ctx| {
         let mut t1 = TestToken::new(ctx);
-        t1.balances.at_mut(&alice).write(U256::from(100u64)).unwrap();
+        t1.balances.at_mut(&alice).unwrap().write(U256::from(100u64)).unwrap();
     });
 
     StorageCtx::enter(&mut storage2, |ctx| {
         let t2 = TestToken::new(ctx);
         // storage2 is independent — balance should be zero.
-        assert_eq!(t2.balances.at(&alice).read().unwrap(), U256::ZERO);
+        assert_eq!(t2.balances.at(&alice).unwrap().read().unwrap(), U256::ZERO);
     });
 }
 
@@ -206,7 +206,7 @@ mod namespaced_layout {
             let mut layout = NamespacedStorage::new(ctx);
             layout.admin.write(owner).unwrap();
             layout.policy.label.write(long_label.clone()).unwrap();
-            layout.policy.balances.at_mut(&owner).write(U256::from(500)).unwrap();
+            layout.policy.balances.at_mut(&owner).unwrap().write(U256::from(500)).unwrap();
             layout.policy.checkpoints.write([U256::from(1), U256::from(2), U256::from(3)]).unwrap();
             layout.policy.packed_flags[0].write(0x1111).unwrap();
             layout.policy.packed_flags[16].write(0x2222).unwrap();
@@ -216,7 +216,7 @@ mod namespaced_layout {
 
             assert_eq!(layout.admin.read().unwrap(), owner);
             assert_eq!(layout.policy.label.read().unwrap(), long_label);
-            assert_eq!(layout.policy.balances.at(&owner).read().unwrap(), U256::from(500));
+            assert_eq!(layout.policy.balances.at(&owner).unwrap().read().unwrap(), U256::from(500));
             assert_eq!(layout.policy.checkpoints[2].read().unwrap(), U256::from(3));
             assert_eq!(layout.policy.packed_flags[0].read().unwrap(), 0x1111);
             assert_eq!(layout.policy.packed_flags[16].read().unwrap(), 0x2222);
@@ -392,7 +392,7 @@ mod type_namespaced_layouts {
 
             layout.local_head.write(0x11).unwrap();
             layout.b20.total_supply.write(U256::from(100)).unwrap();
-            layout.b20.balances.at_mut(&holder).write(U256::from(25)).unwrap();
+            layout.b20.balances.at_mut(&holder).unwrap().write(U256::from(25)).unwrap();
             layout.asset.multiplier.write(U256::from(2)).unwrap();
             layout.redeem.minimum_redeemable.write(U256::from(10)).unwrap();
             layout.redeem.redeem_policy_ids.write(U256::from(3)).unwrap();
@@ -400,7 +400,7 @@ mod type_namespaced_layouts {
 
             assert_eq!(layout.local_head.read().unwrap(), 0x11);
             assert_eq!(layout.b20.total_supply.read().unwrap(), U256::from(100));
-            assert_eq!(layout.b20.balances.at(&holder).read().unwrap(), U256::from(25));
+            assert_eq!(layout.b20.balances.at(&holder).unwrap().read().unwrap(), U256::from(25));
             assert_eq!(layout.asset.multiplier.read().unwrap(), U256::from(2));
             assert_eq!(layout.redeem.minimum_redeemable.read().unwrap(), U256::from(10));
             assert_eq!(layout.redeem.redeem_policy_ids.read().unwrap(), U256::from(3));
@@ -487,11 +487,11 @@ mod namespaced_fields {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut layout = FieldNamespacedStorage::new(ctx);
             layout.policy_label.write(label.clone()).unwrap();
-            layout.policy_balances.at_mut(&owner).write(U256::from(700)).unwrap();
+            layout.policy_balances.at_mut(&owner).unwrap().write(U256::from(700)).unwrap();
             layout.total_supply.write(U256::from(2_000)).unwrap();
 
             assert_eq!(layout.policy_label.read().unwrap(), label);
-            assert_eq!(layout.policy_balances.at(&owner).read().unwrap(), U256::from(700));
+            assert_eq!(layout.policy_balances.at(&owner).unwrap().read().unwrap(), U256::from(700));
             assert_eq!(layout.total_supply.read().unwrap(), U256::from(2_000));
 
             assert_eq!(

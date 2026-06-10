@@ -64,6 +64,22 @@ impl<K: Ord + Clone, H> HandlerCache<K, H> {
         unsafe { &*(boxed.as_ref() as *const H) }
     }
 
+    /// Returns a reference to a lazily initialized handler, or propagates an error from the factory.
+    pub fn get_or_try_insert<E>(
+        &self,
+        key: &K,
+        f: impl FnOnce() -> core::result::Result<H, E>,
+    ) -> core::result::Result<&H, E> {
+        let mut cache = self.inner.borrow_mut();
+        if let Some(boxed) = cache.get(key) {
+            // SAFETY: Same as get_or_insert — stable Box heap address, append-only cache.
+            return Ok(unsafe { &*(boxed.as_ref() as *const H) });
+        }
+        cache.insert(key.clone(), Box::new(f()?));
+        let boxed = cache.get(key).expect("handler cache was just populated");
+        Ok(unsafe { &*(boxed.as_ref() as *const H) })
+    }
+
     /// Returns a mutable reference to a lazily initialized handler for the given key.
     pub fn get_or_insert_mut(&mut self, key: &K, f: impl FnOnce() -> H) -> &mut H {
         // Using get_mut() requires &mut self (exclusive access) — no borrow guard needed.
@@ -72,5 +88,18 @@ impl<K: Ord + Clone, H> HandlerCache<K, H> {
             cache.insert(key.clone(), Box::new(f()));
         }
         cache.get_mut(key).expect("handler cache was just populated").as_mut()
+    }
+
+    /// Returns a mutable reference to a lazily initialized handler, or propagates an error.
+    pub fn get_or_try_insert_mut<E>(
+        &mut self,
+        key: &K,
+        f: impl FnOnce() -> core::result::Result<H, E>,
+    ) -> core::result::Result<&mut H, E> {
+        let cache = self.inner.get_mut();
+        if !cache.contains_key(key) {
+            cache.insert(key.clone(), Box::new(f()?));
+        }
+        Ok(cache.get_mut(key).expect("handler cache was just populated").as_mut())
     }
 }

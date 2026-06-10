@@ -1389,6 +1389,9 @@ mod tests {
     fn factory_address_hashing_is_metered_for_valid_variant() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
+        // Reset counters so setup keccak calls (mapping slot derivations during
+        // activate_precompiles) do not pollute the assertions below.
+        storage.reset_counters();
         let sender = Address::repeat_byte(0x20);
         let salt = B256::repeat_byte(0x30);
         let (expected_asset_addr, _) = B20Variant::Asset.compute_address(sender, salt);
@@ -1407,15 +1410,17 @@ mod tests {
                 IB20Factory::getB20AddressCall::abi_encode_returns(&expected_asset_addr),
             );
         });
-        // One keccak call for the valid getB20Address.
+        // getB20Address performs no storage lookups, so exactly one keccak is charged
+        // (the address hash derivation in dispatch.rs).
         assert_eq!(
             storage.counter_keccak256(),
             1,
             "getB20Address must call keccak256 exactly once for a valid variant"
         );
 
-        // createB20 also meters the keccak hash for valid variants. Verify the token
-        // is created at the same address that getB20Address predicted.
+        // createB20 meters the address hash keccak plus slot-derivation keccak calls
+        // for the activation check and policy/role storage operations (BOP-348). Verify
+        // the token is created at the same address that getB20Address predicted.
         storage.reset_counters();
         storage.set_caller(sender);
         StorageCtx::enter(&mut storage, |ctx| {
@@ -1429,10 +1434,9 @@ mod tests {
                 IB20Factory::createB20Call::abi_encode_returns(&expected_asset_addr),
             );
         });
-        assert_eq!(
-            storage.counter_keccak256(),
-            1,
-            "createB20 must call keccak256 exactly once for a valid variant"
+        assert!(
+            storage.counter_keccak256() >= 1,
+            "createB20 must meter at least one keccak256 (address hash) for a valid variant"
         );
     }
 }

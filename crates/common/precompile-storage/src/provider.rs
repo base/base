@@ -113,6 +113,15 @@ pub trait StorageOps {
     fn store(&mut self, slot: U256, value: U256) -> Result<()>;
     /// Loads a value from the provided slot.
     fn load(&self, slot: U256) -> Result<U256>;
+
+    /// Computes keccak256 and charges the appropriate gas.
+    ///
+    /// The default implementation is unmetered and is only used by [`crate::PackedSlot`].
+    /// Implementations backed by a live EVM context (e.g. [`crate::types::Slot`]) override
+    /// this to delegate to the gas-metered [`crate::storage_ctx::StorageCtx::metered_keccak256`].
+    fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+        Ok(keccak256(data))
+    }
 }
 
 /// Trait providing access to a contract's address and storage.
@@ -319,6 +328,20 @@ pub trait StorageKey: sealed::OnlyPrimitives {
     /// Returns key bytes for storage slot computation (left-padded to 32 bytes).
     fn as_storage_bytes(&self) -> impl AsRef<[u8]>;
 
+    /// Returns the raw bytes used as input to keccak256 for mapping slot derivation.
+    ///
+    /// Primitives use a fixed 64-byte buffer (right-aligned key, then slot).
+    /// `String` overrides this to use the full string bytes without padding.
+    fn mapping_key_buffer(&self, slot: U256) -> alloc::vec::Vec<u8> {
+        let key_bytes = self.as_storage_bytes();
+        let key_bytes = key_bytes.as_ref();
+        debug_assert!(key_bytes.len() <= 32);
+        let mut buf = alloc::vec![0u8; 64];
+        buf[32 - key_bytes.len()..32].copy_from_slice(key_bytes);
+        buf[32..].copy_from_slice(&slot.to_be_bytes::<32>());
+        buf
+    }
+
     /// Computes `keccak256(lpad32(key) ‖ slot_be32)`.
     ///
     /// The formula is Solidity-compatible for unsigned integers (`u8`..`u256`), `Address`,
@@ -330,14 +353,7 @@ pub trait StorageKey: sealed::OnlyPrimitives {
     ///
     /// See the crate-level README for a full compatibility table.
     fn mapping_slot(&self, slot: U256) -> U256 {
-        let key_bytes = self.as_storage_bytes();
-        let key_bytes = key_bytes.as_ref();
-        debug_assert!(key_bytes.len() <= 32);
-
-        let mut buf = [0u8; 64];
-        buf[32 - key_bytes.len()..32].copy_from_slice(key_bytes);
-        buf[32..].copy_from_slice(&slot.to_be_bytes::<32>());
-
-        U256::from_be_bytes(keccak256(buf).0)
+        let buf = self.mapping_key_buffer(slot);
+        U256::from_be_bytes(keccak256(&buf).0)
     }
 }

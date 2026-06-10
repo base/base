@@ -8,7 +8,7 @@
 
 use alloc::vec::Vec;
 
-use alloy_primitives::{Address, U256, keccak256};
+use alloy_primitives::{Address, U256};
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -47,7 +47,8 @@ where
             return Ok(Self::new());
         }
 
-        let data_start = calc_data_slot(len_slot);
+        let data_start =
+            U256::from_be_bytes(storage.metered_keccak256(&len_slot.to_be_bytes::<32>())?.0);
         if T::BYTES <= 16 {
             load_packed_elements(storage, data_start, length, T::BYTES)
         } else {
@@ -63,7 +64,8 @@ where
             return Ok(());
         }
 
-        let data_start = calc_data_slot(len_slot);
+        let data_start =
+            U256::from_be_bytes(storage.metered_keccak256(&len_slot.to_be_bytes::<32>())?.0);
         if T::BYTES <= 16 {
             store_packed_elements(self, storage, data_start, T::BYTES)
         } else {
@@ -81,7 +83,8 @@ where
             return Ok(());
         }
 
-        let data_start = calc_data_slot(len_slot);
+        let data_start =
+            U256::from_be_bytes(storage.metered_keccak256(&len_slot.to_be_bytes::<32>())?.0);
         if T::BYTES <= 16 {
             let slot_count = calc_packed_slot_count(length, T::BYTES);
             for slot_idx in 0..slot_count {
@@ -159,8 +162,10 @@ where
 
     /// Returns the slot where element data begins (`keccak256(len_slot)`).
     #[inline]
-    pub fn data_slot(&self) -> U256 {
-        calc_data_slot(self.len_slot)
+    pub fn data_slot(&self) -> Result<U256> {
+        Ok(U256::from_be_bytes(
+            self.storage.metered_keccak256(&self.len_slot.to_be_bytes::<32>())?.0,
+        ))
     }
 
     #[inline]
@@ -205,7 +210,7 @@ where
         if index >= self.len()? {
             return Ok(None);
         }
-        let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
+        let (data_start, address, storage) = (self.data_slot()?, self.address, self.storage);
         Ok(Some(
             self.cache.get_or_insert(&index, || {
                 Self::compute_handler(data_start, address, storage, index)
@@ -225,7 +230,7 @@ where
             return Err(BasePrecompileError::Fatal("Vec is at max capacity".into()));
         }
         let mut elem_slot =
-            Self::compute_handler(self.data_slot(), self.address, self.storage, length);
+            Self::compute_handler(self.data_slot()?, self.address, self.storage, length);
         elem_slot.write(value)?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
         length_slot.write(U256::from(length + 1))
@@ -244,7 +249,7 @@ where
         }
         let last_index = length - 1;
         let mut elem_slot =
-            Self::compute_handler(self.data_slot(), self.address, self.storage, last_index);
+            Self::compute_handler(self.data_slot()?, self.address, self.storage, last_index);
         let element = elem_slot.read()?;
         elem_slot.delete()?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
@@ -269,7 +274,7 @@ where
                 "vec index out of bounds: position invariant violated".into(),
             ));
         }
-        let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
+        let (data_start, address, storage) = (self.data_slot()?, self.address, self.storage);
         Ok(self
             .cache
             .get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index)))
@@ -287,7 +292,7 @@ where
                 "vec index out of bounds: position invariant violated".into(),
             ));
         }
-        let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
+        let (data_start, address, storage) = (self.data_slot()?, self.address, self.storage);
         Ok(self.cache.get_or_insert_mut(&index, || {
             Self::compute_handler(data_start, address, storage, index)
         }))
@@ -301,11 +306,6 @@ fn load_checked_len<S: StorageOps>(storage: &S, slot: U256) -> Result<usize> {
         return Err(BasePrecompileError::under_overflow());
     }
     Ok(raw.to::<usize>())
-}
-
-#[inline]
-pub(crate) fn calc_data_slot(len_slot: U256) -> U256 {
-    U256::from_be_bytes(keccak256(len_slot.to_be_bytes::<32>()).0)
 }
 
 fn load_packed_elements<T, S>(
@@ -413,8 +413,14 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::keccak256;
+
     use super::*;
     use crate::{hashmap::setup_storage, packing::gen_word_from, storage_ctx::StorageCtx};
+
+    fn calc_data_slot(len_slot: U256) -> U256 {
+        U256::from_be_bytes(keccak256(len_slot.to_be_bytes::<32>()).0)
+    }
 
     #[test]
     fn test_vec_empty_roundtrip() {

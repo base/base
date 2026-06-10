@@ -1,13 +1,11 @@
 //! Type-safe wrapper for EVM storage mappings (hash-based key-value storage).
 
-use core::{
-    marker::PhantomData,
-    ops::{Index, IndexMut},
-};
+use core::marker::PhantomData;
 
 use alloy_primitives::{Address, U256};
 
 use crate::{
+    error::Result,
     provider::{Layout, LayoutCtx, StorableType, StorageKey},
     types::HandlerCache,
 };
@@ -48,50 +46,28 @@ impl<'a, K, V: StorableType> MappingHandler<'a, K, V> {
     }
 
     /// Returns a handler for the given key (immutable access, cached).
-    pub fn at(&self, key: &K) -> &V::Handler<'a>
+    pub fn at(&self, key: &K) -> Result<&V::Handler<'a>>
     where
         K: StorageKey + Eq + Clone + Ord,
     {
         let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
-        self.cache.get_or_insert(key, || {
-            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address, storage)
+        self.cache.get_or_try_insert(key, || {
+            let buf = key.mapping_key_buffer(base_slot);
+            let child_slot = U256::from_be_bytes(storage.metered_keccak256(&buf)?.0);
+            Ok(V::handle(child_slot, LayoutCtx::FULL, address, storage))
         })
     }
 
     /// Returns a mutable handler for the given key (mutable access, cached).
-    pub fn at_mut(&mut self, key: &K) -> &mut V::Handler<'a>
+    pub fn at_mut(&mut self, key: &K) -> Result<&mut V::Handler<'a>>
     where
         K: StorageKey + Eq + Clone + Ord,
     {
         let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
-        self.cache.get_or_insert_mut(key, || {
-            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address, storage)
-        })
-    }
-}
-
-impl<'a, K, V: StorableType> Index<K> for MappingHandler<'a, K, V>
-where
-    K: StorageKey + Eq + Clone + Ord,
-{
-    type Output = V::Handler<'a>;
-
-    fn index(&self, key: K) -> &Self::Output {
-        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
-        self.cache.get_or_insert(&key, || {
-            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address, storage)
-        })
-    }
-}
-
-impl<'a, K, V: StorableType> IndexMut<K> for MappingHandler<'a, K, V>
-where
-    K: StorageKey + Eq + Clone + Ord,
-{
-    fn index_mut(&mut self, key: K) -> &mut Self::Output {
-        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
-        self.cache.get_or_insert_mut(&key, || {
-            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address, storage)
+        self.cache.get_or_try_insert_mut(key, || {
+            let buf = key.mapping_key_buffer(base_slot);
+            let child_slot = U256::from_be_bytes(storage.metered_keccak256(&buf)?.0);
+            Ok(V::handle(child_slot, LayoutCtx::FULL, address, storage))
         })
     }
 }
@@ -170,13 +146,13 @@ mod tests {
             let mapping = MappingHandler::<Address, U256>::new(base_slot, address, ctx);
 
             let key = Address::from([0x20; 20]);
-            let slot1 = &mapping[key];
-            let slot2 = &mapping[key];
+            let slot1 = mapping.at(&key).unwrap();
+            let slot2 = mapping.at(&key).unwrap();
             assert_eq!(slot1.slot(), slot2.slot());
 
             let key1 = Address::from([0x21; 20]);
             let key2 = Address::from([0x22; 20]);
-            assert_ne!(mapping[key1].slot(), mapping[key2].slot());
+            assert_ne!(mapping.at(&key1).unwrap().slot(), mapping.at(&key2).unwrap().slot());
         });
     }
 }

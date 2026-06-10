@@ -71,7 +71,7 @@ impl ActivationRegistryStorage<'_> {
 
     /// Returns true when the feature is activated.
     pub fn is_activated(&self, feature: B256) -> Result<bool> {
-        self.features.at(&feature).read()
+        self.features.at(&feature)?.read()
     }
 
     /// Reverts unless the feature is activated.
@@ -134,7 +134,7 @@ impl ActivationRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
         }
 
-        let current_activated_state = self.features.at(&feature).read()?;
+        let current_activated_state = self.features.at(&feature)?.read()?;
 
         let is_activating_and_already_activated = to_activated_state && current_activated_state;
         let is_deactivating_and_already_deactivated =
@@ -153,10 +153,10 @@ impl ActivationRegistryStorage<'_> {
 
         if to_activated_state {
             self.__initialize()?;
-            self.features.at_mut(&feature).write(true)?;
+            self.features.at_mut(&feature)?.write(true)?;
             self.emit_event(IActivationRegistry::FeatureActivated { feature, caller })?;
         } else {
-            self.features.at_mut(&feature).delete()?;
+            self.features.at_mut(&feature)?.delete()?;
             self.emit_event(IActivationRegistry::FeatureDeactivated { feature, caller })?;
         }
 

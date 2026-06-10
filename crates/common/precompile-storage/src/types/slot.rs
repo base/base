@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use crate::{
     error::Result,
@@ -98,6 +98,10 @@ impl<T> StorageOps for Slot<'_, T> {
     fn store(&mut self, slot: U256, value: U256) -> Result<()> {
         self.storage.sstore(self.address, slot, value)
     }
+
+    fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+        self.storage.metered_keccak256(data)
+    }
 }
 
 struct TransientOps<'a> {
@@ -112,6 +116,10 @@ impl StorageOps for TransientOps<'_> {
 
     fn store(&mut self, slot: U256, value: U256) -> Result<()> {
         self.storage.tstore(self.address, slot, value)
+    }
+
+    fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+        self.storage.metered_keccak256(data)
     }
 }
 
