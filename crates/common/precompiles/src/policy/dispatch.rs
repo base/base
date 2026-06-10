@@ -1,6 +1,6 @@
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::StorageCtx;
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -30,6 +30,9 @@ impl PolicyRegistryStorage<'_> {
     where
         O: PrecompileCallObserver,
     {
+        if !ctx.call_value().is_zero() {
+            return ctx.error_result(BasePrecompileError::revert(IPolicyRegistry::NonPayable {}));
+        }
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::policy_call(calldata));
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {

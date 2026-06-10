@@ -36,6 +36,9 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
+        if !ctx.call_value().is_zero() {
+            return ctx.error_result(BasePrecompileError::revert(IB20::NonPayable {}));
+        }
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::b20_asset_call(calldata));
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
