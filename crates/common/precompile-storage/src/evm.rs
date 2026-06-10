@@ -638,7 +638,7 @@ mod tests {
             };
             let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
             assert_eq!(
-                provider.set_code(address, code.clone()),
+                provider.set_code(address, code),
                 Err(BasePrecompileError::OutOfGas)
             );
         }
