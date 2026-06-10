@@ -1,5 +1,7 @@
+use alloc::string::ToString;
+
 use alloy_primitives::Bytes;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolInterface};
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
@@ -41,29 +43,33 @@ impl PolicyRegistryStorage<'_> {
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
-        let result = if Self::is_view_selector(calldata) {
-            self.inner(calldata, &observer)
-        } else {
-            ActivationRegistryStorage::new(ctx)
-                .ensure_activated(ActivationFeature::PolicyRegistry.id())
-                .and_then(|()| self.inner(calldata, &observer))
+        let result = match calldata.first_chunk::<4>().copied() {
+            None => Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4])),
+            Some(sel)
+                if sel == IPolicyRegistry::isAuthorizedCall::SELECTOR
+                    || sel == IPolicyRegistry::policyExistsCall::SELECTOR
+                    || sel == IPolicyRegistry::policyAdminCall::SELECTOR
+                    || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR =>
+            {
+                self.inner(calldata, &observer)
+            }
+            Some(sel) if IPolicyRegistry::IPolicyRegistryCalls::valid_selector(sel) => {
+                // Validate ABI encoding before the activation gate so that malformed
+                // arguments return AbiDecodeFailed regardless of activation state.
+                IPolicyRegistry::IPolicyRegistryCalls::abi_decode_validate(calldata)
+                    .map_err(|e| BasePrecompileError::AbiDecodeFailed {
+                        selector: sel,
+                        error: e.to_string(),
+                    })
+                    .and_then(|_| {
+                        ActivationRegistryStorage::new(ctx)
+                            .ensure_activated(ActivationFeature::PolicyRegistry.id())
+                            .and_then(|()| self.inner(calldata, &observer))
+                    })
+            }
+            Some(sel) => Err(BasePrecompileError::UnknownFunctionSelector(sel)),
         };
         recorder.record_base_result(ctx, result, |b| b)
-    }
-
-    /// Returns `true` when the calldata selector belongs to a view (read-only) function.
-    ///
-    /// View functions are accessible regardless of whether the feature is activated, so that
-    /// callers can still query policy state (e.g. check blocklist membership) even if the
-    /// precompile feature is administratively disabled.
-    fn is_view_selector(calldata: &[u8]) -> bool {
-        let Some(selector) = calldata.first_chunk::<4>().copied() else {
-            return false;
-        };
-        selector == IPolicyRegistry::isAuthorizedCall::SELECTOR
-            || selector == IPolicyRegistry::policyExistsCall::SELECTOR
-            || selector == IPolicyRegistry::policyAdminCall::SELECTOR
-            || selector == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR
     }
 
     fn inner<O>(&mut self, calldata: &[u8], observer: &O) -> base_precompile_storage::Result<Bytes>
@@ -614,6 +620,66 @@ mod tests {
             .unwrap();
             assert!(out.is_revert(), "createPolicy must revert when feature is deactivated");
         }
+    }
+
+    #[test]
+    fn inactive_unknown_selector_returns_unknown_function_selector() {
+        let mut storage = HashMapStorageProvider::new(1);
+        // Unknown selector; feature never activated.
+        let calldata = [0xde, 0xad, 0xbe, 0xef, 0x00, 0x00, 0x00, 0x00];
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        // UnknownFunctionSelector encodes as the raw 4-byte selector.
+        assert_eq!(out.bytes, Bytes::from([0xde, 0xad, 0xbe, 0xef].as_ref()));
+    }
+
+    #[test]
+    fn inactive_malformed_view_selector_returns_abi_decode_error() {
+        let mut storage = HashMapStorageProvider::new(1);
+        // policyExists selector with no arguments (truncated); feature inactive.
+        let calldata = IPolicyRegistry::policyExistsCall::SELECTOR.to_vec();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        // AbiDecodeFailed encodes as selector || error_string. The first 4 bytes of the
+        // revert data are the matched function selector, which differs from the 4-byte
+        // ABI error selector that FeatureNotActivated would produce.
+        assert_eq!(
+            out.bytes.get(..4),
+            Some(IPolicyRegistry::policyExistsCall::SELECTOR.as_ref()),
+            "revert must be AbiDecodeFailed, not FeatureNotActivated"
+        );
+    }
+
+    #[test]
+    fn inactive_malformed_write_selector_returns_abi_decode_error() {
+        let mut storage = HashMapStorageProvider::new(1);
+        // createPolicy selector with no arguments (truncated); feature inactive.
+        let calldata = IPolicyRegistry::createPolicyCall::SELECTOR.to_vec();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        // AbiDecodeFailed encodes as selector || error_string. The first 4 bytes of the
+        // revert data are the matched function selector, which differs from the 4-byte
+        // ABI error selector that FeatureNotActivated would produce.
+        assert_eq!(
+            out.bytes.get(..4),
+            Some(IPolicyRegistry::createPolicyCall::SELECTOR.as_ref()),
+            "revert must be AbiDecodeFailed, not FeatureNotActivated"
+        );
     }
 
     #[test]
