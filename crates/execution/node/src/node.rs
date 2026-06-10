@@ -39,7 +39,6 @@ use reth_evm::ConfigureEvm;
 use reth_network::{
     DiscoveredEvent, DiscoveryEvent, NetworkConfig, NetworkConfigBuilder,
     NetworkEventListenerProvider, NetworkHandle, NetworkManager, NetworkPrimitives, PeersInfo,
-    events::{NetworkPeersEvents, PeerEvent},
     types::BasicNetworkPrimitives,
 };
 use reth_network_peers::{NodeRecord, PeerId};
@@ -66,7 +65,7 @@ use reth_primitives_traits::{SealedHeader, header::HeaderMut};
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
-use reth_tracing::tracing::{debug, info, warn};
+use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
     EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
     TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
@@ -131,7 +130,7 @@ fn log_configured_bootnodes(bootnodes: &HashMap<PeerId, Vec<NodeRecord>>) {
         request_retries = BASE_DISCV5_BOOTNODE_REQUEST_RETRIES,
         bootnode_count = bootnode_sockets.len(),
         bootnodes = ?bootnode_sockets,
-        "configured execution bootnodes"
+        "configured execution discv5 bootnodes"
     );
 }
 
@@ -160,7 +159,7 @@ fn spawn_bootnode_event_logs<N: NetworkPrimitives>(
                             configured_addrs = ?bootnode_sockets(bootnodes),
                             discovered_addr = ?addr,
                             fork_id = ?fork_id,
-                            "bootnode discovery queued"
+                            "bootnode discv5 discovery update received"
                         );
                     }
                 }
@@ -173,59 +172,7 @@ fn spawn_bootnode_event_logs<N: NetworkPrimitives>(
                             enr_tcp = %bootnode_socket(&record, record.tcp_port),
                             enr_udp = %bootnode_socket(&record, record.udp_port),
                             fork_id = ?fork_id,
-                            "bootnode enr fork id received"
-                        );
-                    }
-                }
-            }
-        }
-    });
-
-    let mut peer_events = network.peer_events();
-    tokio::spawn(async move {
-        while let Some(event) = peer_events.next().await {
-            match event {
-                PeerEvent::SessionEstablished(info) => {
-                    if let Some(bootnodes) = bootnodes.get(&info.peer_id) {
-                        info!(
-                            target: "net::bootnodes",
-                            peer_id = ?info.peer_id,
-                            configured_addrs = ?bootnode_sockets(bootnodes),
-                            remote_addr = %info.remote_addr,
-                            client_version = %info.client_version,
-                            peer_kind = ?info.peer_kind,
-                            "bootnode peer session established"
-                        );
-                    }
-                }
-                PeerEvent::SessionClosed { peer_id, reason } => {
-                    if let Some(bootnodes) = bootnodes.get(&peer_id) {
-                        warn!(
-                            target: "net::bootnodes",
-                            peer_id = ?peer_id,
-                            configured_addrs = ?bootnode_sockets(bootnodes),
-                            reason = ?reason,
-                            "bootnode peer session closed"
-                        );
-                    }
-                }
-                PeerEvent::PeerAdded(peer_id) => {
-                    if let Some(bootnodes) = bootnodes.get(&peer_id) {
-                        info!(
-                            target: "net::bootnodes",
-                            peer_id = ?peer_id,
-                            configured_addrs = ?bootnode_sockets(bootnodes),
-                            "bootnode added to peer set"
-                        );
-                    }
-                }
-                PeerEvent::PeerRemoved(peer_id) => {
-                    if let Some(bootnodes) = bootnodes.get(&peer_id) {
-                        info!(
-                            target: "net::bootnodes",
-                            peer_id = ?peer_id,
-                            configured_addrs = ?bootnode_sockets(bootnodes),
-                            "bootnode removed from peer set"
+                            "bootnode discv5 enr response received"
                         );
                     }
                 }
