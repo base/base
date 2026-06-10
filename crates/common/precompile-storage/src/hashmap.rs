@@ -41,7 +41,11 @@ pub struct HashMapStorageProvider {
 #[derive(Debug)]
 struct Snapshot {
     internals: HashMap<(Address, U256), U256>,
+    transient: HashMap<(Address, U256), U256>,
+    accounts: HashMap<Address, AccountInfo>,
     events: HashMap<Address, Vec<LogData>>,
+    gas_refunded: i64,
+    state_gas_used: u64,
 }
 
 impl HashMapStorageProvider {
@@ -241,8 +245,14 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn checkpoint(&mut self) -> JournalCheckpoint {
         let idx = self.snapshots.len();
-        self.snapshots
-            .push(Snapshot { internals: self.internals.clone(), events: self.events.clone() });
+        self.snapshots.push(Snapshot {
+            internals: self.internals.clone(),
+            transient: self.transient.clone(),
+            accounts: self.accounts.clone(),
+            events: self.events.clone(),
+            gas_refunded: self.gas_refunded,
+            state_gas_used: self.state_gas_used,
+        });
         JournalCheckpoint { log_i: 0, journal_i: idx, selfdestructed_i: 0 }
     }
 
@@ -263,7 +273,11 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         );
         if let Some(snapshot) = self.snapshots.drain(checkpoint.journal_i..).next() {
             self.internals = snapshot.internals;
+            self.transient = snapshot.transient;
+            self.accounts = snapshot.accounts;
             self.events = snapshot.events;
+            self.gas_refunded = snapshot.gas_refunded;
+            self.state_gas_used = snapshot.state_gas_used;
         }
     }
 }
@@ -454,5 +468,88 @@ mod tests {
         let mut p = HashMapStorageProvider::new(1);
         p.sstore(ADDR, KEY, U256::from(99u64)).unwrap();
         assert_eq!(p.gas_refunded(), 0);
+    }
+
+    #[test]
+    fn checkpoint_revert_restores_internals() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.sstore(ADDR, KEY, U256::from(1u64)).unwrap();
+        let cp = p.checkpoint();
+        p.sstore(ADDR, KEY, U256::from(2u64)).unwrap();
+        p.checkpoint_revert(cp);
+        assert_eq!(p.sload(ADDR, KEY).unwrap(), U256::from(1u64));
+    }
+
+    #[test]
+    fn checkpoint_revert_restores_transient() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.tstore(ADDR, KEY, U256::from(10u64)).unwrap();
+        let cp = p.checkpoint();
+        p.tstore(ADDR, KEY, U256::from(99u64)).unwrap();
+        p.checkpoint_revert(cp);
+        assert_eq!(p.tload(ADDR, KEY).unwrap(), U256::from(10u64));
+    }
+
+    #[test]
+    fn checkpoint_revert_restores_accounts() {
+        let mut p = HashMapStorageProvider::new(1);
+        let code_before = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        p.set_code(ADDR, code_before.clone()).unwrap();
+        let cp = p.checkpoint();
+        let code_after = Bytecode::new_raw([0x60u8, 0x01].as_ref().into());
+        p.set_code(ADDR, code_after).unwrap();
+        p.checkpoint_revert(cp);
+        let mut seen_hash = None;
+        p.with_account_info(ADDR, &mut |info| {
+            seen_hash = Some(info.code_hash);
+        })
+        .unwrap();
+        assert_eq!(seen_hash.unwrap(), code_before.hash_slow());
+    }
+
+    #[test]
+    fn checkpoint_revert_restores_events() {
+        use alloy_primitives::Bytes;
+        let mut p = HashMapStorageProvider::new(1);
+        let event_before = LogData::new_unchecked(vec![], Bytes::from_static(b"before"));
+        p.emit_event(ADDR, event_before).unwrap();
+        let cp = p.checkpoint();
+        let event_after = LogData::new_unchecked(vec![], Bytes::from_static(b"after"));
+        p.emit_event(ADDR, event_after).unwrap();
+        p.checkpoint_revert(cp);
+        let events = p.get_events(ADDR);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data, Bytes::from_static(b"before"));
+    }
+
+    #[test]
+    fn checkpoint_revert_restores_gas_refunded() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.refund_gas(1_000);
+        let cp = p.checkpoint();
+        p.refund_gas(500);
+        assert_eq!(p.gas_refunded(), 1_500);
+        p.checkpoint_revert(cp);
+        assert_eq!(p.gas_refunded(), 1_000);
+    }
+
+    #[test]
+    fn checkpoint_revert_restores_state_gas_used() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.deduct_state_gas(100).unwrap();
+        let cp = p.checkpoint();
+        p.deduct_state_gas(50).unwrap();
+        assert_eq!(p.state_gas_used(), 150);
+        p.checkpoint_revert(cp);
+        assert_eq!(p.state_gas_used(), 100);
+    }
+
+    #[test]
+    fn checkpoint_commit_does_not_revert_mutations() {
+        let mut p = HashMapStorageProvider::new(1);
+        let cp = p.checkpoint();
+        p.sstore(ADDR, KEY, U256::from(42u64)).unwrap();
+        p.checkpoint_commit(cp);
+        assert_eq!(p.sload(ADDR, KEY).unwrap(), U256::from(42u64));
     }
 }
