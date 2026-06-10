@@ -480,7 +480,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_primitives::{Address, Bytes, U256};
-    use alloy_sol_types::{SolCall, SolEvent};
+    use alloy_sol_types::{SolCall, SolError, SolEvent};
     use base_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, Result, StorageCtx,
     };
@@ -488,8 +488,9 @@ mod tests {
     use crate::{
         ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
         B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset, InMemoryPolicy,
-        InMemoryTokenAccounting, PrecompileCallMetric, PrecompileCallObserver,
-        PrecompileCallOutcome, PrecompileCallStatus, Token, TokenAccounting,
+        InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
+        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
+        TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
@@ -858,9 +859,6 @@ mod tests {
 
     #[test]
     fn dispatch_rejects_call_with_nonzero_value() {
-        use alloy_sol_types::SolError;
-        use crate::NoopPrecompileCallObserver;
-
         let mut token = make_token();
         let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
         let mut storage = storage_with_caller(ALICE);
