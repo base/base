@@ -26,14 +26,14 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
-        // All factory selectors are nonpayable: reject any call that attaches ETH.
-        // The guard fires before calldata-cost deduction so value-bearing calls pay
-        // zero gas before reverting, matching Solidity's nonpayable semantics.
-        if !ctx.call_value().is_zero() {
-            return ctx.error_result(BasePrecompileError::revert(IB20Factory::NonPayable {}));
-        }
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
+        if !ctx.call_value().is_zero() {
+            return recorder.record_base_error_result(
+                ctx,
+                BasePrecompileError::revert(IB20Factory::NonPayable {}),
+            );
+        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
