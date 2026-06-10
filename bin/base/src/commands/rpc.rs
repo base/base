@@ -18,8 +18,14 @@ use crate::config::ResolvedChainConfig;
 #[derive(Args, Clone, Debug)]
 #[command(
     mut_arg("builder_disallow", |arg| arg.hide(true).long("__builder-disallow-disabled")),
-    mut_arg("sequencer", |arg| arg.hide(true).long("__rollup-sequencer-disabled")),
-    mut_arg("sequencer_headers", |arg| arg.hide(true).long("__rollup-sequencer-headers-disabled"))
+    mut_arg("sequencer", |arg| arg
+        .hide(true)
+        .long("__rollup-sequencer-disabled")
+        .alias(None::<&'static str>)),
+    mut_arg("sequencer_headers", |arg| arg
+        .hide(true)
+        .long("__rollup-sequencer-headers-disabled")
+        .alias(None::<&'static str>))
 )]
 pub(crate) struct RpcCommand {
     /// Execution chain spec to use instead of the root chain selection.
@@ -108,10 +114,16 @@ fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
+    use base_execution_chainspec::BaseChainSpec;
     use clap::Parser;
 
     use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};
 
+    const RPC_FORWARDING_ENDPOINT_ENV: &str = "OP_RETH_SEQUENCER_HTTP";
+    const RPC_FORWARDING_ENDPOINT_ENV_CHILD_TEST: &str =
+        "commands::rpc::tests::parses_rpc_forwarding_endpoint_from_env_child";
     const REQUIRED_CONSENSUS_ARGS: &[&str] =
         &["--l1-eth-rpc", "http://localhost:8545", "--l1-beacon", "http://localhost:5052"];
 
@@ -221,6 +233,70 @@ mod tests {
     }
 
     #[test]
+    fn parses_rpc_forwarding_endpoint_arg() {
+        let cli = BaseCli::parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--rpc.forwarding-endpoint",
+            "http://localhost:8545",
+        ]));
+
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+
+        let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
+
+        assert_eq!(
+            launch_config.standard.rpc.rpc_forwarding_endpoint.as_deref(),
+            Some("http://localhost:8545")
+        );
+        assert_eq!(
+            launch_config.standard.rpc.rollup_args.sequencer.as_deref(),
+            Some("http://localhost:8545")
+        );
+        assert!(!launch_config.standard.enable_tx_forwarding);
+        assert!(launch_config.standard.builder_rpc_urls.is_empty());
+    }
+
+    #[test]
+    fn parses_rpc_forwarding_endpoint_from_env() {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.arg("--exact").arg(RPC_FORWARDING_ENDPOINT_ENV_CHILD_TEST).arg("--ignored");
+        command.env(RPC_FORWARDING_ENDPOINT_ENV, "http://localhost:8547");
+
+        let output = command.output().unwrap();
+
+        assert!(
+            output.status.success(),
+            "child env parsing test failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "spawned by parses_rpc_forwarding_endpoint_from_env with isolated process env"]
+    fn parses_rpc_forwarding_endpoint_from_env_child() {
+        let cli = BaseCli::parse_from(rpc_args(&["base", "rpc"]));
+
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+
+        let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
+
+        assert_eq!(
+            launch_config.standard.rpc.rpc_forwarding_endpoint.as_deref(),
+            Some("http://localhost:8547")
+        );
+        assert_eq!(
+            launch_config.standard.rpc.rollup_args.sequencer.as_deref(),
+            Some("http://localhost:8547")
+        );
+    }
+
+    #[test]
     fn rejects_rpc_mode_arg() {
         let err =
             BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--mode", "sequencer"])).unwrap_err();
@@ -283,6 +359,48 @@ mod tests {
 
         let rendered = err.to_string();
         assert!(rendered.contains("--rollup.sequencer"));
+    }
+
+    #[test]
+    fn rejects_rpc_rollup_sequencer_http_alias_arg() {
+        let err = BaseCli::try_parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--rollup.sequencer-http",
+            "http://localhost:8545",
+        ]))
+        .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--rollup.sequencer-http"));
+    }
+
+    #[test]
+    fn rejects_rpc_rollup_sequencer_ws_alias_arg() {
+        let err = BaseCli::try_parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--rollup.sequencer-ws",
+            "ws://localhost:8546",
+        ]))
+        .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--rollup.sequencer-ws"));
+    }
+
+    #[test]
+    fn rejects_rpc_rollup_sequencer_headers_arg() {
+        let err = BaseCli::try_parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--rollup.sequencer-headers",
+            "authorization=token",
+        ]))
+        .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--rollup.sequencer-headers"));
     }
 
     #[test]

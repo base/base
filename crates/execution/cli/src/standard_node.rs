@@ -119,6 +119,14 @@ pub struct RpcStandardNodeArgs {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
+    /// RPC endpoint used to forward submitted transactions without enabling sequencer mode.
+    #[arg(
+        long = "rpc.forwarding-endpoint",
+        env = "OP_RETH_SEQUENCER_HTTP",
+        value_name = "RPC_FORWARDING_ENDPOINT"
+    )]
+    pub rpc_forwarding_endpoint: Option<String>,
+
     /// A URL pointing to a secure websocket subscription that streams out flashblocks.
     ///
     /// If given, the flashblocks are received to build pending block. All request with "pending"
@@ -161,7 +169,11 @@ pub struct RpcStandardNodeArgs {
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
-    fn from(args: RpcStandardNodeArgs) -> Self {
+    fn from(mut args: RpcStandardNodeArgs) -> Self {
+        if args.rollup_args.sequencer.is_none() {
+            args.rollup_args.sequencer.clone_from(&args.rpc_forwarding_endpoint);
+        }
+
         Self {
             rpc: args,
             enable_metering: false,
@@ -299,6 +311,19 @@ mod tests {
         args: T,
     }
 
+    fn default_rpc_standard_node_args() -> RpcStandardNodeArgs {
+        RpcStandardNodeArgs {
+            rollup_args: RollupArgs::default(),
+            rpc_forwarding_endpoint: None,
+            flashblocks_url: None,
+            max_pending_blocks_depth: 3,
+            flashblocks_cached_execution: false,
+            flashblocks_ping_interval: Duration::from_secs(30),
+            enable_transaction_tracing: false,
+            enable_transaction_tracing_logs: false,
+        }
+    }
+
     #[test]
     fn test_flashblocks_ping_interval_defaults_to_30_seconds() {
         let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
@@ -349,5 +374,48 @@ mod tests {
             .expect("flashblocks config should exist");
 
         assert_eq!(config.subscriber_ping_interval, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn test_rpc_forwarding_endpoint_flows_into_standard_args() {
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
+            "reth",
+            "--rpc.forwarding-endpoint",
+            "http://localhost:8545",
+        ])
+        .args;
+
+        let standard_args = StandardNodeArgs::from(args);
+
+        assert_eq!(
+            standard_args.rpc.rollup_args.sequencer.as_deref(),
+            Some("http://localhost:8545")
+        );
+    }
+
+    #[test]
+    fn test_rpc_forwarding_endpoint_keeps_tx_forwarding_extension_disabled() {
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
+            "reth",
+            "--rpc.forwarding-endpoint",
+            "http://localhost:8545",
+        ])
+        .args;
+
+        let standard_args = StandardNodeArgs::from(args);
+        let config = TxForwardingConfig::from(&standard_args);
+
+        assert!(!config.enabled);
+        assert!(config.builder_urls.is_empty());
+    }
+
+    #[test]
+    fn test_rpc_default_keeps_forwarding_disabled() {
+        let standard_args = StandardNodeArgs::from(default_rpc_standard_node_args());
+        let config = TxForwardingConfig::from(&standard_args);
+
+        assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
+        assert!(!config.enabled);
+        assert!(config.builder_urls.is_empty());
     }
 }
