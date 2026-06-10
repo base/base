@@ -43,7 +43,11 @@ impl FromWord for bool {
     }
     #[inline]
     fn from_word(word: U256) -> crate::error::Result<Self> {
-        Ok(!word.is_zero())
+        match word {
+            w if w == U256::ZERO => Ok(false),
+            w if w == U256::ONE => Ok(true),
+            _ => Err(crate::error::BasePrecompileError::enum_conversion_error()),
+        }
     }
 }
 
@@ -123,6 +127,16 @@ mod tests {
 
     // Generate property tests for all primitive storage types
     base_precompile_macros::gen_storable_tests!();
+
+    #[test]
+    fn bool_from_word_rejects_noncanonical() {
+        for bad in [U256::from(2u64), U256::from(0xffu64), U256::MAX] {
+            assert!(
+                <bool as FromWord>::from_word(bad).is_err(),
+                "expected error for non-canonical bool word {bad}"
+            );
+        }
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(500))]

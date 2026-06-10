@@ -12,6 +12,9 @@ sol! {
             ALLOWLIST
         }
 
+        /// ETH was attached to a call targeting a nonpayable policy registry selector.
+        error NonPayable();
+
         error Unauthorized();
         error PolicyNotFound();
         error IncompatiblePolicyType();

@@ -20,6 +20,13 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
     require_field(&input, "b20")?;
     let has_asset = has_field(&input, "asset");
     let name = input.ident;
+    // This branch is only generated for token structs that do NOT have an `asset` field —
+    // i.e. stablecoin token structs. Asset token structs always have an `asset` field and
+    // take the `has_asset` branch above (which delegates to `AssetAccounting::decimals` and
+    // reads per-token decimals from storage). Therefore `B20Variant::Asset` is structurally
+    // unreachable in the generated code below; `B20Variant::Asset.decimals()` returning `None`
+    // cannot occur here. The only `None` case from `from_address` is an unrecognized (non-B20)
+    // address, which `unwrap_or(0)` handles the same way the original `map_or(0, ...)` did.
     let decimals_impl = if has_asset {
         quote! { crate::AssetAccounting::decimals(self) }
     } else {
@@ -27,7 +34,8 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             Ok(crate::B20Variant::from_address(
                 ::base_precompile_storage::ContractStorage::address(self),
             )
-            .map_or(0, crate::B20Variant::decimals))
+            .and_then(|v| v.decimals())
+            .unwrap_or(0))
         }
     };
 

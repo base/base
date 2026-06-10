@@ -38,6 +38,10 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     {
         let mut recorder =
             BerylCallRecorder::start(observer.clone(), BerylMetricLabels::b20_asset_call(calldata));
+        if !ctx.call_value().is_zero() {
+            return recorder
+                .record_base_error_result(ctx, BasePrecompileError::revert(IB20::NonPayable {}));
+        }
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
@@ -106,9 +110,10 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Asset::IB20AssetCalls::valid_selector(selector)
         {
-            let call = IB20Asset::IB20AssetCalls::abi_decode(calldata).map_err(|error| {
-                BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
-            })?;
+            let call =
+                IB20Asset::IB20AssetCalls::abi_decode_validate(calldata).map_err(|error| {
+                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+                })?;
             let label = call.as_label();
             let asset_observer = observer.clone();
             return observer.observe(label, move || {
@@ -453,8 +458,14 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             if call_bytes[..4] == IB20Asset::announceCall::SELECTOR {
                 return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
             }
-            self.inner_with_privilege(ctx, call_bytes, privileged).map_err(|_| {
-                BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: call.clone() })
+            self.inner_with_privilege(ctx, call_bytes, privileged).map_err(|err| {
+                if err.is_system_error() {
+                    err
+                } else {
+                    BasePrecompileError::revert(IB20Asset::InternalCallFailed {
+                        call: call.clone(),
+                    })
+                }
             })?;
         }
 
@@ -468,7 +479,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_primitives::{Address, Bytes, U256};
-    use alloy_sol_types::{SolCall, SolEvent};
+    use alloy_sol_types::{SolCall, SolError, SolEvent};
     use base_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, Result, StorageCtx,
     };
@@ -476,8 +487,9 @@ mod tests {
     use crate::{
         ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
         B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset, InMemoryPolicy,
-        InMemoryTokenAccounting, PrecompileCallMetric, PrecompileCallObserver,
-        PrecompileCallOutcome, PrecompileCallStatus, Token, TokenAccounting,
+        InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
+        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
+        TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
@@ -790,5 +802,73 @@ mod tests {
             token.to_scaled_balance(U256::from(2u64)).unwrap_err(),
             BasePrecompileError::under_overflow()
         );
+    }
+
+    /// System errors produced by an inner `announce` call must propagate unchanged and must
+    /// not be wrapped as [`IB20Asset::InternalCallFailed`]. A deliberately overflowing
+    /// `toScaledBalance` produces `Panic(UnderOverflow)`, which `is_system_error()` returns
+    /// `true` for.
+    #[test]
+    fn announce_inner_system_error_propagates_unchanged() {
+        let mut token = make_token();
+        // Any balance > 1 overflows when multiplied by this multiplier.
+        token.accounting_mut().multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
+        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, ALICE), true);
+
+        let inner_call = Bytes::from(
+            IB20Asset::toScaledBalanceCall { rawBalance: U256::from(2u64) }.abi_encode(),
+        );
+        let calldata = IB20Asset::announceCall {
+            internalCalls: alloc::vec![inner_call],
+            id: String::from("test-sys-err"),
+            description: String::from("test"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::under_overflow());
+    }
+
+    /// A non-system revert produced by an inner `announce` call must be wrapped as
+    /// [`IB20Asset::InternalCallFailed`], preserving the original calldata in the error field.
+    #[test]
+    fn announce_inner_ordinary_revert_wraps_as_internal_call_failed() {
+        let mut token = make_token();
+        // ALICE has OPERATOR_ROLE (needed for announce) but not MINT_ROLE (needed for mint).
+        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, ALICE), true);
+
+        let inner_call = Bytes::from(IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode());
+        let calldata = IB20Asset::announceCall {
+            internalCalls: alloc::vec![inner_call.clone()],
+            id: String::from("test-ord-revert"),
+            description: String::from("test"),
+            uri: String::new(),
+        }
+        .abi_encode();
+
+        let err = call_asset(&mut token, ALICE, calldata).unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: inner_call })
+        );
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut token = make_token();
+        let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
+        let mut storage = storage_with_caller(ALICE);
+        storage.set_call_value(U256::from(1u64));
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            token.dispatch_with_observer(ctx, &calldata, NoopPrecompileCallObserver)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        assert_eq!(out.bytes, Bytes::from(IB20::NonPayable {}.abi_encode()));
     }
 }

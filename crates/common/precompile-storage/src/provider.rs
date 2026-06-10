@@ -77,6 +77,9 @@ pub trait PrecompileStorageProvider {
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
 
+    /// Returns the native value (in wei) attached to this precompile call.
+    fn call_value(&self) -> U256;
+
     /// Returns the address that called this precompile.
     fn caller(&self) -> Address;
     /// Replaces the current caller address and returns the previous caller.
@@ -90,7 +93,7 @@ pub trait PrecompileStorageProvider {
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint);
 
     /// Computes keccak256 and charges the appropriate gas.
-    fn keccak256(&mut self, data: &[u8]) -> Result<B256> {
+    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256> {
         let num_words =
             u64::try_from(data.len().div_ceil(32)).map_err(|_| BasePrecompileError::OutOfGas)?;
         let price = KECCAK256WORD
