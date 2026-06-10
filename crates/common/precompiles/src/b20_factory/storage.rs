@@ -1,6 +1,6 @@
 use alloc::{string::ToString, vec::Vec};
 
-use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, address, b256, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Result};
