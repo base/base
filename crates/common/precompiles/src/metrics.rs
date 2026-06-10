@@ -538,6 +538,13 @@ impl BerylCallTimer {
     }
 }
 
+/// Per-word calldata ingestion cost charged by Beryl native precompile dispatchers.
+///
+/// Emulates the cost a Solidity predeploy would incur reading its calldata:
+/// `G_copy` (3 gas/word) + `G_memory` (3 gas/word) = 6 gas/word.
+/// Part of the receipts/gas-used commitment: must be identical across all Base execution clients.
+pub const CALLDATA_WORD_GAS: u64 = 6;
+
 /// Per-call recorder for Beryl precompile observations.
 #[derive(Debug)]
 pub struct BerylCallRecorder<O> {
@@ -573,12 +580,14 @@ where
         &self.call
     }
 
+    /// Computes the calldata gas cost for the given calldata slice.
+    pub const fn calldata_gas_cost(calldata: &[u8]) -> u64 {
+        (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS)
+    }
+
     /// Deducts the common calldata gas charged by Beryl precompile dispatch.
     pub fn deduct_calldata_gas(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<()> {
-        const G_SHA3WORD: u64 = 6;
-
-        let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(G_SHA3WORD);
-        ctx.deduct_gas(calldata_cost)
+        ctx.deduct_gas(Self::calldata_gas_cost(calldata))
     }
 
     /// Records a Base precompile error before it is converted to a [`PrecompileResult`].
@@ -644,8 +653,8 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        BerylCallOutcome, BerylErrorKind, BerylMetricLabels, BerylSelector, IB20, IB20Factory,
-        IPolicyRegistry,
+        BerylCallOutcome, BerylCallRecorder, BerylErrorKind, BerylMetricLabels, BerylSelector,
+        CALLDATA_WORD_GAS, IB20, IB20Factory, IPolicyRegistry, NoopPrecompileCallObserver,
     };
 
     #[test]
@@ -710,5 +719,16 @@ mod tests {
         assert_eq!(BerylCallOutcome::from_result(&success), BerylCallOutcome::Success);
         assert_eq!(BerylCallOutcome::from_result(&revert), BerylCallOutcome::Revert);
         assert_eq!(BerylCallOutcome::from_result(&fatal), BerylCallOutcome::Fatal);
+    }
+
+    #[test]
+    fn deduct_calldata_cost_gas_formula() {
+        type Recorder = BerylCallRecorder<NoopPrecompileCallObserver>;
+
+        // 32 bytes = 1 word => CALLDATA_WORD_GAS
+        assert_eq!(Recorder::calldata_gas_cost(&[0u8; 32]), CALLDATA_WORD_GAS);
+
+        // 36 bytes (4-byte selector + 32-byte arg) = ceil(36/32) = 2 words => 2 * CALLDATA_WORD_GAS
+        assert_eq!(Recorder::calldata_gas_cost(&[0u8; 36]), 2 * CALLDATA_WORD_GAS);
     }
 }
