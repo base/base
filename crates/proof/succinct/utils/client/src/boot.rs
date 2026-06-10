@@ -85,7 +85,7 @@ mod tests {
             claimed_l2_output_root: B256::repeat_byte(0x33),
             claimed_l2_block_number,
             chain_id: rollup_config.l2_chain_id.id(),
-            activation_admin_address: ChainConfig::MAINNET.activation_admin_address,
+            activation_admin_address: Some(ChainConfig::MAINNET.activation_admin_address),
             rollup_config,
             l1_config,
             proposer: Address::ZERO,

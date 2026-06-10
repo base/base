@@ -15,6 +15,10 @@ sol! {
         }
 
         // Errors
+
+        /// ETH was attached to a call targeting a nonpayable token selector.
+        error NonPayable();
+
         error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
         error Unauthorized();
         error ContractPaused(PausableFeature feature);

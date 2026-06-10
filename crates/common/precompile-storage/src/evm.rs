@@ -31,6 +31,7 @@ use crate::{
 pub struct EvmPrecompileStorageProvider<'a> {
     internals: alloy_evm::EvmInternals<'a>,
     caller: Address,
+    call_value: U256,
     gas: Gas,
     gas_params: GasParams,
     is_static: bool,
@@ -47,7 +48,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
     /// `gas_params` drives all EIP-2929/2200/3529 cost calculations.
     /// Pass [`GasParams::default`] when the active spec is unknown at call site.
     pub fn new(input: PrecompileInput<'a>, gas_params: GasParams) -> Self {
-        let PrecompileInput { gas, caller, is_static, internals, .. } = input;
+        let PrecompileInput { gas, caller, value, is_static, internals, .. } = input;
 
         let block_number = internals.block_env().number().to::<u64>();
         let timestamp = internals.block_env().timestamp();
@@ -57,6 +58,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
         Self {
             internals,
             caller,
+            call_value: value,
             gas: Gas::new(gas),
             gas_params,
             is_static,
@@ -105,12 +107,14 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
             (info.is_empty(), info.is_empty_code_hash())
         };
 
-        if is_new_account {
+        if has_empty_code {
             // Yellow Paper G_create: base cost for creating a new contract account.
             self.deduct_gas(self.gas_params.create_cost())?;
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
+        }
+        if is_new_account {
             // EIP-8037: charge for the new account entry in the state trie.
             self.deduct_state_gas(self.gas_params.create_state_gas())?;
         }
@@ -261,6 +265,10 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         self.is_static
     }
 
+    fn call_value(&self) -> U256 {
+        self.call_value
+    }
+
     fn caller(&self) -> Address {
         self.caller
     }
@@ -282,7 +290,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         self.internals.checkpoint_revert(checkpoint);
     }
 
-    fn keccak256(&mut self, data: &[u8]) -> Result<B256> {
+    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256> {
         let num_words =
             u64::try_from(data.len().div_ceil(32)).map_err(|_| BasePrecompileError::OutOfGas)?;
         let price = KECCAK256WORD
@@ -371,6 +379,29 @@ mod tests {
             provider.state_gas_used(),
             expected,
             "balance-only account must pay code_deposit_state_gas but not create_state_gas"
+        );
+    }
+
+    /// `set_code` on a prefunded account (balance > 0, no code) must charge the same regular gas
+    /// as a fully empty account.
+    #[test]
+    fn set_code_prefunded_account_charges_same_gas_as_empty_account() {
+        let addr = Address::from([0x43u8; 20]);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+
+        let mut empty_provider = amsterdam_provider();
+        empty_provider.set_code(addr, code.clone()).unwrap();
+        let gas_for_empty = empty_provider.gas_deducted();
+
+        let mut prefunded_provider = amsterdam_provider();
+        prefunded_provider.set_balance(addr, U256::from(1u64));
+        prefunded_provider.set_code(addr, code).unwrap();
+        let gas_for_prefunded = prefunded_provider.gas_deducted();
+
+        assert!(gas_for_empty > 0, "set_code must charge non-zero gas");
+        assert_eq!(
+            gas_for_empty, gas_for_prefunded,
+            "prefunded account must pay identical regular gas to an empty account"
         );
     }
 
