@@ -33,11 +33,7 @@ const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
 /// Initial multiplier storage value. Reads treat zero as WAD precision (1:1).
 const INITIAL_MULTIPLIER: U256 = U256::ZERO;
 
-/// Keccak-256 of the single-byte factory marker bytecode `[0xef]` deployed by `createB20`.
-///
-/// `isB20Initialized` checks for this exact hash rather than merely non-empty code, preventing
-/// false positives from genesis state or migration code that injects arbitrary bytecode at a
-/// B-20 prefix address without going through the factory.
+/// keccak256(0xef)
 const FACTORY_MARKER_CODE_HASH: B256 =
     b256!("309b8896ee4c1ff7ec1966155373dee42663b6b40c3fedc70ba501684848d2a3");
 
@@ -119,11 +115,6 @@ impl<'a> B20FactoryStorage<'a> {
     }
 
     /// Returns whether `token` is a B-20 address that has been initialized by this factory.
-    ///
-    /// Returns `false` for addresses without the B-20 prefix, even if they have bytecode.
-    /// Returns `false` for B-20 prefix addresses whose code hash does not match the factory
-    /// marker (`keccak256([0xef])`), preventing false positives from genesis state or migration
-    /// code that injects arbitrary bytecode at a B-20 prefix address without calling `createB20`.
     pub fn is_b20_initialized(&self, token: Address) -> Result<bool> {
         if !B20Variant::has_b20_prefix(token) {
             return Ok(false);
