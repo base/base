@@ -192,6 +192,10 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
         safe_head: u64,
         is_excluded: impl Fn(u64) -> bool,
     ) -> Vec<u64> {
+        if self.block_interval == 0 {
+            return Vec::new();
+        }
+
         let mut cursor = match recovered.l2_block_number.checked_add(self.block_interval) {
             Some(cursor) => cursor,
             None => return Vec::new(),
@@ -349,11 +353,108 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
     /// Polls a specific prover-service session for `target_block`.
     ///
     /// Used after a discard retry is dispatched under a retry-specific session
-    /// id. The canonical root is still fetched so a terminal failed session can
-    /// be re-dispatched with a complete proof request.
+    /// id. The canonical root is fetched lazily only for outcomes that need it
+    /// (`NotFound` and `Failed`) so pending retry sessions do not depend on an
+    /// unrelated rollup RPC.
     pub async fn poll_session(&self, target_block: u64, session_id: String) -> TargetPoll {
-        let output = match self.rollup_client.output_at_block(target_block).await {
-            Ok(out) => out,
+        let response = match self.get_proof(session_id.clone()).await {
+            Ok(response) => response,
+            Err(e) if e.is_not_found() => {
+                let claimed_l2_output_root =
+                    match self.retry_session_output_root(target_block, &session_id).await {
+                        Ok(root) => root,
+                        Err(error) => {
+                            return TargetPoll::Unknown { session_id: Some(session_id), error };
+                        }
+                    };
+                debug!(
+                    target_block,
+                    session_id = %session_id,
+                    "Retry session missing from prover service, dispatch needed",
+                );
+                return TargetPoll::NotFound { session_id, claimed_l2_output_root };
+            }
+            Err(e) => {
+                return TargetPoll::Unknown {
+                    session_id: Some(session_id),
+                    error: Self::error_from_client(e),
+                };
+            }
+        };
+
+        Metrics::proof_status_received_total(Self::status_label(response.status)).increment(1);
+        match response.status {
+            ProofStatus::Queued | ProofStatus::Running => {
+                debug!(
+                    target_block,
+                    session_id = %session_id,
+                    status = ?response.status,
+                    "Proof request still pending",
+                );
+                TargetPoll::Pending { session_id, status: response.status }
+            }
+            ProofStatus::Failed => {
+                let claimed_l2_output_root =
+                    match self.retry_session_output_root(target_block, &session_id).await {
+                        Ok(root) => root,
+                        Err(error) => {
+                            return TargetPoll::Unknown { session_id: Some(session_id), error };
+                        }
+                    };
+                let message = response.error_message.unwrap_or_else(|| {
+                    format!("proof session {session_id} failed without an error message")
+                });
+                TargetPoll::Failed {
+                    session_id,
+                    claimed_l2_output_root,
+                    error: ProposerError::Prover(message),
+                }
+            }
+            ProofStatus::Succeeded => {
+                let result = match response.result {
+                    Some(result) => result,
+                    None => {
+                        let claimed_l2_output_root = match self
+                            .retry_session_output_root(target_block, &session_id)
+                            .await
+                        {
+                            Ok(root) => root,
+                            Err(error) => {
+                                return TargetPoll::Unknown { session_id: Some(session_id), error };
+                            }
+                        };
+                        let error = ProposerError::Prover(format!(
+                            "proof session {session_id} succeeded without a result"
+                        ));
+                        return TargetPoll::Failed { session_id, claimed_l2_output_root, error };
+                    }
+                };
+                match ProposerProofAdapter::tee_proof_result(result, self.tee_kind) {
+                    Ok(proof) => TargetPoll::Ready { session_id, proof },
+                    Err(error) => {
+                        let claimed_l2_output_root = match self
+                            .retry_session_output_root(target_block, &session_id)
+                            .await
+                        {
+                            Ok(root) => root,
+                            Err(error) => {
+                                return TargetPoll::Unknown { session_id: Some(session_id), error };
+                            }
+                        };
+                        TargetPoll::Failed { session_id, claimed_l2_output_root, error }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn retry_session_output_root(
+        &self,
+        target_block: u64,
+        session_id: &str,
+    ) -> Result<B256, ProposerError> {
+        match self.rollup_client.output_at_block(target_block).await {
+            Ok(out) => Ok(out.output_root),
             Err(e) => {
                 debug!(
                     target_block,
@@ -361,29 +462,8 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                     error = %e,
                     "Failed to fetch canonical output root for retry session",
                 );
-                return TargetPoll::Unknown {
-                    session_id: Some(session_id),
-                    error: ProposerError::Rpc(e),
-                };
+                Err(ProposerError::Rpc(e))
             }
-        };
-
-        match self.get_proof(session_id.clone()).await {
-            Ok(response) => {
-                self.response_to_poll(target_block, session_id, output.output_root, response)
-            }
-            Err(e) if e.is_not_found() => {
-                debug!(
-                    target_block,
-                    session_id = %session_id,
-                    "Retry session missing from prover service, dispatch needed",
-                );
-                TargetPoll::NotFound { session_id, claimed_l2_output_root: output.output_root }
-            }
-            Err(e) => TargetPoll::Unknown {
-                session_id: Some(session_id),
-                error: Self::error_from_client(e),
-            },
         }
     }
 
@@ -489,6 +569,30 @@ mod tests {
         proof_adapter::ProofRequesterDispatcher,
         test_utils::{MockProofRequester, MockRollupClient, test_sync_status},
     };
+
+    fn recovered(block: u64) -> RecoveredState {
+        RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::ZERO,
+            l2_block_number: block,
+        }
+    }
+
+    #[test]
+    fn collectable_targets_returns_empty_for_zero_block_interval() {
+        let proof_requester: Arc<dyn ProofRequesterProvider> =
+            Arc::new(MockProofRequester::default());
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(100, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let collector = ProofCollector::target_poller_aws_nitro(proof_requester, rollup_client);
+
+        let targets = collector.collectable_targets(&recovered(0), 100, |_| false);
+
+        assert!(targets.is_empty());
+    }
 
     /// Restart/recovery: the collector derives the prover-service session id
     /// solely from the canonical L2 output root + tee kind, so a freshly
