@@ -99,11 +99,12 @@ impl<'a> TxContextStorage<'a> {
     /// `sender_actor_id` is zero, failing the transaction rather than corrupting
     /// sender/payer attribution.
     ///
-    /// # Gas
-    /// The three `tstore` writes are intentionally not checkpointed: transient
-    /// storage resets at transaction end, so a partial write cannot persist
-    /// across transactions. The caller is responsible for ensuring enough gas is
-    /// available to complete all three writes.
+    /// # Atomicity
+    /// The three `tstore` writes are grouped under a storage checkpoint, so a
+    /// mid-write failure (e.g. out-of-gas between writes) reverts the whole group
+    /// rather than leaving a half-set context (e.g. a real sender alongside an
+    /// unset payer that then falls back to `tx.origin`). Transient storage also
+    /// resets at transaction end, so nothing persists across transactions.
     pub fn set_context(
         &mut self,
         sender: Address,
@@ -118,6 +119,10 @@ impl<'a> TxContextStorage<'a> {
         if sender.is_zero() || payer.is_zero() || sender_actor_id.is_zero() {
             return Err(BasePrecompileError::assert_failed());
         }
+        // Write the three correlated context slots atomically: the guard reverts
+        // on drop unless committed, so a failure between writes leaves no
+        // half-set context.
+        let checkpoint = self.storage.checkpoint();
         self.storage.tstore(
             Self::ADDRESS,
             Self::SENDER_SLOT,
@@ -133,6 +138,7 @@ impl<'a> TxContextStorage<'a> {
             Self::SENDER_ACTOR_ID_SLOT,
             U256::from_be_bytes(sender_actor_id.0),
         )?;
+        checkpoint.commit();
         Ok(())
     }
 }

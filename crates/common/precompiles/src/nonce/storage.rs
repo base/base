@@ -200,7 +200,10 @@ impl NonceManagerStorage<'_> {
         self.expiring_nonce_seen.at_mut(&expiring_nonce_hash).write(valid_before)?;
 
         // 6. Advance the write pointer, wrapping at capacity (not u32::MAX).
-        let next = if ptr + 1 >= Self::EXPIRING_NONCE_SET_CAPACITY { 0 } else { ptr + 1 };
+        // `wrapping_add` is defensive: a corrupted ptr at u32::MAX wraps to 0
+        // (still < capacity) rather than panicking in debug builds.
+        let incremented = ptr.wrapping_add(1);
+        let next = if incremented >= Self::EXPIRING_NONCE_SET_CAPACITY { 0 } else { incremented };
         self.expiring_nonce_ring_ptr.write(next)?;
 
         checkpoint.commit();
@@ -263,6 +266,39 @@ mod tests {
             let err =
                 NonceManagerStorage::new(ctx).increment_nonce(ACCOUNT_A, U256::ZERO).unwrap_err();
             assert_eq!(err, BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
+        });
+    }
+
+    #[test]
+    fn increment_nonce_rejects_overflow() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let nonce_key = U256::from(9);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut mgr = NonceManagerStorage::new(ctx);
+            // Seed the channel at the maximum so the next increment overflows.
+            mgr.nonces.at_mut(&ACCOUNT_A).at_mut(&nonce_key).write(u64::MAX).unwrap();
+            let err = mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap_err();
+            assert_eq!(err, BasePrecompileError::revert(INonceManager::NonceOverflow {}));
+        });
+    }
+
+    #[test]
+    fn expiring_nonce_rejects_when_ring_slot_is_live() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let now = 1_000u64;
+        storage.set_timestamp(U256::from(now));
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut mgr = NonceManagerStorage::new(ctx);
+            // Occupy the slot the write pointer references with an unexpired entry
+            // (simulating a full ring) so the slot cannot be reclaimed.
+            let occupant = B256::repeat_byte(0xAB);
+            let ptr = mgr.expiring_nonce_ring_ptr.read().unwrap();
+            mgr.expiring_nonce_ring.at_mut(&ptr).write(occupant).unwrap();
+            mgr.expiring_nonce_seen.at_mut(&occupant).write(now + 20).unwrap();
+
+            let err =
+                mgr.check_and_mark_expiring_nonce(B256::repeat_byte(0xCD), now + 20).unwrap_err();
+            assert_eq!(err, BasePrecompileError::revert(INonceManager::ExpiringNonceSetFull {}));
         });
     }
 
