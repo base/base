@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 
 #[cfg(feature = "std")]
 use crate::RuntimeHardForkRegistry;
-use crate::{ChainGenesis, FeeConfig, HardForkActivation, HardForkConfig};
+use crate::{ChainGenesis, FeeConfig, HardForkActivation, HardForkActivationSink, HardForkConfig};
 
 /// The Rollup configuration.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -236,6 +236,20 @@ impl RollupConfig {
         self.hardforks.set_activation_timestamp(hardfork_id, timestamp)
     }
 
+    /// Applies a hardfork activation by contract hardfork ID.
+    pub fn apply_hardfork_activation(
+        &mut self,
+        hardfork_id: &str,
+        activation: HardForkActivation,
+    ) -> bool {
+        match activation {
+            HardForkActivation::Timestamp(timestamp) => {
+                self.set_hardfork_activation_timestamp(hardfork_id, timestamp)
+            }
+            HardForkActivation::Never => self.clear_hardfork_activation_timestamp(hardfork_id),
+        }
+    }
+
     rollup_fork_methods! {
         is_regolith_active,
         is_first_regolith_block,
@@ -416,6 +430,18 @@ impl RollupConfig {
         } else if self.is_first_cobalt_block(timestamp) {
             tracing::info!(target: "upgrades", block_number, "Activating cobalt upgrade");
         }
+    }
+}
+
+impl HardForkActivationSink for RollupConfig {
+    type Error = core::convert::Infallible;
+
+    fn apply_activation(
+        &mut self,
+        hardfork_id: &str,
+        activation: HardForkActivation,
+    ) -> Result<bool, Self::Error> {
+        Ok(self.apply_hardfork_activation(hardfork_id, activation))
     }
 }
 

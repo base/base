@@ -2,13 +2,14 @@
 
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
-use base_common_genesis::{HardForkActivation, HardForkConfig, RuntimeHardForkRegistry};
+use base_common_genesis::{
+    HardForkActivation, HardForkActivationSink, HardForkConfig, RuntimeHardForkRegistry,
+};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
-    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetrics,
-    UpgradeSignalSchedule,
+    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalSchedule,
 };
 
 /// Runtime action taken for one upgrade signal.
@@ -70,6 +71,47 @@ impl UpgradeSignalApplySummary {
             changes: Vec::new(),
         }
     }
+
+    /// Logs each per-hardfork action and a summary line for an applied schedule.
+    ///
+    /// `target` names the destination the schedule was applied to (e.g. "rollup config").
+    pub fn log(&self, target: &'static str) {
+        for change in &self.changes {
+            match change.action {
+                UpgradeSignalApplyAction::Applied => info!(
+                    target: "upgrade_signal",
+                    destination = target,
+                    hardfork_id = %change.hardfork_id,
+                    activation_timestamp = change.activation_timestamp,
+                    "applied upgrade signal"
+                ),
+                UpgradeSignalApplyAction::Cleared => info!(
+                    target: "upgrade_signal",
+                    destination = target,
+                    hardfork_id = %change.hardfork_id,
+                    "cleared upgrade signal"
+                ),
+                UpgradeSignalApplyAction::Ignored => debug!(
+                    target: "upgrade_signal",
+                    destination = target,
+                    hardfork_id = %change.hardfork_id,
+                    activation_timestamp = change.activation_timestamp,
+                    "ignored unsupported upgrade signal"
+                ),
+            }
+        }
+        info!(
+            target: "upgrade_signal",
+            destination = target,
+            chain_id = self.chain_id,
+            l1_block_number = ?self.l1_block_number,
+            applied_hardforks = self.applied_hardforks,
+            cleared_hardforks = self.cleared_hardforks,
+            ignored_hardforks = self.ignored_hardforks,
+            configured_hardforks = self.configured_hardforks,
+            "applied upgrade signal schedule"
+        );
+    }
 }
 
 /// Runtime schedule validation context shared by execution and consensus refresh paths.
@@ -90,6 +132,14 @@ impl UpgradeSignalRuntimeValidation {
     /// Creates a validation context that enforces execution activation admin invariants.
     pub const fn with_activation_admin_address(activation_admin_address: Option<Address>) -> Self {
         Self { require_activation_admin_for_beryl: true, activation_admin_address }
+    }
+
+    /// Creates the fail-closed validation context used when no activation admin source is known.
+    ///
+    /// This requires an activation admin address for positive Beryl signals but has none, so a
+    /// positive Beryl signal is rejected rather than applied unguarded.
+    pub const fn fail_closed() -> Self {
+        Self::with_activation_admin_address(None)
     }
 
     /// Validates a schedule before it mutates the process-local runtime registry.
@@ -118,41 +168,60 @@ impl Default for UpgradeSignalRuntimeValidation {
     }
 }
 
-/// Applies upgrade signal schedules to the process-local runtime hardfork registry.
+/// Hardfork activation sink backed by the process-local runtime registry for one chain.
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeRegistrySink {
+    /// L2 chain ID whose runtime fork view is mutated.
+    pub chain_id: u64,
+}
+
+impl RuntimeRegistrySink {
+    /// Creates a runtime registry sink for one chain.
+    pub const fn new(chain_id: u64) -> Self {
+        Self { chain_id }
+    }
+}
+
+impl HardForkActivationSink for RuntimeRegistrySink {
+    type Error = core::convert::Infallible;
+
+    fn apply_activation(
+        &mut self,
+        hardfork_id: &str,
+        activation: HardForkActivation,
+    ) -> Result<bool, Self::Error> {
+        Ok(RuntimeHardForkRegistry::set_activation(self.chain_id, hardfork_id, activation))
+    }
+}
+
+/// Applies upgrade signal schedules to any hardfork activation sink.
 #[derive(Debug, Clone, Copy)]
 pub struct UpgradeSignalRuntimeApplier;
 
 impl UpgradeSignalRuntimeApplier {
-    /// Applies a schedule to the runtime hardfork registry for one chain.
-    pub fn apply_schedule(
+    /// Applies a schedule to any [`HardForkActivationSink`], returning an application summary.
+    ///
+    /// This is the single application loop shared by startup (rollup config / execution chain
+    /// spec) and runtime (registry) paths.
+    pub fn apply_schedule_to_sink<S: HardForkActivationSink>(
         chain_id: u64,
         schedule: &UpgradeSignalSchedule,
-    ) -> UpgradeSignalApplySummary {
+        sink: &mut S,
+    ) -> Result<UpgradeSignalApplySummary, S::Error> {
         let mut summary = UpgradeSignalApplySummary::new(chain_id, schedule);
 
         for signal in &schedule.signals {
-            let (action, supported) =
-                if let Some(timestamp) = signal.positive_activation_timestamp() {
-                    (
-                        UpgradeSignalApplyAction::Applied,
-                        RuntimeHardForkRegistry::set_activation_timestamp(
-                            chain_id,
-                            &signal.hardfork_id,
-                            timestamp,
-                        ),
-                    )
-                } else {
-                    (
-                        UpgradeSignalApplyAction::Cleared,
-                        RuntimeHardForkRegistry::set_activation(
-                            chain_id,
-                            &signal.hardfork_id,
-                            HardForkActivation::Never,
-                        ),
-                    )
-                };
+            let activation =
+                HardForkActivation::from_timestamp(signal.positive_activation_timestamp());
+            let supported = sink.apply_activation(&signal.hardfork_id, activation)?;
 
-            let action = if supported { action } else { UpgradeSignalApplyAction::Ignored };
+            let action = if !supported {
+                UpgradeSignalApplyAction::Ignored
+            } else if activation.timestamp().is_some() {
+                UpgradeSignalApplyAction::Applied
+            } else {
+                UpgradeSignalApplyAction::Cleared
+            };
             match action {
                 UpgradeSignalApplyAction::Applied => summary.applied_hardforks += 1,
                 UpgradeSignalApplyAction::Cleared => summary.cleared_hardforks += 1,
@@ -168,7 +237,19 @@ impl UpgradeSignalRuntimeApplier {
             });
         }
 
-        summary
+        sink.finalize()?;
+
+        Ok(summary)
+    }
+
+    /// Applies a schedule to the runtime hardfork registry for one chain.
+    pub fn apply_schedule(
+        chain_id: u64,
+        schedule: &UpgradeSignalSchedule,
+    ) -> UpgradeSignalApplySummary {
+        let mut sink = RuntimeRegistrySink::new(chain_id);
+        Self::apply_schedule_to_sink(chain_id, schedule, &mut sink)
+            .unwrap_or_else(|never| match never {})
     }
 }
 
@@ -186,53 +267,29 @@ pub struct UpgradeSignalRefresher {
 }
 
 impl UpgradeSignalRefresher {
-    /// Creates a runtime upgrade signal refresher.
+    /// Creates a runtime upgrade signal refresher with an explicit validation context.
+    ///
+    /// The validation context is required, not defaulted, so every caller consciously chooses
+    /// whether (and how) runtime schedules are validated before they mutate the registry.
     pub const fn new(
         config: UpgradeSignalConfig,
         l1_provider: RootProvider,
         chain_id: u64,
-    ) -> Self {
-        let reader = AlloyUpgradeSignalReader::new(l1_provider, config.contract_address);
-        Self {
-            config,
-            reader,
-            chain_id,
-            runtime_validation: UpgradeSignalRuntimeValidation::disabled(),
-        }
-    }
-
-    /// Sets runtime schedule validation context for this refresher.
-    pub fn with_runtime_validation(
-        self,
         runtime_validation: UpgradeSignalRuntimeValidation,
     ) -> Self {
-        Self { runtime_validation, ..self }
+        let reader = AlloyUpgradeSignalReader::new(l1_provider, config.contract_address)
+            .with_block_tag(config.l1_block_tag);
+        Self { config, reader, chain_id, runtime_validation }
     }
 
     /// Reads, metrics-records, logs, and validates the current L1 schedule.
     pub async fn read_validated_schedule(
         &self,
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
-        let schedule = match self.reader.read_schedule(&self.config.hardfork_ids).await {
-            Ok(schedule) => schedule,
-            Err(error) => return Err(error),
-        };
-
-        UpgradeSignalMetrics::record_schedule(&schedule);
-        for signal in &schedule.signals {
-            info!(
-                target: "upgrade_signal",
-                chain_id = self.chain_id,
-                hardfork_id = %signal.hardfork_id,
-                activation_timestamp = signal.activation_timestamp,
-                minimum_protocol_version = %signal.protocol_version,
-                node_protocol_version = %self.config.node_protocol_version,
-                l1_block_number = signal.l1_block_number,
-                "read dynamic upgrade signal for runtime refresh"
-            );
-        }
-        let application_schedule = self.config.application_schedule(&schedule);
-        self.config.validate_schedule_protocol_versions(&application_schedule)?;
+        let application_schedule = self
+            .config
+            .read_validated_application_schedule(&self.reader, "runtime refresh")
+            .await?;
         self.runtime_validation.validate_schedule(self.chain_id, &application_schedule)?;
 
         Ok(application_schedule)
@@ -337,6 +394,22 @@ mod tests {
     fn disabled_validation_allows_positive_beryl_without_activation_admin() {
         UpgradeSignalRuntimeValidation::disabled()
             .validate_schedule(9_000_004, &schedule(&[("beryl", 42)]))
+            .unwrap();
+    }
+
+    #[test]
+    fn fail_closed_validation_rejects_positive_beryl() {
+        assert!(
+            UpgradeSignalRuntimeValidation::fail_closed()
+                .validate_schedule(9_000_005, &schedule(&[("beryl", 42)]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn fail_closed_validation_allows_non_beryl_and_cleared_beryl() {
+        UpgradeSignalRuntimeValidation::fail_closed()
+            .validate_schedule(9_000_006, &schedule(&[("azul", 42), ("beryl", 0)]))
             .unwrap();
     }
 }

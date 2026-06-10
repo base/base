@@ -8,7 +8,9 @@ use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
 use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
-use base_common_genesis::{HardForkActivation, HardForkConfig, RuntimeHardForkRegistry};
+use base_common_genesis::{
+    HardForkActivation, HardForkActivationSink, HardForkConfig, RuntimeHardForkRegistry,
+};
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks, EthChainSpec,
@@ -516,6 +518,28 @@ impl BaseChainSpec {
     }
 }
 
+impl HardForkActivationSink for BaseChainSpec {
+    type Error = BaseChainSpecError;
+
+    fn apply_activation(
+        &mut self,
+        hardfork_id: &str,
+        activation: HardForkActivation,
+    ) -> Result<bool, Self::Error> {
+        match activation {
+            HardForkActivation::Timestamp(timestamp) => {
+                self.try_set_hardfork_activation_timestamp(hardfork_id, timestamp)
+            }
+            HardForkActivation::Never => self.try_clear_hardfork_activation_timestamp(hardfork_id),
+        }
+    }
+
+    fn finalize(&mut self) -> Result<(), Self::Error> {
+        self.refresh_genesis_header();
+        Ok(())
+    }
+}
+
 impl TryFrom<&ChainConfig> for BaseChainSpec {
     type Error = BaseChainSpecError;
 
@@ -638,11 +662,11 @@ impl EthChainSpec for BaseChainSpec {
 
 impl Hardforks for BaseChainSpec {
     fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
-        BaseChainSpec::fork(self, fork)
+        Self::fork(self, fork)
     }
 
     fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
-        BaseChainSpec::forks_iter(self)
+        Self::forks_iter(self)
     }
 
     fn fork_id(&self, head: &Head) -> ForkId {

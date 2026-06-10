@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use alloy_primitives::U256;
 use base_common_genesis::HardForkConfig;
 
-use crate::UpgradeSignalMetrics;
+use crate::{AlloyUpgradeSignalReader, UpgradeSignalMetrics};
 
 /// L1 upgrade signal values for one hardfork ID.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -43,7 +43,7 @@ pub struct UpgradeSignalSchedule {
 
 impl UpgradeSignalSchedule {
     /// Creates a new upgrade signal schedule.
-    pub fn new(signals: Vec<UpgradeSignal>) -> Self {
+    pub const fn new(signals: Vec<UpgradeSignal>) -> Self {
         Self { signals }
     }
 
@@ -130,6 +130,22 @@ impl UpgradeSignalMonitor {
             states.insert(hardfork_id.clone(), UpgradeSignalState::new());
         }
         Self { states }
+    }
+
+    /// Tolerantly polls the reader, records live metrics, and returns the number of changed signals.
+    ///
+    /// This is the single live-poll routine shared by the consensus actor and the execution
+    /// metrics extension; per-fork read failures are recorded but do not abort the poll.
+    pub async fn poll(
+        &mut self,
+        reader: &AlloyUpgradeSignalReader,
+        hardfork_ids: &[String],
+    ) -> usize {
+        let schedule = reader.read_schedule_tolerant(hardfork_ids).await;
+        self.update_schedule(schedule)
+            .iter()
+            .filter(|update| matches!(update, UpgradeSignalStateUpdate::Changed))
+            .count()
     }
 
     /// Applies signals read from L1 and records corresponding live metrics.

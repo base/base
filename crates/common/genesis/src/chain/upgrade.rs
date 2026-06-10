@@ -62,6 +62,30 @@ impl HardForkActivation {
     }
 }
 
+/// A target that can receive contract-backed hardfork activation updates.
+///
+/// Implemented by every schedule destination (rollup config, execution chain spec, runtime
+/// registry) so a single applier can drive them all without per-target apply loops.
+pub trait HardForkActivationSink {
+    /// Error returned when an activation cannot be applied to this target.
+    type Error;
+
+    /// Applies `activation` for the canonical hardfork ID.
+    ///
+    /// Returns `true` when the hardfork ID is supported by this target, `false` when it is
+    /// unknown and was ignored.
+    fn apply_activation(
+        &mut self,
+        hardfork_id: &str,
+        activation: HardForkActivation,
+    ) -> Result<bool, Self::Error>;
+
+    /// Finalizes the target after a batch of activations (e.g. recompute derived state).
+    fn finalize(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 /// Runtime hardfork activation overrides for one chain.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct HardForkActivationOverrides {
@@ -71,7 +95,7 @@ pub struct HardForkActivationOverrides {
 
 impl HardForkActivationOverrides {
     /// Creates empty runtime hardfork activation overrides.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { activations: BTreeMap::new() }
     }
 

@@ -31,8 +31,8 @@ mod chain;
 #[cfg(feature = "std")]
 pub use chain::RuntimeHardForkRegistry;
 pub use chain::{
-    AddressList, HardForkActivation, HardForkActivationOverrides, HardForkConfig, HardforkConfig,
-    Roles,
+    AddressList, HardForkActivation, HardForkActivationOverrides, HardForkActivationSink,
+    HardForkConfig, HardforkConfig, Roles,
 };
 
 mod genesis;
