@@ -632,9 +632,7 @@ mod tests {
         assert!(out.is_revert());
         assert_eq!(
             out.bytes,
-            alloy_primitives::Bytes::from(alloy_primitives::Bytes::from(
-                IPolicyRegistry::NonPayable {}.abi_encode()
-            ))
+            alloy_primitives::Bytes::from(IPolicyRegistry::NonPayable {}.abi_encode())
         );
     }
 }
