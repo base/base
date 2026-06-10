@@ -67,10 +67,21 @@ runs:
 
     - name: Install native dependencies
       if: inputs.native-deps == 'true'
-      uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
-      with:
-        packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config protobuf-compiler
-        version: 1.4
+      shell: bash
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential \
+          clang \
+          libclang-dev \
+          libprotobuf-dev \
+          libsqlite3-dev \
+          llvm \
+          llvm-dev \
+          pkg-config \
+          protobuf-compiler
 
     - name: Install Rust (stable via rust-toolchain.toml)
       if: inputs.toolchain == 'stable'

@@ -316,7 +316,16 @@ pub trait StorageKey: sealed::OnlyPrimitives {
     /// Returns key bytes for storage slot computation (left-padded to 32 bytes).
     fn as_storage_bytes(&self) -> impl AsRef<[u8]>;
 
-    /// Computes `keccak256(lpad32(key) ‖ slot_be32)` — the Solidity mapping slot derivation.
+    /// Computes `keccak256(lpad32(key) ‖ slot_be32)`.
+    ///
+    /// The formula is Solidity-compatible for unsigned integers (`u8`..`u256`), `Address`,
+    /// `FixedBytes<32>`, and `String`. Signed integers and `FixedBytes<N>` for `N < 32`
+    /// intentionally diverge from Solidity's `abi.encode(key, slot)` encoding: signed integers
+    /// use raw signed bytes and short `FixedBytes<N>` keys are left-padded from their slice
+    /// rather than right-padded as Solidity would. Off-chain tools reconstructing mapping slots
+    /// for those key types must use this crate's encoding, not Solidity's.
+    ///
+    /// See the crate-level README for a full compatibility table.
     fn mapping_slot(&self, slot: U256) -> U256 {
         let key_bytes = self.as_storage_bytes();
         let key_bytes = key_bytes.as_ref();

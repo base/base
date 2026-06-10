@@ -294,6 +294,11 @@ mod tests {
     }
 
     #[test]
+    fn default_admin_role_matches_access_control_zero() {
+        assert_eq!(B20TokenRole::DefaultAdmin.id(), B256::ZERO);
+    }
+
+    #[test]
     fn grant_role_authorizes_against_role_admin_and_emits_event() {
         let mut token = token_with_default_admin();
 

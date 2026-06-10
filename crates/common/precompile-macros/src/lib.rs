@@ -27,7 +27,10 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     contract::generate(input, config.address.as_ref())
 }
 
-/// Namespaces a `#[contract]` storage struct or `Storable` layout using an ERC-7201 storage root.
+/// Adds an ERC-7201 namespace to a `Storable` layout.
+///
+/// Contract storage layouts support `#[namespace("id")]` when it is placed below `#[contract]`;
+/// in that order, `#[contract]` consumes the helper attribute directly.
 #[proc_macro_attribute]
 pub fn namespace(attr: TokenStream, item: TokenStream) -> TokenStream {
     namespace::expand(attr, item)
