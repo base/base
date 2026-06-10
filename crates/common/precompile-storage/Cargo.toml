@@ -47,5 +47,6 @@ std = [
 	"derive_more/std",
 	"revm/std",
 	"thiserror/std",
+	"tracing/std",
 ]
 test-utils = [ "std" ]
