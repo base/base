@@ -178,10 +178,8 @@ impl<'a> StorageCtx<'a> {
     /// Executes `f` with a temporary caller override, restoring the previous caller on exit.
     pub fn with_caller<R>(&self, caller: Address, f: impl FnOnce() -> R) -> R {
         let previous = self.with_storage(|s| s.replace_caller(caller));
-        let guard = CallerGuard { storage: *self, previous: Some(previous) };
-        let result = f();
-        drop(guard);
-        result
+        let _guard = CallerGuard { storage: *self, previous: Some(previous) };
+        f()
     }
 
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
@@ -264,9 +262,9 @@ struct CallerGuard<'a> {
 impl Drop for CallerGuard<'_> {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            self.storage.with_storage(|s| {
-                s.replace_caller(previous);
-            });
+            if let Ok(mut guard) = self.storage.storage.try_borrow_mut() {
+                guard.replace_caller(previous);
+            }
         }
     }
 }
