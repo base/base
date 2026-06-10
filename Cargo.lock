@@ -3661,6 +3661,7 @@ dependencies = [
  "base-common-genesis",
  "revm",
  "serde",
+ "serde_json",
  "spin 0.10.0",
 ]
 

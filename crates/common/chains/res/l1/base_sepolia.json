@@ -1,0 +1,41 @@
+{
+  "config": {
+    "chainId": 84532,
+    "homesteadBlock": 0,
+    "eip150Block": 0,
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "muirGlacierBlock": 0,
+    "berlinBlock": 0,
+    "londonBlock": 0,
+    "arrowGlacierBlock": 0,
+    "grayGlacierBlock": 0,
+    "mergeNetsplitBlock": 0,
+    "bedrockBlock": 0,
+    "regolithTime": 0,
+    "canyonTime": 1699981200,
+    "deltaTime": 1703203200,
+    "ecotoneTime": 1708534800,
+    "fjordTime": 1716998400,
+    "graniteTime": 1723478400,
+    "holoceneTime": 1732633200,
+    "pectraBlobScheduleTime": 1742486400,
+    "isthmusTime": 1744905600,
+    "jovianTime": 1763568001,
+    "base": {
+      "azul": 1776708000
+    },
+    "activationAdminAddress": "0x5Be7Dd3678e999D5F7bC508c413db239F7D4Ac59",
+    "terminalTotalDifficulty": 0,
+    "terminalTotalDifficultyPassed": true,
+    "optimism": {
+      "eip1559Elasticity": 10,
+      "eip1559Denominator": 50,
+      "eip1559DenominatorCanyon": 250
+    }
+  }
+}

@@ -151,6 +151,8 @@ impl ChainConfig {
     pub const ZERONET_NAME: &'static str = "base-zeronet";
     /// CLI chain name for the local Base devnet.
     pub const DEVNET_NAME: &'static str = "dev";
+    /// CLI chain name for the Base Privacy L3 devnet on Base Sepolia.
+    pub const PRIVACY_SEPOLIA_NAME: &'static str = "privacy-sepolia";
     /// All chain names accepted by Base chain parsers.
     pub const SUPPORTED_NAMES: &'static [&'static str] = &[
         Self::MAINNET_NAME,
@@ -158,6 +160,7 @@ impl ChainConfig {
         Self::SEPOLIA_NAME,
         Self::ZERONET_NAME,
         Self::DEVNET_NAME,
+        Self::PRIVACY_SEPOLIA_NAME,
     ];
 
     /// Base Mainnet chain configuration.
@@ -168,6 +171,8 @@ impl ChainConfig {
     pub const DEVNET: &'static Self = Self::devnet();
     /// Base Zeronet chain configuration.
     pub const ZERONET: &'static Self = Self::zeronet();
+    /// Base Privacy L3 devnet chain configuration (parent: Base Sepolia).
+    pub const PRIVACY_SEPOLIA: &'static Self = Self::privacy_sepolia();
 
     /// Base Mainnet chain configuration.
     pub const fn mainnet() -> &'static Self {
@@ -189,9 +194,14 @@ impl ChainConfig {
         &ZERONET
     }
 
+    /// Base Privacy L3 devnet chain configuration.
+    pub const fn privacy_sepolia() -> &'static Self {
+        &PRIVACY_SEPOLIA
+    }
+
     /// Returns all known chain configurations, including devnet.
-    pub const fn all() -> [&'static Self; 4] {
-        [&MAINNET, &SEPOLIA, &DEVNET, &ZERONET]
+    pub const fn all() -> [&'static Self; 5] {
+        [&MAINNET, &SEPOLIA, &DEVNET, &ZERONET, &PRIVACY_SEPOLIA]
     }
 
     /// Looks up a chain config by CLI chain name.
@@ -201,6 +211,7 @@ impl ChainConfig {
             Self::SEPOLIA_NAME | Self::SEPOLIA_ALIAS => Some(Self::sepolia()),
             Self::ZERONET_NAME => Some(Self::zeronet()),
             Self::DEVNET_NAME => Some(Self::devnet()),
+            Self::PRIVACY_SEPOLIA_NAME => Some(Self::privacy_sepolia()),
             _ => None,
         }
     }
@@ -212,6 +223,7 @@ impl ChainConfig {
             84532 => Some(&SEPOLIA),
             1337 => Some(&DEVNET),
             763360 => Some(&ZERONET),
+            84534 => Some(&PRIVACY_SEPOLIA),
             _ => None,
         }
     }
@@ -583,6 +595,66 @@ const ZERONET: ChainConfig = ChainConfig {
     genesis_json: include_str!("../res/genesis/zeronet_base.json"),
 };
 
+/// Base Privacy L3 devnet on Base Sepolia (84532 parent).
+///
+/// Genesis anchors and L1 contract addresses are placeholders until the privacy
+/// devnet pins a deploy-once genesis (see privacy-enclave `services.yml` TODO).
+/// Azul/beryl timestamps assume `genesis_l2_time = 0` and blocks 20/21 with
+/// 2s block time; update both when genesis is pinned.
+const PRIVACY_SEPOLIA: ChainConfig = ChainConfig {
+    chain_id: 84534,
+    l1_chain_id: 84532,
+
+    block_time: 2,
+    seq_window_size: 3600,
+    max_sequencer_drift: 600,
+    channel_timeout: 300,
+
+    bedrock_block: 0,
+    regolith_timestamp: 0,
+    canyon_timestamp: 0,
+    delta_timestamp: 0,
+    ecotone_timestamp: 0,
+    fjord_timestamp: 0,
+    granite_timestamp: 0,
+    holocene_timestamp: 0,
+    pectra_blob_schedule_timestamp: None,
+    isthmus_timestamp: 0,
+    jovian_timestamp: 0,
+    azul_timestamp: Some(40),
+    beryl_timestamp: Some(42),
+    cobalt_timestamp: None,
+
+    genesis_l1_hash: B256::ZERO,
+    genesis_l1_number: 0,
+    genesis_l2_hash: B256::ZERO,
+    genesis_l2_number: 0,
+    genesis_l2_time: 0,
+    genesis_batcher_address: Address::ZERO,
+    genesis_overhead: U256::ZERO,
+    genesis_scalar: U256::ZERO,
+    genesis_gas_limit: 30_000_000,
+
+    eip1559_elasticity: 10,
+    eip1559_denominator: 50,
+    eip1559_denominator_canyon: 250,
+
+    batch_inbox_address: address!("ff00000000000000000000000000000000084534"),
+    deposit_contract_address: Address::ZERO,
+    system_config_address: Address::ZERO,
+    protocol_versions_address: Address::ZERO,
+
+    unsafe_block_signer: None,
+    activation_admin_address: Some(address!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc")),
+
+    max_gas_limit: 30_000_000,
+    prune_delete_limit: 20_000,
+
+    bootnodes: Bootnodes::EMPTY,
+
+    genesis_json: include_str!("../res/genesis/privacy_sepolia.json"),
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,6 +685,15 @@ mod tests {
         assert_eq!(ChainConfig::SEPOLIA, ChainConfig::sepolia());
         assert_eq!(ChainConfig::DEVNET, ChainConfig::devnet());
         assert_eq!(ChainConfig::ZERONET, ChainConfig::zeronet());
+        assert_eq!(ChainConfig::PRIVACY_SEPOLIA, ChainConfig::privacy_sepolia());
+    }
+
+    #[test]
+    fn privacy_sepolia_resolves_by_chain_id() {
+        let cfg = ChainConfig::by_chain_id(84534).expect("privacy-sepolia should resolve");
+        assert_eq!(cfg.l1_chain_id, 84532);
+        assert_eq!(cfg.azul_timestamp, Some(40));
+        assert_eq!(cfg.beryl_timestamp, Some(42));
     }
 
     #[test]

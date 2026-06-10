@@ -34,6 +34,7 @@ revm.workspace = true
 spin.workspace = true
 auto_impl.workspace = true
 serde = { workspace = true, optional = true }
+serde_json = { workspace = true, default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 alloy-chains.workspace = true
@@ -53,6 +54,7 @@ std = [
 	"revm/std",
 	"serde?/std",
 	"spin/std",
+	"serde_json/std",
 ]
 serde = [
 	"alloy-chains/serde",

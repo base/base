@@ -123,6 +123,7 @@ mod tests {
         let cases: &[(u64, B256)] = &[
             (8453, b256!("1607709d90d40904f790574404e2ad614eac858f6162faa0ec34c6bf5e5f3c57")),
             (84532, b256!("12e9c45f19f9817c6d4385fad29e7a70c355502cf0883e76a9a7e478a85d1360")),
+            (84534, b256!("53e7a98dce02084b73b03fa5cfbe9cb4acff6e536b2322d5f6ffab5800c96b8b")),
         ];
 
         for &(chain_id, expected) in cases {

@@ -23,5 +23,8 @@ pub use macros::RollupConfigSource;
 mod ethereum;
 pub use ethereum::{Holesky, Hoodi, L1_CONFIGS, Mainnet, Sepolia};
 
+mod op;
+pub use op::BaseSepolia;
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
