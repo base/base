@@ -8,7 +8,7 @@ AUDIT_RPC_URL="${2:-http://localhost:${AUDIT_RPC_PORT:-9100}}"
 PK="${3:-$ANVIL_ACCOUNT_5_KEY}"
 TO="${4:-$ANVIL_ACCOUNT_6_ADDR}"
 
-echo "=== Transaction Observability Smoke ==="
+echo "=== Transaction Events Smoke ==="
 echo "Sending L2 tx through ingress..."
 from="$(cast wallet address --private-key "$PK")"
 nonce="$(cast nonce --block pending --rpc-url "$RPC_URL" "$from")"

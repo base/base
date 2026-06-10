@@ -1,4 +1,4 @@
-# Transaction Observability Event Journal
+# Transaction Event Journal
 
 This document defines `transaction-event/v1`, the shared business event journal
 contract for Base transaction observability. Producers write newline-delimited

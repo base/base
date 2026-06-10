@@ -52,7 +52,7 @@ checks: status smoke
 
 # Sends an ingress transaction and verifies transaction events reached audit-archiver Postgres
 tx-observability-smoke:
-    ./etc/scripts/devnet/transaction-observability-smoke.sh
+    ./etc/scripts/devnet/transaction-events-smoke.sh
 
 # Stream FB's from the builder via websocket
 flashblocks:
