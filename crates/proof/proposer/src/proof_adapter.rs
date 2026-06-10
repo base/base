@@ -307,6 +307,38 @@ mod tests {
     }
 
     #[test]
+    fn tee_discard_retry_session_id_differs_from_root_session() {
+        let request = test_request(B256::repeat_byte(0xaa));
+
+        assert_ne!(
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 1),
+            ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro),
+        );
+    }
+
+    #[test]
+    fn tee_discard_retry_session_id_changes_by_attempt() {
+        let request = test_request(B256::repeat_byte(0xaa));
+
+        assert_ne!(
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 1),
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 2),
+        );
+    }
+
+    #[test]
+    fn tee_discard_retry_session_id_changes_by_l1_head_number() {
+        let first = test_request(B256::repeat_byte(0xaa));
+        let mut second = first.clone();
+        second.l1_head_number += 1;
+
+        assert_ne!(
+            ProposerProofAdapter::tee_discard_retry_session_id(&first, TeeKind::AwsNitro, 1),
+            ProposerProofAdapter::tee_discard_retry_session_id(&second, TeeKind::AwsNitro, 1),
+        );
+    }
+
+    #[test]
     fn tee_prove_block_range_request_wraps_primitive_request() {
         let request = test_request(B256::repeat_byte(0xaa));
         let expected_session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);

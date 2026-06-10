@@ -375,6 +375,12 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                 return TargetPoll::NotFound { session_id, claimed_l2_output_root };
             }
             Err(e) => {
+                debug!(
+                    target_block,
+                    session_id = %session_id,
+                    error = %e,
+                    "Transient failure polling retry session",
+                );
                 return TargetPoll::Unknown {
                     session_id: Some(session_id),
                     error: Self::error_from_client(e),
