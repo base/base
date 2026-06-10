@@ -284,8 +284,8 @@ pub struct CheckpointGuard<'a> {
 impl CheckpointGuard<'_> {
     /// Commits all state changes since the checkpoint.
     pub fn commit(mut self) {
-        if let Some(cp) = self.checkpoint.take() {
-            self.storage.with_storage(|s| s.checkpoint_commit(cp));
+        if self.checkpoint.take().is_some() {
+            self.storage.with_storage(|s| s.checkpoint_commit());
         }
     }
 }
