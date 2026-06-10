@@ -92,7 +92,7 @@ impl StatusPoller {
                 let proof_type_label = metrics::api_proof_type_label(request.api_proof_type);
 
                 let error_msg = format!(
-                    "Request stuck in {} state without active session for {}+ minutes",
+                    "Request stuck in {} state for {}+ minutes",
                     request.status, self.stuck_timeout_mins
                 );
 
