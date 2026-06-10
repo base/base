@@ -25,9 +25,11 @@ use base_proof_rpc::{
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind as ApiProofRequestKind,
+    ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    TeeKind, TeeProofResult,
 };
+use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
@@ -412,6 +414,10 @@ pub fn test_proposal(block_number: u64) -> Proposal {
 pub struct MockProofRequester {
     /// Requests accepted through `prove_block_range`.
     pub requests: std::sync::Mutex<HashMap<String, ProveBlockRangeRequest>>,
+    /// Sessions that should return a terminal failed status from `get_proof`.
+    pub failed_sessions: std::sync::Mutex<HashMap<String, String>>,
+    /// Number of `prove_block_range` calls accepted.
+    pub prove_count: AtomicUsize,
 }
 
 #[async_trait]
@@ -421,6 +427,7 @@ impl ProofRequesterProvider for MockProofRequester {
         request: ProveBlockRangeRequest,
     ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
         let session_id = request.proof.session_id.clone();
+        self.prove_count.fetch_add(1, Ordering::SeqCst);
         self.requests.lock().unwrap().insert(session_id.clone(), request);
         Ok(ProveBlockRangeResponse { session_id })
     }
@@ -429,10 +436,28 @@ impl ProofRequesterProvider for MockProofRequester {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
+        if let Some(message) = self.failed_sessions.lock().unwrap().get(&request.session_id) {
+            return Ok(GetProofResponse {
+                status: ProofStatus::Failed,
+                error_message: Some(message.clone()),
+                result: None,
+            });
+        }
+
         let requests = self.requests.lock().unwrap();
-        let request = requests
-            .get(&request.session_id)
-            .ok_or_else(|| ProverServiceClientError::MissingResult("unknown session".to_owned()))?;
+        let request = requests.get(&request.session_id).ok_or_else(|| {
+            // Mirror the production prover-service: an unknown session_id surfaces
+            // as a JSON-RPC NotFound error. The proposer pipeline relies
+            // on this to distinguish "no session yet, dispatch needed" from other
+            // transient or terminal errors.
+            ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(
+                ErrorObjectOwned::owned(
+                    ProverServiceClientError::ERROR_NOT_FOUND,
+                    PROOF_REQUEST_NOT_FOUND_MESSAGE,
+                    None::<()>,
+                ),
+            ))
+        })?;
         let ApiProofRequestKind::Tee(tee_request) = &request.proof.request else {
             return Err(ProverServiceClientError::UnexpectedResultPayload(
                 "expected TEE request".to_owned(),

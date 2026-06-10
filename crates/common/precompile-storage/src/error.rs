@@ -99,6 +99,15 @@ impl BasePrecompileError {
         Self::Panic(PanicKind::ArrayOutOfBounds)
     }
 
+    /// Creates an assertion-failure panic error (Solidity `Panic(0x01)`).
+    ///
+    /// Use for internal invariants that must always hold. It is classified as a
+    /// system error (see [`Self::is_system_error`]) so it propagates and fails
+    /// the transaction rather than surfacing as a catchable revert.
+    pub const fn assert_failed() -> Self {
+        Self::Panic(PanicKind::Assert)
+    }
+
     /// ABI-encodes this error and wraps it as a [`PrecompileResult`] (revert or fatal error).
     ///
     /// Internal dispatch diagnostics use compact, non-ABI revert data: unknown selectors return the

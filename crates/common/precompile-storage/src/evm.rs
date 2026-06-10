@@ -39,6 +39,7 @@ pub struct EvmPrecompileStorageProvider<'a> {
     timestamp: U256,
     chain_id: u64,
     beneficiary: Address,
+    origin: Address,
     state_gas_used: u64,
 }
 
@@ -54,6 +55,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
         let timestamp = internals.block_env().timestamp();
         let chain_id = internals.chain_id();
         let beneficiary = internals.block_env().beneficiary();
+        let origin = internals.tx_origin();
 
         Self {
             internals,
@@ -66,6 +68,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
             timestamp,
             chain_id,
             beneficiary,
+            origin,
             state_gas_used: 0,
         }
     }
@@ -86,6 +89,10 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
 
     fn block_number(&self) -> u64 {
         self.block_number
+    }
+
+    fn origin(&self) -> Address {
+        self.origin
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {

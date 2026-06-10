@@ -66,15 +66,16 @@ pub(crate) fn generate(input: DeriveInput, address: Option<&Expr>) -> proc_macro
 fn gen_output(input: DeriveInput, address: Option<&Expr>) -> syn::Result<TokenStream> {
     let (ident, vis) = (input.ident.clone(), input.vis.clone());
     let namespace = extract_namespace(&input.attrs)?;
-    let derives = input
+    let passthrough_attrs = input
         .attrs
         .iter()
-        .filter(|attr| attr.path().is_ident("derive"))
+        .filter(|attr| !attr.path().is_ident("namespace"))
         .cloned()
         .collect::<Vec<_>>();
     let fields = parse_fields(input, namespace.is_some())?;
 
-    let storage_output = gen_storage(&ident, &vis, &derives, &fields, address, namespace.as_ref())?;
+    let storage_output =
+        gen_storage(&ident, &vis, &passthrough_attrs, &fields, address, namespace.as_ref())?;
     Ok(quote! { #storage_output })
 }
 

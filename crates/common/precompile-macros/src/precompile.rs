@@ -183,8 +183,13 @@ struct InstallConfig {
 impl Parse for InstallConfig {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let key: Ident = input.parse()?;
-        if key != "address" && key != "addr" {
-            return Err(syn::Error::new_spanned(key, "`install` supports only `address = ...`"));
+        if key != "addr" {
+            return Err(syn::Error::new_spanned(
+                &key,
+                format!(
+                    "unrecognized install argument `{key}`, the supported argument is `addr = \"0x...\"`"
+                ),
+            ));
         }
 
         input.parse::<Token![=]>()?;
@@ -261,15 +266,33 @@ mod tests {
     }
 
     #[test]
-    fn config_rejects_install_option_without_comma_as_unexpected_option() {
-        let err = parse_config(quote! { install(address = X extra) }).err().unwrap();
+    fn install_config_rejects_address_alias_with_helpful_diagnostic() {
+        let err = parse_config(quote! { install(address = X) }).err().unwrap();
+
+        let msg = err.to_string();
+        assert!(msg.contains("unrecognized install argument `address`"), "got: {msg}");
+        assert!(msg.contains("addr"), "got: {msg}");
+    }
+
+    #[test]
+    fn install_config_rejects_typo_with_helpful_diagnostic() {
+        let err = parse_config(quote! { install(a = X) }).err().unwrap();
+
+        let msg = err.to_string();
+        assert!(msg.contains("unrecognized install argument `a`"), "got: {msg}");
+        assert!(msg.contains("addr"), "got: {msg}");
+    }
+
+    #[test]
+    fn install_config_rejects_extra_option_without_comma() {
+        let err = parse_config(quote! { install(addr = X extra) }).err().unwrap();
 
         assert!(err.to_string().contains("unexpected `install` option"));
     }
 
     #[test]
-    fn config_rejects_extra_install_option_after_comma() {
-        let err = parse_config(quote! { install(address = X, extra) }).err().unwrap();
+    fn install_config_rejects_extra_option_after_comma() {
+        let err = parse_config(quote! { install(addr = X, extra) }).err().unwrap();
 
         assert!(err.to_string().contains("unexpected `install` option"));
     }

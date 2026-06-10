@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 mod common;
 
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, ProverRequesterApiClient,
+    GetProofRequest, GetProofResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofResult, ProofStatus,
+    ProverRequesterApiClient,
 };
 use common::{ProveBlockRequest, connect, prove_block};
 use jsonrpsee::http_client::HttpClient;
@@ -336,7 +337,7 @@ async fn test_get_proof_nonexistent_session() {
         .expect_err("nonexistent session should return error");
 
     assert!(
-        err.to_string().contains("Proof request not found"),
+        err.to_string().contains(PROOF_REQUEST_NOT_FOUND_MESSAGE),
         "error should mention missing proof request, got: {err}"
     );
     println!("  Correctly returned NotFound for nonexistent session: {err}");
