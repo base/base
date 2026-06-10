@@ -4,7 +4,7 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::Sealed;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{L1TxFormat, RollupConfig};
 use base_consensus_derive::{
     BlobProvider, ChainProvider, DataAvailabilityProvider, L2ChainProvider, Pipeline,
     SignalReceiver,
@@ -51,10 +51,12 @@ where
 
     let boot_clone = boot.clone();
 
+    let l1_tx_format = L1TxFormat::from_l1_config(&boot.l1_config);
     let rollup_config = Arc::new(boot.rollup_config);
     let safe_head_hash = fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
 
-    let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, Arc::clone(&oracle));
+    let mut l1_provider =
+        OracleL1ChainProvider::new(boot.l1_head, Arc::clone(&oracle), l1_tx_format);
     let mut l2_provider =
         OracleL2ChainProvider::new(safe_head_hash, Arc::clone(&rollup_config), Arc::clone(&oracle));
 

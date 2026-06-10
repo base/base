@@ -12,6 +12,9 @@ extern crate alloc;
 mod params;
 pub use params::FeeConfig;
 
+mod l1_tx_format;
+pub use l1_tx_format::L1TxFormat;
+
 mod updates;
 pub use updates::{
     BatcherUpdate, DaFootprintGasScalarUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate,

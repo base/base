@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Sealable;
 use async_trait::async_trait;
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{L1TxFormat, RollupConfig, SystemConfig};
 use base_consensus_derive::{
     ChainProvider, DataAvailabilityProvider, DerivationPipeline, EthereumDataSource,
     L2ChainProvider, OriginProvider, Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult,
@@ -113,12 +113,14 @@ where
         boot_info: &BootInfo,
     ) -> Result<(Self, Arc<RwLock<PipelineCursor>>), PipelineErrorKind> {
         let cfg = Arc::new(boot_info.rollup_config.clone());
+        let l1_tx_format = L1TxFormat::from_l1_config(&boot_info.l1_config);
         let l1_cfg = Arc::new(boot_info.l1_config.clone());
 
         let l2_head_hash =
             SafeHeadFetcher::fetch(oracle.as_ref(), boot_info.agreed_l2_output_root).await?;
 
-        let mut l1_provider = OracleL1ChainProvider::new(boot_info.l1_head, Arc::clone(&oracle));
+        let mut l1_provider =
+            OracleL1ChainProvider::new(boot_info.l1_head, Arc::clone(&oracle), l1_tx_format);
         let mut l2_provider =
             OracleL2ChainProvider::new(l2_head_hash, Arc::clone(&cfg), Arc::clone(&oracle));
         let blob_provider = OracleBlobProvider::new(Arc::clone(&oracle));

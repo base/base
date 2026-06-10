@@ -5,6 +5,7 @@ use alloy_consensus::Sealed;
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::B256;
 use base_common_evm::{BaseEvmFactory, BaseTxEnv};
+use base_common_genesis::L1TxFormat;
 use base_consensus_derive::EthereumDataSource;
 use base_proof::{
     BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
@@ -54,13 +55,15 @@ where
         let boot = BootInfo::load(oracle.as_ref()).await?;
         let evm_factory =
             self.evm_factory.with_activation_admin_address(boot.activation_admin_address);
+        let l1_tx_format = L1TxFormat::from_l1_config(&boot.l1_config);
         let l1_config = boot.l1_config;
         let rollup_config = Arc::new(boot.rollup_config);
 
         let safe_head_hash =
             fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
 
-        let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, Arc::clone(&oracle));
+        let mut l1_provider =
+            OracleL1ChainProvider::new(boot.l1_head, Arc::clone(&oracle), l1_tx_format);
         let mut l2_provider = OracleL2ChainProvider::new(
             safe_head_hash,
             Arc::clone(&rollup_config),
