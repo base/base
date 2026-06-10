@@ -54,6 +54,12 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
 
     match target {
         AddTarget::Enode(enode) => {
+            warn_ignored_rpc_override(
+                cl_rpc_override.as_ref(),
+                "--cl-rpc",
+                "enode targets",
+                PeerLayer::El,
+            );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Add EL peer {enode} through {el_rpc}? [y/N] ");
             if !confirm(&prompt, yes)? {
@@ -61,9 +67,18 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
                 return Ok(());
             }
             let accepted = add_peer(&el_rpc, &enode).await?;
-            print_peer_action(&PeerActionJson::el(&config.name, "addPeer", enode, accepted), json)?;
+            print_peer_action(
+                &PeerActionJson::el(&config.name, PeerAction::Add, enode, accepted),
+                json,
+            )?;
         }
         AddTarget::Multiaddr(multiaddr) => {
+            warn_ignored_rpc_override(
+                el_rpc_override.as_ref(),
+                "--el-rpc",
+                "CL targets",
+                PeerLayer::Cl,
+            );
             let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p add-peer")?;
             let prompt = format!("Connect CL peer {multiaddr} through {cl_rpc}? [y/N] ");
             if !confirm(&prompt, yes)? {
@@ -71,7 +86,7 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
                 return Ok(());
             }
             connect_peer(&cl_rpc, &multiaddr).await?;
-            print_peer_action(&PeerActionJson::cl(&config.name, "addPeer", multiaddr), json)?;
+            print_peer_action(&PeerActionJson::cl(&config.name, PeerAction::Add, multiaddr), json)?;
         }
     }
 
@@ -85,6 +100,12 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
 
     match target {
         RemoveTarget::Enode(enode) => {
+            warn_ignored_rpc_override(
+                cl_rpc_override.as_ref(),
+                "--cl-rpc",
+                "enode targets",
+                PeerLayer::El,
+            );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Remove EL peer {enode} through {el_rpc}? [y/N] ");
             if !confirm(&prompt, yes)? {
@@ -93,11 +114,17 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
             }
             let accepted = remove_peer(&el_rpc, &enode).await?;
             print_peer_action(
-                &PeerActionJson::el(&config.name, "removePeer", enode, accepted),
+                &PeerActionJson::el(&config.name, PeerAction::Remove, enode, accepted),
                 json,
             )?;
         }
         RemoveTarget::PeerId(peer_id) => {
+            warn_ignored_rpc_override(
+                el_rpc_override.as_ref(),
+                "--el-rpc",
+                "CL targets",
+                PeerLayer::Cl,
+            );
             let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p remove-peer")?;
             let prompt = format!("Disconnect CL peer {peer_id} from {cl_rpc}? [y/N] ");
             if !confirm(&prompt, yes)? {
@@ -105,7 +132,10 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
                 return Ok(());
             }
             disconnect_peer(&cl_rpc, &peer_id).await?;
-            print_peer_action(&PeerActionJson::cl(&config.name, "removePeer", peer_id), json)?;
+            print_peer_action(
+                &PeerActionJson::cl(&config.name, PeerAction::Remove, peer_id),
+                json,
+            )?;
         }
     }
 
@@ -150,6 +180,22 @@ fn resolve_cl_rpc(
     })
 }
 
+fn warn_ignored_rpc_override(
+    override_url: Option<&Url>,
+    flag: &str,
+    target_kind: &str,
+    layer: PeerLayer,
+) {
+    if override_url.is_some() {
+        tracing::warn!(
+            flag = %flag,
+            target_kind = %target_kind,
+            routed_to = %layer.as_str(),
+            "RPC override ignored for target kind"
+        );
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AddTarget {
     Enode(String),
@@ -168,6 +214,9 @@ fn parse_add_target(raw: &str) -> Result<AddTarget> {
         bail!("peer target cannot be empty");
     }
     if target.starts_with('/') {
+        if !target.contains("/p2p/") {
+            bail!("multiaddr target must include a `/p2p/<peer-id>` component");
+        }
         return Ok(AddTarget::Multiaddr(target.to_string()));
     }
 
@@ -211,6 +260,11 @@ fn parse_remove_target(raw: &str) -> Result<RemoveTarget> {
     if target.contains(':') || target.contains('/') {
         bail!("remove-peer needs a bare libp2p peer ID for CL targets, not a URL or multiaddr");
     }
+    if target.len() < 40 {
+        bail!(
+            "CL peer ID `{target}` looks too short to be a valid libp2p peer ID; expected a base58-encoded string (e.g. 16Uiu2HAm...)"
+        );
+    }
 
     Ok(RemoveTarget::PeerId(target.to_string()))
 }
@@ -219,20 +273,51 @@ fn parse_remove_target(raw: &str) -> Result<RemoveTarget> {
 #[serde(rename_all = "camelCase")]
 struct PeerActionJson {
     network: String,
-    action: &'static str,
-    layer: &'static str,
+    action: PeerAction,
+    layer: PeerLayer,
     target: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     accepted: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+enum PeerAction {
+    #[serde(rename = "addPeer")]
+    Add,
+    #[serde(rename = "removePeer")]
+    Remove,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+enum PeerLayer {
+    #[serde(rename = "el")]
+    El,
+    #[serde(rename = "cl")]
+    Cl,
+}
+
+impl PeerLayer {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::El => "EL",
+            Self::Cl => "CL",
+        }
+    }
+}
+
 impl PeerActionJson {
-    fn el(network: &str, action: &'static str, target: String, accepted: bool) -> Self {
-        Self { network: network.to_string(), action, layer: "el", target, accepted: Some(accepted) }
+    fn el(network: &str, action: PeerAction, target: String, accepted: bool) -> Self {
+        Self {
+            network: network.to_string(),
+            action,
+            layer: PeerLayer::El,
+            target,
+            accepted: Some(accepted),
+        }
     }
 
-    fn cl(network: &str, action: &'static str, target: String) -> Self {
-        Self { network: network.to_string(), action, layer: "cl", target, accepted: None }
+    fn cl(network: &str, action: PeerAction, target: String) -> Self {
+        Self { network: network.to_string(), action, layer: PeerLayer::Cl, target, accepted: None }
     }
 }
 
@@ -247,20 +332,27 @@ fn print_peer_action(action: &PeerActionJson, json: bool) -> Result<()> {
 
 fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
     let mut stdout = io::stdout().lock();
-    match (action.layer, action.action, action.accepted) {
-        ("el", "addPeer", Some(true)) => writeln!(stdout, "OK EL accepted peer {}", action.target)?,
-        ("el", "addPeer", Some(false)) => {
-            writeln!(stdout, "OK EL did not accept peer {}", action.target)?;
+    match (action.layer, action.action) {
+        (PeerLayer::El, PeerAction::Add) => {
+            let accepted = action.accepted.expect("EL actions always carry `accepted`");
+            if accepted {
+                writeln!(stdout, "OK EL accepted peer {}", action.target)?;
+            } else {
+                writeln!(stdout, "OK EL did not accept peer {}", action.target)?;
+            }
         }
-        ("el", "removePeer", Some(true)) => {
-            writeln!(stdout, "OK EL removed peer {}", action.target)?
+        (PeerLayer::El, PeerAction::Remove) => {
+            let accepted = action.accepted.expect("EL actions always carry `accepted`");
+            if accepted {
+                writeln!(stdout, "OK EL removed peer {}", action.target)?;
+            } else {
+                writeln!(stdout, "OK EL did not remove peer {}", action.target)?;
+            }
         }
-        ("el", "removePeer", Some(false)) => {
-            writeln!(stdout, "OK EL did not remove peer {}", action.target)?;
+        (PeerLayer::Cl, PeerAction::Add) => writeln!(stdout, "OK CL connected {}", action.target)?,
+        (PeerLayer::Cl, PeerAction::Remove) => {
+            writeln!(stdout, "OK CL disconnected {}", action.target)?;
         }
-        ("cl", "addPeer", _) => writeln!(stdout, "OK CL connected {}", action.target)?,
-        ("cl", "removePeer", _) => writeln!(stdout, "OK CL disconnected {}", action.target)?,
-        _ => writeln!(stdout, "OK {} {} {}", action.layer, action.action, action.target)?,
     }
     Ok(())
 }
@@ -466,9 +558,13 @@ fn unavailable_cl_peer_stats() -> String {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use serde_json::json;
     use url::Url;
 
-    use super::{AddTarget, RemoveTarget, parse_add_target, parse_remove_target, resolve_cl_rpc};
+    use super::{
+        AddTarget, PeerAction, PeerActionJson, RemoveTarget, parse_add_target, parse_remove_target,
+        resolve_cl_rpc,
+    };
 
     const VALID_ENODE: &str = "enode://d7dfaea49c7ef37701e668652bcf1bc63d3abb2ae97593374a949e175e4ff128730a2f35199f3462a56298b981dfc395a5abebd2d6f0284ffe5bdc3d8e258b86@127.0.0.1:30304?discport=30301";
     const VALID_ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
@@ -553,6 +649,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_add_target_rejects_multiaddr_without_peer_id() {
+        let err = parse_add_target("/ip4/127.0.0.1/tcp/9000")
+            .expect_err("multiaddr without peer ID should be rejected");
+
+        assert!(
+            err.to_string().contains("multiaddr target must include a `/p2p/<peer-id>` component")
+        );
+    }
+
+    #[test]
     fn parse_remove_target_routes_enode_to_el() {
         assert_eq!(
             parse_remove_target(VALID_ENODE).unwrap(),
@@ -562,9 +668,11 @@ mod tests {
 
     #[test]
     fn parse_remove_target_routes_peer_id_to_cl() {
+        let peer_id = "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12";
+
         assert_eq!(
-            parse_remove_target("16Uiu2HAmExamplePeerId").unwrap(),
-            RemoveTarget::PeerId("16Uiu2HAmExamplePeerId".to_string())
+            parse_remove_target(peer_id).unwrap(),
+            RemoveTarget::PeerId(peer_id.to_string())
         );
     }
 
@@ -581,5 +689,51 @@ mod tests {
     #[test]
     fn parse_remove_target_rejects_url_like_target() {
         assert!(parse_remove_target("https://example.com").is_err());
+    }
+
+    #[test]
+    fn parse_remove_target_rejects_obviously_short_peer_id() {
+        let err = parse_remove_target("hello").expect_err("short peer ID should be rejected");
+
+        assert!(err.to_string().contains("looks too short to be a valid libp2p peer ID"));
+    }
+
+    #[test]
+    fn peer_action_json_serializes_typed_action_and_layer() {
+        let el = serde_json::to_value(PeerActionJson::el(
+            "devnet",
+            PeerAction::Add,
+            "enode://example".to_string(),
+            false,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            el,
+            json!({
+                "network": "devnet",
+                "action": "addPeer",
+                "layer": "el",
+                "target": "enode://example",
+                "accepted": false,
+            })
+        );
+
+        let cl = serde_json::to_value(PeerActionJson::cl(
+            "devnet",
+            PeerAction::Remove,
+            "16Uiu2HAmExamplePeerId".to_string(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            cl,
+            json!({
+                "network": "devnet",
+                "action": "removePeer",
+                "layer": "cl",
+                "target": "16Uiu2HAmExamplePeerId",
+            })
+        );
     }
 }
