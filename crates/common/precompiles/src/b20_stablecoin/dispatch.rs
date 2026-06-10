@@ -344,8 +344,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
