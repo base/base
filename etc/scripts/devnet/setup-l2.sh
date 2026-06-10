@@ -328,7 +328,7 @@ if [ -n "$L2_DYNAMIC_HARDFORKS" ]; then
     >"$TMP_GENESIS"
   mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
 
-  echo "Cleared static hardfork activation timestamps from rollup and genesis configs"
+  echo "Cleared static upgrade activation timestamps from rollup and genesis configs"
 fi
 
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."

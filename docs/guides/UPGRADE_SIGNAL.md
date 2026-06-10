@@ -1,6 +1,6 @@
 # L1 Upgrade Signal
 
-The L1 upgrade signal feature lets Base nodes read hardfork activation timestamps from an L1
+The L1 upgrade signal feature lets Base nodes read upgrade activation timestamps from an L1
 contract instead of baking every activation timestamp into the node binary. It is designed for a
 conservative rollout model:
 
@@ -23,10 +23,13 @@ function getTimestamp(string hardforkId) external view returns (uint256);
 function getProtocolVersion(string hardforkId) external view returns (uint256);
 ```
 
-For each configured hardfork ID, the node reads:
+The contract ABI names the parameter `hardforkId`; node configuration treats those values as
+contract-backed Base upgrade IDs.
 
-- `activation_timestamp`: the L2 timestamp for the hardfork activation. A positive timestamp
-  schedules the hardfork. A zero timestamp clears an existing schedule for supported hardforks.
+For each configured upgrade ID, the node reads:
+
+- `activation_timestamp`: the L2 timestamp for the upgrade activation. A positive timestamp
+  schedules the upgrade. A zero timestamp clears an existing schedule for supported upgrades.
 - `protocol_version`: the minimum node protocol version required to apply the timestamp. Startup
   schedule application rejects positive activation timestamps with a missing version or a version
   above the binary's supported version, so older nodes do not activate partial upgrade logic.
@@ -35,18 +38,26 @@ For each configured hardfork ID, the node reads:
 ## Configuration
 
 The shared CLI arguments are defined in
-[`config.rs`](../../crates/utilities/upgrade-signal/src/config.rs).
+[`config/mod.rs`](../../crates/utilities/upgrade-signal/src/config/mod.rs).
 
 | Argument | Environment Variable | Meaning |
 | --- | --- | --- |
 | `--upgrade-signal.contract` | `BASE_NODE_UPGRADE_SIGNAL_CONTRACT` | L1 contract or proxy address. Enables the feature when present. |
-| `--upgrade-signal.hardfork-id` | `BASE_NODE_UPGRADE_SIGNAL_HARDFORK_ID` | Optional comma-delimited hardfork IDs to read. Defaults to all timestamp-based Base hardfork IDs. |
-| `--upgrade-signal.apply-hardfork-id` | `BASE_NODE_UPGRADE_SIGNAL_APPLY_HARDFORK_ID` | Optional comma-delimited hardfork IDs that may mutate the local schedule. Defaults to the read hardfork IDs. |
+| `--upgrade-signal.hardfork-id` | `BASE_NODE_UPGRADE_SIGNAL_HARDFORK_ID` | Optional comma-delimited upgrade IDs to read. The flag keeps the contract's `hardforkId` naming. Defaults to all contract-backed Base upgrade IDs. |
+| `--upgrade-signal.apply-hardfork-id` | `BASE_NODE_UPGRADE_SIGNAL_APPLY_HARDFORK_ID` | Optional comma-delimited upgrade IDs that may mutate the local schedule. The flag keeps the contract's `hardforkId` naming. Defaults to the read upgrade IDs. |
 | `--upgrade-signal.mode` | `BASE_NODE_UPGRADE_SIGNAL_MODE` | `metrics-only`, `startup-apply`, or `runtime-admin`. Defaults to `metrics-only`. |
+| `--upgrade-signal.l1-block-tag` | `BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG` | L1 block tag the contract is read at: `finalized` (default), `safe`, or `latest`. |
 | `--upgrade-signal.l1-rpc` | `BASE_NODE_UPGRADE_SIGNAL_L1_RPC` | L1 execution RPC URL used by standalone execution nodes. |
 
 Standalone execution nodes require both `--upgrade-signal.contract` and
-`--upgrade-signal.l1-rpc`. Consensus nodes already have `--l1-eth-rpc`, so they reuse that endpoint.
+`--upgrade-signal.l1-rpc` (in every mode, including metrics-only). Consensus nodes already have
+`--l1-eth-rpc`, so they reuse that endpoint.
+
+The contract is read at the **finalized** L1 head by default, so an L1 reorg cannot flap the
+upgrade schedule. Networks without L1 finality (local devnets) should set
+`--upgrade-signal.l1-block-tag latest`. Reads are pinned to a single block hash per poll and retried
+with backoff on transient failures; the live metrics poller tolerates per-fork read errors instead
+of dropping the whole schedule.
 
 The integrated `base rpc` command has a single L1 RPC source of truth. It derives the execution
 upgrade-signal L1 RPC from consensus `--l1-eth-rpc`, then copies the shared upgrade-signal contract
@@ -66,16 +77,16 @@ L1 block:
 
 1. It asks the L1 provider for the latest block.
 2. It stores both the block number and concrete block hash.
-3. It reads every configured hardfork ID using that same block hash.
+3. It reads every configured upgrade ID using that same block hash.
 
-This avoids uncertainty from reading one hardfork at L1 block `N` and another at block `N + 1`.
+This avoids uncertainty from reading one upgrade at L1 block `N` and another at block `N + 1`.
 Every `UpgradeSignal` still carries the block number so metrics and logs can show exactly which L1
 block supplied the schedule.
 
 ## Application Modes
 
 `metrics-only` records logs and metrics without mutating the execution chain spec, consensus rollup
-config, or runtime hardfork registry. This is the default and is intended for observation-only
+config, or runtime upgrade registry. This is the default and is intended for observation-only
 rollouts.
 
 `startup-apply` applies the configured `apply-hardfork-id` subset once before startup. Live polling
@@ -83,7 +94,7 @@ continues to record metrics only.
 
 `runtime-admin` applies the configured subset before startup and also exposes
 `admin_refreshUpgradeSignal` on admin RPC. Calling that method reads the current L1 schedule and
-applies the configured subset to the process-local runtime hardfork registry.
+applies the configured subset to the process-local runtime upgrade registry.
 
 ## Startup Application
 
@@ -101,11 +112,11 @@ That function:
    version for each signal.
 3. Filters the schedule to `apply-hardfork-id`.
 4. Validates that every applied signal's minimum protocol version is supported by this binary.
-5. Applies supported hardfork timestamps to `BaseChainSpec`.
+5. Applies supported upgrade timestamps to `BaseChainSpec`.
 6. Refreshes the genesis header after changing fork conditions.
 
-Unsupported hardfork IDs are ignored with a debug log. A zero timestamp clears the supported
-hardfork schedule. Positive timestamps go through the chain spec setters, so existing invariants
+Unsupported upgrade IDs are ignored with a debug log. A zero timestamp clears the supported
+upgrade schedule. Positive timestamps go through the chain spec setters, so existing invariants
 still run. For example, Beryl cannot be scheduled without the required activation admin address.
 
 ### Consensus
@@ -121,10 +132,10 @@ That function:
    version for each signal.
 3. Filters the schedule to `apply-hardfork-id`.
 4. Validates that every applied signal's minimum protocol version is supported by this binary.
-5. Applies supported hardfork timestamps to `RollupConfig`.
+5. Applies supported upgrade timestamps to `RollupConfig`.
 
-Just like execution, unsupported hardfork IDs are ignored and a zero timestamp clears the supported
-hardfork schedule.
+Just like execution, unsupported upgrade IDs are ignored and a zero timestamp clears the supported
+upgrade schedule.
 
 ## Live Metrics
 
@@ -141,8 +152,8 @@ installed by
 [`StandardBaseRethNode::install_upgrade_signal_metrics_extension`](../../crates/execution/cli/src/standard_node.rs)
 when upgrade-signal config is present.
 
-The extension starts after the execution node has started. Every
-`DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL` seconds, it reads the pinned L1 schedule and updates metrics.
+The extension starts after the execution node has started. Every 12 seconds, it reads the pinned L1
+schedule and updates metrics.
 
 ### Consensus Live Observer
 
@@ -157,7 +168,7 @@ The actor uses the same 12-second polling interval and the same metrics state mo
 
 `runtime-admin` mode registers `admin_refreshUpgradeSignal` on admin RPC. The method reads and logs
 the full configured L1 schedule, records metrics, filters to `apply-hardfork-id`, validates protocol
-versions for the filtered schedule, and applies it to the runtime hardfork registry.
+versions for the filtered schedule, and applies it to the runtime upgrade registry.
 
 Execution runtime refresh also keeps the Beryl activation-admin invariant: a positive Beryl
 timestamp is rejected when the execution chain spec has no activation admin address.
@@ -167,12 +178,12 @@ timestamp is rejected when the execution chain spec has no activation admin addr
 Live update detection is implemented by
 [`UpgradeSignalMonitor`](../../crates/utilities/upgrade-signal/src/state.rs).
 
-For each hardfork ID, the monitor stores the last live signal it read. Each new live read produces
+For each upgrade ID, the monitor stores the last live signal it read. Each new live read produces
 one of three states:
 
-- `Initialized`: first live read for that hardfork. This establishes the baseline and does not
+- `Initialized`: first live read for that upgrade. This establishes the baseline and does not
   count as an update.
-- `Unchanged`: the hardfork ID, activation timestamp, and protocol version match the previous live
+- `Unchanged`: the upgrade ID, activation timestamp, and protocol version match the previous live
   read.
 - `Changed`: activation timestamp or protocol version changed while the node was live.
 
@@ -185,10 +196,13 @@ Metric definitions live in
 [`metrics.rs`](../../crates/utilities/upgrade-signal/src/metrics.rs) under the
 `base.upgrade_signal` scope.
 
+The metric label remains `hardfork` for compatibility with the existing telemetry surface, but its
+value is the contract-backed upgrade ID.
+
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
-| `base.upgrade_signal.activation_timestamp` | gauge | `hardfork` | Latest activation timestamp read for the hardfork. |
-| `base.upgrade_signal.expected_protocol_version` | gauge | `hardfork` | Latest minimum node protocol version read for the hardfork. |
+| `base.upgrade_signal.activation_timestamp` | gauge | `hardfork` | Latest activation timestamp read for the upgrade. |
+| `base.upgrade_signal.expected_protocol_version` | gauge | `hardfork` | Latest minimum node protocol version read for the upgrade. |
 | `base.upgrade_signal.last_l1_read_block` | gauge | `hardfork` | L1 block number used for the latest successful read. |
 | `base.upgrade_signal.l1_read_errors_total` | counter | `hardfork` | Failed attempts to read the L1 signal. |
 | `base.upgrade_signal.signal_updates_total` | counter | `hardfork` | Live signal value changes after the initial live baseline. |
@@ -228,7 +242,7 @@ curl -s http://localhost:8300/metrics | grep upgrade_signal
 
 Keep these invariants intact when changing this feature:
 
-- All hardfork reads for one schedule must use the same concrete L1 block.
+- All upgrade reads for one schedule must use the same concrete L1 block.
 - Automatic live polling must remain metrics-only.
 - Startup and manual runtime admin refresh are the only schedule mutation paths.
 - Schedule application must reject positive activation timestamps that are missing a

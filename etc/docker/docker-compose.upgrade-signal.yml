@@ -3,26 +3,32 @@ services:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
       BASE_NODE_UPGRADE_SIGNAL_L1_RPC: ${UPGRADE_SIGNAL_L1_RPC:-http://l1-el:4545}
-      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin
+      BASE_NODE_UPGRADE_SIGNAL_MODE: ${UPGRADE_SIGNAL_MODE:-runtime-admin}
+      # Local devnet L1 has no finality; read at the latest head. Production defaults to finalized.
+      BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG: ${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}
 
   base-builder-cl:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
-      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin
+      BASE_NODE_UPGRADE_SIGNAL_MODE: ${UPGRADE_SIGNAL_MODE:-runtime-admin}
+      BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG: ${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}
 
   base-client:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
       BASE_NODE_UPGRADE_SIGNAL_L1_RPC: ${UPGRADE_SIGNAL_L1_RPC:-http://l1-el:4545}
-      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin
+      BASE_NODE_UPGRADE_SIGNAL_MODE: ${UPGRADE_SIGNAL_MODE:-runtime-admin}
+      BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG: ${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}
 
   base-client-cl:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
-      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin
+      BASE_NODE_UPGRADE_SIGNAL_MODE: ${UPGRADE_SIGNAL_MODE:-runtime-admin}
+      BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG: ${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}
       BASE_NODE_RPC_ENABLE_ADMIN: "true"
 
   base-rpc:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
-      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin
+      BASE_NODE_UPGRADE_SIGNAL_MODE: ${UPGRADE_SIGNAL_MODE:-runtime-admin}
+      BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG: ${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}
