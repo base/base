@@ -262,8 +262,13 @@ struct CallerGuard<'a> {
 impl Drop for CallerGuard<'_> {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            if let Ok(mut guard) = self.storage.storage.try_borrow_mut() {
-                guard.replace_caller(previous);
+            match self.storage.storage.try_borrow_mut() {
+                Ok(mut guard) => {
+                    guard.replace_caller(previous);
+                }
+                Err(_) => tracing::warn!(
+                    "skipping caller restore: RefCell already borrowed (likely during unwind)"
+                ),
             }
         }
     }
@@ -296,8 +301,11 @@ impl CheckpointGuard<'_> {
 impl Drop for CheckpointGuard<'_> {
     fn drop(&mut self) {
         if let Some(cp) = self.checkpoint.take() {
-            if let Ok(mut guard) = self.storage.storage.try_borrow_mut() {
-                guard.checkpoint_revert(cp);
+            match self.storage.storage.try_borrow_mut() {
+                Ok(mut guard) => guard.checkpoint_revert(cp),
+                Err(_) => tracing::warn!(
+                    "skipping checkpoint revert: RefCell already borrowed (likely during unwind)"
+                ),
             }
         }
     }
