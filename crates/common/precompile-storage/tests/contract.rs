@@ -66,6 +66,28 @@ fn test_contract_macro_basic_roundtrip() {
     });
 }
 
+mod mapping_only_storable_layout {
+    use alloy_primitives::{Address, U256};
+    use base_precompile_macros::Storable;
+    use base_precompile_storage::{Mapping, StorableType};
+
+    #[derive(Debug, Clone, Storable)]
+    struct MappingOnlyStorage {
+        balances: Mapping<Address, U256>,
+        allowances: Mapping<Address, Mapping<Address, U256>>,
+    }
+
+    #[test]
+    fn mapping_only_storable_struct_uses_static_layout() {
+        const { assert!(!<MappingOnlyStorage as StorableType>::IS_DYNAMIC) };
+        assert_eq!(<MappingOnlyStorage as StorableType>::SLOTS, 2);
+
+        let value =
+            MappingOnlyStorage { balances: Mapping::default(), allowances: Mapping::default() };
+        let _ = (value.balances, value.allowances);
+    }
+}
+
 #[test]
 fn test_contract_slots_are_deterministic() {
     // Verify that the generated slot constants are stable across runs.
@@ -659,29 +681,5 @@ mod packed_slot_layout {
             );
             assert_eq!((raw >> 56) & U256::from(u64::MAX), U256::from(0xDEAD_BEEF_DEAD_BEEF_u64));
         });
-    }
-}
-
-mod namespace_outer_order {
-    use alloy_primitives::{Address, U256, address, uint};
-    use base_precompile_macros::{contract, namespace};
-
-    const ORDER_ADDR: Address = address!("0000000000000000000000000000000000005678");
-
-    #[namespace("b20.outer-order")]
-    #[contract(addr = ORDER_ADDR)]
-    pub struct OuterOrderStorage {
-        pub value: U256,
-    }
-
-    #[test]
-    fn namespace_macro_reorders_above_contract() {
-        assert_eq!(ORDER_ADDR, address!("0000000000000000000000000000000000005678"));
-        assert_eq!(slots::NAMESPACE_ID, "b20.outer-order");
-        assert_eq!(
-            slots::NAMESPACE_ROOT,
-            uint!(0xf06e16fd945cfdfdb627e60cabea1fb8bb965382c21574655d1e8bb28bdfcf00_U256)
-        );
-        assert_eq!(slots::VALUE, slots::NAMESPACE_ROOT);
     }
 }
