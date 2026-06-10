@@ -633,7 +633,7 @@ mod tests {
         assert_eq!(
             out.bytes,
             alloy_primitives::Bytes::from(
-                alloy_sol_types::SolError::abi_encode(&IPolicyRegistry::NonPayable {})
+                alloy_primitives::Bytes::from(IPolicyRegistry::NonPayable {}.abi_encode())
             )
         );
     }
