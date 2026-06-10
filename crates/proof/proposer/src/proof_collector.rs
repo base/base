@@ -414,15 +414,16 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                 let result = match response.result {
                     Some(result) => result,
                     None => {
-                        let claimed_l2_output_root = match self
-                            .retry_session_output_root(target_block, &session_id)
-                            .await
-                        {
-                            Ok(root) => root,
-                            Err(error) => {
-                                return TargetPoll::Unknown { session_id: Some(session_id), error };
-                            }
-                        };
+                        let claimed_l2_output_root =
+                            match self.retry_session_output_root(target_block, &session_id).await {
+                                Ok(root) => root,
+                                Err(root_error) => {
+                                    return TargetPoll::Unknown {
+                                        session_id: Some(session_id),
+                                        error: root_error,
+                                    };
+                                }
+                            };
                         let error = ProposerError::Prover(format!(
                             "proof session {session_id} succeeded without a result"
                         ));
@@ -431,17 +432,22 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                 };
                 match ProposerProofAdapter::tee_proof_result(result, self.tee_kind) {
                     Ok(proof) => TargetPoll::Ready { session_id, proof },
-                    Err(error) => {
-                        let claimed_l2_output_root = match self
-                            .retry_session_output_root(target_block, &session_id)
-                            .await
-                        {
-                            Ok(root) => root,
-                            Err(error) => {
-                                return TargetPoll::Unknown { session_id: Some(session_id), error };
-                            }
-                        };
-                        TargetPoll::Failed { session_id, claimed_l2_output_root, error }
+                    Err(decode_error) => {
+                        let claimed_l2_output_root =
+                            match self.retry_session_output_root(target_block, &session_id).await {
+                                Ok(root) => root,
+                                Err(root_error) => {
+                                    return TargetPoll::Unknown {
+                                        session_id: Some(session_id),
+                                        error: root_error,
+                                    };
+                                }
+                            };
+                        TargetPoll::Failed {
+                            session_id,
+                            claimed_l2_output_root,
+                            error: decode_error,
+                        }
                     }
                 }
             }
