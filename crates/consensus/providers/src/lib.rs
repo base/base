@@ -6,6 +6,8 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+pub use base_common_genesis::L1TxFormat;
+
 mod metrics;
 pub use metrics::Metrics;
 
@@ -31,5 +33,3 @@ pub use l2_chain_provider::{AlloyL2ChainProvider, AlloyL2ChainProviderError};
 
 mod pipeline;
 pub use pipeline::OnlinePipeline;
-
-pub use base_common_genesis::L1TxFormat;

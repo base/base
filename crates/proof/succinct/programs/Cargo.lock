@@ -717,6 +717,7 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-eips 2.0.5",
+ "alloy-genesis",
  "alloy-hardforks",
  "alloy-primitives",
  "alloy-sol-types",
