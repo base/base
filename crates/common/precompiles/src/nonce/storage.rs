@@ -276,7 +276,13 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             // Seed the channel at the maximum so the next increment overflows.
-            mgr.nonces.at_mut(&ACCOUNT_A).unwrap().at_mut(&nonce_key).unwrap().write(u64::MAX).unwrap();
+            mgr.nonces
+                .at_mut(&ACCOUNT_A)
+                .unwrap()
+                .at_mut(&nonce_key)
+                .unwrap()
+                .write(u64::MAX)
+                .unwrap();
             let err = mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap_err();
             assert_eq!(err, BasePrecompileError::revert(INonceManager::NonceOverflow {}));
         });

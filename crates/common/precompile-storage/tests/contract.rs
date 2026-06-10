@@ -60,9 +60,22 @@ fn test_contract_macro_basic_roundtrip() {
         assert_eq!(token.balances.at(&bob).unwrap().read().unwrap(), U256::ZERO);
 
         // Nested mapping
-        token.allowances.at_mut(&alice).unwrap().at_mut(&bob).unwrap().write(U256::from(100u64)).unwrap();
-        assert_eq!(token.allowances.at(&alice).unwrap().at(&bob).unwrap().read().unwrap(), U256::from(100u64));
-        assert_eq!(token.allowances.at(&bob).unwrap().at(&alice).unwrap().read().unwrap(), U256::ZERO);
+        token
+            .allowances
+            .at_mut(&alice)
+            .unwrap()
+            .at_mut(&bob)
+            .unwrap()
+            .write(U256::from(100u64))
+            .unwrap();
+        assert_eq!(
+            token.allowances.at(&alice).unwrap().at(&bob).unwrap().read().unwrap(),
+            U256::from(100u64)
+        );
+        assert_eq!(
+            token.allowances.at(&bob).unwrap().at(&alice).unwrap().read().unwrap(),
+            U256::ZERO
+        );
     });
 }
 

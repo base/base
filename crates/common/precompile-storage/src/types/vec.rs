@@ -230,9 +230,11 @@ where
         }
         let data_start = self.data_slot()?;
         let (address, storage) = (self.address, self.storage);
-        Ok(Some(self.cache.get_or_insert(&index, || {
-            Self::compute_handler(data_start, address, storage, index)
-        })))
+        Ok(Some(
+            self.cache.get_or_insert(&index, || {
+                Self::compute_handler(data_start, address, storage, index)
+            }),
+        ))
     }
 
     /// Pushes a new element to the end of the vector.
@@ -265,12 +267,8 @@ where
             return Ok(None);
         }
         let last_index = length - 1;
-        let mut elem_slot = Self::compute_handler(
-            self.data_slot()?,
-            self.address,
-            self.storage,
-            last_index,
-        );
+        let mut elem_slot =
+            Self::compute_handler(self.data_slot()?, self.address, self.storage, last_index);
         let element = elem_slot.read()?;
         elem_slot.delete()?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
@@ -373,7 +371,9 @@ where
         }
         let data_start = self.data_slot()?;
         let (address, storage) = (self.address, self.storage);
-        Ok(self.cache.get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index)))
+        Ok(self
+            .cache
+            .get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index)))
     }
 
     /// Mutable variant of [`at_with_len`].
@@ -390,7 +390,9 @@ where
         }
         let data_start = self.data_slot()?;
         let (address, storage) = (self.address, self.storage);
-        Ok(self.cache.get_or_insert_mut(&index, || Self::compute_handler(data_start, address, storage, index)))
+        Ok(self.cache.get_or_insert_mut(&index, || {
+            Self::compute_handler(data_start, address, storage, index)
+        }))
     }
 }
 

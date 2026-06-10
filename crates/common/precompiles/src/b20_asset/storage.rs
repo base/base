@@ -188,8 +188,20 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-            token.asset.used_announcement_ids.at_mut(&announcement_id).unwrap().write(true).unwrap();
-            token.asset.extra_metadata.at_mut(&metadata_key).unwrap().write(metadata_value.clone()).unwrap();
+            token
+                .asset
+                .used_announcement_ids
+                .at_mut(&announcement_id)
+                .unwrap()
+                .write(true)
+                .unwrap();
+            token
+                .asset
+                .extra_metadata
+                .at_mut(&metadata_key)
+                .unwrap()
+                .write(metadata_value.clone())
+                .unwrap();
 
             let announcement_slot = ASSET_ROOT
                 + U256::from(

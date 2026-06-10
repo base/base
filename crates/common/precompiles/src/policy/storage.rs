@@ -1398,7 +1398,11 @@ mod tests {
             [PolicyRegistryStorage::ALWAYS_ALLOW_ID, PolicyRegistryStorage::ALWAYS_BLOCK_ID]
         {
             StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx).pending_admins.at_mut(&policy_id).unwrap().write(NEW_ADMIN)
+                PolicyRegistryStorage::new(ctx)
+                    .pending_admins
+                    .at_mut(&policy_id)
+                    .unwrap()
+                    .write(NEW_ADMIN)
             })
             .unwrap();
 

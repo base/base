@@ -48,7 +48,9 @@ impl StorageOps for PackedSlot {
     }
 
     fn metered_keccak256(&self, _data: &[u8]) -> Result<B256> {
-        unreachable!("PackedSlot is only used for packable primitives; dynamic types never reach this path")
+        unreachable!(
+            "PackedSlot is only used for packable primitives; dynamic types never reach this path"
+        )
     }
 }
 
