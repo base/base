@@ -473,7 +473,7 @@ mod tests {
 
     /// `set_code` on a prefunded account (balance > 0, no code) must charge the same gas
     /// as a fully empty account. Before the fix, `is_empty()` returned false for prefunded
-    /// accounts, silently skipping G_create and the keccak hash cost (~32 036 gas).
+    /// accounts, silently skipping `G_create` and the keccak hash cost (~32 036 gas).
     #[test]
     fn set_code_prefunded_account_charges_same_gas_as_empty_account() {
         let addr = Address::from([0x43u8; 20]);
