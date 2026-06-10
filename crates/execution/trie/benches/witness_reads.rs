@@ -20,7 +20,7 @@ use reth_provider::{AccountReader, StateProofProvider, StateProvider, noop::Noop
 use reth_revm::{
     Database, State, database::StateProviderDatabase, witness::ExecutionWitnessRecord,
 };
-use reth_trie_common::TrieInput;
+use reth_trie_common::{ExecutionWitnessMode, TrieInput};
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 10_000;
@@ -215,11 +215,15 @@ fn read_accounts_storage_and_witness(fixture: &WitnessReadFixture) -> usize {
         .build();
     let reads = read_accounts_and_storage_with_state(&mut state, fixture);
     let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number } =
-        ExecutionWitnessRecord::from_executed_state(&state);
+        ExecutionWitnessRecord::from_executed_state(&state, ExecutionWitnessMode::default());
     black_box(codes);
     black_box(keys);
     black_box(lowest_block_number);
-    black_box(provider.witness(TrieInput::default(), hashed_state).expect("build witness"));
+    black_box(
+        provider
+            .witness(TrieInput::default(), hashed_state, ExecutionWitnessMode::default())
+            .expect("build witness"),
+    );
     reads
 }
 
