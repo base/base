@@ -1,4 +1,4 @@
-//! Polls the prover service for the proof of a single derived target block.
+//! Polls and orchestrates prover-service collection for proposer TEE proofs.
 //!
 //! The [`ProofCollector`] does not care about the proof dispatcher. It assumes that
 //! the eligible block range either has, or will have, a `prove_block_range` request
@@ -14,20 +14,107 @@
 //! dispatch state, the collector can rediscover and complete sessions across
 //! proposer restarts.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
+use async_trait::async_trait;
 use base_proof_primitives::ProofResult;
-use base_proof_rpc::RollupProvider;
+use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{GetProofRequest, GetProofResponse, ProofStatus, TeeKind};
 use futures::{StreamExt, stream};
-use tracing::debug;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    driver::RecoveredState, error::ProposerError, metrics::Metrics,
+    driver::RecoveredState,
+    error::ProposerError,
+    metrics::Metrics,
     proof_adapter::ProposerProofAdapter,
+    proof_dispatcher::{ProofDispatchAttempt, ProofDispatcher},
+    proof_submitter::{ProofSubmitter, SubmitAction},
 };
+
+/// Cached result from the last successful recovery walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofRecoveryCache {
+    /// Factory `game_count` at the time of the walk.
+    pub game_count: u64,
+    /// Recovered on-chain state from the walk.
+    pub state: RecoveredState,
+}
+
+/// Recovery hook used by collector orchestration after successful submissions.
+#[async_trait]
+pub trait ProofCollectorRecoveryProvider: Send + Sync {
+    /// Refreshes the recovery cache and returns the latest on-chain state.
+    async fn recover_latest_state(
+        &self,
+        cache: &mut Option<ProofRecoveryCache>,
+    ) -> Result<RecoveredState, ProposerError>;
+}
+
+/// Runtime settings for collector orchestration.
+#[derive(Debug, Clone, Copy)]
+pub struct ProofCollectorRuntimeConfig {
+    /// Number of L2 blocks between output proposals.
+    pub block_interval: u64,
+    /// Maximum proof failures or discard retries before dropping recovery state.
+    pub max_retries: u32,
+    /// Maximum duration for a single inline submit attempt.
+    pub submit_timeout: Duration,
+}
+
+/// Mutable collector-side orchestration state.
+#[derive(Debug, Default)]
+pub struct ProofCollectorState {
+    /// Latest block the collector has submitted through.
+    pub cursor: Option<RecoveredState>,
+    /// Per-target proof/dispatch retry counts.
+    pub retry_counts: HashMap<u64, u32>,
+    /// Per-target discard retry counts.
+    pub discard_retry_counts: HashMap<u64, u32>,
+    /// Active retry-specific prover-service sessions by target block.
+    pub retry_sessions: HashMap<u64, String>,
+}
+
+/// Result of one collector tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofCollectorTickResult {
+    /// The collector made progress or reached a natural wait point.
+    Continue,
+    /// The owning pipeline session should restart from recovered chain state.
+    Restart,
+}
+
+/// Result of an inline submit attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofSubmitEffect {
+    /// The proof was submitted or the game already existed.
+    Submitted,
+    /// The pipeline should restart before collecting more proofs.
+    Restart,
+    /// The submitted proof should be replaced by a retry-specific session.
+    Redispatch {
+        /// Claimed L2 output root for the discarded proof.
+        claimed_l2_output_root: B256,
+    },
+}
+
+/// Owns collector-side polling, sequential submit, and retry-session orchestration.
+pub struct ProofCollectorOrchestrator<L1, L2, R, Recovery>
+where
+    L1: L1Provider,
+    L2: L2Provider,
+    R: RollupProvider,
+    Recovery: ProofCollectorRecoveryProvider,
+{
+    collector: ProofCollector<R>,
+    dispatcher: ProofDispatcher<L1, L2, R>,
+    submitter: ProofSubmitter<L1, R>,
+    recovery: Arc<Recovery>,
+    runtime: ProofCollectorRuntimeConfig,
+}
 
 /// Outcome of polling the prover service for a single target block.
 ///
@@ -567,6 +654,513 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
             ProofStatus::Succeeded => Metrics::PROOF_STATUS_SUCCEEDED,
             ProofStatus::Failed => Metrics::PROOF_STATUS_FAILED,
         }
+    }
+}
+
+impl ProofCollectorState {
+    /// Creates empty collector state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Removes state for targets already recovered on-chain.
+    pub fn prune_recovered(&mut self, recovered_block: u64) {
+        self.retry_counts.retain(|&target, _| target > recovered_block);
+        self.discard_retry_counts.retain(|&target, _| target > recovered_block);
+        self.retry_sessions.retain(|&target, _| target > recovered_block);
+    }
+
+    /// Records a proof failure and returns whether retrying is still allowed.
+    pub fn handle_proof_failure(
+        &mut self,
+        target: u64,
+        error: ProposerError,
+        max_retries: u32,
+        cache: &mut Option<ProofRecoveryCache>,
+    ) -> bool {
+        Metrics::errors_total(error.metric_label()).increment(1);
+        Metrics::proof_retries_total().increment(1);
+
+        let count = self.retry_counts.entry(target).or_insert(0);
+        *count += 1;
+        if *count >= max_retries {
+            error!(
+                target_block = target,
+                attempts = *count,
+                error = %error,
+                "Proof failed after max retries, dropping cached recovery"
+            );
+            self.retry_counts.remove(&target);
+            *cache = None;
+            false
+        } else {
+            warn!(
+                target_block = target,
+                attempt = *count,
+                error = %error,
+                "Proof failed, re-dispatching"
+            );
+            true
+        }
+    }
+}
+
+impl<L1, L2, R, Recovery> Clone for ProofCollectorOrchestrator<L1, L2, R, Recovery>
+where
+    L1: L1Provider,
+    L2: L2Provider,
+    R: RollupProvider,
+    Recovery: ProofCollectorRecoveryProvider,
+{
+    fn clone(&self) -> Self {
+        Self {
+            collector: self.collector.clone(),
+            dispatcher: self.dispatcher.clone(),
+            submitter: self.submitter.clone(),
+            recovery: Arc::clone(&self.recovery),
+            runtime: self.runtime,
+        }
+    }
+}
+
+impl<L1, L2, R, Recovery> std::fmt::Debug for ProofCollectorOrchestrator<L1, L2, R, Recovery>
+where
+    L1: L1Provider,
+    L2: L2Provider,
+    R: RollupProvider,
+    Recovery: ProofCollectorRecoveryProvider,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProofCollectorOrchestrator")
+            .field("collector", &self.collector)
+            .field("dispatcher", &self.dispatcher)
+            .field("runtime", &self.runtime)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<L1, L2, R, Recovery> ProofCollectorOrchestrator<L1, L2, R, Recovery>
+where
+    L1: L1Provider + 'static,
+    L2: L2Provider + 'static,
+    R: RollupProvider + 'static,
+    Recovery: ProofCollectorRecoveryProvider + 'static,
+{
+    /// Creates a collector orchestrator from low-level proof components.
+    pub const fn new(
+        collector: ProofCollector<R>,
+        dispatcher: ProofDispatcher<L1, L2, R>,
+        submitter: ProofSubmitter<L1, R>,
+        recovery: Arc<Recovery>,
+        runtime: ProofCollectorRuntimeConfig,
+    ) -> Self {
+        Self { collector, dispatcher, submitter, recovery, runtime }
+    }
+
+    /// Runs one collector tick from the supplied recovered state and safe head.
+    pub async fn tick(
+        &self,
+        state: &mut ProofCollectorState,
+        cache: &mut Option<ProofRecoveryCache>,
+        recovered: RecoveredState,
+        safe_head: u64,
+        cancel: &CancellationToken,
+    ) -> ProofCollectorTickResult {
+        state.prune_recovered(recovered.l2_block_number);
+
+        if state.cursor.is_none_or(|cursor| cursor.l2_block_number < recovered.l2_block_number) {
+            state.cursor = Some(recovered);
+        }
+
+        while let Some(current) = state.cursor {
+            if cancel.is_cancelled() {
+                break;
+            }
+
+            let Some(target_block) = self.next_target_block(current.l2_block_number) else {
+                break;
+            };
+
+            if target_block > safe_head {
+                debug!(
+                    current_block = current.l2_block_number,
+                    target_block,
+                    safe_head,
+                    "Safe head below collection target, waiting for L2 head to advance"
+                );
+                break;
+            }
+
+            let poll = if let Some(session_id) = state.retry_sessions.get(&target_block).cloned() {
+                self.collector.poll_session(target_block, session_id).await
+            } else {
+                self.collector.poll(target_block).await
+            };
+
+            match poll {
+                TargetPoll::Ready { session_id, proof } => {
+                    info!(target_block, session_id = %session_id, "Proof ready, submitting inline");
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
+                    Metrics::last_collected_block().set(target_block as f64);
+                    match self
+                        .submit_inline(target_block, &current, proof, state, cache, cancel)
+                        .await
+                    {
+                        ProofSubmitEffect::Submitted => {
+                            state.retry_sessions.remove(&target_block);
+                            state.discard_retry_counts.remove(&target_block);
+                            if let Some(cached) = cache.as_ref() {
+                                state.cursor = Some(cached.state);
+                                if cached.state.l2_block_number > current.l2_block_number {
+                                    continue;
+                                }
+                            }
+                            break;
+                        }
+                        ProofSubmitEffect::Restart => {
+                            Metrics::pipeline_retries()
+                                .set(state.retry_counts.values().sum::<u32>() as f64);
+                            return ProofCollectorTickResult::Restart;
+                        }
+                        ProofSubmitEffect::Redispatch { claimed_l2_output_root } => {
+                            self.dispatch_discard_retry(
+                                target_block,
+                                &current,
+                                claimed_l2_output_root,
+                                state,
+                                cache,
+                                true,
+                            )
+                            .await;
+                            break;
+                        }
+                    }
+                }
+                TargetPoll::Pending { session_id, status } => {
+                    debug!(
+                        target_block,
+                        session_id = %session_id,
+                        ?status,
+                        "Proof pending, waiting for prover service"
+                    );
+                    break;
+                }
+                TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
+                    if state.retry_sessions.get(&target_block).is_some_and(|id| id == &session_id) {
+                        warn!(
+                            target_block,
+                            session_id = %session_id,
+                            "Discard retry session missing, dispatching a fresh retry"
+                        );
+                        self.dispatch_discard_retry(
+                            target_block,
+                            &current,
+                            claimed_l2_output_root,
+                            state,
+                            cache,
+                            true,
+                        )
+                        .await;
+                    } else {
+                        debug!(
+                            target_block,
+                            session_id = %session_id,
+                            claimed_l2_output_root = %claimed_l2_output_root,
+                            "No prover-service session for target, waiting for dispatcher"
+                        );
+                    }
+                    break;
+                }
+                TargetPoll::Failed { session_id, claimed_l2_output_root, error } => {
+                    warn!(
+                        target_block,
+                        session_id = %session_id,
+                        error = %error,
+                        "Prover service reported failed session, re-dispatching"
+                    );
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
+                        .increment(1);
+                    if state.handle_proof_failure(
+                        target_block,
+                        error,
+                        self.runtime.max_retries,
+                        cache,
+                    ) {
+                        if state
+                            .retry_sessions
+                            .get(&target_block)
+                            .is_some_and(|id| id == &session_id)
+                        {
+                            self.dispatch_discard_retry(
+                                target_block,
+                                &current,
+                                claimed_l2_output_root,
+                                state,
+                                cache,
+                                false,
+                            )
+                            .await;
+                        } else {
+                            self.dispatch_root_retry(
+                                target_block,
+                                &current,
+                                claimed_l2_output_root,
+                                state,
+                                cache,
+                                false,
+                            )
+                            .await;
+                        }
+                    }
+                    break;
+                }
+                TargetPoll::Unknown { session_id, error } => {
+                    debug!(
+                        target_block,
+                        session_id = ?session_id,
+                        error = %error,
+                        "Transient poll failure, will retry next iteration"
+                    );
+                    break;
+                }
+            }
+        }
+
+        Metrics::pipeline_retries().set(state.retry_counts.values().sum::<u32>() as f64);
+        ProofCollectorTickResult::Continue
+    }
+
+    /// Validates and submits a ready proof inline.
+    pub async fn submit_inline(
+        &self,
+        target_block: u64,
+        recovered: &RecoveredState,
+        proof: ProofResult,
+        state: &mut ProofCollectorState,
+        cache: &mut Option<ProofRecoveryCache>,
+        cancel: &CancellationToken,
+    ) -> ProofSubmitEffect {
+        let claimed_l2_output_root = match &proof {
+            ProofResult::Tee { aggregate_proposal, .. } => aggregate_proposal.output_root,
+            ProofResult::Zk { .. } => {
+                warn!(target_block, "Unexpected ZK proof result in TEE proposer path");
+                return ProofSubmitEffect::Restart;
+            }
+        };
+        let parent_address = recovered.parent_address;
+        info!(target_block, parent_address = %parent_address, "Submitting proof inline");
+
+        let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
+        let result = tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                submit_timer.disarm();
+                warn!(target_block, "Inline submit cancelled, restarting pipeline session");
+                return ProofSubmitEffect::Restart;
+            }
+            result = tokio::time::timeout(
+                self.runtime.submit_timeout,
+                self.submitter.submit(&proof, target_block, parent_address),
+            ) => result,
+        };
+
+        match result {
+            Err(_) => {
+                submit_timer.disarm();
+                Metrics::submit_timeouts_total().increment(1);
+                warn!(
+                    target_block,
+                    timeout_secs = self.runtime.submit_timeout.as_secs(),
+                    "Inline submit timed out, restarting pipeline session"
+                );
+                ProofSubmitEffect::Restart
+            }
+            Ok(Ok(())) => {
+                drop(submit_timer);
+                info!(target_block, "Submission successful");
+                Metrics::last_proposed_block().set(target_block as f64);
+                state.retry_counts.remove(&target_block);
+                if let Err(e) = self.recovery.recover_latest_state(cache).await {
+                    warn!(error = %e, "Failed to recover state after submission");
+                }
+                ProofSubmitEffect::Submitted
+            }
+            Ok(Err(SubmitAction::RootMismatch)) => {
+                submit_timer.disarm();
+                warn!(target_block, "Output root mismatch at submit time, restarting pipeline");
+                Metrics::root_mismatch_total().increment(1);
+                *cache = None;
+                ProofSubmitEffect::Restart
+            }
+            Ok(Err(SubmitAction::GameAlreadyExists)) => {
+                submit_timer.disarm();
+                info!(target_block, "Game already exists on chain");
+                Metrics::last_proposed_block().set(target_block as f64);
+                state.retry_counts.remove(&target_block);
+                if let Some(cached) = cache.as_mut() {
+                    cached.game_count = cached.game_count.saturating_sub(1);
+                }
+                if let Err(e) = self.recovery.recover_latest_state(cache).await {
+                    warn!(error = %e, "Failed to recover state after GameAlreadyExists");
+                }
+                ProofSubmitEffect::Submitted
+            }
+            Ok(Err(SubmitAction::Failed(error))) => {
+                submit_timer.disarm();
+                Metrics::errors_total(error.metric_label()).increment(1);
+                if error.is_invalid_parent_game() {
+                    warn!(
+                        target_block,
+                        error = %error,
+                        "Submission rejected: parent game invalid, restarting pipeline"
+                    );
+                    *cache = None;
+                } else {
+                    warn!(target_block, error = %error, "Submission failed, restarting pipeline");
+                }
+                ProofSubmitEffect::Restart
+            }
+            Ok(Err(SubmitAction::Discard(error))) => {
+                submit_timer.disarm();
+                Metrics::errors_total(error.metric_label()).increment(1);
+                warn!(
+                    target_block,
+                    error = %error,
+                    "Proof discarded by submitter, dispatching fresh retry proof"
+                );
+                ProofSubmitEffect::Redispatch { claimed_l2_output_root }
+            }
+        }
+    }
+
+    /// Dispatches a root-derived retry after a failed prover-service session.
+    pub async fn dispatch_root_retry(
+        &self,
+        target_block: u64,
+        recovered: &RecoveredState,
+        claimed_l2_output_root: B256,
+        state: &mut ProofCollectorState,
+        cache: &mut Option<ProofRecoveryCache>,
+        count_dispatch_failure: bool,
+    ) {
+        match self.dispatcher.dispatch_for(target_block, recovered, claimed_l2_output_root).await {
+            ProofDispatchAttempt::Accepted(dispatched) => {
+                info!(
+                    target_block,
+                    session_id = %dispatched.session_id,
+                    from_block = recovered.l2_block_number,
+                    "Proof request accepted by prover service"
+                );
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
+            }
+            ProofDispatchAttempt::BuildFailed(error) => {
+                warn!(target_block, error = %error, "Failed to build proof request");
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
+            }
+            ProofDispatchAttempt::DispatchFailed(error) => {
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
+                if count_dispatch_failure {
+                    state.handle_proof_failure(
+                        target_block,
+                        error,
+                        self.runtime.max_retries,
+                        cache,
+                    );
+                } else {
+                    warn!(
+                        target_block,
+                        error = %error,
+                        "Immediate re-dispatch failed after failed proof session"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Dispatches a retry-specific proof request after a discarded proof.
+    pub async fn dispatch_discard_retry(
+        &self,
+        target_block: u64,
+        recovered: &RecoveredState,
+        claimed_l2_output_root: B256,
+        state: &mut ProofCollectorState,
+        cache: &mut Option<ProofRecoveryCache>,
+        count_dispatch_failure: bool,
+    ) {
+        let current_attempt = state.discard_retry_counts.get(&target_block).copied().unwrap_or(0);
+        if current_attempt >= self.runtime.max_retries {
+            error!(
+                target_block,
+                attempts = current_attempt,
+                max_retries = self.runtime.max_retries,
+                "Discard retry budget exhausted, dropping recovery cache"
+            );
+            state.discard_retry_counts.remove(&target_block);
+            state.retry_sessions.remove(&target_block);
+            *cache = None;
+            return;
+        }
+
+        let attempt = current_attempt + 1;
+        match self
+            .dispatcher
+            .dispatch_discard_retry(
+                target_block,
+                recovered,
+                claimed_l2_output_root,
+                self.collector.tee_kind(),
+                attempt,
+            )
+            .await
+        {
+            ProofDispatchAttempt::Accepted(dispatched) => {
+                info!(
+                    target_block,
+                    session_id = %dispatched.session_id,
+                    attempt,
+                    "Discard retry proof request accepted by prover service"
+                );
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
+                state.discard_retry_counts.insert(target_block, attempt);
+                state.retry_sessions.insert(target_block, dispatched.session_id);
+            }
+            ProofDispatchAttempt::BuildFailed(error) => {
+                warn!(target_block, error = %error, "Failed to build discard retry proof request");
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
+            }
+            ProofDispatchAttempt::DispatchFailed(error) => {
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
+                if count_dispatch_failure {
+                    state.handle_proof_failure(
+                        target_block,
+                        error,
+                        self.runtime.max_retries,
+                        cache,
+                    );
+                } else {
+                    warn!(
+                        target_block,
+                        error = %error,
+                        "Immediate discard retry dispatch failed after failed proof session"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Computes the next collector target from a current block.
+    pub fn next_target_block(&self, current_block: u64) -> Option<u64> {
+        current_block.checked_add(self.runtime.block_interval).map_or_else(
+            || {
+                error!(
+                    current_block,
+                    block_interval = self.runtime.block_interval,
+                    "Overflow computing next target block"
+                );
+                None
+            },
+            Some,
+        )
     }
 }
 

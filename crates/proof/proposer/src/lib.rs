@@ -24,7 +24,11 @@ mod proof_adapter;
 pub use proof_adapter::{DispatchedProof, ProofRequesterDispatcher, ProposerProofAdapter};
 
 mod proof_collector;
-pub use proof_collector::{CollectedProof, ProofCollector, TargetPoll};
+pub use proof_collector::{
+    CollectedProof, ProofCollector, ProofCollectorOrchestrator, ProofCollectorRecoveryProvider,
+    ProofCollectorRuntimeConfig, ProofCollectorState, ProofCollectorTickResult, ProofRecoveryCache,
+    ProofSubmitEffect, TargetPoll,
+};
 
 mod proof_dispatcher;
 pub use proof_dispatcher::{

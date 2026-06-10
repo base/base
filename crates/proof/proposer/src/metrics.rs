@@ -70,6 +70,9 @@ base_metrics::define_metrics! {
     #[describe("Total output root mismatches detected at submit time")]
     root_mismatch_total: counter,
 
+    #[describe("Total inline submit attempts that exceeded the submit timeout")]
+    submit_timeouts_total: counter,
+
     #[describe("Time to generate a single proof (seconds)")]
     proof_duration_seconds: histogram,
 
