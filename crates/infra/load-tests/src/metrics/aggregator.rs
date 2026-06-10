@@ -3,9 +3,9 @@ use std::{collections::HashMap, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BlockRange, ConfigSummary, FirstHalfMetrics, FlashblocksLatencyMetrics, GasMetrics,
-    LatencyMetrics, ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
-    types::BLOCK_INTERVAL,
+    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
+    ObservedWindowMetrics, TailMetrics, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    TransactionMetrics, types::BLOCK_INTERVAL,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -25,9 +25,16 @@ impl<'a> MetricsAggregator<'a> {
     /// `wall_clock_duration` is used as a fallback for TPS when block timestamps
     /// are unavailable. When block timestamps are present, TPS is derived from
     /// the first-to-last block time span instead.
+    ///
+    /// `configured_duration` is the user-configured test duration (e.g. `60s`
+    /// from `--duration 60s`). When provided, it anchors the observed-window
+    /// boundary and the "tail" (post-observed-window) classification. When
+    /// `None` (continuous run), `wall_clock_duration` is used for the observed
+    /// window and `tail` is reported as `None`.
     pub fn summarize(
         &self,
         wall_clock_duration: Duration,
+        configured_duration: Option<Duration>,
         submitted: u64,
         failed: u64,
         failure_reasons: &HashMap<String, u64>,
@@ -44,11 +51,22 @@ impl<'a> MetricsAggregator<'a> {
 
         let block_range = Self::compute_block_range(self.transactions);
         let throughput_duration = block_range.block_time_duration().unwrap_or(wall_clock_duration);
+        let reference_duration = configured_duration.unwrap_or(wall_clock_duration);
+
+        let observed_window = Self::compute_observed_window(self.transactions, reference_duration);
+        let tail = configured_duration.map(|_| {
+            Self::compute_tail(
+                self.transactions,
+                observed_window.expected_block_count,
+                block_range.first_block,
+            )
+        });
 
         MetricsSummary {
             config,
             error: None,
-            first_half: Self::compute_first_half(self.transactions, wall_clock_duration),
+            observed_window,
+            tail,
             block_latency: Self::compute_block_latency(self.transactions),
             block_receipt_delay: Self::compute_block_receipt_delay(self.transactions),
             flashblocks_latency: Self::compute_flashblocks_latency(self.transactions),
@@ -66,21 +84,27 @@ impl<'a> MetricsAggregator<'a> {
         }
     }
 
-    /// Computes the "first half" reporting window: transactions in blocks
-    /// `[first_block, first_block + (wall_clock_duration / 2) / BLOCK_INTERVAL]`.
-    /// The window is closed and inclusive at both ends.
-    fn compute_first_half(
+    /// Computes the observed reporting window:
+    /// `expected_block_count = reference_duration.as_secs() / 2`, starting at
+    /// `first_block`. TPS / GPS denominator = `expected_block_count *
+    /// BLOCK_INTERVAL` (real L2 wall-time spanned by those expected blocks).
+    fn compute_observed_window(
         transactions: &[TransactionMetrics],
-        wall_clock_duration: Duration,
-    ) -> FirstHalfMetrics {
+        reference_duration: Duration,
+    ) -> ObservedWindowMetrics {
+        let expected_block_count = reference_duration.as_secs() / 2;
+        let duration =
+            Duration::from_secs(expected_block_count.saturating_mul(BLOCK_INTERVAL.as_secs()));
         let full_range = Self::compute_block_range(transactions);
         let Some(first_block) = full_range.first_block else {
-            return FirstHalfMetrics::default();
+            return ObservedWindowMetrics {
+                expected_block_count,
+                duration,
+                ..ObservedWindowMetrics::default()
+            };
         };
 
-        let half = wall_clock_duration / 2;
-        let block_span = (half.as_secs_f64() / BLOCK_INTERVAL.as_secs_f64()).round() as u64;
-        let end_block = first_block.saturating_add(block_span);
+        let end_block = first_block.saturating_add(expected_block_count.saturating_sub(1));
 
         let filtered: Vec<TransactionMetrics> = transactions
             .iter()
@@ -89,7 +113,6 @@ impl<'a> MetricsAggregator<'a> {
             .collect();
 
         let block_range = Self::compute_block_range(&filtered);
-        let duration = block_range.block_time_duration().unwrap_or(half);
         let confirmed_count = filtered.len() as u64;
         let total_gas: u64 = filtered.iter().map(|t| t.gas_used).sum();
         let duration_secs = duration.as_secs_f64();
@@ -99,14 +122,61 @@ impl<'a> MetricsAggregator<'a> {
             (0.0, 0.0)
         };
 
-        FirstHalfMetrics {
+        ObservedWindowMetrics {
+            expected_block_count,
             block_range,
             duration,
             confirmed_count,
             tps,
             gps,
             block_latency: Self::compute_block_latency(&filtered),
+            block_receipt_delay: Self::compute_block_receipt_delay(&filtered),
             flashblocks_latency: Self::compute_flashblocks_latency(&filtered),
+        }
+    }
+
+    /// Computes the inclusion-delay tail: transactions whose block number is
+    /// strictly greater than the observed-window end block
+    /// (`first_block + observed_window_expected_block_count - 1`). Captures
+    /// straggler receipts that landed past the clean reporting window.
+    fn compute_tail(
+        transactions: &[TransactionMetrics],
+        observed_window_expected_block_count: u64,
+        first_block: Option<u64>,
+    ) -> TailMetrics {
+        let Some(first_block) = first_block else {
+            return TailMetrics::default();
+        };
+        let total_confirmed = transactions.len() as u64;
+
+        let observed_window_end_block =
+            first_block.saturating_add(observed_window_expected_block_count.saturating_sub(1));
+
+        let tail: Vec<TransactionMetrics> = transactions
+            .iter()
+            .filter(|t| t.block_number.is_some_and(|b| b > observed_window_end_block))
+            .cloned()
+            .collect();
+
+        let count = tail.len() as u64;
+        let confirmed_pct =
+            if total_confirmed > 0 { (count as f64 / total_confirmed as f64) * 100.0 } else { 0.0 };
+
+        let mut time_past: Vec<Duration> = tail
+            .iter()
+            .filter_map(|t| t.block_number)
+            .map(|b| BLOCK_INTERVAL * (b - observed_window_end_block) as u32)
+            .collect();
+
+        TailMetrics {
+            observed_window_end_block: Some(observed_window_end_block),
+            count,
+            confirmed_pct,
+            block_range: Self::compute_block_range(&tail),
+            time_past_observed_window: Self::compute_duration_metrics(&mut time_past),
+            block_latency: Self::compute_block_latency(&tail),
+            block_receipt_delay: Self::compute_block_receipt_delay(&tail),
+            flashblocks_latency: Self::compute_flashblocks_latency(&tail),
         }
     }
 
@@ -268,12 +338,16 @@ impl<'a> MetricsAggregator<'a> {
 
 /// Summary of all collected metrics.
 ///
-/// Reporting is split into two scopes:
-/// * `first_half` covers the first half of the run and is the "clean" window
-///   used for headline TPS / latency comparisons.
-/// * Top-level `throughput`, `block_latency`, `flashblocks_latency`, etc. cover
-///   the full run and include a known late-run degradation that is pending
-///   end-to-end observability rollout.
+/// Reporting is split into two diagnostic scopes:
+/// * `observed_window` covers the clean reporting window of the configured
+///   run and is used for headline TPS / latency comparisons.
+/// * `tail` quantifies the inclusion delay: transactions that landed in
+///   blocks past the configured submission window. `None` for continuous runs.
+///
+/// Top-level fields (`throughput`, `block_latency`, `gas`, `block_range`,
+/// `top_failure_reasons`, etc.) are baseline full-run accounting, not headline
+/// metrics — full-run TPS/latency is misleading because it averages the clean
+/// window with the tail.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetricsSummary {
     /// Test configuration (excludes URLs and secrets).
@@ -283,14 +357,18 @@ pub struct MetricsSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// First-half reporting window (clean TPS / block / FB latency).
-    pub first_half: FirstHalfMetrics,
-    /// Block production latency (full run).
+    pub observed_window: ObservedWindowMetrics,
+    /// Inclusion-delay tail (txs landing after the configured submission
+    /// window). `None` when the run had no configured duration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tail: Option<TailMetrics>,
+    /// Block production latency (full run, baseline accounting).
     pub block_latency: LatencyMetrics,
     /// Delay between block production time and receipt observation (full run).
     pub block_receipt_delay: LatencyMetrics,
-    /// Flashblocks sequencer latency (full run).
+    /// Flashblocks sequencer latency (full run, baseline accounting).
     pub flashblocks_latency: FlashblocksLatencyMetrics,
-    /// Throughput statistics (full run).
+    /// Throughput statistics (full run, baseline accounting).
     pub throughput: ThroughputMetrics,
     /// Rolling-window throughput percentiles (TPS and GPS).
     pub throughput_percentiles: ThroughputPercentiles,

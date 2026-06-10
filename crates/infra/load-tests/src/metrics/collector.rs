@@ -108,14 +108,20 @@ impl MetricsCollector {
     ///
     /// `wall_clock_duration` is used as a fallback when block timestamps are
     /// unavailable. TPS is normally derived from block time span.
+    ///
+    /// `configured_duration` is the user-configured test duration; when present
+    /// it anchors the observed window and enables tail (post-observed-window)
+    /// metrics. Pass `None` for continuous runs.
     pub fn summarize(
         &self,
         wall_clock_duration: Duration,
+        configured_duration: Option<Duration>,
         config: Option<ConfigSummary>,
     ) -> MetricsSummary {
         let aggregator = MetricsAggregator::new(&self.transactions);
         aggregator.summarize(
             wall_clock_duration,
+            configured_duration,
             self.submitted_count,
             self.failed_count,
             &self.failure_reasons,
