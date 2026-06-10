@@ -3113,11 +3113,16 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "base-builder-cli",
+ "base-builder-core",
+ "base-builder-metering",
  "base-cli-utils",
  "base-common-chains",
  "base-consensus-cli",
  "base-execution-chainspec",
  "base-execution-cli",
+ "base-node-runner",
+ "base-txpool-rpc",
  "clap",
  "eyre",
  "figment",

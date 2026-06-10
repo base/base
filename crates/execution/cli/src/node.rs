@@ -229,6 +229,11 @@ impl ExecutionNodeRuntimeConfig {
 
         Ok(builder)
     }
+
+    /// Converts the runtime config into a reth node builder with the default RPC validator.
+    pub fn into_default_node_builder(self, ctx: CliContext) -> eyre::Result<BaseNodeBuilder> {
+        self.into_node_builder::<LenientRpcModuleValidator>(ctx)
+    }
 }
 
 /// A chain-injected standard execution node configuration ready to launch.

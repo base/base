@@ -103,7 +103,7 @@ impl RpcCommand {
     }
 }
 
-fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
+pub(super) fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
     let path = Path::new(path);
     let path =
         if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };

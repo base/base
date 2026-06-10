@@ -179,6 +179,46 @@ pub struct EmbeddedConsensusNodeConfigArgs {
     pub checkpoint_path: Option<PathBuf>,
 }
 
+/// Consensus node configuration arguments for embedded sequencer callers.
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddedSequencerConsensusNodeConfigArgs {
+    /// L1 RPC CLI arguments.
+    #[clap(flatten)]
+    pub l1_rpc_args: L1ClientArgs,
+
+    /// L2 engine CLI arguments.
+    #[clap(flatten)]
+    pub l2_client_args: EmbeddedL2ClientArgs,
+
+    /// L1 configuration file.
+    #[clap(flatten)]
+    pub l1_config: L1ConfigFile,
+
+    /// L2 configuration file.
+    #[clap(flatten)]
+    pub l2_config: L2ConfigFile,
+
+    /// P2P CLI arguments.
+    #[command(flatten)]
+    pub p2p_flags: P2PArgs,
+
+    /// RPC CLI arguments.
+    #[command(flatten)]
+    pub rpc_flags: EmbeddedRpcArgs,
+
+    /// SEQUENCER CLI arguments.
+    #[command(flatten)]
+    pub sequencer_flags: SequencerArgs,
+
+    /// Path to the `SafeDB` directory. If not set, safe head tracking is disabled.
+    #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
+    pub safedb_path: Option<PathBuf>,
+
+    /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
+    #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
+    pub checkpoint_path: Option<PathBuf>,
+}
+
 impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
     fn from(args: EmbeddedConsensusNodeConfigArgs) -> Self {
         Self {
@@ -190,6 +230,23 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
             p2p_flags: args.p2p_flags.into(),
             rpc_flags: args.rpc_flags.into(),
             sequencer_flags: SequencerArgs::default(),
+            safedb_path: args.safedb_path,
+            checkpoint_path: args.checkpoint_path,
+        }
+    }
+}
+
+impl From<EmbeddedSequencerConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
+    fn from(args: EmbeddedSequencerConsensusNodeConfigArgs) -> Self {
+        Self {
+            node_mode: NodeMode::Sequencer,
+            l1_rpc_args: args.l1_rpc_args,
+            l2_client_args: args.l2_client_args.into(),
+            l1_config: args.l1_config,
+            l2_config: args.l2_config,
+            p2p_flags: args.p2p_flags,
+            rpc_flags: args.rpc_flags.into(),
+            sequencer_flags: args.sequencer_flags,
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
         }
@@ -466,5 +523,37 @@ mod tests {
             },
         );
         assert_eq!(args.validate_sequencer_key().is_ok(), expected_ok);
+    }
+
+    #[test]
+    fn embedded_sequencer_args_force_sequencer_mode_and_preserve_flags() {
+        let key = B256::ZERO;
+        let conductor_rpc = Url::parse("http://localhost:9090").unwrap();
+        let args = EmbeddedSequencerConsensusNodeConfigArgs {
+            p2p_flags: P2PArgs {
+                signer: SignerArgs { sequencer_key: Some(key), ..Default::default() },
+                ..P2PArgs::default()
+            },
+            rpc_flags: EmbeddedRpcArgs { listen_port: 9546, ..EmbeddedRpcArgs::default() },
+            sequencer_flags: SequencerArgs {
+                stopped: true,
+                conductor_rpc: Some(conductor_rpc.clone()),
+                ..SequencerArgs::default()
+            },
+            l1_rpc_args: L1ClientArgs::default(),
+            l2_client_args: EmbeddedL2ClientArgs::default(),
+            l1_config: L1ConfigFile::default(),
+            l2_config: L2ConfigFile::default(),
+            safedb_path: None,
+            checkpoint_path: None,
+        };
+
+        let config = ConsensusNodeConfigArgs::from(args);
+
+        assert_eq!(config.node_mode, NodeMode::Sequencer);
+        assert_eq!(config.p2p_flags.signer.sequencer_key, Some(key));
+        assert_eq!(config.rpc_flags.listen_port, 9546);
+        assert!(config.sequencer_flags.stopped);
+        assert_eq!(config.sequencer_flags.conductor_rpc, Some(conductor_rpc));
     }
 }
