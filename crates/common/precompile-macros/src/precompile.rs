@@ -92,6 +92,7 @@ impl Parse for PrecompileConfig {
         let mut storage = None;
         let mut macro_path = None;
         let mut args = Vec::new();
+        let mut args_seen = false;
         let mut install = None;
 
         while !input.is_empty() {
@@ -113,9 +114,10 @@ impl Parse for PrecompileConfig {
                     macro_path = Some(input.parse()?);
                 }
                 "args" => {
-                    if !args.is_empty() {
+                    if args_seen {
                         return Err(syn::Error::new_spanned(key, "duplicate `args` option"));
                     }
+                    args_seen = true;
                     let content;
                     parenthesized!(content in input);
                     args = content
@@ -270,5 +272,19 @@ mod tests {
         let err = parse_config(quote! { install(address = X, extra) }).err().unwrap();
 
         assert!(err.to_string().contains("unexpected `install` option"));
+    }
+
+    #[test]
+    fn config_rejects_duplicate_empty_args() {
+        let err = parse_config(quote! { args(), args() }).err().unwrap();
+
+        assert!(err.to_string().contains("duplicate `args` option"));
+    }
+
+    #[test]
+    fn config_rejects_duplicate_args_where_first_is_empty() {
+        let err = parse_config(quote! { args(), args(x: u8) }).err().unwrap();
+
+        assert!(err.to_string().contains("duplicate `args` option"));
     }
 }
