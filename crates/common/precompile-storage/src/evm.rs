@@ -93,16 +93,16 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
 
         let code_len = code.len();
 
-        // EIP-3541 / Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
+        // Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
-        // For new (empty) accounts charge the CREATE equivalent costs (Yellow Paper G_create).
-        let is_new_account = {
+        let (is_new_account, has_empty_code) = {
             let state_load = self
                 .internals
                 .load_account(address)
                 .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-            state_load.data.info.is_empty()
+            let info = &state_load.data.info;
+            (info.is_empty(), info.is_empty_code_hash())
         };
 
         if is_new_account {
@@ -111,14 +111,13 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-            // EIP-8037: both state gas charges are gated on is_new_account.
-            // create_state_gas covers the new account entry in the state trie.
-            // code_deposit_state_gas covers the new code object. Replacing code on an
-            // existing account is not a state-creating operation in the EIP-8037 model —
-            // the code slot already occupies a trie node — so it is intentionally excluded.
-            // In practice, precompile set_code is only called during factory token creation,
-            // where the target address is always a fresh account.
+            // EIP-8037: charge for the new account entry in the state trie.
             self.deduct_state_gas(self.gas_params.create_state_gas())?;
+        }
+        if has_empty_code {
+            // EIP-8037: charge for depositing code into an account whose code slot is
+            // currently empty. Applies to both new accounts and existent accounts that
+            // have only a nonzero balance or nonce (no prior code).
             self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
 
@@ -176,6 +175,14 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
+        }
+        // EIP-2200: if remaining gas is at or below the call stipend (2300), halt with
+        // out-of-gas. This is the reentrancy sentry that Solidity's `.transfer()` relies on:
+        // forwarding only 2300 gas guarantees the recipient cannot perform state-changing
+        // SSTOREs. Without this guard, a warm-dirty rewrite (~200 gas) would succeed where
+        // the EVM SSTORE opcode would have halted, breaking the 2300-gas invariant.
+        if self.gas.remaining() <= self.gas_params.call_stipend() {
+            return Err(BasePrecompileError::OutOfGas);
         }
         let s = self
             .internals
@@ -295,7 +302,7 @@ impl From<alloy_evm::EvmInternalsError> for BasePrecompileError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
+    use alloy_primitives::{Address, U256};
     use revm::{context_interface::cfg::GasParams, primitives::hardfork::SpecId, state::Bytecode};
 
     use crate::{
@@ -306,6 +313,24 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_gas_params(GasParams::new_spec(SpecId::AMSTERDAM));
         provider
+    }
+
+    /// The EIP-2200 stipend guard in [`super::EvmPrecompileStorageProvider::sstore`] compares
+    /// `gas.remaining()` against `gas_params.call_stipend()`. This test verifies that the
+    /// call stipend constant returned by `GasParams` is exactly 2300, as required by EIP-2200.
+    ///
+    /// Unit tests cannot directly instantiate [`super::EvmPrecompileStorageProvider`] because
+    /// it requires a live EVM journal via `PrecompileInput`. The stipend guard is therefore not
+    /// exercisable in isolation here. Full coverage of the guard at runtime is provided by the
+    /// B20 fork tests that forward exactly 2300 gas into a stateful precompile call.
+    #[test]
+    fn eip_2200_stipend_guard_constant_is_2300() {
+        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+        assert_eq!(
+            gas_params.call_stipend(),
+            2300,
+            "call_stipend must equal 2300 as required by EIP-2200"
+        );
     }
 
     /// `set_code` on a brand-new account must charge both `create_state_gas` and
@@ -323,6 +348,30 @@ mod tests {
         let expected = gas_params.create_state_gas() + gas_params.code_deposit_state_gas(code_len);
         assert!(expected > 0, "AMSTERDAM state gas must be non-zero");
         assert_eq!(provider.state_gas_used(), expected);
+    }
+
+    /// `set_code` on a balance-only account (nonzero balance, no code) must charge
+    /// `code_deposit_state_gas` but not `create_state_gas`. This covers the attack where
+    /// a caller prefunds a future token address before calling the factory.
+    #[test]
+    fn set_code_balance_only_account_charges_code_deposit_state_gas_only() {
+        let mut provider = amsterdam_provider();
+        let addr = Address::from([0x42u8; 20]);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code_len = code.len();
+        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+
+        // Simulate a prefunded account: has balance but no code.
+        provider.set_balance(addr, U256::from(1u64));
+
+        provider.set_code(addr, code).unwrap();
+
+        let expected = gas_params.code_deposit_state_gas(code_len);
+        assert_eq!(
+            provider.state_gas_used(),
+            expected,
+            "balance-only account must pay code_deposit_state_gas but not create_state_gas"
+        );
     }
 
     /// `set_code` on an already-initialised account must NOT charge any additional

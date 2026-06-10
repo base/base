@@ -18,7 +18,7 @@ use revm::{
 };
 
 use crate::{
-    error::{BasePrecompileError, Result},
+    error::{BasePrecompileError, IntoPrecompileResult, Result},
     provider::PrecompileStorageProvider,
 };
 
@@ -225,6 +225,29 @@ impl<'a> StorageCtx<'a> {
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
         error.into().into_precompile_result(self.gas_used(), self.state_gas_used())
     }
+
+    /// Converts a `Result<T>` into a [`PrecompileResult`], reading all gas accounting fields
+    /// from the current context.
+    ///
+    /// On success, `encode_ok` encodes the value and the output carries `gas_used`,
+    /// `state_gas_used`, and `gas_refunded` from the context — the same fields that
+    /// [`success_output`](Self::success_output) sets. On error, delegates to
+    /// [`BasePrecompileError::into_precompile_result`].
+    ///
+    /// Use this instead of calling [`IntoPrecompileResult::into_precompile_result`] directly,
+    /// so callers do not have to manually thread gas values through.
+    pub fn result_output<T>(
+        &self,
+        result: Result<T>,
+        encode_ok: impl FnOnce(T) -> Bytes,
+    ) -> PrecompileResult {
+        result.into_precompile_result(
+            self.gas_used(),
+            self.state_gas_used(),
+            self.gas_refunded(),
+            encode_ok,
+        )
+    }
 }
 
 /// RAII guard for temporary caller overrides.
@@ -416,5 +439,55 @@ mod tests {
             }
             assert_eq!(ctx.sload(addr, key).unwrap(), U256::from(99));
         });
+    }
+
+    #[test]
+    fn result_output_success_propagates_gas_refunded() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let addr = Address::ZERO;
+        let key = U256::from(1);
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            // Write a non-zero value then clear it to generate an EIP-3529 refund.
+            ctx.sstore(addr, key, U256::from(42)).unwrap();
+            ctx.sstore(addr, key, U256::ZERO).unwrap();
+
+            ctx.result_output::<Bytes>(Ok(Bytes::new()), |b| b)
+        })
+        .unwrap();
+
+        assert!(output.is_success());
+        assert!(output.gas_refunded > 0, "clearing a slot must propagate a non-zero refund");
+    }
+
+    #[test]
+    fn result_output_error_does_not_expose_refund() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let addr = Address::ZERO;
+        let key = U256::from(1);
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ctx.sstore(addr, key, U256::from(1)).unwrap();
+            ctx.sstore(addr, key, U256::ZERO).unwrap();
+
+            ctx.result_output::<Bytes>(Err(BasePrecompileError::Revert(Bytes::new())), |b| b)
+        })
+        .unwrap();
+
+        assert!(output.is_revert());
+        assert_eq!(output.gas_refunded, 0, "error path must not propagate gas_refunded");
+    }
+
+    #[test]
+    fn result_output_success_no_refund() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ctx.result_output::<Bytes>(Ok(Bytes::new()), |b| b)
+        })
+        .unwrap();
+
+        assert!(output.is_success());
+        assert_eq!(output.gas_refunded, 0);
     }
 }
