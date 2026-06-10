@@ -15,7 +15,9 @@ mod config;
 pub use config::{ConfigError, ProposerConfig};
 
 mod constants;
-pub use constants::{MAX_PROOF_RETRIES, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY};
+pub use constants::{
+    MAX_PROOF_RETRIES, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY, SUBMIT_TIMEOUT,
+};
 
 mod output_proposer;
 pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};

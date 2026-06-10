@@ -13,15 +13,9 @@ base_metrics::define_metrics! {
     #[no_zero]
     last_proposed_block: gauge,
 
-    #[describe("Most recently collected (proved) L2 block number awaiting submission")]
+    #[describe("Highest L2 block number for which a proof has been polled Ready by the collector")]
     #[no_zero]
     last_collected_block: gauge,
-
-    #[describe("Proof tasks currently in flight")]
-    inflight_proofs: gauge,
-
-    #[describe("Proved results awaiting sequential submission")]
-    proved_queue_depth: gauge,
 
     #[describe("Total pending retries across all target blocks")]
     pipeline_retries: gauge,
@@ -79,6 +73,9 @@ base_metrics::define_metrics! {
     #[describe("Time for one pipeline tick (seconds)")]
     tick_duration_seconds: histogram,
 
+    #[describe("Time for one collector tick (seconds)")]
+    collector_tick_duration_seconds: histogram,
+
     #[describe("Total time to validate and submit a proposal (seconds)")]
     proposal_total_duration_seconds: histogram,
 
@@ -94,7 +91,9 @@ impl Metrics {
     pub const DISPATCH_OUTCOME_FAILED: &str = "failed";
 
     /// Label value for a dispatch attempt that failed before reaching the
-    /// prover service while building the request from local RPC data.
+    /// prover service (e.g. while building the request from L1/L2 RPC data).
+    /// Build failures are transient infrastructure errors and do not count
+    /// against the per-target retry budget.
     pub const DISPATCH_OUTCOME_BUILD_FAILED: &str = "build_failed";
 
     /// Label value for a ready (successfully collected) proof.
