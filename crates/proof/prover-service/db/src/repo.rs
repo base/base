@@ -1154,8 +1154,34 @@ impl ProofRequestRepo {
             ClaimAuth::Expired => return Ok(RecordSessionOutcome::Expired),
         }
 
-        // `FOR UPDATE` above serializes the find-then-write: only the lock holder
-        // reaches here, so at most one active row exists per session type.
+        let existing_backend_sessions = sqlx::query(
+            r#"
+            SELECT id, proof_request_id, session_type, backend_session_id,
+                   status, error_message, metadata, created_at, completed_at
+            FROM proof_sessions
+            WHERE proof_request_id = $1
+              AND session_type = $2
+              AND backend_session_id = $3
+            ORDER BY id DESC
+            FOR UPDATE
+            "#,
+        )
+        .bind(proof_request_id)
+        .bind(req.session_type.as_str())
+        .bind(&req.backend_session_id)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        for row in existing_backend_sessions {
+            let session = row_to_proof_session(&row)?;
+            if session.status.is_terminal() {
+                return Ok(RecordSessionOutcome::TerminalBackendSession(session));
+            }
+        }
+
+        // The proof request row lock serializes worker writers, while this
+        // session row lock prevents pollers from terminalizing the selected row
+        // before the update below.
         let active_id: Option<i64> = sqlx::query(
             r#"
             SELECT id
@@ -1163,6 +1189,7 @@ impl ProofRequestRepo {
             WHERE proof_request_id = $1
               AND session_type = $2
               AND status IN ('SUBMITTING', 'RUNNING')
+            FOR UPDATE
             "#,
         )
         .bind(proof_request_id)
@@ -1179,6 +1206,7 @@ impl ProofRequestRepo {
                     status = $2,
                     error_message = $4
                 WHERE id = $3
+                  AND status IN ('SUBMITTING', 'RUNNING')
                 RETURNING id, proof_request_id, session_type, backend_session_id,
                           status, error_message, metadata, created_at, completed_at
                 "#,
@@ -1187,8 +1215,14 @@ impl ProofRequestRepo {
             .bind(req.status.as_str())
             .bind(active_id)
             .bind(&req.error_message)
-            .fetch_one(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await?
+            .ok_or_else(|| {
+                sqlx::Error::Protocol(
+                    "active proof session status changed between SELECT FOR UPDATE and UPDATE"
+                        .into(),
+                )
+            })?
         } else {
             sqlx::query(
                 r#"

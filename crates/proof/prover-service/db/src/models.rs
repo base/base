@@ -1120,6 +1120,8 @@ pub struct WorkerSessionUpsert {
 pub enum RecordSessionOutcome {
     /// The session was inserted or updated and the active row is returned.
     Recorded(ProofSession),
+    /// A row for the requested backend session already reached a terminal state.
+    TerminalBackendSession(ProofSession),
     /// No proof job exists for the supplied `session_id`.
     NotFound,
     /// The job exists but is not currently claimed.

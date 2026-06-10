@@ -1903,6 +1903,110 @@ async fn test_record_worker_proof_session_records_resumes_and_updates() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_record_worker_proof_session_preserves_terminal_backend_sessions() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("session-terminal-backend-worker", 3))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(claimed.id, id);
+    let session_id = claimed.session_id.clone();
+    let lock_id = claimed.lock_id.expect("claimed job has lock");
+    let terminal_backend_id = format!("cluster-proof-{}", Uuid::new_v4());
+    let active_backend_id = format!("cluster-proof-{}", Uuid::new_v4());
+
+    let recorded = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-terminal-backend-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: terminal_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(recorded, RecordSessionOutcome::Recorded(_)));
+
+    repo.update_proof_session(UpdateProofSession {
+        backend_session_id: terminal_backend_id.clone(),
+        status: SessionStatus::Completed,
+        error_message: None,
+        metadata: None,
+    })
+    .await
+    .unwrap();
+
+    let retry = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-terminal-backend-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: terminal_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    let RecordSessionOutcome::TerminalBackendSession(terminal) = retry else {
+        panic!("terminal backend session retry should be idempotent");
+    };
+    assert_eq!(terminal.backend_session_id, terminal_backend_id);
+    assert_eq!(terminal.status, SessionStatus::Completed);
+    assert!(repo.get_active_session(&session_id, SessionType::Stark).await.unwrap().is_none());
+
+    let recorded = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-terminal-backend-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: active_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(recorded, RecordSessionOutcome::Recorded(_)));
+
+    let retry = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-terminal-backend-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: terminal_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(retry, RecordSessionOutcome::TerminalBackendSession(_)));
+
+    let active = repo
+        .get_active_session(&session_id, SessionType::Stark)
+        .await
+        .unwrap()
+        .expect("active backend session should not be overwritten");
+    assert_eq!(active.backend_session_id, active_backend_id);
+
+    let sessions = repo.get_sessions_for_request(id).await.unwrap();
+    let terminal_rows =
+        sessions.iter().filter(|session| session.backend_session_id == terminal_backend_id).count();
+    assert_eq!(terminal_rows, 1);
+    assert!(sessions.iter().any(|session| session.backend_session_id == terminal_backend_id
+        && session.status == SessionStatus::Completed));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_record_worker_proof_session_guards_ownership() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
