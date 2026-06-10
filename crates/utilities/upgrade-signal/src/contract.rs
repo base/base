@@ -1,9 +1,13 @@
 //! L1 upgrade signal contract reader.
 
+use core::time::Duration;
+
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
+use tokio::time::sleep;
+use tracing::warn;
 
 use crate::{UpgradeSignal, UpgradeSignalError, UpgradeSignalMetrics, UpgradeSignalSchedule};
 
@@ -33,12 +37,20 @@ pub struct AlloyUpgradeSignalReader {
     pub provider: RootProvider,
     /// L1 contract or proxy address.
     pub contract_address: Address,
+    /// L1 block tag used to pin reads. Defaults to [`BlockNumberOrTag::Finalized`].
+    pub block_tag: BlockNumberOrTag,
 }
 
 impl AlloyUpgradeSignalReader {
-    /// Creates a new Alloy-backed upgrade signal reader.
+    /// Creates a new Alloy-backed upgrade signal reader that reads at the finalized L1 head.
     pub const fn new(provider: RootProvider, contract_address: Address) -> Self {
-        Self { provider, contract_address }
+        Self { provider, contract_address, block_tag: BlockNumberOrTag::Finalized }
+    }
+
+    /// Sets the L1 block tag used to pin reads.
+    pub const fn with_block_tag(mut self, block_tag: BlockNumberOrTag) -> Self {
+        self.block_tag = block_tag;
+        self
     }
 
     /// Executes an `eth_call` against the upgrade signal contract at a specific L1 block.
@@ -62,15 +74,18 @@ impl AlloyUpgradeSignalReader {
             .map_err(|error| UpgradeSignalError::provider(context, error))
     }
 
-    /// Returns the latest L1 block number and concrete block ID for pinned reads.
-    pub async fn latest_l1_block_id(&self) -> Result<(u64, BlockId), UpgradeSignalError> {
+    /// Returns the L1 block number and concrete block ID for the configured block tag.
+    ///
+    /// Pinning reads to a concrete block hash ensures every per-fork call in a schedule observes
+    /// the same L1 state. The block tag (finalized by default) keeps the schedule reorg-stable.
+    pub async fn pinned_l1_block_id(&self) -> Result<(u64, BlockId), UpgradeSignalError> {
         let block = self
             .provider
-            .get_block_by_number(BlockNumberOrTag::Latest)
+            .get_block_by_number(self.block_tag)
             .await
-            .map_err(|error| UpgradeSignalError::provider("get latest L1 block failed", error))?
+            .map_err(|error| UpgradeSignalError::provider("get L1 block failed", error))?
             .ok_or_else(|| {
-                UpgradeSignalError::provider("get latest L1 block failed", "missing latest block")
+                UpgradeSignalError::provider("get L1 block failed", "missing block for tag")
             })?;
 
         Ok((block.header.number, BlockId::hash(block.header.hash)))
@@ -126,7 +141,7 @@ impl AlloyUpgradeSignalReader {
         &self,
         hardfork_id: &str,
     ) -> Result<UpgradeSignal, UpgradeSignalError> {
-        let (l1_block_number, l1_block) = self.latest_l1_block_id().await?;
+        let (l1_block_number, l1_block) = self.pinned_l1_block_id().await?;
         self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await
     }
 
@@ -138,7 +153,7 @@ impl AlloyUpgradeSignalReader {
         &self,
         hardfork_ids: &[String],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
-        let (l1_block_number, l1_block) = match self.latest_l1_block_id().await {
+        let (l1_block_number, l1_block) = match self.pinned_l1_block_id().await {
             Ok(block) => block,
             Err(error) => {
                 UpgradeSignalMetrics::record_l1_read_errors(hardfork_ids);
@@ -156,6 +171,73 @@ impl AlloyUpgradeSignalReader {
             }
         }
         Ok(UpgradeSignalSchedule::new(signals))
+    }
+
+    /// Reads the schedule, retrying transient failures with a fixed backoff before giving up.
+    ///
+    /// Used on the startup path, where a single transient L1 error should not abort node launch
+    /// outright; after `max_attempts` failures the last error is returned (fail-fast).
+    pub async fn read_schedule_with_retries(
+        &self,
+        hardfork_ids: &[String],
+        max_attempts: u32,
+        backoff: Duration,
+    ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
+        let max_attempts = max_attempts.max(1);
+        let mut attempt = 1;
+        loop {
+            match self.read_schedule(hardfork_ids).await {
+                Ok(schedule) => return Ok(schedule),
+                Err(error) if attempt >= max_attempts => return Err(error),
+                Err(error) => {
+                    warn!(
+                        target: "upgrade_signal",
+                        attempt,
+                        max_attempts,
+                        error = %error,
+                        "retrying L1 upgrade signal read"
+                    );
+                    sleep(backoff).await;
+                    attempt += 1;
+                }
+            }
+        }
+    }
+
+    /// Reads the schedule, tolerating per-fork failures.
+    ///
+    /// Records `l1_read_errors_total` for each fork that fails and returns the signals that were
+    /// read successfully. Intended for the live metrics poller, which must not abort the whole
+    /// schedule (or the node) because a single fork read failed.
+    pub async fn read_schedule_tolerant(&self, hardfork_ids: &[String]) -> UpgradeSignalSchedule {
+        let (l1_block_number, l1_block) = match self.pinned_l1_block_id().await {
+            Ok(block) => block,
+            Err(error) => {
+                UpgradeSignalMetrics::record_l1_read_errors(hardfork_ids);
+                warn!(
+                    target: "upgrade_signal",
+                    error = %error,
+                    "failed to fetch L1 block for upgrade signal poll"
+                );
+                return UpgradeSignalSchedule::default();
+            }
+        };
+        let mut signals = Vec::with_capacity(hardfork_ids.len());
+        for hardfork_id in hardfork_ids {
+            match self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await {
+                Ok(signal) => signals.push(signal),
+                Err(error) => {
+                    UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
+                    warn!(
+                        target: "upgrade_signal",
+                        hardfork_id = %hardfork_id,
+                        error = %error,
+                        "failed to read live L1 upgrade signal for hardfork"
+                    );
+                }
+            }
+        }
+        UpgradeSignalSchedule::new(signals)
     }
 }
 

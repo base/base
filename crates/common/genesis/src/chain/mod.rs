@@ -7,7 +7,8 @@ mod hardfork;
 #[cfg(feature = "std")]
 pub use hardfork::RuntimeHardForkRegistry;
 pub use hardfork::{
-    HardForkActivation, HardForkActivationOverrides, HardForkConfig, HardforkConfig,
+    HardForkActivation, HardForkActivationOverrides, HardForkActivationSink, HardForkConfig,
+    HardforkConfig,
 };
 
 mod roles;

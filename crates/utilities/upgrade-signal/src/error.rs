@@ -64,7 +64,7 @@ impl UpgradeSignalError {
     }
 
     /// Creates a missing protocol version error.
-    pub fn missing_protocol_version(hardfork_id: String) -> Self {
+    pub const fn missing_protocol_version(hardfork_id: String) -> Self {
         Self::MissingProtocolVersion(hardfork_id)
     }
 

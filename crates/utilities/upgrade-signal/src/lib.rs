@@ -10,8 +10,10 @@
 mod config;
 pub use config::{
     DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS, DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION,
-    DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalArgs, UpgradeSignalConfig,
-    UpgradeSignalConfigError, UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupMode,
+    DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, DEFAULT_UPGRADE_SIGNAL_READ_ATTEMPTS,
+    DEFAULT_UPGRADE_SIGNAL_READ_BACKOFF, UpgradeSignalArgs, UpgradeSignalBlockTag,
+    UpgradeSignalConfig, UpgradeSignalConfigError, UpgradeSignalL1RpcArgs, UpgradeSignalMode,
+    UpgradeSignalStartupMode,
 };
 
 mod contract;
@@ -25,8 +27,9 @@ pub use metrics::UpgradeSignalMetrics;
 
 mod runtime;
 pub use runtime::{
-    UpgradeSignalApplyAction, UpgradeSignalApplyChange, UpgradeSignalApplySummary,
-    UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation,
+    RuntimeRegistrySink, UpgradeSignalApplyAction, UpgradeSignalApplyChange,
+    UpgradeSignalApplySummary, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
+    UpgradeSignalRuntimeValidation,
 };
 
 mod state;

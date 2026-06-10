@@ -3,16 +3,26 @@
 use core::time::Duration;
 
 use alloy_primitives::{Address, U256};
+use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_genesis::HardForkConfig;
+use tracing::info;
 use url::Url;
 
 use crate::{
+    contract::AlloyUpgradeSignalReader,
     error::UpgradeSignalError,
+    metrics::UpgradeSignalMetrics,
     state::{UpgradeSignal, UpgradeSignalSchedule},
 };
 
 /// Default wall-clock interval used to check whether another L1 block polling window has elapsed.
 pub const DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL: Duration = Duration::from_secs(12);
+
+/// Default number of attempts to read the L1 upgrade signal schedule before failing startup.
+pub const DEFAULT_UPGRADE_SIGNAL_READ_ATTEMPTS: u32 = 3;
+
+/// Default backoff between L1 upgrade signal schedule read attempts.
+pub const DEFAULT_UPGRADE_SIGNAL_READ_BACKOFF: Duration = Duration::from_secs(2);
 
 /// Node protocol version supported by this binary for contract-backed upgrade signals.
 ///
@@ -47,6 +57,29 @@ impl UpgradeSignalMode {
     }
 }
 
+/// L1 block tag used when reading the upgrade signal contract.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum UpgradeSignalBlockTag {
+    /// Read at the latest finalized L1 block. Reorg-safe; recommended for production.
+    #[default]
+    Finalized,
+    /// Read at the latest safe L1 block.
+    Safe,
+    /// Read at the latest L1 block. May reorg; useful for devnets without L1 finality.
+    Latest,
+}
+
+impl UpgradeSignalBlockTag {
+    /// Converts to the alloy block tag used by the contract reader.
+    pub const fn block_number_or_tag(self) -> BlockNumberOrTag {
+        match self {
+            Self::Finalized => BlockNumberOrTag::Finalized,
+            Self::Safe => BlockNumberOrTag::Safe,
+            Self::Latest => BlockNumberOrTag::Latest,
+        }
+    }
+}
+
 /// Controls whether a service should perform its own startup signal read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum UpgradeSignalStartupMode {
@@ -73,6 +106,11 @@ pub enum UpgradeSignalConfigError {
     /// The hardfork ID is empty.
     #[error("upgrade signal hardfork ID cannot be empty")]
     EmptyHardforkId,
+    /// An apply hardfork ID is not present in the set of read hardfork IDs.
+    #[error(
+        "upgrade signal apply hardfork ID `{0}` is not read; add it to --upgrade-signal.hardfork-id"
+    )]
+    ApplyHardforkIdNotRead(String),
 }
 
 /// CLI arguments shared by nodes that read the L1 upgrade signal contract.
@@ -112,6 +150,15 @@ pub struct UpgradeSignalArgs {
         default_value_t = UpgradeSignalMode::MetricsOnly
     )]
     pub mode: UpgradeSignalMode,
+
+    /// L1 block tag used to read the upgrade signal contract.
+    #[arg(
+        long = "upgrade-signal.l1-block-tag",
+        env = "BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG",
+        value_enum,
+        default_value_t = UpgradeSignalBlockTag::Finalized
+    )]
+    pub l1_block_tag: UpgradeSignalBlockTag,
 }
 
 impl UpgradeSignalArgs {
@@ -133,6 +180,7 @@ impl UpgradeSignalArgs {
             hardfork_ids,
             apply_hardfork_ids,
             mode: self.mode,
+            l1_block_tag: self.l1_block_tag.block_number_or_tag(),
             node_protocol_version: U256::from(DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION),
         }))
     }
@@ -142,7 +190,7 @@ impl UpgradeSignalArgs {
         hardfork_ids: &[String],
     ) -> Result<Vec<String>, UpgradeSignalConfigError> {
         let source = if hardfork_ids.is_empty() {
-            DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS.iter().copied().collect::<Vec<_>>()
+            DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS.to_vec()
         } else {
             hardfork_ids.iter().map(String::as_str).collect::<Vec<_>>()
         };
@@ -161,6 +209,9 @@ impl UpgradeSignalArgs {
     }
 
     /// Returns the configured apply hardfork IDs, or the read hardfork IDs when omitted.
+    ///
+    /// Every apply hardfork ID must also be a read hardfork ID, since only read signals can be
+    /// applied. A non-subset apply ID is rejected rather than silently ignored.
     pub fn configured_apply_hardfork_ids(
         hardfork_ids: &[String],
         apply_hardfork_ids: &[String],
@@ -169,7 +220,18 @@ impl UpgradeSignalArgs {
             return Ok(hardfork_ids.to_vec());
         }
 
-        Self::configured_hardfork_ids(apply_hardfork_ids)
+        let apply_hardfork_ids = Self::configured_hardfork_ids(apply_hardfork_ids)?;
+        for apply_hardfork_id in &apply_hardfork_ids {
+            if !hardfork_ids.iter().any(|read_hardfork_id| {
+                UpgradeSignalSchedule::hardfork_ids_match(read_hardfork_id, apply_hardfork_id)
+            }) {
+                return Err(UpgradeSignalConfigError::ApplyHardforkIdNotRead(
+                    apply_hardfork_id.clone(),
+                ));
+            }
+        }
+
+        Ok(apply_hardfork_ids)
     }
 }
 
@@ -184,6 +246,8 @@ pub struct UpgradeSignalConfig {
     pub apply_hardfork_ids: Vec<String>,
     /// Local schedule mutation mode.
     pub mode: UpgradeSignalMode,
+    /// L1 block tag used to read the contract.
+    pub l1_block_tag: BlockNumberOrTag,
     /// Node protocol version supported by this binary.
     pub node_protocol_version: U256,
 }
@@ -197,6 +261,7 @@ impl UpgradeSignalConfig {
             hardfork_ids: vec![hardfork_id.clone()],
             apply_hardfork_ids: vec![hardfork_id],
             mode: UpgradeSignalMode::MetricsOnly,
+            l1_block_tag: BlockNumberOrTag::Finalized,
             node_protocol_version: U256::from(DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION),
         }
     }
@@ -211,8 +276,11 @@ impl UpgradeSignalConfig {
         signal.protocol_version <= self.node_protocol_version
     }
 
-    /// Validates the minimum protocol version attached to one signal.
-    pub fn validate_signal_protocol_version(
+    /// Returns an error if a positive activation timestamp omits its minimum protocol version.
+    ///
+    /// This malformed-signal check applies to every signal read from L1, including signals that
+    /// this node only observes (reads) but does not apply.
+    pub fn validate_signal_has_protocol_version(
         &self,
         signal: &UpgradeSignal,
     ) -> Result<(), UpgradeSignalError> {
@@ -220,6 +288,17 @@ impl UpgradeSignalConfig {
             return Err(UpgradeSignalError::missing_protocol_version(signal.hardfork_id.clone()));
         }
 
+        Ok(())
+    }
+
+    /// Returns an error if this binary cannot support the signal's minimum protocol version.
+    ///
+    /// This capability check applies only to signals this node will apply, so a node can observe
+    /// a future hardfork that requires newer software without aborting.
+    pub fn validate_signal_supported_protocol_version(
+        &self,
+        signal: &UpgradeSignal,
+    ) -> Result<(), UpgradeSignalError> {
         if self.supports_signal_protocol_version(signal) {
             return Ok(());
         }
@@ -231,16 +310,77 @@ impl UpgradeSignalConfig {
         ))
     }
 
-    /// Validates every minimum protocol version in a schedule.
-    pub fn validate_schedule_protocol_versions(
+    /// Validates the minimum protocol version attached to one signal (presence and support).
+    pub fn validate_signal_protocol_version(
+        &self,
+        signal: &UpgradeSignal,
+    ) -> Result<(), UpgradeSignalError> {
+        self.validate_signal_has_protocol_version(signal)?;
+        self.validate_signal_supported_protocol_version(signal)
+    }
+
+    /// Validates that every positive signal in the full read schedule carries a protocol version.
+    pub fn validate_read_schedule_protocol_versions(
         &self,
         schedule: &UpgradeSignalSchedule,
     ) -> Result<(), UpgradeSignalError> {
         for signal in &schedule.signals {
-            self.validate_signal_protocol_version(signal)?;
+            self.validate_signal_has_protocol_version(signal)?;
         }
 
         Ok(())
+    }
+
+    /// Validates that this binary supports every applied signal's minimum protocol version.
+    pub fn validate_applied_schedule_protocol_versions(
+        &self,
+        schedule: &UpgradeSignalSchedule,
+    ) -> Result<(), UpgradeSignalError> {
+        for signal in &schedule.signals {
+            self.validate_signal_supported_protocol_version(signal)?;
+        }
+
+        Ok(())
+    }
+
+    /// Reads the L1 schedule, records metrics, logs each signal, validates it, and returns the
+    /// application-filtered schedule ready to apply.
+    ///
+    /// This is the single read pipeline shared by startup application and runtime refresh. The
+    /// malformed-signal check runs over the full read schedule; the protocol-version support check
+    /// runs only over the schedule this node will apply.
+    pub async fn read_validated_application_schedule(
+        &self,
+        reader: &AlloyUpgradeSignalReader,
+        log_context: &'static str,
+    ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
+        let schedule = reader
+            .read_schedule_with_retries(
+                &self.hardfork_ids,
+                DEFAULT_UPGRADE_SIGNAL_READ_ATTEMPTS,
+                DEFAULT_UPGRADE_SIGNAL_READ_BACKOFF,
+            )
+            .await?;
+
+        UpgradeSignalMetrics::record_schedule(&schedule);
+        for signal in &schedule.signals {
+            info!(
+                target: "upgrade_signal",
+                context = log_context,
+                hardfork_id = %signal.hardfork_id,
+                activation_timestamp = signal.activation_timestamp,
+                minimum_protocol_version = %signal.protocol_version,
+                node_protocol_version = %self.node_protocol_version,
+                l1_block_number = signal.l1_block_number,
+                "read dynamic upgrade signal"
+            );
+        }
+
+        self.validate_read_schedule_protocol_versions(&schedule)?;
+        let application_schedule = self.application_schedule(&schedule);
+        self.validate_applied_schedule_protocol_versions(&application_schedule)?;
+
+        Ok(application_schedule)
     }
 }
 
@@ -291,6 +431,25 @@ mod tests {
     }
 
     #[test]
+    fn defaults_to_finalized_block_tag() {
+        let config =
+            UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"), "azul");
+
+        assert_eq!(config.l1_block_tag, BlockNumberOrTag::Finalized);
+    }
+
+    #[test]
+    fn maps_configured_block_tag() {
+        let args = UpgradeSignalArgs {
+            contract_address: Some(address!("0000000000000000000000000000000000000001")),
+            l1_block_tag: UpgradeSignalBlockTag::Latest,
+            ..Default::default()
+        };
+
+        assert_eq!(args.config().unwrap().unwrap().l1_block_tag, BlockNumberOrTag::Latest);
+    }
+
+    #[test]
     fn builds_enabled_config() {
         let contract = address!("0000000000000000000000000000000000000001");
         let args = UpgradeSignalArgs {
@@ -319,6 +478,7 @@ mod tests {
             hardfork_ids: vec!["azul".to_string(), "beryl".to_string()],
             apply_hardfork_ids: vec!["beryl".to_string()],
             mode: UpgradeSignalMode::RuntimeAdmin,
+            ..Default::default()
         };
 
         let config = args.config().unwrap().unwrap();
@@ -326,6 +486,21 @@ mod tests {
         assert_eq!(config.hardfork_ids, ["azul", "beryl"]);
         assert_eq!(config.apply_hardfork_ids, ["beryl"]);
         assert_eq!(config.mode, UpgradeSignalMode::RuntimeAdmin);
+    }
+
+    #[test]
+    fn rejects_apply_id_not_in_read_ids() {
+        let args = UpgradeSignalArgs {
+            contract_address: Some(address!("0000000000000000000000000000000000000001")),
+            hardfork_ids: vec!["azul".to_string()],
+            apply_hardfork_ids: vec!["beryl".to_string()],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            args.config().unwrap_err(),
+            UpgradeSignalConfigError::ApplyHardforkIdNotRead(_)
+        ));
     }
 
     fn signal(protocol_version: U256) -> UpgradeSignal {
@@ -368,5 +543,49 @@ mod tests {
             config.validate_signal_protocol_version(&signal(U256::ZERO)).unwrap_err(),
             UpgradeSignalError::MissingProtocolVersion(_)
         ));
+    }
+
+    fn malformed_read_only_schedule(config: &UpgradeSignalConfig) -> UpgradeSignalSchedule {
+        UpgradeSignalSchedule::new(vec![
+            signal(config.node_protocol_version),
+            UpgradeSignal {
+                hardfork_id: "beryl".to_string(),
+                activation_timestamp: 5,
+                protocol_version: U256::ZERO,
+                l1_block_number: 1,
+            },
+        ])
+    }
+
+    #[test]
+    fn read_validation_rejects_missing_protocol_version_on_read_only_fork() {
+        let config =
+            UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"), "azul");
+        let schedule = malformed_read_only_schedule(&config);
+
+        // The malformed beryl signal is read but not applied; it must still be rejected.
+        assert!(matches!(
+            config.validate_read_schedule_protocol_versions(&schedule).unwrap_err(),
+            UpgradeSignalError::MissingProtocolVersion(_)
+        ));
+    }
+
+    #[test]
+    fn applied_validation_allows_unsupported_version_on_read_only_fork() {
+        let config =
+            UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"), "azul");
+        let schedule = UpgradeSignalSchedule::new(vec![
+            signal(config.node_protocol_version),
+            UpgradeSignal {
+                hardfork_id: "beryl".to_string(),
+                activation_timestamp: 5,
+                protocol_version: config.node_protocol_version + U256::from(1),
+                l1_block_number: 1,
+            },
+        ]);
+        let application_schedule = config.application_schedule(&schedule);
+
+        // beryl is observed but not applied, so its newer protocol requirement must not abort.
+        assert!(config.validate_applied_schedule_protocol_versions(&application_schedule).is_ok());
     }
 }
