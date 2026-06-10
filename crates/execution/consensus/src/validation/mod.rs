@@ -97,7 +97,7 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
     chain_spec: impl Upgrades,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
-    block_access_list_hash: Option<B256>,
+    _block_access_list_hash: Option<B256>,
 ) -> Result<(), ConsensusError> {
     let timestamp = header.timestamp();
     let trust_precomputed_receipt_root =
@@ -124,17 +124,6 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
         if requests_hash != header_requests_hash {
             return Err(ConsensusError::BodyRequestsHashDiff(
                 GotExpected::new(requests_hash, header_requests_hash).into(),
-            ));
-        }
-    }
-
-    if chain_spec.is_amsterdam_active_at_timestamp(timestamp)
-        && let Some(block_access_list_hash) = block_access_list_hash
-    {
-        let header_block_access_list_hash = header.block_access_list_hash().unwrap_or_default();
-        if block_access_list_hash != header_block_access_list_hash {
-            return Err(ConsensusError::BlockAccessListHashMismatch(
-                GotExpected::new(block_access_list_hash, header_block_access_list_hash).into(),
             ));
         }
     }
