@@ -16,6 +16,9 @@ sol! {
         /// `updateExtraMetadata` was called with an empty metadata key.
         error InvalidMetadataKey();
 
+        /// `updateMultiplier` was called with a zero multiplier.
+        error InvalidMultiplier();
+
         /// A batched function was called with parallel arrays of differing lengths.
         error LengthMismatch(uint256 leftLen, uint256 rightLen);
 
