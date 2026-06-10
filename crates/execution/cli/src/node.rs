@@ -174,15 +174,25 @@ pub struct ExecutionNodeRuntimeConfig {
 }
 
 impl ExecutionNodeRuntimeConfig {
+    /// Enables authenticated Engine API over IPC on the supplied node config.
+    pub const fn enable_auth_ipc(node_config: &mut NodeConfig<BaseChainSpec>) {
+        node_config.rpc.auth_ipc = true;
+    }
+
+    /// Returns the configured authenticated Engine API IPC path from the supplied node config.
+    pub const fn auth_ipc_path_for(node_config: &NodeConfig<BaseChainSpec>) -> &str {
+        node_config.rpc.auth_ipc_path.as_str()
+    }
+
     /// Enables authenticated Engine API over IPC.
     pub const fn with_auth_ipc(mut self) -> Self {
-        self.node_config.rpc.auth_ipc = true;
+        Self::enable_auth_ipc(&mut self.node_config);
         self
     }
 
     /// Returns the configured authenticated Engine API IPC path.
     pub const fn auth_ipc_path(&self) -> &str {
-        self.node_config.rpc.auth_ipc_path.as_str()
+        Self::auth_ipc_path_for(&self.node_config)
     }
 
     /// Converts the runtime config into a reth node builder.
@@ -234,15 +244,21 @@ pub struct ExecutionNodeLaunchConfig {
 }
 
 impl ExecutionNodeLaunchConfig {
+    /// Converts this standard launch config into the shared runtime config plus standard args.
+    pub fn into_runtime_config(self) -> (ExecutionNodeRuntimeConfig, StandardNodeArgs) {
+        let Self { node_config, standard, with_unused_ports } = self;
+        (ExecutionNodeRuntimeConfig { node_config, with_unused_ports }, standard)
+    }
+
     /// Enables authenticated Engine API over IPC.
     pub const fn with_auth_ipc(mut self) -> Self {
-        self.node_config.rpc.auth_ipc = true;
+        ExecutionNodeRuntimeConfig::enable_auth_ipc(&mut self.node_config);
         self
     }
 
     /// Returns the configured authenticated Engine API IPC path.
     pub const fn auth_ipc_path(&self) -> &str {
-        self.node_config.rpc.auth_ipc_path.as_str()
+        ExecutionNodeRuntimeConfig::auth_ipc_path_for(&self.node_config)
     }
 
     /// Launches the execution node and returns its handle.
@@ -250,12 +266,9 @@ impl ExecutionNodeLaunchConfig {
     where
         Rpc: RpcModuleValidator,
     {
-        let execution = ExecutionNodeRuntimeConfig {
-            node_config: self.node_config,
-            with_unused_ports: self.with_unused_ports,
-        };
+        let (execution, standard) = self.into_runtime_config();
         let builder = execution.into_node_builder::<Rpc>(ctx)?;
-        crate::StandardBaseRethNode::launch(builder, self.standard).await
+        crate::StandardBaseRethNode::launch(builder, standard).await
     }
 
     /// Launches the execution node with the default RPC module validator.
@@ -322,6 +335,24 @@ mod tests {
 
         let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet())).with_auth_ipc();
 
+        assert!(runtime.node_config.rpc.auth_ipc);
+        assert_eq!(runtime.auth_ipc_path(), "/tmp/engine.ipc");
+    }
+
+    #[test]
+    fn launch_config_delegates_auth_ipc_to_runtime_config() {
+        let args = CommandParser::<ExecutionNodeArgs>::parse_from([
+            "reth",
+            "--auth-ipc.path=/tmp/engine.ipc",
+        ])
+        .args;
+
+        let launch = args.into_launch_config(Arc::new(BaseChainSpec::devnet())).with_auth_ipc();
+
+        assert!(launch.node_config.rpc.auth_ipc);
+        assert_eq!(launch.auth_ipc_path(), "/tmp/engine.ipc");
+
+        let (runtime, _standard) = launch.into_runtime_config();
         assert!(runtime.node_config.rpc.auth_ipc);
         assert_eq!(runtime.auth_ipc_path(), "/tmp/engine.ipc");
     }

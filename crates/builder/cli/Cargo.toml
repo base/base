@@ -28,5 +28,5 @@ eyre.workspace = true
 base-bundles.workspace = true
 
 # misc
-rstest.workspace = true
 alloy-primitives.workspace = true
+rstest.workspace = true
