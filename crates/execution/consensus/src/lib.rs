@@ -80,13 +80,7 @@ where
         receipt_root_bloom: Option<ReceiptRootBloom>,
         _block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
-        validate_block_post_execution(
-            block.header(),
-            &self.chain_spec,
-            result,
-            receipt_root_bloom,
-            None,
-        )
+        validate_block_post_execution(block.header(), &self.chain_spec, result, receipt_root_bloom)
     }
 }
 

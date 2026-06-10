@@ -97,7 +97,6 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
     chain_spec: impl Upgrades,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
-    _block_access_list_hash: Option<B256>,
 ) -> Result<(), ConsensusError> {
     let timestamp = header.timestamp();
     let trust_precomputed_receipt_root =
@@ -623,7 +622,7 @@ mod tests {
             requests: Requests::default(),
             gas_used: GAS_USED,
         };
-        validate_block_post_execution(&header, &chainspec, &result, None, None).unwrap();
+        validate_block_post_execution(&header, &chainspec, &result, None).unwrap();
     }
 
     #[test]
@@ -645,7 +644,7 @@ mod tests {
             gas_used: GAS_USED,
         };
         assert!(matches!(
-            validate_block_post_execution(&header, &chainspec, &result, None, None).unwrap_err(),
+            validate_block_post_execution(&header, &chainspec, &result, None).unwrap_err(),
             ConsensusError::BlobGasUsedDiff(diff)
                 if diff.got == BLOB_GAS_USED && diff.expected == BLOB_GAS_USED + 1
         ));
@@ -677,7 +676,6 @@ mod tests {
             BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
-            None,
         )
         .expect(
             "Pre-Canyon blocks should recompute receipt roots instead of trusting the fast path",
@@ -703,7 +701,6 @@ mod tests {
                 BaseChainSpec::sepolia(),
                 &result,
                 Some((invalid_receipts_root, logs_bloom)),
-                None,
             )
             .unwrap_err(),
             ConsensusError::BodyReceiptRootDiff(_)
@@ -726,7 +723,6 @@ mod tests {
             BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
-            None,
         )
         .expect("Canyon blocks should keep using the precomputed receipt root fast path");
     }
