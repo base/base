@@ -5,18 +5,21 @@
 //! distinction is the `StablecoinAccounting` bound that provides `currency()`
 //! from the stablecoin extension namespace.
 
+use alloc::string::ToString;
+
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    B20StablecoinToken, B20TokenRole, Burnable, Configurable,
+    B20StablecoinToken, B20TokenRole, BerylCallRecorder, BerylMetricLabels, BerylSelector,
+    Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
     PrecompileCallObserver, RoleManaged, StablecoinAccounting, Token, Transferable,
-    macros::{decode_precompile_call, deduct_calldata_cost},
+    macros::decode_precompile_call,
 };
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
@@ -35,21 +38,23 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        deduct_calldata_cost!(ctx, calldata);
+        let mut recorder = BerylCallRecorder::start(
+            observer.clone(),
+            BerylMetricLabels::b20_stablecoin_call(calldata),
+        );
+        if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
+            return recorder.record_base_error_result(ctx, error);
+        }
         // Ensure the token has been deployed (has bytecode at its address).
         match self.accounting().is_initialized() {
             Ok(true) => {}
             Ok(false) => {
-                return BasePrecompileError::Revert(Bytes::new())
-                    .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+                return recorder
+                    .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
             }
-            Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
+            Err(error) => return recorder.record_base_error_result(ctx, error),
         }
-        self.inner_with_observer(ctx, calldata, observer).into_precompile_result(
-            ctx.gas_used(),
-            ctx.state_gas_used(),
-            |b| b,
-        )
+        recorder.record_base_result(ctx, self.inner_with_observer(ctx, calldata, observer), |b| b)
     }
 
     /// Decodes calldata and executes the matching `IB20` operation.
@@ -101,7 +106,13 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        if let Ok(call) = IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata) {
+        if let Some(selector) = BerylSelector::selector(calldata)
+            && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
+        {
+            let call =
+                IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata).map_err(|error| {
+                    BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() }
+                })?;
             let label = call.as_label();
             return observer.observe(label, || self.handle_stablecoin_call(call));
         }

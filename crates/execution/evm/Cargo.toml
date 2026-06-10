@@ -47,7 +47,8 @@ reth-revm = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["arbitrary"] }
 
 [features]
-default = [ "std" ]
+default = [ "metrics", "std" ]
+metrics = [ "base-common-evm/metrics" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",

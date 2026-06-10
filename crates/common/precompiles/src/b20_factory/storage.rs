@@ -8,8 +8,9 @@ use revm::state::Bytecode;
 
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20AssetToken, B20StablecoinInit,
-    B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant, IB20Factory, PolicyHandle,
-    RoleManaged, Token,
+    B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant, BerylAuxiliaryMetrics,
+    IB20Factory, NoopPrecompileCallObserver, PolicyHandle, PrecompileCallObserver, RoleManaged,
+    Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -49,6 +50,19 @@ impl<'a> B20FactoryStorage<'a> {
         caller: Address,
         call: IB20Factory::createB20Call,
     ) -> Result<Address> {
+        self.create_b20_with_observer(caller, call, NoopPrecompileCallObserver)
+    }
+
+    /// Creates a token at a deterministic address and records observer-only metrics.
+    pub fn create_b20_with_observer<O>(
+        &mut self,
+        caller: Address,
+        call: IB20Factory::createB20Call,
+        observer: O,
+    ) -> Result<Address>
+    where
+        O: PrecompileCallObserver,
+    {
         let variant = B20Variant::from_abi(call.variant)
             .ok_or_else(|| BasePrecompileError::revert(IB20Factory::InvalidVariant {}))?;
         ActivationRegistryStorage::new(self.storage)
@@ -73,10 +87,10 @@ impl<'a> B20FactoryStorage<'a> {
         let init_calls = call.initCalls;
         match params {
             TokenCreateParams::Stablecoin { common, init } => {
-                self.init_stablecoin(token_address, common, init, init_calls)?;
+                self.init_stablecoin(token_address, common, init, init_calls, observer)?;
             }
             TokenCreateParams::Asset { common, init } => {
-                self.init_asset_token(token_address, common, init, init_calls)?;
+                self.init_asset_token(token_address, common, init, init_calls, observer)?;
             }
         }
 
@@ -101,13 +115,17 @@ impl<'a> B20FactoryStorage<'a> {
         self.storage.with_account_info(token, |info| Ok(!info.is_empty_code_hash()))
     }
 
-    fn init_stablecoin(
+    fn init_stablecoin<O>(
         &mut self,
         token_address: Address,
         common: CommonParams,
         init: B20StablecoinInit,
         init_calls: Vec<Bytes>,
-    ) -> Result<()> {
+        observer: O,
+    ) -> Result<()>
+    where
+        O: PrecompileCallObserver,
+    {
         let mut token = B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
@@ -133,6 +151,14 @@ impl<'a> B20FactoryStorage<'a> {
             )?;
         }
 
+        let internal_call_count = init_calls.len();
+        let internal_call_bytes = init_calls.iter().map(|call| call.len()).sum();
+        observer.record_internal_calls(
+            &BerylAuxiliaryMetrics::singleton("factory", "createB20"),
+            internal_call_count,
+            internal_call_bytes,
+        );
+
         self.storage.with_caller(Self::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {
                 token
@@ -144,13 +170,17 @@ impl<'a> B20FactoryStorage<'a> {
         Ok(())
     }
 
-    fn init_asset_token(
+    fn init_asset_token<O>(
         &mut self,
         token_address: Address,
         common: CommonParams,
         init: B20AssetInit,
         init_calls: Vec<Bytes>,
-    ) -> Result<()> {
+        observer: O,
+    ) -> Result<()>
+    where
+        O: PrecompileCallObserver,
+    {
         let mut token = B20AssetToken::with_storage_and_policy(
             B20AssetStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
@@ -174,6 +204,14 @@ impl<'a> B20FactoryStorage<'a> {
                 Self::ADDRESS,
             )?;
         }
+
+        let internal_call_count = init_calls.len();
+        let internal_call_bytes = init_calls.iter().map(|call| call.len()).sum();
+        observer.record_internal_calls(
+            &BerylAuxiliaryMetrics::singleton("factory", "createB20"),
+            internal_call_count,
+            internal_call_bytes,
+        );
 
         self.storage.with_caller(Self::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {

@@ -48,6 +48,13 @@ pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, T
 mod observer;
 pub use observer::{EndGuard, NoopPrecompileCallObserver, PrecompileCallObserver};
 
+mod metrics;
+pub use metrics::{
+    BerylAuxiliaryMetrics, BerylCallOutcome, BerylCallRecorder, BerylCallTimer,
+    BerylErrorClassifier, BerylErrorKind, BerylMetricLabels, BerylSelector, PrecompileCallMetric,
+    PrecompileCallOutcome, PrecompileCallStatus,
+};
+
 mod b20_asset;
 pub use b20_asset::{
     AssetAccounting, B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage,
