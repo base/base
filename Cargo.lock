@@ -6510,6 +6510,7 @@ dependencies = [
  "alloy-rpc-types-eth 2.0.5",
  "anyhow",
  "base-common-network",
+ "base-consensus-peers",
  "base-protocol",
  "basectl-cli",
  "clap",

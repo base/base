@@ -2,21 +2,28 @@
 
 use std::io::{self, Write};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
+use base_consensus_peers::BootNode;
 use basectl_cli::{
     JsonOutput, KeyValueTable, MonitoringConfig, NodeEndpoint, PeerListReport, PeerStatsReport,
-    PeerSummary, fetch_connected_peers, fetch_info, fetch_raw_info, fetch_raw_peers,
+    PeerSummary, add_peer, connect_peer, disconnect_peer, fetch_connected_peers, fetch_info,
+    fetch_raw_info, fetch_raw_peers, remove_peer,
 };
 use serde::Serialize;
 use url::Url;
 
-use crate::cli::{P2pArgs, P2pCommands};
+use crate::{
+    cli::{DestructivePeerArgs, P2pArgs, P2pCommands},
+    confirm::confirm,
+};
 
 /// Runs the `basectl p2p` command group.
 pub(crate) async fn run(config: MonitoringConfig, command: P2pCommands) -> Result<()> {
     match command {
         P2pCommands::Peers(args) => run_peers(config, args).await,
         P2pCommands::Info(args) => run_info(config, args).await,
+        P2pCommands::AddPeer(args) => run_add_peer(config, args).await,
+        P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await,
     }
 }
 
@@ -34,6 +41,71 @@ async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
         (false, _) => {
             let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
             print_peers_pretty(&config.name, &report)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Result<()> {
+    let DestructivePeerArgs { target, el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, yes, json } =
+        args;
+    let target = parse_add_target(&target)?;
+
+    match target {
+        AddTarget::Enode(enode) => {
+            let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
+            let prompt = format!("Add EL peer {enode} through {el_rpc}? [y/N] ");
+            if !confirm(&prompt, yes)? {
+                println!("aborted");
+                return Ok(());
+            }
+            let accepted = add_peer(&el_rpc, &enode).await?;
+            print_peer_action(&PeerActionJson::el(&config.name, "addPeer", enode, accepted), json)?;
+        }
+        AddTarget::Multiaddr(multiaddr) => {
+            let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p add-peer")?;
+            let prompt = format!("Connect CL peer {multiaddr} through {cl_rpc}? [y/N] ");
+            if !confirm(&prompt, yes)? {
+                println!("aborted");
+                return Ok(());
+            }
+            connect_peer(&cl_rpc, &multiaddr).await?;
+            print_peer_action(&PeerActionJson::cl(&config.name, "addPeer", multiaddr), json)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Result<()> {
+    let DestructivePeerArgs { target, el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, yes, json } =
+        args;
+    let target = parse_remove_target(&target)?;
+
+    match target {
+        RemoveTarget::Enode(enode) => {
+            let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
+            let prompt = format!("Remove EL peer {enode} through {el_rpc}? [y/N] ");
+            if !confirm(&prompt, yes)? {
+                println!("aborted");
+                return Ok(());
+            }
+            let accepted = remove_peer(&el_rpc, &enode).await?;
+            print_peer_action(
+                &PeerActionJson::el(&config.name, "removePeer", enode, accepted),
+                json,
+            )?;
+        }
+        RemoveTarget::PeerId(peer_id) => {
+            let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p remove-peer")?;
+            let prompt = format!("Disconnect CL peer {peer_id} from {cl_rpc}? [y/N] ");
+            if !confirm(&prompt, yes)? {
+                println!("aborted");
+                return Ok(());
+            }
+            disconnect_peer(&cl_rpc, &peer_id).await?;
+            print_peer_action(&PeerActionJson::cl(&config.name, "removePeer", peer_id), json)?;
         }
     }
 
@@ -76,6 +148,134 @@ fn resolve_cl_rpc(
             config.name
         )
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AddTarget {
+    Enode(String),
+    Multiaddr(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RemoveTarget {
+    Enode(String),
+    PeerId(String),
+}
+
+fn parse_add_target(raw: &str) -> Result<AddTarget> {
+    let target = raw.trim();
+    if target.is_empty() {
+        bail!("peer target cannot be empty");
+    }
+
+    let bootnode = BootNode::parse_bootnode(target)
+        .with_context(|| format!("parsing peer target `{target}` as enode or ENR"))?;
+    match &bootnode {
+        BootNode::Enode(_) => Ok(AddTarget::Enode(target.to_string())),
+        BootNode::Enr(_) => {
+            let multiaddr = bootnode.to_multiaddr().ok_or_else(|| {
+                anyhow!(
+                    "ENR target `{target}` does not include enough information to derive a libp2p multiaddr"
+                )
+            })?;
+            Ok(AddTarget::Multiaddr(multiaddr.to_string()))
+        }
+    }
+}
+
+fn parse_remove_target(raw: &str) -> Result<RemoveTarget> {
+    let target = raw.trim();
+    if target.is_empty() {
+        bail!("peer target cannot be empty");
+    }
+    if target.starts_with("enr:") {
+        bail!(
+            "remove-peer needs a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
+        );
+    }
+    if target.split_whitespace().count() != 1 {
+        bail!("peer target must not contain whitespace");
+    }
+
+    if target.starts_with("enode://") {
+        let bootnode = BootNode::parse_bootnode(target)
+            .with_context(|| format!("parsing remove-peer target `{target}` as an enode"))?;
+        if !matches!(bootnode, BootNode::Enode(_)) {
+            bail!("remove-peer EL targets must be `enode://` records");
+        }
+        return Ok(RemoveTarget::Enode(target.to_string()));
+    }
+    if target.contains(':') || target.contains('/') {
+        bail!("remove-peer needs a bare libp2p peer ID for CL targets, not a URL or multiaddr");
+    }
+
+    Ok(RemoveTarget::PeerId(target.to_string()))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PeerActionJson {
+    network: String,
+    action: &'static str,
+    layer: &'static str,
+    target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accepted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ok: Option<bool>,
+}
+
+impl PeerActionJson {
+    fn el(network: &str, action: &'static str, target: String, accepted: bool) -> Self {
+        Self {
+            network: network.to_string(),
+            action,
+            layer: "el",
+            target,
+            accepted: Some(accepted),
+            ok: None,
+        }
+    }
+
+    fn cl(network: &str, action: &'static str, target: String) -> Self {
+        Self {
+            network: network.to_string(),
+            action,
+            layer: "cl",
+            target,
+            accepted: None,
+            ok: Some(true),
+        }
+    }
+}
+
+fn print_peer_action(action: &PeerActionJson, json: bool) -> Result<()> {
+    if json {
+        JsonOutput::print(action)?;
+    } else {
+        print_peer_action_pretty(action)?;
+    }
+    Ok(())
+}
+
+fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    match (action.layer, action.action, action.accepted) {
+        ("el", "addPeer", Some(true)) => writeln!(stdout, "OK EL accepted peer {}", action.target)?,
+        ("el", "addPeer", Some(false)) => {
+            writeln!(stdout, "OK EL did not accept peer {}", action.target)?;
+        }
+        ("el", "removePeer", Some(true)) => {
+            writeln!(stdout, "OK EL removed peer {}", action.target)?
+        }
+        ("el", "removePeer", Some(false)) => {
+            writeln!(stdout, "OK EL did not remove peer {}", action.target)?;
+        }
+        ("cl", "addPeer", _) => writeln!(stdout, "OK CL connected {}", action.target)?,
+        ("cl", "removePeer", _) => writeln!(stdout, "OK CL disconnected {}", action.target)?,
+        _ => writeln!(stdout, "OK {} {} {}", action.layer, action.action, action.target)?,
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -281,7 +481,10 @@ mod tests {
     use alloy_primitives::Address;
     use url::Url;
 
-    use super::resolve_cl_rpc;
+    use super::{AddTarget, RemoveTarget, parse_add_target, parse_remove_target, resolve_cl_rpc};
+
+    const VALID_ENODE: &str = "enode://d7dfaea49c7ef37701e668652bcf1bc63d3abb2ae97593374a949e175e4ff128730a2f35199f3462a56298b981dfc395a5abebd2d6f0284ffe5bdc3d8e258b86@127.0.0.1:30304?discport=30301";
+    const VALID_ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
 
     fn test_config(consensus_node_rpc: Option<Url>) -> basectl_cli::MonitoringConfig {
         basectl_cli::MonitoringConfig {
@@ -327,5 +530,59 @@ mod tests {
         let config = test_config(None);
 
         assert!(resolve_cl_rpc(&config, None, "p2p info").is_err());
+    }
+
+    #[test]
+    fn parse_add_target_routes_enode_to_el() {
+        assert_eq!(
+            parse_add_target(VALID_ENODE).unwrap(),
+            AddTarget::Enode(VALID_ENODE.to_string())
+        );
+    }
+
+    #[test]
+    fn parse_add_target_routes_enr_to_cl_multiaddr() {
+        let AddTarget::Multiaddr(multiaddr) = parse_add_target(VALID_ENR).unwrap() else {
+            panic!("expected ENR to route to CL multiaddr");
+        };
+
+        assert!(multiaddr.starts_with("/ip4/"));
+        assert!(multiaddr.contains("/p2p/"));
+    }
+
+    #[test]
+    fn parse_add_target_rejects_garbage() {
+        assert!(parse_add_target("not-a-peer").is_err());
+    }
+
+    #[test]
+    fn parse_remove_target_routes_enode_to_el() {
+        assert_eq!(
+            parse_remove_target(VALID_ENODE).unwrap(),
+            RemoveTarget::Enode(VALID_ENODE.to_string())
+        );
+    }
+
+    #[test]
+    fn parse_remove_target_routes_peer_id_to_cl() {
+        assert_eq!(
+            parse_remove_target("16Uiu2HAmExamplePeerId").unwrap(),
+            RemoveTarget::PeerId("16Uiu2HAmExamplePeerId".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_remove_target_rejects_enr() {
+        assert!(parse_remove_target(VALID_ENR).is_err());
+    }
+
+    #[test]
+    fn parse_remove_target_rejects_multiaddr() {
+        assert!(parse_remove_target("/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample").is_err());
+    }
+
+    #[test]
+    fn parse_remove_target_rejects_url_like_target() {
+        assert!(parse_remove_target("https://example.com").is_err());
     }
 }
