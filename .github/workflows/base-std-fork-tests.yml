@@ -13,7 +13,7 @@ env:
   # Pinned base-anvil commit so this job is decoupled from base-anvil-fork
   # branch movement. Bump in lockstep with base/base's reth/revm version; a
   # cutover to a new base-anvil (e.g. reth 2.3.0) rides in the same base/base PR.
-  BASE_ANVIL_REF: 85f5a0e2867cb88c55e9af29b348511f91cbc383
+  BASE_ANVIL_REF: 0092692587d8d064dd2c6923ce26a682c58f3694
   BASE_STD_REF: main
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
