@@ -8,9 +8,10 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
-    BondManager, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, Driver,
-    DriverComponents, DriverConfig, GameScanner, L1HeadProvider, OutputValidator, PendingProof,
-    PendingProofs, ProofPhase, ProofUpdate, TeeConfig,
+    BondManager, BondTransactionSubmitter, BondTxHandle, BondTxResult, ChallengeSubmitter,
+    ChallengerProofAdapter, DisputeIntent, Driver, DriverComponents, DriverConfig, GameScanner,
+    L1HeadProvider, OutputValidator, PendingProof, PendingProofs, ProofPhase, ProofUpdate,
+    TeeConfig,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockBondTransactionSubmitter,
         MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider, MockTxManager,
@@ -28,6 +29,7 @@ use base_prover_service_protocol::{
 };
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManagerError;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
@@ -1403,6 +1405,34 @@ fn default_bond_manager(claim_addr: Address) -> BondManager<TokioRuntime> {
     mgr
 }
 
+/// Bond submitter whose returned handles never complete until the test drops it.
+#[derive(Debug, Default)]
+struct PendingBondSubmitter {
+    calls: Mutex<Vec<(Address, Address, Bytes)>>,
+    senders: Mutex<Vec<oneshot::Sender<BondTxResult>>>,
+}
+
+impl PendingBondSubmitter {
+    fn recorded_calls(&self) -> Vec<(Address, Address, Bytes)> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl BondTransactionSubmitter for PendingBondSubmitter {
+    async fn send_bond_tx_async(
+        &self,
+        game_address: Address,
+        to: Address,
+        calldata: Bytes,
+    ) -> Result<BondTxHandle, base_challenger::ChallengeSubmitError> {
+        self.calls.lock().unwrap().push((game_address, to, calldata));
+        let (tx, rx) = oneshot::channel();
+        self.senders.lock().unwrap().push(tx);
+        Ok(BondTxHandle::new(rx))
+    }
+}
+
 #[tokio::test]
 async fn test_bond_manager_full_lifecycle() {
     // Verify the full bond lifecycle: NeedsResolve → NeedsUnlock →
@@ -1431,17 +1461,25 @@ async fn test_bond_manager_full_lifecycle() {
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after detecting resolution");
 
-    // Poll 2: NeedsUnlock → claimCredit (unlock) tx → AwaitingDelay.
+    // Poll 2: NeedsUnlock → submit claimCredit (unlock) tx.
+    mgr.poll(&*verifier, &submitter).await;
+    assert_eq!(mgr.tracked_count(), 1, "game should still be tracked while unlock confirms");
+
+    // Poll 3: unlock tx confirmed → AwaitingDelay.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1, "game should still be tracked during delay");
 
-    // Poll 3: AwaitingDelay (delay=0s, already elapsed) → NeedsWithdraw.
+    // Poll 4: AwaitingDelay (delay=0s, already elapsed) → NeedsWithdraw.
     // check_delay transitions to NeedsWithdraw, but advance_game returns
     // Ok(false), so the game is still tracked. Need one more poll.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after delay");
 
-    // Poll 4: NeedsWithdraw → claimCredit (withdraw) tx → Completed → removed.
+    // Poll 5: NeedsWithdraw → submit claimCredit (withdraw) tx.
+    mgr.poll(&*verifier, &submitter).await;
+    assert_eq!(mgr.tracked_count(), 1, "game should still be tracked while withdraw confirms");
+
+    // Poll 6: withdraw tx confirmed → Completed → removed.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 0, "game should be removed after completion");
 
@@ -1452,6 +1490,35 @@ async fn test_bond_manager_full_lifecycle() {
         assert_eq!(*game, game_addr, "all transactions should reference the game address");
         assert_eq!(*target, game_addr, "all transactions should target the game address");
     }
+}
+
+#[tokio::test]
+async fn test_bond_manager_submits_all_ready_resolves_without_waiting_for_confirmations() {
+    let claim_addr = ZK_PROVER_ADDR;
+    let game_addresses = [addr(0), addr(1), addr(2)];
+
+    let mut verifier_games = HashMap::new();
+    for (i, game_address) in game_addresses.iter().copied().enumerate() {
+        let mut state = mock_state(GameStatus::InProgress, claim_addr, 100 + i as u64);
+        state.game_over = true;
+        state.bond_recipient = claim_addr;
+        verifier_games.insert(game_address, state);
+    }
+    let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
+    let submitter = PendingBondSubmitter::default();
+
+    let mut mgr = default_bond_manager(claim_addr);
+    for game_address in game_addresses {
+        assert!(mgr.track_game(game_address, claim_addr));
+    }
+
+    tokio::time::timeout(Duration::from_millis(100), mgr.poll(&*verifier, &submitter))
+        .await
+        .expect("poll should not wait for resolve confirmations");
+
+    let calls = submitter.recorded_calls();
+    assert_eq!(calls.len(), game_addresses.len(), "all ready resolves should be submitted");
+    assert_eq!(mgr.tracked_count(), game_addresses.len());
 }
 
 #[tokio::test]
@@ -1480,7 +1547,11 @@ async fn test_bond_manager_skips_already_unlocked_game() {
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 3: NeedsWithdraw -> submit withdraw -> Completed -> removed.
+    // Poll 3: NeedsWithdraw -> submit withdraw.
+    mgr.poll(&*verifier, &submitter).await;
+    assert_eq!(mgr.tracked_count(), 1);
+
+    // Poll 4: withdraw tx confirmed -> Completed -> removed.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 0);
 
@@ -1537,11 +1608,15 @@ async fn test_bond_manager_tx_failure_retries() {
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after detecting resolution");
 
-    // Poll 2: NeedsUnlock → claimCredit tx fails → stays NeedsUnlock.
+    // Poll 2: NeedsUnlock → submit claimCredit tx.
+    mgr.poll(&*verifier, &submitter).await;
+    assert_eq!(mgr.tracked_count(), 1, "game should still be tracked while tx confirms");
+
+    // Poll 3: tx fails → stays NeedsUnlock.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after tx failure");
 
-    // Poll 3: NeedsUnlock → retry → claimCredit tx succeeds → AwaitingDelay.
+    // Poll 4: NeedsUnlock → retry submit.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after unlock");
 
@@ -1607,7 +1682,12 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
     mgr.track_game(game_addr, claim_addr);
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 1: NeedsResolve → resolved, bondRecipient not in claim set → removed.
+    // Poll 1: NeedsResolve → resolved, bondRecipient not in claim set,
+    // anchor update submitted before removal.
+    mgr.poll(&*verifier, &submitter).await;
+    assert_eq!(mgr.tracked_count(), 1, "game should be retained while anchor update confirms");
+
+    // Poll 2: anchor update confirmed → removed.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(
         mgr.tracked_count(),

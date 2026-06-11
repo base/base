@@ -15,7 +15,9 @@ use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::{debug, info};
 
-use crate::{BondTransactionSubmitter, ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
+use crate::{
+    BondTransactionSubmitter, BondTxHandle, ChallengeSubmitError, ChallengerMetrics, DisputeIntent,
+};
 
 /// Submits dispute transactions (nullify or challenge) to game contracts on L1.
 #[derive(Debug)]
@@ -117,12 +119,12 @@ impl<T: TxManager> ChallengeSubmitter<T> {
 
 #[async_trait::async_trait]
 impl<T: TxManager> BondTransactionSubmitter for ChallengeSubmitter<T> {
-    async fn send_bond_tx(
+    async fn send_bond_tx_async(
         &self,
         game_address: Address,
         to: Address,
         calldata: Bytes,
-    ) -> Result<B256, ChallengeSubmitError> {
+    ) -> Result<BondTxHandle, ChallengeSubmitError> {
         let candidate = TxCandidate {
             tx_data: calldata,
             to: Some(to),
@@ -138,16 +140,27 @@ impl<T: TxManager> BondTransactionSubmitter for ChallengeSubmitter<T> {
         );
 
         let start = Instant::now();
-        let receipt = self.tx_manager.send(candidate).await?;
-        let latency = start.elapsed();
-        ChallengerMetrics::bond_tx_latency_seconds().record(latency.as_secs_f64());
-        let tx_hash = receipt.transaction_hash;
+        let send_handle = self.tx_manager.send_async(candidate).await;
+        let (tx, rx) = tokio::sync::oneshot::channel();
 
-        if !receipt.inner.status() {
-            return Err(ChallengeSubmitError::TxReverted { tx_hash });
-        }
+        tokio::spawn(async move {
+            let result = match send_handle.await {
+                Ok(receipt) => {
+                    let latency = start.elapsed();
+                    ChallengerMetrics::bond_tx_latency_seconds().record(latency.as_secs_f64());
+                    let tx_hash = receipt.transaction_hash;
+                    if receipt.inner.status() {
+                        Ok(tx_hash)
+                    } else {
+                        Err(ChallengeSubmitError::TxReverted { tx_hash })
+                    }
+                }
+                Err(e) => Err(ChallengeSubmitError::TxManager(e)),
+            };
+            let _ = tx.send(result);
+        });
 
-        Ok(tx_hash)
+        Ok(BondTxHandle::new(rx))
     }
 }
 

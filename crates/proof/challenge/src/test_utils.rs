@@ -924,10 +924,11 @@ pub fn build_test_header_and_account_for_address(
 
 /// Mock bond transaction submitter for testing the [`BondManager`](crate::BondManager).
 ///
-/// Records all submitted transactions and returns pre-configured responses.
+/// Records all submitted transactions and returns pre-configured asynchronous responses.
 #[derive(Debug)]
 pub struct MockBondTransactionSubmitter {
-    /// Queue of results returned by [`send_bond_tx`](crate::BondTransactionSubmitter::send_bond_tx).
+    /// Queue of results returned by
+    /// [`send_bond_tx_async`](crate::BondTransactionSubmitter::send_bond_tx_async).
     pub responses: Mutex<VecDeque<Result<B256, crate::ChallengeSubmitError>>>,
     /// Recorded `(game_address, to, calldata)` tuples for each submitted transaction.
     pub calls: Mutex<Vec<(Address, Address, Bytes)>>,
@@ -952,18 +953,20 @@ impl MockBondTransactionSubmitter {
 
 #[async_trait]
 impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
-    async fn send_bond_tx(
+    async fn send_bond_tx_async(
         &self,
         game_address: Address,
         to: Address,
         calldata: Bytes,
-    ) -> Result<B256, crate::ChallengeSubmitError> {
+    ) -> Result<crate::BondTxHandle, crate::ChallengeSubmitError> {
         self.calls.lock().unwrap().push((game_address, to, calldata));
-        self.responses
+        let result = self
+            .responses
             .lock()
             .unwrap()
             .pop_front()
-            .expect("MockBondTransactionSubmitter has no more responses")
+            .expect("MockBondTransactionSubmitter has no more responses");
+        Ok(crate::BondTxHandle::ready(result))
     }
 }
 

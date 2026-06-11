@@ -27,7 +27,10 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    future::Future,
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -38,10 +41,57 @@ use base_proof_contracts::{
     encode_set_anchor_state_calldata,
 };
 use base_runtime::Clock;
+use base_tx_manager::TxManagerError;
 use futures::stream::{self, StreamExt};
+use tokio::sync::oneshot;
+use tokio::sync::oneshot::error::TryRecvError;
 use tracing::{debug, info, warn};
 
-use crate::{ChallengerMetrics, GameScanner};
+use crate::{ChallengeSubmitError, ChallengerMetrics, GameScanner};
+
+/// Result returned by an asynchronous bond lifecycle transaction.
+pub type BondTxResult = Result<alloy_primitives::B256, ChallengeSubmitError>;
+
+/// Handle for a bond lifecycle transaction submitted asynchronously.
+#[derive(Debug)]
+pub struct BondTxHandle {
+    rx: oneshot::Receiver<BondTxResult>,
+}
+
+impl BondTxHandle {
+    /// Creates a new handle from a oneshot receiver.
+    pub const fn new(rx: oneshot::Receiver<BondTxResult>) -> Self {
+        Self { rx }
+    }
+
+    /// Creates a handle that is immediately ready with `result`.
+    pub fn ready(result: BondTxResult) -> Self {
+        let (tx, rx) = oneshot::channel();
+        let _ = tx.send(result);
+        Self::new(rx)
+    }
+
+    /// Checks whether the transaction has completed without blocking.
+    pub fn try_recv(&mut self) -> Option<BondTxResult> {
+        match self.rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Closed) => {
+                Some(Err(ChallengeSubmitError::TxManager(TxManagerError::ChannelClosed)))
+            }
+        }
+    }
+}
+
+impl Future for BondTxHandle {
+    type Output = BondTxResult;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.get_mut().rx).poll(cx).map(|res| {
+            res.unwrap_or(Err(ChallengeSubmitError::TxManager(TxManagerError::ChannelClosed)))
+        })
+    }
+}
 
 /// Reason a game was removed from tracking after `BondManager::advance_game`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,13 +103,23 @@ pub enum RemovalReason {
 }
 
 /// Phase of the bond claim lifecycle for a single tracked game.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum BondPhase {
     /// The game's dispute period is over; needs a `resolve()` call.
     NeedsResolve,
+    /// A `resolve()` transaction has been submitted and is awaiting confirmation.
+    AwaitingResolve {
+        /// Pending transaction handle.
+        handle: BondTxHandle,
+    },
     /// The game has been resolved; needs the first `claimCredit()` call
     /// to trigger `DelayedWETH.unlock()`.
     NeedsUnlock,
+    /// An unlock `claimCredit()` transaction has been submitted and is awaiting confirmation.
+    AwaitingUnlock {
+        /// Pending transaction handle.
+        handle: BondTxHandle,
+    },
     /// The unlock has been submitted; waiting for the `DelayedWETH` delay
     /// to elapse before the second `claimCredit()` call.
     AwaitingDelay {
@@ -71,12 +131,17 @@ pub enum BondPhase {
     /// The delay has elapsed; needs the second `claimCredit()` call to
     /// complete the withdrawal.
     NeedsWithdraw,
+    /// A withdraw `claimCredit()` transaction has been submitted and is awaiting confirmation.
+    AwaitingWithdraw {
+        /// Pending transaction handle.
+        handle: BondTxHandle,
+    },
     /// Bond fully claimed. The entry will be removed from tracking.
     Completed,
 }
 
 /// A game being tracked for bond lifecycle management.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TrackedGame {
     /// Current lifecycle phase.
     pub phase: BondPhase,
@@ -97,6 +162,8 @@ pub struct TrackedGame {
     /// Cached L2 block number for this game. Read from immutable game info
     /// once the game is finalized and reused for retries.
     pub cached_l2_block_number: Option<u64>,
+    /// Pending `setAnchorState()` transaction, if one has been submitted.
+    pub pending_anchor_update: Option<BondTxHandle>,
     /// Monotonic timestamp for games whose bond lifecycle is complete but
     /// which remain tracked until the anchor update completes.
     pub anchor_update_retained_since: Option<Duration>,
@@ -115,6 +182,7 @@ impl TrackedGame {
             cached_status: None,
             cached_asr_address: None,
             cached_l2_block_number: None,
+            pending_anchor_update: None,
             anchor_update_retained_since: None,
             anchor_update_retention_reason: None,
         }
@@ -747,17 +815,86 @@ impl<C: Clock> BondManager<C> {
             BondPhase::NeedsResolve => {
                 self.try_resolve(game_address, verifier_client, submitter).await
             }
+            BondPhase::AwaitingResolve { .. } => {
+                self.poll_resolve_tx(game_address, verifier_client).await
+            }
             BondPhase::NeedsUnlock => {
                 self.try_unlock(game_address, verifier_client, submitter).await
             }
+            BondPhase::AwaitingUnlock { .. } => self.poll_unlock_tx(game_address),
             BondPhase::AwaitingDelay { unlocked_at, unlocked_at_unix_secs } => {
                 self.check_delay(game_address, *unlocked_at, *unlocked_at_unix_secs)
             }
             BondPhase::NeedsWithdraw => {
                 self.try_withdraw(game_address, verifier_client, submitter).await
             }
+            BondPhase::AwaitingWithdraw { .. } => self.poll_withdraw_tx(game_address),
             BondPhase::Completed => Ok(Some(RemovalReason::Completed)),
         }
+    }
+
+    /// Polls a pending `resolve()` transaction and advances the lifecycle once confirmed.
+    async fn poll_resolve_tx(
+        &mut self,
+        game_address: Address,
+        verifier_client: &dyn AggregateVerifierClient,
+    ) -> eyre::Result<Option<RemovalReason>> {
+        let Some(result) = self.pending_resolve_result(game_address) else {
+            return Ok(None);
+        };
+
+        match result {
+            Ok(tx_hash) => {
+                info!(
+                    game = %game_address,
+                    tx_hash = %tx_hash,
+                    "resolve transaction confirmed"
+                );
+                ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
+                    .increment(1);
+                match verifier_client.status(game_address).await {
+                    Ok(resolved_status) => {
+                        if let Some(g) = self.tracked.get_mut(&game_address) {
+                            g.cached_status = Some(resolved_status);
+                        }
+                    }
+                    Err(e) => {
+                        debug!(
+                            game = %game_address,
+                            error = %e,
+                            "failed to cache status after resolve, will re-read later"
+                        );
+                    }
+                }
+
+                if !self.is_bond_claimable(verifier_client, game_address).await? {
+                    return Ok(Some(RemovalReason::NotClaimable));
+                }
+
+                self.set_phase(game_address, BondPhase::NeedsUnlock);
+                Ok(None)
+            }
+            Err(e) => {
+                warn!(
+                    game = %game_address,
+                    error = %e,
+                    "resolve transaction failed, will retry"
+                );
+                ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
+                    .increment(1);
+                self.set_phase(game_address, BondPhase::NeedsResolve);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Returns a pending resolve transaction result if it is ready.
+    fn pending_resolve_result(&mut self, game_address: Address) -> Option<BondTxResult> {
+        let game = self.tracked.get_mut(&game_address)?;
+        let BondPhase::AwaitingResolve { handle } = &mut game.phase else {
+            return None;
+        };
+        handle.try_recv()
     }
 
     /// Attempts to resolve the game by calling `resolve()`.
@@ -784,38 +921,16 @@ impl<C: Clock> BondManager<C> {
 
             let calldata = encode_resolve_calldata();
             info!(game = %game_address, "submitting resolve transaction");
-            match submitter.send_bond_tx(game_address, game_address, calldata).await {
-                Ok(tx_hash) => {
-                    info!(
-                        game = %game_address,
-                        tx_hash = %tx_hash,
-                        "resolve transaction confirmed"
-                    );
-                    ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
-                        .increment(1);
-                    // Re-read and cache the now-immutable status so that
-                    // try_anchor_update (called later this tick) can use
-                    // it without a redundant RPC call.
-                    match verifier_client.status(game_address).await {
-                        Ok(resolved_status) => {
-                            if let Some(g) = self.tracked.get_mut(&game_address) {
-                                g.cached_status = Some(resolved_status);
-                            }
-                        }
-                        Err(e) => {
-                            debug!(
-                                game = %game_address,
-                                error = %e,
-                                "failed to cache status after resolve, will re-read later"
-                            );
-                        }
-                    }
+            match submitter.send_bond_tx_async(game_address, game_address, calldata).await {
+                Ok(handle) => {
+                    self.set_phase(game_address, BondPhase::AwaitingResolve { handle });
+                    return Ok(None);
                 }
                 Err(e) => {
                     warn!(
                         game = %game_address,
                         error = %e,
-                        "resolve transaction failed, will retry"
+                        "resolve transaction submission failed, will retry"
                     );
                     ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
                         .increment(1);
@@ -910,14 +1025,7 @@ impl<C: Clock> BondManager<C> {
             return Ok(None);
         }
 
-        self.submit_claim_credit(
-            game_address,
-            submitter,
-            "unlock",
-            BondPhase::AwaitingDelay { unlocked_at: self.clock.now(), unlocked_at_unix_secs: None },
-            None,
-        )
-        .await
+        self.submit_claim_credit(game_address, submitter, "unlock", Self::awaiting_unlock).await
     }
 
     /// Checks if the `DelayedWETH` delay has elapsed since the unlock.
@@ -979,59 +1087,123 @@ impl<C: Clock> BondManager<C> {
             return Ok(Some(RemovalReason::Completed));
         }
 
-        self.submit_claim_credit(
-            game_address,
-            submitter,
-            "withdraw",
-            BondPhase::Completed,
-            Some(Self::WITHDRAW_REVERT_RETRY_DELAY),
-        )
-        .await
+        self.submit_claim_credit(game_address, submitter, "withdraw", Self::awaiting_withdraw).await
     }
 
     /// Submits a `claimCredit()` transaction and transitions to the given
-    /// phase on success. If `revert_retry_delay` is set, a reverted
-    /// transaction backs off by that duration before retrying. Returns
-    /// `Ok(Some(Completed))` when the success phase is [`BondPhase::Completed`].
+    /// awaiting phase until the asynchronous transaction confirms.
     async fn submit_claim_credit(
         &mut self,
         game_address: Address,
         submitter: &dyn BondTransactionSubmitter,
         step: &str,
-        success_phase: BondPhase,
-        revert_retry_delay: Option<Duration>,
+        awaiting_phase: fn(BondTxHandle) -> BondPhase,
     ) -> eyre::Result<Option<RemovalReason>> {
         let calldata = encode_claim_credit_calldata();
         ChallengerMetrics::claim_credit_tx_submitted_total().increment(1);
         info!(game = %game_address, step, "submitting claimCredit transaction");
-        match submitter.send_bond_tx(game_address, game_address, calldata).await {
-            Ok(tx_hash) => {
-                info!(
-                    game = %game_address,
-                    tx_hash = %tx_hash,
-                    step,
-                    "claimCredit transaction confirmed"
-                );
-                ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
-                    .increment(1);
-                let completed = matches!(success_phase, BondPhase::Completed);
-                self.set_phase(game_address, success_phase);
-                Ok(completed.then_some(RemovalReason::Completed))
+        match submitter.send_bond_tx_async(game_address, game_address, calldata).await {
+            Ok(handle) => {
+                self.set_phase(game_address, awaiting_phase(handle));
+                Ok(None)
             }
             Err(e) => {
                 ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
                     .increment(1);
-                if let Some(retry_delay) = revert_retry_delay
-                    && matches!(&e, crate::ChallengeSubmitError::TxReverted { .. })
-                {
+                warn!(
+                    game = %game_address,
+                    error = %e,
+                    step,
+                    retry = "immediate",
+                    "claimCredit transaction submission failed, will retry"
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    /// Constructs the pending unlock phase.
+    pub fn awaiting_unlock(handle: BondTxHandle) -> BondPhase {
+        BondPhase::AwaitingUnlock { handle }
+    }
+
+    /// Constructs the pending withdraw phase.
+    pub fn awaiting_withdraw(handle: BondTxHandle) -> BondPhase {
+        BondPhase::AwaitingWithdraw { handle }
+    }
+
+    /// Polls a pending unlock `claimCredit()` transaction.
+    fn poll_unlock_tx(&mut self, game_address: Address) -> eyre::Result<Option<RemovalReason>> {
+        let Some(result) = self.pending_unlock_result(game_address) else {
+            return Ok(None);
+        };
+
+        match result {
+            Ok(tx_hash) => {
+                info!(
+                    game = %game_address,
+                    tx_hash = %tx_hash,
+                    step = "unlock",
+                    "claimCredit transaction confirmed"
+                );
+                ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
+                    .increment(1);
+                self.set_phase(
+                    game_address,
+                    BondPhase::AwaitingDelay {
+                        unlocked_at: self.clock.now(),
+                        unlocked_at_unix_secs: None,
+                    },
+                );
+            }
+            Err(e) => {
+                ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
+                    .increment(1);
+                warn!(
+                    game = %game_address,
+                    error = %e,
+                    step = "unlock",
+                    retry = "immediate",
+                    "claimCredit transaction failed, will retry"
+                );
+                self.set_phase(game_address, BondPhase::NeedsUnlock);
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Polls a pending withdraw `claimCredit()` transaction.
+    fn poll_withdraw_tx(&mut self, game_address: Address) -> eyre::Result<Option<RemovalReason>> {
+        let Some(result) = self.pending_withdraw_result(game_address) else {
+            return Ok(None);
+        };
+
+        match result {
+            Ok(tx_hash) => {
+                info!(
+                    game = %game_address,
+                    tx_hash = %tx_hash,
+                    step = "withdraw",
+                    "claimCredit transaction confirmed"
+                );
+                ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
+                    .increment(1);
+                self.set_phase(game_address, BondPhase::Completed);
+                Ok(Some(RemovalReason::Completed))
+            }
+            Err(e) => {
+                ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
+                    .increment(1);
+                if matches!(&e, ChallengeSubmitError::TxReverted { .. }) {
                     let delay = self.effective_weth_delay(game_address);
-                    let retry_delay = retry_delay.min(delay);
+                    let retry_delay = Self::WITHDRAW_REVERT_RETRY_DELAY.min(delay);
                     let elapsed_before_retry = delay.saturating_sub(retry_delay);
                     let unlocked_at = self.clock.now().saturating_sub(elapsed_before_retry);
                     warn!(
                         game = %game_address,
                         error = %e,
-                        step,
+                        step = "withdraw",
                         retry = "after_backoff",
                         retry_delay_secs = retry_delay.as_secs(),
                         "claimCredit transaction failed, will retry after backoff"
@@ -1044,14 +1216,33 @@ impl<C: Clock> BondManager<C> {
                     warn!(
                         game = %game_address,
                         error = %e,
-                        step,
+                        step = "withdraw",
                         retry = "immediate",
                         "claimCredit transaction failed, will retry"
                     );
+                    self.set_phase(game_address, BondPhase::NeedsWithdraw);
                 }
                 Ok(None)
             }
         }
+    }
+
+    /// Returns a pending unlock transaction result if it is ready.
+    fn pending_unlock_result(&mut self, game_address: Address) -> Option<BondTxResult> {
+        let game = self.tracked.get_mut(&game_address)?;
+        let BondPhase::AwaitingUnlock { handle } = &mut game.phase else {
+            return None;
+        };
+        handle.try_recv()
+    }
+
+    /// Returns a pending withdraw transaction result if it is ready.
+    fn pending_withdraw_result(&mut self, game_address: Address) -> Option<BondTxResult> {
+        let game = self.tracked.get_mut(&game_address)?;
+        let BondPhase::AwaitingWithdraw { handle } = &mut game.phase else {
+            return None;
+        };
+        handle.try_recv()
     }
 
     /// Converts a Unix timestamp (seconds) to a monotonic [`Duration`]
@@ -1194,21 +1385,30 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) {
-        let game = match self.tracked.get(&game_address) {
-            Some(g) => g,
-            None => return,
+        let should_skip = match self.tracked.get(&game_address) {
+            Some(game) => {
+                game.anchor_update_complete
+                    || (game.cached_status.is_none()
+                        && matches!(
+                            game.phase,
+                            BondPhase::NeedsResolve | BondPhase::AwaitingResolve { .. }
+                        ))
+            }
+            None => true,
         };
+        if should_skip {
+            return;
+        }
 
-        if game.anchor_update_complete
-            || (game.cached_status.is_none() && matches!(game.phase, BondPhase::NeedsResolve))
-        {
+        if self.poll_anchor_update_tx(game_address) {
             return;
         }
 
         // Only DEFENDER_WINS games can update the anchor state.
         // The status is immutable after resolution, so we cache it
         // after the first successful RPC read to avoid redundant calls.
-        let status = if let Some(cached) = game.cached_status {
+        let cached_status = self.tracked.get(&game_address).and_then(|g| g.cached_status);
+        let status = if let Some(cached) = cached_status {
             cached
         } else {
             match verifier_client.status(game_address).await {
@@ -1364,20 +1564,16 @@ impl<C: Clock> BondManager<C> {
         }
 
         let calldata = encode_set_anchor_state_calldata(game_address);
-        match submitter.send_bond_tx(game_address, asr_address, calldata).await {
-            Ok(tx_hash) => {
+        match submitter.send_bond_tx_async(game_address, asr_address, calldata).await {
+            Ok(handle) => {
                 info!(
                     game = %game_address,
                     asr = %asr_address,
-                    tx_hash = %tx_hash,
-                    "anchor state registry updated"
+                    "anchor state registry update submitted"
                 );
-                self.mark_anchor_update_complete(game_address);
-                ChallengerMetrics::anchor_update_tx_outcome_total(
-                    ChallengerMetrics::STATUS_SUCCESS,
-                )
-                .increment(1);
-                ChallengerMetrics::anchor_l2_block_number().set(game_l2_block_number as f64);
+                if let Some(game) = self.tracked.get_mut(&game_address) {
+                    game.pending_anchor_update = Some(handle);
+                }
             }
             Err(e) => {
                 debug!(
@@ -1390,6 +1586,62 @@ impl<C: Clock> BondManager<C> {
                     .increment(1);
             }
         }
+    }
+
+    /// Polls a pending anchor update transaction.
+    ///
+    /// Returns `true` if a pending transaction existed and was handled (or is
+    /// still pending), signalling that callers should not submit another anchor
+    /// update during the same tick.
+    fn poll_anchor_update_tx(&mut self, game_address: Address) -> bool {
+        let result = {
+            let Some(game) = self.tracked.get_mut(&game_address) else {
+                return true;
+            };
+            let Some(handle) = game.pending_anchor_update.as_mut() else {
+                return false;
+            };
+            handle.try_recv()
+        };
+
+        let Some(result) = result else {
+            return true;
+        };
+
+        if let Some(game) = self.tracked.get_mut(&game_address) {
+            game.pending_anchor_update = None;
+        }
+
+        match result {
+            Ok(tx_hash) => {
+                info!(
+                    game = %game_address,
+                    tx_hash = %tx_hash,
+                    "anchor state registry updated"
+                );
+                self.mark_anchor_update_complete(game_address);
+                ChallengerMetrics::anchor_update_tx_outcome_total(
+                    ChallengerMetrics::STATUS_SUCCESS,
+                )
+                .increment(1);
+                if let Some(l2_block_number) =
+                    self.tracked.get(&game_address).and_then(|g| g.cached_l2_block_number)
+                {
+                    ChallengerMetrics::anchor_l2_block_number().set(l2_block_number as f64);
+                }
+            }
+            Err(e) => {
+                debug!(
+                    game = %game_address,
+                    error = %e,
+                    "anchor state update failed, will retry"
+                );
+                ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
+                    .increment(1);
+            }
+        }
+
+        true
     }
 
     /// Reads the `DelayedWETH` address from a game proxy and fetches the delay.
@@ -1413,15 +1665,26 @@ impl<C: Clock> BondManager<C> {
 /// can be tested with mock submitters.
 #[async_trait::async_trait]
 pub trait BondTransactionSubmitter: Send + Sync {
-    /// Sends a transaction with the given calldata to `to`. `game_address`
-    /// is the dispute game this transaction is associated with, used for
-    /// log/metric correlation.
+    /// Sends a transaction asynchronously with the given calldata to `to`.
+    ///
+    /// `game_address` is the dispute game this transaction is associated with,
+    /// used for log/metric correlation.
+    async fn send_bond_tx_async(
+        &self,
+        game_address: Address,
+        to: Address,
+        calldata: alloy_primitives::Bytes,
+    ) -> Result<BondTxHandle, crate::ChallengeSubmitError>;
+
+    /// Sends a transaction and waits for confirmation.
     async fn send_bond_tx(
         &self,
         game_address: Address,
         to: Address,
         calldata: alloy_primitives::Bytes,
-    ) -> Result<alloy_primitives::B256, crate::ChallengeSubmitError>;
+    ) -> Result<alloy_primitives::B256, crate::ChallengeSubmitError> {
+        self.send_bond_tx_async(game_address, to, calldata).await?.await
+    }
 }
 
 #[cfg(test)]
@@ -1652,6 +1915,13 @@ mod tests {
         let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
         assert!(result.is_none());
         assert_eq!(submitter.recorded_calls().len(), 1);
+        assert!(matches!(
+            mgr.tracked.get(&game).unwrap().phase,
+            BondPhase::AwaitingWithdraw { .. }
+        ));
+
+        let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none());
         let expected_unlocked_at = Duration::from_secs(monotonic_secs).saturating_sub(
             delay.saturating_sub(BondManager::<FixedClock>::WITHDRAW_REVERT_RETRY_DELAY),
         );
@@ -1737,18 +2007,26 @@ mod tests {
         assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::NeedsWithdraw));
         assert!(submitter.recorded_calls().is_empty());
 
-        // Second poll: NeedsWithdraw → submit_claim_credit → non-revert
-        // failure. The phase must remain `NeedsWithdraw`; the back-off
-        // path is gated on `TxReverted` only.
+        // Second poll: NeedsWithdraw → submit claimCredit asynchronously.
         let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
         assert!(result.is_none());
         assert_eq!(submitter.recorded_calls().len(), 1);
+        assert!(
+            matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::AwaitingWithdraw { .. }),
+            "withdraw submission should transition to AwaitingWithdraw"
+        );
+
+        // Third poll: AwaitingWithdraw → non-revert failure. The phase must
+        // return to `NeedsWithdraw`; the back-off path is gated on
+        // `TxReverted` only.
+        let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none());
         assert!(
             matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::NeedsWithdraw),
             "non-revert withdraw failure must not transition back to AwaitingDelay"
         );
 
-        // Third poll: still `NeedsWithdraw` → resubmits immediately,
+        // Fourth poll: still `NeedsWithdraw` → resubmits immediately,
         // without waiting on a back-off window.
         let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
         assert!(result.is_none());
@@ -1757,7 +2035,10 @@ mod tests {
             2,
             "non-revert failures must not introduce a back-off delay before retry"
         );
-        assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::NeedsWithdraw));
+        assert!(matches!(
+            mgr.tracked.get(&game).unwrap().phase,
+            BondPhase::AwaitingWithdraw { .. }
+        ));
     }
 
     #[test]
@@ -2181,6 +2462,10 @@ mod tests {
         let submitter = MockBondTransactionSubmitter::success(tx_hash);
         let result = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap();
         assert!(result.is_none(), "try_unlock should not remove the game");
+        assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::AwaitingUnlock { .. }));
+
+        let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none(), "confirmed unlock should not remove the game");
 
         let tracked = mgr.tracked.get(&game).expect("game should still be tracked");
         assert!(
@@ -2373,6 +2658,9 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, game, "tx should carry game address as context");
         assert_eq!(calls[0].1, asr, "tx should be sent to ASR address");
+        assert!(!mgr.tracked.get(&game).unwrap().anchor_update_complete);
+
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
         assert!(mgr.tracked.get(&game).unwrap().anchor_update_complete);
     }
 
@@ -2425,6 +2713,8 @@ mod tests {
         // First call succeeds.
         let tx_hash = B256::repeat_byte(0xDD);
         let submitter = MockBondTransactionSubmitter::success(tx_hash);
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
+        assert!(!mgr.tracked.get(&game).unwrap().anchor_update_complete);
         mgr.try_anchor_update(game, &*verifier, &submitter).await;
         assert!(mgr.tracked.get(&game).unwrap().anchor_update_complete);
 
