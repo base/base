@@ -1,6 +1,6 @@
 [package]
-name = "base-prover-service-worker-host"
-description = "Shared prover-service worker host primitives."
+name = "base-proof-worker"
+description = "Shared proof worker primitives."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,3 +17,6 @@ base-prover-service-protocol.workspace = true
 
 # async
 async-trait.workspace = true
+
+# misc
+thiserror.workspace = true
