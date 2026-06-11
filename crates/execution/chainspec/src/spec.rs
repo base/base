@@ -385,28 +385,12 @@ impl BaseChainSpec {
 
     /// Clears all timestamp-based Base hardfork activation conditions.
     pub fn clear_hardfork_activation_timestamps(&mut self) {
-        for fork in [
-            BaseUpgrade::Regolith,
-            BaseUpgrade::Canyon,
-            BaseUpgrade::Ecotone,
-            BaseUpgrade::Fjord,
-            BaseUpgrade::Granite,
-            BaseUpgrade::Holocene,
-            BaseUpgrade::Isthmus,
-            BaseUpgrade::Jovian,
-            BaseUpgrade::Azul,
-            BaseUpgrade::Beryl,
-            BaseUpgrade::Cobalt,
-        ] {
-            self.set_fork(fork, ForkCondition::Never);
-        }
-        for fork in [
-            EthereumHardfork::Shanghai,
-            EthereumHardfork::Cancun,
-            EthereumHardfork::Prague,
-            EthereumHardfork::Osaka,
-        ] {
-            self.set_fork(fork, ForkCondition::Never);
+        for hardfork_id in HardForkConfig::CONTRACT_HARDFORK_IDS {
+            Self::set_hardfork_activation_condition_for(
+                &mut self.inner.hardforks,
+                hardfork_id,
+                ForkCondition::Never,
+            );
         }
     }
 
@@ -481,6 +465,8 @@ impl BaseChainSpec {
                 hardforks.insert(EthereumHardfork::Shanghai, condition);
                 hardforks.insert(BaseUpgrade::Canyon, condition);
             }
+            // Delta affects rollup derivation but does not introduce an execution fork condition.
+            "delta" => {}
             "ecotone" => {
                 hardforks.insert(EthereumHardfork::Cancun, condition);
                 hardforks.insert(BaseUpgrade::Ecotone, condition);
@@ -494,6 +480,8 @@ impl BaseChainSpec {
             "holocene" => {
                 hardforks.insert(BaseUpgrade::Holocene, condition);
             }
+            // The Pectra blob schedule is consumed by rollup logic, not the execution chainspec.
+            "pectrablobschedule" => {}
             "isthmus" => {
                 hardforks.insert(EthereumHardfork::Prague, condition);
                 hardforks.insert(BaseUpgrade::Isthmus, condition);
@@ -1268,6 +1256,19 @@ mod tests {
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
+    }
+
+    #[test]
+    fn set_hardfork_activation_timestamp_accepts_rollup_only_contract_ids() {
+        let mut chain_spec = BaseChainSpec::devnet();
+        let ecotone = chain_spec.fork(BaseUpgrade::Ecotone);
+
+        assert!(chain_spec.set_hardfork_activation_timestamp("delta", 42));
+        assert!(chain_spec.set_hardfork_activation_timestamp("pectra_blob_schedule", 84));
+        assert!(chain_spec.clear_hardfork_activation_timestamp("delta"));
+        assert!(chain_spec.clear_hardfork_activation_timestamp("pectra_blob_schedule"));
+
+        assert_eq!(chain_spec.fork(BaseUpgrade::Ecotone), ecotone);
     }
 
     #[test]
