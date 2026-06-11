@@ -3,6 +3,7 @@
 use std::{error::Error, fmt, sync::Arc};
 
 use alloy_primitives::B256;
+use base_l1_head::{L1HeadCalculator, L1HeadError};
 use base_proof_succinct_ethereum_host_utils::host::SingleChainOPSuccinctHost;
 use base_proof_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher, host::OPSuccinctHost, witness_generation::WitnessGenerator,
@@ -10,8 +11,6 @@ use base_proof_succinct_host_utils::{
 use sp1_sdk::SP1Stdin;
 use thiserror::Error;
 use tracing::{debug, info, warn};
-
-use crate::succinct::{L1HeadCalculator, L1HeadError};
 
 /// Inputs to [`OpSuccinctWitnessProvider::generate_witness`].
 #[derive(Debug, Clone, Copy)]
@@ -154,7 +153,7 @@ impl OpSuccinctWitnessProvider {
                         "SafeDB unavailable, falling back to sequence_window"
                     );
                     let (_l1_head_block_num, l1_head_hash) =
-                        match L1HeadCalculator::calculate_l1_head(
+                        match L1HeadCalculator::calculate_l1_head_from_urls(
                             l1_node_url,
                             base_consensus_url,
                             end_block,

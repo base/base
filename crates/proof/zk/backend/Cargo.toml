@@ -13,17 +13,13 @@ workspace = true
 
 [dependencies]
 # base
-base-proof-rpc.workspace = true
+base-l1-head.workspace = true
 base-proof-zk-host.workspace = true
-base-common-network.workspace = true
 base-prover-service-protocol.workspace = true
 base-proof-succinct-host-utils.workspace = true
 base-proof-succinct-ethereum-host-utils.workspace = true
 
 # network
-url.workspace = true
-alloy-provider.workspace = true
-alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
 
 # sp1
