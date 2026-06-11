@@ -7,7 +7,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_action_harness::TEST_ACCOUNT_KEY;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{B20TokenRole, IB20};
+use base_common_precompiles::{B20_MAX_SUPPLY_CAP, B20TokenRole, IB20};
 
 use crate::env::BerylTestEnv;
 
@@ -297,7 +297,11 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
                 IB20::isPausedCall { feature: IB20::PausableFeature::TRANSFER }.abi_encode(),
                 U256::ZERO,
             ),
-            StaticcallCase::word("supplyCap", IB20::supplyCapCall {}.abi_encode(), U256::MAX),
+            StaticcallCase::word(
+                "supplyCap",
+                IB20::supplyCapCall {}.abi_encode(),
+                B20_MAX_SUPPLY_CAP,
+            ),
             StaticcallCase::word(
                 "DOMAIN_SEPARATOR",
                 IB20::DOMAIN_SEPARATORCall {}.abi_encode(),
@@ -583,7 +587,7 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
         3,
         IB20::SupplyCapUpdated {
             updater: BerylTestEnv::alice(),
-            oldSupplyCap: U256::MAX,
+            oldSupplyCap: B20_MAX_SUPPLY_CAP,
             newSupplyCap: new_cap,
         }
         .encode_log_data(),

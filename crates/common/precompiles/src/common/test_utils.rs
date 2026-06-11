@@ -12,7 +12,7 @@ use crate::{
     IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
     b20_asset::{AssetAccounting, B20AssetStorage, B20AssetToken},
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
-    common::{Policy, TokenAccounting},
+    common::{B20_MAX_SUPPLY_CAP, Policy, TokenAccounting},
 };
 
 /// Convenience alias: [`B20AssetToken`] wired with both in-memory fakes.
@@ -37,7 +37,7 @@ pub struct InMemoryTokenAccounting {
     pub allowances: HashMap<(Address, Address), U256>,
     /// Current total token supply.
     pub total_supply: U256,
-    /// Defaults to `U256::MAX` so mint tests don't need to set a cap explicitly.
+    /// Defaults to [`B20_MAX_SUPPLY_CAP`] so mint tests don't need to set a cap explicitly.
     pub supply_cap: U256,
     /// Token name.
     pub name: String,
@@ -80,7 +80,7 @@ impl InMemoryTokenAccounting {
             balances: HashMap::new(),
             allowances: HashMap::new(),
             total_supply: U256::ZERO,
-            supply_cap: U256::MAX,
+            supply_cap: B20_MAX_SUPPLY_CAP,
             name: String::new(),
             symbol: String::new(),
             decimals: 18,
