@@ -5,7 +5,7 @@ use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use anyhow::Result;
 use base_common_network::Base;
-use base_proof_rpc::OptimismRollupProviderExt;
+use base_optimism_rpc::OptimismRollupProviderExt;
 use tracing::debug;
 
 /// Computes safe L1 head blocks for proof ranges.

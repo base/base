@@ -12,16 +12,14 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
+use base_optimism_rpc::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
 use base_proof_primitives::Proposal;
-use base_proof_rpc::{
-    BaseBlock, L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OutputAtBlock,
-    RollupProvider, RpcError, RpcResult, SyncStatus,
-};
+use base_proof_rpc::{BaseBlock, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
