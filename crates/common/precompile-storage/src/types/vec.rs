@@ -296,7 +296,9 @@ where
             // it in one read-modify-write rather than one per element.
             let boundary_slot_end = (first_full_tail_slot * elems_per_slot).min(old_len);
             if boundary_slot_end > new_len {
-                let boundary_slot_addr = data_start + U256::from(new_len / elems_per_slot);
+                let boundary_slot_addr = data_start
+                    .checked_add(U256::from(new_len / elems_per_slot))
+                    .ok_or(BasePrecompileError::SlotOverflow)?;
                 let current = self.storage.sload(self.address, boundary_slot_addr)?;
                 let mut combined_clear_mask = U256::ZERO;
                 for index in new_len..boundary_slot_end {
@@ -313,14 +315,17 @@ where
             // Zero all fully-removed tail slots in a single store each.
             let last_slot = calc_packed_slot_count(old_len, T::BYTES);
             for slot_idx in first_full_tail_slot..last_slot {
-                let slot_addr = data_start + U256::from(slot_idx);
+                let slot_addr = data_start
+                    .checked_add(U256::from(slot_idx))
+                    .ok_or(BasePrecompileError::SlotOverflow)?;
                 self.storage.sstore(self.address, slot_addr, U256::ZERO)?;
             }
         } else {
             // Unpacked types: each element occupies one or more full slots;
             // delegate to the element handler's delete to zero every occupied slot.
             for index in new_len..old_len {
-                let mut elem = Self::compute_handler(data_start, self.address, self.storage, index);
+                let mut elem =
+                    Self::try_compute_handler(data_start, self.address, self.storage, index)?;
                 elem.delete()?;
             }
         }
