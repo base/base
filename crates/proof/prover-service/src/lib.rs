@@ -9,6 +9,9 @@ pub use metrics::{
     record_proof_request_duration, record_response_latency, record_witness_generation_duration,
 };
 
+mod metadata;
+pub use metadata::{OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY};
+
 #[cfg(feature = "rpc-server")]
 mod server;
 #[cfg(feature = "rpc-server")]

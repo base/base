@@ -19,6 +19,7 @@ jsonrpsee = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 # Serialization
+serde_json.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 # Error handling
@@ -30,9 +31,10 @@ tracing.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+chrono.workspace = true
 jsonrpsee = { workspace = true, features = ["http-client"] }
-base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }
 
 [lints]
 workspace = true

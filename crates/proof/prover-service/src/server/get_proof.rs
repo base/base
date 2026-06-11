@@ -11,7 +11,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    backends::{OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY},
+    OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY,
     server::{ProverServiceServer, internal, invalid_argument, not_found, record_rpc_result},
 };
 
@@ -101,14 +101,11 @@ impl ProverServiceServer {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use base_prover_service_db::{ApiProofType, ProofRequest, ProofType, ZkVmKind};
     use chrono::Utc;
     use uuid::Uuid;
 
     use super::*;
-    use crate::OpSuccinctStoredExecutionStats;
 
     fn metadata_with_execution_stats(stats: serde_json::Value) -> serde_json::Value {
         let mut metadata = serde_json::Map::new();
@@ -158,15 +155,15 @@ mod tests {
 
     #[test]
     fn dry_run_metadata_requires_marker_and_stats() {
-        let stored_stats = OpSuccinctStoredExecutionStats {
-            total_instruction_cycles: 100,
-            total_sp1_gas: 200,
-            cycle_tracker: HashMap::from([("range".to_string(), 42)]),
-            witness_generation_ms: 12.5,
-            execution_ms: 34.5,
-        };
-        let metadata =
-            metadata_with_execution_stats(serde_json::to_value(stored_stats).expect("serialize"));
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": 100,
+            "total_sp1_gas": 200,
+            "cycle_tracker": {
+                "range": 42
+            },
+            "witness_generation_ms": 12.5,
+            "execution_ms": 34.5
+        }));
 
         assert!(is_dry_run_metadata(&metadata));
         assert!(!is_dry_run_metadata(&serde_json::json!({ "dry_run": true })));
