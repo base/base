@@ -3,6 +3,9 @@
 mod abi;
 pub use abi::IB20;
 
+mod balance;
+pub use balance::B20Balance;
+
 mod core_storage;
 pub use core_storage::B20CoreStorage;
 

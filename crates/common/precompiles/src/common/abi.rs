@@ -29,6 +29,7 @@ sol! {
         error InvalidApprover(address approver);
         error InvalidSpender(address spender);
         error InvalidAmount();
+        error MaxBalanceExceeded(address account, uint256 maxBalance, uint256 attemptedBalance);
         error EmptyFeatureSet();
         error InvalidSupplyCap(uint256 currentSupply, uint256 proposedCap);
         error SupplyCapExceeded(uint256 cap, uint256 attempted);

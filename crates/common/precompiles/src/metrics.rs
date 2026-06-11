@@ -317,6 +317,7 @@ impl BerylErrorKind {
             || BerylErrorClassifier::is_error_selector::<IB20::InvalidApprover>(selector)
             || BerylErrorClassifier::is_error_selector::<IB20::InvalidSpender>(selector)
             || BerylErrorClassifier::is_error_selector::<IB20::InvalidAmount>(selector)
+            || BerylErrorClassifier::is_error_selector::<IB20::MaxBalanceExceeded>(selector)
             || BerylErrorClassifier::is_error_selector::<IB20::EmptyFeatureSet>(selector)
             || BerylErrorClassifier::is_error_selector::<IB20::InvalidSupplyCap>(selector)
             || BerylErrorClassifier::is_error_selector::<IB20::SupplyCapExceeded>(selector)
