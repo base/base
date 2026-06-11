@@ -163,13 +163,15 @@ impl<T: TxManager> BondTransactionSubmitter for ChallengeSubmitter<T> {
             .catch_unwind()
             .await
             .unwrap_or_else(|payload| {
-                let message = if let Some(message) = payload.downcast_ref::<&str>() {
-                    (*message).to_owned()
-                } else if let Some(message) = payload.downcast_ref::<String>() {
-                    message.clone()
-                } else {
-                    "non-string panic payload".to_owned()
-                };
+                let message = payload.downcast_ref::<&str>().map_or_else(
+                    || {
+                        payload.downcast_ref::<String>().map_or_else(
+                            || "non-string panic payload".to_owned(),
+                            |message| message.clone(),
+                        )
+                    },
+                    |message| (*message).to_owned(),
+                );
                 error!(panic = %message, "bond transaction task panicked");
                 Err(ChallengeSubmitError::BondTaskPanicked { message })
             });
