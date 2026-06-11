@@ -1054,7 +1054,11 @@ where
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
             }
             ProofDispatchAttempt::BuildFailed(error) => {
-                warn!(target_block, error = %error, "Failed to build proof request");
+                error!(
+                    target_block,
+                    error = %error,
+                    "Failed to build proof request for root retry"
+                );
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
             }
             ProofDispatchAttempt::DispatchFailed(error) => {
@@ -1127,6 +1131,7 @@ where
             ProofDispatchAttempt::BuildFailed(error) => {
                 warn!(target_block, error = %error, "Failed to build discard retry proof request");
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
+                state.retry_sessions.remove(&target_block);
             }
             ProofDispatchAttempt::DispatchFailed(error) => {
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
@@ -1189,6 +1194,9 @@ mod tests {
     #[derive(Debug)]
     struct NoopRecovery;
 
+    #[derive(Debug)]
+    struct FailingL1;
+
     #[async_trait]
     impl ProofCollectorRecoveryProvider for NoopRecovery {
         async fn recover_latest_state(
@@ -1196,6 +1204,58 @@ mod tests {
             _cache: &mut Option<ProofRecoveryCache>,
         ) -> Result<RecoveredState, ProposerError> {
             Ok(recovered(0))
+        }
+    }
+
+    #[async_trait]
+    impl L1Provider for FailingL1 {
+        async fn block_number(&self) -> base_proof_rpc::RpcResult<u64> {
+            Ok(1000)
+        }
+
+        async fn header_by_number(
+            &self,
+            _: Option<u64>,
+        ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
+            Err(base_proof_rpc::RpcError::Transport("simulated L1 outage".into()))
+        }
+
+        async fn header_by_hash(
+            &self,
+            _: B256,
+        ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
+            unimplemented!("tests do not fetch L1 headers by hash")
+        }
+
+        async fn block_receipts(
+            &self,
+            _: B256,
+        ) -> base_proof_rpc::RpcResult<Vec<alloy_rpc_types_eth::TransactionReceipt>> {
+            unimplemented!("tests do not fetch receipts")
+        }
+
+        async fn code_at(
+            &self,
+            _: Address,
+            _: Option<u64>,
+        ) -> base_proof_rpc::RpcResult<alloy_primitives::Bytes> {
+            unimplemented!("tests do not fetch code")
+        }
+
+        async fn call_contract(
+            &self,
+            _: Address,
+            _: alloy_primitives::Bytes,
+            _: Option<u64>,
+        ) -> base_proof_rpc::RpcResult<alloy_primitives::Bytes> {
+            unimplemented!("tests do not call contracts")
+        }
+
+        async fn get_balance(
+            &self,
+            _: Address,
+        ) -> base_proof_rpc::RpcResult<alloy_primitives::U256> {
+            Ok(alloy_primitives::U256::ZERO)
         }
     }
 
@@ -1221,9 +1281,18 @@ mod tests {
     fn make_orchestrator(
         block_interval: u64,
     ) -> ProofCollectorOrchestrator<MockL1, MockL2, MockRollupClient, NoopRecovery> {
+        make_orchestrator_with_l1(Arc::new(MockL1 { latest_block_number: 1000 }), block_interval)
+    }
+
+    fn make_orchestrator_with_l1<L1>(
+        l1: Arc<L1>,
+        block_interval: u64,
+    ) -> ProofCollectorOrchestrator<L1, MockL2, MockRollupClient, NoopRecovery>
+    where
+        L1: L1Provider + 'static,
+    {
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::new(MockProofRequester::default());
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup_client = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
@@ -1325,6 +1394,32 @@ mod tests {
         let orchestrator = make_orchestrator(0);
 
         assert_eq!(orchestrator.next_target_block(100), None);
+    }
+
+    #[tokio::test]
+    async fn discard_retry_build_failure_removes_stale_retry_session() {
+        let orchestrator = make_orchestrator_with_l1(Arc::new(FailingL1), 100);
+        let target_block = 200;
+        let mut state = ProofCollectorState::new();
+        state.retry_sessions.insert(target_block, "stale-failed-session".to_owned());
+        state.discard_retry_counts.insert(target_block, 1);
+        let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
+
+        orchestrator
+            .dispatch_discard_retry(
+                target_block,
+                &recovered(100),
+                B256::repeat_byte(0xaa),
+                &mut state,
+                &mut cache,
+                true,
+            )
+            .await;
+
+        assert!(!state.retry_sessions.contains_key(&target_block));
+        assert_eq!(state.discard_retry_counts.get(&target_block).copied(), Some(1));
+        assert!(state.retry_counts.is_empty());
+        assert!(cache.is_some());
     }
 
     /// Restart/recovery: the collector derives the prover-service session id
