@@ -630,4 +630,144 @@ mod tests {
             assert_eq!(handler.len(), Err(BasePrecompileError::under_overflow()));
         });
     }
+
+    #[test]
+    fn test_vec_truncate_unpacked() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(400u64);
+            let handler = VecHandler::<U256>::new(len_slot, address, ctx);
+
+            let vals: Vec<U256> = (0..5).map(U256::from).collect();
+            for &v in &vals {
+                handler.push(v).unwrap();
+            }
+            assert_eq!(handler.len().unwrap(), 5);
+
+            // truncate to 3 — elements 3 and 4 should be cleared.
+            handler.truncate(3).unwrap();
+            assert_eq!(handler.len().unwrap(), 3);
+
+            let data_start = calc_data_slot(len_slot);
+            let slot3 = U256::handle(data_start + U256::from(3), LayoutCtx::FULL, address, ctx)
+                .read()
+                .unwrap();
+            let slot4 = U256::handle(data_start + U256::from(4), LayoutCtx::FULL, address, ctx)
+                .read()
+                .unwrap();
+            assert_eq!(slot3, U256::ZERO, "vacated slot 3 must be cleared");
+            assert_eq!(slot4, U256::ZERO, "vacated slot 4 must be cleared");
+
+            // remaining elements are intact.
+            for i in 0..3 {
+                assert_eq!(handler.at(i).unwrap().unwrap().read().unwrap(), U256::from(i));
+            }
+
+            // truncate past current length is a no-op.
+            handler.truncate(10).unwrap();
+            assert_eq!(handler.len().unwrap(), 3);
+        });
+    }
+
+    #[test]
+    fn test_vec_truncate_packed_boundary_slot() {
+        // Vec<u8>: 32 elements per slot.  Push 35 elements; truncate to 33.
+        // Slot 0 (indices 0-31): fully kept.
+        // Slot 1 (indices 32-34): index 32 kept, indices 33-34 cleared individually.
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(500u64);
+            let handler = VecHandler::<u8>::new(len_slot, address, ctx);
+
+            for i in 0u8..35 {
+                handler.push(i).unwrap();
+            }
+            assert_eq!(handler.len().unwrap(), 35);
+
+            handler.truncate(33).unwrap();
+            assert_eq!(handler.len().unwrap(), 33);
+
+            // Slot 1 must still contain element 32 (offset 0) and have bytes 1-2 cleared.
+            let data_start = calc_data_slot(len_slot);
+            let slot1 = U256::handle(data_start + U256::from(1), LayoutCtx::FULL, address, ctx)
+                .read()
+                .unwrap();
+            // Only byte 0 (element 32 = 0x20) should survive.
+            let expected = gen_word_from(&["0x20"]);
+            assert_eq!(slot1, expected, "boundary slot must retain element 32 only");
+        });
+    }
+
+    #[test]
+    fn test_vec_truncate_packed_full_tail_slots() {
+        // Vec<u8>: 32 elements per slot.  Push 65 elements; truncate to 32.
+        // Slot 0 (indices 0-31): fully kept.
+        // Slot 1 (indices 32-63): fully removed — zeroed in one store.
+        // Slot 2 (index 64): fully removed — zeroed in one store.
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(600u64);
+            let handler = VecHandler::<u8>::new(len_slot, address, ctx);
+
+            for i in 0u8..65 {
+                handler.push(i).unwrap();
+            }
+            assert_eq!(handler.len().unwrap(), 65);
+
+            handler.truncate(32).unwrap();
+            assert_eq!(handler.len().unwrap(), 32);
+
+            let data_start = calc_data_slot(len_slot);
+            let slot1 = U256::handle(data_start + U256::from(1), LayoutCtx::FULL, address, ctx)
+                .read()
+                .unwrap();
+            let slot2 = U256::handle(data_start + U256::from(2), LayoutCtx::FULL, address, ctx)
+                .read()
+                .unwrap();
+            assert_eq!(slot1, U256::ZERO, "fully-removed slot 1 must be zeroed");
+            assert_eq!(slot2, U256::ZERO, "fully-removed slot 2 must be zeroed");
+
+            // slot 0 must be fully intact.
+            let slot0 = U256::handle(data_start, LayoutCtx::FULL, address, ctx).read().unwrap();
+            let expected = gen_word_from(&[
+                "0x1f", "0x1e", "0x1d", "0x1c", "0x1b", "0x1a", "0x19", "0x18", "0x17", "0x16",
+                "0x15", "0x14", "0x13", "0x12", "0x11", "0x10", "0x0f", "0x0e", "0x0d", "0x0c",
+                "0x0b", "0x0a", "0x09", "0x08", "0x07", "0x06", "0x05", "0x04", "0x03", "0x02",
+                "0x01", "0x00",
+            ]);
+            assert_eq!(slot0, expected, "slot 0 must be fully intact after truncate");
+        });
+    }
+
+    #[test]
+    fn test_vec_clear() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(700u64);
+            let handler = VecHandler::<U256>::new(len_slot, address, ctx);
+
+            for i in 0u64..4 {
+                handler.push(U256::from(i)).unwrap();
+            }
+            assert_eq!(handler.len().unwrap(), 4);
+
+            handler.clear().unwrap();
+            assert_eq!(handler.len().unwrap(), 0);
+            assert!(handler.is_empty().unwrap());
+
+            let data_start = calc_data_slot(len_slot);
+            for i in 0u64..4 {
+                let slot_val =
+                    U256::handle(data_start + U256::from(i), LayoutCtx::FULL, address, ctx)
+                        .read()
+                        .unwrap();
+                assert_eq!(slot_val, U256::ZERO, "slot {i} must be cleared after clear()");
+            }
+
+            // push-after-clear must work correctly.
+            handler.push(U256::from(42u64)).unwrap();
+            assert_eq!(handler.len().unwrap(), 1);
+            assert_eq!(handler.at(0).unwrap().unwrap().read().unwrap(), U256::from(42u64));
+        });
+    }
 }
