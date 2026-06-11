@@ -911,6 +911,10 @@ where
                             )
                             .await;
                         }
+                    } else {
+                        Metrics::pipeline_retries()
+                            .set(state.retry_counts.values().sum::<u32>() as f64);
+                        return ProofCollectorTickResult::Restart;
                     }
                     break;
                 }
@@ -1182,7 +1186,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        proof_adapter::ProofRequesterDispatcher,
+        proof_adapter::{ProofRequesterDispatcher, ProposerProofAdapter},
         proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
         proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
         test_utils::{
@@ -1420,6 +1424,76 @@ mod tests {
         assert_eq!(state.discard_retry_counts.get(&target_block).copied(), Some(1));
         assert!(state.retry_counts.is_empty());
         assert!(cache.is_some());
+    }
+
+    #[tokio::test]
+    async fn tick_returns_restart_when_failed_session_exhausts_retries() {
+        let proof_requester = Arc::new(MockProofRequester::default());
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(target_block as u8);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro);
+        proof_requester
+            .failed_sessions
+            .lock()
+            .unwrap()
+            .insert(session_id, "simulated proof failure".to_owned());
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(target_block, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let collector = ProofCollector::target_poller_aws_nitro(
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            Arc::clone(&rollup_client),
+        );
+        let dispatcher = ProofDispatcher::aws_nitro(
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            Arc::clone(&l1),
+            l2,
+            Arc::clone(&rollup_client),
+            ProofDispatcherConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+        let submitter = ProofSubmitter::new(
+            Arc::new(MockOutputProposer),
+            rollup_client,
+            l1,
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                block_interval: 100,
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        );
+        let orchestrator = ProofCollectorOrchestrator::new(
+            collector,
+            dispatcher,
+            submitter,
+            Arc::new(NoopRecovery),
+            ProofCollectorRuntimeConfig {
+                block_interval: 100,
+                max_retries: 1,
+                submit_timeout: std::time::Duration::from_secs(60),
+            },
+        );
+        let mut state = ProofCollectorState::new();
+        let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
+        let cancel = CancellationToken::new();
+
+        let result =
+            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+
+        assert_eq!(result, ProofCollectorTickResult::Restart);
+        assert!(cache.is_none());
+        assert!(state.retry_counts.is_empty());
     }
 
     /// Restart/recovery: the collector derives the prover-service session id
