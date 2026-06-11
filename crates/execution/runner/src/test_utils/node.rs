@@ -97,11 +97,6 @@ impl LocalNode {
         // that reth 2.3.0 now consults during state-root/proof work.
         node_config.engine.persistence_threshold = 0;
 
-        // Keep the harness on the sequential BAL path as well so these tests continue exercising
-        // the Base helpers rather than reth's parallel BAL internals.
-        node_config.engine.bal_parallel_execution_disabled = true;
-        node_config.engine.bal_parallel_state_root_disabled = true;
-
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
