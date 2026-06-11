@@ -204,7 +204,7 @@ where
     }
 
     fn requires_nonce_check(&self) -> bool {
-        self.eip8130_nonce_channel_key().is_none()
+        self.as_eip8130().is_none_or(|signed| signed.tx().nonce_key.is_zero())
     }
 }
 
@@ -459,17 +459,50 @@ mod tests {
 
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{TxKind, U256};
-    use base_common_consensus::{BasePrimitives, BaseTransactionSigned, TxDeposit};
+    use alloy_primitives::{Bytes, TxKind, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use base_common_chains::ChainConfig;
+    use base_common_consensus::{
+        BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTransactionSigned,
+        Eip8130Constants, Eip8130Signed, TxDeposit, TxEip8130,
+    };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
-        TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
-        validate::EthTransactionValidatorBuilder,
+        PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
+        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
     };
 
     use crate::{BasePooledTransaction, BaseTransactionValidator};
+
+    fn signer() -> PrivateKeySigner {
+        PrivateKeySigner::random()
+    }
+
+    fn eip8130_pooled(nonce_key: U256) -> BasePooledTransaction {
+        let signer = signer();
+        let tx = TxEip8130 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            sender: None,
+            nonce_key,
+            nonce_sequence: 0,
+            expiry: if nonce_key == Eip8130Constants::NONCE_KEY_MAX { 5 } else { 0 },
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
     #[tokio::test]
     async fn validate_base_transaction() {
         let chain_spec = Arc::new(BaseChainSpec::mainnet());
@@ -506,5 +539,12 @@ mod tests {
             _ => panic!("Expected invalid transaction"),
         };
         assert_eq!(err.to_string(), "transaction type not supported");
+    }
+
+    #[test]
+    fn nonce_free_eip8130_skips_protocol_nonce_check() {
+        assert!(eip8130_pooled(U256::ZERO).requires_nonce_check());
+        assert!(!eip8130_pooled(U256::from(1)).requires_nonce_check());
+        assert!(!eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX).requires_nonce_check());
     }
 }
