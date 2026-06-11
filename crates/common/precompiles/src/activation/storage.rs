@@ -487,6 +487,23 @@ mod tests {
         );
     }
 
+    /// A zero-address caller must be rejected even when the admin is also configured as
+    /// `Address::ZERO`. This prevents deposit transactions with `msg.sender == Address::ZERO` from
+    /// toggling activation state on a misconfigured chain.
+    #[test]
+    fn zero_address_caller_with_zero_admin_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(Address::ZERO);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).activate(FEATURE, Some(Address::ZERO))
+        })
+        .unwrap_err();
+
+        assert!(matches!(err, BasePrecompileError::Revert(_)));
+        assert_activated(&mut storage, false);
+    }
+
     /// End-to-end test: activate a feature, then deactivate it through `dispatch`. Deactivation
     /// clears the feature storage slot (nonzero to zero SSTORE), which earns an EIP-3529 refund
     /// that must appear in `PrecompileOutput::gas_refunded`.
@@ -532,22 +549,5 @@ mod tests {
 
         assert!(output.is_success());
         assert_eq!(output.gas_refunded, 0, "writing to a zero slot earns no refund");
-    }
-
-    /// A zero-address caller must be rejected even when the admin is also configured as
-    /// `Address::ZERO`. This prevents deposit transactions with `msg.sender == Address::ZERO` from
-    /// toggling activation state on a misconfigured chain.
-    #[test]
-    fn zero_address_caller_with_zero_admin_is_rejected() {
-        let mut storage = HashMapStorageProvider::new(1);
-        storage.set_caller(Address::ZERO);
-
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).activate(FEATURE, Some(Address::ZERO))
-        })
-        .unwrap_err();
-
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-        assert_activated(&mut storage, false);
     }
 }
