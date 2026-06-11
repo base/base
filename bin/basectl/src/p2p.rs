@@ -193,13 +193,22 @@ async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) ->
     let mut peer_ids = list_banned_peers(&cl_rpc).await?;
     peer_ids.sort();
 
-    if !peer_ids.is_empty() {
-        let prompt =
-            format!("Unban all {} banned CL peers through {cl_rpc}? [y/N] ", peer_ids.len());
-        if !confirm(&prompt, yes)? {
-            println!("aborted");
-            return Ok(());
+    if peer_ids.is_empty() {
+        if json {
+            print_peer_action(
+                &PeerActionJson::cl_bulk(&config.name, PeerAction::UnbanAll, vec![]),
+                json,
+            )?;
+        } else {
+            println!("no peers are currently banned");
         }
+        return Ok(());
+    }
+
+    let prompt = format!("Unban all {} banned CL peers through {cl_rpc}? [y/N] ", peer_ids.len());
+    if !confirm(&prompt, yes)? {
+        println!("aborted");
+        return Ok(());
     }
 
     let mut results = Vec::with_capacity(peer_ids.len());
