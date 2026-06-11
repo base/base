@@ -4,15 +4,17 @@
 //! responses through ad hoc field access.
 
 use base_prover_service_protocol::{
+    BackendSession as ProtocolBackendSession, BackendSessionState as ProtocolBackendSessionState,
     ProofJob as ProtocolProofJob, ProofJobStatus as ProtocolProofJobStatus,
     ProofResult as ProtocolProofResult, ProofStatus as ProtocolProofStatus,
-    ProofSummary as ProtocolProofSummary, ProofType as ProtocolProofType, SnarkGroth16ProofResult,
-    TeeKind as ProtocolTeeKind, ZkProofResult, ZkVm as ProtocolZkVm,
+    ProofSummary as ProtocolProofSummary, ProofType as ProtocolProofType,
+    SessionType as ProtocolSessionType, SnarkGroth16ProofResult, TeeKind as ProtocolTeeKind,
+    ZkProofResult, ZkVm as ProtocolZkVm,
 };
 
 use crate::{
-    ApiProofType, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem, ProofStatus,
-    ProofType, TeeKind, ZkVmKind,
+    ApiProofType, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem, ProofSession,
+    ProofStatus, ProofType, SessionStatus, SessionType, TeeKind, ZkVmKind,
 };
 
 /// Errors raised while converting stored database state into protocol types.
@@ -133,6 +135,52 @@ impl ProofStatus {
             ProtocolProofStatus::Succeeded => vec![Self::Succeeded],
             ProtocolProofStatus::Failed => vec![Self::Failed],
         }
+    }
+}
+
+impl From<ProtocolSessionType> for SessionType {
+    fn from(session_type: ProtocolSessionType) -> Self {
+        match session_type {
+            ProtocolSessionType::Stark => Self::Stark,
+            ProtocolSessionType::Snark => Self::Snark,
+        }
+    }
+}
+
+impl From<SessionType> for ProtocolSessionType {
+    fn from(session_type: SessionType) -> Self {
+        match session_type {
+            SessionType::Stark => Self::Stark,
+            SessionType::Snark => Self::Snark,
+        }
+    }
+}
+
+impl From<ProtocolBackendSessionState> for SessionStatus {
+    fn from(state: ProtocolBackendSessionState) -> Self {
+        match state {
+            ProtocolBackendSessionState::Submitting => Self::Submitting,
+            ProtocolBackendSessionState::Running => Self::Running,
+            ProtocolBackendSessionState::Completed => Self::Completed,
+            ProtocolBackendSessionState::Failed => Self::Failed,
+        }
+    }
+}
+
+impl From<SessionStatus> for ProtocolBackendSessionState {
+    fn from(status: SessionStatus) -> Self {
+        match status {
+            SessionStatus::Submitting => Self::Submitting,
+            SessionStatus::Running => Self::Running,
+            SessionStatus::Completed => Self::Completed,
+            SessionStatus::Failed => Self::Failed,
+        }
+    }
+}
+
+impl From<ProofSession> for ProtocolBackendSession {
+    fn from(session: ProofSession) -> Self {
+        Self { backend_session_id: session.backend_session_id, state: session.status.into() }
     }
 }
 

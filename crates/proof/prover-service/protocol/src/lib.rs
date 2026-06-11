@@ -12,10 +12,12 @@ pub use session::ProofSessionId;
 
 mod types;
 pub use types::{
-    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse, HeartbeatRequest,
-    HeartbeatResponse, ListProofsRequest, ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
-    ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
-    ProofSummary, ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    BackendSession, BackendSessionState, GetNextProofRequest, GetNextProofResponse,
+    GetProofRequest, GetProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+    HeartbeatRequest, HeartbeatResponse, ListProofsRequest, ListProofsResponse,
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind,
+    ProofResult, ProofStatus, ProofSummary, ProofType, ProveBlockRangeRequest,
+    ProveBlockRangeResponse, RecordProofSessionRequest, RecordProofSessionResponse, SessionType,
     SnarkGroth16ProofRequest, SnarkGroth16ProofResult, TeeKind, TeeProofRequest, TeeProofResult,
     WorkerSubmitProofRequest, WorkerSubmitProofResponse, ZkProofRequest, ZkProofResult, ZkVm,
 };
