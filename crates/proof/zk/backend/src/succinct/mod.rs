@@ -3,6 +3,12 @@
 //! Each backend implements [`base_proof_zk_host::ZkProver`] for a different SP1
 //! execution target.
 
+mod provider;
+pub use provider::{OpSuccinctWitnessProvider, WitnessParams};
+
+mod utils;
+pub use utils::L1HeadCalculator;
+
 mod dry_run;
 pub use dry_run::{DRY_RUN_SNARK_PREFIX, DryRunZkProver};
 

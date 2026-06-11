@@ -13,11 +13,29 @@ workspace = true
 
 [dependencies]
 # base
+base-proof-rpc.workspace = true
 base-proof-zk-host.workspace = true
+base-common-network.workspace = true
 base-prover-service-protocol.workspace = true
+base-proof-succinct-host-utils.workspace = true
+base-proof-succinct-ethereum-host-utils.workspace = true
+
+# network
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+alloy-primitives.workspace = true
+
+# sp1
+sp1-sdk.workspace = true
 
 # async
 async-trait.workspace = true
+
+# error handling
+anyhow.workspace = true
+
+# observability
+tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
