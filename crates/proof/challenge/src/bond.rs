@@ -937,16 +937,16 @@ impl<C: Clock> BondManager<C> {
                     return Ok(None);
                 }
             }
-        } else {
-            ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
-                .increment(1);
-            info!(game = %game_address, status = ?status, "game already resolved");
-            // Status is immutable after resolution — cache it so that
-            // try_anchor_update (called later this tick) can skip the
-            // redundant RPC round-trip.
-            if let Some(g) = self.tracked.get_mut(&game_address) {
-                g.cached_status = Some(status);
-            }
+        }
+
+        ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
+            .increment(1);
+        info!(game = %game_address, status = ?status, "game already resolved");
+        // Status is immutable after resolution — cache it so that
+        // try_anchor_update (called later this tick) can skip the
+        // redundant RPC round-trip.
+        if let Some(g) = self.tracked.get_mut(&game_address) {
+            g.cached_status = Some(status);
         }
 
         // Re-read the onchain bondRecipient — resolve may have changed it
@@ -1123,12 +1123,12 @@ impl<C: Clock> BondManager<C> {
     }
 
     /// Constructs the pending unlock phase.
-    pub fn awaiting_unlock(handle: BondTxHandle) -> BondPhase {
+    pub const fn awaiting_unlock(handle: BondTxHandle) -> BondPhase {
         BondPhase::AwaitingUnlock { handle }
     }
 
     /// Constructs the pending withdraw phase.
-    pub fn awaiting_withdraw(handle: BondTxHandle) -> BondPhase {
+    pub const fn awaiting_withdraw(handle: BondTxHandle) -> BondPhase {
         BondPhase::AwaitingWithdraw { handle }
     }
 
@@ -1385,17 +1385,14 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) {
-        let should_skip = match self.tracked.get(&game_address) {
-            Some(game) => {
-                game.anchor_update_complete
-                    || (game.cached_status.is_none()
-                        && matches!(
-                            game.phase,
-                            BondPhase::NeedsResolve | BondPhase::AwaitingResolve { .. }
-                        ))
-            }
-            None => true,
-        };
+        let should_skip = self.tracked.get(&game_address).is_none_or(|game| {
+            game.anchor_update_complete
+                || (game.cached_status.is_none()
+                    && matches!(
+                        game.phase,
+                        BondPhase::NeedsResolve | BondPhase::AwaitingResolve { .. }
+                    ))
+        });
         if should_skip {
             return;
         }
