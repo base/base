@@ -24,6 +24,7 @@ use tokio::sync::{Semaphore, oneshot};
 
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]
 #[cfg_attr(test, rpc(server, client, namespace = "debug"))]
+/// RPC trait for the `debug_executePayload` endpoint.
 pub trait DebugExecutionWitnessApi<Attributes> {
     /// Executes a payload and returns the execution witness.
     #[method(name = "executePayload")]
