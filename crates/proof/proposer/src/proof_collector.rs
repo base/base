@@ -68,6 +68,8 @@ pub struct ProofCollectorRuntimeConfig {
 /// Mutable collector-side orchestration state.
 #[derive(Debug, Default)]
 pub struct ProofCollectorState {
+    /// Recovered chain state that the current cursor was derived from.
+    pub recovered: Option<RecoveredState>,
     /// Latest block the collector has submitted through.
     pub cursor: Option<RecoveredState>,
     /// Per-target proof/dispatch retry counts.
@@ -76,6 +78,10 @@ pub struct ProofCollectorState {
     pub discard_retry_counts: HashMap<u64, u32>,
     /// Active retry-specific prover-service sessions by target block.
     pub retry_sessions: HashMap<u64, String>,
+    /// Targets whose root-derived proof was discarded and need a retry-specific session.
+    pub pending_discard_roots: HashMap<u64, B256>,
+    /// Terminal failed sessions already counted while waiting for replacement dispatch.
+    pub counted_failed_sessions: HashMap<u64, String>,
 }
 
 /// Result of one collector tick.
@@ -668,6 +674,8 @@ impl ProofCollectorState {
         self.retry_counts.retain(|&target, _| target > recovered_block);
         self.discard_retry_counts.retain(|&target, _| target > recovered_block);
         self.retry_sessions.retain(|&target, _| target > recovered_block);
+        self.pending_discard_roots.retain(|&target, _| target > recovered_block);
+        self.counted_failed_sessions.retain(|&target, _| target > recovered_block);
     }
 
     /// Records a proof failure and returns whether retrying is still allowed.
@@ -769,7 +777,8 @@ where
     ) -> ProofCollectorTickResult {
         state.prune_recovered(recovered.l2_block_number);
 
-        if state.cursor.is_none_or(|cursor| cursor.l2_block_number < recovered.l2_block_number) {
+        if state.recovered != Some(recovered) || state.cursor.is_none() {
+            state.recovered = Some(recovered);
             state.cursor = Some(recovered);
         }
 
@@ -792,6 +801,27 @@ where
                 break;
             }
 
+            if let Some(claimed_l2_output_root) =
+                state.pending_discard_roots.get(&target_block).copied()
+            {
+                if !self
+                    .dispatch_discard_retry(
+                        target_block,
+                        &current,
+                        claimed_l2_output_root,
+                        state,
+                        cache,
+                        true,
+                    )
+                    .await
+                {
+                    Metrics::pipeline_retries()
+                        .set(state.retry_counts.values().sum::<u32>() as f64);
+                    return ProofCollectorTickResult::Restart;
+                }
+                break;
+            }
+
             let poll = if let Some(session_id) = state.retry_sessions.get(&target_block).cloned() {
                 self.collector.poll_session(target_block, session_id).await
             } else {
@@ -810,6 +840,8 @@ where
                         ProofSubmitEffect::Submitted => {
                             state.retry_sessions.remove(&target_block);
                             state.discard_retry_counts.remove(&target_block);
+                            state.pending_discard_roots.remove(&target_block);
+                            state.counted_failed_sessions.remove(&target_block);
                             if let Some(cached) = cache.as_ref() {
                                 state.cursor = Some(cached.state);
                                 if cached.state.l2_block_number > current.l2_block_number {
@@ -893,12 +925,19 @@ where
                     );
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
                         .increment(1);
-                    if state.handle_proof_failure(
-                        target_block,
-                        error,
-                        self.runtime.max_retries,
-                        cache,
-                    ) {
+                    let already_counted = state
+                        .counted_failed_sessions
+                        .get(&target_block)
+                        .is_some_and(|id| id == &session_id);
+                    if already_counted
+                        || state.handle_proof_failure(
+                            target_block,
+                            error,
+                            self.runtime.max_retries,
+                            cache,
+                        )
+                    {
+                        state.counted_failed_sessions.insert(target_block, session_id.clone());
                         if state
                             .retry_sessions
                             .get(&target_block)
@@ -1083,6 +1122,7 @@ where
                     "Proof request accepted by prover service"
                 );
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
+                state.counted_failed_sessions.remove(&target_block);
             }
             ProofDispatchAttempt::BuildFailed(error) => {
                 error!(
@@ -1138,11 +1178,14 @@ where
             );
             state.discard_retry_counts.remove(&target_block);
             state.retry_sessions.remove(&target_block);
+            state.pending_discard_roots.remove(&target_block);
+            state.counted_failed_sessions.remove(&target_block);
             *cache = None;
             return false;
         }
 
         let attempt = current_attempt + 1;
+        state.pending_discard_roots.insert(target_block, claimed_l2_output_root);
         match self
             .dispatcher
             .dispatch_discard_retry(
@@ -1164,6 +1207,8 @@ where
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
                 state.discard_retry_counts.insert(target_block, attempt);
                 state.retry_sessions.insert(target_block, dispatched.session_id);
+                state.pending_discard_roots.remove(&target_block);
+                state.counted_failed_sessions.remove(&target_block);
             }
             ProofDispatchAttempt::BuildFailed(error) => {
                 warn!(target_block, error = %error, "Failed to build discard retry proof request");
@@ -1485,6 +1530,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tick_resets_cursor_when_recovery_rewinds() {
+        let orchestrator = make_orchestrator(100);
+        let mut state = ProofCollectorState::new();
+        state.recovered = Some(recovered(300));
+        state.cursor = Some(recovered(500));
+        let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
+        let cancel = CancellationToken::new();
+
+        let result = orchestrator.tick(&mut state, &mut cache, recovered(100), 200, &cancel).await;
+
+        assert_eq!(result, ProofCollectorTickResult::Continue);
+        assert_eq!(state.recovered, Some(recovered(100)));
+        assert_eq!(state.cursor, Some(recovered(100)));
+    }
+
+    #[tokio::test]
     async fn discard_retry_build_failure_removes_stale_retry_session() {
         let orchestrator = make_orchestrator_with_l1(Arc::new(FailingL1), 100);
         let target_block = 200;
@@ -1505,8 +1566,86 @@ mod tests {
             .await;
 
         assert!(!state.retry_sessions.contains_key(&target_block));
+        assert_eq!(
+            state.pending_discard_roots.get(&target_block).copied(),
+            Some(B256::repeat_byte(0xaa))
+        );
         assert_eq!(state.discard_retry_counts.get(&target_block).copied(), Some(1));
         assert!(state.retry_counts.is_empty());
+        assert!(cache.is_some());
+    }
+
+    #[tokio::test]
+    async fn failed_session_is_counted_once_until_replacement_is_accepted() {
+        let proof_requester = Arc::new(MockProofRequester::default());
+        let l1 = Arc::new(FailingL1);
+        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(target_block as u8);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro);
+        proof_requester
+            .failed_sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.clone(), "simulated proof failure".to_owned());
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(target_block, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let collector = ProofCollector::target_poller_aws_nitro(
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            Arc::clone(&rollup_client),
+        );
+        let dispatcher = ProofDispatcher::aws_nitro(
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            l1,
+            l2,
+            Arc::clone(&rollup_client),
+            ProofDispatcherConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+        let submitter = ProofSubmitter::new(
+            Arc::new(MockOutputProposer),
+            rollup_client,
+            Arc::new(FailingL1),
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                block_interval: 100,
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        );
+        let orchestrator = ProofCollectorOrchestrator::new(
+            collector,
+            dispatcher,
+            submitter,
+            Arc::new(NoopRecovery),
+            ProofCollectorRuntimeConfig {
+                block_interval: 100,
+                max_retries: 2,
+                submit_timeout: std::time::Duration::from_secs(60),
+            },
+        );
+        let mut state = ProofCollectorState::new();
+        let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
+        let cancel = CancellationToken::new();
+
+        let first =
+            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+        let second =
+            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+
+        assert_eq!(first, ProofCollectorTickResult::Continue);
+        assert_eq!(second, ProofCollectorTickResult::Continue);
+        assert_eq!(state.retry_counts.get(&target_block).copied(), Some(1));
+        assert_eq!(state.counted_failed_sessions.get(&target_block), Some(&session_id));
         assert!(cache.is_some());
     }
 
