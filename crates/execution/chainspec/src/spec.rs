@@ -304,6 +304,7 @@ impl BaseChainSpec {
             "Jovian" => Some("jovian"),
             "Osaka" | "Azul" => Some("azul"),
             "Beryl" => Some("beryl"),
+            "Cobalt" => Some("cobalt"),
             _ => None,
         }
     }
@@ -395,6 +396,7 @@ impl BaseChainSpec {
             BaseUpgrade::Jovian,
             BaseUpgrade::Azul,
             BaseUpgrade::Beryl,
+            BaseUpgrade::Cobalt,
         ] {
             self.set_fork(fork, ForkCondition::Never);
         }
@@ -505,6 +507,9 @@ impl BaseChainSpec {
             }
             "beryl" | "baseberyl" | "v2" => {
                 hardforks.insert(BaseUpgrade::Beryl, condition);
+            }
+            "cobalt" | "basecobalt" | "v3" => {
+                hardforks.insert(BaseUpgrade::Cobalt, condition);
             }
             _ => return false,
         }
@@ -922,16 +927,21 @@ mod tests {
 
         assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
 
         RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "azul", 42);
+        RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "cobalt", 84);
 
         assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
         assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
 
         RuntimeHardForkRegistry::clear_activation_timestamp(chain_id, "azul");
+        RuntimeHardForkRegistry::clear_activation_timestamp(chain_id, "cobalt");
 
         assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
 
         RuntimeHardForkRegistry::clear_chain(chain_id);
     }
@@ -945,11 +955,14 @@ mod tests {
             .genesis(Genesis::default())
             .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
             .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
             .build();
 
         RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "azul", 42);
+        RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "cobalt", 84);
 
         assert_eq!(spec.fork_id(&Head { number: 0, timestamp: 41, ..Default::default() }).next, 42);
+        assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
 
         RuntimeHardForkRegistry::clear_chain(chain_id);
     }
@@ -1242,15 +1255,19 @@ mod tests {
 
         chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
+        chain_spec.set_fork(BaseUpgrade::Cobalt, ForkCondition::Never);
         assert!(chain_spec.set_hardfork_activation_timestamp("azul", 42));
+        assert!(chain_spec.set_hardfork_activation_timestamp("cobalt", 84));
 
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
 
         chain_spec.clear_hardfork_activation_timestamps();
 
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+        assert_eq!(chain_spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
     }
 
     #[test]

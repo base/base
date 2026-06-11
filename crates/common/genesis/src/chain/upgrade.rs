@@ -315,6 +315,7 @@ impl HardForkConfig {
         "jovian",
         "azul",
         "beryl",
+        "cobalt",
     ];
 
     /// Clears all timestamp-based hardfork activation times.
@@ -347,6 +348,7 @@ impl HardForkConfig {
             Some("jovian") => self.jovian_time = None,
             Some("azul") => self.base.azul = None,
             Some("beryl") => self.base.beryl = None,
+            Some("cobalt") => self.base.cobalt = None,
             _ => return false,
         }
 
@@ -385,6 +387,7 @@ impl HardForkConfig {
             Some("jovian") => self.jovian_time,
             Some("azul") => self.base.azul,
             Some("beryl") => self.base.beryl,
+            Some("cobalt") => self.base.cobalt,
             _ => return None,
         };
 
@@ -411,6 +414,7 @@ impl HardForkConfig {
             Some("jovian") => self.jovian_time = Some(timestamp),
             Some("azul") => self.base.azul = Some(timestamp),
             Some("beryl") => self.base.beryl = Some(timestamp),
+            Some("cobalt") => self.base.cobalt = Some(timestamp),
             _ => return false,
         }
 
@@ -432,6 +436,7 @@ impl HardForkConfig {
             "jovian" => Some("jovian"),
             "azul" | "baseazul" | "v1" => Some("azul"),
             "beryl" | "baseberyl" | "v2" => Some("beryl"),
+            "cobalt" | "basecobalt" | "v3" => Some("cobalt"),
             _ => None,
         }
     }
@@ -604,16 +609,19 @@ mod tests {
         assert!(hardforks.set_activation_timestamp("pectra-blob-schedule", 2));
         assert!(hardforks.set_activation_timestamp("base_azul", 3));
         assert!(hardforks.set_activation_timestamp("v2", 4));
-        assert!(!hardforks.set_activation_timestamp("unknown", 5));
+        assert!(hardforks.set_activation_timestamp("v3", 5));
+        assert!(!hardforks.set_activation_timestamp("unknown", 6));
 
         assert_eq!(hardforks.regolith_time, Some(1));
         assert_eq!(hardforks.pectra_blob_schedule_time, Some(2));
         assert_eq!(hardforks.base.azul, Some(3));
         assert_eq!(hardforks.base.beryl, Some(4));
+        assert_eq!(hardforks.base.cobalt, Some(5));
 
         assert!(hardforks.clear_activation_timestamp("base_azul"));
         assert_eq!(hardforks.base.azul, None);
         assert_eq!(hardforks.base.beryl, Some(4));
+        assert_eq!(hardforks.base.cobalt, Some(5));
         assert!(!hardforks.clear_activation_timestamp("unknown"));
 
         hardforks.clear_activation_timestamps();
@@ -634,6 +642,7 @@ mod runtime_tests {
 
         assert!(RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "base_azul", 42));
         assert!(RuntimeHardForkRegistry::clear_activation_timestamp(chain_id, "beryl"));
+        assert!(RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "v3", 84));
         assert!(!RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "unknown", 10));
 
         assert_eq!(
@@ -643,6 +652,10 @@ mod runtime_tests {
         assert_eq!(
             RuntimeHardForkRegistry::activation(chain_id, "beryl"),
             Some(HardForkActivation::Never)
+        );
+        assert_eq!(
+            RuntimeHardForkRegistry::activation(chain_id, "cobalt"),
+            Some(HardForkActivation::Timestamp(84))
         );
         assert_eq!(RuntimeHardForkRegistry::activation(chain_id, "unknown"), None);
 
@@ -656,10 +669,12 @@ mod runtime_tests {
 
         assert!(overrides.clear_activation_timestamp("canyon"));
         assert!(overrides.set_activation_timestamp("azul", 42));
+        assert!(overrides.set_activation_timestamp("cobalt", 84));
 
         hardforks.apply_activation_overrides(&overrides);
 
         assert_eq!(hardforks.canyon_time, None);
         assert_eq!(hardforks.base.azul, Some(42));
+        assert_eq!(hardforks.base.cobalt, Some(84));
     }
 }

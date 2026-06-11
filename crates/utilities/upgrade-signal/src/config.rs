@@ -299,6 +299,10 @@ impl UpgradeSignalConfig {
         &self,
         signal: &UpgradeSignal,
     ) -> Result<(), UpgradeSignalError> {
+        if signal.activation_timestamp == 0 {
+            return Ok(());
+        }
+
         if self.supports_signal_protocol_version(signal) {
             return Ok(());
         }
@@ -587,5 +591,19 @@ mod tests {
 
         // beryl is observed but not applied, so its newer protocol requirement must not abort.
         assert!(config.validate_applied_schedule_protocol_versions(&application_schedule).is_ok());
+    }
+
+    #[test]
+    fn applied_validation_allows_clear_with_unsupported_protocol_version() {
+        let config =
+            UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"), "azul");
+        let schedule = UpgradeSignalSchedule::new(vec![UpgradeSignal {
+            hardfork_id: "azul".to_string(),
+            activation_timestamp: 0,
+            protocol_version: config.node_protocol_version + U256::from(1),
+            l1_block_number: 1,
+        }]);
+
+        assert!(config.validate_applied_schedule_protocol_versions(&schedule).is_ok());
     }
 }

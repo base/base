@@ -127,9 +127,7 @@ impl Upgrades for RollupConfig {
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Cobalt => self
-                .upgrades
-                .base
-                .cobalt
+                .hardfork_activation_timestamp("cobalt")
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
         }
@@ -180,8 +178,13 @@ mod tests {
         cfg.l2_chain_id = alloy_chains::Chain::from_id(CHAIN_ID);
         RuntimeHardForkRegistry::clear_chain(CHAIN_ID);
         RuntimeHardForkRegistry::set_activation_timestamp(CHAIN_ID, "azul", ACTIVATION);
+        RuntimeHardForkRegistry::set_activation_timestamp(CHAIN_ID, "cobalt", ACTIVATION + 1);
 
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Timestamp(ACTIVATION));
+        assert_eq!(
+            cfg.upgrade_activation(BaseUpgrade::Cobalt),
+            ForkCondition::Timestamp(ACTIVATION + 1)
+        );
 
         RuntimeHardForkRegistry::clear_chain(CHAIN_ID);
     }
