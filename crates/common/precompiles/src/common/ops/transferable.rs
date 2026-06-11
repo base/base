@@ -2,7 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{B20Guards, B20PolicyType, IB20, Token, TokenAccounting};
+use crate::{B20Balance, B20Guards, B20PolicyType, IB20, Token, TokenAccounting};
 
 /// ERC-20 transfer, approval, and memo-decorated transfer operations.
 ///
@@ -54,12 +54,16 @@ pub trait Transferable: Token {
                 needed: amount,
             }));
         }
+        if from == to {
+            return self
+                .accounting_mut()
+                .emit_event(IB20::Transfer { from, to, amount }.encode_log_data());
+        }
         let new_from_balance =
             from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        self.accounting_mut().set_balance(from, new_from_balance)?;
         let to_balance = self.accounting().balance_of(to)?;
-        let new_to_balance =
-            to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        let new_to_balance = B20Balance::checked_add(to, to_balance, amount)?;
+        self.accounting_mut().set_balance(from, new_from_balance)?;
         self.accounting_mut().set_balance(to, new_to_balance)?;
         self.accounting_mut().emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
     }
@@ -155,8 +159,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        B20PausableFeature, B20PolicyType, IB20, InMemoryPolicy, InMemoryTokenAccounting,
-        PolicyRegistryStorage, TestToken, Token, TokenAccounting, Transferable,
+        B20Balance, B20PausableFeature, B20PolicyType, IB20, InMemoryPolicy,
+        InMemoryTokenAccounting, PolicyRegistryStorage, TestToken, Token, TokenAccounting,
+        Transferable,
     };
 
     const ALICE: Address = Address::repeat_byte(0xaa);
@@ -480,6 +485,39 @@ mod tests {
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::ZERO);
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn transfer_allows_max_receiver_balance_boundary() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::ONE);
+        accounting.balances.insert(BOB, B20Balance::MAX - U256::ONE);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        token.transfer(ALICE, BOB, U256::ONE, true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::ZERO);
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), B20Balance::MAX);
+    }
+
+    #[test]
+    fn transfer_reverts_when_receiver_balance_exceeds_max() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::ONE);
+        accounting.balances.insert(BOB, B20Balance::MAX);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.transfer(ALICE, BOB, U256::ONE, true).unwrap_err(),
+            BasePrecompileError::revert(IB20::MaxBalanceExceeded {
+                account: BOB,
+                maxBalance: B20Balance::MAX,
+                attemptedBalance: B20Balance::MAX + U256::ONE,
+            })
+        );
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::ONE);
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), B20Balance::MAX);
+        assert!(token.accounting().events.is_empty());
     }
 
     #[test]
