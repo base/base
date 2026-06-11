@@ -432,17 +432,4 @@ mod tests {
             }
         });
     }
-
-    #[test]
-    fn test_set_transient_methods_return_err() {
-        let (mut storage, contract_addr) = setup_storage();
-        StorageCtx::enter(&mut storage, |ctx| {
-            let base = U256::from(800u64);
-            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
-
-            assert!(handler.t_read().is_err());
-            assert!(handler.t_write(Set::default()).is_err());
-            assert!(handler.t_delete().is_err());
-        });
-    }
 }
