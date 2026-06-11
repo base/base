@@ -196,7 +196,7 @@ where
     ) -> ProofDispatchAttempt {
         let expected_session_id = ProposerProofAdapter::tee_session_id_for_root(
             claimed_l2_output_root,
-            TeeKind::AwsNitro,
+            self.dispatcher.tee_kind(),
         );
         let request =
             match self.build_request(target_block, recovered, claimed_l2_output_root).await {
