@@ -16,7 +16,7 @@ use tracing::info;
 base_cli_utils::define_log_args!("BASE_PROVER_SERVICE");
 base_cli_utils::define_metrics_args!("BASE_PROVER_SERVICE", 7302);
 
-const DEFAULT_RPC_MAX_BODY_BYTES: u32 = 256 * 1024 * 1024;
+const DEFAULT_RPC_MAX_BODY_BYTES: u32 = 32 * 1024 * 1024;
 
 /// Prover service binary.
 #[derive(Parser)]
@@ -160,7 +160,7 @@ impl ServiceArgs {
             self.max_proof_retries,
             server_config.worker_queue,
         );
-        let status_handle = tokio::spawn(async move {
+        let mut status_handle = tokio::spawn(async move {
             status_poller.run().await;
         });
 
@@ -206,7 +206,7 @@ impl ServiceArgs {
         let worker_server_handle = worker_rpc_server.start(worker_rpc_module);
 
         let result: eyre::Result<()> = tokio::select! {
-            res = status_handle => match res {
+            res = &mut status_handle => match res {
                 Ok(()) => Err(eyre!("status poller exited unexpectedly")),
                 Err(e) => Err(eyre!("status poller panicked: {e}")),
             },
@@ -217,6 +217,8 @@ impl ServiceArgs {
                 Err(eyre!("worker RPC server stopped unexpectedly"))
             },
         };
+
+        status_handle.abort();
 
         result
     }
