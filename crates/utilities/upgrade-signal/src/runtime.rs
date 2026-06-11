@@ -201,19 +201,20 @@ pub struct UpgradeSignalRuntimeApplier;
 impl UpgradeSignalRuntimeApplier {
     /// Applies a schedule to any [`HardForkActivationSink`], returning an application summary.
     ///
-    /// This is the single application loop shared by startup (rollup config / execution chain
-    /// spec) and runtime (registry) paths.
-    pub fn apply_schedule_to_sink<S: HardForkActivationSink>(
+    /// This stages the full batch on a cloned sink and only commits it back on success, so a
+    /// failed later activation cannot leave earlier mutations partially applied.
+    pub fn apply_schedule_to_sink<S: HardForkActivationSink + Clone>(
         chain_id: u64,
         schedule: &UpgradeSignalSchedule,
         sink: &mut S,
     ) -> Result<UpgradeSignalApplySummary, S::Error> {
         let mut summary = UpgradeSignalApplySummary::new(chain_id, schedule);
+        let mut staged_sink = sink.clone();
 
         for signal in &schedule.signals {
             let activation =
                 HardForkActivation::from_timestamp(signal.positive_activation_timestamp());
-            let supported = sink.apply_activation(&signal.hardfork_id, activation)?;
+            let supported = staged_sink.apply_activation(&signal.hardfork_id, activation)?;
 
             let action = if !supported {
                 UpgradeSignalApplyAction::Ignored
@@ -237,7 +238,8 @@ impl UpgradeSignalRuntimeApplier {
             });
         }
 
-        sink.finalize()?;
+        staged_sink.finalize()?;
+        *sink = staged_sink;
 
         Ok(summary)
     }
@@ -317,7 +319,7 @@ impl UpgradeSignalRefresher {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
-    use base_common_genesis::RuntimeHardForkRegistry;
+    use base_common_genesis::{HardForkActivationSink, RuntimeHardForkRegistry};
 
     use super::*;
     use crate::UpgradeSignal;
@@ -411,5 +413,49 @@ mod tests {
         UpgradeSignalRuntimeValidation::fail_closed()
             .validate_schedule(9_000_006, &schedule(&[("azul", 42), ("beryl", 0)]))
             .unwrap();
+    }
+
+    #[derive(Debug, Clone, Default, Eq, PartialEq)]
+    struct RecordingSink {
+        applied: Vec<(String, HardForkActivation)>,
+        fail_on_hardfork_id: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    struct RecordingSinkError;
+
+    impl HardForkActivationSink for RecordingSink {
+        type Error = RecordingSinkError;
+
+        fn apply_activation(
+            &mut self,
+            hardfork_id: &str,
+            activation: HardForkActivation,
+        ) -> Result<bool, Self::Error> {
+            if self.fail_on_hardfork_id.as_deref() == Some(hardfork_id) {
+                return Err(RecordingSinkError);
+            }
+
+            self.applied.push((hardfork_id.to_string(), activation));
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn apply_schedule_to_sink_is_transactional() {
+        let mut sink = RecordingSink {
+            applied: vec![("existing".to_string(), HardForkActivation::Timestamp(1))],
+            fail_on_hardfork_id: Some("beryl".to_string()),
+        };
+
+        let error = UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
+            9_000_007,
+            &schedule(&[("azul", 42), ("beryl", 84)]),
+            &mut sink,
+        )
+        .unwrap_err();
+
+        assert_eq!(error, RecordingSinkError);
+        assert_eq!(sink.applied, vec![("existing".to_string(), HardForkActivation::Timestamp(1))]);
     }
 }

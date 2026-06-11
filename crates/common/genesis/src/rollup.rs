@@ -321,7 +321,7 @@ impl RollupConfig {
 
         is_cobalt_active,
         is_first_cobalt_block,
-        [upgrades.base.cobalt],
+        [hardfork_activation_timestamp("cobalt")],
         "Cobalt";
     }
 
@@ -897,13 +897,16 @@ mod tests {
 
         crate::RuntimeHardForkRegistry::clear_activation_timestamp(chain_id, "canyon");
         crate::RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "azul", 42);
+        crate::RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "cobalt", 84);
 
         assert!(!cfg.is_canyon_active(10));
         assert!(cfg.is_base_azul_active(42));
+        assert!(cfg.is_cobalt_active(84));
 
         let materialized = cfg.with_runtime_hardfork_overrides();
         assert_eq!(materialized.hardforks.canyon_time, None);
         assert_eq!(materialized.hardforks.base.azul, Some(42));
+        assert_eq!(materialized.hardforks.base.cobalt, Some(84));
 
         crate::RuntimeHardForkRegistry::clear_chain(chain_id);
     }
