@@ -156,19 +156,30 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
-        let s = self
-            .internals
-            .sload(address, key)
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+        let checkpoint = self.internals.checkpoint();
+        let result = (|| {
+            let s = self
+                .internals
+                .sload(address, key)
+                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
 
-        // EIP-2929: warm base cost always charged
-        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
-        // dynamic cold penalty
-        if s.is_cold {
-            self.deduct_gas(self.gas_params.cold_storage_additional_cost())?;
+            // EIP-2929: warm base cost always charged
+            self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
+            // dynamic cold penalty
+            if s.is_cold {
+                self.deduct_gas(self.gas_params.cold_storage_additional_cost())?;
+            }
+
+            Ok(s.data)
+        })();
+
+        if result.is_ok() {
+            self.internals.checkpoint_commit();
+        } else {
+            self.internals.checkpoint_revert(checkpoint);
         }
 
-        Ok(s.data)
+        result
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
@@ -463,6 +474,64 @@ mod tests {
                 gas_params
                     .warm_storage_read_cost()
                     .saturating_add(gas_params.cold_storage_additional_cost())
+            );
+        }
+    }
+
+    /// An OOG `sload` must not leave the slot warmed in the journal.
+    ///
+    /// We give the provider exactly `warm_storage_read_cost - 1` gas so that the
+    /// cold read fails (it cannot even afford the warm base cost). A second provider
+    /// with unlimited gas then reads the same slot: if the journal still carries the
+    /// spurious warm entry the second read would be charged only `warm_storage_read_cost`,
+    /// but the slot was never successfully accessed so it must still be cold.
+    #[test]
+    fn sload_oog_does_not_warm_slot() {
+        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+        let address = Address::repeat_byte(0x77);
+        let key = U256::from(5);
+
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+
+        // First provider: gas just below warm_storage_read_cost → OOG on sload.
+        {
+            let input = PrecompileInput {
+                data: &[],
+                gas: gas_params.warm_storage_read_cost() - 1,
+                reservoir: 0,
+                caller: Address::ZERO,
+                value: U256::ZERO,
+                target_address: address,
+                is_static: false,
+                bytecode_address: address,
+                internals: EvmInternals::from_context(&mut ctx),
+            };
+            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
+            assert_eq!(provider.sload(address, key), Err(BasePrecompileError::OutOfGas));
+        }
+
+        // Second provider: unlimited gas. The slot must still be cold, so the full
+        // cold read cost (warm_base + cold_additional) must be charged.
+        {
+            let input = PrecompileInput {
+                data: &[],
+                gas: u64::MAX,
+                reservoir: 0,
+                caller: Address::ZERO,
+                value: U256::ZERO,
+                target_address: address,
+                is_static: false,
+                bytecode_address: address,
+                internals: EvmInternals::from_context(&mut ctx),
+            };
+            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
+            assert_eq!(provider.sload(address, key).unwrap(), U256::ZERO);
+            assert_eq!(
+                provider.gas_used(),
+                gas_params
+                    .warm_storage_read_cost()
+                    .saturating_add(gas_params.cold_storage_additional_cost()),
+                "slot must still be cold after a failed OOG read"
             );
         }
     }

@@ -40,6 +40,11 @@ impl ProofRequesterDispatcher {
         Self { requester, tee_kind }
     }
 
+    /// Returns the TEE implementation used by this dispatcher.
+    pub const fn tee_kind(&self) -> TeeKind {
+        self.tee_kind
+    }
+
     /// Submits a TEE proof request to prover service without waiting for completion.
     pub async fn dispatch_tee(
         &self,

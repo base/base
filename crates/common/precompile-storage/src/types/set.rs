@@ -157,13 +157,14 @@ where
 {
     /// Creates a new handler for the set at the given base slot.
     pub const fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+        // positions_slot = base_slot + 1. Base slots are keccak256-derived and never U256::MAX,
+        // so overflow is unreachable in practice.
+        let positions_slot = base_slot
+            .checked_add(U256::ONE)
+            .expect("slot overflow: base slot is keccak256-derived and cannot be U256::MAX");
         Self {
             values: VecHandler::new(base_slot, address, storage),
-            positions: MappingHandler::new(
-                base_slot.checked_add(U256::ONE).expect("slot overflow"),
-                address,
-                storage,
-            ),
+            positions: MappingHandler::new(positions_slot, address, storage),
             base_slot,
             address,
             storage,

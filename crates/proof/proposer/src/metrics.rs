@@ -27,7 +27,7 @@ base_metrics::define_metrics! {
     pipeline_retries: gauge,
 
     #[describe("Total proof dispatch outcomes from the prover service")]
-    #[label(name = "outcome", default = ["accepted", "failed"])]
+    #[label(name = "outcome", default = ["accepted", "failed", "build_failed"])]
     proof_dispatch_total: counter,
 
     #[describe("Total proof collection outcomes returned by the proof collector")]
@@ -89,6 +89,10 @@ impl Metrics {
 
     /// Label value for a failed dispatch outcome.
     pub const DISPATCH_OUTCOME_FAILED: &str = "failed";
+
+    /// Label value for a dispatch attempt that failed before reaching the
+    /// prover service while building the request from local RPC data.
+    pub const DISPATCH_OUTCOME_BUILD_FAILED: &str = "build_failed";
 
     /// Label value for a ready (successfully collected) proof.
     pub const COLLECTION_OUTCOME_READY: &str = "ready";

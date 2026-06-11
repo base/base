@@ -189,25 +189,29 @@ where
     }
 
     #[inline]
-    fn compute_handler(
+    fn try_compute_handler(
         data_start: U256,
         address: Address,
         storage: crate::StorageCtx<'a>,
         index: usize,
-    ) -> T::Handler<'a> {
+    ) -> Result<T::Handler<'a>> {
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = calc_element_loc(index, T::BYTES);
             (
-                data_start.checked_add(U256::from(location.offset_slots)).expect("slot overflow"),
+                data_start
+                    .checked_add(U256::from(location.offset_slots))
+                    .ok_or(BasePrecompileError::SlotOverflow)?,
                 LayoutCtx::packed(location.offset_bytes),
             )
         } else {
             (
-                data_start.checked_add(U256::from(index * T::SLOTS)).expect("slot overflow"),
+                data_start
+                    .checked_add(U256::from(index * T::SLOTS))
+                    .ok_or(BasePrecompileError::SlotOverflow)?,
                 LayoutCtx::FULL,
             )
         };
-        T::handle(slot, layout_ctx, address, storage)
+        Ok(T::handle(slot, layout_ctx, address, storage))
     }
 
     /// Returns a handler for the element at the given index, or `None` if out of bounds.
@@ -216,11 +220,9 @@ where
             return Ok(None);
         }
         let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
-        Ok(Some(
-            self.cache.get_or_insert(&index, || {
-                Self::compute_handler(data_start, address, storage, index)
-            }),
-        ))
+        Ok(Some(self.cache.get_or_try_insert(&index, || {
+            Self::try_compute_handler(data_start, address, storage, index)
+        })?))
     }
 
     /// Pushes a new element to the end of the vector.
@@ -235,7 +237,7 @@ where
             return Err(BasePrecompileError::Fatal("Vec is at max capacity".into()));
         }
         let mut elem_slot =
-            Self::compute_handler(self.data_slot(), self.address, self.storage, length);
+            Self::try_compute_handler(self.data_slot(), self.address, self.storage, length)?;
         elem_slot.write(value)?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
         length_slot.write(U256::from(length + 1))
@@ -254,7 +256,7 @@ where
         }
         let last_index = length - 1;
         let mut elem_slot =
-            Self::compute_handler(self.data_slot(), self.address, self.storage, last_index);
+            Self::try_compute_handler(self.data_slot(), self.address, self.storage, last_index)?;
         let element = elem_slot.read()?;
         elem_slot.delete()?;
         let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
@@ -294,7 +296,9 @@ where
             // it in one read-modify-write rather than one per element.
             let boundary_slot_end = (first_full_tail_slot * elems_per_slot).min(old_len);
             if boundary_slot_end > new_len {
-                let boundary_slot_addr = data_start + U256::from(new_len / elems_per_slot);
+                let boundary_slot_addr = data_start
+                    .checked_add(U256::from(new_len / elems_per_slot))
+                    .ok_or(BasePrecompileError::SlotOverflow)?;
                 let current = self.storage.sload(self.address, boundary_slot_addr)?;
                 let mut combined_clear_mask = U256::ZERO;
                 for index in new_len..boundary_slot_end {
@@ -311,14 +315,17 @@ where
             // Zero all fully-removed tail slots in a single store each.
             let last_slot = calc_packed_slot_count(old_len, T::BYTES);
             for slot_idx in first_full_tail_slot..last_slot {
-                let slot_addr = data_start + U256::from(slot_idx);
+                let slot_addr = data_start
+                    .checked_add(U256::from(slot_idx))
+                    .ok_or(BasePrecompileError::SlotOverflow)?;
                 self.storage.sstore(self.address, slot_addr, U256::ZERO)?;
             }
         } else {
             // Unpacked types: each element occupies one or more full slots;
             // delegate to the element handler's delete to zero every occupied slot.
             for index in new_len..old_len {
-                let mut elem = Self::compute_handler(data_start, self.address, self.storage, index);
+                let mut elem =
+                    Self::try_compute_handler(data_start, self.address, self.storage, index)?;
                 elem.delete()?;
             }
         }
@@ -356,9 +363,9 @@ where
             ));
         }
         let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
-        Ok(self
-            .cache
-            .get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index)))
+        self.cache.get_or_try_insert(&index, || {
+            Self::try_compute_handler(data_start, address, storage, index)
+        })
     }
 
     /// Mutable variant of [`at_with_len`].
@@ -374,9 +381,9 @@ where
             ));
         }
         let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
-        Ok(self.cache.get_or_insert_mut(&index, || {
-            Self::compute_handler(data_start, address, storage, index)
-        }))
+        self.cache.get_or_try_insert_mut(&index, || {
+            Self::try_compute_handler(data_start, address, storage, index)
+        })
     }
 }
 

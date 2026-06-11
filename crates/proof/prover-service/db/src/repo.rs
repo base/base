@@ -787,7 +787,8 @@ impl ProofRequestRepo {
 
         let maybe_row = sqlx::query(
             r#"
-            SELECT retry_count, status, start_block_number, number_of_blocks_to_prove,
+            SELECT retry_count, status, job_status, lock_expires_at,
+                   start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, prover_address, l1_head,
                    intermediate_root_interval
             FROM proof_requests
@@ -805,7 +806,14 @@ impl ProofRequestRepo {
         };
 
         let status_str: &str = row.get("status");
-        if status_str != ProofStatus::Pending.as_str() {
+        let job_status_str: &str = row.get("job_status");
+        let lock_expires_at: Option<chrono::DateTime<Utc>> = row.get("lock_expires_at");
+        let is_pending = status_str == ProofStatus::Pending.as_str();
+        let is_migration_parked_running = status_str == ProofStatus::Running.as_str()
+            && job_status_str == ProofJobStatus::Claimed.as_str()
+            && lock_expires_at.is_none();
+
+        if !is_pending && !is_migration_parked_running {
             tx.rollback().await?;
             return Ok(RetryOutcome::Skipped);
         }
@@ -837,8 +845,14 @@ impl ProofRequestRepo {
                 r#"
                 UPDATE proof_requests
                 SET status = $1,
+                    job_status = 'FAILED',
                     error_message = $2,
-                    completed_at = NOW()
+                    completed_at = NOW(),
+                    worker_id = NULL,
+                    lock_id = NULL,
+                    lock_expires_at = NULL,
+                    claimed_at = NULL,
+                    last_heartbeat_at = NULL
                 WHERE id = $3
                 "#,
             )
@@ -1260,8 +1274,9 @@ impl ProofRequestRepo {
         rows.iter().map(row_to_proof_request).collect()
     }
 
-    /// Get proof requests that are stuck in PENDING without a running session.
-    /// These are likely orphaned due to crashes before session creation.
+    /// Get proof requests that are stuck in PENDING without a running session,
+    /// or migration-parked RUNNING requests that were never claimed by a worker.
+    /// PENDING requests are likely orphaned due to crashes before session creation.
     /// Only checks for active (RUNNING) sessions so that retried requests
     /// with old COMPLETED/FAILED sessions are still detected as stuck.
     pub async fn get_stuck_requests(&self, stuck_timeout_mins: i32) -> Result<Vec<ProofRequest>> {
@@ -1277,13 +1292,21 @@ impl ProofRequestRepo {
                 pr.intermediate_root_interval,
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
             FROM proof_requests pr
-            WHERE pr.status = 'PENDING'
-              AND pr.proof_type IS NOT NULL
-              AND pr.updated_at < NOW() - INTERVAL '1 minute' * $1
-              AND NOT EXISTS (
-                  SELECT 1 FROM proof_sessions ps
-                  WHERE ps.proof_request_id = pr.id
-                    AND ps.status IN ('SUBMITTING', 'RUNNING')
+            WHERE pr.updated_at < NOW() - INTERVAL '1 minute' * $1
+              AND (
+                  (
+                      pr.status = 'PENDING'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM proof_sessions ps
+                          WHERE ps.proof_request_id = pr.id
+                            AND ps.status IN ('SUBMITTING', 'RUNNING')
+                      )
+                  )
+                  OR (
+                      pr.status = 'RUNNING'
+                      AND pr.job_status = 'CLAIMED'
+                      AND pr.lock_expires_at IS NULL
+                  )
               )
             ORDER BY pr.created_at ASC
             "#,

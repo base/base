@@ -5791,6 +5791,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-zk-backend"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base-proof-zk-host",
+ "base-prover-service-protocol",
+ "tokio",
+]
+
+[[package]]
+name = "base-proof-zk-host"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base-prover-service-protocol",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "base-proofs-extension"
 version = "0.0.0"
 dependencies = [
@@ -5931,43 +5951,34 @@ dependencies = [
 name = "base-prover-service"
 version = "0.0.0"
 dependencies = [
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-rpc-types 2.0.5",
  "anyhow",
- "async-trait",
- "axum 0.8.9",
- "base-common-network",
- "base-proof-primitives",
- "base-proof-rpc",
- "base-proof-succinct-client-utils",
- "base-proof-succinct-elfs",
- "base-proof-succinct-ethereum-host-utils",
- "base-proof-succinct-host-utils",
- "base-proof-succinct-proof-utils",
  "base-prover-service-db",
  "base-prover-service-protocol",
- "bincode 2.0.1",
  "chrono",
- "governor",
  "jsonrpsee",
  "metrics",
- "nonzero_ext",
- "reqwest 0.13.3",
  "rstest",
- "serde",
  "serde_json",
- "sp1-cluster-artifact",
- "sp1-cluster-common",
- "sp1-cluster-utils",
- "sp1-prover-types",
- "sp1-sdk",
  "tokio",
- "tower 0.5.3",
- "tower-http",
  "tracing",
  "tracing-subscriber 0.3.23",
  "uuid",
+]
+
+[[package]]
+name = "base-prover-service-bin"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-prover-service",
+ "base-prover-service-db",
+ "base-prover-service-protocol",
+ "clap",
+ "eyre",
+ "jsonrpsee",
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -6015,6 +6026,14 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "base-prover-service-worker-host"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base-prover-service-protocol",
 ]
 
 [[package]]

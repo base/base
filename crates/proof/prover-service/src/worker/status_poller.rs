@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use base_prover_service_db::{FailExpiredProofJobs, ProofJob, ProofRequestRepo, RetryOutcome};
 use tokio::time::sleep;
-use tracing::{Instrument, error, info, warn};
+use tracing::{error, info, warn};
 
-use crate::{metrics, proof_request_manager::ProofRequestManager};
+use crate::metrics;
 
 /// Server-side worker queue tuning shared by worker claims and the expired-claim reaper.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,19 +26,13 @@ impl Default for WorkerQueueConfig {
     }
 }
 
-/// Background worker that polls proving backends for status updates
-/// on RUNNING proof requests.
+/// Background worker that maintains the worker queue.
 ///
-/// The poller runs in a loop, querying the database for all RUNNING proof requests,
-/// checking their status with the proving backend, and updating the database when
-/// jobs complete (SUCCEEDED) or fail (FAILED).
-///
-/// Additionally, it detects stuck requests (PENDING/RUNNING without active sessions)
-/// and retries or fails them after a timeout to prevent orphaned jobs.
+/// The poller detects stale queued requests and expired worker claims, then
+/// retries or fails them according to the configured retry/reclaim budgets.
 #[derive(Debug, Clone)]
 pub struct StatusPoller {
     repo: ProofRequestRepo,
-    manager: ProofRequestManager,
     poll_interval_secs: u64,
     stuck_timeout_mins: i32,
     max_proof_retries: i32,
@@ -51,7 +45,6 @@ impl StatusPoller {
     /// `max_proof_retries=<n>`) with the given worker queue tuning.
     pub fn new(
         repo: ProofRequestRepo,
-        manager: ProofRequestManager,
         poll_interval_secs: u64,
         stuck_timeout_mins: i32,
         max_proof_retries: i32,
@@ -64,7 +57,6 @@ impl StatusPoller {
 
         Self {
             repo,
-            manager,
             poll_interval_secs,
             stuck_timeout_mins,
             max_proof_retries,
@@ -87,31 +79,6 @@ impl StatusPoller {
     }
 
     async fn poll_once(&self) -> anyhow::Result<()> {
-        let running_requests = self.repo.get_running_proof_requests().await?;
-
-        if !running_requests.is_empty() {
-            info!(count = running_requests.len(), "Polling status for RUNNING proof requests");
-
-            for proof_request in &running_requests {
-                let poll_span = tracing::info_span!(
-                    "poll_proof_status",
-                    proof_request_id = %proof_request.id,
-                );
-                if let Err(e) = self
-                    .manager
-                    .sync_and_update_proof_status(proof_request)
-                    .instrument(poll_span)
-                    .await
-                {
-                    error!(
-                        proof_request_id = %proof_request.id,
-                        error = %e,
-                        "Failed to sync and update proof status"
-                    );
-                }
-            }
-        }
-
         let stuck_requests = self.repo.get_stuck_requests(self.stuck_timeout_mins).await?;
 
         if !stuck_requests.is_empty() {
@@ -122,11 +89,10 @@ impl StatusPoller {
             );
 
             for request in stuck_requests {
-                let proof_type_label =
-                    request.proof_type.map(metrics::proof_type_label).unwrap_or("unknown");
+                let proof_type_label = metrics::api_proof_type_label(request.api_proof_type);
 
                 let error_msg = format!(
-                    "Request stuck in {} state without active session for {}+ minutes",
+                    "Request stuck in {} state for {}+ minutes",
                     request.status, self.stuck_timeout_mins
                 );
 
@@ -156,7 +122,7 @@ impl StatusPoller {
                     Ok(RetryOutcome::Skipped) => {
                         warn!(
                             proof_request_id = %request.id,
-                            "Stuck request no longer PENDING — already claimed or transitioned"
+                            "Stuck request no longer eligible for retry"
                         );
                     }
                     Err(e) => {

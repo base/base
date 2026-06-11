@@ -7,11 +7,11 @@ use base_prover_service_protocol::{
     ZkProofResult, ZkVm,
 };
 use jsonrpsee::core::RpcResult;
-use tracing::{Instrument, info};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    backends::{OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY},
+    OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY,
     server::{ProverServiceServer, internal, invalid_argument, not_found, record_rpc_result},
 };
 
@@ -88,36 +88,7 @@ impl ProverServiceServer {
 
         let (status, result, error_message) = match proof_req.status {
             DbProofStatus::Created | DbProofStatus::Pending => (ProofStatus::Queued, None, None),
-            DbProofStatus::Running => {
-                let sync_span = tracing::info_span!(
-                    "sync_proof_status",
-                    proof_request_id = %proof_request_id,
-                );
-                self.manager
-                    .sync_and_update_proof_status(&proof_req)
-                    .instrument(sync_span)
-                    .await
-                    .map_err(|e| internal(format!("Failed to sync proof status: {e}")))?;
-
-                let updated_proof_req = self
-                    .repo
-                    .get(proof_request_id)
-                    .await
-                    .map_err(|e| internal(format!("Database error: {e}")))?
-                    .ok_or_else(|| not_found(PROOF_REQUEST_NOT_FOUND_MESSAGE))?;
-
-                match updated_proof_req.status {
-                    DbProofStatus::Succeeded => (
-                        ProofStatus::Succeeded,
-                        self.succeeded_result(updated_proof_req).await?,
-                        None,
-                    ),
-                    DbProofStatus::Failed => {
-                        (ProofStatus::Failed, None, updated_proof_req.error_message)
-                    }
-                    _ => (ProofStatus::Running, None, None),
-                }
-            }
+            DbProofStatus::Running => (ProofStatus::Running, None, None),
             DbProofStatus::Succeeded => {
                 (ProofStatus::Succeeded, self.succeeded_result(proof_req).await?, None)
             }
@@ -130,14 +101,11 @@ impl ProverServiceServer {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use base_prover_service_db::{ApiProofType, ProofRequest, ProofType, ZkVmKind};
     use chrono::Utc;
     use uuid::Uuid;
 
     use super::*;
-    use crate::OpSuccinctStoredExecutionStats;
 
     fn metadata_with_execution_stats(stats: serde_json::Value) -> serde_json::Value {
         let mut metadata = serde_json::Map::new();
@@ -187,15 +155,15 @@ mod tests {
 
     #[test]
     fn dry_run_metadata_requires_marker_and_stats() {
-        let stored_stats = OpSuccinctStoredExecutionStats {
-            total_instruction_cycles: 100,
-            total_sp1_gas: 200,
-            cycle_tracker: HashMap::from([("range".to_string(), 42)]),
-            witness_generation_ms: 12.5,
-            execution_ms: 34.5,
-        };
-        let metadata =
-            metadata_with_execution_stats(serde_json::to_value(stored_stats).expect("serialize"));
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": 100,
+            "total_sp1_gas": 200,
+            "cycle_tracker": {
+                "range": 42
+            },
+            "witness_generation_ms": 12.5,
+            "execution_ms": 34.5
+        }));
 
         assert!(is_dry_run_metadata(&metadata));
         assert!(!is_dry_run_metadata(&serde_json::json!({ "dry_run": true })));

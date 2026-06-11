@@ -208,8 +208,8 @@ mod namespaced_layout {
             layout.policy.label.write(long_label.clone()).unwrap();
             layout.policy.balances.at_mut(&owner).write(U256::from(500)).unwrap();
             layout.policy.checkpoints.write([U256::from(1), U256::from(2), U256::from(3)]).unwrap();
-            layout.policy.packed_flags[0].write(0x1111).unwrap();
-            layout.policy.packed_flags[16].write(0x2222).unwrap();
+            layout.policy.packed_flags.at_mut(0).unwrap().unwrap().write(0x1111).unwrap();
+            layout.policy.packed_flags.at_mut(16).unwrap().unwrap().write(0x2222).unwrap();
             layout.policy.amounts.write(amounts.clone()).unwrap();
             layout.total_supply.write(U256::from(1_000)).unwrap();
             layout.policy_owner.write(policy_owner).unwrap();
@@ -217,9 +217,12 @@ mod namespaced_layout {
             assert_eq!(layout.admin.read().unwrap(), owner);
             assert_eq!(layout.policy.label.read().unwrap(), long_label);
             assert_eq!(layout.policy.balances.at(&owner).read().unwrap(), U256::from(500));
-            assert_eq!(layout.policy.checkpoints[2].read().unwrap(), U256::from(3));
-            assert_eq!(layout.policy.packed_flags[0].read().unwrap(), 0x1111);
-            assert_eq!(layout.policy.packed_flags[16].read().unwrap(), 0x2222);
+            assert_eq!(
+                layout.policy.checkpoints.at(2).unwrap().unwrap().read().unwrap(),
+                U256::from(3)
+            );
+            assert_eq!(layout.policy.packed_flags.at(0).unwrap().unwrap().read().unwrap(), 0x1111);
+            assert_eq!(layout.policy.packed_flags.at(16).unwrap().unwrap().read().unwrap(), 0x2222);
             assert_eq!(layout.policy.amounts.read().unwrap(), amounts);
             assert_eq!(layout.total_supply.read().unwrap(), U256::from(1_000));
             assert_eq!(layout.policy_owner.read().unwrap(), policy_owner);
