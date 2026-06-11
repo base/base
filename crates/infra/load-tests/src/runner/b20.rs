@@ -84,14 +84,14 @@ impl LoadRunner {
                 decimals: 6,
             };
 
-            let init_calls: Vec<Bytes> =
-                vec![IB20::updateSupplyCapCall { newSupplyCap: U256::MAX }.abi_encode().into()];
-
+            // Factory sets the cap to `DEFAULT_SUPPLY_CAP` (== `B20_MAX_SUPPLY_CAP`) at
+            // creation, so no init call is needed; an `updateSupplyCap(U256::MAX)` would
+            // revert on builds that clamp the cap to `B20_MAX_SUPPLY_CAP`.
             let create_call = IB20Factory::createB20Call {
                 variant: IB20Factory::B20Variant::ASSET,
                 salt,
                 params: params.abi_encode().into(),
-                initCalls: init_calls,
+                initCalls: Vec::new(),
             };
 
             let tx = TransactionRequest::default()
