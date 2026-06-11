@@ -174,8 +174,10 @@ mod tests {
         const CHAIN_ID: u64 = 9_777_001;
         const ACTIVATION: u64 = 42;
 
-        let mut cfg = RollupConfig::default();
-        cfg.l2_chain_id = alloy_chains::Chain::from_id(CHAIN_ID);
+        let cfg = RollupConfig {
+            l2_chain_id: alloy_chains::Chain::from_id(CHAIN_ID),
+            ..RollupConfig::default()
+        };
         RuntimeHardForkRegistry::clear_chain(CHAIN_ID);
         RuntimeHardForkRegistry::set_activation_timestamp(CHAIN_ID, "azul", ACTIVATION);
         RuntimeHardForkRegistry::set_activation_timestamp(CHAIN_ID, "cobalt", ACTIVATION + 1);
