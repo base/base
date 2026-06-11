@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      base_anvil_ref:
+        description: "base/base-anvil ref to build from"
+        required: false
+        default: base-anvil-fork
       base_std_ref:
         description: "base/base-std ref to smoke test against"
         required: false
@@ -16,6 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || 'base-anvil-fork' }}
   BASE_STD_REF: ${{ github.event.inputs.base_std_ref || 'main' }}
   CARGO_TERM_COLOR: always
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/base-anvil
@@ -79,9 +84,30 @@ jobs:
         run: |
           set -euo pipefail
 
+          fetch_ref() {
+            local url="$1"
+            local ref="$2"
+            local dest="$3"
+
+            git init "$dest"
+            git -C "$dest" remote add origin "$url"
+
+            if git ls-remote --exit-code "$url" "refs/heads/$ref" >/dev/null 2>&1; then
+              git -C "$dest" fetch --depth 1 origin "refs/heads/$ref"
+            elif git ls-remote --exit-code "$url" "refs/tags/$ref" >/dev/null 2>&1; then
+              git -C "$dest" fetch --depth 1 origin "refs/tags/$ref"
+            else
+              git -C "$dest" fetch --depth 1 origin "$ref"
+            fi
+
+            git -C "$dest" checkout --detach FETCH_HEAD
+          }
+
           workdir="$RUNNER_TEMP/base-anvil-package"
           rm -rf "$workdir"
-          git clone --depth 1 https://github.com/base/base-anvil.git "$workdir/base-anvil"
+          mkdir -p "$workdir/base-anvil"
+
+          fetch_ref https://github.com/base/base-anvil.git "$BASE_ANVIL_REF" "$workdir/base-anvil"
           base_anvil_sha="$(git -C "$workdir/base-anvil" rev-parse HEAD)"
 
           echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
@@ -204,6 +230,7 @@ jobs:
             --arg base_ref "$GITHUB_REF_NAME" \
             --arg base_sha "$GITHUB_SHA" \
             --arg anvil_repo "base/base-anvil" \
+            --arg anvil_ref "$BASE_ANVIL_REF" \
             --arg anvil_sha "$BASE_ANVIL_SHA" \
             --arg std_repo "base/base-std" \
             --arg std_ref "$BASE_STD_REF" \
@@ -213,7 +240,7 @@ jobs:
               package: $package,
               platform: $platform,
               base: {repo: $base_repo, ref: $base_ref, sha: $base_sha},
-              base_anvil: {repo: $anvil_repo, sha: $anvil_sha},
+              base_anvil: {repo: $anvil_repo, ref: $anvil_ref, sha: $anvil_sha},
               base_std: {
                 repo: $std_repo,
                 ref: $std_ref,
@@ -314,7 +341,7 @@ jobs:
           primary_tag="sha-$GITHUB_SHA"
           tags=("$REGISTRY_IMAGE:$primary_tag")
 
-          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_STD_REF" == "main" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "base-anvil-fork" && "$BASE_STD_REF" == "main" ]]; then
             tags+=("$REGISTRY_IMAGE:main")
             tags+=("$REGISTRY_IMAGE:main-$commit_date-$short_sha")
           else

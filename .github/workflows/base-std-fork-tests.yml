@@ -10,6 +10,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Pinned base-anvil commit so this job is decoupled from base-anvil-fork
+  # branch movement. Bump in lockstep with base/base's reth/revm version; a
+  # cutover to a new base-anvil (e.g. reth 2.3.0) rides in the same base/base PR.
+  BASE_ANVIL_REF: 85f5a0e2867cb88c55e9af29b348511f91cbc383
   BASE_STD_REF: main
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
@@ -61,7 +65,9 @@ jobs:
           gh repo clone base/base-std "$workdir/base-std" -- \
             --depth 1 --single-branch --branch "$BASE_STD_REF" \
             --recurse-submodules --shallow-submodules
-          git clone --depth 1 https://github.com/base/base-anvil.git "$workdir/base-anvil"
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/base/base-anvil.git "$workdir/base-anvil"
+          git -C "$workdir/base-anvil" checkout --detach "$BASE_ANVIL_REF"
 
           echo "BASE_STD_DIR=$workdir/base-std" >> "$GITHUB_ENV"
           echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
@@ -87,7 +93,7 @@ jobs:
           versions="| Dependency | Ref | Commit |
           |---|---|---|
           | [base-std](https://github.com/base/base-std) | \`${BASE_STD_REF}\` | [\`${BASE_STD_SHA:0:8}\`](https://github.com/base/base-std/commit/${BASE_STD_SHA}) |
-          | [base-anvil](https://github.com/base/base-anvil) | \`default\` | [\`${BASE_ANVIL_SHA:0:8}\`](https://github.com/base/base-anvil/commit/${BASE_ANVIL_SHA}) |"
+          | [base-anvil](https://github.com/base/base-anvil) | \`${BASE_ANVIL_REF}\` | [\`${BASE_ANVIL_SHA:0:8}\`](https://github.com/base/base-anvil/commit/${BASE_ANVIL_SHA}) |"
 
           body=$(printf '%s\n\n%s\n\n%s\n\n[View run](%s)' \
             "${marker}" \
@@ -155,6 +161,7 @@ jobs:
           base_std_sha="${BASE_STD_SHA:-unknown}"
           base_anvil_sha="${BASE_ANVIL_SHA:-unknown}"
           base_std_ref="${BASE_STD_REF:-unknown}"
+          base_anvil_ref="${BASE_ANVIL_REF:-unknown}"
           if [ "${base_std_sha}" != "unknown" ]; then
             base_std_link="[\`${base_std_sha:0:8}\`](https://github.com/base/base-std/commit/${base_std_sha})"
           else
@@ -168,7 +175,7 @@ jobs:
           versions="| Dependency | Ref | Commit |
           |---|---|---|
           | [base-std](https://github.com/base/base-std) | \`${base_std_ref}\` | ${base_std_link} |
-          | [base-anvil](https://github.com/base/base-anvil) | \`default\` | ${base_anvil_link} |"
+          | [base-anvil](https://github.com/base/base-anvil) | \`${base_anvil_ref}\` | ${base_anvil_link} |"
 
           if [ ! -s "$output" ] || [ "$((passed + failed))" -eq 0 ]; then
             body=$(printf '%s\n\n%s\n\n%s\n\n%s' \
