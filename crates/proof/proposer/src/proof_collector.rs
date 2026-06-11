@@ -1103,7 +1103,7 @@ where
 
     /// Dispatches a root-derived retry after a failed prover-service session.
     ///
-    /// Returns `false` when retry accounting is exhausted and the caller should restart.
+    /// Returns `false` when the caller should restart before collecting more proofs.
     pub async fn dispatch_root_retry(
         &self,
         target_block: u64,
@@ -1131,6 +1131,7 @@ where
                     "Failed to build proof request for root retry"
                 );
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
+                return false;
             }
             ProofDispatchAttempt::DispatchFailed(error) => {
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
@@ -1576,7 +1577,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_session_is_counted_once_until_replacement_is_accepted() {
+    async fn root_retry_build_failure_restarts_without_exhausting_retry_budget() {
         let proof_requester = Arc::new(MockProofRequester::default());
         let l1 = Arc::new(FailingL1);
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
@@ -1637,13 +1638,10 @@ mod tests {
         let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
         let cancel = CancellationToken::new();
 
-        let first =
-            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
-        let second =
+        let result =
             orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
 
-        assert_eq!(first, ProofCollectorTickResult::Continue);
-        assert_eq!(second, ProofCollectorTickResult::Continue);
+        assert_eq!(result, ProofCollectorTickResult::Restart);
         assert_eq!(state.retry_counts.get(&target_block).copied(), Some(1));
         assert_eq!(state.counted_failed_sessions.get(&target_block), Some(&session_id));
         assert!(cache.is_some());
