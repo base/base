@@ -6,10 +6,6 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      base_anvil_branch:
-        description: "base/base-anvil branch to build from"
-        required: false
-        default: hh/bump-reth-230
       base_std_ref:
         description: "base/base-std ref to smoke test against"
         required: false
@@ -20,7 +16,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BASE_ANVIL_BRANCH: ${{ github.event.inputs.base_anvil_branch || 'hh/bump-reth-230' }}
   BASE_STD_REF: ${{ github.event.inputs.base_std_ref || 'main' }}
   CARGO_TERM_COLOR: always
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/base-anvil
@@ -86,8 +81,7 @@ jobs:
 
           workdir="$RUNNER_TEMP/base-anvil-package"
           rm -rf "$workdir"
-          git clone --depth 1 --single-branch --branch "$BASE_ANVIL_BRANCH" \
-            https://github.com/base/base-anvil.git "$workdir/base-anvil"
+          git clone --depth 1 https://github.com/base/base-anvil.git "$workdir/base-anvil"
           base_anvil_sha="$(git -C "$workdir/base-anvil" rev-parse HEAD)"
 
           echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
@@ -210,7 +204,6 @@ jobs:
             --arg base_ref "$GITHUB_REF_NAME" \
             --arg base_sha "$GITHUB_SHA" \
             --arg anvil_repo "base/base-anvil" \
-            --arg anvil_branch "$BASE_ANVIL_BRANCH" \
             --arg anvil_sha "$BASE_ANVIL_SHA" \
             --arg std_repo "base/base-std" \
             --arg std_ref "$BASE_STD_REF" \
@@ -220,7 +213,7 @@ jobs:
               package: $package,
               platform: $platform,
               base: {repo: $base_repo, ref: $base_ref, sha: $base_sha},
-              base_anvil: {repo: $anvil_repo, branch: $anvil_branch, sha: $anvil_sha},
+              base_anvil: {repo: $anvil_repo, sha: $anvil_sha},
               base_std: {
                 repo: $std_repo,
                 ref: $std_ref,
@@ -321,7 +314,7 @@ jobs:
           primary_tag="sha-$GITHUB_SHA"
           tags=("$REGISTRY_IMAGE:$primary_tag")
 
-          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_BRANCH" == "hh/bump-reth-230" && "$BASE_STD_REF" == "main" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_STD_REF" == "main" ]]; then
             tags+=("$REGISTRY_IMAGE:main")
             tags+=("$REGISTRY_IMAGE:main-$commit_date-$short_sha")
           else
