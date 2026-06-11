@@ -105,21 +105,14 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
 
         let code_len = code.len();
-        let is_new_account = self.accounts.get(&address).is_none_or(AccountInfo::is_empty);
-        let has_empty_code =
+        let is_new_code =
             self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
-        if has_empty_code {
+        if is_new_code {
             self.deduct_gas(self.gas_params.create_cost())?;
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-        }
-        if is_new_account {
-            self.deduct_state_gas(self.gas_params.create_state_gas())?;
-        }
-        if has_empty_code {
-            self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
 
         let account = self.accounts.entry(address).or_default();
