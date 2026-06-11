@@ -48,8 +48,7 @@ where
     P: BaseProofsStore,
     H: BlockHashReader,
 {
-    /// Executes the pruning logic and returns the pruner output.
-    pub fn run_inner(&self) -> BaseProofStoragePrunerResult {
+    fn run_inner(&self) -> BaseProofStoragePrunerResult {
         let latest_block_opt = self.provider.get_latest_block_number()?;
         if latest_block_opt.is_none() {
             trace!(target: "trie::pruner", "No latest blocks in the proof storage");
