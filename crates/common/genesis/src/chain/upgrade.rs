@@ -6,7 +6,7 @@ use alloc::{
 };
 use core::fmt::Display;
 #[cfg(feature = "std")]
-use std::sync::{OnceLock, RwLock};
+use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Upgrade configuration for Base-specific upgrades.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
@@ -154,36 +154,55 @@ impl RuntimeHardForkRegistry {
         REGISTRY.get_or_init(|| RwLock::new(BTreeMap::new()))
     }
 
+    /// Returns a registry read guard, recovering the inner value if the lock is poisoned.
+    fn read_registry() -> RwLockReadGuard<'static, BTreeMap<u64, HardForkActivationOverrides>> {
+        Self::registry().read().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                target: "runtime_hardfork_registry",
+                access = "read",
+                "recovering poisoned runtime hardfork registry lock"
+            );
+            poisoned.into_inner()
+        })
+    }
+
+    /// Returns a registry write guard, recovering the inner value if the lock is poisoned.
+    fn write_registry() -> RwLockWriteGuard<'static, BTreeMap<u64, HardForkActivationOverrides>> {
+        Self::registry().write().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                target: "runtime_hardfork_registry",
+                access = "write",
+                "recovering poisoned runtime hardfork registry lock"
+            );
+            poisoned.into_inner()
+        })
+    }
+
     /// Returns the runtime activation override for a chain and hardfork ID.
     pub fn activation(chain_id: u64, hardfork_id: &str) -> Option<HardForkActivation> {
-        Self::registry()
-            .read()
-            .expect("runtime hardfork registry poisoned")
+        Self::read_registry()
             .get(&chain_id)
             .and_then(|overrides| overrides.activation(hardfork_id))
     }
 
     /// Returns all runtime activation overrides for a chain.
     pub fn overrides(chain_id: u64) -> Option<HardForkActivationOverrides> {
-        Self::registry().read().expect("runtime hardfork registry poisoned").get(&chain_id).cloned()
+        Self::read_registry().get(&chain_id).cloned()
     }
 
     /// Replaces all runtime activation overrides for a chain.
     pub fn replace_overrides(chain_id: u64, overrides: HardForkActivationOverrides) {
-        Self::registry()
-            .write()
-            .expect("runtime hardfork registry poisoned")
-            .insert(chain_id, overrides);
+        Self::write_registry().insert(chain_id, overrides);
     }
 
     /// Clears all runtime activation overrides for a chain.
     pub fn clear_chain(chain_id: u64) {
-        Self::registry().write().expect("runtime hardfork registry poisoned").remove(&chain_id);
+        Self::write_registry().remove(&chain_id);
     }
 
     /// Removes one runtime activation override for a chain and hardfork ID.
     pub fn remove_activation_override(chain_id: u64, hardfork_id: &str) -> bool {
-        let mut registry = Self::registry().write().expect("runtime hardfork registry poisoned");
+        let mut registry = Self::write_registry();
         let Some(overrides) = registry.get_mut(&chain_id) else {
             return false;
         };
@@ -197,7 +216,7 @@ impl RuntimeHardForkRegistry {
         hardfork_id: &str,
         activation: HardForkActivation,
     ) -> bool {
-        let mut registry = Self::registry().write().expect("runtime hardfork registry poisoned");
+        let mut registry = Self::write_registry();
         let overrides = registry.entry(chain_id).or_default();
         overrides.set_activation(hardfork_id, activation)
     }
