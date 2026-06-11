@@ -250,26 +250,11 @@ impl TestHarness {
 
     /// Build a block using the provided transactions and push it through the engine.
     pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
-        const HEADER_PERSIST_RETRY_ATTEMPTS: usize = 5;
-
-        let mut attempts = 0;
-        let PreparedBlock { parent_hash, new_block_hash, new_block_number } = loop {
-            match self.prepare_unsafe_block(transactions.clone()).await {
-                Ok(prepared_block) => break prepared_block,
-                Err(error)
-                    if error.to_string().contains("does not exist in Headers table")
-                        && attempts < HEADER_PERSIST_RETRY_ATTEMPTS =>
-                {
-                    attempts += 1;
-                    sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
-                }
-                Err(error) => return Err(error),
-            }
-        };
+        let PreparedBlock { parent_hash, new_block_hash, new_block_number } =
+            self.prepare_unsafe_block(transactions).await?;
 
         self.engine.update_forkchoice(parent_hash, new_block_hash, None).await?;
         self.wait_for_header(new_block_hash, new_block_number).await?;
-        sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
 
         Ok(())
     }
