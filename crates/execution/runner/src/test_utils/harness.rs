@@ -253,7 +253,7 @@ impl TestHarness {
         const HEADER_PERSIST_RETRY_ATTEMPTS: usize = 5;
 
         let mut attempts = 0;
-        let PreparedBlock { new_block_hash, new_block_number, .. } = loop {
+        let PreparedBlock { parent_hash, new_block_hash, new_block_number } = loop {
             match self.prepare_unsafe_block(transactions.clone()).await {
                 Ok(prepared_block) => break prepared_block,
                 Err(error)
@@ -267,7 +267,7 @@ impl TestHarness {
             }
         };
 
-        self.engine.update_forkchoice(new_block_hash, new_block_hash, None).await?;
+        self.engine.update_forkchoice(parent_hash, new_block_hash, None).await?;
         self.wait_for_header(new_block_hash, new_block_number).await?;
         sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
 
