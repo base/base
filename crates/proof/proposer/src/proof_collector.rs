@@ -823,15 +823,21 @@ where
                             return ProofCollectorTickResult::Restart;
                         }
                         ProofSubmitEffect::Redispatch { claimed_l2_output_root } => {
-                            self.dispatch_discard_retry(
-                                target_block,
-                                &current,
-                                claimed_l2_output_root,
-                                state,
-                                cache,
-                                true,
-                            )
-                            .await;
+                            if !self
+                                .dispatch_discard_retry(
+                                    target_block,
+                                    &current,
+                                    claimed_l2_output_root,
+                                    state,
+                                    cache,
+                                    true,
+                                )
+                                .await
+                            {
+                                Metrics::pipeline_retries()
+                                    .set(state.retry_counts.values().sum::<u32>() as f64);
+                                return ProofCollectorTickResult::Restart;
+                            }
                             break;
                         }
                     }
@@ -852,15 +858,21 @@ where
                             session_id = %session_id,
                             "Discard retry session missing, dispatching a fresh retry"
                         );
-                        self.dispatch_discard_retry(
-                            target_block,
-                            &current,
-                            claimed_l2_output_root,
-                            state,
-                            cache,
-                            true,
-                        )
-                        .await;
+                        if !self
+                            .dispatch_discard_retry(
+                                target_block,
+                                &current,
+                                claimed_l2_output_root,
+                                state,
+                                cache,
+                                true,
+                            )
+                            .await
+                        {
+                            Metrics::pipeline_retries()
+                                .set(state.retry_counts.values().sum::<u32>() as f64);
+                            return ProofCollectorTickResult::Restart;
+                        }
                     } else {
                         debug!(
                             target_block,
@@ -891,15 +903,21 @@ where
                             .get(&target_block)
                             .is_some_and(|id| id == &session_id)
                         {
-                            self.dispatch_discard_retry(
-                                target_block,
-                                &current,
-                                claimed_l2_output_root,
-                                state,
-                                cache,
-                                false,
-                            )
-                            .await;
+                            if !self
+                                .dispatch_discard_retry(
+                                    target_block,
+                                    &current,
+                                    claimed_l2_output_root,
+                                    state,
+                                    cache,
+                                    false,
+                                )
+                                .await
+                            {
+                                Metrics::pipeline_retries()
+                                    .set(state.retry_counts.values().sum::<u32>() as f64);
+                                return ProofCollectorTickResult::Restart;
+                            }
                         } else {
                             self.dispatch_root_retry(
                                 target_block,
@@ -1086,6 +1104,8 @@ where
     }
 
     /// Dispatches a retry-specific proof request after a discarded proof.
+    ///
+    /// Returns `false` when the discard retry budget is exhausted and the caller should restart.
     pub async fn dispatch_discard_retry(
         &self,
         target_block: u64,
@@ -1094,7 +1114,7 @@ where
         state: &mut ProofCollectorState,
         cache: &mut Option<ProofRecoveryCache>,
         count_dispatch_failure: bool,
-    ) {
+    ) -> bool {
         let current_attempt = state.discard_retry_counts.get(&target_block).copied().unwrap_or(0);
         if current_attempt >= self.runtime.max_retries {
             error!(
@@ -1106,7 +1126,7 @@ where
             state.discard_retry_counts.remove(&target_block);
             state.retry_sessions.remove(&target_block);
             *cache = None;
-            return;
+            return false;
         }
 
         let attempt = current_attempt + 1;
@@ -1155,6 +1175,8 @@ where
                 }
             }
         }
+
+        true
     }
 
     /// Computes the next collector target from a current block.
@@ -1183,9 +1205,11 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
 
     use alloy_primitives::{Address, B256};
+    use base_proof_primitives::Proposal;
 
     use super::*;
     use crate::{
+        output_proposer::OutputProposer,
         proof_adapter::{ProofRequesterDispatcher, ProposerProofAdapter},
         proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
         proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
@@ -1201,6 +1225,9 @@ mod tests {
     #[derive(Debug)]
     struct FailingL1;
 
+    #[derive(Debug)]
+    struct DiscardingOutputProposer;
+
     #[async_trait]
     impl ProofCollectorRecoveryProvider for NoopRecovery {
         async fn recover_latest_state(
@@ -1208,6 +1235,18 @@ mod tests {
             _cache: &mut Option<ProofRecoveryCache>,
         ) -> Result<RecoveredState, ProposerError> {
             Ok(recovered(0))
+        }
+    }
+
+    #[async_trait]
+    impl OutputProposer for DiscardingOutputProposer {
+        async fn propose_output(
+            &self,
+            _proposal: &Proposal,
+            _parent_address: Address,
+            _intermediate_roots: &[B256],
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::L1OriginTooOld)
         }
     }
 
@@ -1424,6 +1463,87 @@ mod tests {
         assert_eq!(state.discard_retry_counts.get(&target_block).copied(), Some(1));
         assert!(state.retry_counts.is_empty());
         assert!(cache.is_some());
+    }
+
+    #[tokio::test]
+    async fn tick_returns_restart_when_discard_retry_budget_exhausts() {
+        let proof_requester = Arc::new(MockProofRequester::default());
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(target_block as u8);
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(target_block, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let request = base_proof_primitives::ProofRequest {
+            l1_head: B256::repeat_byte(0x01),
+            agreed_l2_head_hash: B256::repeat_byte(0x02),
+            agreed_l2_output_root: B256::ZERO,
+            claimed_l2_output_root: claimed_root,
+            claimed_l2_block_number: target_block,
+            proposer: Address::repeat_byte(0x04),
+            intermediate_block_interval: 100,
+            l1_head_number: 1000,
+            image_hash: B256::repeat_byte(0x05),
+        };
+        ProofRequesterDispatcher::aws_nitro(
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>
+        )
+        .dispatch_tee(request)
+        .await
+        .expect("test setup should dispatch root session");
+        let collector = ProofCollector::target_poller_aws_nitro(
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            Arc::clone(&rollup_client),
+        );
+        let dispatcher = ProofDispatcher::aws_nitro(
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            Arc::clone(&l1),
+            l2,
+            Arc::clone(&rollup_client),
+            ProofDispatcherConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+        let submitter = ProofSubmitter::new(
+            Arc::new(DiscardingOutputProposer),
+            rollup_client,
+            l1,
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                block_interval: 100,
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        );
+        let orchestrator = ProofCollectorOrchestrator::new(
+            collector,
+            dispatcher,
+            submitter,
+            Arc::new(NoopRecovery),
+            ProofCollectorRuntimeConfig {
+                block_interval: 100,
+                max_retries: 0,
+                submit_timeout: std::time::Duration::from_secs(60),
+            },
+        );
+        let mut state = ProofCollectorState::new();
+        let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
+        let cancel = CancellationToken::new();
+
+        let result =
+            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+
+        assert_eq!(result, ProofCollectorTickResult::Restart);
+        assert!(cache.is_none());
+        assert!(state.discard_retry_counts.is_empty());
+        assert!(state.retry_sessions.is_empty());
     }
 
     #[tokio::test]
