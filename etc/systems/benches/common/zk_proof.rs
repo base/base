@@ -6,7 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_provider::RootProvider;
 use base_common_network::Base;
-use base_proof_rpc::OptimismRollupProviderExt;
+use base_optimism_rpc::OptimismRollupProviderExt;
 use base_zk_client::{
     ExecutionStats, GetProofRequest, ProofJobStatus, ProofType, ProveBlockRequest, ReceiptType,
     ZkProofClient, ZkProofClientConfig,
