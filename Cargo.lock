@@ -5103,6 +5103,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-optimism-rpc"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.0.5",
+ "alloy-network 2.0.5",
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-transport 2.0.5",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "base-precompile-macros"
 version = "0.0.0"
 dependencies = [
@@ -5371,6 +5384,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-network",
  "base-common-rpc-types",
+ "base-optimism-rpc",
  "base-retry",
  "metrics",
  "moka",
