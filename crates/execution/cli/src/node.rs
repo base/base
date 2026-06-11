@@ -223,8 +223,9 @@ impl ExecutionNodeLaunchConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     #[derive(Debug, Parser)]
     struct CommandParser<T: Args> {
