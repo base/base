@@ -540,9 +540,9 @@ mod tests {
     #[test]
     fn checkpoint_commit_does_not_revert_mutations() {
         let mut p = HashMapStorageProvider::new(1);
-        let cp = p.checkpoint();
+        p.checkpoint();
         p.sstore(ADDR, KEY, U256::from(42u64)).unwrap();
-        p.checkpoint_commit(cp);
+        p.checkpoint_commit();
         assert_eq!(p.sload(ADDR, KEY).unwrap(), U256::from(42u64));
     }
 }
