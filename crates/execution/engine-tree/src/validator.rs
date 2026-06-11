@@ -460,11 +460,7 @@ where
 
         // Create overlay factory for payload processor (StateRootTask path needs it for
         // multiproofs)
-        let overlay_builder = Self::overlay_builder_for_parent(
-            parent_hash,
-            ctx.state(),
-            self.changeset_cache.clone(),
-        );
+        let overlay_builder = OverlayBuilder::new(parent_hash, self.changeset_cache.clone());
         let overlay_factory =
             OverlayStateProviderFactory::new(self.provider.clone(), overlay_builder);
 
@@ -1303,15 +1299,6 @@ where
         self.invalid_block_hook.on_invalid_block(parent_header, block, output, trie_updates);
     }
 
-    /// Returns an overlay builder configured for a payload parent.
-    fn overlay_builder_for_parent(
-        parent_hash: B256,
-        _state: &EngineApiTreeState<BasePrimitives>,
-        changeset_cache: ChangesetCache,
-    ) -> OverlayBuilder<BasePrimitives> {
-        OverlayBuilder::new(parent_hash, changeset_cache)
-    }
-
     /// Spawns a background task to compute trie data for the executed block.
     ///
     /// This creates a [`DeferredTrieData`] handle with fallback inputs and spawns a blocking task
@@ -1493,7 +1480,7 @@ where
     fn on_inserted_executed_block(
         &self,
         block: BuiltPayloadExecutedBlock<BasePrimitives>,
-        state: &EngineApiTreeState<BasePrimitives>,
+        _state: &EngineApiTreeState<BasePrimitives>,
     ) -> ProviderResult<ExecutedBlock<BasePrimitives>> {
         self.payload_processor.on_inserted_executed_block(
             block.recovered_block.block_with_parent(),
@@ -1502,9 +1489,8 @@ where
 
         let overlay_factory = OverlayStateProviderFactory::new(
             self.provider.clone(),
-            Self::overlay_builder_for_parent(
+            OverlayBuilder::<BasePrimitives>::new(
                 block.recovered_block.parent_hash(),
-                state,
                 self.changeset_cache.clone(),
             ),
         );
@@ -1530,11 +1516,11 @@ where
         &self,
         parent_hash: B256,
         parent_state_root: B256,
-        state: &EngineApiTreeState<BasePrimitives>,
+        _state: &EngineApiTreeState<BasePrimitives>,
     ) -> Option<StateRootHandle> {
         let overlay_factory = OverlayStateProviderFactory::new(
             self.provider.clone(),
-            Self::overlay_builder_for_parent(parent_hash, state, self.changeset_cache.clone()),
+            OverlayBuilder::<BasePrimitives>::new(parent_hash, self.changeset_cache.clone()),
         );
 
         Some(self.payload_processor.spawn_state_root(
