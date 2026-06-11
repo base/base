@@ -21,6 +21,9 @@ use tracing::info;
 
 use crate::{RpcStandardNodeArgs, StandardNodeArgs};
 
+const DEFAULT_BASE_MAX_INBOUND_EL_PEERS: usize = 80;
+const DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS: usize = 80;
+
 /// Execution node arguments shared by binaries that provide chain selection themselves.
 #[derive(Debug, Clone, Args)]
 pub struct ExecutionNodeArgs {
@@ -121,7 +124,7 @@ impl ExecutionNodeArgs {
             standard,
         } = self;
 
-        let node_config = NodeConfig {
+        let mut node_config = NodeConfig {
             datadir,
             config,
             chain,
@@ -140,6 +143,14 @@ impl ExecutionNodeArgs {
             static_files,
             storage,
         };
+
+        if node_config.network.max_inbound_peers.is_none() {
+            node_config.network.max_inbound_peers = Some(DEFAULT_BASE_MAX_INBOUND_EL_PEERS);
+        }
+
+        if node_config.network.max_outbound_peers.is_none() {
+            node_config.network.max_outbound_peers = Some(DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS);
+        }
 
         ExecutionNodeLaunchConfig { node_config, standard: standard.into(), with_unused_ports }
     }
@@ -207,5 +218,45 @@ impl ExecutionNodeLaunchConfig {
     /// Launches the execution node with the default RPC module validator.
     pub async fn launch_default(self, ctx: CliContext) -> eyre::Result<LaunchedBaseNode> {
         self.launch::<LenientRpcModuleValidator>(ctx).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[derive(Debug, Parser)]
+    struct CommandParser<T: Args> {
+        #[command(flatten)]
+        args: T,
+    }
+
+    #[test]
+    fn launch_config_sets_base_default_el_peer_limits() {
+        let args = CommandParser::<ExecutionNodeArgs>::parse_from(["reth"]).args;
+
+        let launch = args.into_launch_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert_eq!(launch.node_config.network.max_inbound_peers, Some(80));
+        assert_eq!(launch.node_config.network.max_outbound_peers, Some(80));
+    }
+
+    #[test]
+    fn launch_config_preserves_explicit_el_peer_limits() {
+        let args = CommandParser::<ExecutionNodeArgs>::parse_from([
+            "reth",
+            "--max-inbound-peers",
+            "12",
+            "--max-outbound-peers",
+            "34",
+        ])
+        .args;
+
+        let launch = args.into_launch_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert_eq!(launch.node_config.network.max_inbound_peers, Some(12));
+        assert_eq!(launch.node_config.network.max_outbound_peers, Some(34));
     }
 }
