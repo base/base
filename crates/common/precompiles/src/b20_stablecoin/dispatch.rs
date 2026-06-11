@@ -129,7 +129,8 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 C::name(_) => self.accounting().name()?.abi_encode().into(),
                 C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
                 // Stablecoin precision is fixed at 6 by the protocol spec; never read from
-                // storage to avoid the zero-return window during the factory bootstrap.
+                // storage to avoid the zero-return window during the factory bootstrap
+                // (BOP-349/PSRC-27).
                 C::decimals(_) => U256::from(
                     B20Variant::Stablecoin
                         .decimals()
@@ -340,6 +341,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         Ok(encoded)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes, U256};
