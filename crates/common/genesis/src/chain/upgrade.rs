@@ -180,14 +180,30 @@ impl RuntimeHardForkRegistry {
 
     /// Returns the runtime activation override for a chain and hardfork ID.
     pub fn activation(chain_id: u64, hardfork_id: &str) -> Option<HardForkActivation> {
-        Self::read_registry()
-            .get(&chain_id)
-            .and_then(|overrides| overrides.activation(hardfork_id))
+        Self::read_registry().get(&chain_id).and_then(|overrides| overrides.activation(hardfork_id))
     }
 
     /// Returns all runtime activation overrides for a chain.
     pub fn overrides(chain_id: u64) -> Option<HardForkActivationOverrides> {
         Self::read_registry().get(&chain_id).cloned()
+    }
+
+    /// Updates one chain's runtime activation overrides while holding the registry write lock.
+    pub fn update_chain<R>(
+        chain_id: u64,
+        f: impl FnOnce(&mut HardForkActivationOverrides) -> R,
+    ) -> R {
+        let mut registry = Self::write_registry();
+        let result = {
+            let overrides = registry.entry(chain_id).or_default();
+            f(overrides)
+        };
+
+        if registry.get(&chain_id).is_some_and(HardForkActivationOverrides::is_empty) {
+            registry.remove(&chain_id);
+        }
+
+        result
     }
 
     /// Replaces all runtime activation overrides for a chain.

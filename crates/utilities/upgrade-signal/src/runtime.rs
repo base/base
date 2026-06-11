@@ -3,7 +3,8 @@
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use base_common_genesis::{
-    HardForkActivation, HardForkActivationSink, HardForkConfig, RuntimeHardForkRegistry,
+    HardForkActivation, HardForkActivationOverrides, HardForkActivationSink, HardForkConfig,
+    RuntimeHardForkRegistry,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
@@ -169,16 +170,18 @@ impl Default for UpgradeSignalRuntimeValidation {
 }
 
 /// Hardfork activation sink backed by the process-local runtime registry for one chain.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default)]
 pub struct RuntimeRegistrySink {
     /// L2 chain ID whose runtime fork view is mutated.
     pub chain_id: u64,
+    /// Buffered updates to apply to the runtime registry at finalize time.
+    pub updates: HardForkActivationOverrides,
 }
 
 impl RuntimeRegistrySink {
     /// Creates a runtime registry sink for one chain.
     pub const fn new(chain_id: u64) -> Self {
-        Self { chain_id }
+        Self { chain_id, updates: HardForkActivationOverrides::new() }
     }
 }
 
@@ -190,7 +193,19 @@ impl HardForkActivationSink for RuntimeRegistrySink {
         hardfork_id: &str,
         activation: HardForkActivation,
     ) -> Result<bool, Self::Error> {
-        Ok(RuntimeHardForkRegistry::set_activation(self.chain_id, hardfork_id, activation))
+        Ok(self.updates.set_activation(hardfork_id, activation))
+    }
+
+    fn finalize(&mut self) -> Result<(), Self::Error> {
+        let updates = core::mem::take(&mut self.updates);
+
+        RuntimeHardForkRegistry::update_chain(self.chain_id, |overrides| {
+            for (hardfork_id, activation) in updates.activations {
+                overrides.set_activation(&hardfork_id, activation);
+            }
+        });
+
+        Ok(())
     }
 }
 
@@ -457,5 +472,47 @@ mod tests {
 
         assert_eq!(error, RecordingSinkError);
         assert_eq!(sink.applied, vec![("existing".to_string(), HardForkActivation::Timestamp(1))]);
+    }
+
+    #[test]
+    fn runtime_registry_sink_only_flushes_in_finalize() {
+        let chain_id = 9_000_008;
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+        let mut sink = RuntimeRegistrySink::new(chain_id);
+
+        sink.apply_activation("azul", HardForkActivation::Timestamp(42)).unwrap();
+
+        assert_eq!(RuntimeHardForkRegistry::activation(chain_id, "azul"), None);
+
+        sink.finalize().unwrap();
+
+        assert_eq!(
+            RuntimeHardForkRegistry::activation(chain_id, "azul"),
+            Some(HardForkActivation::Timestamp(42))
+        );
+
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn runtime_registry_sink_merges_with_existing_overrides() {
+        let chain_id = 9_000_009;
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+        RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "cobalt", 84);
+
+        let mut sink = RuntimeRegistrySink::new(chain_id);
+        sink.apply_activation("azul", HardForkActivation::Timestamp(42)).unwrap();
+        sink.finalize().unwrap();
+
+        assert_eq!(
+            RuntimeHardForkRegistry::activation(chain_id, "azul"),
+            Some(HardForkActivation::Timestamp(42))
+        );
+        assert_eq!(
+            RuntimeHardForkRegistry::activation(chain_id, "cobalt"),
+            Some(HardForkActivation::Timestamp(84))
+        );
+
+        RuntimeHardForkRegistry::clear_chain(chain_id);
     }
 }
