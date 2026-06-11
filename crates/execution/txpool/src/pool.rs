@@ -652,9 +652,6 @@ where
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
         let pruned = self.nonce_pool.write().prune_mined(&sidecar_hashes);
-        if !pruned.promoted.is_empty() {
-            self.listeners.write().on_promoted(&pruned.promoted);
-        }
         removed.extend(pruned.removed);
         removed
     }
@@ -875,9 +872,6 @@ where
         if !pruned.removed.is_empty() {
             listeners.on_mined(&pruned.removed, block_hash);
         }
-        if !pruned.promoted.is_empty() {
-            listeners.on_promoted(&pruned.promoted);
-        }
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
@@ -1012,12 +1006,6 @@ impl<T: BasePooledTx> SidecarListeners<T> {
             let hash = *transaction.hash();
             self.broadcast_hash_event(&hash, TransactionEvent::Mined(block_hash));
             self.broadcast_all(FullTransactionEvent::Mined { tx_hash: hash, block_hash });
-        }
-    }
-
-    fn on_promoted(&mut self, transactions: &[Arc<ValidPoolTransaction<T>>]) {
-        for transaction in transactions {
-            self.broadcast_pending_transaction(transaction);
         }
     }
 

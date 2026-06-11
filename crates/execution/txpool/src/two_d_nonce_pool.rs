@@ -72,7 +72,6 @@ pub(crate) struct InsertOutcome<T: BasePooledTx> {
 #[derive(Debug)]
 pub(crate) struct PruneMinedOutcome<T: BasePooledTx> {
     pub removed: Vec<Arc<ValidPoolTransaction<T>>>,
-    pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
 }
 
 /// Minimal 2D nonce sidecar for finite non-zero `nonce_key` channels.
@@ -341,30 +340,13 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .collect();
         ordered_hashes.sort_unstable();
 
-        let mut pending_before = BTreeMap::new();
-        for (sender, nonce_key, _, _) in &ordered_hashes {
-            let lane_id = (*sender, *nonce_key);
-            pending_before.entry(lane_id).or_insert_with(|| {
-                self.lanes.get(&lane_id).map_or(0, NonceLane::consecutive_pending_len)
-            });
-        }
-
         for (_, _, _, hash) in ordered_hashes {
             if let Some(transaction) = self.remove_hash(hash, true) {
                 removed.push(transaction);
             }
         }
 
-        let mut promoted = Vec::new();
-        for (lane_id, pending_len_before) in pending_before {
-            let Some(lane) = self.lanes.get(&lane_id) else {
-                continue;
-            };
-            promoted
-                .extend(lane.consecutive_pending_transactions().skip(pending_len_before).cloned());
-        }
-
-        PruneMinedOutcome { removed, promoted }
+        PruneMinedOutcome { removed }
     }
 
     /// Removes sidecar transactions that can no longer afford the updated account balance.
@@ -694,7 +676,6 @@ mod tests {
             outcome.removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
             vec![head_hash]
         );
-        assert!(outcome.promoted.is_empty());
 
         let (pending, queued_count) = pool.pending_and_queued_txn_count();
         assert_eq!((pending, queued_count), (1, 0));
