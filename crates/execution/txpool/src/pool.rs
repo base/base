@@ -475,7 +475,6 @@ where
         limit: GetPooledTransactionLimit,
         out: &mut Vec<<Self::Transaction as PoolTransaction>::Pooled>,
     ) {
-        let nonce_pool = self.nonce_pool.read();
         let mut current_size = 0;
         for hash in tx_hashes {
             if let Some(transaction) = self.protocol_pool.get(hash) {
@@ -490,7 +489,7 @@ where
                 continue;
             }
 
-            let Some(transaction) = nonce_pool.get(hash) else {
+            let Some(transaction) = self.nonce_pool.read().get(hash) else {
                 continue;
             };
             let Some((pooled, encoded_length)) = pooled_element(&transaction) else {
@@ -557,15 +556,7 @@ where
         sender: Address,
         nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.protocol_pool.get_pending_transaction_by_sender_and_nonce(sender, nonce).or_else(
-            || {
-                self.nonce_pool
-                    .read()
-                    .pending_transactions_by_sender(sender)
-                    .into_iter()
-                    .find(|transaction| transaction.nonce() == nonce)
-            },
-        )
+        self.protocol_pool.get_pending_transaction_by_sender_and_nonce(sender, nonce)
     }
 
     fn pending_transactions_max(
@@ -740,16 +731,7 @@ where
         &self,
         sender: Address,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let protocol = self.protocol_pool.get_highest_transaction_by_sender(sender);
-        let sidecar = self.nonce_pool.read().highest_transaction_by_sender(sender);
-        match (protocol, sidecar) {
-            (Some(protocol), Some(sidecar)) => {
-                Some(if protocol.nonce() >= sidecar.nonce() { protocol } else { sidecar })
-            }
-            (Some(protocol), None) => Some(protocol),
-            (None, Some(sidecar)) => Some(sidecar),
-            (None, None) => None,
-        }
+        self.protocol_pool.get_highest_transaction_by_sender(sender)
     }
 
     fn get_highest_consecutive_transaction_by_sender(
@@ -757,18 +739,7 @@ where
         sender: Address,
         on_chain_nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let protocol = self
-            .protocol_pool
-            .get_highest_consecutive_transaction_by_sender(sender, on_chain_nonce);
-        let sidecar = self.nonce_pool.read().highest_consecutive_transaction_by_sender(sender);
-        match (protocol, sidecar) {
-            (Some(protocol), Some(sidecar)) => {
-                Some(if protocol.nonce() >= sidecar.nonce() { protocol } else { sidecar })
-            }
-            (Some(protocol), None) => Some(protocol),
-            (None, Some(sidecar)) => Some(sidecar),
-            (None, None) => None,
-        }
+        self.protocol_pool.get_highest_consecutive_transaction_by_sender(sender, on_chain_nonce)
     }
 
     fn get_transaction_by_sender_and_nonce(
@@ -776,9 +747,7 @@ where
         sender: Address,
         nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.protocol_pool
-            .get_transaction_by_sender_and_nonce(sender, nonce)
-            .or_else(|| self.nonce_pool.read().transaction_by_sender_and_nonce(sender, nonce))
+        self.protocol_pool.get_transaction_by_sender_and_nonce(sender, nonce)
     }
 
     fn get_transactions_by_origin(

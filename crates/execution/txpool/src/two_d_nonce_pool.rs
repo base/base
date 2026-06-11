@@ -200,31 +200,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .collect()
     }
 
-    /// Returns the highest transaction for the sender across all nonce channels.
-    pub(crate) fn highest_transaction_by_sender(
-        &self,
-        sender: Address,
-    ) -> Option<Arc<ValidPoolTransaction<T>>> {
-        self.transactions_by_sender(sender).into_iter().max_by_key(|tx| tx.nonce())
-    }
-
-    /// Returns the highest pending transaction for the sender.
-    pub(crate) fn highest_consecutive_transaction_by_sender(
-        &self,
-        sender: Address,
-    ) -> Option<Arc<ValidPoolTransaction<T>>> {
-        self.pending_transactions_by_sender(sender).into_iter().max_by_key(|tx| tx.nonce())
-    }
-
-    /// Returns the first transaction that matches the sender and nonce sequence.
-    pub(crate) fn transaction_by_sender_and_nonce(
-        &self,
-        sender: Address,
-        nonce: u64,
-    ) -> Option<Arc<ValidPoolTransaction<T>>> {
-        self.transactions_by_sender(sender).into_iter().find(|tx| tx.nonce() == nonce)
-    }
-
     /// Returns all senders present in the sidecar.
     pub(crate) fn unique_senders(&self) -> HashSet<Address> {
         self.lanes.keys().map(|(sender, _)| *sender).collect()
