@@ -867,8 +867,8 @@ async fn test_retry_or_fail_stuck_request_retries_tee_request() {
 
     let stuck_requests = repo.get_stuck_requests(-1).await.unwrap();
     assert!(
-        stuck_requests.iter().all(|request| request.id != id),
-        "TEE requests should not enter legacy backend-session stuck detection"
+        stuck_requests.iter().any(|request| request.id == id),
+        "TEE requests should enter generic worker stuck detection"
     );
 
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
@@ -922,6 +922,81 @@ async fn test_retry_or_fail_stuck_request_wrong_state() {
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Running); // unchanged
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_get_stuck_requests_includes_migration_parked_running_request() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    let (id, _backend_id) = setup_running_request(&repo).await;
+    sqlx::query(
+        "UPDATE proof_requests SET job_status = 'CLAIMED', lock_expires_at = NULL WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let stuck_requests = repo.get_stuck_requests(-1).await.unwrap();
+
+    assert!(
+        stuck_requests.iter().any(|request| request.id == id),
+        "migration-parked RUNNING request should be recovered by stuck detection"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_retry_or_fail_stuck_request_requeues_migration_parked_running_request() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    let (id, backend_id) = setup_running_request(&repo).await;
+    sqlx::query(
+        "UPDATE proof_requests SET job_status = 'CLAIMED', lock_expires_at = NULL WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let outcome =
+        repo.retry_or_fail_stuck_request(id, 3, "migration-parked RUNNING request").await.unwrap();
+
+    assert_eq!(outcome, RetryOutcome::Retried);
+
+    let req = repo.get(id).await.unwrap().unwrap();
+    assert_eq!(req.status, ProofStatus::Created);
+    assert_eq!(req.retry_count, 1);
+    assert!(req.error_message.is_none());
+    assert!(req.completed_at.is_none());
+
+    let (job_status, lock_expires_at, attempt): (
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        i32,
+    ) = sqlx::query_as(
+        "SELECT job_status, lock_expires_at, attempt FROM proof_requests WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(job_status, ProofJobStatus::Pending.as_str());
+    assert!(lock_expires_at.is_none());
+    assert_eq!(attempt, 0);
+
+    let session_status: String =
+        sqlx::query_scalar("SELECT status FROM proof_sessions WHERE backend_session_id = $1")
+            .bind(backend_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(session_status, SessionStatus::Failed.as_str());
 }
 
 // ============================================================

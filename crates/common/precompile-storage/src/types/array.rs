@@ -4,12 +4,10 @@
 //! - **Base slot**: Arrays start directly at `base_slot` (not at keccak256)
 //! - Small elements (`T::BYTES` ≤ 16) are packed; larger elements use full slots.
 
-use core::ops::{Index, IndexMut};
-
 use alloy_primitives::{Address, U256};
 
 use crate::{
-    error::Result,
+    error::{BasePrecompileError, Result},
     packing,
     provider::{Handler, LayoutCtx, Storable, StorableType},
     types::{HandlerCache, Slot},
@@ -61,58 +59,52 @@ impl<'a, T: StorableType, const N: usize> ArrayHandler<'a, T, N> {
 
     /// Returns a handler for the element at the given index, or `None` if out of bounds.
     #[inline]
-    pub fn at(&mut self, index: usize) -> Option<&T::Handler<'a>> {
+    pub fn at(&self, index: usize) -> Result<Option<&T::Handler<'a>>> {
         if index >= N {
-            return None;
+            return Ok(None);
         }
         let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
-        Some(
-            self.cache.get_or_insert(&index, || {
-                Self::compute_handler(base_slot, address, storage, index)
-            }),
-        )
+        Ok(Some(self.cache.get_or_try_insert(&index, || {
+            Self::try_compute_handler(base_slot, address, storage, index)
+        })?))
+    }
+
+    /// Returns a mutable handler for the element at the given index, or `None` if out of bounds.
+    #[inline]
+    pub fn at_mut(&mut self, index: usize) -> Result<Option<&mut T::Handler<'a>>> {
+        if index >= N {
+            return Ok(None);
+        }
+        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
+        Ok(Some(self.cache.get_or_try_insert_mut(&index, || {
+            Self::try_compute_handler(base_slot, address, storage, index)
+        })?))
     }
 
     #[inline]
-    fn compute_handler(
+    fn try_compute_handler(
         base_slot: U256,
         address: Address,
         storage: crate::StorageCtx<'a>,
         index: usize,
-    ) -> T::Handler<'a> {
+    ) -> Result<T::Handler<'a>> {
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = packing::calc_element_loc(index, T::BYTES);
             (
-                base_slot.checked_add(U256::from(location.offset_slots)).expect("slot overflow"),
+                base_slot
+                    .checked_add(U256::from(location.offset_slots))
+                    .ok_or(BasePrecompileError::SlotOverflow)?,
                 LayoutCtx::packed(location.offset_bytes),
             )
         } else {
             (
-                base_slot.checked_add(U256::from(index * T::SLOTS)).expect("slot overflow"),
+                base_slot
+                    .checked_add(U256::from(index * T::SLOTS))
+                    .ok_or(BasePrecompileError::SlotOverflow)?,
                 LayoutCtx::FULL,
             )
         };
-        T::handle(slot, layout_ctx, address, storage)
-    }
-}
-
-impl<'a, T: StorableType, const N: usize> Index<usize> for ArrayHandler<'a, T, N> {
-    type Output = T::Handler<'a>;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        assert!(index < N, "index out of bounds: {index} >= {N}");
-        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
-        self.cache
-            .get_or_insert(&index, || Self::compute_handler(base_slot, address, storage, index))
-    }
-}
-
-impl<'a, T: StorableType, const N: usize> IndexMut<usize> for ArrayHandler<'a, T, N> {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        assert!(index < N, "index out of bounds: {index} >= {N}");
-        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
-        self.cache
-            .get_or_insert_mut(&index, || Self::compute_handler(base_slot, address, storage, index))
+        Ok(T::handle(slot, layout_ctx, address, storage))
     }
 }
 

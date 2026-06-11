@@ -7,7 +7,7 @@ use base_prover_service_protocol::{
     ZkProofResult, ZkVm,
 };
 use jsonrpsee::core::RpcResult;
-use tracing::{Instrument, info};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::{
@@ -88,36 +88,7 @@ impl ProverServiceServer {
 
         let (status, result, error_message) = match proof_req.status {
             DbProofStatus::Created | DbProofStatus::Pending => (ProofStatus::Queued, None, None),
-            DbProofStatus::Running => {
-                let sync_span = tracing::info_span!(
-                    "sync_proof_status",
-                    proof_request_id = %proof_request_id,
-                );
-                self.manager
-                    .sync_and_update_proof_status(&proof_req)
-                    .instrument(sync_span)
-                    .await
-                    .map_err(|e| internal(format!("Failed to sync proof status: {e}")))?;
-
-                let updated_proof_req = self
-                    .repo
-                    .get(proof_request_id)
-                    .await
-                    .map_err(|e| internal(format!("Database error: {e}")))?
-                    .ok_or_else(|| not_found(PROOF_REQUEST_NOT_FOUND_MESSAGE))?;
-
-                match updated_proof_req.status {
-                    DbProofStatus::Succeeded => (
-                        ProofStatus::Succeeded,
-                        self.succeeded_result(updated_proof_req).await?,
-                        None,
-                    ),
-                    DbProofStatus::Failed => {
-                        (ProofStatus::Failed, None, updated_proof_req.error_message)
-                    }
-                    _ => (ProofStatus::Running, None, None),
-                }
-            }
+            DbProofStatus::Running => (ProofStatus::Running, None, None),
             DbProofStatus::Succeeded => {
                 (ProofStatus::Succeeded, self.succeeded_result(proof_req).await?, None)
             }
