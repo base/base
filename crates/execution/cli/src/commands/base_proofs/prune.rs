@@ -78,8 +78,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
             provider_factory,
             self.proofs_history_window,
             self.proofs_history_prune_batch_size,
-        )
-        .map_err(|e| eyre::eyre!("{e}"))?;
+        );
         pruner.run();
         Ok(())
     }

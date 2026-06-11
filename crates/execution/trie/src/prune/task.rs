@@ -32,15 +32,14 @@ where
     H: BlockHashReader + Send + Sync + 'static,
 {
     /// Initialize a new [`BaseProofStoragePrunerTask`]
-    pub fn new(
+    pub const fn new(
         provider: BaseProofsStorage<P>,
         hash_reader: H,
         retention_blocks: u64,
         task_run_interval: Duration,
     ) -> Self {
         let pruner =
-            BaseProofStoragePruner::new(provider, hash_reader, retention_blocks, PRUNE_BATCH_SIZE)
-                .expect("valid PRUNE_BATCH_SIZE");
+            BaseProofStoragePruner::new(provider, hash_reader, retention_blocks, PRUNE_BATCH_SIZE);
         Self { pruner, retention_blocks, task_run_interval }
     }
 

@@ -75,14 +75,8 @@ impl<'a, Storage: BaseProofsStore> BaseProofsStateProviderRef<'a, Storage> {
     }
 
     fn hashed_address(&self, address: Address) -> B256 {
-        let cache = self.hashed_addresses.get_or_init(Default::default);
-        if let Some(hashed_address) = cache.lock().get(&address) {
-            return *hashed_address;
-        }
-
-        let hashed_address = keccak256(address.0);
-        cache.lock().insert(address, hashed_address);
-        hashed_address
+        let hashed = keccak256(address.0);
+        *self.hashed_addresses.get_or_init(Default::default).lock().entry(address).or_insert(hashed)
     }
 }
 
@@ -104,9 +98,11 @@ impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storag
         address: Address,
         hashed_key: B256,
     ) -> ProviderResult<Option<StorageValue>> {
+        let hashed_address = self.hashed_address(address);
+        let tx = self.tx()?;
         Ok(self
             .storage
-            .storage_hashed_cursor(keccak256(address.0), self.block_number)
+            .storage_hashed_cursor_with_tx(tx, hashed_address, self.block_number)
             .map_err(Into::<ProviderError>::into)?
             .seek(hashed_key)
             .map_err(Into::<ProviderError>::into)?
