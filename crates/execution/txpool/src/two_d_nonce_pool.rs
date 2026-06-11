@@ -416,8 +416,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         hash: TxHash,
         advance_lane: bool,
     ) -> Option<Arc<ValidPoolTransaction<T>>> {
-        let ((sender, nonce_key), nonce) = self.index.remove(&hash)?;
-        let lane_id = (sender, nonce_key);
+        let (lane_id, nonce) = *self.index.get(&hash)?;
         let transaction = {
             let lane = self.lanes.get_mut(&lane_id)?;
             let transaction = lane.transactions.remove(&nonce)?;
@@ -433,6 +432,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if self.lanes.get(&lane_id).is_some_and(|lane| lane.transactions.is_empty()) {
             self.lanes.remove(&lane_id);
         }
+        self.index.remove(&hash);
         self.hashes.remove(&hash);
         Some(transaction)
     }
