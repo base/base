@@ -13,10 +13,13 @@ workspace = true
 
 [dependencies]
 # base
+base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
 
 # async
 async-trait.workspace = true
+tokio = { workspace = true, features = ["time"] }
 
 # misc
+tracing.workspace = true
 thiserror.workspace = true

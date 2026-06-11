@@ -5845,8 +5845,11 @@ name = "base-proof-worker"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "base-prover-service-client",
  "base-prover-service-protocol",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
