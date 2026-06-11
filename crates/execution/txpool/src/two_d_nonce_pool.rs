@@ -179,7 +179,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         &self,
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
-        self.pending_transactions().into_iter().filter(|tx| tx.sender() == sender).collect()
+        self.lanes
+            .iter()
+            .filter(|((lane_sender, _), _)| *lane_sender == sender)
+            .flat_map(|(_, lane)| lane.consecutive_pending_transactions())
+            .cloned()
+            .collect()
     }
 
     /// Returns queued transactions for the given sender.
@@ -187,7 +192,12 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         &self,
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
-        self.queued_transactions().into_iter().filter(|tx| tx.sender() == sender).collect()
+        self.lanes
+            .iter()
+            .filter(|((lane_sender, _), _)| *lane_sender == sender)
+            .flat_map(|(_, lane)| lane.queued_transactions())
+            .cloned()
+            .collect()
     }
 
     /// Returns the highest transaction for the sender across all nonce channels.
@@ -217,7 +227,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     /// Returns all senders present in the sidecar.
     pub(crate) fn unique_senders(&self) -> HashSet<Address> {
-        self.all_transactions().into_iter().map(|tx| tx.sender()).collect()
+        self.lanes.keys().map(|(sender, _)| *sender).collect()
     }
 
     /// Returns or creates the sender id for the given address.

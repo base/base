@@ -409,8 +409,20 @@ where
     }
 
     fn pooled_transaction_hashes_max(&self, max: usize) -> Vec<TxHash> {
-        let mut hashes = self.pooled_transaction_hashes();
-        hashes.truncate(max);
+        let mut hashes = self.protocol_pool.pooled_transaction_hashes_max(max);
+        if hashes.len() >= max {
+            return hashes;
+        }
+
+        let nonce_pool = self.nonce_pool.read();
+        for transaction in nonce_pool.all_transactions() {
+            if transaction.propagate {
+                hashes.push(*transaction.hash());
+                if hashes.len() >= max {
+                    break;
+                }
+            }
+        }
         hashes
     }
 
@@ -430,8 +442,20 @@ where
         &self,
         max: usize,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let mut transactions = self.pooled_transactions();
-        transactions.truncate(max);
+        let mut transactions = self.protocol_pool.pooled_transactions_max(max);
+        if transactions.len() >= max {
+            return transactions;
+        }
+
+        let nonce_pool = self.nonce_pool.read();
+        for transaction in nonce_pool.all_transactions() {
+            if transaction.propagate {
+                transactions.push(transaction);
+                if transactions.len() >= max {
+                    break;
+                }
+            }
+        }
         transactions
     }
 
@@ -654,7 +678,10 @@ where
     }
 
     fn get_all(&self, txs: Vec<TxHash>) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        txs.into_iter().filter_map(|tx| self.get(&tx)).collect()
+        let nonce_pool = self.nonce_pool.read();
+        txs.into_iter()
+            .filter_map(|tx| self.protocol_pool.get(&tx).or_else(|| nonce_pool.get(&tx)))
+            .collect()
     }
 
     fn on_propagated(&self, txs: PropagatedTransactions) {
@@ -865,13 +892,14 @@ where
         let block_hash = update.hash();
         let mined_transactions = update.mined_transactions.clone();
         self.protocol_pool.on_canonical_state_change(update);
-        let pruned = self.nonce_pool.write().prune_mined(&mined_transactions);
-        let removed = pruned.removed;
-        if !removed.is_empty() {
-            self.listeners.write().on_mined(&removed, block_hash);
+        let mut nonce_pool = self.nonce_pool.write();
+        let pruned = nonce_pool.prune_mined(&mined_transactions);
+        let mut listeners = self.listeners.write();
+        if !pruned.removed.is_empty() {
+            listeners.on_mined(&pruned.removed, block_hash);
         }
         if !pruned.promoted.is_empty() {
-            self.listeners.write().on_promoted(&pruned.promoted);
+            listeners.on_promoted(&pruned.promoted);
         }
     }
 
