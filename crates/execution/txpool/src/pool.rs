@@ -556,6 +556,8 @@ where
         sender: Address,
         nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        // Channelized nonce sequences live in a separate namespace from account nonces, so this
+        // sender+nonce lookup intentionally remains protocol-only.
         self.protocol_pool.get_pending_transaction_by_sender_and_nonce(sender, nonce)
     }
 
@@ -563,8 +565,14 @@ where
         &self,
         max: usize,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let mut transactions = self.pending_transactions();
-        transactions.truncate(max);
+        let mut transactions = self.protocol_pool.pending_transactions_max(max);
+        if transactions.len() >= max {
+            return transactions;
+        }
+
+        let remaining = max - transactions.len();
+        transactions
+            .extend(self.nonce_pool.read().pending_transactions().into_iter().take(remaining));
         transactions
     }
 
