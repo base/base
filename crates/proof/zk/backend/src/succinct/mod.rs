@@ -6,6 +6,9 @@
 mod provider;
 pub use provider::{L1HeadSource, OpSuccinctWitnessProvider, WitnessError, WitnessParams};
 
+mod cluster;
+pub use cluster::{ClusterSessionId, ClusterZkProver, ClusterZkProverConfig};
+
 mod network;
 pub use network::{NetworkZkProver, NetworkZkProverConfig};
 
