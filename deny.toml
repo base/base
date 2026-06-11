@@ -96,6 +96,7 @@ skip = [
     "thiserror-impl",
 
     # Crypto/random crates - version differences from different crypto stacks
+    "chacha20",
     "rand",
     "rand_core",
     "rand_chacha",
@@ -137,6 +138,7 @@ skip = [
     "tower",
 
     # Other common duplicates from upstream
+    "alloy-eip7928",
     "base64",
     "bincode",
     "bindgen",
@@ -163,6 +165,8 @@ skip = [
     "prost-build",
     "prost-types",
     "rustc-hash",
+    "shlex",
+    "strum",
     "sync_wrapper",
     "sysinfo",
     "webpki-roots",
@@ -174,6 +178,8 @@ skip = [
     "discv5",
 
     # libp2p dependency chain version mismatch
+    "hickory-proto",
+    "hickory-resolver",
     "unsigned-varint",
     "if-addrs",
     "yamux",

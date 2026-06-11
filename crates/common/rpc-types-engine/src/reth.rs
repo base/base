@@ -49,7 +49,7 @@ impl ExecutionPayload for ExecutionData {
     }
 
     fn block_access_list(&self) -> Option<&Bytes> {
-        None
+        self.block_access_list.as_ref()
     }
 
     fn parent_beacon_block_root(&self) -> Option<B256> {

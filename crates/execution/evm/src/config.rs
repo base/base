@@ -57,7 +57,10 @@ pub struct BaseNextBlockEnvAttributes {
 impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv<H>
     for BaseNextBlockEnvAttributes
 {
-    fn build_pending_env(parent: &SealedHeader<H>) -> Self {
+    fn build_pending_env(
+        parent: &SealedHeader<H>,
+        _block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
+    ) -> Self {
         Self {
             timestamp: parent.timestamp().saturating_add(12),
             suggested_fee_recipient: parent.beneficiary(),

@@ -17,7 +17,7 @@ use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use reth_provider::{BlockNumReader, BlockReader, ChainSpecProvider};
+use reth_provider::{BlockNumReader, BlockReader, BlockReaderIdExt, ChainSpecProvider};
 use tokio::time::sleep;
 
 use crate::{
@@ -39,6 +39,8 @@ pub struct PreparedBlock {
     pub parent_hash: B256,
     /// Hash of the newly-built block.
     pub new_block_hash: B256,
+    /// Number of the newly-built block.
+    pub new_block_number: u64,
 }
 
 /// Builder for configuring and launching a test harness.
@@ -171,6 +173,7 @@ impl TestHarness {
             .ok_or_else(|| eyre!("No genesis block found"))?;
 
         let parent_hash = latest_block.header.hash;
+        let new_block_number = latest_block.header.number + 1;
         let parent_beacon_block_root =
             latest_block.header.parent_beacon_block_root.unwrap_or(B256::ZERO);
         let next_timestamp = latest_block.header.timestamp + BLOCK_TIME_SECONDS;
@@ -242,17 +245,46 @@ impl TestHarness {
             .latest_valid_hash
             .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
 
-        Ok(PreparedBlock { parent_hash, new_block_hash })
+        Ok(PreparedBlock { parent_hash, new_block_hash, new_block_number })
     }
 
     /// Build a block using the provided transactions and push it through the engine.
     pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
-        let PreparedBlock { parent_hash, new_block_hash } =
+        let PreparedBlock { parent_hash, new_block_hash, new_block_number } =
             self.prepare_unsafe_block(transactions).await?;
 
         self.engine.update_forkchoice(parent_hash, new_block_hash, None).await?;
+        self.wait_for_header(new_block_hash, new_block_number).await?;
 
         Ok(())
+    }
+
+    async fn wait_for_header(&self, block_hash: B256, block_number: u64) -> Result<()> {
+        const HEADER_PERSIST_TIMEOUT: Duration = Duration::from_secs(5);
+        const HEADER_PERSIST_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+        let deadline = tokio::time::Instant::now() + HEADER_PERSIST_TIMEOUT;
+        let provider = self.blockchain_provider();
+
+        loop {
+            let latest_header =
+                provider.sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)?;
+            if provider.best_block_number()? >= block_number
+                && latest_header.is_some_and(|header| {
+                    header.number == block_number && header.hash() == block_hash
+                })
+            {
+                return Ok(());
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                return Err(eyre!(
+                    "timed out waiting for canonical header {block_hash} at block {block_number} to persist"
+                ));
+            }
+
+            sleep(HEADER_PERSIST_POLL_INTERVAL).await;
+        }
     }
 
     /// Advance the canonical chain by `n` empty blocks.

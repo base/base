@@ -1,5 +1,6 @@
 use alloy_eip7928::{
-    AccountChanges, BalanceChange, CodeChange, NonceChange, SlotChanges, StorageChange,
+    AccountChanges, BalanceChange, BlockAccessIndex, CodeChange, NonceChange, SlotChanges,
+    StorageChange,
 };
 use alloy_primitives::{Address, U256};
 use revm::{
@@ -83,7 +84,7 @@ impl AccountChangesBuilder {
                     changes: sc
                         .into_iter()
                         .map(|(tx_idx, val)| StorageChange {
-                            block_access_index: tx_idx,
+                            block_access_index: BlockAccessIndex(tx_idx),
                             new_value: val,
                         })
                         .collect(),
@@ -94,20 +95,23 @@ impl AccountChangesBuilder {
                 .balance_changes
                 .into_iter()
                 .map(|(tx_idx, val)| BalanceChange {
-                    block_access_index: tx_idx,
+                    block_access_index: BlockAccessIndex(tx_idx),
                     post_balance: val,
                 })
                 .collect(),
             nonce_changes: self
                 .nonce_changes
                 .into_iter()
-                .map(|(tx_idx, val)| NonceChange { block_access_index: tx_idx, new_nonce: val })
+                .map(|(tx_idx, val)| NonceChange {
+                    block_access_index: BlockAccessIndex(tx_idx),
+                    new_nonce: val,
+                })
                 .collect(),
             code_changes: self
                 .code_changes
                 .into_iter()
                 .map(|(tx_idx, bc)| CodeChange {
-                    block_access_index: tx_idx,
+                    block_access_index: BlockAccessIndex(tx_idx),
                     new_code: bc.original_bytes(),
                 })
                 .collect(),

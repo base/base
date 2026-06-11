@@ -229,10 +229,6 @@ where
         self.executor.finish()
     }
 
-    fn set_state_hook(&mut self, hook: Option<Box<dyn reth_evm::OnStateHook>>) {
-        self.executor.set_state_hook(hook)
-    }
-
     fn evm_mut(&mut self) -> &mut Self::Evm {
         self.executor.evm_mut()
     }

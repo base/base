@@ -84,7 +84,7 @@ impl PrecompileCallStatus {
     }
 
     /// Classifies a [`PrecompileResult`] into a bounded status.
-    pub fn from_result(result: &PrecompileResult) -> Self {
+    pub const fn from_result(result: &PrecompileResult) -> Self {
         match result {
             Ok(output) if output.is_success() => Self::Success,
             Ok(output) if output.is_revert() => Self::Revert,
