@@ -109,8 +109,10 @@ where
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: &InvalidPoolTransactionError) {
         if transaction.transaction.eip8130_nonce_channel_key().is_some() {
+            self.next_sidecar = None;
             self.sidecar.mark_invalid(transaction, kind);
         } else {
+            self.next_protocol = None;
             self.protocol.mark_invalid(transaction, kind);
         }
     }
@@ -332,5 +334,34 @@ mod tests {
         );
 
         assert_eq!(merged.next().map(|transaction| *transaction.hash()), Some(older_hash));
+    }
+
+    #[test]
+    fn mark_invalid_clears_cached_protocol_transaction() {
+        let signer = signer();
+        let protocol = vec![
+            valid_pool_transaction(signed_tx(&signer, U256::ZERO, 0, 1_200, 1_200)),
+            valid_pool_transaction(signed_tx(&signer, U256::ZERO, 1, 900, 900)),
+        ];
+        let sidecar =
+            vec![valid_pool_transaction(signed_tx(&signer, U256::from(1), 0, 1_000, 1_000))];
+
+        let mut merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(protocol)),
+            Box::new(StaticBestTransactions::new(sidecar)),
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
+
+        let first = merged.next().expect("expected protocol transaction");
+        assert_eq!(first.transaction.eip8130_nonce_channel_key(), None);
+        assert_eq!(first.nonce(), 0);
+
+        let second = merged.next().expect("expected sidecar transaction");
+        assert_eq!(second.transaction.eip8130_nonce_channel_key(), Some(U256::from(1)));
+
+        merged.mark_invalid(&first, &InvalidPoolTransactionError::Underpriced);
+
+        assert!(merged.next().is_none());
     }
 }

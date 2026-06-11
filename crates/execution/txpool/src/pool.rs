@@ -498,7 +498,7 @@ where
         let block_info = self.protocol_pool.block_info();
         let best_transactions_attributes = BestTransactionsAttributes::new(
             block_info.pending_basefee,
-            block_info.pending_blob_fee.map(|fee| fee as u64),
+            block_info.pending_blob_fee.map(|fee| fee.min(u64::MAX as u128) as u64),
         );
         let base_fee = best_transactions_attributes.basefee;
         Box::new(MergeBestTransactions::new(
@@ -616,7 +616,7 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
-        removed.extend(self.nonce_pool.write().prune_mined(&sidecar_hashes));
+        removed.extend(self.nonce_pool.write().prune_mined(&sidecar_hashes).removed);
         removed
     }
 
@@ -697,9 +697,16 @@ where
         &self,
         sender: Address,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.protocol_pool
-            .get_highest_transaction_by_sender(sender)
-            .or_else(|| self.nonce_pool.read().highest_transaction_by_sender(sender))
+        let protocol = self.protocol_pool.get_highest_transaction_by_sender(sender);
+        let sidecar = self.nonce_pool.read().highest_transaction_by_sender(sender);
+        match (protocol, sidecar) {
+            (Some(protocol), Some(sidecar)) => {
+                Some(if protocol.nonce() >= sidecar.nonce() { protocol } else { sidecar })
+            }
+            (Some(protocol), None) => Some(protocol),
+            (None, Some(sidecar)) => Some(sidecar),
+            (None, None) => None,
+        }
     }
 
     fn get_highest_consecutive_transaction_by_sender(
@@ -707,9 +714,18 @@ where
         sender: Address,
         on_chain_nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        self.protocol_pool
-            .get_highest_consecutive_transaction_by_sender(sender, on_chain_nonce)
-            .or_else(|| self.nonce_pool.read().highest_consecutive_transaction_by_sender(sender))
+        let protocol = self
+            .protocol_pool
+            .get_highest_consecutive_transaction_by_sender(sender, on_chain_nonce);
+        let sidecar = self.nonce_pool.read().highest_consecutive_transaction_by_sender(sender);
+        match (protocol, sidecar) {
+            (Some(protocol), Some(sidecar)) => {
+                Some(if protocol.nonce() >= sidecar.nonce() { protocol } else { sidecar })
+            }
+            (Some(protocol), None) => Some(protocol),
+            (None, Some(sidecar)) => Some(sidecar),
+            (None, None) => None,
+        }
     }
 
     fn get_transaction_by_sender_and_nonce(
@@ -833,13 +849,18 @@ where
         let block_hash = update.hash();
         let mined_transactions = update.mined_transactions.clone();
         self.protocol_pool.on_canonical_state_change(update);
-        let removed = self.nonce_pool.write().prune_mined(&mined_transactions);
+        let pruned = self.nonce_pool.write().prune_mined(&mined_transactions);
+        let removed = pruned.removed;
         if !removed.is_empty() {
             self.listeners.write().on_mined(&removed, block_hash);
+        }
+        if !pruned.promoted.is_empty() {
+            self.listeners.write().on_promoted(&pruned.promoted);
         }
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
+        self.nonce_pool.write().remove_unaffordable(&accounts);
         self.protocol_pool.update_accounts(accounts)
     }
 
@@ -967,6 +988,12 @@ impl<T: BasePooledTx> SidecarListeners<T> {
             let hash = *transaction.hash();
             self.broadcast_hash_event(&hash, TransactionEvent::Mined(block_hash));
             self.broadcast_all(FullTransactionEvent::Mined { tx_hash: hash, block_hash });
+        }
+    }
+
+    fn on_promoted(&mut self, transactions: &[Arc<ValidPoolTransaction<T>>]) {
+        for transaction in transactions {
+            self.broadcast_pending_transaction(transaction);
         }
     }
 

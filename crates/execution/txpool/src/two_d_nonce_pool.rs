@@ -7,6 +7,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, TxHash, U256};
+use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
     AddedTransactionOutcome, BestTransactions, PoolResult, PriceBumpConfig, Priority,
@@ -64,6 +65,13 @@ impl<T: BasePooledTx> NonceLane<T> {
 pub(crate) struct InsertOutcome<T: BasePooledTx> {
     pub outcome: AddedTransactionOutcome,
     pub replaced: Option<Arc<ValidPoolTransaction<T>>>,
+    pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
+}
+
+/// Outcome returned after pruning mined transactions from the 2D nonce sidecar.
+#[derive(Debug)]
+pub(crate) struct PruneMinedOutcome<T: BasePooledTx> {
+    pub removed: Vec<Arc<ValidPoolTransaction<T>>>,
     pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
 }
 
@@ -261,7 +269,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
 
         let pending_len_after = lane.consecutive_pending_len();
-        let state = if nonce < lane.next_nonce + pending_len_after as u64 {
+        let state = if lane
+            .next_nonce
+            .checked_add(pending_len_after as u64)
+            .is_none_or(|boundary| nonce < boundary)
+        {
             AddedTransactionState::Pending
         } else {
             AddedTransactionState::Queued(QueuedReason::NonceGap)
@@ -319,7 +331,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Prunes mined transactions and advances the matching lane heads.
-    pub(crate) fn prune_mined(&mut self, hashes: &[TxHash]) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub(crate) fn prune_mined(&mut self, hashes: &[TxHash]) -> PruneMinedOutcome<T> {
         let mut removed = Vec::new();
         let mut ordered_hashes: Vec<_> = hashes
             .iter()
@@ -329,12 +341,52 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .collect();
         ordered_hashes.sort_unstable();
 
+        let mut pending_before = BTreeMap::new();
+        for (sender, nonce_key, _, _) in &ordered_hashes {
+            let lane_id = (*sender, *nonce_key);
+            pending_before.entry(lane_id).or_insert_with(|| {
+                self.lanes.get(&lane_id).map_or(0, NonceLane::consecutive_pending_len)
+            });
+        }
+
         for (_, _, _, hash) in ordered_hashes {
             if let Some(transaction) = self.remove_hash(hash, true) {
                 removed.push(transaction);
             }
         }
-        removed
+
+        let mut promoted = Vec::new();
+        for (lane_id, pending_len_before) in pending_before {
+            let Some(lane) = self.lanes.get(&lane_id) else {
+                continue;
+            };
+            promoted
+                .extend(lane.consecutive_pending_transactions().skip(pending_len_before).cloned());
+        }
+
+        PruneMinedOutcome { removed, promoted }
+    }
+
+    /// Removes sidecar transactions that can no longer afford the updated account balance.
+    pub(crate) fn remove_unaffordable(
+        &mut self,
+        accounts: &[ChangedAccount],
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        let mut hashes = Vec::new();
+        for account in accounts {
+            hashes.extend(
+                self.hashes
+                    .values()
+                    .filter(|transaction| {
+                        transaction.sender() == account.address
+                            && transaction.transaction.cost() > &account.balance
+                    })
+                    .map(|transaction| *transaction.hash()),
+            );
+        }
+        hashes.sort_unstable();
+        hashes.dedup();
+        self.remove_transactions(&hashes)
     }
 
     /// Removes all transactions for the given sender.
@@ -369,8 +421,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let transaction = {
             let lane = self.lanes.get_mut(&lane_id)?;
             let transaction = lane.transactions.remove(&nonce)?;
-            if advance_lane && nonce == lane.next_nonce {
-                lane.next_nonce += 1;
+            if advance_lane
+                && nonce == lane.next_nonce
+                && let Some(next_nonce) = lane.next_nonce.checked_add(1)
+            {
+                lane.next_nonce = next_nonce;
             }
             transaction
         };
@@ -504,6 +559,7 @@ mod tests {
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
     };
+    use reth_execution_types::ChangedAccount;
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, TransactionOrigin};
 
     use super::*;
@@ -633,7 +689,12 @@ mod tests {
             vec![head_hash, queued_hash]
         );
 
-        pool.prune_mined(&[head_hash]);
+        let outcome = pool.prune_mined(&[head_hash]);
+        assert_eq!(
+            outcome.removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
+            vec![head_hash]
+        );
+        assert!(outcome.promoted.is_empty());
 
         let (pending, queued_count) = pool.pending_and_queued_txn_count();
         assert_eq!((pending, queued_count), (1, 0));
@@ -641,6 +702,34 @@ mod tests {
             pool.pending_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
             vec![queued_hash]
         );
+    }
+
+    #[test]
+    fn remove_unaffordable_prunes_sidecar_transactions_for_changed_account() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+
+        let affordable = valid_pool_transaction(signed_channel_tx(&signer, U256::from(3), 0, 1));
+        let affordable_hash = *affordable.hash();
+        let unaffordable =
+            valid_pool_transaction(signed_channel_tx(&signer, U256::from(4), 0, 1_000_000_000_000));
+        let unaffordable_hash = *unaffordable.hash();
+
+        pool.insert_validated(affordable).unwrap();
+        pool.insert_validated(unaffordable).unwrap();
+
+        let removed = pool.remove_unaffordable(&[ChangedAccount {
+            address: signer.address(),
+            nonce: 0,
+            balance: U256::from(100_000u64),
+        }]);
+
+        assert_eq!(
+            removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
+            vec![unaffordable_hash]
+        );
+        assert!(pool.get(&unaffordable_hash).is_none());
+        assert!(pool.get(&affordable_hash).is_some());
     }
 
     #[test]
@@ -748,6 +837,52 @@ mod tests {
         let mut best = BestTwoDTransactions::new(&lanes, BaseOrdering::coinbase_tip(), 0);
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
         assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn insert_validated_classifies_u64_max_head_as_pending_without_overflow() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let transaction =
+            valid_pool_transaction(signed_channel_tx(&signer, U256::from(18), u64::MAX, 1_000));
+
+        let lane_id = (signer.address(), U256::from(18));
+        pool.lanes
+            .insert(lane_id, NonceLane { next_nonce: u64::MAX, transactions: BTreeMap::new() });
+
+        let outcome = pool.insert_validated(transaction).unwrap();
+
+        assert!(matches!(outcome.outcome.state, AddedTransactionState::Pending));
+    }
+
+    #[test]
+    fn prune_mined_does_not_wrap_lane_head_after_u64_max() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let head = Arc::new(valid_pool_transaction(signed_channel_tx(
+            &signer,
+            U256::from(19),
+            u64::MAX,
+            1_000,
+        )));
+        let head_hash = *head.hash();
+        let stale =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(19), 7, 900)));
+        let lane_id = (signer.address(), U256::from(19));
+
+        pool.hashes.insert(head_hash, Arc::clone(&head));
+        pool.index.insert(head_hash, (lane_id, u64::MAX));
+        pool.lanes.insert(
+            lane_id,
+            NonceLane {
+                next_nonce: u64::MAX,
+                transactions: BTreeMap::from([(7, Arc::clone(&stale)), (u64::MAX, head)]),
+            },
+        );
+
+        let _ = pool.prune_mined(&[head_hash]);
+
+        assert_eq!(pool.lanes.get(&lane_id).map(|lane| lane.next_nonce), Some(u64::MAX));
     }
 
     #[test]
