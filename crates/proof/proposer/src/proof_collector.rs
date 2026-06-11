@@ -671,6 +671,7 @@ impl ProofCollectorState {
     }
 
     /// Records a proof failure and returns whether retrying is still allowed.
+    #[must_use]
     pub fn handle_proof_failure(
         &mut self,
         target: u64,
@@ -919,15 +920,21 @@ where
                                 return ProofCollectorTickResult::Restart;
                             }
                         } else {
-                            self.dispatch_root_retry(
-                                target_block,
-                                &current,
-                                claimed_l2_output_root,
-                                state,
-                                cache,
-                                false,
-                            )
-                            .await;
+                            if !self
+                                .dispatch_root_retry(
+                                    target_block,
+                                    &current,
+                                    claimed_l2_output_root,
+                                    state,
+                                    cache,
+                                    false,
+                                )
+                                .await
+                            {
+                                Metrics::pipeline_retries()
+                                    .set(state.retry_counts.values().sum::<u32>() as f64);
+                                return ProofCollectorTickResult::Restart;
+                            }
                         }
                     } else {
                         Metrics::pipeline_retries()
@@ -1056,6 +1063,8 @@ where
     }
 
     /// Dispatches a root-derived retry after a failed prover-service session.
+    ///
+    /// Returns `false` when retry accounting is exhausted and the caller should restart.
     pub async fn dispatch_root_retry(
         &self,
         target_block: u64,
@@ -1064,7 +1073,7 @@ where
         state: &mut ProofCollectorState,
         cache: &mut Option<ProofRecoveryCache>,
         count_dispatch_failure: bool,
-    ) {
+    ) -> bool {
         match self.dispatcher.dispatch_for(target_block, recovered, claimed_l2_output_root).await {
             ProofDispatchAttempt::Accepted(dispatched) => {
                 info!(
@@ -1086,12 +1095,14 @@ where
             ProofDispatchAttempt::DispatchFailed(error) => {
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
                 if count_dispatch_failure {
-                    state.handle_proof_failure(
+                    if !state.handle_proof_failure(
                         target_block,
                         error,
                         self.runtime.max_retries,
                         cache,
-                    );
+                    ) {
+                        return false;
+                    }
                 } else {
                     warn!(
                         target_block,
@@ -1101,6 +1112,8 @@ where
                 }
             }
         }
+
+        true
     }
 
     /// Dispatches a retry-specific proof request after a discarded proof.
@@ -1160,12 +1173,14 @@ where
             ProofDispatchAttempt::DispatchFailed(error) => {
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
                 if count_dispatch_failure {
-                    state.handle_proof_failure(
+                    if !state.handle_proof_failure(
                         target_block,
                         error,
                         self.runtime.max_retries,
                         cache,
-                    );
+                    ) {
+                        return false;
+                    }
                 } else {
                     warn!(
                         target_block,
@@ -1228,6 +1243,9 @@ mod tests {
     #[derive(Debug)]
     struct DiscardingOutputProposer;
 
+    #[derive(Debug)]
+    struct RejectingProofRequester;
+
     #[async_trait]
     impl ProofCollectorRecoveryProvider for NoopRecovery {
         async fn recover_latest_state(
@@ -1247,6 +1265,33 @@ mod tests {
             _intermediate_roots: &[B256],
         ) -> Result<(), ProposerError> {
             Err(ProposerError::L1OriginTooOld)
+        }
+    }
+
+    #[async_trait]
+    impl ProofRequesterProvider for RejectingProofRequester {
+        async fn prove_block_range(
+            &self,
+            _request: base_prover_service_protocol::ProveBlockRangeRequest,
+        ) -> Result<base_prover_service_protocol::ProveBlockRangeResponse, ProverServiceClientError>
+        {
+            Err(ProverServiceClientError::Timeout("simulated dispatch failure".into()))
+        }
+
+        async fn get_proof(
+            &self,
+            _request: base_prover_service_protocol::GetProofRequest,
+        ) -> Result<base_prover_service_protocol::GetProofResponse, ProverServiceClientError>
+        {
+            unimplemented!("tests do not poll proofs")
+        }
+
+        async fn list_proofs(
+            &self,
+            _request: base_prover_service_protocol::ListProofsRequest,
+        ) -> Result<base_prover_service_protocol::ListProofsResponse, ProverServiceClientError>
+        {
+            unimplemented!("tests do not list proofs")
         }
     }
 
@@ -1463,6 +1508,75 @@ mod tests {
         assert_eq!(state.discard_retry_counts.get(&target_block).copied(), Some(1));
         assert!(state.retry_counts.is_empty());
         assert!(cache.is_some());
+    }
+
+    #[tokio::test]
+    async fn discard_retry_dispatch_failure_returns_false_on_retry_exhaustion() {
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(200, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
+        let collector = ProofCollector::target_poller_aws_nitro(
+            Arc::clone(&requester),
+            Arc::clone(&rollup_client),
+        );
+        let dispatcher = ProofDispatcher::aws_nitro(
+            requester,
+            Arc::clone(&l1),
+            l2,
+            Arc::clone(&rollup_client),
+            ProofDispatcherConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+        let submitter = ProofSubmitter::new(
+            Arc::new(MockOutputProposer),
+            rollup_client,
+            l1,
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                block_interval: 100,
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        );
+        let orchestrator = ProofCollectorOrchestrator::new(
+            collector,
+            dispatcher,
+            submitter,
+            Arc::new(NoopRecovery),
+            ProofCollectorRuntimeConfig {
+                block_interval: 100,
+                max_retries: 1,
+                submit_timeout: std::time::Duration::from_secs(60),
+            },
+        );
+        let target_block = 200;
+        let mut state = ProofCollectorState::new();
+        let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
+
+        let should_continue = orchestrator
+            .dispatch_discard_retry(
+                target_block,
+                &recovered(100),
+                B256::repeat_byte(0xaa),
+                &mut state,
+                &mut cache,
+                true,
+            )
+            .await;
+
+        assert!(!should_continue);
+        assert!(cache.is_none());
+        assert!(state.retry_counts.is_empty());
     }
 
     #[tokio::test]
