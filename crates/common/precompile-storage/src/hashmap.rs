@@ -105,8 +105,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
 
         let code_len = code.len();
-        let is_new_code =
-            self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
+        let is_new_code = self.accounts.get(&address).is_none_or(|info| info.is_empty_code_hash());
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
         if is_new_code {
@@ -533,9 +532,9 @@ mod tests {
     #[test]
     fn checkpoint_commit_does_not_revert_mutations() {
         let mut p = HashMapStorageProvider::new(1);
-        let cp = p.checkpoint();
+        p.checkpoint();
         p.sstore(ADDR, KEY, U256::from(42u64)).unwrap();
-        p.checkpoint_commit(cp);
+        p.checkpoint_commit();
         assert_eq!(p.sload(ADDR, KEY).unwrap(), U256::from(42u64));
     }
 }
