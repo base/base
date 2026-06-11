@@ -21,6 +21,7 @@ base-proof-succinct-host-utils.workspace = true
 base-proof-succinct-ethereum-host-utils.workspace = true
 
 # network
+url.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
@@ -32,7 +33,7 @@ sp1-sdk.workspace = true
 async-trait.workspace = true
 
 # error handling
-anyhow.workspace = true
+thiserror.workspace = true
 
 # observability
 tracing.workspace = true

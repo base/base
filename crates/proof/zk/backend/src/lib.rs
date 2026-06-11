@@ -2,6 +2,7 @@
 
 mod succinct;
 pub use succinct::{
-    DRY_RUN_SNARK_PREFIX, DryRunZkProver, L1HeadCalculator, MOCK_PROOF_BYTES, MOCK_SNARK_PREFIX,
-    MockZkProver, OpSuccinctWitnessProvider, WitnessParams,
+    DRY_RUN_SNARK_PREFIX, DryRunZkProver, L1HeadCalculator, L1HeadError, L1HeadSource,
+    MOCK_PROOF_BYTES, MOCK_SNARK_PREFIX, MockZkProver, OpSuccinctWitnessProvider, WitnessError,
+    WitnessParams,
 };

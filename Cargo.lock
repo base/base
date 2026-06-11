@@ -5861,7 +5861,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider 2.0.5",
  "alloy-rpc-types 2.0.5",
- "anyhow",
  "async-trait",
  "base-common-network",
  "base-proof-rpc",
@@ -5870,8 +5869,10 @@ dependencies = [
  "base-proof-zk-host",
  "base-prover-service-protocol",
  "sp1-sdk",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

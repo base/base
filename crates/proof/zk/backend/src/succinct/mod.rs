@@ -4,10 +4,10 @@
 //! execution target.
 
 mod provider;
-pub use provider::{OpSuccinctWitnessProvider, WitnessParams};
+pub use provider::{L1HeadSource, OpSuccinctWitnessProvider, WitnessError, WitnessParams};
 
 mod utils;
-pub use utils::L1HeadCalculator;
+pub use utils::{L1HeadCalculator, L1HeadError};
 
 mod dry_run;
 pub use dry_run::{DRY_RUN_SNARK_PREFIX, DryRunZkProver};
