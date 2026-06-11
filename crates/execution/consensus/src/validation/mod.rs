@@ -116,17 +116,6 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
         }
     }
 
-    if chain_spec.is_isthmus_active_at_timestamp(timestamp) {
-        let header_requests_hash =
-            header.requests_hash().ok_or(ConsensusError::RequestsHashMissing)?;
-        let requests_hash = result.requests.requests_hash();
-        if requests_hash != header_requests_hash {
-            return Err(ConsensusError::BodyRequestsHashDiff(
-                GotExpected::new(requests_hash, header_requests_hash).into(),
-            ));
-        }
-    }
-
     let receipts = &result.receipts;
 
     // Before Byzantium, receipts contained state root that would mean that expensive
@@ -239,10 +228,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{Header, Receipt, TxReceipt};
-    use alloy_eips::{
-        eip2718::Encodable2718,
-        eip7685::{EMPTY_REQUESTS_HASH, Requests},
-    };
+    use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
     use base_common_chains::BaseUpgrade;
@@ -612,7 +598,6 @@ mod tests {
         let header = Header {
             timestamp: JOVIAN_TIMESTAMP,
             blob_gas_used: Some(BLOB_GAS_USED),
-            requests_hash: Some(EMPTY_REQUESTS_HASH),
             ..Default::default()
         };
 
@@ -634,7 +619,6 @@ mod tests {
         let header = Header {
             timestamp: JOVIAN_TIMESTAMP,
             blob_gas_used: Some(BLOB_GAS_USED + 1),
-            requests_hash: Some(EMPTY_REQUESTS_HASH),
             ..Default::default()
         };
 
