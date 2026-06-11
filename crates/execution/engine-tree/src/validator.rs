@@ -32,7 +32,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseRethReceiptBuilder;
 use base_flashblocks::FlashblocksState;
 use base_node_core::{BaseEngineTypes, engine::BasePostExecutionValidator};
-use reth_chain_state::{DeferredTrieData, ExecutedBlock};
+use reth_chain_state::{DeferredTrieData, ExecutedBlock, StateTrieOverlayManager};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{
     ConfigureEngineEvm, ExecutableTxIterator, InvalidBlockHook, PayloadValidator,
@@ -460,7 +460,11 @@ where
 
         // Create overlay factory for payload processor (StateRootTask path needs it for
         // multiproofs)
-        let overlay_builder = OverlayBuilder::new(parent_hash, self.changeset_cache.clone());
+        let overlay_builder = Self::overlay_builder_for_parent(
+            parent_hash,
+            ctx.state(),
+            self.changeset_cache.clone(),
+        );
         let overlay_factory =
             OverlayStateProviderFactory::new(self.provider.clone(), overlay_builder);
 
@@ -1269,6 +1273,30 @@ where
         Ok(None)
     }
 
+    /// Returns an overlay builder configured for the given parent hash.
+    fn overlay_builder_for_parent(
+        parent_hash: B256,
+        state: &EngineApiTreeState<BasePrimitives>,
+        changeset_cache: ChangesetCache,
+    ) -> OverlayBuilder<BasePrimitives> {
+        let overlay_builder = OverlayBuilder::new(parent_hash, changeset_cache);
+
+        let Some((_, blocks)) = state.tree_state().blocks_by_hash(parent_hash) else {
+            return overlay_builder;
+        };
+
+        if blocks.is_empty() {
+            return overlay_builder;
+        }
+
+        let overlay_manager = StateTrieOverlayManager::default();
+        for block in blocks {
+            overlay_manager.insert_block(block);
+        }
+
+        overlay_builder.with_state_trie_overlay_manager(overlay_manager)
+    }
+
     /// Determines the state root computation strategy based on configuration.
     ///
     /// Note: Use state root task only if prefix sets are empty, otherwise proof generation is
@@ -1480,7 +1508,7 @@ where
     fn on_inserted_executed_block(
         &self,
         block: BuiltPayloadExecutedBlock<BasePrimitives>,
-        _state: &EngineApiTreeState<BasePrimitives>,
+        state: &EngineApiTreeState<BasePrimitives>,
     ) -> ProviderResult<ExecutedBlock<BasePrimitives>> {
         self.payload_processor.on_inserted_executed_block(
             block.recovered_block.block_with_parent(),
@@ -1489,8 +1517,9 @@ where
 
         let overlay_factory = OverlayStateProviderFactory::new(
             self.provider.clone(),
-            OverlayBuilder::<BasePrimitives>::new(
+            Self::overlay_builder_for_parent(
                 block.recovered_block.parent_hash(),
+                state,
                 self.changeset_cache.clone(),
             ),
         );
@@ -1516,11 +1545,11 @@ where
         &self,
         parent_hash: B256,
         parent_state_root: B256,
-        _state: &EngineApiTreeState<BasePrimitives>,
+        state: &EngineApiTreeState<BasePrimitives>,
     ) -> Option<StateRootHandle> {
         let overlay_factory = OverlayStateProviderFactory::new(
             self.provider.clone(),
-            OverlayBuilder::<BasePrimitives>::new(parent_hash, self.changeset_cache.clone()),
+            Self::overlay_builder_for_parent(parent_hash, state, self.changeset_cache.clone()),
         );
 
         Some(self.payload_processor.spawn_state_root(
