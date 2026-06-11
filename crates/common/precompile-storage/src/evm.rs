@@ -98,31 +98,24 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         // Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
-        let (is_new_account, has_empty_code) = {
+        // Charge CREATE equivalent costs whenever code is written to an account that had no code,
+        // regardless of its balance. A prefunded account (balance > 0, no code) passes the
+        // factory's collision check (which only rejects accounts that already have code), but
+        // must still pay G_create and the keccak hash cost.
+        let is_new_code = {
             let state_load = self
                 .internals
                 .load_account(address)
                 .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-            let info = &state_load.data.info;
-            (info.is_empty(), info.is_empty_code_hash())
+            state_load.data.info.is_empty_code_hash()
         };
 
-        if has_empty_code {
+        if is_new_code {
             // Yellow Paper G_create: base cost for creating a new contract account.
             self.deduct_gas(self.gas_params.create_cost())?;
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-        }
-        if is_new_account {
-            // EIP-8037: charge for the new account entry in the state trie.
-            self.deduct_state_gas(self.gas_params.create_state_gas())?;
-        }
-        if has_empty_code {
-            // EIP-8037: charge for depositing code into an account whose code slot is
-            // currently empty. Applies to both new accounts and existent accounts that
-            // have only a nonzero balance or nonce (no prior code).
-            self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
 
         self.internals
