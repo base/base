@@ -43,8 +43,7 @@ use base_proof_contracts::{
 use base_runtime::Clock;
 use base_tx_manager::TxManagerError;
 use futures::stream::{self, StreamExt};
-use tokio::sync::oneshot;
-use tokio::sync::oneshot::error::TryRecvError;
+use tokio::sync::{oneshot, oneshot::error::TryRecvError};
 use tracing::{debug, info, warn};
 
 use crate::{ChallengeSubmitError, ChallengerMetrics, GameScanner};
@@ -1672,16 +1671,6 @@ pub trait BondTransactionSubmitter: Send + Sync {
         to: Address,
         calldata: alloy_primitives::Bytes,
     ) -> Result<BondTxHandle, crate::ChallengeSubmitError>;
-
-    /// Sends a transaction and waits for confirmation.
-    async fn send_bond_tx(
-        &self,
-        game_address: Address,
-        to: Address,
-        calldata: alloy_primitives::Bytes,
-    ) -> Result<alloy_primitives::B256, crate::ChallengeSubmitError> {
-        self.send_bond_tx_async(game_address, to, calldata).await?.await
-    }
 }
 
 #[cfg(test)]

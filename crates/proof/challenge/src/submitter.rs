@@ -8,12 +8,13 @@
 //!    with a ZK proof to refute the fraudulent challenge.
 //! 3. **Wrong ZK proposal** — `nullify()` with a ZK proof.
 
-use std::time::Instant;
+use std::{panic::AssertUnwindSafe, time::Instant};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
 use base_tx_manager::{TxCandidate, TxManager};
-use tracing::{debug, info};
+use futures::FutureExt;
+use tracing::{debug, error, info};
 
 use crate::{
     BondTransactionSubmitter, BondTxHandle, ChallengeSubmitError, ChallengerMetrics, DisputeIntent,
@@ -144,19 +145,34 @@ impl<T: TxManager> BondTransactionSubmitter for ChallengeSubmitter<T> {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         tokio::spawn(async move {
-            let result = match send_handle.await {
-                Ok(receipt) => {
-                    let latency = start.elapsed();
-                    ChallengerMetrics::bond_tx_latency_seconds().record(latency.as_secs_f64());
-                    let tx_hash = receipt.transaction_hash;
-                    if receipt.inner.status() {
-                        Ok(tx_hash)
-                    } else {
-                        Err(ChallengeSubmitError::TxReverted { tx_hash })
+            let result = AssertUnwindSafe(async move {
+                match send_handle.await {
+                    Ok(receipt) => {
+                        let latency = start.elapsed();
+                        ChallengerMetrics::bond_tx_latency_seconds().record(latency.as_secs_f64());
+                        let tx_hash = receipt.transaction_hash;
+                        if receipt.inner.status() {
+                            Ok(tx_hash)
+                        } else {
+                            Err(ChallengeSubmitError::TxReverted { tx_hash })
+                        }
                     }
+                    Err(e) => Err(ChallengeSubmitError::TxManager(e)),
                 }
-                Err(e) => Err(ChallengeSubmitError::TxManager(e)),
-            };
+            })
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|payload| {
+                let message = if let Some(message) = payload.downcast_ref::<&str>() {
+                    (*message).to_owned()
+                } else if let Some(message) = payload.downcast_ref::<String>() {
+                    message.clone()
+                } else {
+                    "non-string panic payload".to_owned()
+                };
+                error!(panic = %message, "bond transaction task panicked");
+                Err(ChallengeSubmitError::BondTaskPanicked { message })
+            });
             let _ = tx.send(result);
         });
 
@@ -288,5 +304,45 @@ mod tests {
             .await;
 
         assert_eq!(result.unwrap(), tx_hash);
+    }
+
+    #[tokio::test]
+    async fn send_bond_tx_async_success_returns_tx_hash() {
+        let tx_hash = B256::repeat_byte(0xDD);
+        let mock = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+        let submitter = ChallengeSubmitter::new(mock);
+
+        let handle = submitter
+            .send_bond_tx_async(
+                Address::repeat_byte(0x01),
+                Address::repeat_byte(0x02),
+                Bytes::from(vec![0xBA, 0x5E]),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(handle.await.unwrap(), tx_hash);
+    }
+
+    #[tokio::test]
+    async fn send_bond_tx_async_reverted_returns_error() {
+        let tx_hash = B256::repeat_byte(0xEE);
+        let mock = MockTxManager::new(Ok(receipt_with_status(false, tx_hash)));
+        let submitter = ChallengeSubmitter::new(mock);
+
+        let handle = submitter
+            .send_bond_tx_async(
+                Address::repeat_byte(0x01),
+                Address::repeat_byte(0x02),
+                Bytes::from(vec![0xBA, 0x5E]),
+            )
+            .await
+            .unwrap();
+
+        let err = handle.await.unwrap_err();
+        assert!(
+            matches!(err, ChallengeSubmitError::TxReverted { tx_hash: h } if h == tx_hash),
+            "expected TxReverted, got {err:?}",
+        );
     }
 }

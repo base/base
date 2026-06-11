@@ -13,6 +13,12 @@ pub enum ChallengeSubmitError {
         /// Hash of the reverted transaction.
         tx_hash: B256,
     },
+    /// An internal asynchronous transaction task panicked.
+    #[error("bond transaction task panicked: {message}")]
+    BondTaskPanicked {
+        /// Panic message captured from the asynchronous task.
+        message: String,
+    },
     /// Transaction manager error (nonce, fees, RPC, signing, etc.).
     #[error(transparent)]
     TxManager(#[from] TxManagerError),

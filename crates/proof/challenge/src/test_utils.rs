@@ -836,7 +836,15 @@ impl TxManager for MockTxManager {
     }
 
     async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-        unimplemented!("not needed for these tests")
+        let response = self
+            .responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("MockTxManager has no more responses");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(response);
+        SendHandle::new(rx)
     }
 
     fn sender_address(&self) -> Address {
