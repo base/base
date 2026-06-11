@@ -125,6 +125,7 @@ mod test {
             gas_limit: None,
             eip_1559_params,
             min_base_fee: None,
+            activation_admin_address: None,
         }
     }
 

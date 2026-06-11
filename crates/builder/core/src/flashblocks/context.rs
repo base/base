@@ -1173,6 +1173,7 @@ impl BasePayloadBuilderCtx {
             gas_limit: parent.gas_limit,
             parent_beacon_block_root: Some(B256::ZERO),
             extra_data: Default::default(),
+            activation_admin_address: None,
         };
 
         let evm_env = evm_config

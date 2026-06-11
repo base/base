@@ -420,6 +420,7 @@ mod tests {
                     parent_beacon_block_root: Some(B256::ZERO),
                     slot_number: None,
                 },
+                activation_admin_address: None,
             },
             3,
         )

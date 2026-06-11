@@ -7,7 +7,7 @@ use alloy_eips::{
     eip1559::BaseFeeParams,
     eip2718::{Eip2718Result, WithEncoded},
 };
-use alloy_primitives::{B64, B256, Bytes, keccak256};
+use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
 use alloy_rlp::{Encodable, Result};
 use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
 use base_common_consensus::{
@@ -50,6 +50,9 @@ pub struct BasePayloadAttributes {
     /// Prior to Jovian activation, this field should always be [None].
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub min_base_fee: Option<u64>,
+    /// If set, this selects the activation registry admin for the block.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub activation_admin_address: Option<Address>,
 }
 
 impl BasePayloadAttributes {
@@ -101,6 +104,10 @@ impl BasePayloadAttributes {
 
         if let Some(min_base_fee) = self.min_base_fee {
             hasher.update(min_base_fee.to_be_bytes());
+        }
+
+        if let Some(activation_admin_address) = self.activation_admin_address {
+            hasher.update(activation_admin_address.as_slice());
         }
 
         let mut out = hasher.finalize();
@@ -242,6 +249,7 @@ mod test {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: None,
+            activation_admin_address: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -276,6 +284,7 @@ mod test {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: Some(100),
+            activation_admin_address: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -305,6 +314,7 @@ mod test {
             gas_limit: Some(42),
             eip_1559_params: None,
             min_base_fee: None,
+            activation_admin_address: None,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
@@ -329,6 +339,7 @@ mod test {
             gas_limit: Some(42),
             eip_1559_params: Some(b64!("0000dead0000beef")),
             min_base_fee: None,
+            activation_admin_address: None,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
@@ -371,6 +382,7 @@ mod test {
             gas_limit: Some(42),
             eip_1559_params: Some(b64!("0000dead0000beef")),
             min_base_fee: None,
+            activation_admin_address: None,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
@@ -395,6 +407,7 @@ mod test {
             gas_limit: Some(42),
             eip_1559_params: None,
             min_base_fee: Some(1),
+            activation_admin_address: None,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();

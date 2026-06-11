@@ -26,3 +26,6 @@ pub use min_base_fee::MinBaseFeeUpdate;
 
 mod da_footprint_gas_scalar;
 pub use da_footprint_gas_scalar::DaFootprintGasScalarUpdate;
+
+mod activation_admin;
+pub use activation_admin::ActivationAdminUpdate;

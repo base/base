@@ -67,6 +67,7 @@ where
         gas_limit: block.header().gas_limit(),
         parent_beacon_block_root: block.header().parent_beacon_block_root(),
         extra_data: block.header().extra_data().clone(),
+        activation_admin_address: None,
     };
 
     // Recover signers first (this can be parallelized in production)

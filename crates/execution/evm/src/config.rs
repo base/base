@@ -51,6 +51,8 @@ pub struct BaseNextBlockEnvAttributes {
     pub parent_beacon_block_root: Option<B256>,
     /// Encoded EIP-1559 parameters to include into block's `extra_data` field.
     pub extra_data: RevmBytes,
+    /// Activation registry admin address for the next block.
+    pub activation_admin_address: Option<Address>,
 }
 
 #[cfg(feature = "rpc")]
@@ -65,6 +67,7 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
             gas_limit: parent.gas_limit(),
             parent_beacon_block_root: parent.parent_beacon_block_root(),
             extra_data: parent.extra_data().clone(),
+            activation_admin_address: None,
         }
     }
 }
@@ -194,6 +197,7 @@ where
             parent_hash: block.header().parent_hash(),
             parent_beacon_block_root: block.header().parent_beacon_block_root(),
             extra_data: block.header().extra_data().clone(),
+            activation_admin_address: None,
         })
     }
 
@@ -206,6 +210,7 @@ where
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             extra_data: attributes.extra_data,
+            activation_admin_address: attributes.activation_admin_address,
         })
     }
 }
@@ -237,6 +242,7 @@ where
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             extra_data: payload.payload.as_v1().extra_data.clone(),
+            activation_admin_address: None,
         })
     }
 

@@ -14,17 +14,18 @@ pub use params::FeeConfig;
 
 mod updates;
 pub use updates::{
-    BatcherUpdate, DaFootprintGasScalarUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate,
-    MinBaseFeeUpdate, OperatorFeeUpdate, UnsafeBlockSignerUpdate, UpdateDataValidator,
-    ValidatedUpdateData, ValidationError, Validator,
+    ActivationAdminUpdate, BatcherUpdate, DaFootprintGasScalarUpdate, Eip1559Update,
+    GasConfigUpdate, GasLimitUpdate, MinBaseFeeUpdate, OperatorFeeUpdate, UnsafeBlockSignerUpdate,
+    UpdateDataValidator, ValidatedUpdateData, ValidationError, Validator,
 };
 
 mod system;
 pub use system::{
-    BatcherUpdateError, DaFootprintGasScalarUpdateError, EIP1559UpdateError, GasConfigUpdateError,
-    GasLimitUpdateError, LogProcessingError, MinBaseFeeUpdateError, OperatorFeeUpdateError,
-    SystemConfig, SystemConfigLog, SystemConfigUpdate, SystemConfigUpdateError,
-    SystemConfigUpdateKind, UnsafeBlockSignerUpdateError,
+    ActivationAdminUpdateError, BatcherUpdateError, DaFootprintGasScalarUpdateError,
+    EIP1559UpdateError, GasConfigUpdateError, GasLimitUpdateError, LogProcessingError,
+    MinBaseFeeUpdateError, OperatorFeeUpdateError, SystemConfig, SystemConfigLog,
+    SystemConfigUpdate, SystemConfigUpdateError, SystemConfigUpdateKind,
+    UnsafeBlockSignerUpdateError,
 };
 
 mod chain;

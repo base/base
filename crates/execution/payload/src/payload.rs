@@ -69,6 +69,8 @@ pub struct BasePayloadBuilderAttributes<T> {
     pub eip_1559_params: Option<B64>,
     /// Min base fee for the generated payload (only available post-Jovian)
     pub min_base_fee: Option<u64>,
+    /// Activation registry admin address for the generated payload.
+    pub activation_admin_address: Option<Address>,
 }
 
 impl<T> Default for BasePayloadBuilderAttributes<T> {
@@ -80,6 +82,7 @@ impl<T> Default for BasePayloadBuilderAttributes<T> {
             eip_1559_params: Default::default(),
             transactions: Default::default(),
             min_base_fee: Default::default(),
+            activation_admin_address: Default::default(),
         }
     }
 }
@@ -105,6 +108,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
             gas_limit: self.gas_limit,
             eip_1559_params: self.eip_1559_params,
             min_base_fee: self.min_base_fee,
+            activation_admin_address: self.activation_admin_address,
         }
     }
 
@@ -176,6 +180,7 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
             gas_limit: attributes.gas_limit,
             eip_1559_params: attributes.eip_1559_params,
             min_base_fee: attributes.min_base_fee,
+            activation_admin_address: attributes.activation_admin_address,
         })
     }
 }
@@ -518,6 +523,10 @@ pub fn payload_id(
         hasher.update(min_base_fee.to_be_bytes());
     }
 
+    if let Some(activation_admin_address) = attributes.activation_admin_address {
+        hasher.update(activation_admin_address.as_slice());
+    }
+
     let mut out = hasher.finalize();
     out[0] = payload_version;
 
@@ -565,6 +574,7 @@ where
             gas_limit: attributes.gas_limit.unwrap_or_else(|| parent.gas_limit()),
             parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
+            activation_admin_address: attributes.activation_admin_address,
         })
     }
 }
@@ -599,6 +609,7 @@ mod tests {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: None,
+            activation_admin_address: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -631,6 +642,7 @@ mod tests {
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: Some(100),
+            activation_admin_address: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails

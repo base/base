@@ -215,6 +215,7 @@ where
                 l2_parent.block_info.timestamp,
                 next_l2_time,
             ),
+            activation_admin_address: sys_config.activation_admin_address,
             min_base_fee: self
                 .rollup_cfg
                 .is_jovian_active(next_l2_time)
@@ -497,6 +498,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            activation_admin_address: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -550,6 +552,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            activation_admin_address: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -604,6 +607,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            activation_admin_address: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 7);
@@ -657,6 +661,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            activation_admin_address: None,
         };
         assert_eq!(payload.transactions.as_ref().unwrap().len(), 10);
         assert_eq!(payload, expected);

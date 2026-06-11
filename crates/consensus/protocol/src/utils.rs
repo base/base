@@ -57,6 +57,10 @@ pub fn to_system_config(
         overhead: l1_info.l1_fee_overhead(),
         scalar: l1_fee_scalar,
         gas_limit: block.header.gas_limit,
+        activation_admin_address: rollup_config
+            .genesis
+            .system_config
+            .and_then(|config| config.activation_admin_address),
         ..Default::default()
     };
 
@@ -314,6 +318,7 @@ mod tests {
             operator_fee_constant: None,
             min_base_fee: None,
             da_footprint_gas_scalar: None,
+            activation_admin_address: None,
         };
         assert_eq!(config, expected);
     }
@@ -363,6 +368,7 @@ mod tests {
             operator_fee_constant: None,
             min_base_fee: None,
             da_footprint_gas_scalar: None,
+            activation_admin_address: None,
         };
         assert_eq!(config, expected);
     }
@@ -416,6 +422,7 @@ mod tests {
             operator_fee_constant: Some(0xdcba),
             min_base_fee: None,
             da_footprint_gas_scalar: None,
+            activation_admin_address: None,
         };
         assert_eq!(config, expected);
     }

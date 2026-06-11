@@ -38,7 +38,7 @@ mod evm;
 pub use evm::BaseEvm;
 
 mod factory;
-pub use factory::BaseEvmFactory;
+pub use factory::{ActivationAdminPrecompiles, BaseEvmFactory};
 
 mod tx_env;
 pub use tx_env::BaseTxEnv;

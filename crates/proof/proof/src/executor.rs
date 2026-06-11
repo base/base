@@ -8,7 +8,7 @@ use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::B
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
-use base_common_evm::{BaseSpecId, BaseTxEnv};
+use base_common_evm::{ActivationAdminPrecompiles, BaseSpecId, BaseTxEnv};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_driver::Executor;
@@ -59,6 +59,7 @@ where
     P: TrieDBProvider + Debug + Send + Sync + Clone,
     H: TrieHinter + Debug + Send + Sync + Clone,
     Evm: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + 'static,
+    <Evm as EvmFactory>::Precompiles: ActivationAdminPrecompiles,
     <Evm as EvmFactory>::Tx:
         FromTxWithEncoded<BaseTxEnvelope> + FromRecoveredTx<BaseTxEnvelope> + BaseTxEnv,
 {

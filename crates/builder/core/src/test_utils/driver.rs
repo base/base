@@ -186,6 +186,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                 no_tx_pool,
                 min_base_fee,
                 eip_1559_params: Some(B64::from(eip_1559_params)),
+                activation_admin_address: None,
             })
             .await?;
 

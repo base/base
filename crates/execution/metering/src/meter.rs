@@ -400,6 +400,7 @@ where
         parent_beacon_block_root: parent_beacon_block_root
             .or_else(|| header.parent_beacon_block_root()),
         extra_data: header.extra_data().clone(),
+        activation_admin_address: None,
     };
 
     // Execute transactions with a MeteringInspector to collect per-opcode and

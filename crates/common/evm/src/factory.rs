@@ -8,9 +8,31 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
-    Builder, DefaultBase,
+    BaseContext, BaseEvm, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
+    BaseTransactionError, BerylPrecompileMetricsObserver, Builder, DefaultBase,
 };
+
+/// Precompile providers that can rebuild their activation-registry admin binding.
+pub trait ActivationAdminPrecompiles {
+    /// Rebuilds the activation-registry precompile for `spec` and `activation_admin_address`.
+    fn set_activation_admin_address(
+        &mut self,
+        spec: BaseSpecId,
+        activation_admin_address: Option<Address>,
+    );
+}
+
+impl ActivationAdminPrecompiles for PrecompilesMap {
+    fn set_activation_admin_address(
+        &mut self,
+        spec: BaseSpecId,
+        activation_admin_address: Option<Address>,
+    ) {
+        *self = BasePrecompiles::new_with_spec(spec)
+            .with_activation_admin_address(activation_admin_address)
+            .install_with_observer(BerylPrecompileMetricsObserver);
+    }
+}
 
 /// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].
 ///

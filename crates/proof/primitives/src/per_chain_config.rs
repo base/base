@@ -262,6 +262,7 @@ impl PerChainConfig {
                 operator_fee_constant: None,
                 da_footprint_gas_scalar: None,
                 min_base_fee: None,
+                activation_admin_address: None,
             }),
         }
     }

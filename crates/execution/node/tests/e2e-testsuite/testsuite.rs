@@ -52,6 +52,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
                     eip_1559_params: None,
                     min_base_fee: None,
                     gas_limit: Some(30_000_000),
+                    activation_admin_address: None,
                 },
                 3,
             )
@@ -103,6 +104,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
                     eip_1559_params: Some(B64::ZERO),
                     min_base_fee: None,
                     gas_limit: Some(30_000_000),
+                    activation_admin_address: None,
                 },
                 3,
             )

@@ -21,4 +21,6 @@ pub enum SystemConfigUpdateKind {
     MinBaseFee = 6,
     /// DA footprint gas scalar update type
     DaFootprintGasScalar = 7,
+    /// Activation registry admin update type
+    ActivationAdmin = 8,
 }

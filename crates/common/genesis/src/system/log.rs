@@ -3,9 +3,9 @@
 use alloy_primitives::Log;
 
 use crate::{
-    BatcherUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate, LogProcessingError,
-    OperatorFeeUpdate, SystemConfigUpdate, SystemConfigUpdateError, SystemConfigUpdateKind,
-    UnsafeBlockSignerUpdate,
+    ActivationAdminUpdate, BatcherUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate,
+    LogProcessingError, OperatorFeeUpdate, SystemConfigUpdate, SystemConfigUpdateError,
+    SystemConfigUpdateKind, UnsafeBlockSignerUpdate,
     updates::{DaFootprintGasScalarUpdate, MinBaseFeeUpdate},
 };
 
@@ -107,6 +107,10 @@ impl SystemConfigLog {
             SystemConfigUpdateKind::DaFootprintGasScalar => {
                 let update = DaFootprintGasScalarUpdate::try_from(self)?;
                 Ok(SystemConfigUpdate::DaFootprintGasScalar(update))
+            }
+            SystemConfigUpdateKind::ActivationAdmin => {
+                let update = ActivationAdminUpdate::try_from(self)?;
+                Ok(SystemConfigUpdate::ActivationAdmin(update))
             }
         }
     }

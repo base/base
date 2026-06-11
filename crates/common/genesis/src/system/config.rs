@@ -50,6 +50,8 @@ pub struct SystemConfig {
     /// Note: according to the [spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/system-config.md#initialization), as long as the `DAFootprintGasScalar` is not
     /// explicitly set, the default value (`400`) will be systematically applied.
     pub da_footprint_gas_scalar: Option<u16>,
+    /// Activation registry admin address.
+    pub activation_admin_address: Option<Address>,
 }
 
 /// Custom EIP-1559 parameter decoding is needed here for holocene encoding.
@@ -84,6 +86,7 @@ impl<'a> serde::Deserialize<'a> for SystemConfig {
             operator_fee_constant: Option<u64>,
             min_base_fee: Option<u64>,
             da_footprint_gas_scalar: Option<u16>,
+            activation_admin_address: Option<Address>,
         }
 
         let mut alias = SystemConfigAlias::deserialize(deserializer)?;
@@ -115,6 +118,7 @@ impl<'a> serde::Deserialize<'a> for SystemConfig {
             operator_fee_constant: alias.operator_fee_constant,
             min_base_fee: alias.min_base_fee,
             da_footprint_gas_scalar: alias.da_footprint_gas_scalar,
+            activation_admin_address: alias.activation_admin_address,
         })
     }
 }
@@ -241,6 +245,8 @@ mod tests {
         b256!("0000000000000000000000000000000000000000000000000000000000000004");
     const OPERATOR_FEE_UPDATE_TYPE: B256 =
         b256!("0000000000000000000000000000000000000000000000000000000000000005");
+    const ACTIVATION_ADMIN_UPDATE_TYPE: B256 =
+        b256!("0000000000000000000000000000000000000000000000000000000000000008");
 
     #[test]
     #[cfg(feature = "serde")]
@@ -469,6 +475,30 @@ mod tests {
         assert_eq!(
             system_config.batcher_address,
             address!("000000000000000000000000000000000000bEEF")
+        );
+    }
+
+    #[test]
+    fn test_system_config_update_activation_admin_log() {
+        let mut system_config = SystemConfig::default();
+
+        let update_log = Log {
+            address: Address::ZERO,
+            data: LogData::new_unchecked(
+                vec![
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
+                    ACTIVATION_ADMIN_UPDATE_TYPE,
+                ],
+                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
+            )
+        };
+
+        system_config.process_config_update_log(&update_log, false).unwrap();
+
+        assert_eq!(
+            system_config.activation_admin_address,
+            Some(address!("000000000000000000000000000000000000bEEF"))
         );
     }
 

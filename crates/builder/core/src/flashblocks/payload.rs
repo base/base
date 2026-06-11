@@ -175,6 +175,7 @@ where
             gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
             parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
+            activation_admin_address: config.attributes.activation_admin_address,
         };
 
         let evm_config = self.evm_config.clone();

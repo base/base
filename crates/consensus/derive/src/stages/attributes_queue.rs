@@ -240,6 +240,7 @@ mod tests {
             gas_limit: None,
             eip_1559_params: None,
             min_base_fee: None,
+            activation_admin_address: None,
         }
     }
 

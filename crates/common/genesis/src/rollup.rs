@@ -591,6 +591,7 @@ mod tests {
                     operator_fee_constant: Some(40),
                     min_base_fee: Some(50),
                     da_footprint_gas_scalar: Some(10),
+                    activation_admin_address: None,
                 }),
             },
             block_time: 2,

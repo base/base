@@ -66,6 +66,7 @@ mod tests {
                 operator_fee_constant: None,
                 min_base_fee: None,
                 da_footprint_gas_scalar: Some(10),
+                activation_admin_address: None,
             }),
         }
     }

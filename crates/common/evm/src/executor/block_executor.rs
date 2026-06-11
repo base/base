@@ -24,8 +24,8 @@ use revm::{
 };
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
-    DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    ActivationAdminPrecompiles, BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder,
+    BaseSpecId, BaseTxEnv, BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
@@ -56,12 +56,19 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
 
 impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
 where
-    E: Evm,
+    E: Evm<Spec = BaseSpecId>,
+    E::Precompiles: ActivationAdminPrecompiles,
     R: BaseReceiptBuilder,
     Spec: Upgrades + Clone,
 {
     /// Creates a new [`BaseBlockExecutor`].
-    pub fn new(evm: E, ctx: BaseBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
+    pub fn new(mut evm: E, ctx: BaseBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
+        if let Some(activation_admin_address) = ctx.activation_admin_address {
+            let spec_id = evm.cfg_env().spec;
+            evm.components_mut()
+                .2
+                .set_activation_admin_address(spec_id, Some(activation_admin_address));
+        }
         Self {
             is_regolith: spec
                 .is_regolith_active_at_timestamp(evm.block().timestamp().saturating_to()),

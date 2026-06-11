@@ -14,7 +14,8 @@ use alloy_evm::{
 };
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
 use base_common_evm::{
-    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BaseTxEnv,
+    ActivationAdminPrecompiles, AlloyReceiptBuilder, BaseBlockExecutionCtx,
+    BaseBlockExecutorFactory, BaseSpecId, BaseTxEnv,
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -57,6 +58,7 @@ where
     P: TrieDBProvider + Debug,
     H: TrieHinter + Debug,
     Evm: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + 'static,
+    <Evm as EvmFactory>::Precompiles: ActivationAdminPrecompiles,
     <Evm as EvmFactory>::Tx:
         FromTxWithEncoded<BaseTxEnvelope> + FromRecoveredTx<BaseTxEnvelope> + BaseTxEnv,
 {
@@ -146,6 +148,7 @@ where
             parent_beacon_block_root: attrs.payload_attributes.parent_beacon_block_root,
             // This field is unused for individual block building jobs.
             extra_data: Default::default(),
+            activation_admin_address: attrs.activation_admin_address,
         };
         let executor = self.factory.create_executor(evm, ctx);
 

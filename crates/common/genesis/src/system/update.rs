@@ -3,8 +3,8 @@
 use alloy_primitives::{B256, b256};
 
 use crate::{
-    BatcherUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate, OperatorFeeUpdate, SystemConfig,
-    SystemConfigUpdateKind, UnsafeBlockSignerUpdate,
+    ActivationAdminUpdate, BatcherUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate,
+    OperatorFeeUpdate, SystemConfig, SystemConfigUpdateKind, UnsafeBlockSignerUpdate,
     updates::{DaFootprintGasScalarUpdate, MinBaseFeeUpdate},
 };
 
@@ -29,6 +29,8 @@ pub enum SystemConfigUpdate {
     MinBaseFee(MinBaseFeeUpdate),
     /// DA footprint gas scalar update.
     DaFootprintGasScalar(DaFootprintGasScalarUpdate),
+    /// Activation registry admin update.
+    ActivationAdmin(ActivationAdminUpdate),
 }
 
 impl SystemConfigUpdate {
@@ -50,6 +52,7 @@ impl SystemConfigUpdate {
             Self::OperatorFee(update) => update.apply(config),
             Self::MinBaseFee(update) => update.apply(config),
             Self::DaFootprintGasScalar(update) => update.apply(config),
+            Self::ActivationAdmin(update) => update.apply(config),
         }
     }
 
@@ -64,6 +67,7 @@ impl SystemConfigUpdate {
             Self::OperatorFee(_) => SystemConfigUpdateKind::OperatorFee,
             Self::MinBaseFee(_) => SystemConfigUpdateKind::MinBaseFee,
             Self::DaFootprintGasScalar(_) => SystemConfigUpdateKind::DaFootprintGasScalar,
+            Self::ActivationAdmin(_) => SystemConfigUpdateKind::ActivationAdmin,
         }
     }
 }

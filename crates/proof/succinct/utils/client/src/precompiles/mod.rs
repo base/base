@@ -6,7 +6,7 @@ use alloy_evm::precompiles::PrecompilesMap;
 #[cfg(target_os = "zkvm")]
 use alloy_evm::precompiles::{DynPrecompile, Precompile};
 use alloy_primitives::Address;
-use base_common_evm::{BasePrecompiles, BaseSpecId};
+use base_common_evm::{ActivationAdminPrecompiles, BasePrecompiles, BaseSpecId};
 use base_common_precompiles::PrecompileCallObserver;
 #[cfg(any(test, target_os = "zkvm"))]
 use revm::precompile::PrecompileId;
@@ -167,6 +167,16 @@ impl BaseZkvmPrecompiles {
 
     #[cfg(not(target_os = "zkvm"))]
     const fn install_cycle_trackers(_precompiles: &mut PrecompilesMap) {}
+}
+
+impl ActivationAdminPrecompiles for BaseZkvmPrecompiles {
+    fn set_activation_admin_address(
+        &mut self,
+        spec: BaseSpecId,
+        activation_admin_address: Option<Address>,
+    ) {
+        *self = Self::new_with_spec_and_activation_admin_address(spec, activation_admin_address);
+    }
 }
 
 impl<CTX> PrecompileProvider<CTX> for BaseZkvmPrecompiles
