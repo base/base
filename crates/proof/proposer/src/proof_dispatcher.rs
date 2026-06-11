@@ -194,6 +194,10 @@ where
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
     ) -> ProofDispatchAttempt {
+        let expected_session_id = ProposerProofAdapter::tee_session_id_for_root(
+            claimed_l2_output_root,
+            TeeKind::AwsNitro,
+        );
         let request =
             match self.build_request(target_block, recovered, claimed_l2_output_root).await {
                 Ok(request) => request,
@@ -201,7 +205,13 @@ where
             };
 
         match self.dispatcher.dispatch_tee(request).await {
-            Ok(dispatched) => ProofDispatchAttempt::Accepted(dispatched),
+            Ok(dispatched) if dispatched.session_id == expected_session_id => {
+                ProofDispatchAttempt::Accepted(dispatched)
+            }
+            Ok(dispatched) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
+                "prover service returned mismatched session_id: expected {}, got {}",
+                expected_session_id, dispatched.session_id
+            ))),
             Err(error) => ProofDispatchAttempt::DispatchFailed(error),
         }
     }
@@ -222,9 +232,16 @@ where
             };
         let session_id =
             ProposerProofAdapter::tee_discard_retry_session_id(&request, tee_kind, attempt);
+        let expected_session_id = session_id.clone();
 
         match self.dispatcher.dispatch_tee_with_session_id(request, session_id).await {
-            Ok(dispatched) => ProofDispatchAttempt::Accepted(dispatched),
+            Ok(dispatched) if dispatched.session_id == expected_session_id => {
+                ProofDispatchAttempt::Accepted(dispatched)
+            }
+            Ok(dispatched) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
+                "prover service returned mismatched session_id: expected {}, got {}",
+                expected_session_id, dispatched.session_id
+            ))),
             Err(error) => ProofDispatchAttempt::DispatchFailed(error),
         }
     }
@@ -408,6 +425,7 @@ impl ProofDispatcherState {
                 "Proof failed after max retries, dropping cached recovery"
             );
             self.retry_counts.remove(&target);
+            self.cursor = None;
             false
         } else {
             warn!(
@@ -425,14 +443,58 @@ impl ProofDispatcherState {
 mod tests {
     use std::collections::HashMap;
 
+    use async_trait::async_trait;
+    use base_prover_service_client::ProverServiceClientError;
+    use base_prover_service_protocol::{
+        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+        ProveBlockRangeRequest, ProveBlockRangeResponse,
+    };
+
     use super::*;
     use crate::test_utils::{
         MockL1, MockL2, MockProofRequester, MockRollupClient, test_sync_status,
     };
 
+    #[derive(Debug)]
+    struct MismatchedProofRequester {
+        session_id: String,
+    }
+
+    #[async_trait]
+    impl ProofRequesterProvider for MismatchedProofRequester {
+        async fn prove_block_range(
+            &self,
+            _request: ProveBlockRangeRequest,
+        ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+            Ok(ProveBlockRangeResponse { session_id: self.session_id.clone() })
+        }
+
+        async fn get_proof(
+            &self,
+            _request: GetProofRequest,
+        ) -> Result<GetProofResponse, ProverServiceClientError> {
+            unimplemented!("dispatcher tests do not poll proofs")
+        }
+
+        async fn list_proofs(
+            &self,
+            _request: ListProofsRequest,
+        ) -> Result<ListProofsResponse, ProverServiceClientError> {
+            unimplemented!("dispatcher tests do not list proofs")
+        }
+    }
+
     fn dispatcher() -> (ProofDispatcher<MockL1, MockL2, MockRollupClient>, Arc<MockProofRequester>)
     {
         let requester = Arc::new(MockProofRequester::default());
+        let dispatcher =
+            dispatcher_for_requester(Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>);
+        (dispatcher, requester)
+    }
+
+    fn dispatcher_for_requester(
+        requester: Arc<dyn ProofRequesterProvider>,
+    ) -> ProofDispatcher<MockL1, MockL2, MockRollupClient> {
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup = Arc::new(MockRollupClient {
@@ -440,8 +502,8 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let dispatcher = ProofDispatcher::aws_nitro(
-            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+        ProofDispatcher::aws_nitro(
+            requester,
             l1,
             l2,
             rollup,
@@ -450,8 +512,7 @@ mod tests {
                 intermediate_block_interval: 300,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
-        );
-        (dispatcher, requester)
+        )
     }
 
     fn recovered() -> RecoveredState {
@@ -477,6 +538,20 @@ mod tests {
             ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro)
         );
         assert!(requester.requests.lock().unwrap().contains_key(&dispatched.session_id));
+    }
+
+    #[tokio::test]
+    async fn dispatch_for_rejects_mismatched_session_id() {
+        let dispatcher = dispatcher_for_requester(Arc::new(MismatchedProofRequester {
+            session_id: "wrong-session".to_owned(),
+        }));
+
+        let outcome = dispatcher.dispatch_for(200, &recovered(), B256::repeat_byte(0xaa)).await;
+
+        let ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(message)) = outcome else {
+            panic!("expected mismatched session id to fail dispatch")
+        };
+        assert!(message.contains("mismatched session_id"));
     }
 
     #[tokio::test]
@@ -507,6 +582,23 @@ mod tests {
             ProofDispatcher::<MockL1, MockL2, MockRollupClient>::next_target_block(100, 0),
             None
         );
+    }
+
+    #[test]
+    fn handle_proof_failure_clears_cursor_on_retry_exhaustion() {
+        let mut state = ProofDispatcherState::new();
+        state.cursor = Some(RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::repeat_byte(0x09),
+            l2_block_number: 300,
+        });
+        state.retry_counts.insert(200, 1);
+
+        let should_retry = state.handle_proof_failure(200, ProposerError::Prover("boom".into()), 2);
+
+        assert!(!should_retry);
+        assert!(state.cursor.is_none());
+        assert!(!state.retry_counts.contains_key(&200));
     }
 
     #[tokio::test]
