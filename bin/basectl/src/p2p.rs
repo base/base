@@ -180,6 +180,9 @@ fn resolve_cl_rpc(
     })
 }
 
+/// Minimum length used to catch obvious non-libp2p peer IDs before hitting the CL RPC.
+const MIN_LIBP2P_PEER_ID_LEN: usize = 40;
+
 fn warn_ignored_rpc_override(
     override_url: Option<&Url>,
     flag: &str,
@@ -255,7 +258,7 @@ fn parse_remove_target(raw: &str) -> Result<RemoveTarget> {
     if target.contains(':') || target.contains('/') {
         bail!("remove-peer needs a bare libp2p peer ID for CL targets, not a URL or multiaddr");
     }
-    if target.len() < 40 {
+    if target.len() < MIN_LIBP2P_PEER_ID_LEN {
         bail!(
             "CL peer ID `{target}` looks too short to be a valid libp2p peer ID; expected a base58-encoded string (e.g. 16Uiu2HAm...)"
         );
