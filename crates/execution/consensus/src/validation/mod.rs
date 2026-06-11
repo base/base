@@ -634,6 +634,7 @@ mod tests {
         let header = Header {
             timestamp: JOVIAN_TIMESTAMP,
             blob_gas_used: Some(BLOB_GAS_USED + 1),
+            requests_hash: Some(EMPTY_REQUESTS_HASH),
             ..Default::default()
         };
 
