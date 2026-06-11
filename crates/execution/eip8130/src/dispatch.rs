@@ -135,8 +135,15 @@ impl AuthenticatorDispatch {
         Ok(Self::address_actor_id(address))
     }
 
-    /// P-256 raw authenticator. `data = r(32) || s(32) || x(32) || y(32) || pre_hash(1)`.
-    /// `actorId = keccak256(x || y)`.
+    /// P-256 raw authenticator. `data = r(32) || s(32) || x(32) || y(32) || pre_hash(1)`
+    /// (exactly 129 bytes). `actorId = keccak256(x || y)`.
+    ///
+    /// The trailing `pre_hash` byte (`data[128]`) is **reserved**: the deployed
+    /// `P256Authenticator` requires it to be present (it enforces `length == 129`)
+    /// but never reads it — it exists only so the contract wire format matches the
+    /// native-authenticator form. We mirror that exactly: require the byte, ignore
+    /// its value, and verify directly over `hash`. If the contract ever begins
+    /// interpreting `pre_hash`, this must change in lockstep to preserve parity.
     fn p256(hash: B256, data: &[u8]) -> Result<B256, AuthError> {
         if data.len() != 129 {
             return Err(AuthError::MalformedAuth);
@@ -231,13 +238,11 @@ impl AuthenticatorDispatch {
         Ok(())
     }
 
-    /// Narrows a `clientDataJSON` index from `uint256` to `usize`, rejecting
-    /// implausibly large values.
+    /// Narrows a `clientDataJSON` index from `uint256` to `usize`, rejecting any
+    /// value that does not fit the platform pointer width (it cannot be a valid
+    /// offset into the blob anyway). Correct on 32- and 64-bit targets.
     fn index(value: &U256) -> Result<usize, AuthError> {
-        if *value > U256::from(u32::MAX) {
-            return Err(AuthError::MalformedAuth);
-        }
-        Ok(value.as_limbs()[0] as usize)
+        usize::try_from(*value).map_err(|_| AuthError::MalformedAuth)
     }
 
     /// Delegate authenticator. `data = delegate_account(20) || nested_auth`, where
