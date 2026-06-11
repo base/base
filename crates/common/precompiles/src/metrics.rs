@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{SolCall, SolError};
-use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Result, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileResult};
 
 use crate::{IActivationRegistry, IB20, IB20Asset, IB20Factory, IB20Stablecoin, IPolicyRegistry};
@@ -612,12 +612,7 @@ where
         if let Err(error) = &result {
             self.record_base_error(error);
         }
-        let result = result.into_precompile_result(
-            ctx.gas_used(),
-            ctx.state_gas_used(),
-            ctx.gas_refunded(),
-            encode_ok,
-        );
+        let result = ctx.result_output(result, encode_ok);
         self.record_result(&result);
         result
     }
