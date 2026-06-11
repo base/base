@@ -1312,22 +1312,16 @@ where
         OverlayBuilder::new(parent_hash, changeset_cache)
     }
 
-    /// Spawns a background task to compute and sort trie data for the executed block.
+    /// Spawns a background task to compute trie data for the executed block.
     ///
-    /// This function creates a [`DeferredTrieData`] handle with fallback inputs and spawns a
-    /// blocking task that calls `wait_cloned()` to:
-    /// 1. Sort the block's hashed state and trie updates
-    /// 2. Merge ancestor overlays and extend with the sorted data
-    /// 3. Create an [`AnchoredTrieInput`](reth_chain_state::AnchoredTrieInput) for efficient future
-    ///    trie computations
-    /// 4. Cache the result so subsequent calls return immediately
+    /// This creates a [`DeferredTrieData`] handle with fallback inputs and spawns a blocking task
+    /// that calls `compute_and_publish()` to sort and cache the hashed state and trie updates.
+    /// If the background task has not completed when `trie_data()` is requested, the deferred
+    /// handle computes from the stored inputs instead, avoiding deadlocks and duplicate work.
     ///
-    /// If the background task hasn't completed when `trie_data()` is called, `wait_cloned()`
-    /// computes from the stored inputs, eliminating deadlock risk and duplicate computation.
-    ///
-    /// The validation hot path can return immediately after state root verification,
-    /// while consumers (DB writes, overlay providers, proofs) get trie data either
-    /// from the completed task or via fallback computation.
+    /// The validation hot path can return immediately after state root verification, while
+    /// consumers such as DB writes, overlay providers, and proofs can read the computed trie data
+    /// once it is available.
     fn spawn_deferred_trie_task(
         &self,
         block: Arc<RecoveredBlock<BaseBlock>>,
@@ -1345,8 +1339,8 @@ where
         let block_number = block.number();
         let pending_changeset_guard = self.changeset_cache.register_pending(block_hash);
 
-        // Spawn background task to compute trie data. Calling `wait_cloned` will compute from
-        // the stored inputs and cache the result, so subsequent calls return immediately.
+        // Spawn background task to compute trie data. The deferred handle will compute from the
+        // stored inputs on demand if this task has not published the result yet.
         let compute_trie_input_task = move || {
             let _span = debug_span!(
                 target: "engine::tree::payload_validator",
