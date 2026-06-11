@@ -10,11 +10,13 @@ use base_prover_service_db::{DatabaseConfig, ProofRequestRepo};
 use base_prover_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
 use clap::Parser;
 use eyre::eyre;
-use jsonrpsee::server::Server;
+use jsonrpsee::server::{Server, ServerConfig as JsonRpcServerConfig};
 use tracing::info;
 
 base_cli_utils::define_log_args!("BASE_PROVER_SERVICE");
 base_cli_utils::define_metrics_args!("BASE_PROVER_SERVICE", 7302);
+
+const DEFAULT_RPC_MAX_BODY_BYTES: u32 = 256 * 1024 * 1024;
 
 /// Prover service binary.
 #[derive(Parser)]
@@ -91,8 +93,27 @@ struct ServiceArgs {
     )]
     worker_queue_reaper_batch_size: u32,
 
-    #[arg(long, env = "RPC_LISTEN_ADDR", default_value = "0.0.0.0:9000")]
-    rpc_listen_addr: SocketAddr,
+    #[arg(long = "rpc-listen-addr", env = "RPC_LISTEN_ADDR", default_value = "0.0.0.0:9000")]
+    requester_rpc_listen_addr: SocketAddr,
+
+    #[arg(long, env = "WORKER_RPC_LISTEN_ADDR", default_value = "127.0.0.1:9001")]
+    worker_rpc_listen_addr: SocketAddr,
+
+    #[arg(
+        long,
+        env = "RPC_MAX_REQUEST_BODY_BYTES",
+        default_value_t = DEFAULT_RPC_MAX_BODY_BYTES,
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    rpc_max_request_body_bytes: u32,
+
+    #[arg(
+        long,
+        env = "RPC_MAX_RESPONSE_BODY_BYTES",
+        default_value_t = DEFAULT_RPC_MAX_BODY_BYTES,
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    rpc_max_response_body_bytes: u32,
 }
 
 impl Cli {
@@ -145,26 +166,56 @@ impl ServiceArgs {
 
         let prover_server = ProverServiceServer::new(repo, server_config);
 
-        let mut rpc_module = ProverWorkerApiServer::into_rpc(prover_server.clone());
-        rpc_module
-            .merge(ProverRequesterApiServer::into_rpc(prover_server))
-            .map_err(|e| eyre!("failed to merge requester and worker RPC modules: {e}"))?;
+        let json_rpc_config = JsonRpcServerConfig::builder()
+            .max_request_body_size(self.rpc_max_request_body_bytes)
+            .max_response_body_size(self.rpc_max_response_body_bytes)
+            .build();
 
-        let rpc_server = Server::builder()
-            .build(self.rpc_listen_addr)
+        let requester_rpc_module = ProverRequesterApiServer::into_rpc(prover_server.clone());
+        let requester_rpc_server = Server::builder()
+            .set_config(json_rpc_config.clone())
+            .build(self.requester_rpc_listen_addr)
             .await
-            .map_err(|e| eyre!("failed to bind RPC server: {e}"))?;
-        let local_addr =
-            rpc_server.local_addr().map_err(|e| eyre!("failed to read RPC server address: {e}"))?;
-        info!(addr = %local_addr, "starting prover JSON-RPC service");
-        let server_handle = rpc_server.start(rpc_module);
+            .map_err(|e| eyre!("failed to bind requester RPC server: {e}"))?;
+        let requester_local_addr = requester_rpc_server
+            .local_addr()
+            .map_err(|e| eyre!("failed to read requester RPC server address: {e}"))?;
+        info!(
+            addr = %requester_local_addr,
+            max_request_body_bytes = self.rpc_max_request_body_bytes,
+            max_response_body_bytes = self.rpc_max_response_body_bytes,
+            "starting prover requester JSON-RPC service"
+        );
+        let requester_server_handle = requester_rpc_server.start(requester_rpc_module);
+
+        let worker_rpc_module = ProverWorkerApiServer::into_rpc(prover_server);
+        let worker_rpc_server = Server::builder()
+            .set_config(json_rpc_config)
+            .build(self.worker_rpc_listen_addr)
+            .await
+            .map_err(|e| eyre!("failed to bind worker RPC server: {e}"))?;
+        let worker_local_addr = worker_rpc_server
+            .local_addr()
+            .map_err(|e| eyre!("failed to read worker RPC server address: {e}"))?;
+        info!(
+            addr = %worker_local_addr,
+            max_request_body_bytes = self.rpc_max_request_body_bytes,
+            max_response_body_bytes = self.rpc_max_response_body_bytes,
+            "starting prover worker JSON-RPC service"
+        );
+        let worker_server_handle = worker_rpc_server.start(worker_rpc_module);
 
         let result: eyre::Result<()> = tokio::select! {
             res = status_handle => match res {
                 Ok(()) => Err(eyre!("status poller exited unexpectedly")),
                 Err(e) => Err(eyre!("status poller panicked: {e}")),
             },
-            () = server_handle.stopped() => Err(eyre!("RPC server stopped unexpectedly")),
+            () = requester_server_handle.stopped() => {
+                Err(eyre!("requester RPC server stopped unexpectedly"))
+            },
+            () = worker_server_handle.stopped() => {
+                Err(eyre!("worker RPC server stopped unexpectedly"))
+            },
         };
 
         result
