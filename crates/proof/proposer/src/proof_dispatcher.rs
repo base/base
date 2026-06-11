@@ -40,6 +40,8 @@ pub struct ProofDispatcherRuntimeConfig {
 /// Mutable dispatcher-side orchestration state.
 #[derive(Debug, Default)]
 pub struct ProofDispatcherState {
+    /// Recovered chain state that the current cursor was derived from.
+    pub recovered: Option<RecoveredState>,
     /// Latest block the dispatcher has sent proof requests through.
     pub cursor: Option<RecoveredState>,
     /// Per-target proof/dispatch retry counts.
@@ -257,7 +259,8 @@ where
     ) -> ProofDispatcherTickResult {
         state.retry_counts.retain(|&target, _| target > recovered.l2_block_number);
 
-        if state.cursor.is_none_or(|cursor| cursor.l2_block_number < recovered.l2_block_number) {
+        if state.recovered != Some(recovered) || state.cursor.is_none() {
+            state.recovered = Some(recovered);
             state.cursor = Some(recovered);
         }
 
@@ -425,6 +428,7 @@ impl ProofDispatcherState {
                 "Proof failed after max retries, dropping cached recovery"
             );
             self.retry_counts.remove(&target);
+            self.recovered = None;
             self.cursor = None;
             false
         } else {
@@ -576,6 +580,40 @@ mod tests {
         assert!(state.retry_counts.is_empty());
     }
 
+    #[tokio::test]
+    async fn tick_resets_cursor_when_recovery_rewinds() {
+        let (dispatcher, requester) = dispatcher();
+        let cancel = CancellationToken::new();
+        let mut state = ProofDispatcherState {
+            recovered: Some(RecoveredState {
+                parent_address: Address::repeat_byte(0x01),
+                output_root: B256::repeat_byte(0x01),
+                l2_block_number: 300,
+            }),
+            cursor: Some(RecoveredState {
+                parent_address: Address::repeat_byte(0x02),
+                output_root: B256::repeat_byte(0x02),
+                l2_block_number: 500,
+            }),
+            retry_counts: HashMap::new(),
+        };
+
+        let result = dispatcher
+            .tick(
+                &mut state,
+                recovered(),
+                200,
+                ProofDispatcherRuntimeConfig { block_interval: 100, max_retries: 3 },
+                &cancel,
+            )
+            .await;
+
+        assert!(!result.drop_recovery_cache);
+        assert_eq!(state.recovered, Some(recovered()));
+        assert_eq!(state.cursor.map(|cursor| cursor.l2_block_number), Some(200));
+        assert_eq!(requester.requests.lock().unwrap().len(), 1);
+    }
+
     #[test]
     fn next_target_block_returns_none_for_zero_interval() {
         assert_eq!(
@@ -597,6 +635,7 @@ mod tests {
         let should_retry = state.handle_proof_failure(200, ProposerError::Prover("boom".into()), 2);
 
         assert!(!should_retry);
+        assert!(state.recovered.is_none());
         assert!(state.cursor.is_none());
         assert!(!state.retry_counts.contains_key(&200));
     }
