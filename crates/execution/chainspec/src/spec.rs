@@ -667,11 +667,11 @@ mod tests {
     fn activation_admin_matches_chain_config() {
         assert_eq!(
             BaseChainSpec::mainnet().activation_admin_address(),
-            Some(address!("331C9d37BbcebBC9dfAf98FBE3C5B8A39Dd6E771"))
+            Some(address!("cE3a3bEE7E72E2A24079f3c0Cb3b97740ED425A9"))
         );
         assert_eq!(
             BaseChainSpec::sepolia().activation_admin_address(),
-            Some(address!("5Be7Dd3678e999D5F7bC508c413db239F7D4Ac59"))
+            Some(address!("5F43072722f59964d886CBb507F6a85ca0759D42"))
         );
     }
 
