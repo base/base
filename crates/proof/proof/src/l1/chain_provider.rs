@@ -162,10 +162,13 @@ impl<T: CommsClient> TrieProvider for OracleL1ChainProvider<T> {
 mod tests {
     use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 
+    use alloy_consensus::{Signed, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, Sealable, TxKind, U256, keccak256};
+    use alloy_primitives::{Address, Bytes, Sealable, Signature, TxKind, U256, keccak256};
     use alloy_rlp::Encodable;
-    use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, OpTxType, TxDeposit};
+    use base_common_consensus::{
+        BaseReceiptEnvelope, BaseTxEnvelope, Eip8130Signed, OpTxType, TxDeposit, TxEip8130,
+    };
     use base_proof_mpt::ordered_trie_with_encoder;
     use base_proof_preimage::{
         PreimageKey,
@@ -288,5 +291,119 @@ mod tests {
 
         assert_eq!(receipts.len(), 1);
         assert_eq!(receipts[0].cumulative_gas_used, 100);
+    }
+
+    fn base_eip8130_tx_2718() -> Vec<u8> {
+        let tx = TxEip8130 {
+            chain_id: 8453,
+            sender: Some(Address::repeat_byte(0x11)),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 1,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 5_000_000_000,
+            gas_limit: 100_000,
+            account_changes: vec![],
+            calls: vec![],
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0xab; 32]), Bytes::new());
+        BaseTxEnvelope::Eip8130(signed).encoded_2718()
+    }
+
+    fn base_eip8130_receipt_2718() -> Vec<u8> {
+        BaseReceiptEnvelope::from_parts(true, 200, vec![], OpTxType::Eip8130, None, None)
+            .encoded_2718()
+    }
+
+    fn eip1559_tx_2718() -> Vec<u8> {
+        let tx = TxEip1559 {
+            chain_id: 8453,
+            nonce: 5,
+            gas_limit: 21000,
+            to: TxKind::Call(Address::repeat_byte(0x88)),
+            max_fee_per_gas: 5_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            ..Default::default()
+        };
+        let sig = Signature::new(U256::from(1u64), U256::from(2u64), false);
+        let signed = Signed::new_unchecked(tx, sig, B256::ZERO);
+        BaseTxEnvelope::Eip1559(signed).encoded_2718()
+    }
+
+    fn eip1559_receipt_2718() -> Vec<u8> {
+        BaseReceiptEnvelope::from_parts(true, 300, vec![], OpTxType::Eip1559, None, None)
+            .encoded_2718()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_format_block_decodes_and_drops_eip8130() {
+        let txs = vec![base_deposit_tx_2718(), base_eip8130_tx_2718()];
+        let (transactions_root, mut preimages) = trie_root_and_preimages(&txs);
+        let header = Header { transactions_root, number: 42, timestamp: 1, ..Default::default() };
+        let (hash, encoded_header) = header_preimage(&header);
+        preimages.push((PreimageKey::new_keccak256(*hash), encoded_header));
+        let oracle = Arc::new(MockOracle::new(preimages));
+        let mut provider = OracleL1ChainProvider::new(hash, oracle, L1TxFormat::Base);
+
+        let (info, txs) = provider.block_info_and_transactions_by_hash(hash).await.unwrap();
+
+        assert_eq!(info.number, 42);
+        assert!(txs.is_empty(), "both deposit and EIP-8130 are dropped during down-conversion");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_format_receipts_decode_and_preserve_eip8130() {
+        let receipts = vec![base_deposit_receipt_2718(), base_eip8130_receipt_2718()];
+        let (receipts_root, mut preimages) = trie_root_and_preimages(&receipts);
+        let header = Header { receipts_root, number: 42, timestamp: 1, ..Default::default() };
+        let (hash, encoded_header) = header_preimage(&header);
+        preimages.push((PreimageKey::new_keccak256(*hash), encoded_header));
+        let oracle = Arc::new(MockOracle::new(preimages));
+        let mut provider = OracleL1ChainProvider::new(hash, oracle, L1TxFormat::Base);
+
+        let receipts = provider.receipts_by_hash(hash).await.unwrap();
+
+        assert_eq!(receipts.len(), 2);
+        assert_eq!(receipts[0].cumulative_gas_used, 100);
+        assert_eq!(receipts[1].cumulative_gas_used, 200);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_format_mixed_block_preserves_standard_txs() {
+        let txs = vec![base_deposit_tx_2718(), eip1559_tx_2718(), base_eip8130_tx_2718()];
+        let (transactions_root, mut preimages) = trie_root_and_preimages(&txs);
+        let header = Header { transactions_root, number: 42, timestamp: 1, ..Default::default() };
+        let (hash, encoded_header) = header_preimage(&header);
+        preimages.push((PreimageKey::new_keccak256(*hash), encoded_header));
+        let oracle = Arc::new(MockOracle::new(preimages));
+        let mut provider = OracleL1ChainProvider::new(hash, oracle, L1TxFormat::Base);
+
+        let (info, txs) = provider.block_info_and_transactions_by_hash(hash).await.unwrap();
+
+        assert_eq!(info.number, 42);
+        assert_eq!(txs.len(), 1, "only the EIP-1559 tx should survive down-conversion");
+        assert!(matches!(txs[0], TxEnvelope::Eip1559(_)), "surviving tx must be EIP-1559");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn base_format_mixed_receipts_preserve_all() {
+        let receipts =
+            vec![base_deposit_receipt_2718(), eip1559_receipt_2718(), base_eip8130_receipt_2718()];
+        let (receipts_root, mut preimages) = trie_root_and_preimages(&receipts);
+        let header = Header { receipts_root, number: 42, timestamp: 1, ..Default::default() };
+        let (hash, encoded_header) = header_preimage(&header);
+        preimages.push((PreimageKey::new_keccak256(*hash), encoded_header));
+        let oracle = Arc::new(MockOracle::new(preimages));
+        let mut provider = OracleL1ChainProvider::new(hash, oracle, L1TxFormat::Base);
+
+        let receipts = provider.receipts_by_hash(hash).await.unwrap();
+
+        assert_eq!(receipts.len(), 3);
+        assert_eq!(receipts[0].cumulative_gas_used, 100);
+        assert_eq!(receipts[1].cumulative_gas_used, 300);
+        assert_eq!(receipts[2].cumulative_gas_used, 200);
     }
 }

@@ -571,8 +571,7 @@ mod tests {
         })
     }
 
-    /// A Base-format block whose only transaction is a `0x7e` deposit.
-    fn base_block_with_deposit() -> Value {
+    fn base_block_with_txs(txs: Vec<Value>) -> Value {
         json!({
             "hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
             "parentHash": "0x2222222222222222222222222222222222222222222222222222222222222222",
@@ -591,12 +590,17 @@ mod tests {
             "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
             "nonce": "0x0000000000000000",
             "baseFeePerGas": "0x1",
-            "transactions": [deposit_tx_json()],
+            "transactions": txs,
             "uncles": [],
             "withdrawals": [],
             "blobGasUsed": "0x0",
             "excessBlobGas": "0x0"
         })
+    }
+
+    /// A Base-format block whose only transaction is a `0x7e` deposit.
+    fn base_block_with_deposit() -> Value {
+        base_block_with_txs(vec![deposit_tx_json()])
     }
 
     /// A type-`0x7e` deposit receipt, as a Base/OP JSON-RPC endpoint returns it.
@@ -619,6 +623,130 @@ mod tests {
             "depositNonce": "0x0",
             "depositReceiptVersion": "0x1"
         })
+    }
+
+    /// A type-`0x7d` EIP-8130 transaction, as a Base RPC endpoint returns it.
+    ///
+    /// Built to match the wire format produced by
+    /// `base_common_rpc_types::Transaction::from_transaction` for the `Eip8130` variant.
+    fn eip8130_tx_json() -> Value {
+        json!({
+            "type": "0x7d",
+            "hash": "0x4242424242424242424242424242424242424242424242424242424242424242",
+            "blockHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "blockNumber": "0x2a",
+            "transactionIndex": "0x1",
+            "from": "0x0000000000000000000000000000000000000011",
+            "gasPrice": "0x12a05f200",
+            "tx": {
+                "chainId": 8453,
+                "sender": "0x0000000000000000000000000000000000000011",
+                "nonceKey": "0x0",
+                "nonceSequence": 7,
+                "expiry": 0,
+                "maxPriorityFeePerGas": "0x3b9aca00",
+                "maxFeePerGas": "0x12a05f200",
+                "gasLimit": 1_000_000,
+                "accountChanges": [],
+                "calls": [],
+                "payer": null
+            },
+            "senderAuth": format!("0x{}", "ab".repeat(32)),
+            "payerAuth": "0x"
+        })
+    }
+
+    /// A type-`0x7d` EIP-8130 receipt, as a Base RPC endpoint returns it.
+    fn eip8130_receipt_json() -> Value {
+        json!({
+            "type": "0x7d",
+            "status": "0x1",
+            "cumulativeGasUsed": "0x5208",
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "logs": [],
+            "transactionHash": "0x4242424242424242424242424242424242424242424242424242424242424242",
+            "transactionIndex": "0x1",
+            "blockHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "blockNumber": "0x2a",
+            "from": "0x0000000000000000000000000000000000000011",
+            "to": null,
+            "gasUsed": "0x5208",
+            "effectiveGasPrice": "0x12a05f200",
+            "contractAddress": null
+        })
+    }
+
+    /// A minimal EIP-1559 (type `0x02`) transaction with well-formed signature fields, as a
+    /// standard Ethereum-compatible RPC endpoint returns it.
+    fn eip1559_tx_json() -> Value {
+        json!({
+            "type": "0x2",
+            "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "blockHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "blockNumber": "0x2a",
+            "transactionIndex": "0x1",
+            "from": "0x0000000000000000000000000000000000000099",
+            "to": "0x0000000000000000000000000000000000000088",
+            "value": "0x0",
+            "nonce": "0x5",
+            "gas": "0x5208",
+            "input": "0x",
+            "chainId": "0x2105",
+            "maxFeePerGas": "0x12a05f200",
+            "maxPriorityFeePerGas": "0x3b9aca00",
+            "accessList": [],
+            "v": "0x1",
+            "r": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            "s": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            "yParity": "0x1"
+        })
+    }
+
+    /// A minimal EIP-1559 (type `0x02`) receipt.
+    fn eip1559_receipt_json() -> Value {
+        json!({
+            "type": "0x2",
+            "status": "0x1",
+            "cumulativeGasUsed": "0xa410",
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "logs": [{
+                "address": "0x0000000000000000000000000000000000000088",
+                "topics": ["0x0000000000000000000000000000000000000000000000000000000000000001"],
+                "data": "0x",
+                "blockHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+                "blockNumber": "0x2a",
+                "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "transactionIndex": "0x1",
+                "logIndex": "0x0",
+                "removed": false
+            }],
+            "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "transactionIndex": "0x1",
+            "blockHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "blockNumber": "0x2a",
+            "from": "0x0000000000000000000000000000000000000099",
+            "to": "0x0000000000000000000000000000000000000088",
+            "gasUsed": "0x5208",
+            "effectiveGasPrice": "0x12a05f200",
+            "contractAddress": null
+        })
+    }
+
+    /// A Base-format block containing a deposit (`0x7E`) at index 0 and an EIP-8130 (`0x7D`) tx
+    /// at index 1.
+    fn base_block_with_eip8130() -> Value {
+        base_block_with_txs(vec![deposit_tx_json(), eip8130_tx_json()])
+    }
+
+    /// A Base-format block containing a deposit at index 0, an EIP-1559 tx at index 1, and an
+    /// EIP-8130 tx at index 2. This is the most realistic scenario: deposits + standard user
+    /// txs + AA txs coexisting in a single block.
+    fn base_block_mixed() -> Value {
+        let mut eip1559 = eip1559_tx_json();
+        eip1559["transactionIndex"] = json!("0x1");
+        let mut eip8130 = eip8130_tx_json();
+        eip8130["transactionIndex"] = json!("0x2");
+        base_block_with_txs(vec![deposit_tx_json(), eip1559, eip8130])
     }
 
     fn base_provider(server: &MockServer) -> AlloyChainProvider {
@@ -715,5 +843,146 @@ mod tests {
 
         mock.assert_calls_async(1).await;
         assert_eq!(receipts.len(), 1, "the 0x7e deposit receipt must be decoded and preserved");
+    }
+
+    /// Regression: an EIP-8130 (`0x7D`) transaction in a Base-format block must be deserialized
+    /// by the `RootProvider<Base>` path but dropped from the down-converted `Vec<TxEnvelope>`
+    /// returned by `block_info_and_transactions_by_hash`.
+    #[tokio::test]
+    async fn base_format_block_decodes_and_drops_eip8130() {
+        let server = MockServer::start_async().await;
+        let block = base_block_with_eip8130();
+        let mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByHash"}"#);
+                then.respond_with(move |req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_response(req, block.clone()))
+                        .build()
+                });
+            })
+            .await;
+
+        let mut provider = base_provider(&server);
+        let hash = B256::repeat_byte(0x11);
+        let (info, txs) = provider.block_info_and_transactions_by_hash(hash).await.unwrap();
+
+        mock.assert_calls_async(1).await;
+        assert_eq!(info.number, 0x2a);
+        assert!(
+            txs.is_empty(),
+            "both 0x7e deposit and 0x7d EIP-8130 must be dropped from down-converted transactions"
+        );
+    }
+
+    /// Regression: an EIP-8130 (`0x7D`) receipt must be deserialized and preserved in the
+    /// `Vec<Receipt>` returned by `receipts_by_hash`.
+    #[tokio::test]
+    async fn base_format_receipts_decode_and_preserve_eip8130() {
+        let server = MockServer::start_async().await;
+        let receipts = json!([deposit_receipt_json(), eip8130_receipt_json()]);
+        let mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockReceipts"}"#);
+                then.respond_with(move |req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_response(req, receipts.clone()))
+                        .build()
+                });
+            })
+            .await;
+
+        let mut provider = base_provider(&server);
+        let hash = B256::repeat_byte(0x11);
+        let receipts = provider.receipts_by_hash(hash).await.unwrap();
+
+        mock.assert_calls_async(1).await;
+        assert_eq!(receipts.len(), 2, "both deposit and EIP-8130 receipts must be preserved");
+        assert_eq!(
+            receipts[1].status,
+            alloy_consensus::Eip658Value::Eip658(true),
+            "EIP-8130 receipt status must be correctly converted"
+        );
+    }
+
+    /// When a Base-format block contains a mix of non-Ethereum txs (deposit, EIP-8130) and
+    /// standard Ethereum-compatible txs (EIP-1559), only the standard txs survive the
+    /// down-conversion while the non-Ethereum txs are dropped.
+    #[tokio::test]
+    async fn base_format_mixed_block_preserves_standard_txs() {
+        let server = MockServer::start_async().await;
+        let block = base_block_mixed();
+        let mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByHash"}"#);
+                then.respond_with(move |req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_response(req, block.clone()))
+                        .build()
+                });
+            })
+            .await;
+
+        let mut provider = base_provider(&server);
+        let hash = B256::repeat_byte(0x11);
+        let (info, txs) = provider.block_info_and_transactions_by_hash(hash).await.unwrap();
+
+        mock.assert_calls_async(1).await;
+        assert_eq!(info.number, 0x2a);
+        assert_eq!(txs.len(), 1, "only the EIP-1559 tx should survive down-conversion");
+        assert!(matches!(txs[0], TxEnvelope::Eip1559(_)), "surviving tx must be EIP-1559");
+    }
+
+    /// When a Base-format block contains receipts of mixed types, ALL receipts are preserved
+    /// (including deposit and EIP-8130), maintaining block-wide log-index numbering.
+    #[tokio::test]
+    async fn base_format_mixed_receipts_preserve_all() {
+        let server = MockServer::start_async().await;
+        let receipts =
+            json!([deposit_receipt_json(), eip1559_receipt_json(), eip8130_receipt_json()]);
+        let mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockReceipts"}"#);
+                then.respond_with(move |req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_response(req, receipts.clone()))
+                        .build()
+                });
+            })
+            .await;
+
+        let mut provider = base_provider(&server);
+        let hash = B256::repeat_byte(0x11);
+        let receipts = provider.receipts_by_hash(hash).await.unwrap();
+
+        mock.assert_calls_async(1).await;
+        assert_eq!(receipts.len(), 3, "all three receipts must be preserved regardless of type");
+        assert_eq!(
+            receipts[0].status,
+            alloy_consensus::Eip658Value::Eip658(true),
+            "deposit receipt status"
+        );
+        assert_eq!(receipts[1].logs.len(), 1, "EIP-1559 receipt log preserved");
+        assert_eq!(
+            receipts[2].status,
+            alloy_consensus::Eip658Value::Eip658(true),
+            "EIP-8130 receipt status"
+        );
     }
 }
