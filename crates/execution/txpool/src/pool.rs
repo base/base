@@ -586,7 +586,11 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions(protocol_hashes);
-        removed.extend(self.nonce_pool.write().remove_transactions(&sidecar_hashes));
+        let sidecar_removed = self.nonce_pool.write().remove_transactions(&sidecar_hashes);
+        if !sidecar_removed.is_empty() {
+            self.listeners.write().on_discarded(&sidecar_removed);
+        }
+        removed.extend(sidecar_removed);
         removed
     }
 
@@ -596,8 +600,12 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions_and_descendants(protocol_hashes);
-        removed
-            .extend(self.nonce_pool.write().remove_transactions_and_descendants(&sidecar_hashes));
+        let sidecar_removed =
+            self.nonce_pool.write().remove_transactions_and_descendants(&sidecar_hashes);
+        if !sidecar_removed.is_empty() {
+            self.listeners.write().on_discarded(&sidecar_removed);
+        }
+        removed.extend(sidecar_removed);
         removed
     }
 
@@ -606,7 +614,11 @@ where
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
-        removed.extend(self.nonce_pool.write().remove_transactions_by_sender(sender));
+        let sidecar_removed = self.nonce_pool.write().remove_transactions_by_sender(sender);
+        if !sidecar_removed.is_empty() {
+            self.listeners.write().on_discarded(&sidecar_removed);
+        }
+        removed.extend(sidecar_removed);
         removed
     }
 
@@ -616,7 +628,11 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
-        removed.extend(self.nonce_pool.write().prune_mined(&sidecar_hashes).removed);
+        let pruned = self.nonce_pool.write().prune_mined(&sidecar_hashes);
+        if !pruned.promoted.is_empty() {
+            self.listeners.write().on_promoted(&pruned.promoted);
+        }
+        removed.extend(pruned.removed);
         removed
     }
 
@@ -860,7 +876,10 @@ where
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
-        self.nonce_pool.write().remove_unaffordable(&accounts);
+        let removed = self.nonce_pool.write().remove_unaffordable(&accounts);
+        if !removed.is_empty() {
+            self.listeners.write().on_discarded(&removed);
+        }
         self.protocol_pool.update_accounts(accounts)
     }
 
@@ -994,6 +1013,14 @@ impl<T: BasePooledTx> SidecarListeners<T> {
     fn on_promoted(&mut self, transactions: &[Arc<ValidPoolTransaction<T>>]) {
         for transaction in transactions {
             self.broadcast_pending_transaction(transaction);
+        }
+    }
+
+    fn on_discarded(&mut self, transactions: &[Arc<ValidPoolTransaction<T>>]) {
+        for transaction in transactions {
+            let hash = *transaction.hash();
+            self.broadcast_hash_event(&hash, TransactionEvent::Discarded);
+            self.broadcast_all(FullTransactionEvent::Discarded(hash));
         }
     }
 
@@ -1188,5 +1215,24 @@ mod tests {
         assert_eq!(pending.recv().await, Some(middle_hash));
         assert_eq!(pending.recv().await, Some(queued_hash));
         assert!(matches!(queued_events.next().await, Some(TransactionEvent::Pending)));
+    }
+
+    #[tokio::test]
+    async fn discarded_sidecar_transaction_broadcasts_terminal_events() {
+        let mut listeners = SidecarListeners::default();
+        let signer = signer();
+        let transaction =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(2), 0, 1_000)));
+        let hash = *transaction.hash();
+
+        let mut hash_events = listeners.subscribe_hash(hash).0;
+        let mut all_events = listeners.subscribe_all();
+
+        listeners.on_discarded(&[transaction]);
+
+        assert!(matches!(hash_events.next().await, Some(TransactionEvent::Discarded)));
+        assert!(
+            matches!(all_events.next().await, Some(FullTransactionEvent::Discarded(event_hash)) if event_hash == hash)
+        );
     }
 }

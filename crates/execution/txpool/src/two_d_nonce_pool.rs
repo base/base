@@ -34,18 +34,21 @@ impl<T: BasePooledTx> Default for NonceLane<T> {
 }
 
 impl<T: BasePooledTx> NonceLane<T> {
+    fn live_transactions(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
+        self.transactions.range(self.next_nonce..).map(|(_, transaction)| transaction)
+    }
+
     fn consecutive_pending_transactions(
         &self,
     ) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
-        self.transactions
-            .range(self.next_nonce..)
+        self.live_transactions()
             .enumerate()
-            .take_while(|(offset, (nonce, _))| {
+            .take_while(|(offset, transaction)| {
                 self.next_nonce
                     .checked_add(*offset as u64)
-                    .is_some_and(|expected| **nonce == expected)
+                    .is_some_and(|expected| transaction.nonce() == expected)
             })
-            .map(|(_, (_, transaction))| transaction)
+            .map(|(_, transaction)| transaction)
     }
 
     fn consecutive_pending_len(&self) -> usize {
@@ -53,10 +56,7 @@ impl<T: BasePooledTx> NonceLane<T> {
     }
 
     fn queued_transactions(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
-        self.transactions
-            .range(self.next_nonce..)
-            .map(|(_, transaction)| transaction)
-            .skip(self.consecutive_pending_len())
+        self.live_transactions().skip(self.consecutive_pending_len())
     }
 }
 
@@ -108,8 +108,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let mut queued = 0;
         for lane in self.lanes.values() {
             let pending_in_lane = lane.consecutive_pending_len();
+            let live_in_lane = lane.live_transactions().count();
             pending += pending_in_lane;
-            queued += lane.transactions.len().saturating_sub(pending_in_lane);
+            queued += live_in_lane.saturating_sub(pending_in_lane);
         }
         (pending, queued)
     }
@@ -138,12 +139,20 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     /// Returns all transactions in the sidecar.
     pub(crate) fn all_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
-        self.hashes.values().cloned().collect()
+        let mut transactions = Vec::new();
+        for lane in self.lanes.values() {
+            transactions.extend(lane.live_transactions().cloned());
+        }
+        transactions
     }
 
     /// Returns all transaction hashes in the sidecar.
     pub(crate) fn all_hashes(&self) -> Vec<TxHash> {
-        self.hashes.keys().copied().collect()
+        let mut hashes = Vec::new();
+        for lane in self.lanes.values() {
+            hashes.extend(lane.live_transactions().map(|transaction| *transaction.hash()));
+        }
+        hashes
     }
 
     /// Returns the transaction for the given hash.
@@ -156,7 +165,13 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         &self,
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
-        self.hashes.values().filter(|tx| tx.sender() == sender).cloned().collect()
+        let mut transactions = Vec::new();
+        for ((lane_sender, _), lane) in &self.lanes {
+            if *lane_sender == sender {
+                transactions.extend(lane.live_transactions().cloned());
+            }
+        }
+        transactions
     }
 
     /// Returns pending transactions for the given sender.
@@ -202,7 +217,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     /// Returns all senders present in the sidecar.
     pub(crate) fn unique_senders(&self) -> HashSet<Address> {
-        self.hashes.values().map(|tx| tx.sender()).collect()
+        self.all_transactions().into_iter().map(|tx| tx.sender()).collect()
     }
 
     /// Returns or creates the sender id for the given address.
@@ -814,6 +829,52 @@ mod tests {
             vec![*transaction.hash()]
         );
         assert!(lane.queued_transactions().next().is_none());
+    }
+
+    #[test]
+    fn all_transactions_and_hashes_skip_stale_entries_below_lane_head() {
+        let signer = signer();
+        let stale =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(23), 3, 1_000)));
+        let pending =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(23), 5, 900)));
+        let queued =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(23), 7, 800)));
+        let lane_id = (signer.address(), U256::from(23));
+
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        pool.hashes.insert(*stale.hash(), Arc::clone(&stale));
+        pool.hashes.insert(*pending.hash(), Arc::clone(&pending));
+        pool.hashes.insert(*queued.hash(), Arc::clone(&queued));
+        pool.index.insert(*stale.hash(), (lane_id, 3));
+        pool.index.insert(*pending.hash(), (lane_id, 5));
+        pool.index.insert(*queued.hash(), (lane_id, 7));
+        pool.lanes.insert(
+            lane_id,
+            NonceLane {
+                next_nonce: 5,
+                transactions: BTreeMap::from([
+                    (3, Arc::clone(&stale)),
+                    (5, Arc::clone(&pending)),
+                    (7, Arc::clone(&queued)),
+                ]),
+            },
+        );
+
+        assert_eq!(
+            pool.all_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
+            vec![*pending.hash(), *queued.hash()]
+        );
+        assert_eq!(pool.all_hashes(), vec![*pending.hash(), *queued.hash()]);
+        assert_eq!(
+            pool.transactions_by_sender(signer.address())
+                .into_iter()
+                .map(|tx| *tx.hash())
+                .collect::<Vec<_>>(),
+            vec![*pending.hash(), *queued.hash()]
+        );
+        assert_eq!(pool.pending_and_queued_txn_count(), (1, 1));
+        assert_eq!(pool.unique_senders(), HashSet::from([signer.address()]));
     }
 
     #[test]
