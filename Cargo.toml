@@ -480,6 +480,7 @@ sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", ta
 # crypto
 sha3 = "0.10"
 k256 = "0.13"
+p256 = "0.13"
 p384 = "0.13"
 ciborium = "0.2"
 rustls = "0.23.35"
