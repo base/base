@@ -4,6 +4,9 @@ use alloc::string::String;
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
+/// Maximum total supply for a B-20 token.
+pub const B20_MAX_SUPPLY_CAP: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
+
 /// Outbound port: all data reads and writes the core business logic requires.
 ///
 /// Each token variant's `#[contract]` storage struct implements this trait.
@@ -101,4 +104,18 @@ pub trait TokenAccounting {
 
     /// Publishes a pre-encoded EVM event log from this token's address.
     fn emit_event(&mut self, log: LogData) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::U256;
+
+    use super::B20_MAX_SUPPLY_CAP;
+
+    #[test]
+    fn max_supply_cap_equals_two_to_128_minus_one() {
+        let expected = U256::from(2u64).pow(U256::from(128u64)) - U256::ONE;
+
+        assert_eq!(B20_MAX_SUPPLY_CAP, expected);
+    }
 }

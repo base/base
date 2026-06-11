@@ -7,10 +7,10 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use revm::state::Bytecode;
 
 use crate::{
-    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20AssetToken, B20StablecoinInit,
-    B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant, BerylAuxiliaryMetrics,
-    IB20Factory, NoopPrecompileCallObserver, PolicyHandle, PrecompileCallObserver, RoleManaged,
-    Token,
+    ActivationRegistryStorage, B20_MAX_SUPPLY_CAP, B20AssetInit, B20AssetStorage, B20AssetToken,
+    B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant,
+    BerylAuxiliaryMetrics, IB20Factory, NoopPrecompileCallObserver, PolicyHandle,
+    PrecompileCallObserver, RoleManaged, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -28,7 +28,7 @@ fn encode_stablecoin_variant_params(currency: &str) -> Bytes {
 }
 
 /// Maximum total supply for all newly-created B-20 tokens.
-const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
+const DEFAULT_SUPPLY_CAP: U256 = B20_MAX_SUPPLY_CAP;
 
 /// Initial multiplier storage value. Reads treat zero as WAD precision (1:1).
 const INITIAL_MULTIPLIER: U256 = U256::ZERO;
@@ -378,10 +378,10 @@ mod tests {
 
     use super::FACTORY_MARKER_CODE_HASH;
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
-        B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20TokenRole, B20Variant, IB20,
-        IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged, Token, TokenAccounting,
-        Transferable,
+        ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20_MAX_SUPPLY_CAP,
+        B20AssetStorage, B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20TokenRole,
+        B20Variant, IB20, IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged, Token,
+        TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -546,7 +546,8 @@ mod tests {
             assert_eq!(token.b20.name.read().unwrap(), "My Token");
             assert_eq!(token.b20.symbol.read().unwrap(), "MYT");
             assert_eq!(AssetAccounting::decimals(&token).unwrap(), B20AssetStorage::MIN_DECIMALS);
-            assert_eq!(token.supply_cap().unwrap(), B20FactoryStorage::DEFAULT_SUPPLY_CAP);
+            assert_eq!(B20FactoryStorage::DEFAULT_SUPPLY_CAP, B20_MAX_SUPPLY_CAP);
+            assert_eq!(token.supply_cap().unwrap(), B20_MAX_SUPPLY_CAP);
         });
     }
 
