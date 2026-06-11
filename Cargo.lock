@@ -4891,6 +4891,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-l1-head"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-types 2.0.5",
+ "base-common-network",
+ "base-optimism-rpc",
+ "thiserror 2.0.18",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-load-tester-bin"
 version = "0.0.0"
 dependencies = [
