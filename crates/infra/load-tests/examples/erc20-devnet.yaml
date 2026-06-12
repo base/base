@@ -10,13 +10,15 @@
 
 # HTTP submission endpoints. Batches are distributed across all configured URLs.
 transaction_submission_rpcs:
-  - "https://base-zeronet.cbhq.net"
+  - "http://localhost:7545"
 
 # RPC endpoint for reads and balance checks
-query_rpc: "https://base-zeronet-reth-rpc-donotuse.cbhq.net:8545"
+query_rpc: "http://localhost:8545"
 
 # Optional txpool admin nodes to clear for all sender addresses before startup.
-txpool_nodes: []
+txpool_nodes:
+  - "http://localhost:7545"
+  - "http://localhost:8545"
 
 
 # Builder flashblocks broadcast WebSocket endpoint
