@@ -4,8 +4,15 @@
 //! `WorkerSubmitProofRequest` from their own proof result type, then hand the
 //! request to this shared worker component for delivery.
 
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
+use backon::Retryable;
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
@@ -25,7 +32,7 @@ pub const DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF: Duration = DEFAULT_UNBOUNDED_
 /// Default maximum retry delay for proof submission.
 pub const DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF: Duration = DEFAULT_UNBOUNDED_MAX_DELAY;
 
-/// Exponential backoff configuration for proof submission retries.
+/// Retry configuration used for proof submission backoff.
 pub type ProofSubmitterBackoffConfig = RetryConfig;
 
 /// Errors raised while preparing or submitting a generated proof.
@@ -132,6 +139,78 @@ where
             }
         }
     }
+
+    /// Submits a generated proof through the worker API until delivered or permanently rejected.
+    pub async fn submit_until_delivered(
+        &self,
+        request: WorkerSubmitProofRequest,
+    ) -> Result<WorkerSubmitProofResponse, ProofSubmitterError> {
+        let attempts = Arc::new(AtomicU64::new(0));
+        let attempts_for_submit = Arc::clone(&attempts);
+
+        let response = (|| {
+            let request = request.clone();
+            let attempts = Arc::clone(&attempts_for_submit);
+
+            async move {
+                attempts.fetch_add(1, Ordering::Relaxed);
+                self.submit_once(request).await
+            }
+        })
+        .retry(self.backoff.to_backoff_builder())
+        .when(|error: &ProofSubmitterError| match error {
+            ProofSubmitterError::Submit(error) => error.is_retryable(),
+            ProofSubmitterError::UnsupportedProofResult => false,
+        })
+        .notify(|error, delay| {
+            if let ProofSubmitterError::Submit(error) = error {
+                warn!(
+                    session_id = %request.session_id,
+                    lock_id = %request.lock_id,
+                    worker_id = %request.worker_id,
+                    attempts = attempts.load(Ordering::Relaxed),
+                    backoff_ms = delay.as_millis(),
+                    error = %error,
+                    "proof submission failed; retrying"
+                );
+            }
+        })
+        .await;
+
+        match response {
+            Ok(response) => {
+                info!(
+                    session_id = %request.session_id,
+                    lock_id = %request.lock_id,
+                    worker_id = %request.worker_id,
+                    attempts = attempts.load(Ordering::Relaxed),
+                    "proof submission delivered"
+                );
+                Ok(response)
+            }
+            Err(ProofSubmitterError::Submit(error)) => {
+                warn!(
+                    session_id = %request.session_id,
+                    lock_id = %request.lock_id,
+                    worker_id = %request.worker_id,
+                    attempts = attempts.load(Ordering::Relaxed),
+                    error = %error,
+                    "proof submission failed permanently"
+                );
+                Err(ProofSubmitterError::Submit(error))
+            }
+            Err(ProofSubmitterError::UnsupportedProofResult) => {
+                warn!(
+                    session_id = %request.session_id,
+                    lock_id = %request.lock_id,
+                    worker_id = %request.worker_id,
+                    attempts = attempts.load(Ordering::Relaxed),
+                    "proof submission failed: unsupported proof result"
+                );
+                Err(ProofSubmitterError::UnsupportedProofResult)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -219,6 +298,12 @@ mod tests {
         ProverServiceClientError::Timeout("service unavailable".to_owned())
     }
 
+    fn non_retryable_error() -> ProverServiceClientError {
+        ProverServiceClientError::WorkerLeaseRejected {
+            message: "proof job lock is not owned by worker".to_owned(),
+        }
+    }
+
     fn submit_request() -> WorkerSubmitProofRequest {
         WorkerSubmitProofRequest {
             session_id: "session-1".to_owned(),
@@ -270,12 +355,30 @@ mod tests {
         assert_eq!(client.submission_count(), 1);
     }
 
-    #[tokio::test]
-    async fn submitter_returns_submission_error() {
-        let client = MockWorkerClient::new(vec![retryable_error()]);
-        let submitter = ProofSubmitter::new(client.clone());
+    fn fast_backoff() -> ProofSubmitterBackoffConfig {
+        ProofSubmitterBackoffConfig::unbounded(Duration::from_millis(1), Duration::from_millis(1))
+    }
 
-        let result = submitter.submit_once(submit_request()).await;
+    #[tokio::test]
+    async fn submitter_retries_retryable_failures_until_delivered() {
+        let client = MockWorkerClient::new(vec![retryable_error(), retryable_error()]);
+        let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(fast_backoff());
+
+        let response = submitter
+            .submit_until_delivered(submit_request())
+            .await
+            .expect("retryable failures should eventually deliver");
+
+        assert_eq!(response.job.status, ProofJobStatus::Succeeded);
+        assert_eq!(client.submission_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn submitter_stops_on_non_retryable_error() {
+        let client = MockWorkerClient::new(vec![non_retryable_error()]);
+        let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(fast_backoff());
+
+        let result = submitter.submit_until_delivered(submit_request()).await;
 
         assert!(matches!(result, Err(ProofSubmitterError::Submit(_))));
         assert_eq!(client.submission_count(), 1);
