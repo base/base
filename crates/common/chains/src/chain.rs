@@ -7,9 +7,9 @@ use BaseUpgrade::{
 };
 // Production imports for upgrade implementations
 use EthereumHardfork::{
-    Amsterdam, ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Cancun,
-    Constantinople, Dao, Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Osaka,
-    Paris, Petersburg, Prague, Shanghai, SpuriousDragon, Tangerine,
+    Amsterdam, ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Constantinople, Dao,
+    Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Paris, Petersburg,
+    SpuriousDragon, Tangerine,
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
@@ -71,13 +71,13 @@ impl EthereumHardforks for ChainUpgrades {
 
         let forks_len = self.forks.len();
         // check index out of bounds
-        match fork {
-            Shanghai if forks_len <= Canyon.idx() => ForkCondition::Never,
-            Cancun if forks_len <= Ecotone.idx() => ForkCondition::Never,
-            Prague if forks_len <= Isthmus.idx() => ForkCondition::Never,
-            Osaka if forks_len <= Azul.idx() => ForkCondition::Never,
-            _ => self[fork],
+        if let Some(base_upgrade) = BaseUpgrade::from_ethereum_hardfork(fork)
+            && forks_len <= base_upgrade.idx()
+        {
+            return ForkCondition::Never;
         }
+
+        self[fork]
     }
 }
 
@@ -116,6 +116,10 @@ impl Index<EthereumHardfork> for ChainUpgrades {
     type Output = ForkCondition;
 
     fn index(&self, hf: EthereumHardfork) -> &Self::Output {
+        if let Some(base_upgrade) = BaseUpgrade::from_ethereum_hardfork(hf) {
+            return &self[base_upgrade];
+        }
+
         match hf {
             // Dao Upgrade is not needed for ChainUpgrades
             Dao | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
@@ -127,10 +131,6 @@ impl Index<EthereumHardfork> for ChainUpgrades {
                 fork_block: Some(0),
                 total_difficulty: U256::ZERO,
             },
-            Shanghai => &self[Canyon],
-            Cancun => &self[Ecotone],
-            Prague => &self[Isthmus],
-            Osaka => &self[Azul],
             _ => unreachable!(),
         }
     }

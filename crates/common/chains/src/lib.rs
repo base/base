@@ -9,7 +9,7 @@ mod config;
 pub use config::{Bootnodes, ChainConfig};
 
 mod upgrade;
-pub use upgrade::BaseUpgrade;
+pub use upgrade::{BaseUpgrade, ContractUpgrade};
 
 mod upgrades;
 pub use upgrades::Upgrades;
