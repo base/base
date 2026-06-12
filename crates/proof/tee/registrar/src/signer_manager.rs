@@ -61,9 +61,9 @@ pub struct SignerManager<P, R, T> {
     proof_provider: P,
     registry: R,
     tx_manager: T,
-    proof_semaphore: Arc<Semaphore>,
-    in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
-    signer_history: Arc<Mutex<HashMap<Address, String>>>,
+    proof_semaphore: Semaphore,
+    in_flight_registrations: Mutex<HashSet<Address>>,
+    signer_history: Mutex<HashMap<Address, String>>,
     config: SignerManagerConfig,
 }
 
@@ -76,14 +76,14 @@ impl<P, R, T> fmt::Debug for SignerManager<P, R, T> {
 impl<P, R, T> SignerManager<P, R, T> {
     /// Creates a signer manager from the signer lifecycle dependencies.
     pub fn new(proof_provider: P, registry: R, tx_manager: T, config: SignerManagerConfig) -> Self {
-        let proof_semaphore = Arc::new(Semaphore::new(config.max_concurrency.max(1)));
+        let proof_semaphore = Semaphore::new(config.max_concurrency.max(1));
         Self {
             proof_provider,
             registry,
             tx_manager,
             proof_semaphore,
-            in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
-            signer_history: Arc::new(Mutex::new(HashMap::new())),
+            in_flight_registrations: Mutex::new(HashSet::new()),
+            signer_history: Mutex::new(HashMap::new()),
             config,
         }
     }

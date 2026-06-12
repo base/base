@@ -3,7 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    sync::{Arc, Mutex},
+    sync::Mutex,
 };
 
 use alloy_primitives::{Address, Bytes};
@@ -20,7 +20,7 @@ pub struct DeregistrationManager<'a, R: ?Sized, T: ?Sized> {
     registry_address: Address,
     registry: &'a R,
     tx_manager: &'a T,
-    signer_history: &'a Arc<Mutex<HashMap<Address, String>>>,
+    signer_history: &'a Mutex<HashMap<Address, String>>,
 }
 
 impl<R: ?Sized, T: ?Sized> fmt::Debug for DeregistrationManager<'_, R, T> {
@@ -37,7 +37,7 @@ impl<'a, R: ?Sized, T: ?Sized> DeregistrationManager<'a, R, T> {
         registry_address: Address,
         registry: &'a R,
         tx_manager: &'a T,
-        signer_history: &'a Arc<Mutex<HashMap<Address, String>>>,
+        signer_history: &'a Mutex<HashMap<Address, String>>,
     ) -> Self {
         Self { registry_address, registry, tx_manager, signer_history }
     }

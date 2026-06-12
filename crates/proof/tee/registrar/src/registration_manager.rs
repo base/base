@@ -6,11 +6,7 @@
 //! deduplicate signer proof work, submit the proof request, then invoke the
 //! proof handler.
 
-use std::{
-    collections::HashSet,
-    fmt,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashSet, fmt, sync::Mutex};
 
 use alloy_primitives::Address;
 use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
@@ -36,7 +32,7 @@ pub struct RegistrationManager<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
     /// Semaphore bounding concurrent proof work.
     proof_semaphore: &'a Semaphore,
     /// Process-local signer set used to deduplicate concurrent attempts.
-    in_flight_registrations: &'a Arc<Mutex<HashSet<Address>>>,
+    in_flight_registrations: &'a Mutex<HashSet<Address>>,
     /// Runtime settings for registration transaction handling.
     config: ProofHandlerConfig,
 }
@@ -58,7 +54,7 @@ impl<'a, P: ?Sized, R: ?Sized, T: ?Sized> RegistrationManager<'a, P, R, T> {
         registry: &'a R,
         tx_manager: &'a T,
         proof_semaphore: &'a Semaphore,
-        in_flight_registrations: &'a Arc<Mutex<HashSet<Address>>>,
+        in_flight_registrations: &'a Mutex<HashSet<Address>>,
         config: ProofHandlerConfig,
     ) -> Self {
         Self {
@@ -79,20 +75,20 @@ impl<'a, P: ?Sized, R: ?Sized, T: ?Sized> RegistrationManager<'a, P, R, T> {
 /// success, error, retry exhaustion, cancellation drop, and panic.
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct InFlightRegistrationGuard {
-    in_flight: Arc<Mutex<HashSet<Address>>>,
+pub struct InFlightRegistrationGuard<'a> {
+    in_flight: &'a Mutex<HashSet<Address>>,
     signer: Address,
 }
 
-impl InFlightRegistrationGuard {
+impl<'a> InFlightRegistrationGuard<'a> {
     /// Reserves `signer` in `in_flight` until the returned guard is dropped.
-    pub fn try_acquire(in_flight: &Arc<Mutex<HashSet<Address>>>, signer: Address) -> Option<Self> {
+    pub fn try_acquire(in_flight: &'a Mutex<HashSet<Address>>, signer: Address) -> Option<Self> {
         let mut set = in_flight.lock().unwrap_or_else(|e| e.into_inner());
-        set.insert(signer).then(|| Self { in_flight: Arc::clone(in_flight), signer })
+        set.insert(signer).then(|| Self { in_flight, signer })
     }
 }
 
-impl Drop for InFlightRegistrationGuard {
+impl Drop for InFlightRegistrationGuard<'_> {
     fn drop(&mut self) {
         // Recover from poisoning so guard cleanup still runs.
         let mut set = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
@@ -158,7 +154,7 @@ where
         signer_address: Address,
         enclave_index: usize,
         signer_cancel: &CancellationToken,
-    ) -> Result<Option<InFlightRegistrationGuard>> {
+    ) -> Result<Option<InFlightRegistrationGuard<'_>>> {
         // Avoid taking locks or making registry RPCs after cancellation.
         if signer_cancel.is_cancelled() {
             debug!(signer = %signer_address, "task cancelled before registry probe");
@@ -377,7 +373,7 @@ mod tests {
         registry: R,
         tx_manager: T,
         proof_semaphore: Semaphore,
-        in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
+        in_flight_registrations: Mutex<HashSet<Address>>,
     }
 
     impl<P, R, T> ManagerHarness<P, R, T> {
@@ -387,7 +383,7 @@ mod tests {
                 registry,
                 tx_manager,
                 proof_semaphore: Semaphore::new(4),
-                in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
+                in_flight_registrations: Mutex::new(HashSet::new()),
             }
         }
 
