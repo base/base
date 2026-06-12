@@ -153,7 +153,7 @@ impl OpSuccinctWitnessProvider {
                     })?
             }
             L1HeadSource::SequenceWindow { sequence_window, l1_node_url, base_consensus_url } => {
-                let (_l1_head_block_num, l1_head_hash) =
+                let (l1_head_block_num, l1_head_hash) =
                     L1HeadCalculator::calculate_l1_head_from_urls(
                         l1_node_url,
                         base_consensus_url,
@@ -162,7 +162,11 @@ impl OpSuccinctWitnessProvider {
                     )
                     .await
                     .map_err(|source| WitnessError::SequenceWindowL1Head { source })?;
-                info!(l1_head_hash = %l1_head_hash, "l1 head calculated via sequence_window");
+                info!(
+                    l1_head_block = l1_head_block_num,
+                    l1_head_hash = %l1_head_hash,
+                    "l1 head calculated via sequence_window"
+                );
                 self.host
                     .fetch(
                         start_block,
