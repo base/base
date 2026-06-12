@@ -265,7 +265,13 @@ fn print_fanout_action(action: &ConductorFanoutJson, json: bool) -> Result<()> {
         JsonOutput::print(action)?;
     } else {
         let mut stdout = io::stdout().lock();
-        if action.total > 0 && action.failures.is_empty() {
+        if action.total == 0 {
+            writeln!(
+                stdout,
+                "WARN no conductor nodes to {}",
+                action.action.infinitive()
+            )?;
+        } else if action.failures.is_empty() {
             writeln!(
                 stdout,
                 "OK conductor {} on {}/{} nodes",
@@ -312,6 +318,14 @@ impl ConductorAction {
             Self::TransferLeader => "transferred",
             Self::Pause | Self::PauseAll => "paused",
             Self::Unpause | Self::UnpauseAll => "resumed",
+        }
+    }
+
+    const fn infinitive(self) -> &'static str {
+        match self {
+            Self::TransferLeader => "transfer",
+            Self::Pause | Self::PauseAll => "pause",
+            Self::Unpause | Self::UnpauseAll => "resume",
         }
     }
 }
