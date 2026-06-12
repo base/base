@@ -130,6 +130,19 @@ jobs:
           "$BASE_ANVIL_DIR/target/release/anvil" --version
           "$BASE_ANVIL_DIR/target/release/forge" --version
 
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Set up base-std fork-test runner
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$BASE_STD_DIR"
+          make smoke-setup PYTHON=python3
+
       - name: Run base-std fork tests
         shell: bash
         run: |
@@ -139,7 +152,7 @@ jobs:
           ANVIL_BIN="$BASE_ANVIL_DIR/target/release/anvil" \
             FORGE_BIN="$BASE_ANVIL_DIR/target/release/forge" \
             ANVIL_LOG="$RUNNER_TEMP/base-std-anvil.log" \
-            ./script/run-fork-tests.sh 2>&1 | tee "$RUNNER_TEMP/fork-test-output.txt"
+            make fork-tests 2>&1 | tee "$RUNNER_TEMP/fork-test-output.txt"
 
       - name: Comment fork test results on PR
         if: github.event_name == 'pull_request' && always()
