@@ -177,7 +177,7 @@ impl EncoderConfig {
         if matches!(self.batch_type, BatchType::Span)
             && !rollup_config.is_fjord_active(next_l2_timestamp)
         {
-            return rollup_config.hardforks.fjord_time.map_or(
+            return rollup_config.upgrades.fjord_time.map_or(
                 Err(EncoderConfigError::SpanBatchRequiresScheduledFjord { next_l2_timestamp }),
                 |fjord_time| {
                     Err(EncoderConfigError::SpanBatchBeforeFjord { next_l2_timestamp, fjord_time })
@@ -277,7 +277,7 @@ pub enum EncoderConfigError {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::HardForkConfig;
+    use base_common_genesis::UpgradeConfig;
     use rstest::rstest;
 
     use super::*;
@@ -399,7 +399,7 @@ mod tests {
     fn rollup_config_with(block_time: u64, fjord_time: Option<u64>) -> RollupConfig {
         RollupConfig {
             block_time,
-            hardforks: HardForkConfig { fjord_time, ..HardForkConfig::default() },
+            upgrades: UpgradeConfig { fjord_time, ..UpgradeConfig::default() },
             ..RollupConfig::default()
         }
     }

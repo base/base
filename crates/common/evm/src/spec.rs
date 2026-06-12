@@ -42,7 +42,7 @@ impl BaseSpecId {
     ///
     /// # Note
     ///
-    /// This is only intended to be used after the Bedrock, when hardforks are activated by
+    /// This is only intended to be used after Bedrock, when upgrades are activated by
     /// timestamp.
     pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
         Self(BaseUpgrade::from_timestamp(chain_spec, timestamp))

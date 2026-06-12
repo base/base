@@ -1,11 +1,11 @@
-//! Action tests for the Holocene hardfork activation and Holocene-specific protocol changes.
+//! Action tests for the Holocene upgrade activation and Holocene-specific protocol changes.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_genesis::HardForkConfig;
+use base_common_genesis::UpgradeConfig;
 use base_consensus_derive::StepResult;
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ async fn holocene_derivation_crosses_activation_boundary() {
     // All forks through Granite at genesis; Holocene at ts=6 (block 3).
     // Fjord is needed so the batcher's brotli compression is accepted.
     let holocene_time = 6u64;
-    let hardforks = HardForkConfig {
+    let upgrades = UpgradeConfig {
         canyon_time: Some(0),
         delta_time: Some(0),
         ecotone_time: Some(0),
@@ -49,7 +49,7 @@ async fn holocene_derivation_crosses_activation_boundary() {
         ..Default::default()
     };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -94,7 +94,7 @@ async fn holocene_activation_flushes_buffered_pre_holocene_channel_data() {
         ..BatcherConfig::default()
     };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-        .with_hardforks(HardForkConfig {
+        .with_upgrades(UpgradeConfig {
             canyon_time: Some(0),
             delta_time: Some(0),
             ecotone_time: Some(0),
@@ -174,7 +174,7 @@ async fn holocene_reorg_backward_restores_pre_holocene_batch_buffering() {
         ..BatcherConfig::default()
     };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-        .with_hardforks(HardForkConfig {
+        .with_upgrades(UpgradeConfig {
             canyon_time: Some(0),
             delta_time: Some(0),
             ecotone_time: Some(0),
@@ -264,7 +264,7 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
         ..BatcherConfig::default()
     };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-        .with_hardforks(HardForkConfig {
+        .with_upgrades(UpgradeConfig {
             canyon_time: Some(0),
             delta_time: Some(0),
             ecotone_time: Some(0),
@@ -368,7 +368,7 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
         ..BatcherConfig::default()
     };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-        .with_hardforks(HardForkConfig {
+        .with_upgrades(UpgradeConfig {
             canyon_time: Some(0),
             delta_time: Some(0),
             ecotone_time: Some(0),
@@ -479,7 +479,7 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
         ..BatcherConfig::default()
     };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-        .with_hardforks(HardForkConfig {
+        .with_upgrades(UpgradeConfig {
             canyon_time: Some(0),
             delta_time: Some(0),
             ecotone_time: Some(0),

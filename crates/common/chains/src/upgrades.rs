@@ -87,59 +87,59 @@ impl Upgrades for RollupConfig {
         match fork {
             BaseUpgrade::Bedrock => ForkCondition::Block(0),
             BaseUpgrade::Regolith => self
-                .hardforks
+                .upgrades
                 .regolith_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Canyon)),
             BaseUpgrade::Canyon => self
-                .hardforks
+                .upgrades
                 .canyon_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Ecotone)),
             BaseUpgrade::Ecotone => self
-                .hardforks
+                .upgrades
                 .ecotone_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Fjord)),
             BaseUpgrade::Fjord => self
-                .hardforks
+                .upgrades
                 .fjord_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Granite)),
             BaseUpgrade::Granite => self
-                .hardforks
+                .upgrades
                 .granite_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Holocene)),
             BaseUpgrade::Holocene => self
-                .hardforks
+                .upgrades
                 .holocene_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Isthmus)),
             BaseUpgrade::Isthmus => self
-                .hardforks
+                .upgrades
                 .isthmus_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Jovian)),
             BaseUpgrade::Jovian => self
-                .hardforks
+                .upgrades
                 .jovian_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Azul => self
-                .hardforks
+                .upgrades
                 .base
                 .azul
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Beryl => self
-                .hardforks
+                .upgrades
                 .base
                 .beryl
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Cobalt => self
-                .hardforks
+                .upgrades
                 .base
                 .cobalt
                 .map(ForkCondition::Timestamp)
@@ -156,7 +156,7 @@ mod tests {
     fn rollup_config_upgrade_activation_cascade() {
         const ACTIVATION: u64 = 10;
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.ecotone_time = Some(ACTIVATION);
+        cfg.upgrades.ecotone_time = Some(ACTIVATION);
 
         // Cascading: Regolith and Canyon should fall through to Ecotone.
         assert_eq!(

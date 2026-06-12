@@ -39,7 +39,7 @@ serde = { workspace = true, optional = true }
 alloy-chains.workspace = true
 
 [[test]]
-name = "hardfork_consistency"
+name = "upgrade_consistency"
 required-features = ["test-utils"]
 
 [features]

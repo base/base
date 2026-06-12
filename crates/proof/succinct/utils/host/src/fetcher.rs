@@ -191,7 +191,7 @@ impl OPSuccinctDataFetcher {
         let unix_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         if !rollup_config.is_holocene_active(unix_timestamp) {
             tracing::warn!(
-                "Chain is not using Holocene hard fork. This will cause significant performance degradation compared to chains that have activated Holocene."
+                "Chain is not using Holocene upgrade. This will cause significant performance degradation compared to chains that have activated Holocene."
             );
         }
 

@@ -4,7 +4,7 @@ use alloy_chains::Chain;
 use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, address, b256, uint};
 use base_common_genesis::{
-    ChainGenesis, FeeConfig, HardForkConfig, HardforkConfig, RollupConfig, SystemConfig,
+    BaseUpgradeConfig, ChainGenesis, FeeConfig, RollupConfig, SystemConfig, UpgradeConfig,
 };
 
 /// Complete configuration for a Base chain
@@ -26,7 +26,7 @@ pub struct ChainConfig {
     /// Channel timeout in L1 blocks.
     pub channel_timeout: u64,
 
-    // Hardfork schedule
+    // Upgrade schedule
     /// Bedrock activation block.
     pub bedrock_block: u64,
     /// Regolith activation timestamp.
@@ -239,9 +239,9 @@ impl ChainConfig {
         }
     }
 
-    /// Returns the [`HardForkConfig`] (Base upgrade activation timestamps) for this chain.
-    pub const fn hardfork_config(&self) -> HardForkConfig {
-        HardForkConfig {
+    /// Returns the [`UpgradeConfig`] (Base upgrade activation timestamps) for this chain.
+    pub const fn upgrade_config(&self) -> UpgradeConfig {
+        UpgradeConfig {
             regolith_time: Some(self.regolith_timestamp),
             canyon_time: Some(self.canyon_timestamp),
             delta_time: Some(self.delta_timestamp),
@@ -252,7 +252,7 @@ impl ChainConfig {
             pectra_blob_schedule_time: self.pectra_blob_schedule_timestamp,
             isthmus_time: Some(self.isthmus_timestamp),
             jovian_time: Some(self.jovian_timestamp),
-            base: HardforkConfig {
+            base: BaseUpgradeConfig {
                 azul: self.azul_timestamp,
                 beryl: self.beryl_timestamp,
                 cobalt: self.cobalt_timestamp,
@@ -294,7 +294,7 @@ impl ChainConfig {
             granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
             l1_chain_id: self.l1_chain_id,
             l2_chain_id: Chain::from_id(self.chain_id),
-            hardforks: self.hardfork_config(),
+            upgrades: self.upgrade_config(),
             batch_inbox_address: self.batch_inbox_address,
             deposit_contract_address: self.deposit_contract_address,
             l1_system_config_address: self.system_config_address,
@@ -311,9 +311,9 @@ impl From<&ChainConfig> for FeeConfig {
     }
 }
 
-impl From<&ChainConfig> for HardForkConfig {
+impl From<&ChainConfig> for UpgradeConfig {
     fn from(cfg: &ChainConfig) -> Self {
-        cfg.hardfork_config()
+        cfg.upgrade_config()
     }
 }
 
@@ -622,8 +622,8 @@ mod tests {
     #[test]
     fn zeronet_beryl_is_scheduled() {
         assert_eq!(ChainConfig::zeronet().beryl_timestamp, Some(1_780_678_800));
-        assert_eq!(ChainConfig::zeronet().hardfork_config().base.beryl, Some(1_780_678_800));
+        assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_780_678_800));
         assert_eq!(ChainConfig::zeronet().cobalt_timestamp, None);
-        assert_eq!(ChainConfig::zeronet().hardfork_config().base.cobalt, None);
+        assert_eq!(ChainConfig::zeronet().upgrade_config().base.cobalt, None);
     }
 }

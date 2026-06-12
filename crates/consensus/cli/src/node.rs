@@ -299,8 +299,8 @@ impl ConsensusNodeArgs {
             chain_id = cfg.l2_chain_id.id(),
             "Starting rollup node services"
         );
-        for hf in cfg.hardforks.to_string().lines() {
-            info!(target: "rollup_node", hardfork = %hf, "hardfork");
+        for hf in cfg.upgrades.to_string().lines() {
+            info!(target: "rollup_node", upgrade = %hf, "upgrade");
         }
 
         let l1_chain_config =

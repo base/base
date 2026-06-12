@@ -574,7 +574,7 @@ impl BasePayloadBuilderCtx {
 
             // Cache the depositor account prior to the state transition for the deposit nonce.
             //
-            // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
+            // Note that this *only* needs to be done post-regolith upgrade, as deposit nonces
             // were not introduced in Bedrock. In addition, regular transactions don't have deposit
             // nonces, so we don't need to touch the DB for those.
             let depositor_nonce = (self.is_regolith_active() && sequencer_tx.is_deposit())

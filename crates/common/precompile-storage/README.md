@@ -67,7 +67,7 @@ Use contract view functions rather than off-chain keccak reconstruction for the 
 
 ### Append-only rule
 
-**Never reorder or reuse storage slots across hardforks.** Adding new fields is safe as long as
+**Never reorder or reuse storage slots across upgrades.** Adding new fields is safe as long as
 they append after existing ones. Changing slot assignments for existing fields corrupts state.
 
 ## Attribution

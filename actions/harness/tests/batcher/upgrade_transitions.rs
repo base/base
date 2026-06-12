@@ -1,4 +1,4 @@
-//! Action tests for batch format transitions across hardfork boundaries.
+//! Action tests for batch format transitions across upgrade boundaries.
 
 use alloy_primitives::B256;
 use base_action_harness::{
@@ -6,12 +6,12 @@ use base_action_harness::{
     SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_genesis::{HardForkConfig, RollupConfig};
+use base_common_genesis::{RollupConfig, UpgradeConfig};
 use base_protocol::BatchType;
 use tracing_subscriber::EnvFilter;
 
 // ---------------------------------------------------------------------------
-// A. Span batch with non-empty hardfork transition block is rejected
+// A. Span batch with non-empty upgrade transition block is rejected
 // ---------------------------------------------------------------------------
 
 /// A span batch covering blocks 1–4 where block 3 is the first Jovian block
@@ -31,7 +31,7 @@ use tracing_subscriber::EnvFilter;
 /// in a new channel; safe head advances to 4.
 ///
 /// Note: `NonEmptyTransitionBlock` only fires for the first Jovian block, not
-/// for earlier hardforks like Ecotone or Isthmus.
+/// for earlier upgrades like Ecotone or Isthmus.
 #[tokio::test]
 async fn span_batch_with_non_empty_transition_block_rejected() {
     let _ = tracing_subscriber::fmt()
@@ -43,7 +43,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     // `is_first_jovian_block(6)` returns true and the NonEmptyTransitionBlock
     // check fires for block 3 alone.
     let jovian_time = 6u64;
-    let hardforks = HardForkConfig {
+    let upgrades = UpgradeConfig {
         canyon_time: Some(0),
         delta_time: Some(0),
         ecotone_time: Some(0),
@@ -59,7 +59,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         ..BatcherConfig::default()
     };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -160,9 +160,9 @@ async fn mixed_singular_and_span_batches_after_delta() {
         ..BatcherConfig::default()
     };
     // Fjord cascades: Canyon, Delta, Ecotone, Fjord all active at genesis.
-    let hardforks = HardForkConfig { fjord_time: Some(0), ..Default::default() };
+    let upgrades = UpgradeConfig { fjord_time: Some(0), ..Default::default() };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -237,7 +237,7 @@ async fn granite_channel_timeout_enforced() {
     // All forks through Fjord at genesis, Granite at timestamp 6.
     // The pre-Granite channel_timeout (300) is never exercised because every
     // L1 origin processed by the pipeline has timestamp >= 12 > 6.
-    let hardforks = HardForkConfig {
+    let upgrades = UpgradeConfig {
         canyon_time: Some(0),
         delta_time: Some(0),
         ecotone_time: Some(0),
@@ -254,7 +254,7 @@ async fn granite_channel_timeout_enforced() {
         ..BatcherConfig::default()
     };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
 
     // Verify the config has the expected timeout values.
     assert_eq!(
@@ -377,7 +377,7 @@ async fn granite_channel_timeout_enforced() {
 #[tokio::test]
 async fn jovian_single_batch_transition_block_deposit_only() {
     let jovian_time = 6u64;
-    let hardforks = HardForkConfig {
+    let upgrades = UpgradeConfig {
         canyon_time: Some(0),
         delta_time: Some(0),
         ecotone_time: Some(0),
@@ -400,7 +400,7 @@ async fn jovian_single_batch_transition_block_deposit_only() {
     // don't create a wide gap that would generate many spurious empty L2 blocks
     // when the sequencer window expires.
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-        .with_hardforks(hardforks)
+        .with_upgrades(upgrades)
         .with_seq_window_size(4)
         .build();
     let l1_config = L1MinerConfig { block_time: 2 };

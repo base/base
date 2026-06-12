@@ -8,7 +8,7 @@ use std::{
 use alloy_primitives::{Address, B256, hex};
 use alloy_sol_types::SolCall;
 use base_common_chains::ChainConfig;
-use base_common_genesis::HardForkConfig;
+use base_common_genesis::UpgradeConfig;
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -82,17 +82,17 @@ impl ChainUpgrades {
         }
     }
 
-    fn apply_hardforks(&mut self, hardforks: &HardForkConfig) {
-        self.set_timestamp("Delta", hardforks.delta_time);
-        self.set_timestamp("Canyon", hardforks.canyon_time);
-        self.set_timestamp("Ecotone", hardforks.ecotone_time);
-        self.set_timestamp("Fjord", hardforks.fjord_time);
-        self.set_timestamp("Granite", hardforks.granite_time);
-        self.set_timestamp("Holocene", hardforks.holocene_time);
-        self.set_timestamp("Isthmus", hardforks.isthmus_time);
-        self.set_timestamp("Jovian", hardforks.jovian_time);
-        self.set_timestamp("Azul", hardforks.base.azul);
-        self.set_timestamp("Beryl", hardforks.base.beryl);
+    fn apply_upgrades(&mut self, upgrades: &UpgradeConfig) {
+        self.set_timestamp("Delta", upgrades.delta_time);
+        self.set_timestamp("Canyon", upgrades.canyon_time);
+        self.set_timestamp("Ecotone", upgrades.ecotone_time);
+        self.set_timestamp("Fjord", upgrades.fjord_time);
+        self.set_timestamp("Granite", upgrades.granite_time);
+        self.set_timestamp("Holocene", upgrades.holocene_time);
+        self.set_timestamp("Isthmus", upgrades.isthmus_time);
+        self.set_timestamp("Jovian", upgrades.jovian_time);
+        self.set_timestamp("Azul", upgrades.base.azul);
+        self.set_timestamp("Beryl", upgrades.base.beryl);
     }
 }
 
@@ -200,8 +200,8 @@ const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
     ("B-20 asset feature", ActivationFeature::B20Asset),
 ];
 
-fn check_names_for(hardfork: &str) -> &'static [&'static str] {
-    match hardfork {
+fn check_names_for(upgrade: &str) -> &'static [&'static str] {
+    match upgrade {
         "Beryl" => BERYL_CHECK_NAMES,
         "Azul" => AZUL_CHECK_NAMES,
         "Jovian" => JOVIAN_CHECK_NAMES,
@@ -209,16 +209,16 @@ fn check_names_for(hardfork: &str) -> &'static [&'static str] {
     }
 }
 
-fn has_checks(hardfork: &str) -> bool {
-    !check_names_for(hardfork).is_empty()
+fn has_checks(upgrade: &str) -> bool {
+    !check_names_for(upgrade).is_empty()
 }
 
 fn checkable_specs_display(chain: &ChainUpgrades) -> Vec<&UpgradeSpec> {
     chain.specs.iter().filter(|spec| has_checks(spec.name)).rev().collect()
 }
 
-/// Returns the hardfork whose checks should be shown for this chain.
-fn target_hardfork(chain: &ChainUpgrades, now: u64) -> Option<&'static str> {
+/// Returns the upgrade whose checks should be shown for this chain.
+fn target_upgrade(chain: &ChainUpgrades, now: u64) -> Option<&'static str> {
     let check_specs: Vec<_> = chain.specs.iter().filter(|spec| has_checks(spec.name)).collect();
 
     if let Some(upcoming) =
@@ -234,8 +234,8 @@ fn target_hardfork(chain: &ChainUpgrades, now: u64) -> Option<&'static str> {
     latest_active.map_or_else(
         || check_specs.last().map(|spec| spec.name),
         |index| {
-            // Prefer the next checkable hardfork when it exists, even before it
-            // is scheduled. At the frontier, keep showing the active hardfork.
+            // Prefer the next checkable upgrade when it exists, even before it
+            // is scheduled. At the frontier, keep showing the active upgrade.
             check_specs.get(index + 1).or_else(|| check_specs.get(index)).map(|spec| spec.name)
         },
     )
@@ -267,8 +267,8 @@ enum CheckUpdate {
 struct ChecksPanel {
     /// Chain index these checks were (or are being) run for.
     chain_idx: Option<usize>,
-    /// Which hardfork's checks are running.
-    hardfork: Option<&'static str>,
+    /// Which upgrade's checks are running.
+    upgrade: Option<&'static str>,
     mode: Option<CheckMode>,
     rpc_url: String,
     /// Name of the check currently executing.
@@ -285,35 +285,29 @@ struct ChecksPanel {
 }
 
 impl ChecksPanel {
-    fn start(
-        &mut self,
-        chain_idx: usize,
-        rpc_url: String,
-        hardfork: &'static str,
-        mode: CheckMode,
-    ) {
+    fn start(&mut self, chain_idx: usize, rpc_url: String, upgrade: &'static str, mode: CheckMode) {
         if let Some(h) = self.handle.take() {
             h.abort();
         }
         let (tx, rx) = mpsc::channel(64);
         let chain_changed = self.chain_idx != Some(chain_idx);
-        let hardfork_changed = self.hardfork != Some(hardfork);
+        let upgrade_changed = self.upgrade != Some(upgrade);
         let mode_changed = self.mode != Some(mode);
         self.chain_idx = Some(chain_idx);
-        self.hardfork = Some(hardfork);
+        self.upgrade = Some(upgrade);
         self.mode = Some(mode);
         self.rpc_url = rpc_url.clone();
         self.current = None;
         // Preserve previous results across auto-refreshes so the table updates
         // in-place rather than blanking on every tick. Only clear when the
         // target context actually changed.
-        if chain_changed || hardfork_changed || mode_changed {
+        if chain_changed || upgrade_changed || mode_changed {
             self.results.clear();
         }
         self.running = true;
         self.rx = Some(rx);
         self.last_run_at = Some(Instant::now());
-        self.handle = Some(tokio::spawn(run_checks_streaming(hardfork, rpc_url, mode, tx)));
+        self.handle = Some(tokio::spawn(run_checks_streaming(upgrade, rpc_url, mode, tx)));
     }
 
     fn reset(&mut self) {
@@ -321,7 +315,7 @@ impl ChecksPanel {
             h.abort();
         }
         self.chain_idx = None;
-        self.hardfork = None;
+        self.upgrade = None;
         self.mode = None;
         self.rpc_url.clear();
         self.current = None;
@@ -464,7 +458,7 @@ const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 pub struct UpgradesView {
     chains: [ChainUpgrades; 4],
     selected_chain: usize,
-    selected_check_hardforks: [Option<&'static str>; 4],
+    selected_check_upgrades: [Option<&'static str>; 4],
     tick_count: u64,
     checks: ChecksPanel,
     /// When true, re-run the activation checks on the configured cadence
@@ -484,11 +478,11 @@ impl UpgradesView {
         Self {
             chains: all_chains(),
             selected_chain: 0,
-            selected_check_hardforks: [None; 4],
+            selected_check_upgrades: [None; 4],
             tick_count: 0,
             checks: ChecksPanel {
                 chain_idx: None,
-                hardfork: None,
+                upgrade: None,
                 mode: None,
                 rpc_url: String::new(),
                 current: None,
@@ -503,10 +497,10 @@ impl UpgradesView {
     }
 
     /// Kick off an activation-check run for the currently selected chain, if
-    /// the chain has a hardfork with defined checks and a usable RPC URL.
+    /// the chain has an upgrade with defined checks and a usable RPC URL.
     fn start_checks(&mut self, resources: &Resources) {
         let now = now_unix();
-        let Some((hardfork, timestamp)) =
+        let Some((upgrade, timestamp)) =
             self.selected_check_spec(now).map(|spec| (spec.name, spec.timestamp))
         else {
             return;
@@ -517,24 +511,24 @@ impl UpgradesView {
         };
         let Some(rpc) = self.rpc_for_selected(resources) else { return };
         let mode = if ts > now { CheckMode::Before } else { CheckMode::After };
-        self.checks.start(self.selected_chain, rpc, hardfork, mode);
+        self.checks.start(self.selected_chain, rpc, upgrade, mode);
     }
 
     fn selected_check_spec(&self, now: u64) -> Option<&UpgradeSpec> {
         let chain = &self.chains[self.selected_chain];
-        self.selected_check_hardforks[self.selected_chain]
+        self.selected_check_upgrades[self.selected_chain]
             .filter(|name| chain.specs.iter().any(|spec| spec.name == *name && has_checks(name)))
-            .or_else(|| target_hardfork(chain, now))
+            .or_else(|| target_upgrade(chain, now))
             .and_then(|name| chain.specs.iter().find(|spec| spec.name == name))
     }
 
-    fn selected_check_hardfork(&self, now: u64) -> Option<&'static str> {
+    fn selected_check_upgrade(&self, now: u64) -> Option<&'static str> {
         self.selected_check_spec(now).map(|spec| spec.name)
     }
 
-    fn move_selected_check_hardfork(&mut self, direction: i8) {
+    fn move_selected_check_upgrade(&mut self, direction: i8) {
         let now = now_unix();
-        let current = self.selected_check_hardfork(now);
+        let current = self.selected_check_upgrade(now);
         let checkable: Vec<_> = checkable_specs_display(&self.chains[self.selected_chain])
             .into_iter()
             .map(|spec| spec.name)
@@ -550,17 +544,17 @@ impl UpgradesView {
             _ => current_index,
         };
         let next = checkable[next_index];
-        if self.selected_check_hardforks[self.selected_chain] != Some(next) {
-            self.selected_check_hardforks[self.selected_chain] = Some(next);
+        if self.selected_check_upgrades[self.selected_chain] != Some(next) {
+            self.selected_check_upgrades[self.selected_chain] = Some(next);
             self.checks.reset();
         }
     }
 
-    fn apply_live_hardforks(&mut self, resources: &Resources) {
-        let Some(hardforks) = resources.config.hardforks.as_ref() else { return };
+    fn apply_live_upgrades(&mut self, resources: &Resources) {
+        let Some(upgrades) = resources.config.upgrades.as_ref() else { return };
         let chain = &mut self.chains[self.selected_chain];
         if chain_name_matches_loaded(chain.display_name, &resources.config.name) {
-            chain.apply_hardforks(hardforks);
+            chain.apply_upgrades(upgrades);
         }
     }
 
@@ -595,10 +589,10 @@ impl View for UpgradesView {
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.move_selected_check_hardfork(-1);
+                self.move_selected_check_upgrade(-1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.move_selected_check_hardfork(1);
+                self.move_selected_check_upgrade(1);
             }
             KeyCode::Char(c @ '1'..='4') => {
                 let idx = (c as usize) - ('1' as usize);
@@ -621,7 +615,7 @@ impl View for UpgradesView {
     fn tick(&mut self, resources: &mut Resources) -> Action {
         self.tick_count = self.tick_count.wrapping_add(1);
         self.checks.poll();
-        self.apply_live_hardforks(resources);
+        self.apply_live_upgrades(resources);
 
         if self.auto_refresh && !self.checks.running {
             let due = self.checks.last_run_at.is_none_or(|t| t.elapsed() >= AUTO_REFRESH_INTERVAL);
@@ -664,8 +658,8 @@ impl View for UpgradesView {
             ])
             .split(area);
 
-        // Dull the activated banner if the hardfork is stale (> 4 weeks old) or if a
-        // newer hardfork is already active on any other chain, meaning this network is
+        // Dull the activated banner if the upgrade is stale (> 4 weeks old) or if a
+        // newer upgrade is already active on any other chain, meaning this network is
         // running behind the frontier.
         let dull = if let Some((_, lat_ts)) = latest_activated {
             let stale = now.saturating_sub(lat_ts) > SECS_FOUR_WEEKS;
@@ -683,7 +677,7 @@ impl View for UpgradesView {
 
         render_chain_tabs(frame, outer[0], &self.chains, self.selected_chain);
         let selected_check_spec = self.selected_check_spec(now);
-        let selected_hardfork = selected_check_spec.map(|spec| spec.name);
+        let selected_upgrade = selected_check_spec.map(|spec| spec.name);
 
         match upcoming {
             Some((name, ts)) => {
@@ -711,7 +705,7 @@ impl View for UpgradesView {
             .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
             .split(outer[2]);
 
-        render_history(frame, bottom[0], chain, now, selected_hardfork);
+        render_history(frame, bottom[0], chain, now, selected_upgrade);
         render_checks_panel(
             frame,
             bottom[1],
@@ -898,7 +892,7 @@ fn render_history(
     area: Rect,
     chain: &ChainUpgrades,
     now: u64,
-    selected_hardfork: Option<&'static str>,
+    selected_upgrade: Option<&'static str>,
 ) {
     let block = Block::default()
         .title(" Upgrade History ")
@@ -910,7 +904,7 @@ fn render_history(
         .iter()
         .rev()
         .map(|spec| {
-            let selected = selected_hardfork == Some(spec.name);
+            let selected = selected_upgrade == Some(spec.name);
             let upgrade_name =
                 if selected { format!("▶ {}", spec.name) } else { format!("  {}", spec.name) };
             let (date_str, status_str, status_color) = match spec.timestamp {
@@ -1015,7 +1009,7 @@ fn render_checks_panel(
         return;
     }
 
-    let hf = panel.hardfork.unwrap_or("?");
+    let hf = panel.upgrade.unwrap_or("?");
     let check_names = check_names_for(hf);
 
     let mode_str = match panel.mode {
@@ -1213,14 +1207,14 @@ fn clock_lines(
 
 // ── Activation checks ─────────────────────────────────────────────────────────
 
-/// Route to the correct hardfork's streaming check function.
+/// Route to the correct upgrade's streaming check function.
 async fn run_checks_streaming(
-    hardfork: &'static str,
+    upgrade: &'static str,
     rpc_url: String,
     mode: CheckMode,
     tx: mpsc::Sender<CheckUpdate>,
 ) {
-    match hardfork {
+    match upgrade {
         "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
         "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
@@ -1805,7 +1799,7 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::HardforkConfig;
+    use base_common_genesis::BaseUpgradeConfig;
     use crossterm::event::KeyModifiers;
 
     use super::*;
@@ -1818,14 +1812,14 @@ mod tests {
             rpc: None,
             specs: specs_from_config(ChainConfig::devnet()),
         };
-        assert_eq!(target_hardfork(&chain, 100), Some("Beryl"));
+        assert_eq!(target_upgrade(&chain, 100), Some("Beryl"));
 
-        chain.apply_hardforks(&HardForkConfig {
-            base: HardforkConfig { azul: Some(10), beryl: Some(12), cobalt: None },
-            ..HardForkConfig::default()
+        chain.apply_upgrades(&UpgradeConfig {
+            base: BaseUpgradeConfig { azul: Some(10), beryl: Some(12), cobalt: None },
+            ..UpgradeConfig::default()
         });
 
-        assert_eq!(target_hardfork(&chain, 11), Some("Beryl"));
+        assert_eq!(target_upgrade(&chain, 11), Some("Beryl"));
         let beryl = chain.specs.iter().find(|spec| spec.name == "Beryl").unwrap();
         assert_eq!(beryl.timestamp, Some(12));
     }
@@ -1837,18 +1831,18 @@ mod tests {
             rpc: None,
             specs: specs_from_config(ChainConfig::mainnet()),
         };
-        chain.apply_hardforks(&HardForkConfig {
+        chain.apply_upgrades(&UpgradeConfig {
             jovian_time: Some(10),
-            base: HardforkConfig { azul: Some(20), beryl: None, cobalt: None },
-            ..HardForkConfig::default()
+            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None },
+            ..UpgradeConfig::default()
         });
 
-        assert_eq!(target_hardfork(&chain, 15), Some("Azul"));
-        assert_eq!(target_hardfork(&chain, 21), Some("Beryl"));
+        assert_eq!(target_upgrade(&chain, 15), Some("Azul"));
+        assert_eq!(target_upgrade(&chain, 21), Some("Beryl"));
     }
 
     #[test]
-    fn live_hardforks_do_not_clear_known_static_timestamps() {
+    fn live_upgrades_do_not_clear_known_static_timestamps() {
         let mut chain = ChainUpgrades {
             display_name: "Mainnet",
             rpc: None,
@@ -1856,9 +1850,9 @@ mod tests {
         };
         let delta = chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp;
 
-        chain.apply_hardforks(&HardForkConfig {
-            base: HardforkConfig { azul: Some(20), beryl: None, cobalt: None },
-            ..HardForkConfig::default()
+        chain.apply_upgrades(&UpgradeConfig {
+            base: BaseUpgradeConfig { azul: Some(20), beryl: None, cobalt: None },
+            ..UpgradeConfig::default()
         });
 
         assert_eq!(chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp, delta);
@@ -1891,17 +1885,17 @@ mod tests {
     }
 
     #[test]
-    fn arrow_keys_select_check_hardfork() {
+    fn arrow_keys_select_check_upgrade() {
         let mut view = UpgradesView::new();
         let mut resources = Resources::new(MonitoringConfig::mainnet());
 
-        assert_eq!(view.selected_check_hardfork(100), Some("Beryl"));
+        assert_eq!(view.selected_check_upgrade(100), Some("Beryl"));
 
         view.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut resources);
-        assert_eq!(view.selected_check_hardfork(100), Some("Azul"));
+        assert_eq!(view.selected_check_upgrade(100), Some("Azul"));
 
         view.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &mut resources);
-        assert_eq!(view.selected_check_hardfork(100), Some("Beryl"));
+        assert_eq!(view.selected_check_upgrade(100), Some("Beryl"));
     }
 
     #[test]
@@ -1910,7 +1904,7 @@ mod tests {
         view.selected_chain = 3;
         let resources = Resources::new(MonitoringConfig::mainnet());
 
-        assert_eq!(view.selected_check_hardfork(now_unix()), Some("Beryl"));
+        assert_eq!(view.selected_check_upgrade(now_unix()), Some("Beryl"));
         view.start_checks(&resources);
 
         assert!(!view.checks.running);

@@ -33,17 +33,17 @@ impl TryFrom<&OtherFields> for ChainInfo {
     }
 }
 
-/// Base-specific hardfork configuration in a genesis file.
+/// Base-specific upgrade configuration in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HardforkInfo {
-    /// Base Azul hardfork timestamp.
+pub struct UpgradeInfo {
+    /// Base Azul upgrade timestamp.
     #[serde(alias = "v1")]
     pub azul: Option<u64>,
-    /// Beryl hardfork timestamp.
+    /// Beryl upgrade timestamp.
     #[serde(alias = "v2")]
     pub beryl: Option<u64>,
-    /// Cobalt hardfork timestamp.
+    /// Cobalt upgrade timestamp.
     #[serde(alias = "v3")]
     pub cobalt: Option<u64>,
 }
@@ -54,25 +54,25 @@ pub struct HardforkInfo {
 pub struct GenesisInfo {
     /// bedrock block number
     pub bedrock_block: Option<u64>,
-    /// regolith hardfork timestamp
+    /// regolith upgrade timestamp
     pub regolith_time: Option<u64>,
-    /// canyon hardfork timestamp
+    /// canyon upgrade timestamp
     pub canyon_time: Option<u64>,
-    /// ecotone hardfork timestamp
+    /// ecotone upgrade timestamp
     pub ecotone_time: Option<u64>,
-    /// fjord hardfork timestamp
+    /// fjord upgrade timestamp
     pub fjord_time: Option<u64>,
-    /// granite hardfork timestamp
+    /// granite upgrade timestamp
     pub granite_time: Option<u64>,
-    /// holocene hardfork timestamp
+    /// holocene upgrade timestamp
     pub holocene_time: Option<u64>,
-    /// isthmus hardfork timestamp
+    /// isthmus upgrade timestamp
     pub isthmus_time: Option<u64>,
-    /// jovian hardfork timestamp
+    /// jovian upgrade timestamp
     pub jovian_time: Option<u64>,
-    /// Base-specific hardfork activation times.
+    /// Base-specific upgrade activation times.
     #[serde(default)]
-    pub base: HardforkInfo,
+    pub base: UpgradeInfo,
     /// Activation registry admin address.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activation_admin_address: Option<Address>,
@@ -158,7 +158,7 @@ mod tests {
                 holocene_time: None,
                 isthmus_time: None,
                 jovian_time: None,
-                base: HardforkInfo { azul: Some(14), beryl: Some(16), cobalt: None },
+                base: UpgradeInfo { azul: Some(14), beryl: Some(16), cobalt: None },
                 activation_admin_address: None,
             }
         );
@@ -224,7 +224,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { azul: Some(14), beryl: Some(16), cobalt: None },
+                    base: UpgradeInfo { azul: Some(14), beryl: Some(16), cobalt: None },
                     activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
@@ -250,7 +250,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { azul: Some(14), beryl: Some(16), cobalt: None },
+                    base: UpgradeInfo { azul: Some(14), beryl: Some(16), cobalt: None },
                     activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
@@ -294,7 +294,7 @@ mod tests {
                     holocene_time: Some(0),
                     isthmus_time: Some(0),
                     jovian_time: Some(0),
-                    base: HardforkInfo::default(),
+                    base: UpgradeInfo::default(),
                     activation_admin_address: None,
                 }),
                 base_fee_info: None,

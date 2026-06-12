@@ -3,18 +3,18 @@ use alloc::{boxed::Box, vec};
 use alloy_primitives::U256;
 use base_common_chains::{BaseUpgrade, ChainUpgrades};
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
-/// Extension trait to convert alloy's [`ChainUpgrades`] into reth's [`ChainHardforks`].
+/// Extension trait to convert alloy's [`ChainUpgrades`] into reth's fork schedule.
 pub trait ChainUpgradesExt {
-    /// Expands Base upgrades into a full [`ChainHardforks`] including implied Ethereum entries.
+    /// Expands Base upgrades into a full reth fork schedule including implied Ethereum entries.
     ///
-    /// Pre-Bedrock Ethereum hardforks are set to block 0. Paired Ethereum hardforks
+    /// Pre-Bedrock Ethereum upgrades are set to block 0. Paired Ethereum upgrades
     /// use their Base counterpart's timestamp:
     /// Shanghai=Canyon, Cancun=Ecotone, Prague=Isthmus, Osaka=Azul.
-    fn to_chain_hardforks(&self) -> ChainHardforks;
+    fn to_chain_upgrades(&self) -> ChainHardforks;
 }
 
 impl ChainUpgradesExt for ChainUpgrades {
-    fn to_chain_hardforks(&self) -> ChainHardforks {
+    fn to_chain_upgrades(&self) -> ChainHardforks {
         let mut forks: vec::Vec<(Box<dyn Hardfork>, ForkCondition)> = vec![
             (EthereumHardfork::Frontier.boxed(), ForkCondition::Block(0)),
             (EthereumHardfork::Homestead.boxed(), ForkCondition::Block(0)),
@@ -91,16 +91,15 @@ mod tests {
 
     #[test]
     fn azul_expands_to_osaka() {
-        let hardforks =
-            ChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(|(fork, cond)| {
-                if fork == BaseUpgrade::Azul {
-                    (fork, ForkCondition::Timestamp(1_000_000))
-                } else {
-                    (fork, cond)
-                }
-            }))
-            .to_chain_hardforks();
-        assert_eq!(hardforks.get(BaseUpgrade::Azul), Some(ForkCondition::Timestamp(1_000_000)));
-        assert_eq!(hardforks.get(EthereumHardfork::Osaka), hardforks.get(BaseUpgrade::Azul));
+        let upgrades = ChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(|(fork, cond)| {
+            if fork == BaseUpgrade::Azul {
+                (fork, ForkCondition::Timestamp(1_000_000))
+            } else {
+                (fork, cond)
+            }
+        }))
+        .to_chain_upgrades();
+        assert_eq!(upgrades.get(BaseUpgrade::Azul), Some(ForkCondition::Timestamp(1_000_000)));
+        assert_eq!(upgrades.get(EthereumHardfork::Osaka), upgrades.get(BaseUpgrade::Azul));
     }
 }

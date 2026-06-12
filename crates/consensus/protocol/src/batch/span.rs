@@ -594,7 +594,7 @@ impl SpanBatch {
 
     /// Checks the validity of the batch's prefix.
     ///
-    /// This function is used for post-Holocene hardfork to perform batch validation
+    /// This function is used for post-Holocene upgrade to perform batch validation
     /// as each batch is being loaded in.
     pub async fn check_batch_prefix<BF: BatchValidationProvider>(
         &self,
@@ -632,7 +632,7 @@ impl SpanBatch {
         if !cfg.is_delta_active(batch_origin.timestamp) {
             warn!(
                 target: "batch_span",
-                "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta hard fork",
+                "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta upgrade",
                 batch_origin.id(),
                 batch_origin.timestamp
             );
@@ -766,7 +766,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, Bytes, b256};
     use base_common_consensus::BaseBlock;
-    use base_common_genesis::{ChainGenesis, HardForkConfig, HardforkConfig};
+    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
     use tracing::Level;
 
     use super::*;
@@ -978,7 +978,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(10), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(10), ..Default::default() },
             ..Default::default()
         };
         let block = BlockInfo { number: 10, timestamp: 9, ..Default::default() };
@@ -995,7 +995,7 @@ mod tests {
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
         let str = alloc::format!(
-            "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta hard fork",
+            "received SpanBatch (id {:?}) with L1 origin (timestamp {}) before Delta upgrade",
             block.id(),
             block.timestamp
         );
@@ -1007,7 +1007,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1037,7 +1037,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1065,7 +1065,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             max_sequencer_drift: 1000,
             ..Default::default()
@@ -1128,7 +1128,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             max_sequencer_drift: 1000,
             ..Default::default()
@@ -1204,7 +1204,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1239,7 +1239,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1268,7 +1268,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1297,7 +1297,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1329,7 +1329,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1378,7 +1378,7 @@ mod tests {
         let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1424,7 +1424,7 @@ mod tests {
 
         let cfg = RollupConfig {
             seq_window_size: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1476,7 +1476,7 @@ mod tests {
 
         let cfg = RollupConfig {
             seq_window_size: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1532,7 +1532,7 @@ mod tests {
 
         let cfg = RollupConfig {
             seq_window_size: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1583,7 +1583,7 @@ mod tests {
 
         let cfg = RollupConfig {
             seq_window_size: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1638,7 +1638,7 @@ mod tests {
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 0,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1686,7 +1686,7 @@ mod tests {
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 0,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1741,7 +1741,7 @@ mod tests {
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 0,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1802,7 +1802,7 @@ mod tests {
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1867,7 +1867,7 @@ mod tests {
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1926,7 +1926,7 @@ mod tests {
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -1989,7 +1989,7 @@ mod tests {
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -2053,9 +2053,9 @@ mod tests {
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 100,
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 delta_time: Some(0),
-                base: HardforkConfig { cobalt: Some(0), ..Default::default() },
+                base: BaseUpgradeConfig { cobalt: Some(0), ..Default::default() },
                 ..Default::default()
             },
             block_time: 10,
@@ -2112,7 +2112,7 @@ mod tests {
 
         let cfg = RollupConfig {
             seq_window_size: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -2165,7 +2165,7 @@ mod tests {
 
         let cfg = RollupConfig {
             seq_window_size: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             ..Default::default()
         };
@@ -2233,7 +2233,7 @@ mod tests {
             b256!("0e2ee9abe94ee4514b170d7039d8151a7469d434a8575dbab5bd4187a27732dd");
         let cfg = RollupConfig {
             seq_window_size: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             genesis: ChainGenesis {
                 l2: BlockNumHash { number: 41, hash: payload_block_hash },
@@ -2300,7 +2300,7 @@ mod tests {
         let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
         let cfg = RollupConfig {
             seq_window_size: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             genesis: ChainGenesis {
                 l2: BlockNumHash { number: 40, hash: parent_hash },
@@ -2368,7 +2368,7 @@ mod tests {
             b256!("0e2ee9abe94ee4514b170d7039d8151a7469d434a8575dbab5bd4187a27732dd");
         let cfg = RollupConfig {
             seq_window_size: 100,
-            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { delta_time: Some(0), ..Default::default() },
             block_time: 10,
             genesis: ChainGenesis {
                 l2: BlockNumHash { number: 41, hash: payload_block_hash },

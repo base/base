@@ -1207,8 +1207,8 @@ mod tests {
     use super::{FlashblocksMetadata, build_block};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
-    /// Creates a minimal [`BaseChainSpec`] with all L1 hardforks through Cancun
-    /// active at genesis but **no** inherited rollup hardforks (Bedrock, Canyon,
+    /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
+    /// active at genesis but **no** inherited rollup upgrades (Bedrock, Canyon,
     /// Ecotone, Holocene, Isthmus, Jovian are all absent).
     ///
     /// This keeps `build_block` on the simplest code paths: no blob fields,

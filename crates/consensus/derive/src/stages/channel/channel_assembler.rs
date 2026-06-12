@@ -231,7 +231,7 @@ where
 mod tests {
     use alloc::{sync::Arc, vec};
 
-    use base_common_genesis::{HardForkConfig, RollupConfig};
+    use base_common_genesis::{RollupConfig, UpgradeConfig};
     use base_protocol::BlockInfo;
     use tracing::Level;
 
@@ -343,7 +343,7 @@ mod tests {
         ];
         let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         });
         let mut assembler = ChannelAssembler::new(cfg, mock);
@@ -404,7 +404,7 @@ mod tests {
         frames[1].data = vec![0; RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize];
         let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { fjord_time: Some(0), ..Default::default() },
             ..Default::default()
         });
 

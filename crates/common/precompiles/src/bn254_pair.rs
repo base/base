@@ -3,7 +3,7 @@ use revm::precompile::{
     call_eth_precompile,
 };
 
-/// Max input size for the bn254 pair precompile after the Granite hardfork.
+/// Max input size for the bn254 pair precompile after the Granite upgrade.
 pub const GRANITE_MAX_INPUT_SIZE: usize = 112687;
 /// Bn254 pair precompile with Granite input limits.
 pub const GRANITE: Precompile =
@@ -29,7 +29,7 @@ pub fn run_pair_granite(input: &[u8], gas_limit: u64, reservoir: u64) -> Precomp
     ))
 }
 
-/// Max input size for the bn254 pair precompile after the Jovian hardfork.
+/// Max input size for the bn254 pair precompile after the Jovian upgrade.
 pub const JOVIAN_MAX_INPUT_SIZE: usize = 81_984;
 /// Bn254 pair precompile with Jovian input limits.
 pub const JOVIAN: Precompile =

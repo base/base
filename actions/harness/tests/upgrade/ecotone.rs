@@ -1,11 +1,11 @@
-//! Action tests for the Ecotone hardfork activation boundary.
+//! Action tests for the Ecotone upgrade activation boundary.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_genesis::HardForkConfig;
+use base_common_genesis::UpgradeConfig;
 use base_protocol::L1BlockInfoTx;
 
 // ---------------------------------------------------------------------------
@@ -33,14 +33,14 @@ async fn ecotone_l1_info_format_transitions_at_activation() {
     // Canyon and Delta active at genesis; Ecotone activates at ts=6 (block 3,
     // block_time=2). All earlier forks silent so they don't interfere.
     let ecotone_time = 6u64;
-    let hardforks = HardForkConfig {
+    let upgrades = UpgradeConfig {
         canyon_time: Some(0),
         delta_time: Some(0),
         ecotone_time: Some(ecotone_time),
         ..Default::default()
     };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
@@ -86,7 +86,7 @@ async fn ecotone_l1_info_format_transitions_at_activation() {
 // B. Ecotone activation block user txs are accepted at the batch layer
 // ---------------------------------------------------------------------------
 
-/// Unlike the Jovian hardfork, Ecotone does **not** enforce an empty first block
+/// Unlike the Jovian upgrade, Ecotone does **not** enforce an empty first block
 /// at the batch-validation layer. There is no `NonEmptyTransitionBlock` check
 /// for Ecotone; the constraint is enforced at the sequencer level
 /// (`should_use_tx_pool()` returns `false` for the first Ecotone block).
@@ -113,7 +113,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     // Fjord must be active so the batcher's brotli-compressed frames are
     // accepted by the pipeline's BatchReader.
     let ecotone_time = 6u64;
-    let hardforks = HardForkConfig {
+    let upgrades = UpgradeConfig {
         canyon_time: Some(0),
         delta_time: Some(0),
         ecotone_time: Some(ecotone_time),
@@ -121,7 +121,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
         ..Default::default()
     };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -177,7 +177,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
 
 /// Full end-to-end derivation through the Ecotone activation boundary,
 /// following the same pattern as `jovian_derivation_crosses_activation_boundary`
-/// in `hardfork_activation.rs`.
+/// in `upgrade/activation.rs`.
 ///
 /// - Canyon and Delta active at genesis (via Fjord cascade ensures brotli is
 ///   accepted by the verifier's `BatchReader`).
@@ -199,7 +199,7 @@ async fn ecotone_derivation_crosses_activation_boundary() {
     // is "new". Fjord must be active so the batcher's brotli compression is
     // accepted. Ecotone activates at ts=6 (block 3).
     let ecotone_time = 6u64;
-    let hardforks = HardForkConfig {
+    let upgrades = UpgradeConfig {
         canyon_time: Some(0),
         delta_time: Some(0),
         ecotone_time: Some(ecotone_time),
@@ -207,7 +207,7 @@ async fn ecotone_derivation_crosses_activation_boundary() {
         ..Default::default()
     };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());

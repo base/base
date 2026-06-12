@@ -66,8 +66,8 @@ impl CliMetrics {
     /// The duration to ban peers.
     pub const P2P_BAN_DURATION: &'static str = "base_node_ban_duration";
 
-    /// Hardfork activation times.
-    pub const HARDFORK_ACTIVATION_TIMES: &'static str = "base_node_hardforks";
+    /// Upgrade activation times.
+    pub const UPGRADE_ACTIVATION_TIMES: &'static str = "base_node_upgrades";
 
     /// Top-level rollup config settings.
     pub const ROLLUP_CONFIG: &'static str = "base_node_rollup_config";
@@ -141,8 +141,8 @@ impl CliMetrics {
     pub fn init_rollup_config(config: &RollupConfig) {
         metrics::describe_gauge!(Self::ROLLUP_CONFIG, "Rollup configuration settings for Base");
         metrics::describe_gauge!(
-            Self::HARDFORK_ACTIVATION_TIMES,
-            "Activation times for hardforks in Base"
+            Self::UPGRADE_ACTIVATION_TIMES,
+            "Activation times for upgrades in Base"
         );
 
         metrics::gauge!(
@@ -166,10 +166,10 @@ impl CliMetrics {
         )
         .set(1);
 
-        for (fork_name, activation_time) in config.hardforks.iter() {
-            // Use `-1` as a signal that the fork is not scheduled.
+        for (upgrade_name, activation_time) in config.upgrades.iter() {
+            // Use `-1` as a signal that the upgrade is not scheduled.
             let time: f64 = activation_time.map(|t| t as f64).unwrap_or(-1f64);
-            metrics::gauge!(Self::HARDFORK_ACTIVATION_TIMES, "fork" => fork_name).set(time);
+            metrics::gauge!(Self::UPGRADE_ACTIVATION_TIMES, "upgrade" => upgrade_name).set(time);
         }
     }
 }

@@ -1,4 +1,4 @@
-//! Integration tests verifying that the derived rollup configs agree with chain hardfork
+//! Integration tests verifying that the derived rollup configs agree with chain upgrade
 //! schedules for every [`BaseUpgrade`] variant.
 
 use base_common_chains::{
@@ -7,7 +7,7 @@ use base_common_chains::{
 };
 
 #[test]
-fn mainnet_rollup_config_matches_chain_hardforks() {
+fn mainnet_rollup_config_matches_chain_upgrades() {
     let chain = ChainUpgrades::mainnet();
     for fork in BaseUpgrade::VARIANTS {
         // Regolith activated at genesis on Base and is stored as `regolith_time: Some(0)`
@@ -26,7 +26,7 @@ fn mainnet_rollup_config_matches_chain_hardforks() {
 }
 
 #[test]
-fn sepolia_rollup_config_matches_chain_hardforks() {
+fn sepolia_rollup_config_matches_chain_upgrades() {
     let chain = ChainUpgrades::sepolia();
     for fork in BaseUpgrade::VARIANTS {
         // See comment in mainnet test above.

@@ -19,12 +19,12 @@ use crate::{BaseUpgrade, Upgrades};
 /// A type allowing to configure activation [`ForkCondition`]s for a given list of
 /// [`BaseUpgrade`]s.
 ///
-/// Zips together [`EthereumHardfork`]s and [`BaseUpgrade`]s. Base hard forks whenever Ethereum
-/// hard forks. When Ethereum hard forks, a new [`BaseUpgrade`] piggybacks on top of the new
+/// Zips together [`EthereumHardfork`]s and [`BaseUpgrade`]s. Base upgrades whenever Ethereum
+/// upgrades. When Ethereum upgrades, a new [`BaseUpgrade`] piggybacks on top of the new
 /// [`EthereumHardfork`] to include (or to noop) the L1 changes on L2.
 ///
-/// Base can also hard fork independently of Ethereum. The relation between Ethereum and Base
-/// hard forks is described by predicate [`EthereumHardfork`] `=>` [`BaseUpgrade`], since a Base
+/// Base can also upgrade independently of Ethereum. The relation between Ethereum and Base
+/// upgrades is described by predicate [`EthereumHardfork`] `=>` [`BaseUpgrade`], since a Base
 /// chain can undergo a [`BaseUpgrade`] without an [`EthereumHardfork`], but not the other way
 /// around.
 #[derive(Debug, Clone)]
@@ -117,7 +117,7 @@ impl Index<EthereumHardfork> for ChainUpgrades {
 
     fn index(&self, hf: EthereumHardfork) -> &Self::Output {
         match hf {
-            // Dao Hardfork is not needed for ChainUpgrades
+            // Dao Upgrade is not needed for ChainUpgrades
             Dao | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
             Frontier | Homestead | Tangerine | SpuriousDragon | Byzantium | Constantinople
             | Petersburg | Istanbul | MuirGlacier | Berlin => &ForkCondition::ZERO_BLOCK,
@@ -348,11 +348,11 @@ mod tests {
     #[test]
     fn test_ethereum_fork_activation_consistency() {
         let base_mainnet_forks = ChainUpgrades::mainnet();
-        for ethereum_hardfork in EthereumHardfork::VARIANTS {
-            let _ = base_mainnet_forks.ethereum_fork_activation(*ethereum_hardfork);
+        for ethereum_upgrade in EthereumHardfork::VARIANTS {
+            let _ = base_mainnet_forks.ethereum_fork_activation(*ethereum_upgrade);
         }
-        for base_hardfork in BaseUpgrade::VARIANTS {
-            let _ = base_mainnet_forks.upgrade_activation(*base_hardfork);
+        for base_upgrade in BaseUpgrade::VARIANTS {
+            let _ = base_mainnet_forks.upgrade_activation(*base_upgrade);
         }
     }
 }

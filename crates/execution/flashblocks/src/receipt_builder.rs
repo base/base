@@ -60,7 +60,7 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
     /// * `transaction` - The recovered transaction to build a receipt for
     /// * `result` - The execution result
     /// * `cumulative_gas_used` - Cumulative gas used up to and including this transaction
-    /// * `timestamp` - The block timestamp, used to determine active hardforks
+    /// * `timestamp` - The block timestamp, used to determine active upgrades
     ///
     /// # Returns
     ///

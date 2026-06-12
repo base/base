@@ -47,7 +47,7 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     /// This is only set for blocks post-Jovian activation.
     /// See [DA footprint block limit spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit)
     pub da_footprint_used: u64,
-    /// Whether Regolith hardfork is active.
+    /// Whether Regolith upgrade is active.
     pub is_regolith: bool,
     /// Utility to call system smart contracts.
     pub system_caller: SystemCaller<Spec>,
@@ -405,7 +405,7 @@ mod tests {
     fn build_executor<'a>(
         db: &'a mut revm::database::State<InMemoryDB>,
         receipt_builder: &'a AlloyReceiptBuilder,
-        base_chain_hardforks: &'a ChainUpgrades,
+        base_chain_upgrades: &'a ChainUpgrades,
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> BaseBlockExecutor<
@@ -432,7 +432,7 @@ mod tests {
         BaseBlockExecutor::new(
             evm,
             BaseBlockExecutionCtx::default(),
-            base_chain_hardforks,
+            base_chain_upgrades,
             receipt_builder,
         )
     }
@@ -444,7 +444,7 @@ mod tests {
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let base_chain_hardforks = ChainUpgrades::new(
+        let base_chain_upgrades = ChainUpgrades::new(
             BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
@@ -454,7 +454,7 @@ mod tests {
         let mut executor = build_executor(
             &mut db,
             &receipt_builder,
-            &base_chain_hardforks,
+            &base_chain_upgrades,
             GAS_LIMIT,
             JOVIAN_TIMESTAMP,
         );
@@ -489,7 +489,7 @@ mod tests {
         const GAS_LIMIT: u64 = 100;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let base_chain_hardforks = ChainUpgrades::new(
+        let base_chain_upgrades = ChainUpgrades::new(
             BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
@@ -499,7 +499,7 @@ mod tests {
         let mut executor = build_executor(
             &mut db,
             &receipt_builder,
-            &base_chain_hardforks,
+            &base_chain_upgrades,
             GAS_LIMIT,
             JOVIAN_TIMESTAMP,
         );
@@ -546,7 +546,7 @@ mod tests {
         const GAS_LIMIT: u64 = 200_000;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let base_chain_hardforks = ChainUpgrades::new(
+        let base_chain_upgrades = ChainUpgrades::new(
             BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
@@ -556,7 +556,7 @@ mod tests {
         let mut executor = build_executor(
             &mut db,
             &receipt_builder,
-            &base_chain_hardforks,
+            &base_chain_upgrades,
             GAS_LIMIT,
             JOVIAN_TIMESTAMP,
         );

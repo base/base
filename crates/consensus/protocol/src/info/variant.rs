@@ -100,11 +100,11 @@ impl L1BlockInfoTx {
                     // where the sequencer followed the incorrect chain, using the legacy Cancun blob fee
                     // schedule instead of the new Prague blob fee schedule. This portion of the chain was
                     // chosen to be canonicalized in favor of the prospect of a deep reorg imposed by the
-                    // sequencers of the testnet chains. An optional hardfork was introduced for Sepolia only,
-                    // where if present, activates the use of the Prague blob fee schedule. If the hardfork is
+                    // sequencers of the testnet chains. An optional upgrade was introduced for Sepolia only,
+                    // where if present, activates the use of the Prague blob fee schedule. If the upgrade is
                     // not present, and L1 has activated pectra, the Prague blob fee schedule is used
                     // immediately.
-                    (rollup_config.hardforks.pectra_blob_schedule_time.is_none() ||
+                    (rollup_config.upgrades.pectra_blob_schedule_time.is_none() ||
                         rollup_config.is_pectra_blob_schedule_active(l1_header.timestamp)) =>
                 {
                     BlobParams::prague()
@@ -215,7 +215,7 @@ impl L1BlockInfoTx {
             input: l1_info.encode_calldata(),
         };
 
-        // With the regolith hardfork, system transactions were deprecated, and we allocate
+        // With the regolith upgrade, system transactions were deprecated, and we allocate
         // a constant amount of gas for special transactions like L1 block info.
         if rollup_config.is_regolith_active(l2_block_time) {
             deposit_tx.is_system_transaction = false;
@@ -392,7 +392,7 @@ mod tests {
 
     use alloy_primitives::{address, b256};
     use base_common_chains::Sepolia;
-    use base_common_genesis::HardForkConfig;
+    use base_common_genesis::UpgradeConfig;
     use rstest::rstest;
 
     use super::*;
@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn test_try_new_ecotone() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { ecotone_time: Some(1), ..Default::default() },
+            upgrades: UpgradeConfig { ecotone_time: Some(1), ..Default::default() },
             ..Default::default()
         };
         let l1_config = Sepolia::l1_config();
@@ -808,7 +808,7 @@ mod tests {
         #[case] use_wrong_params: bool,
     ) {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 ecotone_time: Some(1),
                 pectra_blob_schedule_time: Some(2),
                 ..Default::default()
@@ -879,7 +879,7 @@ mod tests {
     #[test]
     fn test_try_new_isthmus_before_pectra_blob_schedule() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 isthmus_time: Some(1),
                 pectra_blob_schedule_time: Some(1713121140),
                 ..Default::default()
@@ -952,7 +952,7 @@ mod tests {
     #[test]
     fn test_try_new_isthmus() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { isthmus_time: Some(1), ..Default::default() },
+            upgrades: UpgradeConfig { isthmus_time: Some(1), ..Default::default() },
             ..Default::default()
         };
         let l1_config = Sepolia::l1_config();
@@ -1017,7 +1017,7 @@ mod tests {
     #[test]
     fn test_try_new_with_deposit_tx() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { isthmus_time: Some(1), ..Default::default() },
+            upgrades: UpgradeConfig { isthmus_time: Some(1), ..Default::default() },
             ..Default::default()
         };
         let l1_config = Sepolia::l1_config();

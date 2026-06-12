@@ -41,7 +41,7 @@ pub struct L1BlockInfo {
     pub operator_fee_scalar: Option<U256>,
     /// The operator fee constant. None if Isthmus is not activated.
     pub operator_fee_constant: Option<U256>,
-    /// Da footprint gas scalar. Used to set the DA footprint block limit on the L2. Always null prior to the Jovian hardfork.
+    /// Da footprint gas scalar. Used to set the DA footprint block limit on the L2. Always null prior to the Jovian upgrade.
     pub da_footprint_gas_scalar: Option<u16>,
     /// True if Ecotone is activated, but the L1 fee scalars have not yet been set.
     pub empty_ecotone_scalars: bool,

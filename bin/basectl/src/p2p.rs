@@ -564,7 +564,7 @@ mod tests {
             flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
             l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
             consensus_node_rpc,
-            hardforks: None,
+            upgrades: None,
             system_config: Address::ZERO,
             batcher_address: None,
             l1_blob_target: 14,

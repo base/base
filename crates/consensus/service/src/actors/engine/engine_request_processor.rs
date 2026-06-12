@@ -1936,7 +1936,7 @@ mod tests {
         let attributes_timestamp = unsafe_block.block_info.timestamp;
 
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.ecotone_time = Some(attributes_timestamp);
+        cfg.upgrades.ecotone_time = Some(attributes_timestamp);
         let cfg = Arc::new(cfg);
 
         let invalid_fcu = ForkchoiceUpdated {

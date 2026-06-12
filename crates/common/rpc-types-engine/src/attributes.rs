@@ -57,7 +57,7 @@ impl BasePayloadAttributes {
     ///
     /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
     ///
-    /// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for a hardfork.
+    /// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for an upgrade.
     /// See also <https://github.com/ethereum-optimism/op-geth/blob/d401af16f2dd94b010a72eaef10e07ac10b31931/miner/payload_building.go#L59-L59>
     pub fn payload_id(&self, parent: &B256, payload_version: u8) -> PayloadId {
         let mut hasher = sha2::Sha256::new();

@@ -1,4 +1,4 @@
-//! Verification of blocks w.r.t. Base hardforks.
+//! Verification of blocks w.r.t. Base upgrades.
 
 pub mod canyon;
 pub mod isthmus;

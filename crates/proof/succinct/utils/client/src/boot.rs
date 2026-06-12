@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Hash the rollup config using the canonical [`PerChainConfig`] binary encoding and keccak256.
 ///
-/// This is stable across hardfork additions: only the core chain identity fields are hashed,
+/// This is stable across upgrade additions: only the core chain identity fields are hashed,
 /// so adding a new fork timestamp to [`RollupConfig`] does not change the hash.
 pub fn hash_rollup_config(config: &RollupConfig) -> B256 {
     let mut per_chain =

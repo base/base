@@ -1,45 +1,45 @@
-//! Action tests for hardfork activation gating and cascade semantics.
+//! Action tests for upgrade activation gating and cascade semantics.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_genesis::HardForkConfig;
+use base_common_genesis::UpgradeConfig;
 use base_protocol::BatchType;
 
 // ---------------------------------------------------------------------------
-// Section 1: Base mainnet config — hardfork boundary tests
+// Section 1: Base mainnet config — upgrade boundary tests
 //
 // These tests use the real Base mainnet rollup config from the chain registry
 // and fast-forward through timestamps to verify that each fork activates at
 // exactly the right moment and that protocol parameters change as specified.
 //
-// No L2 blocks are built here. The hardfork activation functions act as a
+// No L2 blocks are built here. The upgrade activation functions act as a
 // virtual clock: querying is_X_active(timestamp ± 1) and the dynamic
 // parameter methods at the exact fork boundary is sufficient to verify
 // correct activation semantics.
 // ---------------------------------------------------------------------------
 
-/// Every hardfork activates at its recorded mainnet timestamp and is inactive
+/// Every upgrade activates at its recorded mainnet timestamp and is inactive
 /// one second before that timestamp.
 ///
 /// Timestamps are read from the config itself — no hardcoded magic numbers —
 /// so this test catches any future drift between the registry and the
 /// activation logic.
 #[test]
-fn each_hardfork_activates_at_its_mainnet_timestamp() {
+fn each_upgrade_activates_at_its_mainnet_timestamp() {
     let rc = TestRollupConfigBuilder::mainnet();
 
-    let canyon_time = rc.hardforks.canyon_time.expect("canyon_time must be set on mainnet");
-    let delta_time = rc.hardforks.delta_time.expect("delta_time must be set on mainnet");
-    let ecotone_time = rc.hardforks.ecotone_time.expect("ecotone_time must be set on mainnet");
-    let fjord_time = rc.hardforks.fjord_time.expect("fjord_time must be set on mainnet");
-    let granite_time = rc.hardforks.granite_time.expect("granite_time must be set on mainnet");
-    let holocene_time = rc.hardforks.holocene_time.expect("holocene_time must be set on mainnet");
-    let isthmus_time = rc.hardforks.isthmus_time.expect("isthmus_time must be set on mainnet");
-    let jovian_time = rc.hardforks.jovian_time.expect("jovian_time must be set on mainnet");
-    let base_azul_time = rc.hardforks.base.azul.expect("azul_time must be set on mainnet");
+    let canyon_time = rc.upgrades.canyon_time.expect("canyon_time must be set on mainnet");
+    let delta_time = rc.upgrades.delta_time.expect("delta_time must be set on mainnet");
+    let ecotone_time = rc.upgrades.ecotone_time.expect("ecotone_time must be set on mainnet");
+    let fjord_time = rc.upgrades.fjord_time.expect("fjord_time must be set on mainnet");
+    let granite_time = rc.upgrades.granite_time.expect("granite_time must be set on mainnet");
+    let holocene_time = rc.upgrades.holocene_time.expect("holocene_time must be set on mainnet");
+    let isthmus_time = rc.upgrades.isthmus_time.expect("isthmus_time must be set on mainnet");
+    let jovian_time = rc.upgrades.jovian_time.expect("jovian_time must be set on mainnet");
+    let base_azul_time = rc.upgrades.base.azul.expect("azul_time must be set on mainnet");
 
     // Canyon
     assert!(!rc.is_canyon_active(canyon_time - 1), "Canyon must be inactive before its timestamp");
@@ -94,13 +94,13 @@ fn each_hardfork_activates_at_its_mainnet_timestamp() {
     assert!(rc.is_base_azul_active(base_azul_time), "Azul must be active at its timestamp");
 }
 
-/// Hardfork timestamps on Base mainnet are strictly increasing. This guarantees
+/// Upgrade timestamps on Base mainnet are strictly increasing. This guarantees
 /// that no two forks activate simultaneously — each fork's `is_X_active` check
 /// trips at a different second, so there is never a spurious simultaneous cascade.
 #[test]
-fn mainnet_hardfork_timestamps_are_strictly_ordered() {
+fn mainnet_upgrade_timestamps_are_strictly_ordered() {
     let rc = TestRollupConfigBuilder::mainnet();
-    let h = &rc.hardforks;
+    let h = &rc.upgrades;
 
     let ordered: &[(&str, u64)] = &[
         ("canyon", h.canyon_time.expect("canyon_time")),
@@ -128,10 +128,10 @@ fn mainnet_hardfork_timestamps_are_strictly_ordered() {
 fn cascade_implies_all_preceding_forks_and_no_later_forks() {
     let rc = TestRollupConfigBuilder::mainnet();
 
-    let delta_time = rc.hardforks.delta_time.expect("delta_time");
-    let fjord_time = rc.hardforks.fjord_time.expect("fjord_time");
-    let granite_time = rc.hardforks.granite_time.expect("granite_time");
-    let jovian_time = rc.hardforks.jovian_time.expect("jovian_time");
+    let delta_time = rc.upgrades.delta_time.expect("delta_time");
+    let fjord_time = rc.upgrades.fjord_time.expect("fjord_time");
+    let granite_time = rc.upgrades.granite_time.expect("granite_time");
+    let jovian_time = rc.upgrades.jovian_time.expect("jovian_time");
 
     // At delta_time: Canyon is implied; Ecotone and later are not yet active.
     assert!(rc.is_canyon_active(delta_time), "Canyon must be implied at Delta");
@@ -150,7 +150,7 @@ fn cascade_implies_all_preceding_forks_and_no_later_forks() {
     assert!(rc.is_granite_active(granite_time));
     assert!(!rc.is_holocene_active(granite_time), "Holocene must not be implied by Granite");
 
-    // At jovian_time: all inherited rollup hardforks are implied.
+    // At jovian_time: all inherited rollup upgrades are implied.
     assert!(rc.is_canyon_active(jovian_time));
     assert!(rc.is_delta_active(jovian_time));
     assert!(rc.is_ecotone_active(jovian_time));
@@ -171,7 +171,7 @@ fn cascade_implies_all_preceding_forks_and_no_later_forks() {
 #[test]
 fn fjord_changes_max_sequencer_drift_at_mainnet_timestamp() {
     let rc = TestRollupConfigBuilder::mainnet();
-    let fjord_time = rc.hardforks.fjord_time.expect("fjord_time");
+    let fjord_time = rc.upgrades.fjord_time.expect("fjord_time");
 
     // One second before Fjord: the rollup config field is used.
     assert_eq!(
@@ -198,7 +198,7 @@ fn fjord_changes_max_sequencer_drift_at_mainnet_timestamp() {
 #[test]
 fn granite_changes_channel_timeout_at_mainnet_timestamp() {
     let rc = TestRollupConfigBuilder::mainnet();
-    let granite_time = rc.hardforks.granite_time.expect("granite_time");
+    let granite_time = rc.upgrades.granite_time.expect("granite_time");
 
     // One second before Granite: the base channel_timeout field is used.
     assert_eq!(
@@ -220,13 +220,13 @@ fn granite_changes_channel_timeout_at_mainnet_timestamp() {
     );
 }
 
-/// `Azul` is a standalone Base-specific hardfork. It is not part of the
+/// `Azul` is a standalone Base-specific upgrade. It is not part of the
 /// inherited cascade chain: Jovian does not imply it, and it does not imply Jovian.
 #[test]
 fn base_azul_is_standalone_from_jovian() {
     let rc = TestRollupConfigBuilder::mainnet();
-    let jovian_time = rc.hardforks.jovian_time.expect("jovian_time");
-    let base_azul_time = rc.hardforks.base.azul.expect("azul_time");
+    let jovian_time = rc.upgrades.jovian_time.expect("jovian_time");
+    let base_azul_time = rc.upgrades.base.azul.expect("azul_time");
 
     assert!(!rc.is_base_azul_active(jovian_time), "Azul must not be implied by Jovian");
     assert!(!rc.is_base_azul_active(base_azul_time - 1), "Azul must remain inactive before Azul");
@@ -234,7 +234,7 @@ fn base_azul_is_standalone_from_jovian() {
 }
 
 // ---------------------------------------------------------------------------
-// Section 2: Derivation tests — pipeline behaviour at hardfork boundaries
+// Section 2: Derivation tests — pipeline behaviour at upgrade boundaries
 //
 // These tests exercise the full derivation pipeline with synthetic rollup
 // configs. A synthetic config is necessary because the L1 miner starts at
@@ -247,7 +247,7 @@ fn base_azul_is_standalone_from_jovian() {
 // rejects when Fjord is not active. Setting fjord_time = Some(0) activates
 // the full cascade from Canyon through Fjord, so Delta is also active.
 //
-// When testing a hardfork boundary at a specific timestamp T, all forks
+// When testing an upgrade boundary at a specific timestamp T, all forks
 // *earlier* than that fork are set to Some(0) so they are active from
 // genesis and do not activate again at T. Only the fork under test
 // activates at T, keeping the upgrade-transaction injection isolated.
@@ -265,9 +265,9 @@ fn base_azul_is_standalone_from_jovian() {
 #[tokio::test]
 async fn span_batch_rejected_before_delta() {
     let batcher_cfg = BatcherConfig::default();
-    let hardforks = HardForkConfig { canyon_time: Some(0), ..Default::default() };
+    let upgrades = UpgradeConfig { canyon_time: Some(0), ..Default::default() };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -308,9 +308,9 @@ async fn span_batch_rejected_before_delta() {
 #[tokio::test]
 async fn span_batch_derives_after_delta() {
     let batcher_cfg = BatcherConfig::default();
-    let hardforks = HardForkConfig { fjord_time: Some(0), ..Default::default() };
+    let upgrades = UpgradeConfig { fjord_time: Some(0), ..Default::default() };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -348,9 +348,9 @@ async fn single_batch_derives_with_fjord() {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
-    let hardforks = HardForkConfig { fjord_time: Some(0), ..Default::default() };
+    let upgrades = UpgradeConfig { fjord_time: Some(0), ..Default::default() };
     let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_upgrades(upgrades).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());

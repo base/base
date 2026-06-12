@@ -55,7 +55,7 @@ where
     /// potentially older L2 block ensures we see any batcher-address changes that could
     /// affect channels still open within the channel timeout window.
     ///
-    /// The Granite hardfork shrinks `channel_timeout` from 300 to 50 L1 blocks, and the spec
+    /// The Granite upgrade shrinks `channel_timeout` from 300 to 50 L1 blocks, and the spec
     /// gates the transition on the *L1 origin block's* timestamp (matching every operational use
     /// site: `channel_assembler::is_timed_out`, `channel_bank::*`). `L2BlockInfo::l1_origin`
     /// carries only `(number, hash)`, so we approximate the L1 origin timestamp with the safe
@@ -264,7 +264,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, B256, address};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_common_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_common_genesis::{RollupConfig, SystemConfig, UpgradeConfig};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
@@ -452,7 +452,7 @@ mod tests {
             seq_window_size: 3600,
             channel_timeout: PRE_GRANITE_TIMEOUT,
             granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 fjord_time: Some(0),
                 granite_time: Some(GRANITE_TIME),
                 ..Default::default()

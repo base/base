@@ -115,11 +115,11 @@ where
     ///
     /// Registration is PCR0-agnostic: all legitimate enclaves are registered
     /// regardless of their PCR0 measurement. This enables pre-registration of
-    /// new-PCR0 enclaves before a hardfork, eliminating the proof-generation
+    /// new-PCR0 enclaves before an upgrade, eliminating the proof-generation
     /// delay when the onchain `TEE_IMAGE_HASH` rotates. The onchain
     /// `TEEVerifier` gates proof acceptance on `TEE_IMAGE_HASH` at submission
     /// time, so pre-registered enclaves cannot produce accepted proposals
-    /// until the hardfork activates.
+    /// until the upgrade activates.
     pub async fn register_signer(
         &self,
         instance: &ProverInstance,

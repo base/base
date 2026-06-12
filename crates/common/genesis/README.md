@@ -6,7 +6,7 @@
 ## Overview
 
 Genesis types for Base. Provides the `RollupConfig` type — the primary configuration
-for Base chains — encoding hardfork activation timestamps, L1 and L2 genesis block
+for Base chains — encoding upgrade activation timestamps, L1 and L2 genesis block
 information, batch inbox address, and system config. `no_std` compatible when default
 features are disabled.
 

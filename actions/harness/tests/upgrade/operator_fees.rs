@@ -1,4 +1,4 @@
-//! Action tests for operator fee encoding and hardfork activation.
+//! Action tests for operator fee encoding and upgrade activation.
 
 use alloy_primitives::Address;
 use base_action_harness::{
@@ -14,7 +14,7 @@ use base_protocol::L1BlockInfoTx;
 // These tests inspect the L1 info deposit transaction embedded in each built
 // [`BaseBlock`] to verify that:
 // - The correct calldata format (Ecotone / Isthmus / Jovian) is selected for
-//   the active hardfork.
+//   the active upgrade.
 // - `operator_fee_scalar` and `operator_fee_constant` are zero when Isthmus is
 //   inactive and match the [`SystemConfig`] once Isthmus is active.
 //
@@ -34,11 +34,11 @@ use base_protocol::L1BlockInfoTx;
 async fn operator_fee_not_encoded_before_isthmus() {
     let batcher_cfg = BatcherConfig::default();
     ForkMatrix::pre_isthmus()
-        .run_async(|fork_name, hardforks| {
+        .run_async(|fork_name, upgrades| {
             let batcher_cfg = batcher_cfg.clone();
             async move {
                 let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-                    .with_hardforks(hardforks)
+                    .with_upgrades(upgrades)
                     .build();
                 let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
                 let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -67,7 +67,7 @@ async fn operator_fee_not_encoded_before_isthmus() {
         .await;
 }
 
-/// From Isthmus onward, L2 blocks carry the active hardfork's L1 info format
+/// From Isthmus onward, L2 blocks carry the active upgrade's L1 info format
 /// with `operator_fee_scalar` and `operator_fee_constant` encoded from the
 /// genesis [`SystemConfig`].
 ///
@@ -75,7 +75,7 @@ async fn operator_fee_not_encoded_before_isthmus() {
 /// Because `is_first_<fork>_block(ts)` checks `is_active(ts) && !is_active(ts −
 /// block_time)`, with activation at 0 the condition is `true && !true = false`
 /// for every positive timestamp — no sequencer-built block is treated as the
-/// transition block. Every block (ts ≥ 2) uses the full active hardfork format.
+/// transition block. Every block (ts ≥ 2) uses the full active upgrade format.
 ///
 /// The matrix keeps the same invariant covered across both reachable post-Isthmus
 /// forks: Isthmus itself and Jovian.
@@ -86,11 +86,11 @@ async fn operator_fee_encoded_in_l1_info_from_isthmus_onward() {
 
     let batcher_cfg = BatcherConfig::default();
     ForkMatrix::from_isthmus()
-        .run_async(|fork_name, hardforks| {
+        .run_async(|fork_name, upgrades| {
             let batcher_cfg = batcher_cfg.clone();
             async move {
                 let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
-                    .with_hardforks(hardforks)
+                    .with_upgrades(upgrades)
                     .build();
                 let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
                 sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
@@ -111,7 +111,7 @@ async fn operator_fee_encoded_in_l1_info_from_isthmus_onward() {
                 );
                 assert!(
                     expected_format,
-                    "{fork_name}: post-Isthmus L1 info must use the active hardfork format, got {l1_info:?}"
+                    "{fork_name}: post-Isthmus L1 info must use the active upgrade format, got {l1_info:?}"
                 );
                 assert_eq!(
                     l1_info.operator_fee_scalar(),

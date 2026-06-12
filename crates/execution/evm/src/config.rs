@@ -318,7 +318,7 @@ mod tests {
         let header = Header::default();
 
         // Build the ChainSpec for Ethereum mainnet, activating London, Paris, and Shanghai
-        // hardforks
+        // upgrades
         let chain_spec = ChainSpec::builder()
             .chain(0.into())
             .genesis(Genesis::default())

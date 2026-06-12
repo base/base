@@ -5,19 +5,19 @@ use revm::precompile::{
     call_eth_precompile,
 };
 
-/// Max input size for the BLS12-381 G1 MSM precompile after the Isthmus hardfork.
+/// Max input size for the BLS12-381 G1 MSM precompile after the Isthmus upgrade.
 pub const ISTHMUS_G1_MSM_MAX_INPUT_SIZE: usize = 513760;
-/// Max input size for the BLS12-381 G1 MSM precompile after the Jovian hardfork.
+/// Max input size for the BLS12-381 G1 MSM precompile after the Jovian upgrade.
 pub const JOVIAN_G1_MSM_MAX_INPUT_SIZE: usize = 288_960;
 
-/// Max input size for the BLS12-381 G2 MSM precompile after the Isthmus hardfork.
+/// Max input size for the BLS12-381 G2 MSM precompile after the Isthmus upgrade.
 pub const ISTHMUS_G2_MSM_MAX_INPUT_SIZE: usize = 488448;
-/// Max input size for the BLS12-381 G2 MSM precompile after the Jovian hardfork.
+/// Max input size for the BLS12-381 G2 MSM precompile after the Jovian upgrade.
 pub const JOVIAN_G2_MSM_MAX_INPUT_SIZE: usize = 278_784;
 
-/// Max input size for the BLS12-381 pairing precompile after the Isthmus hardfork.
+/// Max input size for the BLS12-381 pairing precompile after the Isthmus upgrade.
 pub const ISTHMUS_PAIRING_MAX_INPUT_SIZE: usize = 235008;
-/// Max input size for the BLS12-381 pairing precompile after the Jovian hardfork.
+/// Max input size for the BLS12-381 pairing precompile after the Jovian upgrade.
 pub const JOVIAN_PAIRING_MAX_INPUT_SIZE: usize = 156_672;
 
 /// BLS12-381 G1 MSM precompile with Isthmus input limits.

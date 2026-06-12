@@ -35,12 +35,12 @@ impl From<TxEnvBuildError> for BuildError {
 pub enum BaseTransactionError {
     /// Base transaction error.
     Base(InvalidTransaction),
-    /// System transactions are not supported post-regolith hardfork.
+    /// System transactions are not supported post-regolith upgrade.
     ///
-    /// Before the Regolith hardfork, there was a special field in the `Deposit` transaction
+    /// Before the Regolith upgrade, there was a special field in the `Deposit` transaction
     /// type that differentiated between `system` and `user` deposit transactions. This field
-    /// was deprecated in the Regolith hardfork, and this error is thrown if a `Deposit` transaction
-    /// is found with this field set to `true` after the hardfork activation.
+    /// was deprecated in the Regolith upgrade, and this error is thrown if a `Deposit` transaction
+    /// is found with this field set to `true` after the upgrade activation.
     ///
     /// In addition, this error is internal, and bubbles up into a [`BaseHaltReason::FailedDeposit`][crate::BaseHaltReason::FailedDeposit] error
     /// in the `revm` handler for the consumer to easily handle. This is due to a state transition
@@ -54,7 +54,7 @@ pub enum BaseTransactionError {
     /// only increasing the nonce + persisting the mint value.
     ///
     /// This is a catch-all error for any deposit transaction that results in a [`BaseHaltReason`][crate::BaseHaltReason] error
-    /// post-regolith hardfork. This allows for a consumer to easily handle special cases where
+    /// post-regolith upgrade. This allows for a consumer to easily handle special cases where
     /// a deposit transaction fails during validation, but must still be included in the block.
     ///
     /// In addition, this error is internal, and bubbles up into a [`BaseHaltReason::FailedDeposit`][crate::BaseHaltReason::FailedDeposit] error
@@ -79,7 +79,7 @@ impl Display for BaseTransactionError {
         match self {
             Self::Base(error) => error.fmt(f),
             Self::DepositSystemTxPostRegolith => {
-                write!(f, "deposit system transactions post regolith hardfork are not supported")
+                write!(f, "deposit system transactions post regolith upgrade are not supported")
             }
             Self::HaltedDepositPostRegolith => {
                 write!(
@@ -132,7 +132,7 @@ mod tests {
         );
         assert_eq!(
             BaseTransactionError::DepositSystemTxPostRegolith.to_string(),
-            "deposit system transactions post regolith hardfork are not supported"
+            "deposit system transactions post regolith upgrade are not supported"
         );
         assert_eq!(
             BaseTransactionError::HaltedDepositPostRegolith.to_string(),

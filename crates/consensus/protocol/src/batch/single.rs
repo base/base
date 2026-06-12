@@ -155,7 +155,7 @@ impl SingleBatch {
             }
         }
 
-        // If this is the first block in the jovian hardfork, and the batch contains any
+        // If this is the first block in the jovian upgrade, and the batch contains any
         // transactions, it must be dropped.
         if cfg.is_first_jovian_block(self.timestamp) && !self.transactions.is_empty() {
             warn!(
@@ -200,7 +200,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, Sealed, Signature, TxKind, U256};
     use alloy_rlp::{Decodable, Encodable};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::{HardForkConfig, HardforkConfig};
+    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
     use tracing::Level;
 
     use super::*;
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn test_check_batch_timestamp_holocene_active_drop() {
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let l2_safe_head = L2BlockInfo {
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn test_check_batch_timestamp_holocene_active_past() {
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let l2_safe_head = L2BlockInfo {
@@ -513,7 +513,7 @@ mod tests {
         // Notice: Isthmus is active.
         let cfg = RollupConfig {
             max_sequencer_drift: 1,
-            hardforks: HardForkConfig { isthmus_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { isthmus_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
@@ -578,8 +578,8 @@ mod tests {
         // Notice: Cobalt is active.
         let cfg = RollupConfig {
             max_sequencer_drift: 1,
-            hardforks: HardForkConfig {
-                base: HardforkConfig { cobalt: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { cobalt: Some(0), ..Default::default() },
                 ..Default::default()
             },
             ..Default::default()
@@ -688,7 +688,7 @@ mod tests {
         let cfg = RollupConfig {
             max_sequencer_drift: 1,
             block_time: 1,
-            hardforks: HardForkConfig { jovian_time: Some(1), ..Default::default() },
+            upgrades: UpgradeConfig { jovian_time: Some(1), ..Default::default() },
             ..Default::default()
         };
         let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];

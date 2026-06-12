@@ -152,7 +152,7 @@ pub struct BootInfo {
     ///
     /// Contains all the network-specific parameters needed for proper L2 block
     /// derivation, including genesis configuration, system addresses, gas limits,
-    /// and hard fork activation heights.
+    /// and upgrade activation heights.
     ///
     /// **Security**: Loaded from built-in config (secure) or oracle (requires validation).
     pub rollup_config: RollupConfig,
@@ -277,7 +277,7 @@ impl BootInfo {
         // The activation registry is installed at Beryl. For built-in chains, the admin comes from
         // `ChainConfig`; for oracle-provided rollup configs, do not infer an admin from untrusted
         // fallback data until the admin has an explicit committed source.
-        if activation_admin_address.is_none() && rollup_config.hardforks.base.beryl.is_some() {
+        if activation_admin_address.is_none() && rollup_config.upgrades.base.beryl.is_some() {
             return Err(OracleProviderError::MissingActivationAdminAddress { chain_id });
         }
 

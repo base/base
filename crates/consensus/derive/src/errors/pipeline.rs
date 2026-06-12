@@ -86,7 +86,7 @@ pub enum PipelineErrorKind {
     /// # Examples
     /// - L1 chain reorganization detected
     /// - Block hash mismatches indicating reorg
-    /// - Hard fork activation requiring state reset
+    /// - Upgrade activation requiring state reset
     ///
     /// # Handling
     /// Reset errors trigger pipeline state cleanup and reset to a safe state,

@@ -108,7 +108,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
         }
     }
 
-    /// Extracts the extra data parameters post-Holocene hardfork.
+    /// Extracts the extra data parameters post-Holocene upgrade.
     /// In Holocene, those parameters are the EIP-1559 base fee parameters.
     pub fn get_holocene_extra_data(
         &self,
@@ -119,7 +119,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 
-    /// Extracts the extra data parameters post-Jovian hardfork.
+    /// Extracts the extra data parameters post-Jovian upgrade.
     /// Those parameters are the EIP-1559 parameters from Holocene and the minimum base fee.
     pub fn get_jovian_extra_data(
         &self,
@@ -491,7 +491,7 @@ where
 ///
 /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
 ///
-/// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for a hardfork.
+/// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for an upgrade.
 /// See also <https://github.com/ethereum-optimism/op-geth/blob/d401af16f2dd94b010a72eaef10e07ac10b31931/miner/payload_building.go#L59-L59>
 pub fn payload_id(
     parent: &B256,

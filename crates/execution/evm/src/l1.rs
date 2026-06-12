@@ -73,7 +73,7 @@ pub fn parse_l1_info(input: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionErro
     }
 }
 
-/// Parses the calldata of the [`L1BlockInfo`] transaction pre-Ecotone hardfork.
+/// Parses the calldata of the [`L1BlockInfo`] transaction pre-Ecotone upgrade.
 pub fn parse_l1_info_tx_bedrock(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExecutionError> {
     // The setL1BlockValues tx calldata must be exactly 260 bytes long, considering that
     // we already removed the first 4 bytes (the function selector). Detailed breakdown:
@@ -306,7 +306,7 @@ fn base_spec_id(chain_spec: &impl Upgrades, timestamp: u64) -> BaseSpecId {
 }
 
 /// An extension trait for [`L1BlockInfo`] that allows us to calculate the L1 cost of a transaction
-/// based off of the chain spec's activated hardfork.
+/// based off of the chain spec's activated upgrade.
 pub trait RethL1BlockInfo {
     /// Forwards an L1 transaction calculation to revm and returns the gas cost.
     ///

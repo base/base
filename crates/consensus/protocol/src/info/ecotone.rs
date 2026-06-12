@@ -48,7 +48,7 @@ pub struct L1BlockInfoEcotone {
     /// The l1 fee overhead used along with the `empty_scalars` field for the
     /// bedrock tx l1 cost function.
     ///
-    /// This field is deprecated in the Ecotone Hardfork.
+    /// This field is deprecated in the Ecotone Upgrade.
     pub l1_fee_overhead: U256,
 }
 
@@ -62,7 +62,7 @@ pub trait L1BlockInfoEcotoneOnlyFields {
     /// The l1 fee overhead used along with the `empty_scalars` field for the
     /// bedrock tx l1 cost function.
     ///
-    /// This field is deprecated in the Ecotone Hardfork.
+    /// This field is deprecated in the Ecotone Upgrade.
     fn l1_fee_overhead(&self) -> U256;
 }
 
