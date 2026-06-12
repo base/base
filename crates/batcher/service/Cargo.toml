@@ -28,6 +28,7 @@ tracing = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
 base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
@@ -49,5 +50,7 @@ metrics = [
 httpmock.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
+alloy-signer.workspace = true
+serde_json.workspace = true
 miniz_oxide.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

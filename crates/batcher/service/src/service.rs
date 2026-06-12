@@ -12,7 +12,8 @@ use base_batcher_core::{
 use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
 use base_common_consensus::BaseBlock;
-use base_common_network::Base;
+use base_common_genesis::L1TxFormat;
+use base_common_network::{Base, L1RpcProvider};
 use base_consensus_rpc::RollupNodeApiClient;
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
@@ -376,7 +377,7 @@ impl BatcherService {
     /// The runtime's cancellation token is forwarded to the safe-head poller
     /// spawned here so it stops cleanly when the batcher shuts down.
     pub async fn setup(self, runtime: TokioRuntime) -> eyre::Result<ReadyBatcher> {
-        self.config.encoder_config.validate()?;
+        self.config.validate()?;
 
         if self.config.stopped && self.config.admin_addr.is_none() {
             eyre::bail!(
@@ -514,8 +515,22 @@ impl BatcherService {
                 .as_ref()
                 .ok_or_else(|| eyre::eyre!("batcher_private_key must be set before starting"))?
                 .address();
+            let scan_provider = match self.config.l1_tx_format {
+                L1TxFormat::Ethereum => L1RpcProvider::Ethereum(l1_provider.clone()),
+                L1TxFormat::Base => L1RpcProvider::Base(
+                    Self::connect_first(&self.config.l1_rpc_url, "l1-rpc-base-scan", |url| {
+                        let url = url.clone();
+                        async move {
+                            let provider = RootProvider::<Base>::new_http(url);
+                            provider.get_chain_id().await?;
+                            eyre::Ok(provider)
+                        }
+                    })
+                    .await?,
+                ),
+            };
             RecentTxScanner::highest_submitted_l2_block(
-                &l1_provider,
+                &scan_provider,
                 batcher_address,
                 rollup_config.batch_inbox_address,
                 self.config.check_recent_txs_depth,
