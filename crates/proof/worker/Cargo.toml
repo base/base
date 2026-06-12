@@ -13,9 +13,9 @@ workspace = true
 
 [dependencies]
 # base
+base-retry.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true
-base-retry.workspace = true
 
 # async
 tokio-util.workspace = true
