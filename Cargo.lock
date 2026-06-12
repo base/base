@@ -6447,6 +6447,7 @@ dependencies = [
  "base-metrics",
  "clap",
  "metrics",
+ "rstest",
  "serde",
  "thiserror 2.0.18",
  "tokio",
