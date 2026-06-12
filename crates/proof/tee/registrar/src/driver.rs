@@ -271,26 +271,11 @@ where
     /// consistent. `JoinSet::abort_all` is deliberately **not** used — see
     /// [`ProofTaskSet::drain_proof_tasks`] for the nonce-gap rationale.
     ///
-    /// # Ownership
-    ///
-    /// Consumes `self` by value so the API matches every other long-lived
-    /// `*_service::run` in the workspace. Internally the driver is wrapped
-    /// in an [`Arc`] and the spawned proof tasks each hold a clone — see
-    /// [`Self::run_arc`] for the underlying loop and the rationale for the
-    /// shared ownership.
     pub async fn run(self) -> Result<()> {
-        Arc::new(self).run_arc().await
+        self.run_loop().await
     }
 
-    /// Underlying registration loop that powers [`Self::run`].
-    ///
-    /// Takes `self: Arc<Self>` directly because each spawned proof task
-    /// owns an `Arc<Self>` clone so the cycle loop can continue to mutate
-    /// `proof_tasks` while proofs run for tens of minutes. Tests
-    /// that need to inspect driver state from outside the task can call
-    /// this method directly with their own `Arc` clone; production code
-    /// uses [`Self::run`].
-    pub async fn run_arc(self: Arc<Self>) -> Result<()> {
+    async fn run_loop(&self) -> Result<()> {
         info!(
             poll_interval = ?self.config.poll_interval,
             registry = %self.config.signer_manager.registry_address,
@@ -498,7 +483,7 @@ where
             // Return `attestations: None` so the safety invariant —
             // `Some(..)` ↔ "passed every eligibility + security gate,
             // including CRL" — is enforced locally. Today the outer
-            // `run_arc` loop re-checks `cancel.is_cancelled()` before
+            // run loop re-checks `cancel.is_cancelled()` before
             // calling `reconcile_proof_tasks`, so a `Some(..)` here
             // would still be discarded; keeping it `None` removes the
             // non-local dependence on that re-check and matches the
@@ -574,7 +559,7 @@ where
     /// `true` so legitimate fleet drains still let orphan cleanup proceed —
     /// except when the driver is cancelled, in which case the orphan dereg
     /// pass is skipped so we don't acquire nonces during shutdown.
-    async fn discover_and_resolve(self: &Arc<Self>) -> Result<DiscoveryResolution> {
+    async fn discover_and_resolve(&self) -> Result<DiscoveryResolution> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
 
@@ -596,7 +581,6 @@ where
 
         let concurrency = self.config.signer_manager.max_concurrency.max(1);
         let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
-            let driver = Arc::clone(self);
             let span = info_span!(
                 "resolve_instance",
                 instance_id = %instance.instance_id,
@@ -604,7 +588,7 @@ where
                 health = ?instance.health_status,
             );
             async move {
-                let result = driver.resolve_instance(&instance).await;
+                let result = self.resolve_instance(&instance).await;
                 (instance, result)
             }
             .instrument(span)
@@ -1078,9 +1062,8 @@ mod tests {
 
     /// Builds a fully-configured driver for primitive-level tests that
     /// invoke `discover_and_resolve` and `run_orphan_dereg` directly
-    /// (rather than the spawn pipeline in `run`). Returns an `Arc` so callers can invoke
-    /// `discover_and_resolve` (which takes `&Arc<Self>`) without
-    /// re-wrapping at every call site.
+    /// (rather than the spawn pipeline in `run`). Returns an `Arc` so tests
+    /// that spawn the run loop can keep handles for state inspection.
     fn cycle_driver(
         instances: Vec<ProverInstance>,
         signer_client: MockSignerClient,
@@ -1386,13 +1369,10 @@ mod tests {
         }
 
         /// Spawns the registration loop on the current runtime, returning
-        /// the `JoinHandle` so the test can await shutdown. Uses
-        /// [`RegistrationDriver::run_arc`] (rather than the value-API
-        /// `run`) so the harness can keep its own `Arc<RegistrationDriver>`
-        /// for state inspection.
+        /// the `JoinHandle` so the test can await shutdown.
         fn spawn_run(&self) -> tokio::task::JoinHandle<Result<()>> {
             let driver = Arc::clone(&self.driver);
-            tokio::spawn(driver.run_arc())
+            tokio::spawn(async move { driver.run_loop().await })
         }
 
         /// Cancels the harness, awaits its run handle inside
