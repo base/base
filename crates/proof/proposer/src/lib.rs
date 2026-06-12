@@ -26,11 +26,15 @@ pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
 mod proof_adapter;
 pub use proof_adapter::{DispatchedProof, ProofRequesterDispatcher, ProposerProofAdapter};
 
+mod proof_recovery;
+pub use proof_recovery::{
+    ProofCollectorRecoveryProvider, ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig,
+};
+
 mod proof_collector;
 pub use proof_collector::{
-    CollectedProof, ProofCollector, ProofCollectorOrchestrator, ProofCollectorRecoveryProvider,
-    ProofCollectorRuntimeConfig, ProofCollectorState, ProofCollectorTickResult, ProofRecoveryCache,
-    ProofSubmitEffect, TargetPoll,
+    CollectedProof, ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig,
+    ProofCollectorState, ProofCollectorTickResult, ProofSubmitEffect, TargetPoll,
 };
 
 mod proof_dispatcher;

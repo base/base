@@ -17,7 +17,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use async_trait::async_trait;
 use base_proof_primitives::ProofResult;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
@@ -32,27 +31,9 @@ use crate::{
     metrics::Metrics,
     proof_adapter::ProposerProofAdapter,
     proof_dispatcher::{ProofDispatchAttempt, ProofDispatcher},
+    proof_recovery::{ProofCollectorRecoveryProvider, ProofRecoveryCache},
     proof_submitter::{ProofSubmitter, SubmitAction},
 };
-
-/// Cached result from the last successful recovery walk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProofRecoveryCache {
-    /// Factory `game_count` at the time of the walk.
-    pub game_count: u64,
-    /// Recovered on-chain state from the walk.
-    pub state: RecoveredState,
-}
-
-/// Recovery hook used by collector orchestration after successful submissions.
-#[async_trait]
-pub trait ProofCollectorRecoveryProvider: Send + Sync {
-    /// Refreshes the recovery cache and returns the latest on-chain state.
-    async fn recover_latest_state(
-        &self,
-        cache: &mut Option<ProofRecoveryCache>,
-    ) -> Result<RecoveredState, ProposerError>;
-}
 
 /// Runtime settings for collector orchestration.
 #[derive(Debug, Clone, Copy)]
@@ -1306,6 +1287,7 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
 
     use alloy_primitives::{Address, B256};
+    use async_trait::async_trait;
     use base_proof_primitives::Proposal;
 
     use super::*;
