@@ -452,7 +452,7 @@ where
 
             pending_state_builder
                 .apply_pre_execution_changes(parent_hash, parent_beacon_block_root)?;
-// Pass builder-provided receipts from flashblock metadata so
+            // Pass builder-provided receipts from flashblock metadata so
             // PendingStateBuilder can use them instead of re-executing.
             let all_receipts: std::collections::HashMap<B256, base_common_rpc_types::BaseTransactionReceipt> = flashblocks
                 .iter()
