@@ -124,14 +124,6 @@ impl<P, R, T> SignerManager<P, R, T> {
         }
     }
 
-    /// Finds the signer address whose pending entry was spawned with `task_id`.
-    pub fn find_signer_by_task_id(
-        pending: &HashMap<Address, PendingRegistration>,
-        task_id: task::Id,
-    ) -> Option<Address> {
-        pending.iter().find_map(|(addr, p)| (p.task_id == task_id).then_some(*addr))
-    }
-
     /// Removes the `pending` entry for `signer` only when its task id matches.
     pub fn remove_if_task_matches(
         pending: &mut HashMap<Address, PendingRegistration>,
@@ -142,6 +134,17 @@ impl<P, R, T> SignerManager<P, R, T> {
             Some(entry) if entry.task_id == id => pending.remove(&signer),
             _ => None,
         }
+    }
+
+    /// Removes the `pending` entry spawned with `task_id`.
+    pub fn remove_by_task_id(
+        pending: &mut HashMap<Address, PendingRegistration>,
+        task_id: task::Id,
+    ) -> Option<(Address, PendingRegistration)> {
+        let signer =
+            pending.iter().find_map(|(addr, p)| (p.task_id == task_id).then_some(*addr))?;
+        let registration = pending.remove(&signer)?;
+        Some((signer, registration))
     }
 
     /// Consumes one `JoinSet` outcome and updates `pending` plus metrics.
@@ -163,28 +166,28 @@ impl<P, R, T> SignerManager<P, R, T> {
                 );
             }
             Ok((id, Err(e))) => {
-                let signer = Self::find_signer_by_task_id(pending, id);
-                let removed = signer.and_then(|s| Self::remove_if_task_matches(pending, s, id));
+                let removed = Self::remove_by_task_id(pending, id);
+                let signer = removed.as_ref().map(|(signer, _)| *signer);
                 warn!(
                     task_id = ?id,
                     error = %e,
                     signer = ?signer,
-                    instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
-                    superseded = signer.is_some() && removed.is_none(),
+                    instance = ?removed.as_ref().map(|(_, t)| t.instance_id.as_str()),
+                    pending_entry_found = removed.is_some(),
                     "proof task failed"
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
             }
             Err(join_err) => {
                 let id = join_err.id();
-                let signer = Self::find_signer_by_task_id(pending, id);
-                let removed = signer.and_then(|s| Self::remove_if_task_matches(pending, s, id));
+                let removed = Self::remove_by_task_id(pending, id);
+                let signer = removed.as_ref().map(|(signer, _)| *signer);
                 warn!(
                     task_id = ?id,
                     error = %join_err,
                     signer = ?signer,
-                    instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
-                    superseded = signer.is_some() && removed.is_none(),
+                    instance = ?removed.as_ref().map(|(_, t)| t.instance_id.as_str()),
+                    pending_entry_found = removed.is_some(),
                     "proof task join error (panic or abort)"
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
@@ -226,10 +229,16 @@ where
         let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
 
         for (signer, task) in pending.iter_mut() {
-            if !wanted.contains(signer)
-                && !task.cancel.is_cancelled()
-                && !resolution.unresolved_instance_ids.contains(&task.instance_id)
-            {
+            if wanted.contains(signer) || task.cancel.is_cancelled() {
+                continue;
+            }
+            if resolution.unresolved_instance_ids.contains(&task.instance_id) {
+                debug!(
+                    signer = %signer,
+                    instance = %task.instance_id,
+                    "preserving proof task: source instance failed to resolve this cycle (inconclusive)"
+                );
+            } else {
                 info!(
                     signer = %signer,
                     instance = %task.instance_id,
@@ -238,15 +247,6 @@ where
                 task.cancel.cancel();
                 task.cancelled_by_reconcile = true;
                 RegistrarMetrics::proof_tasks_cancelled().increment(1);
-            } else if !wanted.contains(signer)
-                && !task.cancel.is_cancelled()
-                && resolution.unresolved_instance_ids.contains(&task.instance_id)
-            {
-                debug!(
-                    signer = %signer,
-                    instance = %task.instance_id,
-                    "preserving proof task: source instance failed to resolve this cycle (inconclusive)"
-                );
             }
         }
 

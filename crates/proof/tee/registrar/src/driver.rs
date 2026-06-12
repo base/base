@@ -17,8 +17,6 @@ use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use rand::random;
-#[cfg(test)]
-use tokio::task;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
@@ -328,7 +326,7 @@ where
             // `pending` for an entire cycle and (incorrectly) cause
             // reconcile to skip spawning a replacement on transient
             // failure (audit finding #9).
-            Self::reap_finished_tasks(&mut tasks, &mut pending);
+            SignerManager::<P, R, T>::reap_finished_tasks(&mut tasks, &mut pending);
 
             match self.discover_and_resolve().await {
                 Ok(resolution) => {
@@ -336,21 +334,26 @@ where
                     // (potentially slow) discovery RPCs would otherwise
                     // look in-flight to reconcile and get spuriously
                     // re-cancelled or have its respawn deferred a cycle.
-                    Self::reap_finished_tasks(&mut tasks, &mut pending);
+                    SignerManager::<P, R, T>::reap_finished_tasks(&mut tasks, &mut pending);
 
                     // Spawning new proof tasks during a shutdown would
                     // acquire L1 nonces we have no intention of
                     // broadcasting. Skip reconcile (and the orphan
                     // dereg pass) entirely when cancellation is set.
                     if !self.config.cancel.is_cancelled() {
-                        self.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+                        self.signer_manager.reconcile_proof_tasks(
+                            &resolution,
+                            &mut tasks,
+                            &mut pending,
+                        );
                     }
 
                     if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
                         // Pending proof tasks can register while orphan cleanup
                         // is running, so protect those signers too.
-                        let protected = Self::protected_signers(&resolution, &pending);
-                        if let Err(e) = self.run_orphan_dereg(&protected).await {
+                        let protected =
+                            SignerManager::<P, R, T>::protected_signers(&resolution, &pending);
+                        if let Err(e) = self.signer_manager.run_orphan_dereg(&protected).await {
                             warn!(error = %e, "orphan deregistration pass failed");
                             RegistrarMetrics::processing_errors_total().increment(1);
                         }
@@ -385,7 +388,7 @@ where
             }
         }
 
-        Self::drain_proof_tasks(&mut tasks, &mut pending).await;
+        SignerManager::<P, R, T>::drain_proof_tasks(&mut tasks, &mut pending).await;
 
         info!("registration driver stopped");
         Ok(())
@@ -714,134 +717,6 @@ where
             unresolved_instance_ids,
         })
     }
-
-    /// Runs orphan deregistration through [`DeregistrationManager`].
-    async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
-        self.signer_manager.run_orphan_dereg(protected_signers).await
-    }
-
-    /// Builds the protected-signer set for orphan deregistration.
-    ///
-    /// Includes both active signers and pending proof tasks so a signer that
-    /// registers mid-pass is not immediately deregistered.
-    fn protected_signers(
-        resolution: &DiscoveryResolution,
-        pending: &HashMap<Address, PendingRegistration>,
-    ) -> HashSet<Address> {
-        SignerManager::<P, R, T>::protected_signers(resolution, pending)
-    }
-
-    /// Reconciles the in-flight `pending` set against this cycle's
-    /// `resolution`.
-    ///
-    /// Two passes:
-    ///
-    /// 1. **Cancel pass** — any task whose `signer` is no longer in the
-    ///    current registerable set is cooperatively cancelled, **except**
-    ///    when the task's `instance_id` is in
-    ///    [`DiscoveryResolution::unresolved_instance_ids`]. That
-    ///    inconclusive-snapshot guard prevents a single transient
-    ///    `resolve_instance` failure (e.g. signer-service RPC blip, CRL
-    ///    endpoint hiccup) from abandoning an in-flight ~70 min Boundless
-    ///    proof: the signer is missing from `registerable` only because
-    ///    we couldn't tell this cycle, not because we proved it's gone.
-    ///    The `PendingRegistration::cancel` token fires; the task itself observes
-    ///    it at its next checkpoint (proof generation, retry sleep,
-    ///    pre-send) and exits with `Ok(())`. The entry stays in `pending`
-    ///    until the join arrives (handled by [`Self::reap_finished_tasks`]).
-    /// 2. **Spawn pass** — any registerable `(instance, signer)` not
-    ///    currently in-flight (excluding already-cancelled tasks awaiting
-    ///    reap) is spawned into the `JoinSet`. Each spawn creates a fresh
-    ///    child token from [`DriverConfig::cancel`] so the parent
-    ///    shutdown still propagates.
-    ///
-    /// Treating cancelled-but-not-reaped tasks as "not in-flight" enables
-    /// single-cycle convergence for the vanish-then-reappear case (e.g.
-    /// rolling deployments) where a signer drops out of `registerable`
-    /// one cycle and returns the next: without this filter the fresh
-    /// task would be deferred for an extra cycle until reap clears the
-    /// stale entry. Safety relies on
-    /// [`SignerManager`] (the registration-manager-layer
-    /// process-wide `Mutex<HashSet<Address>>` dedupe) catching any
-    /// brief overlap between the old task winding down and the new task
-    /// entering registration. The second arrival short-circuits with a
-    /// debug log and exits `Ok(())`.
-    ///
-    /// Transient task failures (non-cancel `Err`) are not re-spawned this
-    /// cycle: the entry remains until reaped, after which the next cycle
-    /// observes the empty in-flight set and respawns naturally if the
-    /// signer is still registerable.
-    fn reconcile_proof_tasks(
-        self: &Arc<Self>,
-        resolution: &DiscoveryResolution,
-        tasks: &mut JoinSet<Result<Address>>,
-        pending: &mut HashMap<Address, PendingRegistration>,
-    ) {
-        self.signer_manager.reconcile_proof_tasks(resolution, tasks, pending);
-    }
-
-    /// Drains every task that has already finished from `tasks`,
-    /// removing the matching entry from `pending` and updating metrics
-    /// via [`SignerManager::apply_join_outcome`].
-    ///
-    /// Non-blocking: returns once `try_join_next_with_id` yields
-    /// `None`. Called at the top of each [`Self::run`] cycle so the
-    /// in-flight gauge tracks reality before the next reconcile.
-    fn reap_finished_tasks(
-        tasks: &mut JoinSet<Result<Address>>,
-        pending: &mut HashMap<Address, PendingRegistration>,
-    ) {
-        SignerManager::<P, R, T>::reap_finished_tasks(tasks, pending);
-    }
-
-    /// Consumes one `JoinSet` outcome and updates `pending` + metrics.
-    ///
-    /// Handles all three termination paths:
-    /// - successful completion (`Ok((id, Ok(signer)))`) — the task
-    ///   reported its signer directly, so cleanup is an O(1) lookup
-    ///   guarded by a `task_id` match (a stale-but-still-running task
-    ///   whose entry was already overwritten by a same-cycle respawn
-    ///   must NOT evict the fresh entry).
-    /// - inner error (`Ok((id, Err(_)))`) — no signer in hand, so the
-    ///   address is recovered from the pending task id.
-    /// - join error (panic or external abort) — same recovery path,
-    ///   keyed off [`tokio::task::JoinError::id`].
-    ///
-    /// Returns silently when `joined` is `None` so the caller's
-    /// `try_join_next_with_id` loop can use it unconditionally.
-    #[cfg(test)]
-    fn apply_join_outcome(
-        joined: Option<std::result::Result<(task::Id, Result<Address>), tokio::task::JoinError>>,
-        pending: &mut HashMap<Address, PendingRegistration>,
-    ) {
-        SignerManager::<P, R, T>::apply_join_outcome(joined, pending);
-    }
-
-    /// Cancels every pending task cooperatively, awaits them to natural
-    /// completion, and updates `pending` via [`SignerManager::apply_join_outcome`].
-    /// Used only at shutdown — see [`Self::run`].
-    ///
-    /// **No `JoinSet::abort_all`.** Aborting would drop futures at arbitrary
-    /// await points, including inside [`base_tx_manager::TxManager::send`]
-    /// after a `NonceGuard` has been acquired but before the transaction is
-    /// broadcast — leaving a permanent nonce gap (`NonceGuard::Drop` does not
-    /// roll back). Cooperative cancellation is the only safe option: each
-    /// task observes its `signer_cancel` token at its own checkpoints and
-    /// exits with `Ok(())`. All registry RPCs in the spawned-task path
-    /// (`is_registered`, `get_registered_signers`) are wrapped in
-    /// `select!` against `signer_cancel` (or `DriverConfig::cancel` for
-    /// non-spawned paths) so they drop immediately on cancel — the only
-    /// remaining non-cancel-aware operation is
-    /// [`base_tx_manager::TxManager::send`], which is intentionally
-    /// kept that way to prevent the nonce-gap class of bugs. Shutdown
-    /// latency is therefore bounded by a single in-flight `send()` per
-    /// task, not by additional registry round-trips.
-    async fn drain_proof_tasks(
-        tasks: &mut JoinSet<Result<Address>>,
-        pending: &mut HashMap<Address, PendingRegistration>,
-    ) {
-        SignerManager::<P, R, T>::drain_proof_tasks(tasks, pending).await;
-    }
 }
 
 #[cfg(test)]
@@ -866,6 +741,7 @@ mod tests {
     use hex_literal::hex;
     use k256::ecdsa::SigningKey;
     use rstest::rstest;
+    use tokio::task;
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
@@ -1266,7 +1142,7 @@ mod tests {
     /// reaching the tx-manager send path.
     ///
     /// Used by the spawn-pass indexing tests to assert that
-    /// [`RegistrationDriver::reconcile_proof_tasks`] pairs each signer
+    /// [`SignerManager::reconcile_proof_tasks`] pairs each signer
     /// with `attestations[idx]` and never with a sibling's blob.
     #[derive(Debug, Clone, Default)]
     struct RecordingProofProvider {
@@ -1490,6 +1366,9 @@ mod tests {
         MockSignerClient,
     >;
 
+    /// Type alias for the [`SignerManager`] owned by [`RunDriver`].
+    type RunSignerManager = SignerManager<GatedProofProvider, MockRegistry, SharedTxManager>;
+
     /// Bundles every handle a pipeline test needs to drive the loop.
     struct GatedRunHarness {
         driver: Arc<RunDriver>,
@@ -1614,7 +1493,7 @@ mod tests {
     /// well inside [`GATED_WAIT_TIMEOUT`].
     const REAP_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
-    /// Repeatedly invokes [`RunDriver::reap_finished_tasks`] until
+    /// Repeatedly invokes [`RunSignerManager::reap_finished_tasks`] until
     /// `pending` is empty or [`GATED_WAIT_TIMEOUT`] elapses. The
     /// production loop calls `reap_finished_tasks` exactly once per
     /// cycle, so unit tests that drive it directly need to give the
@@ -1629,7 +1508,7 @@ mod tests {
             if started.elapsed() > GATED_WAIT_TIMEOUT {
                 panic!("timed out reaping {} pending task(s)", pending.len());
             }
-            RunDriver::reap_finished_tasks(tasks, pending);
+            RunSignerManager::reap_finished_tasks(tasks, pending);
             tokio::time::sleep(REAP_POLL_INTERVAL).await;
         }
     }
@@ -1678,7 +1557,7 @@ mod tests {
     /// reap/apply-outcome flows without spawning a real future. The
     /// `task_id` is taken from the spawned placeholder's
     /// `JoinHandle::id()` so the failure-path O(n) scan in
-    /// [`RegistrationDriver::apply_join_outcome`] can recover the
+    /// [`SignerManager::apply_join_outcome`] can recover the
     /// signer just as it does in production.
     fn pending_registration_for_test(task_id: task::Id, instance_id: &str) -> PendingRegistration {
         PendingRegistration {
@@ -1756,7 +1635,7 @@ mod tests {
         assert!(resolution.ok_to_dereg, "single reachable instance clears the majority guard");
 
         // Orphan-dereg pass must not deregister the signer (it's in active_signers).
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         assert!(
             tx.sent_calldata().is_empty(),
@@ -1795,7 +1674,7 @@ mod tests {
             "zero-instance fleet drain is a legitimate empty active set",
         );
 
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         let sent = tx.sent_calldata();
         assert_eq!(sent.len(), expected_count, "all onchain signers should be deregistered");
@@ -1879,7 +1758,7 @@ mod tests {
         );
         // And `run_orphan_dereg` itself is cancel-aware — call it
         // directly to confirm it bails out without loading the registry.
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
         assert!(tx.sent_calldata().is_empty(), "no txs should be sent after cancellation");
     }
 
@@ -1914,7 +1793,7 @@ mod tests {
         );
         assert!(resolution.ok_to_dereg, "single reachable instance clears the majority guard");
 
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         // No registration (draining) and no deregistration (signer is active).
         assert!(tx.sent_calldata().is_empty());
@@ -1984,7 +1863,7 @@ mod tests {
         );
 
         if resolution.ok_to_dereg {
-            driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+            driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
             let sent = tx.sent_calldata();
             assert_eq!(sent.len(), 1, "{reachable_count}/4 reachable: should deregister orphan");
             let expected =
@@ -2122,7 +2001,7 @@ mod tests {
         );
         // run_orphan_dereg is cancel-aware — call it to confirm it bails
         // out without loading the registry or sending any tx.
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
         assert!(
             tx.sent_calldata().is_empty(),
             "mid-cycle cancellation should prevent any orphan deregistration",
@@ -2162,7 +2041,7 @@ mod tests {
         assert!(resolution.active_signers.contains(&addr1));
         assert!(resolution.ok_to_dereg);
 
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         // No registration (draining) and no deregistration (both signers
         // are in active_signers).
@@ -2221,7 +2100,7 @@ mod tests {
         );
         assert!(resolution.ok_to_dereg);
 
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         assert!(
             tx.sent_calldata().is_empty(),
@@ -2268,7 +2147,7 @@ mod tests {
         );
         assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
 
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         assert!(
             tx.sent_calldata().is_empty(),
@@ -2303,7 +2182,7 @@ mod tests {
         assert!(resolution.unresolved_instance_ids.contains(&inst.instance_id));
         assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
 
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         assert!(
             tx.sent_calldata().is_empty(),
@@ -2355,7 +2234,7 @@ mod tests {
             "registerable list is computed without invoking the proof provider",
         );
 
-        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
 
         // No deregistration tx (signer is in active_signers despite the
         // proof failure path being possible downstream).
@@ -2532,7 +2411,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let active: HashSet<Address> = HashSet::new();
             let start = tokio::time::Instant::now();
-            let res = driver_clone.run_orphan_dereg(&active).await;
+            let res = driver_clone.signer_manager.run_orphan_dereg(&active).await;
             (res, start.elapsed(), cancel_clone)
         });
 
@@ -2614,7 +2493,7 @@ mod tests {
         let pre_spawn_count = pending.len();
         let pre_cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
 
-        harness.driver.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
 
         let post_cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
         let new_spawns = pending.len().saturating_sub(pre_spawn_count);
@@ -2635,11 +2514,11 @@ mod tests {
 
         let resolution = dr_from_kept(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
 
-        harness.driver.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
         let after_first = pending.len();
         let snapshot_ids: HashSet<_> = pending.keys().copied().collect();
 
-        harness.driver.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
 
         assert_eq!(pending.len(), after_first, "idempotent: no extra spawns");
         let after_second: HashSet<_> = pending.keys().copied().collect();
@@ -2699,7 +2578,7 @@ mod tests {
         // but does not reap, so the (now cancelled) entry persists in
         // `pending` keyed by `signer`.
         let empty = dr_from_kept(&[]);
-        harness.driver.reconcile_proof_tasks(&empty, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&empty, &mut tasks, &mut pending);
         assert!(stale_cancel.is_cancelled(), "stale task must be cancelled by reconcile");
         assert_eq!(
             pending.get(&signer).map(|p| p.task_id),
@@ -2714,7 +2593,7 @@ mod tests {
         // the stale task lives on in the JoinSet (parked on its cancel
         // until drain).
         let resurrected = dr_from_kept(&[(EP1, &HARDHAT_KEY_0)]);
-        harness.driver.reconcile_proof_tasks(&resurrected, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&resurrected, &mut tasks, &mut pending);
 
         assert_eq!(pending.len(), 1, "still exactly one entry per signer after respawn");
         let fresh = pending.get(&signer).expect("fresh entry keyed by the resurrected signer");
@@ -2774,7 +2653,7 @@ mod tests {
             unresolved_instance_ids: unresolved,
         };
 
-        harness.driver.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
 
         assert!(
             !task_cancel.is_cancelled(),
@@ -2793,7 +2672,11 @@ mod tests {
             ok_to_dereg: true,
             unresolved_instance_ids: HashSet::new(),
         };
-        harness.driver.reconcile_proof_tasks(&resolution_conclusive, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(
+            &resolution_conclusive,
+            &mut tasks,
+            &mut pending,
+        );
         assert!(
             task_cancel.is_cancelled(),
             "with no inconclusive guard, the cancel-pass MUST fire on the same setup",
@@ -2812,7 +2695,7 @@ mod tests {
     /// `unresolved_instance_ids`). If the preserved task succeeds and
     /// registers the signer onchain right as the orphan-dereg pass
     /// runs, the protected set assembled by
-    /// [`RunDriver::protected_signers`] MUST union the two, otherwise
+    /// [`RunSignerManager::protected_signers`] MUST union the two, otherwise
     /// the very next call to `deregister_orphans` would deregister the
     /// freshly-registered signer (TOCTOU race).
     #[tokio::test]
@@ -2866,13 +2749,13 @@ mod tests {
             unresolved_instance_ids: unresolved,
         };
 
-        let protected = RunDriver::protected_signers(&resolution, &pending);
+        let protected = RunSignerManager::protected_signers(&resolution, &pending);
         assert!(
             protected.contains(&signer),
             "protected set must include in-flight signer even when absent from active_signers",
         );
 
-        harness.driver.run_orphan_dereg(&protected).await.unwrap();
+        harness.driver.signer_manager.run_orphan_dereg(&protected).await.unwrap();
 
         let sent = harness.tx.sent_calldata();
         assert_eq!(
@@ -2909,10 +2792,10 @@ mod tests {
             unresolved_instance_ids: HashSet::new(),
         };
 
-        let protected = RunDriver::protected_signers(&resolution, &pending);
+        let protected = RunSignerManager::protected_signers(&resolution, &pending);
         assert!(protected.is_empty(), "no pending → protected set is empty");
 
-        harness.driver.run_orphan_dereg(&protected).await.unwrap();
+        harness.driver.signer_manager.run_orphan_dereg(&protected).await.unwrap();
 
         let sent = harness.tx.sent_calldata();
         assert_eq!(
@@ -2924,10 +2807,10 @@ mod tests {
 
     // ── drain_proof_tasks metric-gating test ────────────────────────────
 
-    /// At shutdown, [`RegistrationDriver::drain_proof_tasks`] MUST count
+    /// At shutdown, [`SignerManager::drain_proof_tasks`] MUST count
     /// only the tasks whose cancellation it actually drives — tasks
     /// already cancelled by a prior
-    /// [`RegistrationDriver::reconcile_proof_tasks`] cancel-pass were
+    /// [`SignerManager::reconcile_proof_tasks`] cancel-pass were
     /// counted at intent time and double-counting them in the drain pass
     /// would inflate the `proof_tasks_cancelled` counter. The gate uses
     /// the `cancelled_by_reconcile` flag (not
@@ -2991,7 +2874,7 @@ mod tests {
                         }
                     }
 
-                    RunDriver::drain_proof_tasks(&mut tasks, &mut pending).await;
+                    RunSignerManager::drain_proof_tasks(&mut tasks, &mut pending).await;
                 });
             });
 
@@ -3082,7 +2965,7 @@ mod tests {
         let mut tasks: JoinSet<Result<Address>> = JoinSet::new();
         let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
 
-        driver.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
 
         assert_eq!(pending.len(), 1, "exactly one task should spawn for a duplicate signer");
         let (&only_signer, _entry) = pending.iter().next().unwrap();
@@ -3153,7 +3036,7 @@ mod tests {
         let mut tasks: JoinSet<Result<Address>> = JoinSet::new();
         let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
 
-        driver.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
 
         wait_for("both signers recorded their attestations", || {
             proof_provider.snapshot().len() == 2
@@ -3219,7 +3102,7 @@ mod tests {
             },
         );
 
-        RunDriver::reap_finished_tasks(&mut tasks, &mut pending);
+        RunSignerManager::reap_finished_tasks(&mut tasks, &mut pending);
 
         assert_eq!(pending.len(), 1, "live task must remain in pending");
 
@@ -3234,7 +3117,7 @@ mod tests {
         let mut tasks: JoinSet<Result<Address>> = JoinSet::new();
         let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
 
-        RunDriver::reap_finished_tasks(&mut tasks, &mut pending);
+        RunSignerManager::reap_finished_tasks(&mut tasks, &mut pending);
 
         assert!(pending.is_empty(), "pending stays empty");
         assert!(tasks.is_empty(), "JoinSet stays empty");
@@ -3522,12 +3405,12 @@ mod tests {
         // The `Err(JoinError)` arm of `apply_join_outcome` must still
         // remove the panicked task from `pending`. With the address-
         // keyed map and the panic path losing the task's return value,
-        // the recovery routes through `find_signer_by_task_id` (the
-        // O(n) scan over `pending`) to map `JoinError::id()` back to
-        // the signer address. The per-task cancel handle is dropped
-        // and the proof-task-completed metric still fires. The full
-        // reap path is exercised so this is also a coverage test for
-        // `reap_finished_tasks` routing the `JoinError` correctly.
+        // the recovery routes through the task-id scan over `pending`
+        // to map `JoinError::id()` back to the signer address. The
+        // per-task cancel handle is dropped and the proof-task-completed
+        // metric still fires. The full reap path is exercised so this
+        // is also a coverage test for `reap_finished_tasks` routing the
+        // `JoinError` correctly.
         let mut tasks: JoinSet<Result<Address>> = JoinSet::new();
         let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
 
@@ -3548,7 +3431,7 @@ mod tests {
     /// Address-keyed cleanup safety: a stale task whose `pending` entry
     /// was overwritten by a same-cycle respawn for the same signer
     /// must NOT evict the fresh entry when its terminal `Ok(signer)`
-    /// flows through [`RegistrationDriver::apply_join_outcome`]. The
+    /// flows through [`SignerManager::apply_join_outcome`]. The
     /// `task_id`-match guard in the success arm is the protection — a
     /// stale completion without the guard would leak the fresh task
     /// from `pending` (orphaning its cancel handle) and corrupt
@@ -3595,7 +3478,7 @@ mod tests {
         let started = std::time::Instant::now();
         loop {
             if let Some(joined) = tasks.try_join_next_with_id() {
-                RunDriver::apply_join_outcome(Some(joined), &mut pending);
+                RunSignerManager::apply_join_outcome(Some(joined), &mut pending);
                 break;
             }
             if started.elapsed() > GATED_WAIT_TIMEOUT {
@@ -3614,14 +3497,12 @@ mod tests {
     }
 
     /// Mirror of the success-arm fresh/stale test for the
-    /// [`RegistrationDriver::apply_join_outcome`] inner-`Err` arm: a
+    /// [`SignerManager::apply_join_outcome`] inner-`Err` arm: a
     /// stale task failing must NOT evict the fresh entry that
     /// reconcile dropped into the slot for the same signer. The
-    /// [`RegistrationDriver::remove_if_task_matches`] guard threaded
-    /// through all three arms is what enforces this — without it,
-    /// `find_signer_by_task_id` returning `None` for the stale id is
-    /// the only thing preventing fresh-entry eviction, which is a
-    /// fragile implicit invariant.
+    /// [`SignerManager::remove_by_task_id`] guard threaded through the
+    /// error arms is what enforces this — without it, a stale failure
+    /// could evict a fresh entry for the same signer.
     #[tokio::test]
     async fn apply_join_outcome_err_arm_preserves_fresh_entry_when_stale_task_fails_for_same_signer()
      {
@@ -3663,7 +3544,7 @@ mod tests {
         let started = std::time::Instant::now();
         loop {
             if let Some(joined) = tasks.try_join_next_with_id() {
-                RunDriver::apply_join_outcome(Some(joined), &mut pending);
+                RunSignerManager::apply_join_outcome(Some(joined), &mut pending);
                 break;
             }
             if started.elapsed() > GATED_WAIT_TIMEOUT {
