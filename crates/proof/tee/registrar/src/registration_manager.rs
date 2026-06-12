@@ -3,14 +3,10 @@
 //! Coordinates signer-level registration work before handing completed proof
 //! results to [`ProofHandler`]. This keeps the driver focused on discovery and
 //! task lifecycle management while centralizing the expensive path:
-//! deduplicate signer proof work, submit the proof request, then invoke the
-//! proof handler.
+//! confirm the signer still needs registration, submit the proof request,
+//! then invoke the proof handler.
 
-use std::{
-    collections::HashSet,
-    fmt,
-    sync::{Arc, Mutex},
-};
+use std::fmt;
 
 use alloy_primitives::Address;
 use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
@@ -23,9 +19,10 @@ use crate::{ProofHandler, ProofHandlerConfig, ProverInstance, RegistryClient, Re
 
 /// Component responsible for signer-level registration orchestration.
 ///
-/// For each signer it checks whether proof work is already in progress,
-/// starts the attestation proof request when needed, and passes the completed
-/// proof to [`ProofHandler`] for onchain registration.
+/// For each signer it confirms the signer still needs registration, starts the
+/// attestation proof request when needed, and passes the completed proof to
+/// [`ProofHandler`] for onchain registration. The caller owns task-level
+/// deduplication; production calls flow through [`crate::RegistrationDriver`].
 pub struct RegistrationManager<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
     /// Proof provider used to submit or recover attestation proof requests.
     proof_provider: &'a P,
@@ -35,8 +32,6 @@ pub struct RegistrationManager<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
     tx_manager: &'a T,
     /// Semaphore bounding concurrent proof work.
     proof_semaphore: &'a Semaphore,
-    /// Process-local signer set used to deduplicate concurrent attempts.
-    in_flight_registrations: &'a Arc<Mutex<HashSet<Address>>>,
     /// Runtime settings for registration transaction handling.
     config: ProofHandlerConfig,
 }
@@ -58,45 +53,9 @@ impl<'a, P: ?Sized, R: ?Sized, T: ?Sized> RegistrationManager<'a, P, R, T> {
         registry: &'a R,
         tx_manager: &'a T,
         proof_semaphore: &'a Semaphore,
-        in_flight_registrations: &'a Arc<Mutex<HashSet<Address>>>,
         config: ProofHandlerConfig,
     ) -> Self {
-        Self {
-            proof_provider,
-            registry,
-            tx_manager,
-            proof_semaphore,
-            in_flight_registrations,
-            config,
-        }
-    }
-}
-
-/// RAII guard that removes a signer address from the in-flight set when
-/// dropped.
-///
-/// Ensures cleanup on every exit path from [`RegistrationManager::register_signer`]:
-/// success, error, retry exhaustion, cancellation drop, and panic.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct InFlightRegistrationGuard {
-    in_flight: Arc<Mutex<HashSet<Address>>>,
-    signer: Address,
-}
-
-impl InFlightRegistrationGuard {
-    /// Reserves `signer` in `in_flight` until the returned guard is dropped.
-    pub fn try_acquire(in_flight: &Arc<Mutex<HashSet<Address>>>, signer: Address) -> Option<Self> {
-        let mut set = in_flight.lock().unwrap_or_else(|e| e.into_inner());
-        set.insert(signer).then(|| Self { in_flight: Arc::clone(in_flight), signer })
-    }
-}
-
-impl Drop for InFlightRegistrationGuard {
-    fn drop(&mut self) {
-        // Recover from poisoning so guard cleanup still runs.
-        let mut set = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
-        set.remove(&self.signer);
+        Self { proof_provider, registry, tx_manager, proof_semaphore, config }
     }
 }
 
@@ -108,10 +67,9 @@ where
 {
     /// Attempts to register a signer onchain if it is not already registered.
     ///
-    /// This is the expensive path: checks whether proof work is already in
-    /// progress for the signer, confirms the signer still needs registration,
-    /// generates or recovers the proof, and invokes [`ProofHandler`] with the
-    /// completed proof.
+    /// This is the expensive path: confirms the signer still needs
+    /// registration, generates or recovers the proof, and invokes
+    /// [`ProofHandler`] with the completed proof.
     ///
     /// Registration is PCR0-agnostic: all legitimate enclaves are registered
     /// regardless of their PCR0 measurement. This enables pre-registration of
@@ -128,12 +86,12 @@ where
         attestation_bytes: &[u8],
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
-        let Some(_in_flight) = self
-            .prepare_registration_attempt(instance, signer_address, enclave_index, signer_cancel)
+        if !self
+            .signer_needs_registration(instance, signer_address, enclave_index, signer_cancel)
             .await?
-        else {
+        {
             return Ok(());
-        };
+        }
 
         let Some(proof) = self
             .generate_registration_proof(
@@ -148,38 +106,24 @@ where
             return Ok(());
         };
 
-        self.invoke_proof_handler(instance, signer_address, proof, signer_cancel).await
+        let handler =
+            ProofHandler::new(self.proof_provider, self.registry, self.tx_manager, self.config);
+        handler.handle_registration_proof(instance, signer_address, proof, signer_cancel).await
     }
 
-    /// Reserves this signer and confirms it still needs registration.
-    pub async fn prepare_registration_attempt(
+    /// Confirms this signer still needs registration.
+    pub async fn signer_needs_registration(
         &self,
         instance: &ProverInstance,
         signer_address: Address,
         enclave_index: usize,
         signer_cancel: &CancellationToken,
-    ) -> Result<Option<InFlightRegistrationGuard>> {
+    ) -> Result<bool> {
         // Avoid taking locks or making registry RPCs after cancellation.
         if signer_cancel.is_cancelled() {
             debug!(signer = %signer_address, "task cancelled before registry probe");
-            return Ok(None);
+            return Ok(false);
         }
-
-        // Reserve this signer in the in-flight set before the `is_registered`
-        // precheck. If another concurrent task already owns it, short-circuit
-        // so we do not race past the precheck, regenerate the proof, and
-        // submit a duplicate registration transaction.
-        let Some(in_flight) =
-            InFlightRegistrationGuard::try_acquire(self.in_flight_registrations, signer_address)
-        else {
-            debug!(
-                signer = %signer_address,
-                enclave_index,
-                instance = %instance.instance_id,
-                "registration already in flight for this signer, skipping duplicate",
-            );
-            return Ok(None);
-        };
 
         // Safe to cancel because this is a side-effect-free registry read.
         let already_registered = tokio::select! {
@@ -187,18 +131,25 @@ where
             () = signer_cancel.cancelled() => {
                 debug!(
                     signer = %signer_address,
+                    enclave_index,
+                    instance = %instance.instance_id,
                     "cancelled while probing registry pre-proof-gen"
                 );
-                return Ok(None);
+                return Ok(false);
             }
             res = self.registry.is_registered(signer_address) => res?,
         };
         if already_registered {
-            debug!(signer = %signer_address, "already registered, skipping");
-            return Ok(None);
+            debug!(
+                signer = %signer_address,
+                enclave_index,
+                instance = %instance.instance_id,
+                "already registered, skipping"
+            );
+            return Ok(false);
         }
 
-        Ok(Some(in_flight))
+        Ok(true)
     }
 
     /// Generates or recovers an attestation proof for a signer.
@@ -289,29 +240,13 @@ where
             }
         }
     }
-
-    /// Invokes the proof handler with a completed registration proof.
-    pub async fn invoke_proof_handler(
-        &self,
-        instance: &ProverInstance,
-        signer_address: Address,
-        proof: AttestationProof,
-        signer_cancel: &CancellationToken,
-    ) -> Result<()> {
-        let handler =
-            ProofHandler::new(self.proof_provider, self.registry, self.tx_manager, self.config);
-        handler.handle_registration_proof(instance, signer_address, proof, signer_cancel).await
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{HashSet, VecDeque},
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicU32, Ordering},
-        },
+        collections::VecDeque,
+        sync::{Arc, Mutex},
         time::Duration,
     };
 
@@ -321,7 +256,6 @@ mod tests {
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
     use base_tx_manager::{SendHandle, TxCandidate, TxManager, TxManagerError};
-    use rstest::rstest;
     use tokio::sync::Semaphore;
     use tokio_util::sync::CancellationToken;
     use url::Url;
@@ -377,18 +311,11 @@ mod tests {
         registry: R,
         tx_manager: T,
         proof_semaphore: Semaphore,
-        in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
     }
 
     impl<P, R, T> ManagerHarness<P, R, T> {
         fn new(proof_provider: P, registry: R, tx_manager: T) -> Self {
-            Self {
-                proof_provider,
-                registry,
-                tx_manager,
-                proof_semaphore: Semaphore::new(4),
-                in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
-            }
+            Self { proof_provider, registry, tx_manager, proof_semaphore: Semaphore::new(4) }
         }
 
         fn manager(&self) -> RegistrationManager<'_, P, R, T> {
@@ -397,7 +324,6 @@ mod tests {
                 &self.registry,
                 &self.tx_manager,
                 &self.proof_semaphore,
-                &self.in_flight_registrations,
                 ProofHandlerConfig {
                     registry_address: TEST_REGISTRY_ADDRESS,
                     max_tx_retries: MAX_TX_RETRIES,
@@ -438,39 +364,6 @@ mod tests {
             Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
                 "simulated cancel race".into(),
             ))
-        }
-    }
-
-    #[derive(Debug)]
-    struct YieldingProofProvider {
-        call_count: Arc<AtomicU32>,
-    }
-
-    impl YieldingProofProvider {
-        fn new() -> Self {
-            Self { call_count: Arc::new(AtomicU32::new(0)) }
-        }
-
-        fn call_count(&self) -> u32 {
-            self.call_count.load(Ordering::Relaxed)
-        }
-    }
-
-    #[async_trait]
-    impl AttestationProofProvider for YieldingProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            self.call_count.fetch_add(1, Ordering::Relaxed);
-            for _ in 0..16 {
-                tokio::task::yield_now().await;
-            }
-            Ok(AttestationProof {
-                output: Bytes::from_static(b"stub-output"),
-                proof_bytes: Bytes::from_static(b"stub-proof"),
-            })
         }
     }
 
@@ -609,55 +502,5 @@ mod tests {
             elapsed < CANCEL_ABORT_BUDGET,
             "cancel must abort the registry stall within {CANCEL_ABORT_BUDGET:?} (took {elapsed:?})",
         );
-    }
-
-    #[tokio::test]
-    async fn register_signer_concurrent_same_signer_dedups() {
-        let tx = FailingTxManager::with_errors(vec![]);
-        let harness = ManagerHarness::new(
-            YieldingProofProvider::new(),
-            DynamicRegistry::never_registered(vec![]),
-            tx.clone(),
-        );
-        let cancel = CancellationToken::new();
-        let manager = harness.manager();
-        let inst = instance();
-
-        let (r1, r2) = tokio::join!(
-            manager.register_signer(&inst, TEST_SIGNER, 0, ATTESTATION, &cancel),
-            manager.register_signer(&inst, TEST_SIGNER, 0, ATTESTATION, &cancel),
-        );
-
-        assert!(r1.is_ok(), "first concurrent registration failed: {r1:?}");
-        assert!(r2.is_ok(), "second concurrent registration failed: {r2:?}");
-        assert_eq!(tx.send_count(), 1, "same signer must dedup to a single tx");
-        assert_eq!(harness.proof_provider.call_count(), 1, "proof should be generated once");
-    }
-
-    #[rstest]
-    #[case::completion(vec![], false)]
-    #[case::failure(vec![TxManagerError::InsufficientFunds], true)]
-    #[tokio::test]
-    async fn register_signer_in_flight_slot_released_after_attempt(
-        #[case] errors: Vec<TxManagerError>,
-        #[case] first_attempt_should_fail: bool,
-    ) {
-        let tx = FailingTxManager::with_errors(errors);
-        let harness = ManagerHarness::new(
-            StubProofProvider,
-            DynamicRegistry::never_registered(vec![]),
-            tx.clone(),
-        );
-        let cancel = CancellationToken::new();
-
-        let first_result = register(&harness, &cancel).await;
-        assert_eq!(
-            first_result.is_err(),
-            first_attempt_should_fail,
-            "unexpected first registration result: {first_result:?}",
-        );
-        register(&harness, &cancel).await.unwrap();
-
-        assert_eq!(tx.send_count(), 2, "registration must release in-flight slot");
     }
 }

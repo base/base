@@ -245,23 +245,6 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// inside [`Self::run_proof_task`], not at spawn time, so the
     /// reconcile pass remains synchronous.
     proof_semaphore: Arc<Semaphore>,
-    /// Process-local set of signer addresses currently being registered.
-    ///
-    /// [`RegistrationManager::register_signer`] reserves an entry here before
-    /// its `is_registered` precheck and releases it when it returns. This closes
-    /// a TOCTOU race in which two concurrent registration attempts for the same
-    /// signer both read `is_registered == false`, both generate proofs, and both
-    /// submit duplicate registration transactions.
-    ///
-    /// This is a defence-in-depth backstop: the [`Self::run`] spawn loop's
-    /// `in_flight: HashSet<Address>` already dedupes at task-spawn time,
-    /// so the registration-manager layer only catches duplicates from callers
-    /// that bypass the spawn loop.
-    ///
-    /// The set is held across the entire registration lifecycle (including
-    /// the ~20 minute Boundless proof generation) so deduplication holds
-    /// across cycles as well as within one.
-    in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
     /// Last-known EC2 instance ID for every signer observed during discovery.
     /// Used to annotate orphan deregistration logs.
     /// Entries are never evicted; bounded by historic fleet size.
@@ -328,7 +311,6 @@ where
             config,
             cert_manager,
             proof_semaphore,
-            in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
             signer_history: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -843,12 +825,10 @@ where
     /// rolling deployments) where a signer drops out of `registerable`
     /// one cycle and returns the next: without this filter the fresh
     /// task would be deferred for an extra cycle until reap clears the
-    /// stale entry. Safety relies on
-    /// [`Self::in_flight_registrations`] (the registration-manager-layer
-    /// process-wide `Mutex<HashSet<Address>>` dedupe) catching any
-    /// brief overlap between the old task winding down and the new task
-    /// entering registration. The second arrival short-circuits with a
-    /// debug log and exits `Ok(())`.
+    /// stale entry. The old task observes its cancellation token at
+    /// registration checkpoints and exits cooperatively; the task-id guard in
+    /// [`Self::apply_join_outcome`] prevents a stale join from evicting the
+    /// fresh pending entry.
     ///
     /// Transient task failures (non-cancel `Err`) are not re-spawned this
     /// cycle: the entry remains until reaped, after which the next cycle
@@ -976,7 +956,6 @@ where
             &self.registry,
             &self.tx_manager,
             self.proof_semaphore.as_ref(),
-            &self.in_flight_registrations,
             ProofHandlerConfig {
                 registry_address: self.config.registry_address,
                 max_tx_retries: self.config.max_tx_retries,
