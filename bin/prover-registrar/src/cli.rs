@@ -23,7 +23,7 @@ use base_proof_tee_registrar::{
     DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierClient,
     NitroVerifierContractClient, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError,
-    RegistrarMetrics, RegistrationDriver, RegistryContractClient,
+    RegistrarMetrics, RegistrationDriver, RegistryContractClient, SignerManagerConfig,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use boundless_market::{
@@ -685,12 +685,14 @@ impl Cli {
         // ── 8. Build and run driver ──────────────────────────────────────────
         let signer_client = ProverClient::new(config.prover_timeout);
         let driver_config = DriverConfig {
-            registry_address: config.tee_prover_registry_address,
             poll_interval: config.poll_interval,
-            cancel: cancel.clone(),
-            max_concurrency: config.max_concurrency,
-            max_tx_retries: config.max_tx_retries,
-            tx_retry_delay: config.tx_retry_delay,
+            signer_manager: SignerManagerConfig {
+                registry_address: config.tee_prover_registry_address,
+                cancel: cancel.clone(),
+                max_concurrency: config.max_concurrency,
+                max_tx_retries: config.max_tx_retries,
+                tx_retry_delay: config.tx_retry_delay,
+            },
             unhealthy_registration_window: config.unhealthy_registration_window,
             crl: config.crl,
         };

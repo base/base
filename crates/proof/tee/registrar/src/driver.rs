@@ -18,7 +18,6 @@ use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use rand::random;
 use tokio::task::JoinSet;
-use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
@@ -58,22 +57,14 @@ pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 5100;
 /// trait-based dependencies.
 #[derive(Debug, Clone)]
 pub struct DriverConfig {
-    /// `TEEProverRegistry` contract address on L1.
-    pub registry_address: Address,
     /// Interval between discovery and registration poll cycles.
     pub poll_interval: Duration,
-    /// Cancellation token for graceful shutdown.
-    pub cancel: CancellationToken,
-    /// Maximum number of instances to process concurrently. Each instance
-    /// may trigger proof generation, so this bounds concurrent proof work.
-    /// Defaults to [`DEFAULT_MAX_CONCURRENCY`].
-    pub max_concurrency: usize,
-    /// Maximum number of transaction submission retries for transient errors.
-    /// Defaults to [`DEFAULT_MAX_TX_RETRIES`].
-    pub max_tx_retries: u32,
-    /// Delay between transaction submission retries.
-    /// Defaults to [`DEFAULT_TX_RETRY_DELAY_SECS`] seconds.
-    pub tx_retry_delay: Duration,
+    /// Signer lifecycle settings.
+    ///
+    /// The registrar currently uses `signer_manager.max_concurrency` for both
+    /// per-cycle instance resolution and spawned proof task concurrency so one
+    /// CLI setting controls total signer lifecycle pressure.
+    pub signer_manager: SignerManagerConfig,
     /// Duration after launch during which unhealthy instances are still
     /// eligible for registration. New instances may fail ALB health checks
     /// while the application is still initializing. Set to zero to disable.
@@ -246,13 +237,7 @@ where
             proof_provider,
             registry,
             tx_manager,
-            SignerManagerConfig {
-                registry_address: config.registry_address,
-                cancel: config.cancel.clone(),
-                max_concurrency: config.max_concurrency,
-                max_tx_retries: config.max_tx_retries,
-                tx_retry_delay: config.tx_retry_delay,
-            },
+            config.signer_manager.clone(),
         ));
         Ok(Self { discovery, signer_client, config, cert_manager, signer_manager })
     }
@@ -314,7 +299,7 @@ where
     pub async fn run_arc(self: Arc<Self>) -> Result<()> {
         info!(
             poll_interval = ?self.config.poll_interval,
-            registry = %self.config.registry_address,
+            registry = %self.config.signer_manager.registry_address,
             "starting registration driver"
         );
 
@@ -340,7 +325,7 @@ where
                     // acquire L1 nonces we have no intention of
                     // broadcasting. Skip reconcile (and the orphan
                     // dereg pass) entirely when cancellation is set.
-                    if !self.config.cancel.is_cancelled() {
+                    if !self.config.signer_manager.cancel.is_cancelled() {
                         self.signer_manager.reconcile_proof_tasks(
                             &resolution,
                             &mut tasks,
@@ -348,7 +333,7 @@ where
                         );
                     }
 
-                    if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
+                    if resolution.ok_to_dereg && !self.config.signer_manager.cancel.is_cancelled() {
                         // Pending proof tasks can register while orphan cleanup
                         // is running, so protect those signers too.
                         let protected =
@@ -377,7 +362,7 @@ where
 
             tokio::select! {
                 biased;
-                () = self.config.cancel.cancelled() => {
+                () = self.config.signer_manager.cancel.cancelled() => {
                     info!(
                         pending = pending.len(),
                         "registration driver received shutdown signal"
@@ -440,12 +425,12 @@ where
     /// spawned tasks instead of blocking the next discovery cycle.
     ///
     /// **Cancellation contract.** This future checks
-    /// `self.config.cancel.is_cancelled()` before starting new side effects.
+    /// `self.config.signer_manager.cancel.is_cancelled()` before starting new side effects.
     /// `check_and_revoke_crls` awaits any `revokeCert` transaction
     /// submissions it triggers, so revocation outcomes are logged before
     /// the resolution future returns.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
-        if self.config.cancel.is_cancelled() {
+        if self.config.signer_manager.cancel.is_cancelled() {
             return Ok(ResolveOutcome {
                 addresses: Vec::new(),
                 attestations: None,
@@ -480,7 +465,7 @@ where
             );
         }
 
-        if self.config.cancel.is_cancelled() {
+        if self.config.signer_manager.cancel.is_cancelled() {
             return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
         }
 
@@ -530,7 +515,7 @@ where
             // would still be discarded; keeping it `None` removes the
             // non-local dependence on that re-check and matches the
             // CRL-revoked branch below.
-            if self.config.cancel.is_cancelled() {
+            if self.config.signer_manager.cancel.is_cancelled() {
                 return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
             }
             // Use `.first()` rather than `[0]` so the non-empty
@@ -581,7 +566,7 @@ where
     /// [`DiscoveryResolution`] consumed by the spawn-and-reap loop.
     ///
     /// This fans out per-instance resolution work concurrently (bounded by
-    /// [`DriverConfig::max_concurrency`]). No registration transactions are
+    /// [`SignerManagerConfig::max_concurrency`]). No registration transactions are
     /// submitted here; the [`Self::run`] loop spawns a dedicated task per
     /// registerable signer instead, so long Boundless proofs do not block the
     /// next discovery cycle.
@@ -589,7 +574,7 @@ where
     /// **Why no outer cancel-select.** `resolve_instance` performs several
     /// side effects before deciding whether an instance is registerable. The
     /// buffered stream is therefore drained to natural completion; each
-    /// `resolve_instance` short-circuits on `self.config.cancel` between
+    /// `resolve_instance` short-circuits on the configured cancellation token between
     /// awaits. Shutdown latency is bounded by `max_concurrency` × the slowest
     /// signer-RPC / CRL-fetch timeout, not by long proof work (which lives in
     /// the spawned proof tasks).
@@ -621,7 +606,7 @@ where
         let mut registerable: Vec<RegisterableSigner> = Vec::new();
         let mut unresolved_instance_ids: HashSet<String> = HashSet::new();
 
-        let concurrency = self.config.max_concurrency.max(1);
+        let concurrency = self.config.signer_manager.max_concurrency.max(1);
         let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
             let driver = Arc::clone(self);
             let span = info_span!(
@@ -639,7 +624,7 @@ where
         .buffer_unordered(concurrency);
 
         // No cancel-select around `futs.next()`: each future checks
-        // `self.config.cancel` cooperatively between awaits, so new work is
+        // cancellation cooperatively between awaits, so new work is
         // short-circuited while already-started resolution work reaches a
         // natural boundary.
         while let Some((instance, result)) = futs.next().await {
@@ -692,18 +677,19 @@ where
             }
         }
 
-        let ok_to_dereg =
-            if self.config.cancel.is_cancelled() || !unresolved_instance_ids.is_empty() {
-                false
-            } else if total_count == 0 {
-                true
-            } else {
-                // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
-                // is bounded above by `total_count = instances.len()`, so the
-                // doubling can only overflow on a list with `usize::MAX / 2`
-                // entries, which is physically impossible.
-                reachable_count * 2 > total_count
-            };
+        let ok_to_dereg = if self.config.signer_manager.cancel.is_cancelled()
+            || !unresolved_instance_ids.is_empty()
+        {
+            false
+        } else if total_count == 0 {
+            true
+        } else {
+            // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
+            // is bounded above by `total_count = instances.len()`, so the
+            // doubling can only overflow on a list with `usize::MAX / 2`
+            // entries, which is physically impossible.
+            reachable_count * 2 > total_count
+        };
 
         Ok(DiscoveryResolution {
             registerable,
@@ -1080,12 +1066,14 @@ mod tests {
 
     fn default_config(cancel: CancellationToken) -> DriverConfig {
         DriverConfig {
-            registry_address: TEST_REGISTRY_ADDRESS,
             poll_interval: Duration::from_secs(1),
-            cancel,
-            max_concurrency: DEFAULT_MAX_CONCURRENCY,
-            max_tx_retries: DEFAULT_MAX_TX_RETRIES,
-            tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            signer_manager: SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                cancel,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            },
             unhealthy_registration_window: Duration::from_secs(
                 DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
             ),
@@ -2305,7 +2293,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let tx = SharedTxManager::new();
         let mut config = default_config(cancel);
-        config.max_concurrency = max_concurrency;
+        config.signer_manager.max_concurrency = max_concurrency;
 
         let driver = Arc::new(
             RegistrationDriver::new(
@@ -2382,11 +2370,11 @@ mod tests {
     /// total test time stays well under [`CANCEL_ABORT_BUDGET`].
     const PRE_CANCEL_WARMUP: Duration = Duration::from_millis(50);
 
-    /// `run_orphan_dereg` MUST abort promptly when `config.cancel` fires
-    /// during the `get_registered_signers` RPC. Without the `select!`
-    /// wrap a stalled RPC here would extend drain latency by one
-    /// round-trip even though the function never reaches the
-    /// per-orphan loop that has its own cancel check.
+    /// `run_orphan_dereg` MUST abort promptly when the configured cancel
+    /// token fires during the `get_registered_signers` RPC. Without the
+    /// `select!` wrap a stalled RPC here would extend drain latency by one
+    /// round-trip even though the function never reaches the per-orphan loop
+    /// that has its own cancel check.
     #[tokio::test]
     async fn run_orphan_dereg_aborts_promptly_when_cancel_fires_during_registry_stall() {
         let cancel = CancellationToken::new();
