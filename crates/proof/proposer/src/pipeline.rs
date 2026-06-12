@@ -68,10 +68,10 @@ pub struct PipelineConfig {
     pub max_retries: u32,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
-    /// Maximum duration for a single inline submit (validation + L1
-    /// transaction). When exceeded, the loop logs and continues to the next
-    /// iteration without counting against the retry budget.
-    pub submit_timeout: Duration,
+    /// Optional maximum duration for a single inline submit (validation + L1
+    /// transaction). When exceeded, the pipeline restarts without counting
+    /// against the retry budget. `None` disables the outer pipeline timeout.
+    pub submit_timeout: Option<Duration>,
     /// Base driver configuration.
     pub driver: DriverConfig,
     /// Optional address of the `TEEProverRegistry` contract on L1.
@@ -289,7 +289,7 @@ where
         info!(
             block_interval = self.config.driver.block_interval,
             poll_interval_secs = self.config.driver.poll_interval.as_secs(),
-            submit_timeout_secs = self.config.submit_timeout.as_secs(),
+            submit_timeout_secs = ?self.config.submit_timeout.map(|timeout| timeout.as_secs()),
             "Starting proving pipeline"
         );
 
@@ -395,6 +395,7 @@ where
         };
 
         Metrics::safe_head().set(safe_head as f64);
+        Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
         let result = self
             .proof_dispatcher
@@ -1324,7 +1325,7 @@ mod tests {
 
         ProvingPipeline::new(
             PipelineConfig {
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
                 max_retries: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1416,7 +1417,7 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1537,7 +1538,7 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
                 max_retries: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1965,7 +1966,7 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                submit_timeout,
+                submit_timeout: Some(submit_timeout),
                 max_retries,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2306,7 +2307,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                submit_timeout: Duration::from_secs(60),
+                submit_timeout: Some(Duration::from_secs(60)),
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2420,7 +2421,7 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                submit_timeout: Duration::from_secs(60),
+                submit_timeout: Some(Duration::from_secs(60)),
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2943,7 +2944,7 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                submit_timeout: Duration::from_secs(60),
+                submit_timeout: Some(Duration::from_secs(60)),
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,

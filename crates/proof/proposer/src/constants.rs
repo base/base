@@ -8,6 +8,10 @@ pub const PROPOSAL_TIMEOUT: Duration = Duration::from_mins(10);
 
 const SUBMIT_TIMEOUT_SLACK_SECS: u64 = 2 * 60;
 
+/// Extra time allowed around the transaction manager's send timeout for JIT
+/// validation RPCs before the pipeline restarts the submit session.
+pub const SUBMIT_TIMEOUT_SLACK: Duration = Duration::from_secs(SUBMIT_TIMEOUT_SLACK_SECS);
+
 /// Default maximum time for a single inline submit attempt
 /// (validation + L1 transaction). Allows [`PROPOSAL_TIMEOUT`] for the
 /// transaction itself plus a 2-minute slack for JIT validation RPCs.

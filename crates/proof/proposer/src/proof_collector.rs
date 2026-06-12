@@ -61,8 +61,8 @@ pub struct ProofCollectorRuntimeConfig {
     pub block_interval: u64,
     /// Maximum proof failures or discard retries before dropping recovery state.
     pub max_retries: u32,
-    /// Maximum duration for a single inline submit attempt.
-    pub submit_timeout: Duration,
+    /// Optional maximum duration for a single inline submit attempt.
+    pub submit_timeout: Option<Duration>,
 }
 
 /// Mutable collector-side orchestration state.
@@ -1027,10 +1027,16 @@ where
                 warn!(target_block, "Inline submit cancelled, restarting pipeline session");
                 return ProofSubmitEffect::Restart;
             }
-            result = tokio::time::timeout(
-                self.runtime.submit_timeout,
-                self.submitter.submit(&proof, target_block, parent_address),
-            ) => result,
+            result = async {
+                match self.runtime.submit_timeout {
+                    Some(timeout) => tokio::time::timeout(
+                        timeout,
+                        self.submitter.submit(&proof, target_block, parent_address),
+                    )
+                    .await,
+                    None => Ok(self.submitter.submit(&proof, target_block, parent_address).await),
+                }
+            } => result,
         };
 
         match result {
@@ -1039,7 +1045,7 @@ where
                 Metrics::submit_timeouts_total().increment(1);
                 warn!(
                     target_block,
-                    timeout_secs = self.runtime.submit_timeout.as_secs(),
+                    timeout_secs = ?self.runtime.submit_timeout.map(|timeout| timeout.as_secs()),
                     "Inline submit timed out, restarting pipeline session"
                 );
                 ProofSubmitEffect::Restart
@@ -1549,7 +1555,7 @@ mod tests {
             ProofCollectorRuntimeConfig {
                 block_interval,
                 max_retries: 3,
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
             },
         )
     }
@@ -1672,7 +1678,7 @@ mod tests {
             ProofCollectorRuntimeConfig {
                 block_interval: 100,
                 max_retries: 2,
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
             },
         );
         let proposal = test_proposal(200);
@@ -1766,7 +1772,7 @@ mod tests {
             ProofCollectorRuntimeConfig {
                 block_interval: 100,
                 max_retries: 2,
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
             },
         );
         let target_block = 200;
@@ -1837,7 +1843,7 @@ mod tests {
             ProofCollectorRuntimeConfig {
                 block_interval: 100,
                 max_retries: 2,
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
             },
         );
         let target_block = 200;
@@ -1919,7 +1925,7 @@ mod tests {
             ProofCollectorRuntimeConfig {
                 block_interval: 100,
                 max_retries: 2,
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
             },
         );
         let mut state = ProofCollectorState::new();
@@ -1981,7 +1987,7 @@ mod tests {
             ProofCollectorRuntimeConfig {
                 block_interval: 100,
                 max_retries: 1,
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
             },
         );
         let target_block = 200;
@@ -2054,7 +2060,7 @@ mod tests {
             ProofCollectorRuntimeConfig {
                 block_interval: 100,
                 max_retries: 2,
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
             },
         );
         let target_block = 200;
@@ -2145,7 +2151,7 @@ mod tests {
             ProofCollectorRuntimeConfig {
                 block_interval: 100,
                 max_retries: 0,
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
             },
         );
         let mut state = ProofCollectorState::new();
@@ -2216,7 +2222,7 @@ mod tests {
             ProofCollectorRuntimeConfig {
                 block_interval: 100,
                 max_retries: 1,
-                submit_timeout: std::time::Duration::from_secs(60),
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
             },
         );
         let mut state = ProofCollectorState::new();
