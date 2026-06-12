@@ -155,10 +155,6 @@ pub struct RocksdbProofsStorage {
     write_options: WriteOptions,
     // Serializes append-only writers that read LatestBlock before writing LatestBlock + 1.
     /// Lock guarding append-only writes that advance `LatestBlock`.
-    #[expect(
-        dead_code,
-        reason = "used by the append-only block-write path implemented in a later PR"
-    )]
     append_lock: Mutex<()>,
     // Serializes prune plans that assume a stable EarliestBlock across prepare and commit.
     /// Lock guarding prune prepare/commit sequences over `EarliestBlock`.
@@ -1553,6 +1549,11 @@ impl RocksdbProofsStorage {
     }
 
     /// Commits a previously prepared prune batch if the earliest anchor still matches.
+    ///
+    /// Callers must hold [`Self::prune_lock`] across both [`Self::prepare_prune`] and this
+    /// method so that `EarliestBlock` cannot change between preparation, the staleness
+    /// re-check below, and the batch write. [`Self::prune_earliest_state`] is the orchestrator
+    /// that owns this lock for the whole prepare/commit sequence.
     pub fn commit_prepared_prune(
         &self,
         prepared: RocksdbPreparedPrune,
@@ -1577,7 +1578,6 @@ impl RocksdbProofsStorage {
             total_deletes = deletes.total(),
             "Committing RocksDB proof storage prune",
         );
-        let _prune_guard = self.prune_lock.lock();
         let expected_earliest = Some((expected_earliest_block, expected_earliest_hash));
         let current_earliest = self.get_block_number_hash(ProofWindowKey::EarliestBlock)?;
         if current_earliest != expected_earliest {
@@ -1694,11 +1694,11 @@ impl BaseProofsStore for RocksdbProofsStorage {
     }
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        unimplemented!("block write path not yet implemented")
+        self.get_block_number_hash(ProofWindowKey::EarliestBlock)
     }
 
     fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        unimplemented!("block write path not yet implemented")
+        self.get_latest_block_number_hash()
     }
 
     fn storage_trie_cursor<'tx>(
@@ -1783,10 +1783,16 @@ impl BaseProofsStore for RocksdbProofsStorage {
 
     fn store_trie_updates(
         &self,
-        _block_ref: BlockWithParent,
-        _block_state_diff: BlockStateDiff,
+        block_ref: BlockWithParent,
+        block_state_diff: BlockStateDiff,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        unimplemented!("block write path not yet implemented")
+        let _append_guard = self.append_lock.lock();
+        let _history_guard = self.history_gate.read();
+        let mut batch = WriteBatch::default();
+        let counts =
+            self.store_trie_updates_append_only(&mut batch, block_ref, block_state_diff)?;
+        self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
+        Ok(counts)
     }
 
     fn fetch_trie_updates(&self, _block_number: u64) -> BaseProofsStorageResult<BlockStateDiff> {
@@ -1795,13 +1801,73 @@ impl BaseProofsStore for RocksdbProofsStorage {
 
     fn prune_earliest_state(
         &self,
-        _new_earliest_block_ref: BlockWithParent,
+        new_earliest_block_ref: BlockWithParent,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        unimplemented!("block write path not yet implemented")
+        let started = Instant::now();
+        info!(
+            target: "trie::pruner",
+            target_block = new_earliest_block_ref.block.number,
+            "Acquiring RocksDB proof storage prune locks",
+        );
+        let _prune_guard = self.prune_lock.lock();
+        let _history_guard = self.history_gate.read();
+        info!(
+            target: "trie::pruner",
+            target_block = new_earliest_block_ref.block.number,
+            elapsed = ?started.elapsed(),
+            "Acquired RocksDB proof storage prune locks",
+        );
+        let Some(prepared) = self.prepare_prune(new_earliest_block_ref)? else {
+            info!(
+                target: "trie::pruner",
+                target_block = new_earliest_block_ref.block.number,
+                elapsed = ?started.elapsed(),
+                "No RocksDB proof storage prune work prepared",
+            );
+            return Ok(WriteCounts::default());
+        };
+
+        let counts = self.commit_prepared_prune(prepared)?;
+        info!(
+            target: "trie::pruner",
+            target_block = new_earliest_block_ref.block.number,
+            elapsed = ?started.elapsed(),
+            "Finished RocksDB proof storage prune request",
+        );
+        Ok(counts)
     }
 
-    fn unwind_history(&self, _to: BlockWithParent) -> BaseProofsStorageResult<()> {
-        unimplemented!("block write path not yet implemented")
+    fn unwind_history(&self, to: BlockWithParent) -> BaseProofsStorageResult<()> {
+        let _guard = self.history_gate.write();
+        let Some(proof_window) = self.get_proof_window()? else {
+            return Ok(());
+        };
+
+        if to.block.number > proof_window.latest.number {
+            return Ok(());
+        }
+
+        if to.block.number <= proof_window.earliest.number {
+            return Err(BaseProofsStorageError::UnwindBeyondEarliest {
+                unwind_block_number: to.block.number,
+                earliest_block_number: proof_window.earliest.number,
+            });
+        }
+
+        // Keep collection and deletion under the same exclusive history gate so another history
+        // rewrite cannot change the proof window or history rows between choosing keys and
+        // committing the batch.
+        let history_to_delete = self.collect_history_ranged(to.block.number..)?;
+        let mut batch = WriteBatch::default();
+        self.delete_history_ranged(&mut batch, history_to_delete)?;
+        self.put_proof_window(
+            &mut batch,
+            ProofWindowKey::LatestBlock,
+            to.block.number.saturating_sub(1),
+            to.parent,
+        )?;
+        self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
+        Ok(())
     }
 
     fn replace_updates(
@@ -1814,10 +1880,10 @@ impl BaseProofsStore for RocksdbProofsStorage {
 
     fn set_earliest_block_number(
         &self,
-        _block_number: u64,
-        _hash: B256,
+        block_number: u64,
+        hash: B256,
     ) -> BaseProofsStorageResult<()> {
-        unimplemented!("block write path not yet implemented")
+        self.set_earliest_block_number_hash(block_number, hash)
     }
 }
 
@@ -2012,11 +2078,11 @@ impl BaseProofsBatchSession for RocksdbBatchSession<'_> {
         Self: 'a;
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        unimplemented!("block write path not yet implemented")
+        self.storage.get_earliest_block_number()
     }
 
     fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        unimplemented!("block write path not yet implemented")
+        self.storage.get_latest_block_number()
     }
 
     fn storage_trie_cursor(
@@ -2051,10 +2117,13 @@ impl BaseProofsBatchSession for RocksdbBatchSession<'_> {
 
     fn store_trie_updates(
         &mut self,
-        _block_ref: BlockWithParent,
-        _block_state_diff: BlockStateDiff,
+        block_ref: BlockWithParent,
+        block_state_diff: BlockStateDiff,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        unimplemented!("block write path not yet implemented")
+        let counts = self.storage.store_trie_updates(block_ref, block_state_diff)?;
+        // Refresh the snapshot so the next block's cursor reads observe this commit.
+        self.snapshot = Arc::new(RocksdbReadSnapshot::new(self.storage.db.as_ref()));
+        Ok(counts)
     }
 }
 
@@ -2064,11 +2133,12 @@ impl BaseProofsBatchStore for RocksdbProofsStorage {
     where
         Self: 'a;
 
-    fn with_batch_session<R, F>(&self, _f: F) -> BaseProofsStorageResult<R>
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
     where
         F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
     {
-        unimplemented!("block write path not yet implemented")
+        let mut session = RocksdbBatchSession::new(self);
+        f(&mut session)
     }
 }
 
