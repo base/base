@@ -81,6 +81,15 @@ tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"
 
 # misc
 serial_test.workspace = true
+criterion = { workspace = true, features = ["html_reports"] }
+
+[[bench]]
+name = "witness_reads"
+harness = false
+
+[[bench]]
+name = "deep_history_reads"
+harness = false
 
 [features]
 serde-bincode-compat = [
