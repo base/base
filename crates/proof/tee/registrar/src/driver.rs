@@ -10,6 +10,7 @@ use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 use alloy_primitives::{Address, hex};
 use futures::stream::StreamExt;
 use rand::random;
+use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
@@ -51,6 +52,8 @@ pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 5100;
 pub struct DriverConfig {
     /// Interval between discovery and registration poll cycles.
     pub poll_interval: Duration,
+    /// Cancellation token for graceful shutdown.
+    pub cancel: CancellationToken,
     /// Signer lifecycle settings.
     ///
     /// The registrar currently uses `signer_manager.max_concurrency` for both
@@ -290,11 +293,11 @@ where
                     // acquire L1 nonces we have no intention of
                     // broadcasting. Skip reconcile (and the orphan
                     // dereg pass) entirely when cancellation is set.
-                    if !self.config.signer_manager.cancel.is_cancelled() {
+                    if !self.config.cancel.is_cancelled() {
                         self.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
                     }
 
-                    if resolution.ok_to_dereg && !self.config.signer_manager.cancel.is_cancelled() {
+                    if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
                         // Pending proof tasks can register while orphan cleanup
                         // is running, so protect those signers too.
                         let protected = proof_tasks.protected_signers(&resolution);
@@ -322,7 +325,7 @@ where
 
             tokio::select! {
                 biased;
-                () = self.config.signer_manager.cancel.cancelled() => {
+                () = self.config.cancel.cancelled() => {
                     info!(
                         pending = proof_tasks.pending_len(),
                         "registration driver received shutdown signal"
@@ -385,12 +388,12 @@ where
     /// spawned tasks instead of blocking the next discovery cycle.
     ///
     /// **Cancellation contract.** This future checks
-    /// `self.config.signer_manager.cancel.is_cancelled()` before starting new side effects.
+    /// `self.config.cancel.is_cancelled()` before starting new side effects.
     /// `check_and_revoke_crls` awaits any `revokeCert` transaction
     /// submissions it triggers, so revocation outcomes are logged before
     /// the resolution future returns.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
-        if self.config.signer_manager.cancel.is_cancelled() {
+        if self.config.cancel.is_cancelled() {
             return Ok(ResolveOutcome {
                 addresses: Vec::new(),
                 attestations: None,
@@ -425,7 +428,7 @@ where
             );
         }
 
-        if self.config.signer_manager.cancel.is_cancelled() {
+        if self.config.cancel.is_cancelled() {
             return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
         }
 
@@ -475,7 +478,7 @@ where
             // would still be discarded; keeping it `None` removes the
             // non-local dependence on that re-check and matches the
             // CRL-revoked branch below.
-            if self.config.signer_manager.cancel.is_cancelled() {
+            if self.config.cancel.is_cancelled() {
                 return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
             }
             // Use `.first()` rather than `[0]` so the non-empty
@@ -636,19 +639,18 @@ where
             }
         }
 
-        let ok_to_dereg = if self.config.signer_manager.cancel.is_cancelled()
-            || !unresolved_instance_ids.is_empty()
-        {
-            false
-        } else if total_count == 0 {
-            true
-        } else {
-            // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
-            // is bounded above by `total_count = instances.len()`, so the
-            // doubling can only overflow on a list with `usize::MAX / 2`
-            // entries, which is physically impossible.
-            reachable_count * 2 > total_count
-        };
+        let ok_to_dereg =
+            if self.config.cancel.is_cancelled() || !unresolved_instance_ids.is_empty() {
+                false
+            } else if total_count == 0 {
+                true
+            } else {
+                // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
+                // is bounded above by `total_count = instances.len()`, so the
+                // doubling can only overflow on a list with `usize::MAX / 2`
+                // entries, which is physically impossible.
+                reachable_count * 2 > total_count
+            };
 
         Ok(DiscoveryResolution {
             registerable,
@@ -1058,6 +1060,7 @@ mod tests {
     fn default_config(cancel: CancellationToken) -> DriverConfig {
         DriverConfig {
             poll_interval: Duration::from_secs(1),
+            cancel: cancel.clone(),
             signer_manager: SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
                 cancel,

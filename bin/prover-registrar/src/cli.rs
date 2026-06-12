@@ -687,6 +687,7 @@ impl Cli {
         let signer_client = ProverClient::new(config.prover_timeout);
         let driver_config = DriverConfig {
             poll_interval: config.poll_interval,
+            cancel: cancel.clone(),
             signer_manager: SignerManagerConfig {
                 registry_address: config.tee_prover_registry_address,
                 cancel: cancel.clone(),
