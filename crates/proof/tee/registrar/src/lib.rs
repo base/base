@@ -51,7 +51,9 @@ mod registry;
 pub use registry::{RegistryClient, RegistryContractClient};
 
 mod signer_manager;
-pub use signer_manager::{PendingRegistration, SignerManager, SignerManagerConfig};
+pub use signer_manager::{
+    PendingRegistration, ProofTaskOutcome, ProofTaskSet, SignerManager, SignerManagerConfig,
+};
 
 mod traits;
 pub use traits::{InstanceDiscovery, SignerClient};

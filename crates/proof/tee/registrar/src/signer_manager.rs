@@ -15,7 +15,7 @@ use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use tokio::{
     sync::Semaphore,
-    task::{self, JoinSet},
+    task::{self, JoinError, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -56,6 +56,17 @@ pub struct PendingRegistration {
     pub cancelled_by_reconcile: bool,
 }
 
+/// Terminal outcome returned by a spawned signer proof task.
+#[derive(Debug)]
+pub struct ProofTaskOutcome {
+    /// Signer address the task attempted to register.
+    pub signer: Address,
+    /// Source prover instance ID used for diagnostic logs.
+    pub instance_id: String,
+    /// Result of the signer registration attempt.
+    pub result: Result<()>,
+}
+
 /// Coordinates signer registration and orphan signer deregistration.
 pub struct SignerManager<P, R, T> {
     proof_provider: P,
@@ -91,6 +102,27 @@ impl<P, R, T> SignerManager<P, R, T> {
         &self.tx_manager
     }
 
+    /// Returns the `TEEProverRegistry` contract address on L1.
+    pub const fn registry_address(&self) -> Address {
+        self.config.registry_address
+    }
+
+    /// Returns the cancellation token shared by signer lifecycle work.
+    pub const fn cancel(&self) -> &CancellationToken {
+        &self.config.cancel
+    }
+
+    /// Returns the configured maximum signer lifecycle concurrency.
+    pub const fn max_concurrency(&self) -> usize {
+        self.config.max_concurrency
+    }
+}
+
+/// Stateless helpers for the driver's in-flight proof task set.
+#[derive(Debug)]
+pub struct ProofTaskSet;
+
+impl ProofTaskSet {
     /// Builds the protected-signer set for orphan deregistration.
     ///
     /// Includes both fetched prover signers and pending proof tasks so a signer
@@ -106,7 +138,7 @@ impl<P, R, T> SignerManager<P, R, T> {
 
     /// Drains every task that has already finished from `tasks`.
     pub fn reap_finished_tasks(
-        tasks: &mut JoinSet<Result<Address>>,
+        tasks: &mut JoinSet<ProofTaskOutcome>,
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
         while let Some(joined) = tasks.try_join_next_with_id() {
@@ -116,9 +148,17 @@ impl<P, R, T> SignerManager<P, R, T> {
 
     /// Consumes one `JoinSet` outcome and updates `pending` plus metrics.
     pub fn apply_join_outcome(
-        joined: std::result::Result<(task::Id, Result<Address>), tokio::task::JoinError>,
+        joined: std::result::Result<(task::Id, ProofTaskOutcome), JoinError>,
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
+        let remove_current_task = |pending: &mut HashMap<Address, PendingRegistration>,
+                                   signer: Address,
+                                   task_id: task::Id| {
+            match pending.get(&signer) {
+                Some(entry) if entry.task_id == task_id => pending.remove(&signer),
+                _ => None,
+            }
+        };
         let remove_by_task_id = |pending: &mut HashMap<Address, PendingRegistration>,
                                  task_id: task::Id| {
             pending
@@ -129,32 +169,32 @@ impl<P, R, T> SignerManager<P, R, T> {
 
         RegistrarMetrics::proof_tasks_completed().increment(1);
         match joined {
-            Ok((id, Ok(signer))) => {
-                let removed = match pending.get(&signer) {
-                    Some(entry) if entry.task_id == id => pending.remove(&signer),
-                    _ => None,
-                };
-                debug!(
-                    task_id = ?id,
-                    signer = %signer,
-                    instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
-                    superseded = removed.is_none(),
-                    "proof task completed",
-                );
-            }
-            Ok((id, Err(e))) => {
-                let removed = remove_by_task_id(pending, id);
-                let signer = removed.as_ref().map(|(signer, _)| *signer);
-                warn!(
-                    task_id = ?id,
-                    error = %e,
-                    signer = ?signer,
-                    instance = ?removed.as_ref().map(|(_, t)| t.instance_id.as_str()),
-                    pending_entry_found = removed.is_some(),
-                    "proof task failed"
-                );
-                RegistrarMetrics::processing_errors_total().increment(1);
-            }
+            Ok((id, outcome)) => match outcome.result {
+                Ok(()) => {
+                    let removed = remove_current_task(pending, outcome.signer, id);
+                    debug!(
+                        task_id = ?id,
+                        signer = %outcome.signer,
+                        instance = %outcome.instance_id,
+                        pending_entry_found = removed.is_some(),
+                        superseded = removed.is_none(),
+                        "proof task completed",
+                    );
+                }
+                Err(e) => {
+                    let removed = remove_current_task(pending, outcome.signer, id);
+                    warn!(
+                        task_id = ?id,
+                        error = %e,
+                        signer = %outcome.signer,
+                        instance = %outcome.instance_id,
+                        pending_entry_found = removed.is_some(),
+                        superseded = removed.is_none(),
+                        "proof task failed"
+                    );
+                    RegistrarMetrics::processing_errors_total().increment(1);
+                }
+            },
             Err(join_err) => {
                 let id = join_err.id();
                 let removed = remove_by_task_id(pending, id);
@@ -174,7 +214,7 @@ impl<P, R, T> SignerManager<P, R, T> {
 
     /// Cancels every pending task cooperatively and awaits natural completion.
     pub async fn drain_proof_tasks(
-        tasks: &mut JoinSet<Result<Address>>,
+        tasks: &mut JoinSet<ProofTaskOutcome>,
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
         for task in pending.values() {
@@ -200,7 +240,7 @@ where
     pub fn reconcile_proof_tasks(
         self: &Arc<Self>,
         resolution: &DiscoveryResolution,
-        tasks: &mut JoinSet<Result<Address>>,
+        tasks: &mut JoinSet<ProofTaskOutcome>,
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
         let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
@@ -241,15 +281,18 @@ where
             let manager = Arc::clone(self);
             let instance_owned = entry.instance.clone();
             let instance_id = instance_owned.instance_id.clone();
+            let outcome_instance_id = instance_id.clone();
             let attestation = entry.attestation.clone();
             let task_cancel = signer_cancel.clone();
             let signer = entry.signer;
             let enclave_index = entry.enclave_index;
 
             let handle = tasks.spawn(async move {
-                manager
+                let result = manager
                     .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
                     .await
+                    .map(|_| ());
+                ProofTaskOutcome { signer, instance_id: outcome_instance_id, result }
             });
             pending.insert(
                 signer,
