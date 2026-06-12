@@ -5864,6 +5864,7 @@ dependencies = [
  "async-trait",
  "base-prover-service-client",
  "base-prover-service-protocol",
+ "base-retry",
  "chrono",
  "thiserror 2.0.18",
  "tokio",
