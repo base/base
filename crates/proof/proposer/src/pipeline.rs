@@ -324,11 +324,6 @@ where
         let exit = tokio::select! {
             biased;
             () = self.cancel.cancelled() => PipelineSessionExit::Cancelled,
-            reason = restart_rx.recv() => {
-                let reason = reason.unwrap_or_else(|| "collector restart channel closed".to_owned());
-                warn!(reason = %reason, "Restarting pipeline session");
-                PipelineSessionExit::Restart
-            }
             result = &mut dispatcher => {
                 dispatcher_done = true;
                 handle_task_result(TaskKind::Dispatcher, result);
@@ -337,6 +332,11 @@ where
             result = &mut collector => {
                 collector_done = true;
                 handle_task_result(TaskKind::Collector, result);
+                PipelineSessionExit::Restart
+            }
+            reason = restart_rx.recv() => {
+                let reason = reason.unwrap_or_else(|| "collector restart channel closed".to_owned());
+                warn!(reason = %reason, "Restarting pipeline session");
                 PipelineSessionExit::Restart
             }
         };
