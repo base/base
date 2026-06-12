@@ -11,7 +11,7 @@ use base_proof_rpc::{RollupProvider, RpcError};
 use futures::{StreamExt, stream};
 use tracing::{debug, info, warn};
 
-use crate::{driver::RecoveredState, error::ProposerError};
+use crate::{driver::RecoveredState, error::ProposerError, proposal_intervals::ProposalIntervals};
 
 /// Runtime settings for proposer recovery.
 #[derive(Debug, Clone, Copy)]
@@ -28,37 +28,6 @@ pub struct ProofRecoveryConfig {
     pub anchor_state_registry_address: Address,
     /// Maximum number of concurrent rollup RPC calls during root fetching.
     pub scan_concurrency: usize,
-}
-
-impl ProofRecoveryConfig {
-    /// Returns intermediate block numbers for the next proposal target.
-    fn intermediate_block_numbers(
-        &self,
-        starting_block_number: u64,
-    ) -> std::result::Result<Vec<u64>, ProposerError> {
-        let interval = self.intermediate_block_interval;
-        if interval == 0 {
-            return Err(ProposerError::Config(
-                "intermediate_block_interval must not be zero".into(),
-            ));
-        }
-        let count = self.block_interval / interval;
-        (1..=count)
-            .map(|i| {
-                starting_block_number
-                    .checked_add(i.checked_mul(interval).ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })?)
-                    .ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })
-            })
-            .collect()
-    }
 }
 
 /// Cached result from the last successful recovery walk.
@@ -304,7 +273,11 @@ where
         while let Some(expected_block) = parent_block.checked_add(block_interval) {
             // Fetch all intermediate roots, including the canonical root for
             // `expected_block`, from the rollup node in one batch.
-            let intermediate_blocks = self.config.intermediate_block_numbers(parent_block)?;
+            let intermediate_blocks = ProposalIntervals::intermediate_block_numbers(
+                self.config.block_interval,
+                self.config.intermediate_block_interval,
+                parent_block,
+            )?;
             let intermediate_roots =
                 match self.fetch_canonical_roots(intermediate_blocks.clone()).await {
                     Ok(roots) => roots,
