@@ -141,6 +141,14 @@ impl UpgradeActivationOverrides {
 }
 
 /// Process-local runtime upgrade activation registry.
+///
+/// The runtime upgrade signal treats the L1 contract as the authoritative source for these
+/// overrides, so schedule application may replace the entire override set for a chain rather than
+/// merging with previously stored entries.
+///
+/// This registry uses `spin::RwLock`, which cannot be locked again by the same thread. Do not
+/// keep a read or write guard alive while calling another [`RuntimeUpgradeRegistry`] method, or
+/// the thread will wait on its own lock forever.
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeUpgradeRegistry;
 
