@@ -235,9 +235,9 @@ impl OPSuccinctDataFetcher {
         let block_data = stream::iter(start + 1..=end)
             .map(|block_number| async move {
                 let block =
-                    self.l2_provider.get_block_by_number(block_number.into()).await?.unwrap();
+                    self.l2_provider.get_block_by_number(block_number.into()).await?.ok_or_else(|| anyhow::anyhow!("block {block_number} not found on L2 RPC"))?;
                 let receipts =
-                    self.l2_provider.get_block_receipts(block_number.into()).await?.unwrap();
+                    self.l2_provider.get_block_receipts(block_number.into()).await?.ok_or_else(|| anyhow::anyhow!("receipts for block {block_number} not found on L2 RPC"))?;
                 let total_l1_fees: u128 =
                     receipts.iter().map(|tx| tx.l1_block_info.l1_fee.unwrap_or(0)).sum();
                 let total_tx_fees: u128 = receipts
@@ -762,7 +762,7 @@ impl OPSuccinctDataFetcher {
         let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
         // Get L2 claim data.
-        let l2_claim_block = l2_provider.get_block_by_number(l2_end_block.into()).await?.unwrap();
+        let l2_claim_block = l2_provider.get_block_by_number(l2_end_block.into()).await?.ok_or_else(|| anyhow::anyhow!("block {l2_end_block} not found on L2 RPC"))?;
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash;
         let l2_claim_storage_hash = l2_provider
