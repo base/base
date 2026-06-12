@@ -652,9 +652,6 @@ where
                     if outcome.unresolved {
                         unresolved_instance_ids.insert(instance.instance_id.clone());
                     }
-                    // Record signer -> instance attribution before `instance`
-                    // is moved into `RegisterableSigner` below.
-                    self.signer_manager.record_signers(&outcome.addresses, &instance.instance_id);
                     if let Some(attestations) = outcome.attestations {
                         // `resolve_instance` already enforced the pairing
                         // invariants (non-empty addresses,

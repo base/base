@@ -63,7 +63,6 @@ pub struct SignerManager<P, R, T> {
     tx_manager: T,
     proof_semaphore: Semaphore,
     in_flight_registrations: Mutex<HashSet<Address>>,
-    signer_history: Mutex<HashMap<Address, String>>,
     config: SignerManagerConfig,
 }
 
@@ -83,7 +82,6 @@ impl<P, R, T> SignerManager<P, R, T> {
             tx_manager,
             proof_semaphore,
             in_flight_registrations: Mutex::new(HashSet::new()),
-            signer_history: Mutex::new(HashMap::new()),
             config,
         }
     }
@@ -91,14 +89,6 @@ impl<P, R, T> SignerManager<P, R, T> {
     /// Returns the transaction manager used by signer lifecycle operations.
     pub const fn tx_manager(&self) -> &T {
         &self.tx_manager
-    }
-
-    /// Records last-known instance attribution for signer addresses.
-    pub fn record_signers(&self, addresses: &[Address], instance_id: &str) {
-        let mut history = self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
-        for addr in addresses {
-            history.insert(*addr, instance_id.to_string());
-        }
     }
 
     /// Builds the protected-signer set for orphan deregistration.
@@ -320,7 +310,6 @@ where
             self.config.registry_address,
             &self.registry,
             &self.tx_manager,
-            &self.signer_history,
         );
 
         deregistration_manager.run_orphan_dereg(protected_signers, &self.config.cancel).await
