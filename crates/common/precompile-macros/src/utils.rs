@@ -413,4 +413,28 @@ mod tests {
         let lit: Lit = parse_quote!(0x2au64);
         assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(42u64));
     }
+
+    #[test]
+    fn test_parse_slot_value_hex_with_underscores() {
+        let lit: Lit = parse_quote!(0xFF_FF);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(0xFFFFu64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_binary_with_underscores() {
+        let lit: Lit = parse_quote!(0b1010_0101);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(0b10100101u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_decimal_with_underscores() {
+        let lit: Lit = parse_quote!(1_000);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(1000u64));
+    }
+
+    #[test]
+    fn test_parse_slot_value_octal_with_underscores() {
+        let lit: Lit = parse_quote!(0o7_7);
+        assert_eq!(parse_slot_value(&lit).unwrap(), U256::from(0o77u64));
+    }
 }
