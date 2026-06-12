@@ -88,7 +88,7 @@ impl PolicyRegistryStorage<'_> {
     const BUILTIN_POLICY_COUNT: u64 = 2;
     /// Maximum number of accounts per membership batch (`createPolicyWithAccounts`,
     /// `updateAllowlist`, `updateBlocklist`).
-    const MAX_ACCOUNTS_PER_BATCH: usize = 64;
+    pub const MAX_ACCOUNTS_PER_BATCH: usize = 64;
 
     const fn policy_id_type(policy_id: u64) -> u8 {
         (policy_id >> Self::POLICY_ID_TYPE_SHIFT) as u8

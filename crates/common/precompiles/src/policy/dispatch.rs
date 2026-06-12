@@ -1,6 +1,6 @@
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use super::{
@@ -21,7 +21,54 @@ impl PolicyRegistryStorage<'_> {
             .into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), |b| b)
     }
 
+    /// Enforces the account batch size cap before any ABI decode heap allocation.
+    ///
+    /// `createPolicyWithAccounts`, `updateAllowlist`, and `updateBlocklist` all share the
+    /// same calldata layout for their `address[]` parameter:
+    ///
+    /// ```text
+    /// [0..4]   4-byte selector
+    /// [4..36]  param0 (32 bytes)
+    /// [36..68] param1 (32 bytes)
+    /// [68..100] dynamic offset for address[] (32 bytes)
+    /// [100..132] array length (32 bytes, big-endian)
+    /// ```
+    ///
+    /// This method reads the raw 32-byte length word at offset 100 and returns
+    /// `BatchSizeTooLarge` immediately if it exceeds `MAX_ACCOUNTS_PER_BATCH`, before
+    /// the full ABI decode allocates memory for the entire array.
+    fn check_batch_calldata_length(calldata: &[u8]) -> base_precompile_storage::Result<()> {
+        const ARRAY_LEN_OFFSET: usize = 100;
+        const ARRAY_LEN_END: usize = 132;
+
+        let selector: [u8; 4] = match calldata.get(..4) {
+            Some(s) => s.try_into().unwrap(),
+            None => return Ok(()),
+        };
+
+        let is_batch_selector = selector == IPolicyRegistry::createPolicyWithAccountsCall::SELECTOR
+            || selector == IPolicyRegistry::updateAllowlistCall::SELECTOR
+            || selector == IPolicyRegistry::updateBlocklistCall::SELECTOR;
+
+        if !is_batch_selector {
+            return Ok(());
+        }
+
+        let Some(len_word) = calldata.get(ARRAY_LEN_OFFSET..ARRAY_LEN_END) else {
+            return Ok(());
+        };
+
+        if U256::from_be_slice(len_word) > U256::from(Self::MAX_ACCOUNTS_PER_BATCH) {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
+                maxBatchSize: U256::from(Self::MAX_ACCOUNTS_PER_BATCH),
+            }));
+        }
+
+        Ok(())
+    }
+
     fn inner(&mut self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
+        Self::check_batch_calldata_length(calldata)?;
         match decode_precompile_call!(calldata, IPolicyRegistry::IPolicyRegistryCalls) {
             C::createPolicy(call) => {
                 let id = self.create_policy(call.admin, call.policyType)?;
@@ -342,5 +389,68 @@ mod tests {
         let pending =
             IPolicyRegistry::pendingPolicyAdminCall::abi_decode_returns(&out.bytes).unwrap();
         assert_eq!(pending, Address::ZERO);
+    }
+
+    /// Verifies that `check_batch_calldata_length` rejects an oversized array length word
+    /// before the full ABI decode allocates any heap memory for the accounts slice.
+    ///
+    /// The calldata is crafted to be exactly 132 bytes (selector + 3 head words + length word)
+    /// with the length word set to `MAX_ACCOUNTS_PER_BATCH + 1` but no actual account data
+    /// following it, so a successful decode would be impossible anyway. The check must fire
+    /// first to confirm the early-rejection path.
+    #[test]
+    fn dispatch_batch_selectors_reject_oversized_length_before_decode() {
+        let oversized_len = PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH as u8 + 1;
+
+        let batch_selectors = [
+            IPolicyRegistry::createPolicyWithAccountsCall::SELECTOR,
+            IPolicyRegistry::updateAllowlistCall::SELECTOR,
+            IPolicyRegistry::updateBlocklistCall::SELECTOR,
+        ];
+
+        for selector in batch_selectors {
+            let mut storage = HashMapStorageProvider::new(1);
+            activate_policy_registry(&mut storage);
+
+            // Layout: selector(4) | param0(32) | param1(32) | dynamic-offset=0x60(32) | len(32)
+            let mut calldata = alloc::vec![0u8; 132];
+            calldata[..4].copy_from_slice(&selector);
+            // bytes [68..100]: dynamic offset = 96 (0x60)
+            calldata[99] = 0x60;
+            // bytes [100..132]: array length = MAX_ACCOUNTS_PER_BATCH + 1
+            calldata[131] = oversized_len;
+
+            let out = StorageCtx::enter(&mut storage, |ctx| {
+                PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+            })
+            .unwrap();
+            assert!(out.is_revert(), "expected revert for oversized batch selector {selector:?}");
+        }
+    }
+
+    #[test]
+    fn dispatch_batch_selectors_accept_max_batch_size() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        let id = create_allowlist_policy(&mut storage);
+
+        storage.set_caller(ADMIN);
+        let accounts: alloc::vec::Vec<Address> = (0..PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH)
+            .map(|i| {
+                Address::from_word(alloy_primitives::B256::from(alloy_primitives::U256::from(
+                    i as u64 + 1,
+                )))
+            })
+            .collect();
+
+        let calldata =
+            IPolicyRegistry::updateAllowlistCall { policyId: id, allowed: true, accounts }
+                .abi_encode();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .unwrap();
+        assert!(!out.is_revert(), "max batch size should succeed");
     }
 }
