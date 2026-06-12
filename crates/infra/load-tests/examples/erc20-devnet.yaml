@@ -22,7 +22,7 @@ txpool_nodes:
 
 
 # Builder flashblocks broadcast WebSocket endpoint
-flashblocks_ws: "ws://internal-zeronet-api-protocols-rollup-boo-93463458.us-east-1.elb.amazonaws.com/ws"
+flashblocks_ws: "ws://<fb-ws-url>/ws"
 
 # Number of sender accounts
 sender_count: 100
