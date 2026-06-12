@@ -5,26 +5,19 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned onchain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, hex};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use rand::random;
-use tokio::task::JoinSet;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
-    PendingRegistration, ProofTaskOutcome, ProofTaskSet, ProverClient, ProverInstance,
-    RegistrarError, RegistrarMetrics, RegistryClient, Result, SignerClient, SignerManager,
-    SignerManagerConfig,
+    ProofTaskSet, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient,
+    Result, SignerClient, SignerManager, SignerManagerConfig,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -263,7 +256,7 @@ where
     ///    run a single deregistration pass over signers no longer backed
     ///    by an active instance (`run_orphan_dereg`). The protected set
     ///    is the union of `resolution.active_signers` and the keys of
-    ///    `pending` (see [`Self::protected_signers`]) so a signer
+    ///    `pending` (see [`ProofTaskSet::protected_signers`]) so a signer
     ///    registered mid-cycle by a preserved task — whose source
     ///    instance failed `resolve_instance` transiently — cannot be
     ///    deregistered in the same pass.
@@ -293,26 +286,25 @@ where
     ///
     /// Takes `self: Arc<Self>` directly because each spawned proof task
     /// owns an `Arc<Self>` clone so the cycle loop can continue to mutate
-    /// `pending` and `tasks` while proofs run for tens of minutes. Tests
+    /// `proof_tasks` while proofs run for tens of minutes. Tests
     /// that need to inspect driver state from outside the task can call
     /// this method directly with their own `Arc` clone; production code
     /// uses [`Self::run`].
     pub async fn run_arc(self: Arc<Self>) -> Result<()> {
         info!(
             poll_interval = ?self.config.poll_interval,
-            registry = %self.signer_manager.registry_address(),
+            registry = %self.config.signer_manager.registry_address,
             "starting registration driver"
         );
 
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
         loop {
             // Reap before discovery so finished tasks don't linger in
             // `pending` for an entire cycle and (incorrectly) cause
             // reconcile to skip spawning a replacement on transient
             // failure (audit finding #9).
-            ProofTaskSet::reap_finished_tasks(&mut tasks, &mut pending);
+            proof_tasks.reap_finished_tasks();
 
             match self.discover_and_resolve().await {
                 Ok(resolution) => {
@@ -320,24 +312,20 @@ where
                     // (potentially slow) discovery RPCs would otherwise
                     // look in-flight to reconcile and get spuriously
                     // re-cancelled or have its respawn deferred a cycle.
-                    ProofTaskSet::reap_finished_tasks(&mut tasks, &mut pending);
+                    proof_tasks.reap_finished_tasks();
 
                     // Spawning new proof tasks during a shutdown would
                     // acquire L1 nonces we have no intention of
                     // broadcasting. Skip reconcile (and the orphan
                     // dereg pass) entirely when cancellation is set.
-                    if !self.signer_manager.cancel().is_cancelled() {
-                        self.signer_manager.reconcile_proof_tasks(
-                            &resolution,
-                            &mut tasks,
-                            &mut pending,
-                        );
+                    if !self.config.signer_manager.cancel.is_cancelled() {
+                        self.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
                     }
 
-                    if resolution.ok_to_dereg && !self.signer_manager.cancel().is_cancelled() {
+                    if resolution.ok_to_dereg && !self.config.signer_manager.cancel.is_cancelled() {
                         // Pending proof tasks can register while orphan cleanup
                         // is running, so protect those signers too.
-                        let protected = ProofTaskSet::protected_signers(&resolution, &pending);
+                        let protected = proof_tasks.protected_signers(&resolution);
                         if let Err(e) = self.signer_manager.run_orphan_dereg(&protected).await {
                             warn!(error = %e, "orphan deregistration pass failed");
                             RegistrarMetrics::processing_errors_total().increment(1);
@@ -358,13 +346,13 @@ where
 
             // Publish gauge once per cycle, after every path that could
             // mutate `pending` (reconcile, reap) has run.
-            RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
+            RegistrarMetrics::proof_tasks_pending().set(proof_tasks.pending_len() as f64);
 
             tokio::select! {
                 biased;
-                () = self.signer_manager.cancel().cancelled() => {
+                () = self.config.signer_manager.cancel.cancelled() => {
                     info!(
-                        pending = pending.len(),
+                        pending = proof_tasks.pending_len(),
                         "registration driver received shutdown signal"
                     );
                     break;
@@ -373,7 +361,7 @@ where
             }
         }
 
-        ProofTaskSet::drain_proof_tasks(&mut tasks, &mut pending).await;
+        proof_tasks.drain_proof_tasks().await;
 
         info!("registration driver stopped");
         Ok(())
@@ -425,12 +413,12 @@ where
     /// spawned tasks instead of blocking the next discovery cycle.
     ///
     /// **Cancellation contract.** This future checks
-    /// `self.signer_manager.cancel().is_cancelled()` before starting new side effects.
+    /// `self.config.signer_manager.cancel.is_cancelled()` before starting new side effects.
     /// `check_and_revoke_crls` awaits any `revokeCert` transaction
     /// submissions it triggers, so revocation outcomes are logged before
     /// the resolution future returns.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
-        if self.signer_manager.cancel().is_cancelled() {
+        if self.config.signer_manager.cancel.is_cancelled() {
             return Ok(ResolveOutcome {
                 addresses: Vec::new(),
                 attestations: None,
@@ -465,7 +453,7 @@ where
             );
         }
 
-        if self.signer_manager.cancel().is_cancelled() {
+        if self.config.signer_manager.cancel.is_cancelled() {
             return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
         }
 
@@ -515,7 +503,7 @@ where
             // would still be discarded; keeping it `None` removes the
             // non-local dependence on that re-check and matches the
             // CRL-revoked branch below.
-            if self.signer_manager.cancel().is_cancelled() {
+            if self.config.signer_manager.cancel.is_cancelled() {
                 return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
             }
             // Use `.first()` rather than `[0]` so the non-empty
@@ -606,7 +594,7 @@ where
         let mut registerable: Vec<RegisterableSigner> = Vec::new();
         let mut unresolved_instance_ids: HashSet<String> = HashSet::new();
 
-        let concurrency = self.signer_manager.max_concurrency().max(1);
+        let concurrency = self.config.signer_manager.max_concurrency.max(1);
         let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
             let driver = Arc::clone(self);
             let span = info_span!(
@@ -677,18 +665,19 @@ where
             }
         }
 
-        let ok_to_dereg =
-            if self.signer_manager.cancel().is_cancelled() || !unresolved_instance_ids.is_empty() {
-                false
-            } else if total_count == 0 {
-                true
-            } else {
-                // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
-                // is bounded above by `total_count = instances.len()`, so the
-                // doubling can only overflow on a list with `usize::MAX / 2`
-                // entries, which is physically impossible.
-                reachable_count * 2 > total_count
-            };
+        let ok_to_dereg = if self.config.signer_manager.cancel.is_cancelled()
+            || !unresolved_instance_ids.is_empty()
+        {
+            false
+        } else if total_count == 0 {
+            true
+        } else {
+            // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
+            // is bounded above by `total_count = instances.len()`, so the
+            // doubling can only overflow on a list with `usize::MAX / 2`
+            // entries, which is physically impossible.
+            reachable_count * 2 > total_count
+        };
 
         Ok(DiscoveryResolution {
             registerable,
@@ -728,7 +717,10 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{InstanceHealthStatus, RegistryClient, Result, SignerClient};
+    use crate::{
+        InstanceHealthStatus, PendingRegistration, ProofTaskOutcome, RegistryClient, Result,
+        SignerClient,
+    };
 
     // ── Shared constants ────────────────────────────────────────────────
 
@@ -1457,16 +1449,14 @@ mod tests {
     /// backstop and drains the `JoinSet` so test teardown doesn't leak
     /// futures that are forever parked on their tokens. Mirrors the
     /// production shutdown sequence in [`RegistrationDriver::run`].
-    async fn drain_test_tasks(
-        tasks: &mut JoinSet<ProofTaskOutcome>,
-        pending: &mut HashMap<Address, PendingRegistration>,
-    ) {
-        for task in pending.values() {
+    async fn drain_test_tasks(proof_tasks: &mut ProofTaskSet) {
+        for task in proof_tasks.pending().values() {
             task.cancel.cancel();
         }
+        let tasks = proof_tasks.tasks_mut();
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
-        pending.clear();
+        proof_tasks.pending_mut().clear();
     }
 
     /// Polling fixed point used by the reap-loop helper below — small
@@ -1480,16 +1470,13 @@ mod tests {
     /// cycle, so unit tests that drive it directly need to give the
     /// runtime time to schedule the spawned task that they are waiting
     /// to observe complete.
-    async fn reap_until_pending_empty(
-        tasks: &mut JoinSet<ProofTaskOutcome>,
-        pending: &mut HashMap<Address, PendingRegistration>,
-    ) {
+    async fn reap_until_pending_empty(proof_tasks: &mut ProofTaskSet) {
         let started = std::time::Instant::now();
-        while !pending.is_empty() {
+        while !proof_tasks.is_pending_empty() {
             if started.elapsed() > GATED_WAIT_TIMEOUT {
-                panic!("timed out reaping {} pending task(s)", pending.len());
+                panic!("timed out reaping {} pending task(s)", proof_tasks.pending_len());
             }
-            ProofTaskSet::reap_finished_tasks(tasks, pending);
+            proof_tasks.reap_finished_tasks();
             tokio::time::sleep(REAP_POLL_INTERVAL).await;
         }
     }
@@ -2456,8 +2443,7 @@ mod tests {
         #[case] expected_cancels: usize,
     ) {
         let harness = single_healthy_harness();
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
         // Seed the pending map by spawning placeholder tasks for the
         // pre-existing signers. These futures park on their per-task
@@ -2467,11 +2453,11 @@ mod tests {
             let signer = ProverClient::derive_address(&public_key_from_private(key)).unwrap();
             let task_cancel = CancellationToken::new();
             let task_cancel_inner = task_cancel.clone();
-            let handle = tasks.spawn(async move {
+            let handle = proof_tasks.tasks_mut().spawn(async move {
                 task_cancel_inner.cancelled().await;
                 proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
             });
-            pending.insert(
+            proof_tasks.pending_mut().insert(
                 signer,
                 PendingRegistration {
                     instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -2484,18 +2470,18 @@ mod tests {
         }
 
         let resolution = dr_from_kept(kept);
-        let pre_spawn_count = pending.len();
+        let pre_spawn_count = proof_tasks.pending_len();
         let pre_cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
 
-        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
 
         let post_cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
-        let new_spawns = pending.len().saturating_sub(pre_spawn_count);
+        let new_spawns = proof_tasks.pending_len().saturating_sub(pre_spawn_count);
 
         assert_eq!(new_spawns, expected_new_spawns, "spawn-pass count");
         assert_eq!(post_cancelled - pre_cancelled, expected_cancels, "cancel-pass count");
 
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
     }
 
     #[tokio::test]
@@ -2503,25 +2489,24 @@ mod tests {
         // Running reconcile twice with the same resolution must not
         // spawn duplicate tasks or cancel an already-pending one.
         let harness = single_healthy_harness();
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
         let resolution = dr_from_kept(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
 
-        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
-        let after_first = pending.len();
-        let snapshot_ids: HashSet<_> = pending.keys().copied().collect();
+        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
+        let after_first = proof_tasks.pending_len();
+        let snapshot_ids: HashSet<_> = proof_tasks.pending().keys().copied().collect();
 
-        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
 
-        assert_eq!(pending.len(), after_first, "idempotent: no extra spawns");
-        let after_second: HashSet<_> = pending.keys().copied().collect();
+        assert_eq!(proof_tasks.pending_len(), after_first, "idempotent: no extra spawns");
+        let after_second: HashSet<_> = proof_tasks.pending().keys().copied().collect();
         assert_eq!(snapshot_ids, after_second, "pending signer keys unchanged across reconciles");
-        for task in pending.values() {
+        for task in proof_tasks.pending().values() {
             assert!(!task.cancel.is_cancelled(), "kept task must not be cancelled");
         }
 
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
     }
 
     /// Vanish-then-reappear: a signer cancelled in cycle N (because it
@@ -2542,8 +2527,7 @@ mod tests {
     #[tokio::test]
     async fn reconcile_proof_tasks_respawns_after_vanish_and_reappear() {
         let harness = single_healthy_harness();
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
         let signer =
             ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
@@ -2553,12 +2537,12 @@ mod tests {
         // cancellation is observable without the task self-resolving.
         let stale_cancel = CancellationToken::new();
         let stale_cancel_inner = stale_cancel.clone();
-        let stale_handle = tasks.spawn(async move {
+        let stale_handle = proof_tasks.tasks_mut().spawn(async move {
             stale_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
         });
         let stale_task_id = stale_handle.id();
-        pending.insert(
+        proof_tasks.pending_mut().insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -2572,14 +2556,18 @@ mod tests {
         // but does not reap, so the (now cancelled) entry persists in
         // `pending` keyed by `signer`.
         let empty = dr_from_kept(&[]);
-        harness.driver.signer_manager.reconcile_proof_tasks(&empty, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&empty, &mut proof_tasks);
         assert!(stale_cancel.is_cancelled(), "stale task must be cancelled by reconcile");
         assert_eq!(
-            pending.get(&signer).map(|p| p.task_id),
+            proof_tasks.pending().get(&signer).map(|p| p.task_id),
             Some(stale_task_id),
             "cancelled entry still keyed by signer until reaped",
         );
-        assert_eq!(pending.len(), 1, "no fresh spawn yet (signer not registerable this cycle)");
+        assert_eq!(
+            proof_tasks.pending_len(),
+            1,
+            "no fresh spawn yet (signer not registerable this cycle)"
+        );
 
         // Cycle N+2 (BEFORE the stale entry is reaped): signer reappears
         // → fresh spawn must happen this cycle, not deferred to N+3. The
@@ -2587,14 +2575,21 @@ mod tests {
         // the stale task lives on in the JoinSet (parked on its cancel
         // until drain).
         let resurrected = dr_from_kept(&[(EP1, &HARDHAT_KEY_0)]);
-        harness.driver.signer_manager.reconcile_proof_tasks(&resurrected, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&resurrected, &mut proof_tasks);
 
-        assert_eq!(pending.len(), 1, "still exactly one entry per signer after respawn");
-        let fresh = pending.get(&signer).expect("fresh entry keyed by the resurrected signer");
+        assert_eq!(
+            proof_tasks.pending_len(),
+            1,
+            "still exactly one entry per signer after respawn"
+        );
+        let fresh = proof_tasks
+            .pending()
+            .get(&signer)
+            .expect("fresh entry keyed by the resurrected signer");
         assert_ne!(fresh.task_id, stale_task_id, "fresh task_id replaces the stale one");
         assert!(!fresh.cancel.is_cancelled(), "fresh task carries a live cancel token");
 
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
     }
 
     /// Inconclusive-snapshot guard: when a signer's source instance
@@ -2609,8 +2604,7 @@ mod tests {
     #[tokio::test]
     async fn reconcile_proof_tasks_preserves_task_when_instance_fails_to_resolve() {
         let harness = single_healthy_harness();
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
         let signer =
             ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
@@ -2619,11 +2613,11 @@ mod tests {
         // with the instance_id we'll later mark as unresolved.
         let task_cancel = CancellationToken::new();
         let task_cancel_inner = task_cancel.clone();
-        let handle = tasks.spawn(async move {
+        let handle = proof_tasks.tasks_mut().spawn(async move {
             task_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
         });
-        pending.insert(
+        proof_tasks.pending_mut().insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -2647,13 +2641,13 @@ mod tests {
             unresolved_instance_ids: unresolved,
         };
 
-        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
 
         assert!(
             !task_cancel.is_cancelled(),
             "task tied to an unresolved instance must be preserved across the cancel-pass",
         );
-        assert_eq!(pending.len(), 1, "no spurious spawn or eviction this cycle");
+        assert_eq!(proof_tasks.pending_len(), 1, "no spurious spawn or eviction this cycle");
 
         // Sanity contrast: same setup, but the instance is NOT
         // unresolved → cancel-pass MUST fire. Asserts the previous
@@ -2666,17 +2660,16 @@ mod tests {
             ok_to_dereg: true,
             unresolved_instance_ids: HashSet::new(),
         };
-        harness.driver.signer_manager.reconcile_proof_tasks(
-            &resolution_conclusive,
-            &mut tasks,
-            &mut pending,
-        );
+        harness
+            .driver
+            .signer_manager
+            .reconcile_proof_tasks(&resolution_conclusive, &mut proof_tasks);
         assert!(
             task_cancel.is_cancelled(),
             "with no inconclusive guard, the cancel-pass MUST fire on the same setup",
         );
 
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
     }
 
     /// Orphan-dereg companion to
@@ -2711,15 +2704,14 @@ mod tests {
         // alone is what `protected_signers` consumes; the placeholder
         // task is just there so cleanup runs through the same path the
         // production loop does.
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
         let task_cancel = CancellationToken::new();
         let task_cancel_inner = task_cancel.clone();
-        let handle = tasks.spawn(async move {
+        let handle = proof_tasks.tasks_mut().spawn(async move {
             task_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
         });
-        pending.insert(
+        proof_tasks.pending_mut().insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -2743,7 +2735,7 @@ mod tests {
             unresolved_instance_ids: unresolved,
         };
 
-        let protected = ProofTaskSet::protected_signers(&resolution, &pending);
+        let protected = proof_tasks.protected_signers(&resolution);
         assert!(
             protected.contains(&signer),
             "protected set must include in-flight signer even when absent from active_signers",
@@ -2758,7 +2750,7 @@ mod tests {
             "orphan pass must NOT deregister a signer with an in-flight proof task",
         );
 
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
     }
 
     /// Sanity contrast for
@@ -2776,7 +2768,7 @@ mod tests {
             MockRegistry::with_signers(vec![signer]),
         );
 
-        let pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let proof_tasks = ProofTaskSet::new();
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::new(),
@@ -2786,7 +2778,7 @@ mod tests {
             unresolved_instance_ids: HashSet::new(),
         };
 
-        let protected = ProofTaskSet::protected_signers(&resolution, &pending);
+        let protected = proof_tasks.protected_signers(&resolution);
         assert!(protected.is_empty(), "no pending → protected set is empty");
 
         harness.driver.signer_manager.run_orphan_dereg(&protected).await.unwrap();
@@ -2832,8 +2824,7 @@ mod tests {
 
             metrics::with_local_recorder(&recorder, || {
                 rt.block_on(async {
-                    let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-                    let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+                    let mut proof_tasks = ProofTaskSet::new();
 
                     // Seed: (key, was_flagged_by_reconcile). The flagged
                     // task must NOT re-count at drain; the two unflagged
@@ -2846,11 +2837,11 @@ mod tests {
                             ProverClient::derive_address(&public_key_from_private(key)).unwrap();
                         let cancel = CancellationToken::new();
                         let cancel_inner = cancel.clone();
-                        let handle = tasks.spawn(async move {
+                        let handle = proof_tasks.tasks_mut().spawn(async move {
                             cancel_inner.cancelled().await;
                             proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
                         });
-                        pending.insert(
+                        proof_tasks.pending_mut().insert(
                             signer,
                             PendingRegistration {
                                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -2868,7 +2859,7 @@ mod tests {
                         }
                     }
 
-                    ProofTaskSet::drain_proof_tasks(&mut tasks, &mut pending).await;
+                    proof_tasks.drain_proof_tasks().await;
                 });
             });
 
@@ -2956,13 +2947,16 @@ mod tests {
             unresolved_instance_ids: HashSet::new(),
         };
 
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
-        driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
 
-        assert_eq!(pending.len(), 1, "exactly one task should spawn for a duplicate signer");
-        let (&only_signer, _entry) = pending.iter().next().unwrap();
+        assert_eq!(
+            proof_tasks.pending_len(),
+            1,
+            "exactly one task should spawn for a duplicate signer"
+        );
+        let (&only_signer, _entry) = proof_tasks.pending().iter().next().unwrap();
         assert_eq!(only_signer, signer, "the spawned task is keyed by the deduplicated signer");
 
         // Let the single task run, record its attestation, and exit.
@@ -2970,7 +2964,7 @@ mod tests {
             !proof_provider.snapshot().is_empty()
         })
         .await;
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
 
         let snap = proof_provider.snapshot();
         assert_eq!(snap.len(), 1, "exactly one signer recorded across both entries");
@@ -3027,16 +3021,15 @@ mod tests {
             unresolved_instance_ids: HashSet::new(),
         };
 
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
-        driver.signer_manager.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+        driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
 
         wait_for("both signers recorded their attestations", || {
             proof_provider.snapshot().len() == 2
         })
         .await;
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
 
         let snap = proof_provider.snapshot();
         assert_eq!(snap.get(&signer_a), Some(&att_a), "signer A got the A-aligned attestation");
@@ -3052,10 +3045,9 @@ mod tests {
     async fn reap_finished_tasks_drains_completed_and_evicts_pending(#[case] succeed: bool) {
         // Spawn one task that completes immediately; reap_finished_tasks
         // must remove it from `pending` regardless of inner success.
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
-        let handle = tasks.spawn(async move {
+        let handle = proof_tasks.tasks_mut().spawn(async move {
             if succeed {
                 proof_task_success_for_test(HARDHAT_ACCOUNT, TEST_PENDING_INSTANCE_ID)
             } else {
@@ -3066,31 +3058,30 @@ mod tests {
                 )
             }
         });
-        pending.insert(
+        proof_tasks.pending_mut().insert(
             HARDHAT_ACCOUNT,
             pending_registration_for_test(handle.id(), TEST_PENDING_INSTANCE_ID),
         );
 
-        reap_until_pending_empty(&mut tasks, &mut pending).await;
+        reap_until_pending_empty(&mut proof_tasks).await;
 
-        assert!(pending.is_empty(), "completed task must be evicted from pending");
-        assert!(tasks.is_empty(), "JoinSet must drain to empty");
+        assert!(proof_tasks.is_pending_empty(), "completed task must be evicted from pending");
+        assert!(proof_tasks.is_join_set_empty(), "JoinSet must drain to empty");
     }
 
     #[tokio::test]
     async fn reap_finished_tasks_leaves_in_flight_alone() {
         // A task that never completes must remain in `pending` after
         // `reap_finished_tasks` is called (it is non-blocking).
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
         let cancel = CancellationToken::new();
         let cancel_inner = cancel.clone();
-        let handle = tasks.spawn(async move {
+        let handle = proof_tasks.tasks_mut().spawn(async move {
             cancel_inner.cancelled().await;
             proof_task_success_for_test(HARDHAT_ACCOUNT, TEST_PENDING_INSTANCE_ID)
         });
-        pending.insert(
+        proof_tasks.pending_mut().insert(
             HARDHAT_ACCOUNT,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -3100,11 +3091,11 @@ mod tests {
             },
         );
 
-        ProofTaskSet::reap_finished_tasks(&mut tasks, &mut pending);
+        proof_tasks.reap_finished_tasks();
 
-        assert_eq!(pending.len(), 1, "live task must remain in pending");
+        assert_eq!(proof_tasks.pending_len(), 1, "live task must remain in pending");
 
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
     }
 
     #[tokio::test]
@@ -3112,13 +3103,12 @@ mod tests {
         // Sanity: the production loop calls `reap_finished_tasks` every
         // cycle, including cycles with no pending work. It must not
         // panic in that case.
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
-        ProofTaskSet::reap_finished_tasks(&mut tasks, &mut pending);
+        proof_tasks.reap_finished_tasks();
 
-        assert!(pending.is_empty(), "pending stays empty");
-        assert!(tasks.is_empty(), "JoinSet stays empty");
+        assert!(proof_tasks.is_pending_empty(), "pending stays empty");
+        assert!(proof_tasks.is_join_set_empty(), "JoinSet stays empty");
     }
 
     // ── run() spawn-and-reap pipeline tests ─────────────────────────────
@@ -3409,21 +3399,20 @@ mod tests {
         // metric still fires. The full reap path is exercised so this
         // is also a coverage test for `reap_finished_tasks` routing the
         // `JoinError` correctly.
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
-        let handle = tasks.spawn(async {
+        let handle = proof_tasks.tasks_mut().spawn(async {
             panic!("synthetic proof-task panic for apply_join_outcome test");
         });
-        pending.insert(
+        proof_tasks.pending_mut().insert(
             HARDHAT_ACCOUNT,
             pending_registration_for_test(handle.id(), TEST_PENDING_INSTANCE_ID),
         );
 
-        reap_until_pending_empty(&mut tasks, &mut pending).await;
+        reap_until_pending_empty(&mut proof_tasks).await;
 
-        assert!(pending.is_empty(), "panicked task must be evicted from pending");
-        assert!(tasks.is_empty(), "JoinSet must drain to empty");
+        assert!(proof_tasks.is_pending_empty(), "panicked task must be evicted from pending");
+        assert!(proof_tasks.is_join_set_empty(), "JoinSet must drain to empty");
     }
 
     /// Address-keyed cleanup safety: a stale task whose `pending` entry
@@ -3436,8 +3425,7 @@ mod tests {
     /// shutdown bookkeeping.
     #[tokio::test]
     async fn apply_join_outcome_preserves_fresh_entry_when_stale_task_completes_for_same_signer() {
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
         let signer = HARDHAT_ACCOUNT;
 
@@ -3446,7 +3434,8 @@ mod tests {
         // instead simulate the post-overwrite state where the stale
         // entry is gone but its outcome is still in-flight on the
         // JoinSet.
-        let stale_handle = tasks
+        let stale_handle = proof_tasks
+            .tasks_mut()
             .spawn(async move { proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID) });
         let stale_task_id = stale_handle.id();
 
@@ -3455,14 +3444,14 @@ mod tests {
         // terminal outcome.
         let fresh_cancel = CancellationToken::new();
         let fresh_cancel_inner = fresh_cancel.clone();
-        let fresh_handle = tasks.spawn(async move {
+        let fresh_handle = proof_tasks.tasks_mut().spawn(async move {
             fresh_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
         });
         let fresh_task_id = fresh_handle.id();
         assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
 
-        pending.insert(
+        proof_tasks.pending_mut().insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -3476,8 +3465,8 @@ mod tests {
         // cancel token so reap only sees the stale outcome.
         let started = std::time::Instant::now();
         loop {
-            if let Some(joined) = tasks.try_join_next_with_id() {
-                ProofTaskSet::apply_join_outcome(joined, &mut pending);
+            if let Some(joined) = proof_tasks.tasks_mut().try_join_next_with_id() {
+                proof_tasks.apply_join_outcome(joined);
                 break;
             }
             if started.elapsed() > GATED_WAIT_TIMEOUT {
@@ -3486,13 +3475,17 @@ mod tests {
             tokio::time::sleep(REAP_POLL_INTERVAL).await;
         }
 
-        assert_eq!(pending.len(), 1, "fresh entry must NOT be evicted by stale completion");
-        let entry = pending.get(&signer).expect("fresh entry still keyed by signer");
+        assert_eq!(
+            proof_tasks.pending_len(),
+            1,
+            "fresh entry must NOT be evicted by stale completion"
+        );
+        let entry = proof_tasks.pending().get(&signer).expect("fresh entry still keyed by signer");
         assert_eq!(entry.task_id, fresh_task_id, "fresh task_id preserved");
         assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
 
         // Tear down: cancel the fresh task and drain.
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
     }
 
     /// Mirror of the success-arm fresh/stale test for the
@@ -3505,14 +3498,13 @@ mod tests {
     #[tokio::test]
     async fn apply_join_outcome_err_arm_preserves_fresh_entry_when_stale_task_fails_for_same_signer()
      {
-        let mut tasks: JoinSet<ProofTaskOutcome> = JoinSet::new();
-        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let mut proof_tasks = ProofTaskSet::new();
 
         let signer = HARDHAT_ACCOUNT;
 
         // Stale task returns an immediate `Err`. Its task_id is NOT in
         // `pending` — simulating the post-overwrite state.
-        let stale_handle = tasks.spawn(async move {
+        let stale_handle = proof_tasks.tasks_mut().spawn(async move {
             proof_task_failure_for_test(
                 signer,
                 TEST_PENDING_INSTANCE_ID,
@@ -3525,14 +3517,14 @@ mod tests {
         // `signer`. This entry must survive the stale `Err` outcome.
         let fresh_cancel = CancellationToken::new();
         let fresh_cancel_inner = fresh_cancel.clone();
-        let fresh_handle = tasks.spawn(async move {
+        let fresh_handle = proof_tasks.tasks_mut().spawn(async move {
             fresh_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
         });
         let fresh_task_id = fresh_handle.id();
         assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
 
-        pending.insert(
+        proof_tasks.pending_mut().insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -3546,8 +3538,8 @@ mod tests {
         // cancel token so reap only sees the stale outcome.
         let started = std::time::Instant::now();
         loop {
-            if let Some(joined) = tasks.try_join_next_with_id() {
-                ProofTaskSet::apply_join_outcome(joined, &mut pending);
+            if let Some(joined) = proof_tasks.tasks_mut().try_join_next_with_id() {
+                proof_tasks.apply_join_outcome(joined);
                 break;
             }
             if started.elapsed() > GATED_WAIT_TIMEOUT {
@@ -3556,12 +3548,12 @@ mod tests {
             tokio::time::sleep(REAP_POLL_INTERVAL).await;
         }
 
-        assert_eq!(pending.len(), 1, "fresh entry must NOT be evicted by stale Err");
-        let entry = pending.get(&signer).expect("fresh entry still keyed by signer");
+        assert_eq!(proof_tasks.pending_len(), 1, "fresh entry must NOT be evicted by stale Err");
+        let entry = proof_tasks.pending().get(&signer).expect("fresh entry still keyed by signer");
         assert_eq!(entry.task_id, fresh_task_id, "fresh task_id preserved");
         assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
 
-        drain_test_tasks(&mut tasks, &mut pending).await;
+        drain_test_tasks(&mut proof_tasks).await;
     }
 
     #[tokio::test]
