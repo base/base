@@ -28,11 +28,10 @@ pub use system::{
 };
 
 mod chain;
-#[cfg(feature = "std")]
-pub use chain::RuntimeHardForkRegistry;
+pub use chain::RuntimeUpgradeRegistry;
 pub use chain::{
-    AddressList, HardForkActivation, HardForkActivationOverrides, HardForkActivationSink,
-    HardForkConfig, HardforkConfig, Roles,
+    AddressList, HardForkConfig, HardforkConfig, Roles, UpgradeActivation,
+    UpgradeActivationOverrides, UpgradeActivationSink,
 };
 
 mod genesis;
