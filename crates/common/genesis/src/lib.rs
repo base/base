@@ -28,9 +28,8 @@ pub use system::{
 };
 
 mod chain;
-pub use chain::RuntimeUpgradeRegistry;
 pub use chain::{
-    AddressList, HardForkConfig, HardforkConfig, Roles, UpgradeActivation,
+    AddressList, HardForkConfig, HardforkConfig, Roles, RuntimeUpgradeRegistry, UpgradeActivation,
     UpgradeActivationOverrides, UpgradeActivationSink,
 };
 

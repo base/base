@@ -4,10 +4,9 @@ mod addresses;
 pub use addresses::AddressList;
 
 mod hardfork;
-pub use hardfork::RuntimeUpgradeRegistry;
 pub use hardfork::{
-    HardForkConfig, HardforkConfig, UpgradeActivation, UpgradeActivationOverrides,
-    UpgradeActivationSink,
+    HardForkConfig, HardforkConfig, RuntimeUpgradeRegistry, UpgradeActivation,
+    UpgradeActivationOverrides, UpgradeActivationSink,
 };
 
 mod roles;
