@@ -6129,6 +6129,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-prover-zk-host"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "clap",
+ "eyre",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
