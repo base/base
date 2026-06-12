@@ -63,7 +63,7 @@ impl UpgradeSignalSchedule {
         Self { signals }
     }
 
-    /// Returns true if two hardfork ID spellings refer to the same contract hardfork.
+    /// Returns true if two hardfork ID spellings refer to the same contract upgrade.
     pub fn hardfork_ids_match(left: &str, right: &str) -> bool {
         match (
             HardForkConfig::canonical_hardfork_id(left),

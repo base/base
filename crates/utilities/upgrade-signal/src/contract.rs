@@ -148,7 +148,7 @@ impl AlloyUpgradeSignalReader {
     /// Reads the upgrade signal schedule for `hardfork_ids`.
     ///
     /// Records `l1_read_errors_total` on failure: all hardfork IDs if the L1 block fetch fails,
-    /// only the failing hardfork ID if a per-fork contract call fails.
+    /// only the failing hardfork ID if a per-hardfork contract call fails.
     pub async fn read_schedule(
         &self,
         hardfork_ids: &[String],
@@ -258,7 +258,7 @@ mod tests {
 
         assert!(matches!(
             AlloyUpgradeSignalReader::decode_timestamp(value).unwrap_err(),
-            UpgradeSignalError::TimestampOverflow(_)
+            UpgradeSignalError::TimestampOverflow(actual) if actual == value
         ));
     }
 }

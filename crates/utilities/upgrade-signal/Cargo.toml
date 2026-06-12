@@ -34,3 +34,6 @@ serde = { workspace = true, features = ["derive", "std"] }
 [features]
 default = []
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
+
+[dev-dependencies]
+rstest.workspace = true

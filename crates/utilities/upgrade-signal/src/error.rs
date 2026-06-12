@@ -1,5 +1,7 @@
 //! Upgrade signal error types.
 
+use alloy_primitives::U256;
+
 /// Error returned by upgrade signal readers.
 #[derive(Debug, thiserror::Error)]
 pub enum UpgradeSignalError {
@@ -21,7 +23,7 @@ pub enum UpgradeSignalError {
     },
     /// The activation timestamp does not fit in a `u64`.
     #[error("activation timestamp {0} does not fit in u64")]
-    TimestampOverflow(String),
+    TimestampOverflow(U256),
     /// A positive activation timestamp was not paired with a minimum node protocol version.
     #[error(
         "upgrade signal for {0} has an activation timestamp but no minimum node protocol version"
@@ -29,27 +31,15 @@ pub enum UpgradeSignalError {
     MissingProtocolVersion(String),
     /// The contract requires a newer node protocol version than this binary supports.
     #[error(
-        "upgrade signal for {hardfork_id} requires node protocol version {minimum_protocol_version}, but this binary supports {node_protocol_version}"
+        "upgrade signal for {upgrade_id} requires node protocol version {minimum_protocol_version}, but this binary supports {node_protocol_version}"
     )]
     UnsupportedProtocolVersion {
-        /// Hardfork ID whose signal required a newer protocol version.
-        hardfork_id: String,
+        /// Upgrade ID whose signal required a newer protocol version.
+        upgrade_id: String,
         /// Minimum node protocol version read from L1.
         minimum_protocol_version: String,
         /// Node protocol version supported by this binary.
         node_protocol_version: String,
-    },
-    /// A Beryl activation signal was applied without an execution activation admin address.
-    #[error("missing activation admin address for Beryl-enabled chain ID: {chain_id}")]
-    MissingActivationAdminAddress {
-        /// L2 chain ID whose runtime schedule was rejected.
-        chain_id: u64,
-    },
-    /// A Beryl activation signal was applied with a zero execution activation admin address.
-    #[error("activation admin address must not be zero for Beryl-enabled chain ID: {chain_id}")]
-    ZeroActivationAdminAddress {
-        /// L2 chain ID whose runtime schedule was rejected.
-        chain_id: u64,
     },
 }
 
@@ -65,35 +55,25 @@ impl UpgradeSignalError {
     }
 
     /// Creates a timestamp overflow error.
-    pub fn timestamp_overflow(value: impl ToString) -> Self {
-        Self::TimestampOverflow(value.to_string())
+    pub const fn timestamp_overflow(value: U256) -> Self {
+        Self::TimestampOverflow(value)
     }
 
     /// Creates a missing protocol version error.
-    pub const fn missing_protocol_version(hardfork_id: String) -> Self {
-        Self::MissingProtocolVersion(hardfork_id)
+    pub const fn missing_protocol_version(upgrade_id: String) -> Self {
+        Self::MissingProtocolVersion(upgrade_id)
     }
 
     /// Creates an unsupported protocol version error.
     pub fn unsupported_protocol_version(
-        hardfork_id: String,
+        upgrade_id: String,
         minimum_protocol_version: impl ToString,
         node_protocol_version: impl ToString,
     ) -> Self {
         Self::UnsupportedProtocolVersion {
-            hardfork_id,
+            upgrade_id,
             minimum_protocol_version: minimum_protocol_version.to_string(),
             node_protocol_version: node_protocol_version.to_string(),
         }
-    }
-
-    /// Creates a missing activation admin address error.
-    pub const fn missing_activation_admin_address(chain_id: u64) -> Self {
-        Self::MissingActivationAdminAddress { chain_id }
-    }
-
-    /// Creates a zero activation admin address error.
-    pub const fn zero_activation_admin_address(chain_id: u64) -> Self {
-        Self::ZeroActivationAdminAddress { chain_id }
     }
 }
