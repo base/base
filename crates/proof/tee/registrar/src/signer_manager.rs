@@ -61,8 +61,6 @@ pub struct PendingRegistration {
 pub struct ProofTaskOutcome {
     /// Signer address the task attempted to register.
     pub signer: Address,
-    /// Source prover instance ID used for diagnostic logs.
-    pub instance_id: String,
     /// Result of the signer registration attempt.
     pub result: Result<()>,
 }
@@ -173,51 +171,48 @@ impl ProofTaskSet {
         &mut self,
         joined: std::result::Result<(task::Id, ProofTaskOutcome), JoinError>,
     ) {
-        let remove_current_task =
-            |tasks: &mut Self, signer: Address, task_id: task::Id| match tasks.pending.get(&signer)
-            {
-                Some(entry) if entry.task_id == task_id => tasks.pending.remove(&signer),
-                _ => None,
-            };
-        let remove_by_task_id = |tasks: &mut Self, task_id: task::Id| {
-            tasks
-                .pending
-                .iter()
-                .find_map(|(addr, p)| (p.task_id == task_id).then_some(*addr))
-                .and_then(|signer| tasks.pending.remove(&signer).map(|entry| (signer, entry)))
-        };
-
         RegistrarMetrics::proof_tasks_completed().increment(1);
         match joined {
-            Ok((id, outcome)) => match outcome.result {
-                Ok(()) => {
-                    let removed = remove_current_task(self, outcome.signer, id);
-                    debug!(
-                        task_id = ?id,
-                        signer = %outcome.signer,
-                        instance = %outcome.instance_id,
-                        pending_entry_found = removed.is_some(),
-                        superseded = removed.is_none(),
-                        "proof task completed",
-                    );
+            Ok((id, outcome)) => {
+                let removed = match self.pending.get(&outcome.signer) {
+                    Some(entry) if entry.task_id == id => self.pending.remove(&outcome.signer),
+                    _ => None,
+                };
+                let instance_id =
+                    removed.as_ref().map_or("superseded", |entry| entry.instance_id.as_str());
+
+                match outcome.result {
+                    Ok(()) => {
+                        debug!(
+                            task_id = ?id,
+                            signer = %outcome.signer,
+                            instance = %instance_id,
+                            pending_entry_found = removed.is_some(),
+                            superseded = removed.is_none(),
+                            "proof task completed",
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            task_id = ?id,
+                            error = %e,
+                            signer = %outcome.signer,
+                            instance = %instance_id,
+                            pending_entry_found = removed.is_some(),
+                            superseded = removed.is_none(),
+                            "proof task failed"
+                        );
+                        RegistrarMetrics::processing_errors_total().increment(1);
+                    }
                 }
-                Err(e) => {
-                    let removed = remove_current_task(self, outcome.signer, id);
-                    warn!(
-                        task_id = ?id,
-                        error = %e,
-                        signer = %outcome.signer,
-                        instance = %outcome.instance_id,
-                        pending_entry_found = removed.is_some(),
-                        superseded = removed.is_none(),
-                        "proof task failed"
-                    );
-                    RegistrarMetrics::processing_errors_total().increment(1);
-                }
-            },
+            }
             Err(join_err) => {
                 let id = join_err.id();
-                let removed = remove_by_task_id(self, id);
+                let removed = self
+                    .pending
+                    .iter()
+                    .find_map(|(addr, p)| (p.task_id == id).then_some(*addr))
+                    .and_then(|signer| self.pending.remove(&signer).map(|entry| (signer, entry)));
                 let signer = removed.as_ref().map(|(signer, _)| *signer);
                 warn!(
                     task_id = ?id,
@@ -266,12 +261,20 @@ where
         proof_tasks: &mut ProofTaskSet,
     ) {
         let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
+        let mut live_signers = HashSet::new();
 
         for (signer, task) in &mut proof_tasks.pending {
-            if wanted.contains(signer) || task.cancel.is_cancelled() {
+            if task.cancel.is_cancelled() {
                 continue;
             }
+
+            if wanted.contains(signer) {
+                live_signers.insert(*signer);
+                continue;
+            }
+
             if resolution.unresolved_instance_ids.contains(&task.instance_id) {
+                live_signers.insert(*signer);
                 debug!(
                     signer = %signer,
                     instance = %task.instance_id,
@@ -289,22 +292,14 @@ where
             }
         }
 
-        let mut in_flight: HashSet<Address> = proof_tasks
-            .pending
-            .iter()
-            .filter(|(_, t)| !t.cancel.is_cancelled())
-            .map(|(addr, _)| *addr)
-            .collect();
-
         for entry in &resolution.registerable {
-            if !in_flight.insert(entry.signer) {
+            if !live_signers.insert(entry.signer) {
                 continue;
             }
             let signer_cancel = self.config.cancel.child_token();
             let manager = Arc::clone(self);
             let instance_owned = entry.instance.clone();
             let instance_id = instance_owned.instance_id.clone();
-            let outcome_instance_id = instance_id.clone();
             let attestation = entry.attestation.clone();
             let task_cancel = signer_cancel.clone();
             let signer = entry.signer;
@@ -314,7 +309,7 @@ where
                 let result = manager
                     .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
                     .await;
-                ProofTaskOutcome { signer, instance_id: outcome_instance_id, result }
+                ProofTaskOutcome { signer, result }
             });
             proof_tasks.pending.insert(
                 signer,
@@ -351,8 +346,7 @@ where
         );
         registration_manager
             .register_signer(&instance, signer, enclave_index, &attestation_bytes, &signer_cancel)
-            .await?;
-        Ok(())
+            .await
     }
 
     /// Queries onchain signers and deregisters orphans.

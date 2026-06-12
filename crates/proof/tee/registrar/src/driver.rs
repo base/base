@@ -1537,16 +1537,12 @@ mod tests {
         }
     }
 
-    fn proof_task_success_for_test(signer: Address, instance_id: &str) -> ProofTaskOutcome {
-        ProofTaskOutcome { signer, instance_id: instance_id.to_string(), result: Ok(()) }
+    fn proof_task_success_for_test(signer: Address) -> ProofTaskOutcome {
+        ProofTaskOutcome { signer, result: Ok(()) }
     }
 
-    fn proof_task_failure_for_test(
-        signer: Address,
-        instance_id: &str,
-        error: RegistrarError,
-    ) -> ProofTaskOutcome {
-        ProofTaskOutcome { signer, instance_id: instance_id.to_string(), result: Err(error) }
+    fn proof_task_failure_for_test(signer: Address, error: RegistrarError) -> ProofTaskOutcome {
+        ProofTaskOutcome { signer, result: Err(error) }
     }
 
     /// Builds a synthetic [`DiscoveryResolution`] from a list of
@@ -2455,7 +2451,7 @@ mod tests {
             let task_cancel_inner = task_cancel.clone();
             let handle = proof_tasks.tasks_mut().spawn(async move {
                 task_cancel_inner.cancelled().await;
-                proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
+                proof_task_success_for_test(signer)
             });
             proof_tasks.pending_mut().insert(
                 signer,
@@ -2539,7 +2535,7 @@ mod tests {
         let stale_cancel_inner = stale_cancel.clone();
         let stale_handle = proof_tasks.tasks_mut().spawn(async move {
             stale_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
+            proof_task_success_for_test(signer)
         });
         let stale_task_id = stale_handle.id();
         proof_tasks.pending_mut().insert(
@@ -2615,7 +2611,7 @@ mod tests {
         let task_cancel_inner = task_cancel.clone();
         let handle = proof_tasks.tasks_mut().spawn(async move {
             task_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
+            proof_task_success_for_test(signer)
         });
         proof_tasks.pending_mut().insert(
             signer,
@@ -2709,7 +2705,7 @@ mod tests {
         let task_cancel_inner = task_cancel.clone();
         let handle = proof_tasks.tasks_mut().spawn(async move {
             task_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
+            proof_task_success_for_test(signer)
         });
         proof_tasks.pending_mut().insert(
             signer,
@@ -2839,7 +2835,7 @@ mod tests {
                         let cancel_inner = cancel.clone();
                         let handle = proof_tasks.tasks_mut().spawn(async move {
                             cancel_inner.cancelled().await;
-                            proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
+                            proof_task_success_for_test(signer)
                         });
                         proof_tasks.pending_mut().insert(
                             signer,
@@ -3049,11 +3045,10 @@ mod tests {
 
         let handle = proof_tasks.tasks_mut().spawn(async move {
             if succeed {
-                proof_task_success_for_test(HARDHAT_ACCOUNT, TEST_PENDING_INSTANCE_ID)
+                proof_task_success_for_test(HARDHAT_ACCOUNT)
             } else {
                 proof_task_failure_for_test(
                     HARDHAT_ACCOUNT,
-                    TEST_PENDING_INSTANCE_ID,
                     RegistrarError::Transaction("synthetic".into()),
                 )
             }
@@ -3079,7 +3074,7 @@ mod tests {
         let cancel_inner = cancel.clone();
         let handle = proof_tasks.tasks_mut().spawn(async move {
             cancel_inner.cancelled().await;
-            proof_task_success_for_test(HARDHAT_ACCOUNT, TEST_PENDING_INSTANCE_ID)
+            proof_task_success_for_test(HARDHAT_ACCOUNT)
         });
         proof_tasks.pending_mut().insert(
             HARDHAT_ACCOUNT,
@@ -3434,9 +3429,8 @@ mod tests {
         // instead simulate the post-overwrite state where the stale
         // entry is gone but its outcome is still in-flight on the
         // JoinSet.
-        let stale_handle = proof_tasks
-            .tasks_mut()
-            .spawn(async move { proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID) });
+        let stale_handle =
+            proof_tasks.tasks_mut().spawn(async move { proof_task_success_for_test(signer) });
         let stale_task_id = stale_handle.id();
 
         // Fresh task: spawn another, register it under `signer` in
@@ -3446,7 +3440,7 @@ mod tests {
         let fresh_cancel_inner = fresh_cancel.clone();
         let fresh_handle = proof_tasks.tasks_mut().spawn(async move {
             fresh_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
+            proof_task_success_for_test(signer)
         });
         let fresh_task_id = fresh_handle.id();
         assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
@@ -3507,7 +3501,6 @@ mod tests {
         let stale_handle = proof_tasks.tasks_mut().spawn(async move {
             proof_task_failure_for_test(
                 signer,
-                TEST_PENDING_INSTANCE_ID,
                 RegistrarError::Config("synthetic stale proof failure".to_string()),
             )
         });
@@ -3519,7 +3512,7 @@ mod tests {
         let fresh_cancel_inner = fresh_cancel.clone();
         let fresh_handle = proof_tasks.tasks_mut().spawn(async move {
             fresh_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer, TEST_PENDING_INSTANCE_ID)
+            proof_task_success_for_test(signer)
         });
         let fresh_task_id = fresh_handle.id();
         assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
