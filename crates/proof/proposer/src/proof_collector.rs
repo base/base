@@ -1213,7 +1213,6 @@ where
             self.collector.tee_kind(),
             attempt,
         );
-        state.retry_sessions.insert(target_block, session_id.clone());
 
         let dispatch_error = match self
             .dispatcher
@@ -1235,15 +1234,24 @@ where
                 state.counted_failed_sessions.remove(&target_block);
                 None
             }
-            Ok(dispatched) => Some(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {}, got {}",
-                session_id, dispatched.session_id
-            ))),
+            Ok(dispatched) => {
+                error!(
+                    target_block,
+                    expected_session_id = %session_id,
+                    actual_session_id = %dispatched.session_id,
+                    "Prover service returned mismatched discard retry session id"
+                );
+                Some(ProposerError::Prover(format!(
+                    "prover service returned mismatched session_id: expected {}, got {}",
+                    session_id, dispatched.session_id
+                )))
+            }
             Err(error) => Some(error),
         };
 
         if let Some(error) = dispatch_error {
             Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
+            state.retry_sessions.remove(&target_block);
             if count_dispatch_failure {
                 if !state.handle_proof_failure(target_block, error, self.runtime.max_retries, cache)
                 {
@@ -1321,6 +1329,9 @@ mod tests {
     #[derive(Debug)]
     struct RejectingProofRequester;
 
+    #[derive(Debug)]
+    struct MismatchedProofRequester;
+
     #[async_trait]
     impl ProofCollectorRecoveryProvider for NoopRecovery {
         async fn recover_latest_state(
@@ -1361,6 +1372,35 @@ mod tests {
         ) -> Result<base_prover_service_protocol::ProveBlockRangeResponse, ProverServiceClientError>
         {
             Err(ProverServiceClientError::Timeout("simulated dispatch failure".into()))
+        }
+
+        async fn get_proof(
+            &self,
+            _request: base_prover_service_protocol::GetProofRequest,
+        ) -> Result<base_prover_service_protocol::GetProofResponse, ProverServiceClientError>
+        {
+            unimplemented!("tests do not poll proofs")
+        }
+
+        async fn list_proofs(
+            &self,
+            _request: base_prover_service_protocol::ListProofsRequest,
+        ) -> Result<base_prover_service_protocol::ListProofsResponse, ProverServiceClientError>
+        {
+            unimplemented!("tests do not list proofs")
+        }
+    }
+
+    #[async_trait]
+    impl ProofRequesterProvider for MismatchedProofRequester {
+        async fn prove_block_range(
+            &self,
+            _request: base_prover_service_protocol::ProveBlockRangeRequest,
+        ) -> Result<base_prover_service_protocol::ProveBlockRangeResponse, ProverServiceClientError>
+        {
+            Ok(base_prover_service_protocol::ProveBlockRangeResponse {
+                session_id: "unexpected-session".to_owned(),
+            })
         }
 
         async fn get_proof(
@@ -1681,7 +1721,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discard_retry_dispatch_failure_preserves_intended_retry_session() {
+    async fn discard_retry_dispatch_failure_does_not_store_unaccepted_session() {
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup_client = Arc::new(MockRollupClient {
@@ -1731,13 +1771,6 @@ mod tests {
         );
         let target_block = 200;
         let claimed_root = B256::repeat_byte(0xaa);
-        let request = orchestrator
-            .dispatcher
-            .build_request(target_block, &recovered(100), claimed_root)
-            .await
-            .expect("test setup should build request");
-        let expected_session_id =
-            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 1);
         let mut state = ProofCollectorState::new();
         let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
 
@@ -1753,8 +1786,81 @@ mod tests {
             .await;
 
         assert!(!should_continue);
-        assert_eq!(state.retry_sessions.get(&target_block), Some(&expected_session_id));
+        assert!(state.retry_sessions.is_empty());
         assert_eq!(state.pending_discard_roots.get(&target_block).copied(), Some(claimed_root));
+        assert!(cache.is_some());
+    }
+
+    #[tokio::test]
+    async fn discard_retry_session_mismatch_does_not_store_unaccepted_session() {
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(200, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let requester: Arc<dyn ProofRequesterProvider> = Arc::new(MismatchedProofRequester);
+        let collector = ProofCollector::target_poller_aws_nitro(
+            Arc::clone(&requester),
+            Arc::clone(&rollup_client),
+        );
+        let dispatcher = ProofDispatcher::aws_nitro(
+            requester,
+            Arc::clone(&l1),
+            l2,
+            Arc::clone(&rollup_client),
+            ProofDispatcherConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+        let submitter = ProofSubmitter::new(
+            Arc::new(MockOutputProposer),
+            rollup_client,
+            l1,
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                block_interval: 100,
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        );
+        let orchestrator = ProofCollectorOrchestrator::new(
+            collector,
+            dispatcher,
+            submitter,
+            Arc::new(NoopRecovery),
+            ProofCollectorRuntimeConfig {
+                block_interval: 100,
+                max_retries: 2,
+                submit_timeout: std::time::Duration::from_secs(60),
+            },
+        );
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(0xaa);
+        let mut state = ProofCollectorState::new();
+        state.retry_sessions.insert(target_block, "stale-session".to_owned());
+        let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
+
+        let should_continue = orchestrator
+            .dispatch_discard_retry(
+                target_block,
+                &recovered(100),
+                claimed_root,
+                &mut state,
+                &mut cache,
+                true,
+            )
+            .await;
+
+        assert!(should_continue);
+        assert!(state.retry_sessions.is_empty());
+        assert_eq!(state.pending_discard_roots.get(&target_block).copied(), Some(claimed_root));
+        assert_eq!(state.retry_counts.get(&target_block).copied(), Some(1));
         assert!(cache.is_some());
     }
 
