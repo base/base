@@ -34,6 +34,7 @@ serde = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 
 # reth
+opentelemetry = { workspace = true, optional = true }
 reth-payload-primitives = { workspace = true, optional = true }
 
 # misc
@@ -88,4 +89,4 @@ arbitrary = [
 	"dep:arbitrary",
 	"std",
 ]
-reth = [ "dep:reth-payload-primitives", "serde", "std" ]
+reth = [ "dep:opentelemetry", "dep:reth-payload-primitives", "serde", "std" ]

@@ -27,7 +27,7 @@ use base_common_evm::{
     BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseHaltReason,
     BaseTxResult,
 };
-use base_common_rpc_types_engine::ExecutionData;
+use base_common_rpc_types_engine::BaseExecutionDataExt;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseRethReceiptBuilder;
 use base_flashblocks::FlashblocksState;
@@ -201,7 +201,7 @@ where
     pub fn convert_to_block<
         T: PayloadTypes<
                 BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
-                ExecutionData = ExecutionData,
+                ExecutionData: BaseExecutionDataExt,
             >,
     >(
         &self,
@@ -220,7 +220,7 @@ where
     pub fn evm_env_for<
         T: PayloadTypes<
                 BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
-                ExecutionData = ExecutionData,
+                ExecutionData: BaseExecutionDataExt,
             >,
     >(
         &self,
@@ -228,10 +228,15 @@ where
     ) -> Result<EvmEnvFor<Evm>, Evm::Error>
     where
         V: PayloadValidator<T, Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<ExecutionData, Primitives = BasePrimitives>,
+        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = BasePrimitives>,
     {
         match input {
-            BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
+            BlockOrPayload::Payload(payload) => {
+                let _trace_guard = payload
+                    .trace_context_headers()
+                    .and_then(|trace_context| trace_context.attach_as_parent());
+                Ok(self.evm_config.evm_env_for_payload(payload)?)
+            }
             BlockOrPayload::Block(block) => Ok(self.evm_config.evm_env(block.header())?),
         }
     }
@@ -241,7 +246,7 @@ where
         'a,
         T: PayloadTypes<
                 BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
-                ExecutionData = ExecutionData,
+                ExecutionData: BaseExecutionDataExt,
             >,
     >(
         &'a self,
@@ -249,10 +254,13 @@ where
     ) -> Result<impl ExecutableTxIterator<Evm>, NewPayloadError>
     where
         V: PayloadValidator<T, Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<ExecutionData, Primitives = BasePrimitives>,
+        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = BasePrimitives>,
     {
         Ok(match input {
             BlockOrPayload::Payload(payload) => {
+                let _trace_guard = payload
+                    .trace_context_headers()
+                    .and_then(|trace_context| trace_context.attach_as_parent());
                 let iter = self
                     .evm_config
                     .tx_iterator_for_payload(payload)
@@ -272,7 +280,7 @@ where
         'a,
         T: PayloadTypes<
                 BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
-                ExecutionData = ExecutionData,
+                ExecutionData: BaseExecutionDataExt,
             >,
     >(
         &self,
@@ -280,10 +288,15 @@ where
     ) -> Result<ExecutionCtxFor<'a, Evm>, Evm::Error>
     where
         V: PayloadValidator<T, Block = BaseBlock>,
-        Evm: ConfigureEngineEvm<ExecutionData, Primitives = BasePrimitives>,
+        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = BasePrimitives>,
     {
         match input {
-            BlockOrPayload::Payload(payload) => Ok(self.evm_config.context_for_payload(payload)?),
+            BlockOrPayload::Payload(payload) => {
+                let _trace_guard = payload
+                    .trace_context_headers()
+                    .and_then(|trace_context| trace_context.attach_as_parent());
+                Ok(self.evm_config.context_for_payload(payload)?)
+            }
             BlockOrPayload::Block(block) => Ok(self.evm_config.context_for_block(block)?),
         }
     }
@@ -295,7 +308,7 @@ where
     fn handle_execution_error<
         T: PayloadTypes<
                 BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
-                ExecutionData = ExecutionData,
+                ExecutionData: BaseExecutionDataExt,
             >,
     >(
         &self,
@@ -354,7 +367,7 @@ where
     fn validate_block_with_state<
         T: PayloadTypes<
                 BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
-                ExecutionData = ExecutionData,
+                ExecutionData: BaseExecutionDataExt,
             >,
     >(
         &mut self,
@@ -363,8 +376,15 @@ where
     ) -> ValidationOutcome<BasePrimitives, InsertPayloadError<BaseBlock>>
     where
         V: BasePostExecutionValidator<T>,
-        Evm: ConfigureEngineEvm<ExecutionData, Primitives = BasePrimitives>,
+        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = BasePrimitives>,
     {
+        let _trace_guard = match &input {
+            BlockOrPayload::Payload(payload) => payload
+                .trace_context_headers()
+                .and_then(|trace_context| trace_context.attach_as_parent()),
+            BlockOrPayload::Block(_) => None,
+        };
+
         /// A helper macro that returns the block in case there was an error
         /// This macro is used for early returns before block conversion
         macro_rules! ensure_ok {
@@ -732,7 +752,7 @@ where
         V: PayloadValidator<T, Block = BaseBlock>,
         T: PayloadTypes<
                 BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
-                ExecutionData = ExecutionData,
+                ExecutionData: BaseExecutionDataExt,
             >,
         Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = BasePrimitives>,
     {
@@ -788,6 +808,7 @@ where
 
         let txs = match &input {
             BlockOrPayload::Payload(payload) => payload
+                .execution_data()
                 .payload
                 .transactions()
                 .iter()
@@ -1456,7 +1477,7 @@ where
         + 'static,
     V: BasePostExecutionValidator<Types>,
     Evm: ConfigureEngineEvm<
-            ExecutionData,
+            Types::ExecutionData,
             Primitives = BasePrimitives,
             BlockExecutorFactory = BaseBlockExecutorFactory<
                 BaseRethReceiptBuilder,
@@ -1465,7 +1486,7 @@ where
         > + 'static,
     Types: PayloadTypes<
             BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
-            ExecutionData = ExecutionData,
+            ExecutionData: BaseExecutionDataExt,
         >,
     C: CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>>
         + Clone
@@ -1612,7 +1633,9 @@ where
                 ChainSpec = BaseChainSpec,
                 Primitives = BasePrimitives,
             >,
-            Evm: ConfigureEngineEvm<ExecutionData>
+            Evm: ConfigureEngineEvm<
+                <<<Node as FullNodeTypes>::Types as NodeTypes>::Payload as PayloadTypes>::ExecutionData,
+            >
                      + ConfigureEvm<
                 BlockExecutorFactory = BaseBlockExecutorFactory<
                     BaseRethReceiptBuilder,
@@ -1621,7 +1644,7 @@ where
             >,
         >,
     <<Node as FullNodeTypes>::Types as NodeTypes>::Payload:
-        PayloadTypes<ExecutionData = ExecutionData>,
+        PayloadTypes<ExecutionData: BaseExecutionDataExt>,
     EV: PayloadValidatorBuilder<Node>,
     EV::Validator: BasePostExecutionValidator<<Node::Types as NodeTypes>::Payload>,
 {

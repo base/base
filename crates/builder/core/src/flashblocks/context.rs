@@ -18,7 +18,8 @@ use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
-    BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
+    BasePayloadAttributesExt, BasePayloadBuilderAttributes, TracedBasePayloadBuilderAttributes,
+    error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
@@ -281,7 +282,7 @@ pub struct BasePayloadBuilderCtx {
     /// The chainspec
     pub chain_spec: Arc<BaseChainSpec>,
     /// How to build the payload.
-    pub config: PayloadConfig<BasePayloadBuilderAttributes<BaseTransactionSigned>>,
+    pub config: PayloadConfig<TracedBasePayloadBuilderAttributes<BaseTransactionSigned>>,
     /// Evm Settings
     pub evm_env: EvmEnv<BaseSpecId>,
     /// Block env attributes for the current block.
@@ -329,8 +330,8 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Returns the builder attributes.
-    pub(super) const fn attributes(&self) -> &BasePayloadBuilderAttributes<BaseTransactionSigned> {
-        &self.config.attributes
+    pub(super) fn attributes(&self) -> &BasePayloadBuilderAttributes<BaseTransactionSigned> {
+        self.config.attributes.payload_attributes()
     }
 
     /// Returns the withdrawals if shanghai is active.
@@ -1127,7 +1128,7 @@ impl BasePayloadBuilderCtx {
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let timestamp = parent.timestamp + 2;
 
-        let attributes = BasePayloadBuilderAttributes {
+        let attributes = TracedBasePayloadBuilderAttributes::new(BasePayloadBuilderAttributes {
             payload_attributes: EthPayloadBuilderAttributes {
                 id: PayloadId::new([0; 8]),
                 parent: parent.hash(),
@@ -1137,7 +1138,7 @@ impl BasePayloadBuilderCtx {
             },
             gas_limit: Some(parent.gas_limit),
             ..Default::default()
-        };
+        });
 
         let block_env_attributes = BaseNextBlockEnvAttributes {
             timestamp,
@@ -1352,8 +1353,8 @@ mod tests {
 
         // Strict mode: derived attributes (`no_tx_pool=true`) — the invalid tx must be fatal.
         let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, parent);
-        ctx.config.attributes.no_tx_pool = true;
-        ctx.config.attributes.transactions = vec![with_encoded];
+        ctx.config.attributes.inner.no_tx_pool = true;
+        ctx.config.attributes.inner.transactions = vec![with_encoded];
 
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
@@ -1368,7 +1369,7 @@ mod tests {
         // Mempool mode (`no_tx_pool=false`): pre-includes are still skippable. Identical
         // input now succeeds with zero gas consumed and no receipt — this guards against
         // accidentally tightening the legacy code path along with the strict one.
-        ctx.config.attributes.no_tx_pool = false;
+        ctx.config.attributes.inner.no_tx_pool = false;
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let info = ctx

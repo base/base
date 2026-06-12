@@ -1,10 +1,7 @@
 use core::time::Duration;
 use std::{
     ops::{Div, Rem},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::Instant,
 };
 
@@ -15,17 +12,20 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
+use base_access_lists::FlashblockAccessList;
 use base_builder_publish::WebSocketPublisher;
 use base_bundles::RejectedTransaction;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_flashblocks::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
-    Metadata,
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
-use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_payload_builder::{
+    BaseBuiltPayload, BasePayloadAttributesExt, TracedBasePayloadBuilderAttributes,
+};
+use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -74,26 +74,6 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     >,
 >;
 
-#[derive(Debug, Default)]
-struct LastEmittedFlashblockId {
-    block_number: AtomicU64,
-    index: AtomicU64,
-}
-
-impl LastEmittedFlashblockId {
-    fn load(&self) -> FlashblockId {
-        FlashblockId {
-            block_number: self.block_number.load(Ordering::Relaxed),
-            index: self.index.load(Ordering::Relaxed),
-        }
-    }
-
-    fn store(&self, flashblock_id: FlashblockId) {
-        self.block_number.store(flashblock_id.block_number, Ordering::Relaxed);
-        self.index.store(flashblock_id.index, Ordering::Relaxed);
-    }
-}
-
 /// Base payload builder
 #[derive(Debug, Clone)]
 pub(super) struct BasePayloadBuilder<Pool, Client> {
@@ -113,13 +93,11 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     pub config: BuilderConfig,
     /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
     pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
-    /// Last flashblock emitted by this builder instance.
-    last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
 }
 
 impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
     /// `BasePayloadBuilder` constructor.
-    pub(super) fn new(
+    pub(super) const fn new(
         evm_config: BaseEvmConfig,
         pool: Pool,
         client: Client,
@@ -128,24 +106,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
         ws_pub: Arc<WebSocketPublisher>,
         rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
     ) -> Self {
-        Self {
-            evm_config,
-            pool,
-            client,
-            payload_tx,
-            ws_pub,
-            config,
-            rejected_tx_sender,
-            last_emitted_flashblock_id: Arc::default(),
-        }
-    }
-
-    fn previous_flashblock_id(&self) -> FlashblockId {
-        self.last_emitted_flashblock_id.load()
-    }
-
-    fn record_emitted_flashblock(&self, block_number: u64, index: u64) {
-        self.last_emitted_flashblock_id.store(FlashblockId { block_number, index });
+        Self { evm_config, pool, client, payload_tx, ws_pub, config, rejected_tx_sender }
     }
 }
 
@@ -154,7 +115,7 @@ where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
 {
-    type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
+    type Attributes = TracedBasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
 
     fn try_build(
@@ -187,22 +148,21 @@ where
     fn get_base_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
-            BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
+            TracedBasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
         >,
         cancel: CancellationToken,
         extra: FlashblocksExtraCtx,
     ) -> eyre::Result<BasePayloadBuilderCtx> {
+        let attributes = config.attributes.payload_attributes();
         let chain_spec = self.client.chain_spec();
-        let timestamp = config.attributes.timestamp();
+        let timestamp = attributes.timestamp();
 
         let extra_data = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-            config
-                .attributes
+            attributes
                 .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
                 .wrap_err("failed to get jovian extra data for flashblocks payload builder")?
         } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-            config
-                .attributes
+            attributes
                 .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
                 .wrap_err("failed to get holocene extra data for flashblocks payload builder")?
         } else {
@@ -211,10 +171,10 @@ where
 
         let block_env_attributes = BaseNextBlockEnvAttributes {
             timestamp,
-            suggested_fee_recipient: config.attributes.payload_attributes.suggested_fee_recipient,
-            prev_randao: config.attributes.payload_attributes.prev_randao,
-            gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
-            parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
+            suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
+            prev_randao: attributes.payload_attributes.prev_randao,
+            gas_limit: attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
+            parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
         };
 
@@ -247,7 +207,10 @@ where
     /// a result indicating success with the payload or an error in case of failure.
     async fn build_payload(
         &self,
-        args: BuildArguments<BasePayloadBuilderAttributes<BaseTransactionSigned>, BaseBuiltPayload>,
+        args: BuildArguments<
+            TracedBasePayloadBuilderAttributes<BaseTransactionSigned>,
+            BaseBuiltPayload,
+        >,
         best_payload: BlockCell<BaseBuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
@@ -267,7 +230,10 @@ where
             tracing::Span::none()
         };
         let _entered = span.enter();
-        span.record("payload_id", config.attributes.payload_attributes.id.to_string());
+        span.record(
+            "payload_id",
+            config.attributes.payload_attributes().payload_attributes.id.to_string(),
+        );
 
         let timestamp = config.attributes.timestamp();
         let mut ctx = self
@@ -300,12 +266,10 @@ where
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
-        let prev_flashblock_id = self.previous_flashblock_id();
         let (payload, fb_payload) = build_block(
             &mut state,
             &ctx,
             &mut info,
-            prev_flashblock_id,
             skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
         )?;
 
@@ -330,7 +294,6 @@ where
                 .ws_pub
                 .publish(&fb_payload, ctx.block_number(), 0)
                 .map_err(PayloadBuilderError::other)?;
-            self.record_emitted_flashblock(ctx.block_number(), 0);
             BuilderMetrics::flashblock_byte_size_histogram().record(flashblock_byte_size as f64);
             BuilderMetrics::first_flashblock_time_offset()
                 .record(first_flashblock_offset.as_millis() as f64);
@@ -691,9 +654,7 @@ where
             .set(payload_transaction_simulation_time);
 
         let total_block_built_duration = Instant::now();
-        let prev_flashblock_id = self.previous_flashblock_id();
-        let build_result =
-            build_block(state, ctx, info, prev_flashblock_id, ctx.attributes().no_tx_pool);
+        let build_result = build_block(state, ctx, info, ctx.attributes().no_tx_pool);
         let total_block_built_duration = total_block_built_duration.elapsed();
         BuilderMetrics::total_block_built_duration().record(total_block_built_duration);
         BuilderMetrics::total_block_built_gauge().set(total_block_built_duration);
@@ -721,7 +682,6 @@ where
                             .ws_pub
                             .publish(&fb_payload, ctx.block_number(), flashblock_index)
                             .wrap_err("failed to publish flashblock via websocket")?;
-                        self.record_emitted_flashblock(ctx.block_number(), flashblock_index);
                         (false, size)
                     }
                 };
@@ -873,7 +833,7 @@ where
         let start_time = Instant::now();
 
         // Build the final block WITH state root computed
-        let (final_payload, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
+        let (final_payload, _) = build_block(state, ctx, info, true)?;
 
         ctx.flush_rejected_txs(info);
 
@@ -940,7 +900,7 @@ where
     Pool: PoolBounds,
     Client: ClientBounds,
 {
-    type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
+    type Attributes = TracedBasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
 
     async fn try_build(
@@ -955,13 +915,14 @@ where
 #[skip_serializing_none]
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata {
-    /// Metadata fields consumed by flashblock clients.
-    #[serde(flatten)]
-    metadata: Metadata,
     /// Receipts for transactions in this flashblock (removed in Base 1.0)
     receipts: Option<HashMap<B256, BaseReceipt>>,
     /// Changed account balances (removed in Base 1.0)
     new_account_balances: Option<HashMap<Address, U256>>,
+    /// The block number this flashblock belongs to
+    block_number: u64,
+    /// The flashblock access list
+    access_list: Option<FlashblockAccessList>,
 }
 
 pub(crate) fn execute_pre_steps<DB>(
@@ -987,7 +948,6 @@ pub(crate) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &BasePayloadBuilderCtx,
     info: &mut ExecutionInfo,
-    prev_flashblock_id: FlashblockId,
     calculate_state_root: bool,
 ) -> Result<(BaseBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
@@ -1136,8 +1096,8 @@ where
             },
             state: state.take_bundle(),
         }),
-        hashed_state: Arc::new(hashed_state),
-        trie_updates: Arc::new(trie_output),
+        hashed_state: Either::Left(Arc::new(hashed_state)),
+        trie_updates: Either::Left(Arc::new(trie_output)),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 
@@ -1152,6 +1112,9 @@ where
     let new_transactions_encoded =
         new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
+    let min_tx_index = info.extra.last_flashblock_index as u64;
+    let max_tx_index = min_tx_index + new_transactions_encoded.len() as u64;
+
     let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
     info.extra.last_flashblock_index = info.executed_transactions.len();
 
@@ -1161,16 +1124,22 @@ where
         .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
         .collect::<HashMap<B256, BaseReceipt>>();
 
+    // finalize and build the FAL
+    let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
+    let _access_list = fal_builder.build(min_tx_index, max_tx_index);
+
     let metadata: FlashblocksMetadata =
         if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
             FlashblocksMetadata {
-                metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
+                block_number: ctx.parent().number + 1,
+                access_list: None,
                 receipts: None,
                 new_account_balances: None,
             }
         } else {
             FlashblocksMetadata {
-                metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
+                block_number: ctx.parent().number + 1,
+                access_list: None,
                 new_account_balances: Some(new_account_balances),
                 receipts: Some(receipts_with_hash),
             }
@@ -1218,13 +1187,7 @@ where
     state.transition_state = untouched_transition_state;
 
     Ok((
-        BaseBuiltPayload::new(
-            ctx.payload_id(),
-            sealed_block,
-            info.total_fees,
-            Some(executed),
-            None,
-        ),
+        BaseBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed)),
         fb_payload,
     ))
 }
@@ -1236,7 +1199,7 @@ mod tests {
     use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
     use base_common_consensus::BaseReceipt;
-    use base_common_flashblocks::{FlashblockId, Metadata};
+    use base_common_flashblocks::Metadata;
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
     use reth_primitives_traits::SealedHeader;
@@ -1246,8 +1209,8 @@ mod tests {
     use super::{FlashblocksMetadata, build_block};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
-    /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
-    /// active at genesis but **no** inherited rollup upgrades (Bedrock, Canyon,
+    /// Creates a minimal [`BaseChainSpec`] with all L1 hardforks through Cancun
+    /// active at genesis but **no** inherited rollup hardforks (Bedrock, Canyon,
     /// Ecotone, Holocene, Isthmus, Jovian are all absent).
     ///
     /// This keeps `build_block` on the simplest code paths: no blob fields,
@@ -1288,14 +1251,9 @@ mod tests {
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
-        let (payload, fb_payload) = build_block::<_, NoopProvider>(
-            &mut state,
-            &ctx,
-            &mut info,
-            FlashblockId::default(),
-            false,
-        )
-        .expect("build_block should succeed for an empty block");
+        let (payload, fb_payload) =
+            build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, false)
+                .expect("build_block should succeed for an empty block");
 
         // Block number must be parent + 1.
         assert_eq!(payload.block().number, parent.number + 1, "block number should be parent + 1");
@@ -1325,14 +1283,9 @@ mod tests {
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
-        let (payload, _fb_payload) = build_block::<_, NoopProvider>(
-            &mut state,
-            &ctx,
-            &mut info,
-            FlashblockId::default(),
-            true,
-        )
-        .expect("build_block with state root should succeed");
+        let (payload, _fb_payload) =
+            build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, true)
+                .expect("build_block with state root should succeed");
 
         // NoopProvider returns B256::default() for all state root queries,
         // which equals B256::ZERO.
@@ -1366,14 +1319,8 @@ mod tests {
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
-        let err = build_block::<_, NoopProvider>(
-            &mut state,
-            &ctx,
-            &mut info,
-            FlashblockId::default(),
-            false,
-        )
-        .expect_err("build_block should fail on block number mismatch");
+        let err = build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, false)
+            .expect_err("build_block should fail on block number mismatch");
 
         let msg = err.to_string();
         assert!(
@@ -1395,20 +1342,14 @@ mod tests {
         let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
 
         // Clear the parent beacon block root that for_test() sets.
-        ctx.config.attributes.payload_attributes.parent_beacon_block_root = None;
+        ctx.config.attributes.inner.payload_attributes.parent_beacon_block_root = None;
 
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
-        let err = build_block::<_, NoopProvider>(
-            &mut state,
-            &ctx,
-            &mut info,
-            FlashblockId::default(),
-            false,
-        )
-        .expect_err("build_block should fail without beacon block root");
+        let err = build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, false)
+            .expect_err("build_block should fail without beacon block root");
 
         let msg = err.to_string();
         assert!(
@@ -1442,10 +1383,8 @@ mod tests {
         let metadata = FlashblocksMetadata {
             receipts: Some(receipts),
             new_account_balances: Some(balances),
-            metadata: Metadata {
-                block_number: 42,
-                prev_flashblock_id: FlashblockId { block_number: 41, index: 10 },
-            },
+            block_number: 42,
+            access_list: None,
         };
 
         let json = serde_json::to_value(&metadata).unwrap();
@@ -1456,13 +1395,12 @@ mod tests {
         keys.sort();
         assert_eq!(
             keys,
-            vec!["block_number", "new_account_balances", "prev_flashblock_id", "receipts",],
+            vec!["block_number", "new_account_balances", "receipts"],
             "metadata field names changed"
         );
 
         // block_number is a plain integer, not hex-encoded
         assert_eq!(obj["block_number"], serde_json::json!(42));
-        assert_eq!(obj["prev_flashblock_id"], serde_json::json!("41-10"));
 
         // receipts is a map keyed by tx hash
         let receipts_obj = obj["receipts"].as_object().unwrap();
@@ -1486,20 +1424,14 @@ mod tests {
         let metadata = FlashblocksMetadata {
             receipts: Some(HashMap::default()),
             new_account_balances: Some(HashMap::default()),
-            metadata: Metadata {
-                block_number: 99,
-                prev_flashblock_id: FlashblockId { block_number: 98, index: 10 },
-            },
+            block_number: 99,
+            access_list: None,
         };
 
         let json = serde_json::to_value(&metadata).unwrap();
         let client_metadata: Metadata =
             serde_json::from_value(json).expect("client Metadata must parse builder metadata");
         assert_eq!(client_metadata.block_number, 99);
-        assert_eq!(
-            client_metadata.prev_flashblock_id,
-            FlashblockId { block_number: 98, index: 10 }
-        );
     }
 
     /// The v0.4.1 metadata format (only `block_number`) must still deserialize
@@ -1509,6 +1441,5 @@ mod tests {
         let json = serde_json::json!({"block_number": 123});
         let metadata: Metadata = serde_json::from_value(json).expect("v0.4.1 metadata must parse");
         assert_eq!(metadata.block_number, 123);
-        assert_eq!(metadata.prev_flashblock_id, FlashblockId::default());
     }
 }

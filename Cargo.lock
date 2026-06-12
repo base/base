@@ -3874,6 +3874,7 @@ dependencies = [
  "base-common-consensus",
  "ethereum_ssz",
  "ethereum_ssz_derive",
+ "opentelemetry 0.31.0",
  "reth-payload-primitives",
  "serde",
  "serde_json",
