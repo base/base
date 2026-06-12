@@ -421,6 +421,7 @@ impl BerylMetricLabels {
                 Cow::Borrowed("checkActivated")
             }
             Some(IActivationRegistry::adminCall::SELECTOR) => Cow::Borrowed("admin"),
+            Some(IActivationRegistry::setAdminCall::SELECTOR) => Cow::Borrowed("setAdmin"),
             Some(IActivationRegistry::activateCall::SELECTOR) => Cow::Borrowed("activate"),
             Some(IActivationRegistry::deactivateCall::SELECTOR) => Cow::Borrowed("deactivate"),
             _ => Self::unknown(),
