@@ -190,7 +190,7 @@ where
                 continue;
             }
             let signer_cancel = cancel.child_token();
-            let manager = Arc::clone(self);
+            let manager = Self::clone(self);
             let instance_owned = entry.instance.clone();
             let instance_id = instance_owned.instance_id.clone();
             let attestation = entry.attestation.clone();

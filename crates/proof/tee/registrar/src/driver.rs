@@ -180,7 +180,10 @@ where
     signer_manager: M,
 }
 
-impl<D, S, M> fmt::Debug for RegistrationDriver<D, S, M> {
+impl<D, S, M> fmt::Debug for RegistrationDriver<D, S, M>
+where
+    M: SignerLifecycle,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegistrationDriver").field("config", &self.config).finish_non_exhaustive()
     }
@@ -1074,7 +1077,7 @@ mod tests {
     fn default_config(cancel: CancellationToken) -> DriverConfig {
         DriverConfig {
             poll_interval: Duration::from_secs(1),
-            cancel: cancel.clone(),
+            cancel,
             signer_manager: SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
