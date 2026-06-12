@@ -4891,6 +4891,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-l1-head"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-types 2.0.5",
+ "base-common-network",
+ "base-optimism-rpc",
+ "thiserror 2.0.18",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-load-tester-bin"
 version = "0.0.0"
 dependencies = [
@@ -5531,6 +5545,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-network",
  "base-consensus-derive",
+ "base-optimism-rpc",
  "base-proof",
  "base-proof-host",
  "base-proof-preimage",
@@ -5909,6 +5924,7 @@ dependencies = [
  "base-common-genesis",
  "base-health",
  "base-metrics",
+ "base-optimism-rpc",
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
@@ -6121,6 +6137,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-prover-zk-host"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "clap",
+ "eyre",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
@@ -6248,6 +6275,7 @@ dependencies = [
  "base-flashblocks-node",
  "base-node-core",
  "base-node-runner",
+ "base-optimism-rpc",
  "base-proof-rpc",
  "base-protocol",
  "base-runtime",
@@ -6476,6 +6504,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base-common-network",
+ "base-optimism-rpc",
  "base-proof-rpc",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",

@@ -10,6 +10,7 @@ use alloy_rpc_types_eth::{BlockId, EIP1186AccountProofResponse, Header};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
+use base_optimism_rpc::DebugProviderExt;
 use base_retry::RetryConfig;
 use url::Url;
 
@@ -18,7 +19,6 @@ use super::{
     cache::MeteredCache,
     config::DEFAULT_CACHE_SIZE,
     error::{RpcError, RpcResult},
-    provider_ext::DebugProviderExt,
     traits::L2Provider,
     types::BaseBlock,
 };

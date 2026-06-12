@@ -3,9 +3,6 @@
 use alloy_network::Ethereum;
 use alloy_provider::RootProvider;
 use base_common_network::Base;
-pub use base_optimism_rpc::{
-    GenesisL2BlockRef, L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus,
-};
 
 /// Shared type alias for the L1 HTTP provider.
 ///
