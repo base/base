@@ -6,7 +6,8 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use base_common_rpc_types_engine::{BaseExecutionPayloadV4, ExecutionData};
+use base_common_rpc_types_engine::{BaseExecutionDataExt, BaseExecutionPayloadV4, ExecutionData};
+use base_execution_payload_builder::PayloadTraceContextExt;
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
@@ -14,7 +15,7 @@ use reth_chainspec::EthereumHardforks;
 use reth_node_api::{EngineApiValidator, EngineTypes};
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
-use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
+use reth_storage_api::{BlockReader, HeaderProvider, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
 use tracing::{Instrument, debug, debug_span, instrument, trace};
 
@@ -264,8 +265,10 @@ where
 impl<Provider, EngineT, Pool, Validator, ChainSpec> BaseEngineApiServer<EngineT>
     for BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
 where
-    Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
-    EngineT: EngineTypes<ExecutionData = ExecutionData>,
+    Provider: HeaderProvider + BlockReader + StateProviderFactory + 'static,
+    EngineT: EngineTypes,
+    EngineT::ExecutionData: BaseExecutionDataExt + From<ExecutionData>,
+    EngineT::PayloadAttributes: PayloadTraceContextExt,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator<EngineT>,
     ChainSpec: EthereumHardforks + Send + Sync + 'static,
@@ -283,12 +286,13 @@ where
     )]
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV2");
-        let payload = ExecutionData::v2(payload);
+        let payload =
+            EngineT::ExecutionData::from(ExecutionData::v2(payload)).with_current_trace_context();
         let submit_span = debug_span!(
             target: "rpc::engine",
             "submit_new_payload_v2",
-            block_hash = ?payload.block_hash(),
-            block_number = payload.block_number(),
+            block_hash = ?payload.execution_data().block_hash(),
+            block_number = payload.execution_data().block_number(),
         );
 
         Ok(self.inner.new_payload_v2_metered(payload).instrument(submit_span).await?)
@@ -314,12 +318,17 @@ where
         parent_beacon_block_root: B256,
     ) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV3");
-        let payload = ExecutionData::v3(payload, versioned_hashes, parent_beacon_block_root);
+        let payload = EngineT::ExecutionData::from(ExecutionData::v3(
+            payload,
+            versioned_hashes,
+            parent_beacon_block_root,
+        ))
+        .with_current_trace_context();
         let submit_span = debug_span!(
             target: "rpc::engine",
             "submit_new_payload_v3",
-            block_hash = ?payload.block_hash(),
-            block_number = payload.block_number(),
+            block_hash = ?payload.execution_data().block_hash(),
+            block_number = payload.execution_data().block_number(),
         );
 
         Ok(self.inner.new_payload_v3_metered(payload).instrument(submit_span).await?)
@@ -353,11 +362,12 @@ where
             parent_beacon_block_root,
             execution_requests,
         );
+        let payload = EngineT::ExecutionData::from(payload).with_current_trace_context();
         let submit_span = debug_span!(
             target: "rpc::engine",
             "submit_new_payload_v4",
-            block_hash = ?payload.block_hash(),
-            block_number = payload.block_number(),
+            block_hash = ?payload.execution_data().block_hash(),
+            block_number = payload.execution_data().block_number(),
         );
 
         Ok(self.inner.new_payload_v4_metered(payload).instrument(submit_span).await?)
@@ -380,6 +390,8 @@ where
         payload_attributes: Option<EngineT::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
         trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV1");
+        let payload_attributes =
+            payload_attributes.map(PayloadTraceContextExt::with_current_trace_context);
         Ok(self.inner.fork_choice_updated_v1_metered(fork_choice_state, payload_attributes).await?)
     }
 
@@ -400,6 +412,8 @@ where
         payload_attributes: Option<EngineT::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
         trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV2");
+        let payload_attributes =
+            payload_attributes.map(PayloadTraceContextExt::with_current_trace_context);
         Ok(self.inner.fork_choice_updated_v2_metered(fork_choice_state, payload_attributes).await?)
     }
 
@@ -420,6 +434,8 @@ where
         payload_attributes: Option<EngineT::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
         trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV3");
+        let payload_attributes =
+            payload_attributes.map(PayloadTraceContextExt::with_current_trace_context);
         Ok(self.inner.fork_choice_updated_v3_metered(fork_choice_state, payload_attributes).await?)
     }
 

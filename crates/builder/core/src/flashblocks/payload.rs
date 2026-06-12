@@ -25,7 +25,10 @@ use base_common_flashblocks::{
 };
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
-use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_payload_builder::{
+    BaseBuiltPayload, BasePayloadAttributesExt, TracedBasePayloadBuilderAttributes,
+};
+use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -154,7 +157,7 @@ where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
 {
-    type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
+    type Attributes = TracedBasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
 
     fn try_build(
@@ -187,22 +190,21 @@ where
     fn get_base_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
-            BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
+            TracedBasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
         >,
         cancel: CancellationToken,
         extra: FlashblocksExtraCtx,
     ) -> eyre::Result<BasePayloadBuilderCtx> {
+        let attributes = config.attributes.payload_attributes();
         let chain_spec = self.client.chain_spec();
-        let timestamp = config.attributes.timestamp();
+        let timestamp = attributes.timestamp();
 
         let extra_data = if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-            config
-                .attributes
+            attributes
                 .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
                 .wrap_err("failed to get jovian extra data for flashblocks payload builder")?
         } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-            config
-                .attributes
+            attributes
                 .get_holocene_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
                 .wrap_err("failed to get holocene extra data for flashblocks payload builder")?
         } else {
@@ -211,10 +213,10 @@ where
 
         let block_env_attributes = BaseNextBlockEnvAttributes {
             timestamp,
-            suggested_fee_recipient: config.attributes.payload_attributes.suggested_fee_recipient,
-            prev_randao: config.attributes.payload_attributes.prev_randao,
-            gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
-            parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
+            suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
+            prev_randao: attributes.payload_attributes.prev_randao,
+            gas_limit: attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
+            parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
         };
 
@@ -247,7 +249,10 @@ where
     /// a result indicating success with the payload or an error in case of failure.
     async fn build_payload(
         &self,
-        args: BuildArguments<BasePayloadBuilderAttributes<BaseTransactionSigned>, BaseBuiltPayload>,
+        args: BuildArguments<
+            TracedBasePayloadBuilderAttributes<BaseTransactionSigned>,
+            BaseBuiltPayload,
+        >,
         best_payload: BlockCell<BaseBuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
@@ -260,14 +265,16 @@ where
         } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
-        let block_number = config.parent_header.number + 1;
         let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
-            span!(Level::INFO, "build_payload", block_number)
+            span!(Level::INFO, "build_payload")
         } else {
             tracing::Span::none()
         };
         let _entered = span.enter();
-        span.record("payload_id", config.attributes.payload_attributes.id.to_string());
+        span.record(
+            "payload_id",
+            config.attributes.payload_attributes().payload_attributes.id.to_string(),
+        );
 
         let timestamp = config.attributes.timestamp();
         let mut ctx = self
@@ -462,7 +469,6 @@ where
 
         // Process flashblocks in a blocking loop
         loop {
-            let flashblock_index = ctx.flashblock_index();
             let fb_span = if span.is_none() {
                 tracing::Span::none()
             } else {
@@ -470,7 +476,6 @@ where
                     parent: &span,
                     Level::INFO,
                     "build_flashblock",
-                    flashblock_index,
                 )
             };
             let _entered = fb_span.enter();
@@ -940,7 +945,7 @@ where
     Pool: PoolBounds,
     Client: ClientBounds,
 {
-    type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
+    type Attributes = TracedBasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
 
     async fn try_build(
@@ -1030,14 +1035,6 @@ where
     let mut hashed_state = HashedPostState::default();
 
     if calculate_state_root {
-        let state_root_span = span!(
-            Level::INFO,
-            "calculate_state_root",
-            block_number = ctx.block_number(),
-            parent_hash = %ctx.parent().hash(),
-        );
-        let _state_root_span_guard = state_root_span.enter();
-
         let state_provider = state.database.as_ref();
         hashed_state = state_provider.hashed_post_state(&state.bundle_state);
         (state_root, trie_output) =
@@ -1136,8 +1133,8 @@ where
             },
             state: state.take_bundle(),
         }),
-        hashed_state: Arc::new(hashed_state),
-        trie_updates: Arc::new(trie_output),
+        hashed_state: Either::Left(Arc::new(hashed_state)),
+        trie_updates: Either::Left(Arc::new(trie_output)),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 
@@ -1218,13 +1215,7 @@ where
     state.transition_state = untouched_transition_state;
 
     Ok((
-        BaseBuiltPayload::new(
-            ctx.payload_id(),
-            sealed_block,
-            info.total_fees,
-            Some(executed),
-            None,
-        ),
+        BaseBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed)),
         fb_payload,
     ))
 }
@@ -1246,8 +1237,8 @@ mod tests {
     use super::{FlashblocksMetadata, build_block};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
-    /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
-    /// active at genesis but **no** inherited rollup upgrades (Bedrock, Canyon,
+    /// Creates a minimal [`BaseChainSpec`] with all L1 hardforks through Cancun
+    /// active at genesis but **no** inherited rollup hardforks (Bedrock, Canyon,
     /// Ecotone, Holocene, Isthmus, Jovian are all absent).
     ///
     /// This keeps `build_block` on the simplest code paths: no blob fields,
@@ -1395,7 +1386,7 @@ mod tests {
         let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
 
         // Clear the parent beacon block root that for_test() sets.
-        ctx.config.attributes.payload_attributes.parent_beacon_block_root = None;
+        ctx.config.attributes.inner.payload_attributes.parent_beacon_block_root = None;
 
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();

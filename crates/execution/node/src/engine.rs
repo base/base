@@ -1,17 +1,17 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, Predeploys};
 use base_common_rpc_types_engine::{
-    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    ExecutionData,
+    BaseExecutionDataExt, BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4,
+    BaseExecutionPayloadEnvelopeV5,
 };
 use base_execution_consensus::isthmus;
 use base_execution_payload_builder::{
-    BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
+    BaseExecutionPayloadValidator, BasePayloadAttributesExt, BasePayloadTypes,
 };
 use reth_consensus::ConsensusError;
 use reth_node_api::{
@@ -23,9 +23,10 @@ use reth_node_api::{
     },
     validate_version_specific_fields,
 };
-use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SignedTransaction};
+use reth_primitives_traits::{RecoveredBlock, SealedBlock, SignedTransaction};
 use reth_provider::{StateProvider, StateProviderFactory};
 use reth_trie_common::{HashedPostState, KeyHasher};
+use tracing::debug_span;
 
 /// The types used in the Base beacon consensus engine.
 #[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
@@ -34,9 +35,9 @@ pub struct BaseEngineTypes<T: PayloadTypes = BasePayloadTypes> {
     _marker: PhantomData<T>,
 }
 
-impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for BaseEngineTypes<T>
+impl<T> PayloadTypes for BaseEngineTypes<T>
 where
-    ExecutionData: From<T::BuiltPayload>,
+    T: PayloadTypes,
 {
     type ExecutionData = T::ExecutionData;
     type BuiltPayload = T::BuiltPayload;
@@ -46,19 +47,14 @@ where
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
-        bal: Option<Bytes>,
     ) -> <T as PayloadTypes>::ExecutionData {
-        ExecutionData::from_block_unchecked_with_extras(
-            block.hash(),
-            &block.into_block().into_ethereum_block(),
-            bal,
-        )
+        T::block_to_payload(block)
     }
 }
 
-impl<T: PayloadTypes<ExecutionData = ExecutionData>> EngineTypes for BaseEngineTypes<T>
+impl<T> EngineTypes for BaseEngineTypes<T>
 where
-    ExecutionData: From<T::BuiltPayload>,
+    T: PayloadTypes,
     T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = BaseBlock>>
         + TryInto<ExecutionPayloadV1>
         + TryInto<ExecutionPayloadEnvelopeV2>
@@ -121,14 +117,14 @@ where
         self.inner.chain_spec()
     }
 
-    /// Verifies upgrade-gated post-execution rules against the supplied parent state.
+    /// Verifies hardfork-gated post-execution rules against the supplied parent state.
     ///
     /// Authoritative implementation of all Base-specific post-execution checks that require
     /// access to parent state (currently: Isthmus' L2-to-L1 message-passer storage root).
     /// Callers supply `parent_state` explicitly so engine pipelines can pass in-memory-aware
     /// overlay providers when the parent block isn't canonical yet.
     ///
-    /// To add a check for a future upgrade, extend the body with another
+    /// To add a check for a future hardfork, extend the body with another
     /// `if chain_spec.is_<X>_active_at_timestamp(...)` arm.
     pub fn validate_block_post_execution_with_state<DB, H>(
         &self,
@@ -202,7 +198,7 @@ where
     P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
     ChainSpec: Upgrades + Send + Sync + 'static,
-    Types: PayloadTypes<ExecutionData = ExecutionData>,
+    Types: PayloadTypes<ExecutionData: BaseExecutionDataExt>,
 {
     type Block = alloy_consensus::Block<Tx>;
 
@@ -229,19 +225,30 @@ where
 
     fn convert_payload_to_block(
         &self,
-        payload: ExecutionData,
+        payload: Types::ExecutionData,
     ) -> Result<SealedBlock<Self::Block>, NewPayloadError> {
-        self.inner.ensure_well_formed_payload(payload).map_err(NewPayloadError::other)
+        let _trace_guard = payload
+            .trace_context_headers()
+            .and_then(|trace_context| trace_context.attach_as_parent());
+        let payload_ref = payload.execution_data();
+        let _span = debug_span!(
+            target: "engine::validator",
+            "convert_payload_to_block",
+            block_hash = ?payload_ref.block_hash(),
+            block_number = payload_ref.block_number(),
+        )
+        .entered();
+        self.inner
+            .ensure_well_formed_payload(payload.into_execution_data())
+            .map_err(NewPayloadError::other)
     }
 }
 
 impl<Types, P, Tx, ChainSpec> EngineApiValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
 where
-    Types: PayloadTypes<
-            PayloadAttributes = BasePayloadBuilderAttributes<Tx>,
-            ExecutionData = ExecutionData,
-            BuiltPayload: BuiltPayload<Primitives: NodePrimitives<SignedTx = Tx>>,
-        >,
+    Types: PayloadTypes<BuiltPayload: BuiltPayload<Primitives: NodePrimitives<SignedTx = Tx>>>,
+    Types::ExecutionData: BaseExecutionDataExt,
+    Types::PayloadAttributes: BasePayloadAttributesExt<Tx>,
     P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
     ChainSpec: Upgrades + Send + Sync + 'static,
@@ -279,10 +286,11 @@ where
         validate_version_specific_fields(
             self.chain_spec(),
             version,
-            PayloadOrAttributes::<ExecutionData, Types::PayloadAttributes>::PayloadAttributes(
+            PayloadOrAttributes::<Types::ExecutionData, Types::PayloadAttributes>::PayloadAttributes(
                 attributes,
             ),
         )?;
+        let attributes = attributes.payload_attributes();
 
         if attributes.gas_limit.is_none() {
             return Err(EngineObjectValidationError::InvalidParams(
@@ -383,6 +391,9 @@ mod tests {
     use base_common_consensus::BaseTxEnvelope;
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::BaseChainSpec;
+    use base_execution_payload_builder::{
+        BasePayloadBuilderAttributes, TracedBasePayloadBuilderAttributes,
+    };
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
 
@@ -412,27 +423,29 @@ mod tests {
         eip_1559_params: Option<B64>,
         min_base_fee: Option<u64>,
         timestamp: u64,
-    ) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
-        BasePayloadBuilderAttributes::try_new(
-            B256::ZERO,
-            BasePayloadAttributes {
-                gas_limit: Some(1000),
-                eip_1559_params,
-                min_base_fee,
-                transactions: None,
-                no_tx_pool: None,
-                payload_attributes: PayloadAttributes {
-                    timestamp,
-                    prev_randao: B256::ZERO,
-                    suggested_fee_recipient: Address::ZERO,
-                    withdrawals: Some(vec![]),
-                    parent_beacon_block_root: Some(B256::ZERO),
-                    slot_number: None,
+    ) -> TracedBasePayloadBuilderAttributes<BaseTxEnvelope> {
+        TracedBasePayloadBuilderAttributes::new(
+            BasePayloadBuilderAttributes::try_new(
+                B256::ZERO,
+                BasePayloadAttributes {
+                    gas_limit: Some(1000),
+                    eip_1559_params,
+                    min_base_fee,
+                    transactions: None,
+                    no_tx_pool: None,
+                    payload_attributes: PayloadAttributes {
+                        timestamp,
+                        prev_randao: B256::ZERO,
+                        suggested_fee_recipient: Address::ZERO,
+                        withdrawals: Some(vec![]),
+                        parent_beacon_block_root: Some(B256::ZERO),
+                        slot_number: None,
+                    },
                 },
-            },
-            3,
+                3,
+            )
+            .expect("valid test payload attributes"),
         )
-        .expect("valid test payload attributes")
     }
 
     #[test]

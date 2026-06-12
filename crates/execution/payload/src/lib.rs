@@ -14,7 +14,10 @@ pub use builder::BasePayloadBuilder;
 pub mod config;
 pub mod error;
 pub mod payload;
-pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes, payload_id};
+pub use payload::{
+    BaseBuiltPayload, BasePayloadAttributesExt, BasePayloadBuilderAttributes,
+    PayloadTraceContextExt, TracedBasePayloadBuilderAttributes, payload_id,
+};
 mod traits;
 pub use traits::*;
 mod types;
