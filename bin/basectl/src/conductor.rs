@@ -19,6 +19,36 @@ use crate::{
     confirm::{confirm_or_abort, confirm_typed_or_abort},
 };
 
+#[derive(Debug, Clone, Copy)]
+enum NodeActionKind {
+    Pause,
+    Unpause,
+}
+
+impl NodeActionKind {
+    const fn action(self) -> ConductorAction {
+        match self {
+            Self::Pause => ConductorAction::Pause,
+            Self::Unpause => ConductorAction::Unpause,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ClusterActionKind {
+    PauseAll,
+    UnpauseAll,
+}
+
+impl ClusterActionKind {
+    const fn action(self) -> ConductorAction {
+        match self {
+            Self::PauseAll => ConductorAction::PauseAll,
+            Self::UnpauseAll => ConductorAction::UnpauseAll,
+        }
+    }
+}
+
 /// Runs the `basectl conductor` command group.
 pub(crate) async fn run(
     config: MonitoringConfig,
@@ -30,16 +60,16 @@ pub(crate) async fn run(
         ConductorCommands::Status(args) => run_status(config, source, args).await,
         ConductorCommands::TransferLeader(args) => run_transfer_leader(config, source, args).await,
         ConductorCommands::Pause(args) => {
-            run_node_action(config, source, args, ConductorAction::Pause).await
+            run_node_action(config, source, args, NodeActionKind::Pause).await
         }
         ConductorCommands::Unpause(args) => {
-            run_node_action(config, source, args, ConductorAction::Unpause).await
+            run_node_action(config, source, args, NodeActionKind::Unpause).await
         }
         ConductorCommands::PauseAll(args) => {
-            run_cluster_action(config, source, args, ConductorAction::PauseAll).await
+            run_cluster_action(config, source, args, ClusterActionKind::PauseAll).await
         }
         ConductorCommands::UnpauseAll(args) => {
-            run_cluster_action(config, source, args, ConductorAction::UnpauseAll).await
+            run_cluster_action(config, source, args, ClusterActionKind::UnpauseAll).await
         }
     }
 }
@@ -98,36 +128,35 @@ async fn run_node_action(
     config: MonitoringConfig,
     source: ConductorSource,
     args: ConductorNodeActionArgs,
-    action: ConductorAction,
+    action: NodeActionKind,
 ) -> Result<()> {
     let nodes = current_nodes_for_action(&source).await?;
     let node = find_node(&nodes, &args.node)?;
+    let json_action = action.action();
     let prompt = match action {
-        ConductorAction::Pause => {
+        NodeActionKind::Pause => {
             format!(
                 "Pause conductor control loop on {} ({})? [y/N] ",
                 node.name, node.conductor_rpc
             )
         }
-        ConductorAction::Unpause => {
+        NodeActionKind::Unpause => {
             format!(
                 "Unpause conductor control loop on {} ({})? [y/N] ",
                 node.name, node.conductor_rpc
             )
         }
-        _ => unreachable!("single-node conductor action must be pause or unpause"),
     };
     if !confirm_or_abort(&prompt, args.yes)? {
         return Ok(());
     }
 
     let message = match action {
-        ConductorAction::Pause => ConductorControl::pause_node(node).await?,
-        ConductorAction::Unpause => ConductorControl::resume_node(node).await?,
-        _ => unreachable!("single-node conductor action must be pause or unpause"),
+        NodeActionKind::Pause => ConductorControl::pause_node(node).await?,
+        NodeActionKind::Unpause => ConductorControl::resume_node(node).await?,
     };
     print_single_action(
-        &ConductorActionJson::single(&config.name, action, Some(node.name.clone()), message),
+        &ConductorActionJson::single(&config.name, json_action, Some(node.name.clone()), message),
         args.json,
     )
 }
@@ -136,39 +165,38 @@ async fn run_cluster_action(
     config: MonitoringConfig,
     source: ConductorSource,
     args: ConductorClusterActionArgs,
-    action: ConductorAction,
+    action: ClusterActionKind,
 ) -> Result<()> {
     let nodes = current_nodes_for_all(&source).await?;
     let names = nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>().join(", ");
+    let json_action = action.action();
     let prompt = match action {
-        ConductorAction::PauseAll => format!(
+        ClusterActionKind::PauseAll => format!(
             "Type {} to pause conductor control loop on all {} current raft members ({}): ",
             config.name,
             nodes.len(),
             names
         ),
-        ConductorAction::UnpauseAll => format!(
+        ClusterActionKind::UnpauseAll => format!(
             "Type {} to unpause conductor control loop on all {} current raft members ({}): ",
             config.name,
             nodes.len(),
             names
         ),
-        _ => unreachable!("cluster conductor action must be pause-all or unpause-all"),
     };
     if !confirm_typed_or_abort(&prompt, &config.name, args.yes)? {
         return Ok(());
     }
 
     let report = match action {
-        ConductorAction::PauseAll => ConductorControl::pause_all(nodes).await,
-        ConductorAction::UnpauseAll => ConductorControl::resume_all(nodes).await,
-        _ => unreachable!("cluster conductor action must be pause-all or unpause-all"),
+        ClusterActionKind::PauseAll => ConductorControl::pause_all(nodes).await,
+        ClusterActionKind::UnpauseAll => ConductorControl::resume_all(nodes).await,
     };
     print_fanout_action(
-        &ConductorFanoutJson::from_report(&config.name, action, &report),
+        &ConductorFanoutJson::from_report(&config.name, json_action, &report),
         args.json,
     )?;
-    if report.is_success() { Ok(()) } else { bail!(report.summary(action.past_tense())) }
+    if report.is_success() { Ok(()) } else { bail!(report.summary(json_action.past_tense())) }
 }
 
 fn resolve_source(

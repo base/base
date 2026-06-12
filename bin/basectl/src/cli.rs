@@ -361,22 +361,20 @@ mod tests {
 
     use super::Cli;
 
+    fn try_parse<const N: usize>(args: [&str; N]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(args)
+    }
+
     #[test]
     fn destructive_p2p_json_requires_yes() {
+        assert!(try_parse(["basectl", "p2p", "add-peer", "enr:example", "--json"]).is_err());
+        assert!(try_parse(["basectl", "p2p", "ban", "16Uiu2HAmExamplePeerId", "--json",]).is_err());
         assert!(
-            Cli::try_parse_from(["basectl", "p2p", "add-peer", "enr:example", "--json"]).is_err()
+            try_parse(["basectl", "p2p", "unban", "16Uiu2HAmExamplePeerId", "--json",]).is_err()
         );
+        assert!(try_parse(["basectl", "p2p", "unban-all", "--json"]).is_err());
         assert!(
-            Cli::try_parse_from(["basectl", "p2p", "ban", "16Uiu2HAmExamplePeerId", "--json",])
-                .is_err()
-        );
-        assert!(
-            Cli::try_parse_from(["basectl", "p2p", "unban", "16Uiu2HAmExamplePeerId", "--json",])
-                .is_err()
-        );
-        assert!(Cli::try_parse_from(["basectl", "p2p", "unban-all", "--json"]).is_err());
-        assert!(
-            Cli::try_parse_from([
+            try_parse([
                 "basectl",
                 "p2p",
                 "remove-peer",
@@ -387,7 +385,7 @@ mod tests {
             .is_ok()
         );
         assert!(
-            Cli::try_parse_from([
+            try_parse([
                 "basectl",
                 "p2p",
                 "ban",
@@ -400,7 +398,7 @@ mod tests {
             .is_ok()
         );
         assert!(
-            Cli::try_parse_from([
+            try_parse([
                 "basectl",
                 "p2p",
                 "unban",
@@ -413,7 +411,7 @@ mod tests {
             .is_ok()
         );
         assert!(
-            Cli::try_parse_from([
+            try_parse([
                 "basectl",
                 "p2p",
                 "unban-all",
@@ -429,7 +427,7 @@ mod tests {
     #[test]
     fn destructive_cl_p2p_commands_reject_el_rpc() {
         assert!(
-            Cli::try_parse_from([
+            try_parse([
                 "basectl",
                 "p2p",
                 "ban",
@@ -440,7 +438,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            Cli::try_parse_from([
+            try_parse([
                 "basectl",
                 "p2p",
                 "unban",
@@ -451,22 +449,16 @@ mod tests {
             .is_err()
         );
         assert!(
-            Cli::try_parse_from([
-                "basectl",
-                "p2p",
-                "unban-all",
-                "--el-rpc",
-                "http://127.0.0.1:8545",
-            ])
-            .is_err()
+            try_parse(["basectl", "p2p", "unban-all", "--el-rpc", "http://127.0.0.1:8545",])
+                .is_err()
         );
     }
 
     #[test]
     fn conductor_commands_parse() {
-        assert!(Cli::try_parse_from(["basectl", "conductor", "status", "--json"]).is_ok());
+        assert!(try_parse(["basectl", "conductor", "status", "--json"]).is_ok());
         assert!(
-            Cli::try_parse_from([
+            try_parse([
                 "basectl",
                 "conductor",
                 "transfer-leader",
@@ -476,33 +468,19 @@ mod tests {
             ])
             .is_ok()
         );
-        assert!(
-            Cli::try_parse_from(["basectl", "conductor", "pause", "op-conductor-0", "--yes",])
-                .is_ok()
-        );
-        assert!(
-            Cli::try_parse_from(["basectl", "conductor", "unpause", "op-conductor-0", "--yes",])
-                .is_ok()
-        );
-        assert!(
-            Cli::try_parse_from(["basectl", "conductor", "pause-all", "--yes", "--json",]).is_ok()
-        );
-        assert!(Cli::try_parse_from(["basectl", "conductor", "unpause-all"]).is_ok());
+        assert!(try_parse(["basectl", "conductor", "pause", "op-conductor-0", "--yes",]).is_ok());
+        assert!(try_parse(["basectl", "conductor", "unpause", "op-conductor-0", "--yes",]).is_ok());
+        assert!(try_parse(["basectl", "conductor", "pause-all", "--yes", "--json",]).is_ok());
+        assert!(try_parse(["basectl", "conductor", "unpause-all"]).is_ok());
     }
 
     #[test]
     fn destructive_conductor_json_requires_yes() {
-        assert!(
-            Cli::try_parse_from(["basectl", "conductor", "pause", "op-conductor-0", "--json",])
-                .is_err()
-        );
-        assert!(
-            Cli::try_parse_from(["basectl", "conductor", "transfer-leader", "--json"]).is_err()
-        );
-        assert!(Cli::try_parse_from(["basectl", "conductor", "pause-all", "--json"]).is_err());
-        assert!(Cli::try_parse_from(["basectl", "conductor", "unpause-all", "--json"]).is_err());
-        assert!(
-            Cli::try_parse_from(["basectl", "conductor", "pause-all", "--yes", "--json"]).is_ok()
-        );
+        assert!(try_parse(["basectl", "conductor", "pause", "op-conductor-0", "--json",]).is_err());
+        assert!(try_parse(["basectl", "conductor", "transfer-leader", "--json"]).is_err());
+        assert!(try_parse(["basectl", "conductor", "pause-all", "--json"]).is_err());
+        assert!(try_parse(["basectl", "conductor", "unpause-all", "--json"]).is_err());
+        assert!(try_parse(["basectl", "conductor", "pause-all", "--yes", "--json"]).is_ok());
+        assert!(try_parse(["basectl", "conductor", "unpause-all", "--yes", "--json"]).is_ok());
     }
 }
