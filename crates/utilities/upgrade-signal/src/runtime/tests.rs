@@ -109,7 +109,7 @@ fn runtime_registry_sink_only_flushes_in_finalize() {
 }
 
 #[test]
-fn runtime_registry_sink_merges_with_existing_overrides() {
+fn runtime_registry_sink_replaces_existing_overrides() {
     let chain_id = 9_000_009;
     RuntimeUpgradeRegistry::clear_chain(chain_id);
     RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, "cobalt", 84);
@@ -122,10 +122,7 @@ fn runtime_registry_sink_merges_with_existing_overrides() {
         RuntimeUpgradeRegistry::activation(chain_id, "azul"),
         Some(UpgradeActivation::Timestamp(42))
     );
-    assert_eq!(
-        RuntimeUpgradeRegistry::activation(chain_id, "cobalt"),
-        Some(UpgradeActivation::Timestamp(84))
-    );
+    assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, "cobalt"), None);
 
     RuntimeUpgradeRegistry::clear_chain(chain_id);
 }

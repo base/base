@@ -35,11 +35,11 @@ impl UpgradeActivationSink for RuntimeRegistrySink {
     fn finalize(&mut self) -> Result<(), Self::Error> {
         let updates = core::mem::take(&mut self.updates);
 
-        RuntimeUpgradeRegistry::update_chain(self.chain_id, |overrides| {
-            for (hardfork_id, activation) in updates.activations {
-                overrides.set_activation(&hardfork_id, activation);
-            }
-        });
+        if updates.is_empty() {
+            RuntimeUpgradeRegistry::clear_chain(self.chain_id);
+        } else {
+            RuntimeUpgradeRegistry::replace_overrides(self.chain_id, updates);
+        }
 
         Ok(())
     }

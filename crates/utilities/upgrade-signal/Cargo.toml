@@ -25,6 +25,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 # general
 url.workspace = true
 tracing.workspace = true
+futures.workspace = true
 metrics = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["time"] }
 thiserror = { workspace = true, features = ["std"] }

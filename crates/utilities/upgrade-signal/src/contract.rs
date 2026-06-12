@@ -6,6 +6,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
+use futures::future::{join_all, try_join, try_join_all};
 use tokio::time::sleep;
 use tracing::warn;
 
@@ -103,25 +104,24 @@ impl AlloyUpgradeSignalReader {
         l1_block_number: u64,
         l1_block: BlockId,
     ) -> Result<UpgradeSignal, UpgradeSignalError> {
-        let timestamp_output = self
-            .call_at_block(
+        let (timestamp_output, version_output) = try_join(
+            self.call_at_block(
                 IUpgradeSignal::getTimestampCall { hardforkId: hardfork_id.to_string() },
                 l1_block,
                 "getTimestamp failed",
-            )
-            .await?;
+            ),
+            self.call_at_block(
+                IUpgradeSignal::getProtocolVersionCall { hardforkId: hardfork_id.to_string() },
+                l1_block,
+                "getProtocolVersion failed",
+            ),
+        )
+        .await?;
         let timestamp =
             IUpgradeSignal::getTimestampCall::abi_decode_returns(timestamp_output.as_ref())
                 .map_err(|error| UpgradeSignalError::decode("getTimestamp decode failed", error))?;
         let activation_timestamp = Self::decode_timestamp(timestamp)?;
 
-        let version_output = self
-            .call_at_block(
-                IUpgradeSignal::getProtocolVersionCall { hardforkId: hardfork_id.to_string() },
-                l1_block,
-                "getProtocolVersion failed",
-            )
-            .await?;
         let protocol_version =
             IUpgradeSignal::getProtocolVersionCall::abi_decode_returns(version_output.as_ref())
                 .map_err(|error| {
@@ -160,16 +160,17 @@ impl AlloyUpgradeSignalReader {
                 return Err(error);
             }
         };
-        let mut signals = Vec::with_capacity(hardfork_ids.len());
-        for hardfork_id in hardfork_ids {
-            match self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await {
-                Ok(signal) => signals.push(signal),
-                Err(error) => {
-                    UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
-                    return Err(error);
-                }
-            }
-        }
+        let signals = try_join_all(hardfork_ids.iter().map(|hardfork_id| async move {
+            self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block)
+                .await
+                .map_err(|error| (hardfork_id, error))
+        }))
+        .await
+        .map_err(|(hardfork_id, error)| {
+            UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
+            error
+        })?;
+
         Ok(UpgradeSignalSchedule::new(signals))
     }
 
@@ -223,8 +224,15 @@ impl AlloyUpgradeSignalReader {
             }
         };
         let mut signals = Vec::with_capacity(hardfork_ids.len());
-        for hardfork_id in hardfork_ids {
-            match self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await {
+        for (hardfork_id, result) in join_all(hardfork_ids.iter().map(|hardfork_id| async move {
+            (
+                hardfork_id,
+                self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await,
+            )
+        }))
+        .await
+        {
+            match result {
                 Ok(signal) => signals.push(signal),
                 Err(error) => {
                     UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
