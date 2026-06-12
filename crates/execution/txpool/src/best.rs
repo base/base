@@ -98,7 +98,7 @@ where
                 return Some(transaction);
             }
 
-            self.mark_invalid(&transaction, &InvalidPoolTransactionError::Underpriced);
+            self.mark_invalid(&transaction, InvalidPoolTransactionError::Underpriced);
         }
     }
 }
@@ -107,7 +107,7 @@ impl<T: BasePooledTx, O> BestTransactions for MergeBestTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    fn mark_invalid(&mut self, transaction: &Self::Item, kind: &InvalidPoolTransactionError) {
+    fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
         if transaction.transaction.eip8130_nonce_channel_key().is_some() {
             self.next_sidecar = None;
             self.sidecar.mark_invalid(transaction, kind);
@@ -166,7 +166,7 @@ mod tests {
     }
 
     impl<T: BasePooledTx> BestTransactions for StaticBestTransactions<T> {
-        fn mark_invalid(&mut self, transaction: &Self::Item, _kind: &InvalidPoolTransactionError) {
+        fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
             let nonce_key = transaction.transaction.eip8130_nonce_channel_key();
             self.transactions.retain(|candidate| {
                 if nonce_key.is_some() {
@@ -360,7 +360,7 @@ mod tests {
         let second = merged.next().expect("expected sidecar transaction");
         assert_eq!(second.transaction.eip8130_nonce_channel_key(), Some(U256::from(1)));
 
-        merged.mark_invalid(&first, &InvalidPoolTransactionError::Underpriced);
+        merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
 
         assert!(merged.next().is_none());
     }

@@ -42,7 +42,7 @@ pub struct BaseTransactionPool<
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
-    S: BlobStore,
+    S: BlobStore + Clone,
 {
     protocol_pool:
         Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>,
@@ -58,7 +58,7 @@ where
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
-    S: BlobStore,
+    S: BlobStore + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BaseTransactionPool").finish_non_exhaustive()
@@ -72,7 +72,7 @@ where
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
-    S: BlobStore,
+    S: BlobStore + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -91,7 +91,7 @@ where
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
-    S: BlobStore,
+    S: BlobStore + Clone,
 {
 }
 
@@ -102,7 +102,7 @@ where
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
-    S: BlobStore,
+    S: BlobStore + Clone,
 {
     /// Creates a new wrapper around the reth protocol pool.
     pub fn new(
@@ -287,7 +287,7 @@ where
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
-    S: BlobStore,
+    S: BlobStore + Clone,
 {
     type Transaction = T;
 
@@ -521,7 +521,7 @@ where
         let block_info = self.protocol_pool.block_info();
         let best_transactions_attributes = BestTransactionsAttributes::new(
             block_info.pending_basefee,
-            block_info.pending_blob_fee.map(|fee| fee.min(u64::MAX as u128) as u64),
+            block_info.pending_blob_fee.map(|fee| u64::try_from(fee).unwrap_or(u64::MAX)),
         );
         let base_fee = best_transactions_attributes.basefee;
         Box::new(MergeBestTransactions::new(
@@ -667,6 +667,16 @@ where
 
         let nonce_pool = self.nonce_pool.read();
         announcement.retain_by_hash(|hash| !nonce_pool.contains(hash));
+    }
+
+    fn retain_contains<A>(&self, announcement: &mut A)
+    where
+        A: HandleMempoolData,
+    {
+        let nonce_pool = self.nonce_pool.read();
+        announcement.retain_by_hash(|hash| {
+            self.protocol_pool.get(hash).is_some() || nonce_pool.contains(hash)
+        });
     }
 
     fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
@@ -842,6 +852,10 @@ where
     ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
         self.protocol_pool.get_blobs_for_versioned_hashes_v4(versioned_hashes, indices_bitarray)
     }
+
+    fn blob_store(&self) -> Box<dyn BlobStore> {
+        Box::new(self.protocol_pool.blob_store().clone())
+    }
 }
 
 impl<Client, S, Evm, T, O> TransactionPoolExt for BaseTransactionPool<Client, S, Evm, T, O>
@@ -851,7 +865,7 @@ where
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
     O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
-    S: BlobStore,
+    S: BlobStore + Clone,
 {
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
 

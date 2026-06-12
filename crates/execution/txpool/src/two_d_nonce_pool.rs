@@ -511,7 +511,7 @@ impl<T: BasePooledTx, O> BestTransactions for BestTwoDTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
-    fn mark_invalid(&mut self, transaction: &Self::Item, _kind: &InvalidPoolTransactionError) {
+    fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
         let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() else {
             return;
         };
@@ -992,7 +992,7 @@ mod tests {
         let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0);
         best.mark_invalid(
             &lane_to_invalidate,
-            &InvalidPoolTransactionError::Consensus(InvalidTransactionError::TxTypeNotSupported),
+            InvalidPoolTransactionError::Consensus(InvalidTransactionError::TxTypeNotSupported),
         );
 
         let yielded_hashes: Vec<_> = best.map(|transaction| *transaction.hash()).collect();
