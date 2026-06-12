@@ -10,7 +10,7 @@ use base_proof_succinct_host_utils::{
 };
 use sp1_sdk::SP1Stdin;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Inputs to [`OpSuccinctWitnessProvider::generate_witness`].
 #[derive(Debug, Clone, Copy)]
@@ -30,13 +30,13 @@ pub struct WitnessParams<'a> {
 pub enum L1HeadSource<'a> {
     /// Use this exact L1 head hash.
     Pinned(B256),
-    /// Try `SafeDB`, then fall back to sequence-window calculation.
-    SafeDbWithFallback {
-        /// Sequence-window size used for L1-head fallback.
+    /// Calculate the L1 head hash from the requested L2 range and sequence window.
+    SequenceWindow {
+        /// Sequence-window size used for L1-head calculation.
         sequence_window: u64,
-        /// L1 execution-layer RPC URL, used for sequence-window fallback.
+        /// L1 execution-layer RPC URL, used for sequence-window calculation.
         l1_node_url: &'a str,
-        /// Base consensus-layer RPC URL, used for sequence-window fallback.
+        /// Base consensus-layer RPC URL, used for sequence-window calculation.
         base_consensus_url: &'a str,
     },
 }
@@ -45,8 +45,8 @@ impl fmt::Debug for L1HeadSource<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pinned(hash) => f.debug_tuple("Pinned").field(hash).finish(),
-            Self::SafeDbWithFallback { sequence_window, .. } => f
-                .debug_struct("SafeDbWithFallback")
+            Self::SequenceWindow { sequence_window, .. } => f
+                .debug_struct("SequenceWindow")
                 .field("sequence_window", sequence_window)
                 .field("l1_node_url", &"<redacted>")
                 .field("base_consensus_url", &"<redacted>")
@@ -60,7 +60,7 @@ impl L1HeadSource<'_> {
     pub const fn variant_name(&self) -> &'static str {
         match self {
             Self::Pinned(_) => "Pinned",
-            Self::SafeDbWithFallback { .. } => "SafeDbWithFallback",
+            Self::SequenceWindow { .. } => "SequenceWindow",
         }
     }
 }
@@ -75,25 +75,19 @@ pub enum WitnessError {
         #[source]
         source: Box<dyn StdError + Send + Sync>,
     },
-    /// `SafeDB` failed, then sequence-window L1-head calculation also failed.
-    #[error(
-        "SafeDB failed ({safe_db_source}), then sequence-window l1_head calculation also failed"
-    )]
-    SafeDbFallbackL1Head {
-        /// `SafeDB` host fetch error.
-        safe_db_source: Box<dyn StdError + Send + Sync>,
+    /// Sequence-window L1-head calculation failed.
+    #[error("failed to calculate sequence-window l1_head")]
+    SequenceWindowL1Head {
         /// Sequence-window L1-head calculation error.
         #[source]
-        l1_head_source: L1HeadError,
+        source: L1HeadError,
     },
-    /// `SafeDB` failed, then fetching host arguments with the fallback L1 head also failed.
-    #[error("SafeDB failed ({safe_db_source}), then fallback l1_head host fetch also failed")]
-    SafeDbFallbackHostFetch {
-        /// `SafeDB` host fetch error.
-        safe_db_source: Box<dyn StdError + Send + Sync>,
-        /// Fallback host fetch error.
+    /// Fetching host arguments with a sequence-window L1 head failed.
+    #[error("failed to fetch Succinct host args with sequence-window l1_head")]
+    SequenceWindowHostFetch {
+        /// Underlying Succinct host error.
         #[source]
-        fallback_source: Box<dyn StdError + Send + Sync>,
+        source: Box<dyn StdError + Send + Sync>,
     },
     /// Running the Succinct host failed.
     #[error("failed to run Succinct host")]
@@ -134,8 +128,7 @@ impl OpSuccinctWitnessProvider {
     /// Generate witness stdin for a block range.
     ///
     /// When `params.l1_head` is pinned, that hash is used directly. Otherwise
-    /// this first tries the Succinct host's `SafeDB` path, then falls back to
-    /// the configured sequence-window calculation.
+    /// the configured sequence-window calculation selects the L1 head.
     pub async fn generate_witness(
         &self,
         params: WitnessParams<'_>,
@@ -159,58 +152,30 @@ impl OpSuccinctWitnessProvider {
                         source: source.into_boxed_dyn_error(),
                     })?
             }
-            L1HeadSource::SafeDbWithFallback {
-                sequence_window,
-                l1_node_url,
-                base_consensus_url,
-            } => match self
-                .host
-                .fetch(start_block, end_block, None, intermediate_root_interval, false)
-                .await
-            {
-                Ok(args) => {
-                    info!("l1 head calculated via SafeDB");
-                    args
-                }
-                Err(safe_db_err) => {
-                    warn!(
-                        error = %safe_db_err,
-                        sequence_window = sequence_window,
-                        "SafeDB unavailable, falling back to sequence_window"
-                    );
-                    let (_l1_head_block_num, l1_head_hash) =
-                        match L1HeadCalculator::calculate_l1_head_from_urls(
-                            l1_node_url,
-                            base_consensus_url,
-                            end_block,
-                            sequence_window,
-                        )
-                        .await
-                        {
-                            Ok(l1_head) => l1_head,
-                            Err(l1_head_source) => {
-                                return Err(WitnessError::SafeDbFallbackL1Head {
-                                    safe_db_source: safe_db_err.into_boxed_dyn_error(),
-                                    l1_head_source,
-                                });
-                            }
-                        };
-                    info!(l1_head_hash = %l1_head_hash, "l1 head via sequence_window fallback");
-                    self.host
-                        .fetch(
-                            start_block,
-                            end_block,
-                            Some(l1_head_hash),
-                            intermediate_root_interval,
-                            false,
-                        )
-                        .await
-                        .map_err(|fallback_source| WitnessError::SafeDbFallbackHostFetch {
-                            safe_db_source: safe_db_err.into_boxed_dyn_error(),
-                            fallback_source: fallback_source.into_boxed_dyn_error(),
-                        })?
-                }
-            },
+            L1HeadSource::SequenceWindow { sequence_window, l1_node_url, base_consensus_url } => {
+                let (_l1_head_block_num, l1_head_hash) =
+                    L1HeadCalculator::calculate_l1_head_from_urls(
+                        l1_node_url,
+                        base_consensus_url,
+                        end_block,
+                        sequence_window,
+                    )
+                    .await
+                    .map_err(|source| WitnessError::SequenceWindowL1Head { source })?;
+                info!(l1_head_hash = %l1_head_hash, "l1 head calculated via sequence_window");
+                self.host
+                    .fetch(
+                        start_block,
+                        end_block,
+                        Some(l1_head_hash),
+                        intermediate_root_interval,
+                        false,
+                    )
+                    .await
+                    .map_err(|source| WitnessError::SequenceWindowHostFetch {
+                        source: source.into_boxed_dyn_error(),
+                    })?
+            }
         };
 
         debug!(start_block = start_block, end_block = end_block, "host args fetched");
