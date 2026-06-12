@@ -20,12 +20,15 @@ use reth_rpc_eth_api::{
     TxInfoMapper,
     helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
 };
-use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
+use reth_rpc_eth_types::{
+    EthApiError, TransactionSource, block::convert_transaction_receipt,
+    utils::recover_raw_transaction,
+};
 use reth_storage_api::{ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError};
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
 };
-use tracing::{debug, instrument, warn};
+use tracing::{Instrument, debug, info_span, instrument, warn};
 
 use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
 
@@ -41,6 +44,25 @@ where
 
     fn send_raw_transaction_sync_timeout(&self) -> Duration {
         self.inner.eth_api.send_raw_transaction_sync_timeout()
+    }
+
+    fn send_raw_transaction(
+        &self,
+        tx: Bytes,
+    ) -> impl Future<Output = Result<B256, Self::Error>> + Send {
+        let tx_len = tx.len();
+        let span = info_span!("send_raw_transaction", tx_len);
+
+        async move {
+            let recovered = info_span!("decode_raw_transaction", tx_len)
+                .in_scope(|| recover_raw_transaction::<PoolPooledTx<Self::Pool>>(&tx))?;
+            let tx_hash = *recovered.tx_hash();
+
+            self.send_transaction(TransactionOrigin::External, WithEncoded::new(tx, recovered))
+                .instrument(info_span!("submit_raw_transaction", tx_hash = %tx_hash))
+                .await
+        }
+        .instrument(span)
     }
 
     #[instrument(skip_all, fields(tx_hash = %tx.tx_hash()))]
