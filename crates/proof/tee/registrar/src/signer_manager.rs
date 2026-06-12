@@ -110,43 +110,30 @@ impl<P, R, T> SignerManager<P, R, T> {
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
         while let Some(joined) = tasks.try_join_next_with_id() {
-            Self::apply_join_outcome(Some(joined), pending);
+            Self::apply_join_outcome(joined, pending);
         }
-    }
-
-    /// Removes the `pending` entry for `signer` only when its task id matches.
-    pub fn remove_if_task_matches(
-        pending: &mut HashMap<Address, PendingRegistration>,
-        signer: Address,
-        id: task::Id,
-    ) -> Option<PendingRegistration> {
-        match pending.get(&signer) {
-            Some(entry) if entry.task_id == id => pending.remove(&signer),
-            _ => None,
-        }
-    }
-
-    /// Removes the `pending` entry spawned with `task_id`.
-    pub fn remove_by_task_id(
-        pending: &mut HashMap<Address, PendingRegistration>,
-        task_id: task::Id,
-    ) -> Option<(Address, PendingRegistration)> {
-        let signer =
-            pending.iter().find_map(|(addr, p)| (p.task_id == task_id).then_some(*addr))?;
-        let registration = pending.remove(&signer)?;
-        Some((signer, registration))
     }
 
     /// Consumes one `JoinSet` outcome and updates `pending` plus metrics.
     pub fn apply_join_outcome(
-        joined: Option<std::result::Result<(task::Id, Result<Address>), tokio::task::JoinError>>,
+        joined: std::result::Result<(task::Id, Result<Address>), tokio::task::JoinError>,
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
-        let Some(result) = joined else { return };
+        let remove_by_task_id = |pending: &mut HashMap<Address, PendingRegistration>,
+                                 task_id: task::Id| {
+            pending
+                .iter()
+                .find_map(|(addr, p)| (p.task_id == task_id).then_some(*addr))
+                .and_then(|signer| pending.remove(&signer).map(|entry| (signer, entry)))
+        };
+
         RegistrarMetrics::proof_tasks_completed().increment(1);
-        match result {
+        match joined {
             Ok((id, Ok(signer))) => {
-                let removed = Self::remove_if_task_matches(pending, signer, id);
+                let removed = match pending.get(&signer) {
+                    Some(entry) if entry.task_id == id => pending.remove(&signer),
+                    _ => None,
+                };
                 debug!(
                     task_id = ?id,
                     signer = %signer,
@@ -156,7 +143,7 @@ impl<P, R, T> SignerManager<P, R, T> {
                 );
             }
             Ok((id, Err(e))) => {
-                let removed = Self::remove_by_task_id(pending, id);
+                let removed = remove_by_task_id(pending, id);
                 let signer = removed.as_ref().map(|(signer, _)| *signer);
                 warn!(
                     task_id = ?id,
@@ -170,7 +157,7 @@ impl<P, R, T> SignerManager<P, R, T> {
             }
             Err(join_err) => {
                 let id = join_err.id();
-                let removed = Self::remove_by_task_id(pending, id);
+                let removed = remove_by_task_id(pending, id);
                 let signer = removed.as_ref().map(|(signer, _)| *signer);
                 warn!(
                     task_id = ?id,
@@ -197,7 +184,7 @@ impl<P, R, T> SignerManager<P, R, T> {
             }
         }
         while let Some(joined) = tasks.join_next_with_id().await {
-            Self::apply_join_outcome(Some(joined), pending);
+            Self::apply_join_outcome(joined, pending);
         }
         RegistrarMetrics::proof_tasks_pending().set(0.0);
     }

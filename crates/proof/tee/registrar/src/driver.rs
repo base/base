@@ -3475,7 +3475,7 @@ mod tests {
         let started = std::time::Instant::now();
         loop {
             if let Some(joined) = tasks.try_join_next_with_id() {
-                RunSignerManager::apply_join_outcome(Some(joined), &mut pending);
+                RunSignerManager::apply_join_outcome(joined, &mut pending);
                 break;
             }
             if started.elapsed() > GATED_WAIT_TIMEOUT {
@@ -3497,9 +3497,9 @@ mod tests {
     /// [`SignerManager::apply_join_outcome`] inner-`Err` arm: a
     /// stale task failing must NOT evict the fresh entry that
     /// reconcile dropped into the slot for the same signer. The
-    /// [`SignerManager::remove_by_task_id`] guard threaded through the
-    /// error arms is what enforces this — without it, a stale failure
-    /// could evict a fresh entry for the same signer.
+    /// task-id guard in the error arms is what enforces this — without
+    /// it, a stale failure could evict a fresh entry for the same
+    /// signer.
     #[tokio::test]
     async fn apply_join_outcome_err_arm_preserves_fresh_entry_when_stale_task_fails_for_same_signer()
      {
@@ -3541,7 +3541,7 @@ mod tests {
         let started = std::time::Instant::now();
         loop {
             if let Some(joined) = tasks.try_join_next_with_id() {
-                RunSignerManager::apply_join_outcome(Some(joined), &mut pending);
+                RunSignerManager::apply_join_outcome(joined, &mut pending);
                 break;
             }
             if started.elapsed() > GATED_WAIT_TIMEOUT {
