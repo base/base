@@ -97,7 +97,10 @@ pub enum ProofCollectorTickResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofSubmitEffect {
     /// The proof was submitted or the game already existed.
-    Submitted,
+    Submitted {
+        /// Latest recovered chain state after the submit was observed.
+        recovered: RecoveredState,
+    },
     /// The pipeline should restart before collecting more proofs.
     Restart,
     /// The submitted proof should be replaced by a retry-specific session.
@@ -837,16 +840,14 @@ where
                         .submit_inline(target_block, &current, proof, state, cache, cancel)
                         .await
                     {
-                        ProofSubmitEffect::Submitted => {
+                        ProofSubmitEffect::Submitted { recovered } => {
                             state.retry_sessions.remove(&target_block);
                             state.discard_retry_counts.remove(&target_block);
                             state.pending_discard_roots.remove(&target_block);
                             state.counted_failed_sessions.remove(&target_block);
-                            if let Some(cached) = cache.as_ref() {
-                                state.cursor = Some(cached.state);
-                                if cached.state.l2_block_number > current.l2_block_number {
-                                    continue;
-                                }
+                            state.cursor = Some(recovered);
+                            if recovered.l2_block_number > current.l2_block_number {
+                                continue;
                             }
                             break;
                         }
@@ -1048,10 +1049,13 @@ where
                 info!(target_block, "Submission successful");
                 Metrics::last_proposed_block().set(target_block as f64);
                 state.retry_counts.remove(&target_block);
-                if let Err(e) = self.recovery.recover_latest_state(cache).await {
-                    warn!(error = %e, "Failed to recover state after submission");
+                match self.recovery.recover_latest_state(cache).await {
+                    Ok(recovered) => ProofSubmitEffect::Submitted { recovered },
+                    Err(e) => {
+                        warn!(error = %e, "Failed to recover state after submission");
+                        ProofSubmitEffect::Restart
+                    }
                 }
-                ProofSubmitEffect::Submitted
             }
             Ok(Err(SubmitAction::RootMismatch)) => {
                 submit_timer.disarm();
@@ -1068,10 +1072,13 @@ where
                 if let Some(cached) = cache.as_mut() {
                     cached.game_count = cached.game_count.saturating_sub(1);
                 }
-                if let Err(e) = self.recovery.recover_latest_state(cache).await {
-                    warn!(error = %e, "Failed to recover state after GameAlreadyExists");
+                match self.recovery.recover_latest_state(cache).await {
+                    Ok(recovered) => ProofSubmitEffect::Submitted { recovered },
+                    Err(e) => {
+                        warn!(error = %e, "Failed to recover state after GameAlreadyExists");
+                        ProofSubmitEffect::Restart
+                    }
                 }
-                ProofSubmitEffect::Submitted
             }
             Ok(Err(SubmitAction::Failed(error))) => {
                 submit_timer.disarm();
@@ -1295,12 +1302,15 @@ mod tests {
         proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
         test_utils::{
             MockL1, MockL2, MockOutputProposer, MockProofRequester, MockRollupClient,
-            test_sync_status,
+            test_proposal, test_sync_status,
         },
     };
 
     #[derive(Debug)]
     struct NoopRecovery;
+
+    #[derive(Debug)]
+    struct FailingRecovery;
 
     #[derive(Debug)]
     struct FailingL1;
@@ -1318,6 +1328,16 @@ mod tests {
             _cache: &mut Option<ProofRecoveryCache>,
         ) -> Result<RecoveredState, ProposerError> {
             Ok(recovered(0))
+        }
+    }
+
+    #[async_trait]
+    impl ProofCollectorRecoveryProvider for FailingRecovery {
+        async fn recover_latest_state(
+            &self,
+            _cache: &mut Option<ProofRecoveryCache>,
+        ) -> Result<RecoveredState, ProposerError> {
+            Err(ProposerError::Internal("simulated recovery failure".to_owned()))
         }
     }
 
@@ -1563,6 +1583,70 @@ mod tests {
         assert_eq!(result, ProofCollectorTickResult::Continue);
         assert_eq!(state.recovered, Some(recovered(100)));
         assert_eq!(state.cursor, Some(recovered(100)));
+    }
+
+    #[tokio::test]
+    async fn submit_inline_restarts_when_post_submit_recovery_fails() {
+        let proof_requester: Arc<dyn ProofRequesterProvider> =
+            Arc::new(MockProofRequester::default());
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(200, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let collector = ProofCollector::target_poller_aws_nitro(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup_client),
+        );
+        let dispatcher = ProofDispatcher::aws_nitro(
+            proof_requester,
+            Arc::clone(&l1),
+            l2,
+            Arc::clone(&rollup_client),
+            ProofDispatcherConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+        let submitter = ProofSubmitter::new(
+            Arc::new(MockOutputProposer),
+            rollup_client,
+            l1,
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                block_interval: 100,
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        );
+        let orchestrator = ProofCollectorOrchestrator::new(
+            collector,
+            dispatcher,
+            submitter,
+            Arc::new(FailingRecovery),
+            ProofCollectorRuntimeConfig {
+                block_interval: 100,
+                max_retries: 2,
+                submit_timeout: std::time::Duration::from_secs(60),
+            },
+        );
+        let proposal = test_proposal(200);
+        let proof =
+            ProofResult::Tee { aggregate_proposal: proposal.clone(), proposals: vec![proposal] };
+        let mut state = ProofCollectorState::new();
+        let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
+        let cancel = CancellationToken::new();
+
+        let effect = orchestrator
+            .submit_inline(200, &recovered(100), proof, &mut state, &mut cache, &cancel)
+            .await;
+
+        assert_eq!(effect, ProofSubmitEffect::Restart);
     }
 
     #[tokio::test]
