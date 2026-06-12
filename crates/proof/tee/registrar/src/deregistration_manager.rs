@@ -10,6 +10,7 @@ use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::ITEEProverRegistry;
 use base_tx_manager::{TxCandidate, TxManager};
+use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -21,6 +22,7 @@ pub struct DeregistrationManager<'a, R: ?Sized, T: ?Sized> {
     registry: &'a R,
     tx_manager: &'a T,
     signer_history: &'a Arc<Mutex<HashMap<Address, String>>>,
+    max_concurrency: usize,
 }
 
 impl<R: ?Sized, T: ?Sized> fmt::Debug for DeregistrationManager<'_, R, T> {
@@ -39,7 +41,13 @@ impl<'a, R: ?Sized, T: ?Sized> DeregistrationManager<'a, R, T> {
         tx_manager: &'a T,
         signer_history: &'a Arc<Mutex<HashMap<Address, String>>>,
     ) -> Self {
-        Self { registry_address, registry, tx_manager, signer_history }
+        Self { registry_address, registry, tx_manager, signer_history, max_concurrency: 1 }
+    }
+
+    /// Sets the maximum number of orphan deregistration tasks to run at once.
+    pub const fn with_max_concurrency(mut self, max_concurrency: usize) -> Self {
+        self.max_concurrency = max_concurrency;
+        self
     }
 }
 
@@ -119,10 +127,58 @@ where
         }
     }
 
-    /// Deregisters registered signers that are not currently protected.
+    /// Deregisters one orphan signer if it is still registered onchain.
     ///
-    /// Each candidate is checked against `isRegisteredSigner` before submitting a
-    /// transaction so stale `getRegisteredSigners()` entries do not loop forever.
+    /// Checks `isRegisteredSigner` before submitting a transaction so stale
+    /// `getRegisteredSigners()` entries do not loop forever.
+    pub async fn deregister_orphan(
+        &self,
+        signer: Address,
+        cancel: &CancellationToken,
+    ) -> Result<bool> {
+        if cancel.is_cancelled() {
+            debug!("shutdown requested, stopping orphan deregistration");
+            return Ok(false);
+        }
+
+        let registered = tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                debug!("shutdown requested while verifying orphan signer");
+                return Ok(false);
+            }
+            res = self.registry.is_registered(signer) => res,
+        };
+
+        match registered {
+            Ok(false) => {
+                warn!(
+                    signer = %signer,
+                    "signer appears in getRegisteredSigners but isRegisteredSigner is false, \
+                     skipping (possible EnumerableSet ghost entry)"
+                );
+                Ok(false)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    signer = %signer,
+                    "failed to verify signer registration status, skipping deregistration"
+                );
+                Ok(false)
+            }
+            Ok(true) if cancel.is_cancelled() => {
+                debug!(
+                    signer = %signer,
+                    "shutdown requested before submitting orphan deregistration"
+                );
+                Ok(false)
+            }
+            Ok(true) => Ok(self.submit_deregistration(signer).await),
+        }
+    }
+
+    /// Deregisters registered signers that are not currently protected.
     pub async fn deregister_orphans(
         &self,
         protected_signers: &HashSet<Address>,
@@ -141,35 +197,15 @@ where
 
         info!(count = orphans.len(), "deregistering orphan signers");
 
+        let concurrency = self.max_concurrency.max(1).min(orphans.len());
+        let mut deregistrations = futures::stream::iter(
+            orphans.into_iter().map(|signer| self.deregister_orphan(signer, cancel)),
+        )
+        .buffer_unordered(concurrency);
+
         let mut deregistered = 0usize;
-
-        for signer in orphans {
-            if cancel.is_cancelled() {
-                debug!("shutdown requested, stopping orphan deregistration");
-                break;
-            }
-
-            match self.registry.is_registered(signer).await {
-                Ok(false) => {
-                    warn!(
-                        signer = %signer,
-                        "signer appears in getRegisteredSigners but isRegisteredSigner is false, \
-                         skipping (possible EnumerableSet ghost entry)"
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        signer = %signer,
-                        "failed to verify signer registration status, skipping deregistration"
-                    );
-                    continue;
-                }
-                Ok(true) => {}
-            }
-
-            if self.submit_deregistration(signer).await {
+        while let Some(result) = deregistrations.next().await {
+            if result? {
                 RegistrarMetrics::deregistrations_total().increment(1);
                 deregistered += 1;
             }
@@ -186,6 +222,7 @@ where
 mod tests {
     use std::{
         future,
+        sync::atomic::{AtomicUsize, Ordering},
         sync::{Arc, Mutex},
         time::Duration,
     };
@@ -327,6 +364,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deregister_orphan_rechecks_cancellation_before_submission() {
+        let cancel = CancellationToken::new();
+        let registry =
+            MockRegistry::with_signers(vec![SIGNER_A]).cancel_on_is_registered(cancel.clone());
+        let tx_manager = MockTxManager::default();
+        let history = Arc::new(Mutex::new(HashMap::new()));
+        let manager =
+            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+
+        manager.deregister_orphan(SIGNER_A, &cancel).await.unwrap();
+
+        assert!(tx_manager.take_candidates().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_respects_configured_concurrency() {
+        let registered_signers = vec![SIGNER_A, SIGNER_B, SIGNER_C];
+        let registry =
+            ConcurrencyTrackingRegistry::new(registered_signers.clone(), Duration::from_millis(25));
+        let peak = registry.peak();
+        let tx_manager = MockTxManager::default();
+        let history = Arc::new(Mutex::new(HashMap::new()));
+        let manager =
+            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history)
+                .with_max_concurrency(2);
+
+        manager
+            .deregister_orphans(&HashSet::new(), &registered_signers, &CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert!(
+            peak.load(Ordering::SeqCst) <= 2,
+            "orphan deregistration exceeded configured concurrency"
+        );
+        assert_eq!(tx_manager.take_candidates().len(), registered_signers.len());
+    }
+
+    #[tokio::test]
     async fn run_orphan_dereg_respects_cancellation_while_loading_signers() {
         let registry = MockRegistry::stalling_get_registered_signers();
         let get_registered_signers_started = registry.get_registered_signers_started();
@@ -362,6 +438,7 @@ mod tests {
         true_signers: HashSet<Address>,
         get_registered_signers_started: Arc<Notify>,
         stall_get_registered_signers: bool,
+        cancel_on_is_registered: Option<CancellationToken>,
     }
 
     impl MockRegistry {
@@ -378,6 +455,7 @@ mod tests {
                 true_signers: true_signers.into_iter().collect(),
                 get_registered_signers_started: Arc::new(Notify::new()),
                 stall_get_registered_signers: false,
+                cancel_on_is_registered: None,
             }
         }
 
@@ -387,17 +465,26 @@ mod tests {
                 true_signers: HashSet::new(),
                 get_registered_signers_started: Arc::new(Notify::new()),
                 stall_get_registered_signers: true,
+                cancel_on_is_registered: None,
             }
         }
 
         fn get_registered_signers_started(&self) -> Arc<Notify> {
             Arc::clone(&self.get_registered_signers_started)
         }
+
+        fn cancel_on_is_registered(mut self, cancel: CancellationToken) -> Self {
+            self.cancel_on_is_registered = Some(cancel);
+            self
+        }
     }
 
     #[async_trait]
     impl RegistryClient for MockRegistry {
         async fn is_registered(&self, signer: Address) -> Result<bool> {
+            if let Some(cancel) = &self.cancel_on_is_registered {
+                cancel.cancel();
+            }
             Ok(self.true_signers.contains(&signer))
         }
 
@@ -406,6 +493,51 @@ mod tests {
             if self.stall_get_registered_signers {
                 future::pending::<()>().await;
             }
+            Ok(self.signers.clone())
+        }
+    }
+
+    #[derive(Debug)]
+    struct ConcurrencyTrackingRegistry {
+        signers: Vec<Address>,
+        active: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+        delay: Duration,
+    }
+
+    impl ConcurrencyTrackingRegistry {
+        fn new(signers: Vec<Address>, delay: Duration) -> Self {
+            Self {
+                signers,
+                active: Arc::new(AtomicUsize::new(0)),
+                peak: Arc::new(AtomicUsize::new(0)),
+                delay,
+            }
+        }
+
+        fn peak(&self) -> Arc<AtomicUsize> {
+            Arc::clone(&self.peak)
+        }
+    }
+
+    #[async_trait]
+    impl RegistryClient for ConcurrencyTrackingRegistry {
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut peak = self.peak.load(Ordering::SeqCst);
+            while active > peak {
+                match self.peak.compare_exchange(peak, active, Ordering::SeqCst, Ordering::SeqCst) {
+                    Ok(_) => break,
+                    Err(current) => peak = current,
+                }
+            }
+
+            tokio::time::sleep(self.delay).await;
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(true)
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
             Ok(self.signers.clone())
         }
     }

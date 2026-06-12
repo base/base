@@ -8,7 +8,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
@@ -17,17 +17,16 @@ use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use rand::random;
-use tokio::{
-    sync::Semaphore,
-    task::{self, JoinSet},
-};
+#[cfg(test)]
+use tokio::task;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
-    CertManager, CrlConfig, DeregistrationManager, InstanceDiscovery, InstanceHealthStatus,
-    NitroVerifierClient, ProofHandlerConfig, ProverClient, ProverInstance, RegistrarError,
-    RegistrarMetrics, RegistrationManager, RegistryClient, Result, SignerClient,
+    CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
+    PendingRegistration, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics,
+    RegistryClient, Result, SignerClient, SignerManager, SignerManagerConfig,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -85,49 +84,6 @@ pub struct DriverConfig {
     /// CRL checking configuration. When enabled, intermediate certificates
     /// are checked against CRL distribution points before registration.
     pub crl: CrlConfig,
-}
-
-/// State for a proof-generation task currently in-flight in the
-/// [`RegistrationDriver::run`] spawn-and-reap loop.
-///
-/// One entry per signer address — the `pending` map is keyed by
-/// [`Address`] (the signer this task owns) so reconcile's per-cycle
-/// match against the latest registerable set is an O(1) lookup and
-/// "at most one active proof task per signer" is a structural
-/// invariant of the map, not a runtime check.
-///
-/// `cancel` is a child of [`DriverConfig::cancel`]. Firing it asks the
-/// task to terminate cooperatively at the next checkpoint (proof-gen,
-/// retry sleep, before tx send) — the task always returns the signer
-/// address (`Ok(signer)`) when it observes the cancel, never an error,
-/// so the happy and cancelled paths route identically through
-/// [`RegistrationDriver::apply_join_outcome`].
-#[derive(Debug)]
-pub struct PendingRegistration {
-    /// Originating instance ID — recorded only for logging.
-    pub instance_id: String,
-    /// `JoinSet` task id for this proof task. Used by
-    /// [`RegistrationDriver::apply_join_outcome`] for two things: (1)
-    /// recovering the signer address on failure paths via an O(n) scan
-    /// over `pending` (bounded by [`DriverConfig::max_concurrency`]),
-    /// and (2) gating success-arm cleanup with a `task_id == id` check
-    /// so a stale task's terminal outcome cannot evict a same-signer
-    /// respawn that reconcile dropped into the slot mid-cycle.
-    pub task_id: task::Id,
-    /// Cooperative cancel handle for this single task.
-    pub cancel: CancellationToken,
-    /// `true` once [`RegistrationDriver::reconcile_proof_tasks`] has
-    /// fired this task's [`Self::cancel`] (signer dropped from the
-    /// registerable set mid-flight). Lets [`RegistrationDriver::
-    /// drain_proof_tasks`] distinguish reconcile-cancelled tasks
-    /// (already counted in `proof_tasks_cancelled` at intent time)
-    /// from shutdown-cancelled tasks so neither double-counts nor
-    /// silently misses the shutdown path — every cancellation increments
-    /// the metric exactly once. Necessary because [`Self::cancel`] is a
-    /// child of [`DriverConfig::cancel`]; on shutdown the parent's fire
-    /// auto-cancels every child, so an `is_cancelled()` gate alone
-    /// cannot tell the two cases apart.
-    pub cancelled_by_reconcile: bool,
 }
 
 /// A single (signer, attestation) pair from a prover instance that
@@ -229,43 +185,13 @@ pub struct ResolveOutcome {
 /// in tests.
 pub struct RegistrationDriver<D, P, R, T, S> {
     discovery: D,
-    proof_provider: P,
-    registry: R,
-    tx_manager: T,
     signer_client: S,
     config: DriverConfig,
     /// Optional certificate revocation manager. Built once at construction
     /// time when CRL checking is enabled. `None` when CRL checking is disabled.
     cert_manager: Option<CertManager>,
-    /// Bounds the number of proof-generation calls that may be in-flight
-    /// across the spawned task pool at once. Sized from
-    /// [`DriverConfig::max_concurrency`], matching the discovery/resolve
-    /// concurrency bound so an ASG scale-up cannot fan out an unbounded
-    /// number of concurrent Boundless proof requests. Permits are acquired
-    /// inside [`Self::run_proof_task`], not at spawn time, so the
-    /// reconcile pass remains synchronous.
-    proof_semaphore: Arc<Semaphore>,
-    /// Process-local set of signer addresses currently being registered.
-    ///
-    /// [`RegistrationManager::register_signer`] reserves an entry here before
-    /// its `is_registered` precheck and releases it when it returns. This closes
-    /// a TOCTOU race in which two concurrent registration attempts for the same
-    /// signer both read `is_registered == false`, both generate proofs, and both
-    /// submit duplicate registration transactions.
-    ///
-    /// This is a defence-in-depth backstop: the [`Self::run`] spawn loop's
-    /// `in_flight: HashSet<Address>` already dedupes at task-spawn time,
-    /// so the registration-manager layer only catches duplicates from callers
-    /// that bypass the spawn loop.
-    ///
-    /// The set is held across the entire registration lifecycle (including
-    /// the ~20 minute Boundless proof generation) so deduplication holds
-    /// across cycles as well as within one.
-    in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
-    /// Last-known EC2 instance ID for every signer observed during discovery.
-    /// Used to annotate orphan deregistration logs.
-    /// Entries are never evicted; bounded by historic fleet size.
-    signer_history: Arc<Mutex<HashMap<Address, String>>>,
+    /// Signer lifecycle manager for registration tasks and orphan cleanup.
+    signer_manager: Arc<SignerManager<P, R, T>>,
 }
 
 impl<D, P, R, T, S> fmt::Debug for RegistrationDriver<D, P, R, T, S> {
@@ -318,19 +244,19 @@ where
         } else {
             None
         };
-        let proof_semaphore = Arc::new(Semaphore::new(config.max_concurrency.max(1)));
-        Ok(Self {
-            discovery,
+        let signer_manager = Arc::new(SignerManager::new(
             proof_provider,
             registry,
             tx_manager,
-            signer_client,
-            config,
-            cert_manager,
-            proof_semaphore,
-            in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
-            signer_history: Arc::new(Mutex::new(HashMap::new())),
-        })
+            SignerManagerConfig {
+                registry_address: config.registry_address,
+                cancel: config.cancel.clone(),
+                max_concurrency: config.max_concurrency,
+                max_tx_retries: config.max_tx_retries,
+                tx_retry_delay: config.tx_retry_delay,
+            },
+        ));
+        Ok(Self { discovery, signer_client, config, cert_manager, signer_manager })
     }
 
     /// Runs the registration loop until cancelled.
@@ -364,9 +290,9 @@ where
     /// On shutdown every `PendingRegistration::cancel` is fired cooperatively;
     /// tasks are then awaited to natural completion via
     /// `join_next_with_id` so each terminal outcome flows through
-    /// `apply_join_outcome`, keeping the proof-task metrics consistent.
-    /// `JoinSet::abort_all` is deliberately **not** used — see
-    /// [`Self::drain_proof_tasks`] for the nonce-gap rationale.
+    /// the signer manager join-outcome path, keeping the proof-task metrics
+    /// consistent. `JoinSet::abort_all` is deliberately **not** used — see
+    /// [`SignerManager::drain_proof_tasks`] for the nonce-gap rationale.
     ///
     /// # Ownership
     ///
@@ -620,7 +546,11 @@ where
             let cert_manager =
                 self.cert_manager.as_ref().expect("cert_manager required when CRL enabled");
             match cert_manager
-                .check_and_revoke_crls(first_attestation, instance, &self.tx_manager)
+                .check_and_revoke_crls(
+                    first_attestation,
+                    instance,
+                    self.signer_manager.tx_manager(),
+                )
                 .await
             {
                 Ok(true) => {
@@ -721,13 +651,7 @@ where
                     }
                     // Record signer -> instance attribution before `instance`
                     // is moved into `RegisterableSigner` below.
-                    {
-                        let mut history =
-                            self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
-                        for addr in &outcome.addresses {
-                            history.insert(*addr, instance.instance_id.clone());
-                        }
-                    }
+                    self.signer_manager.record_signers(&outcome.addresses, &instance.instance_id);
                     if let Some(attestations) = outcome.attestations {
                         // `resolve_instance` already enforced the pairing
                         // invariants (non-empty addresses,
@@ -793,13 +717,7 @@ where
 
     /// Runs orphan deregistration through [`DeregistrationManager`].
     async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
-        let manager = DeregistrationManager::new(
-            self.config.registry_address,
-            &self.registry,
-            &self.tx_manager,
-            &self.signer_history,
-        );
-        manager.run_orphan_dereg(protected_signers, &self.config.cancel).await
+        self.signer_manager.run_orphan_dereg(protected_signers).await
     }
 
     /// Builds the protected-signer set for orphan deregistration.
@@ -810,9 +728,7 @@ where
         resolution: &DiscoveryResolution,
         pending: &HashMap<Address, PendingRegistration>,
     ) -> HashSet<Address> {
-        let mut protected = resolution.active_signers.clone();
-        protected.extend(pending.keys().copied());
-        protected
+        SignerManager::<P, R, T>::protected_signers(resolution, pending)
     }
 
     /// Reconciles the in-flight `pending` set against this cycle's
@@ -845,7 +761,7 @@ where
     /// one cycle and returns the next: without this filter the fresh
     /// task would be deferred for an extra cycle until reap clears the
     /// stale entry. Safety relies on
-    /// [`Self::in_flight_registrations`] (the registration-manager-layer
+    /// [`SignerManager`] (the registration-manager-layer
     /// process-wide `Mutex<HashSet<Address>>` dedupe) catching any
     /// brief overlap between the old task winding down and the new task
     /// entering registration. The second arrival short-circuits with a
@@ -861,138 +777,12 @@ where
         tasks: &mut JoinSet<Result<Address>>,
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
-        let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
-
-        // Cancel-pass: any in-flight task whose signer is no longer
-        // wanted AND whose source instance produced a conclusive
-        // verdict this cycle (i.e. NOT in `unresolved_instance_ids`).
-        // Tasks tied to instances that failed to resolve transiently
-        // are preserved — the absence from `wanted` is then a lack of
-        // evidence, not evidence of absence.
-        //
-        // `cancelled_by_reconcile = true` is set alongside the cancel
-        // intent so [`Self::drain_proof_tasks`] can tell shutdown-driven
-        // cancels (which it must count) apart from reconcile-driven
-        // cancels (already counted here).
-        for (signer, task) in pending.iter_mut() {
-            if !wanted.contains(signer)
-                && !task.cancel.is_cancelled()
-                && !resolution.unresolved_instance_ids.contains(&task.instance_id)
-            {
-                info!(
-                    signer = %signer,
-                    instance = %task.instance_id,
-                    "cancelling proof task: signer no longer registerable"
-                );
-                task.cancel.cancel();
-                task.cancelled_by_reconcile = true;
-                RegistrarMetrics::proof_tasks_cancelled().increment(1);
-            } else if !wanted.contains(signer)
-                && !task.cancel.is_cancelled()
-                && resolution.unresolved_instance_ids.contains(&task.instance_id)
-            {
-                debug!(
-                    signer = %signer,
-                    instance = %task.instance_id,
-                    "preserving proof task: source instance failed to resolve this cycle (inconclusive)"
-                );
-            }
-        }
-
-        // Build `in_flight` from only the still-live entries so a signer
-        // that was cancelled in a previous cycle and has now reappeared
-        // in `registerable` can spawn a fresh task immediately rather
-        // than waiting two cycles (one to reap, one to respawn).
-        // The registration-manager in-flight mutex catches any brief
-        // overlap between the winding-down old task and the new task.
-        // Updated as we spawn so a signer that appears in two registerable
-        // entries within the same cycle (misconfig / discovery glitch —
-        // two instances briefly backing the same enclave key) cannot
-        // spawn duplicate proof tasks.
-        //
-        // A fresh spawn for a signer whose stale entry is still in
-        // `pending` (cancelled, not yet reaped) overwrites the stale
-        // entry below. The stale task continues running in the JoinSet
-        // and `apply_join_outcome`'s task_id-match guard prevents it
-        // from later evicting the fresh entry.
-        let mut in_flight: HashSet<Address> = pending
-            .iter()
-            .filter(|(_, t)| !t.cancel.is_cancelled())
-            .map(|(addr, _)| *addr)
-            .collect();
-
-        // Spawn-pass: any wanted signer not currently in-flight.
-        for entry in &resolution.registerable {
-            if !in_flight.insert(entry.signer) {
-                continue;
-            }
-            let signer_cancel = self.config.cancel.child_token();
-            let driver = Arc::clone(self);
-            let instance_owned = entry.instance.clone();
-            // Clone `instance_id` from `instance_owned` (rather than
-            // re-reaching into `entry.instance`) to make the origin
-            // explicit — the string is allocated twice either way
-            // because `instance_owned` is moved into the spawned future
-            // while `PendingRegistration` outlives the move.
-            let instance_id = instance_owned.instance_id.clone();
-            let attestation = entry.attestation.clone();
-            let task_cancel = signer_cancel.clone();
-            let signer = entry.signer;
-            let enclave_index = entry.enclave_index;
-
-            let handle = tasks.spawn(async move {
-                driver
-                    .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
-                    .await
-            });
-            pending.insert(
-                signer,
-                PendingRegistration {
-                    instance_id,
-                    task_id: handle.id(),
-                    cancel: signer_cancel,
-                    cancelled_by_reconcile: false,
-                },
-            );
-            RegistrarMetrics::proof_tasks_spawned().increment(1);
-        }
-    }
-
-    /// Spawned-task body: runs signer registration with task-scoped
-    /// cancellation. Always returns `Ok(signer)` on cooperative cancel
-    /// and on registration success; only genuine failures propagate as
-    /// `Err`. The success arm carries the signer address so
-    /// [`Self::apply_join_outcome`] can clean `pending` in O(1) without
-    /// a reverse `task::Id → Address` lookup.
-    async fn run_proof_task(
-        self: Arc<Self>,
-        instance: ProverInstance,
-        signer: Address,
-        enclave_index: usize,
-        attestation_bytes: Vec<u8>,
-        signer_cancel: CancellationToken,
-    ) -> Result<Address> {
-        let registration_manager = RegistrationManager::new(
-            &self.proof_provider,
-            &self.registry,
-            &self.tx_manager,
-            self.proof_semaphore.as_ref(),
-            &self.in_flight_registrations,
-            ProofHandlerConfig {
-                registry_address: self.config.registry_address,
-                max_tx_retries: self.config.max_tx_retries,
-                tx_retry_delay: self.config.tx_retry_delay,
-            },
-        );
-        registration_manager
-            .register_signer(&instance, signer, enclave_index, &attestation_bytes, &signer_cancel)
-            .await?;
-        Ok(signer)
+        self.signer_manager.reconcile_proof_tasks(resolution, tasks, pending);
     }
 
     /// Drains every task that has already finished from `tasks`,
     /// removing the matching entry from `pending` and updating metrics
-    /// via [`Self::apply_join_outcome`].
+    /// via [`SignerManager::apply_join_outcome`].
     ///
     /// Non-blocking: returns once `try_join_next_with_id` yields
     /// `None`. Called at the top of each [`Self::run`] cycle so the
@@ -1001,47 +791,7 @@ where
         tasks: &mut JoinSet<Result<Address>>,
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
-        while let Some(joined) = tasks.try_join_next_with_id() {
-            Self::apply_join_outcome(Some(joined), pending);
-        }
-    }
-
-    /// O(n) scan to find the signer address whose pending entry was
-    /// spawned with `task_id`. `pending` is bounded by
-    /// [`DriverConfig::max_concurrency`] (typically <20), so this
-    /// rare-path scan (only hit on `Err` or panic, never the happy
-    /// path) is cheaper than maintaining a second reverse `task::Id →
-    /// Address` index that would have to stay consistent with every
-    /// spawn/reap.
-    fn find_signer_by_task_id(
-        pending: &HashMap<Address, PendingRegistration>,
-        task_id: task::Id,
-    ) -> Option<Address> {
-        pending.iter().find_map(|(addr, p)| (p.task_id == task_id).then_some(*addr))
-    }
-
-    /// Removes the `pending` entry for `signer` only when its
-    /// `task_id` matches `id`. Returns the removed entry or `None` if
-    /// the slot was already overwritten by a same-signer respawn.
-    ///
-    /// Every [`Self::apply_join_outcome`] arm funnels through this
-    /// helper so the same stale-task / fresh-respawn invariant applies
-    /// uniformly: a terminal outcome from a stale task must never
-    /// evict the fresh entry reconcile dropped into the slot
-    /// mid-cycle. The check is technically redundant on the
-    /// [`Self::find_signer_by_task_id`] paths (the scan already filters
-    /// by `task_id`), but making the guard local rather than implicit
-    /// in another helper hardens the invariant against future
-    /// refactors of the recovery routine.
-    fn remove_if_task_matches(
-        pending: &mut HashMap<Address, PendingRegistration>,
-        signer: Address,
-        id: task::Id,
-    ) -> Option<PendingRegistration> {
-        match pending.get(&signer) {
-            Some(entry) if entry.task_id == id => pending.remove(&signer),
-            _ => None,
-        }
+        SignerManager::<P, R, T>::reap_finished_tasks(tasks, pending);
     }
 
     /// Consumes one `JoinSet` outcome and updates `pending` + metrics.
@@ -1053,61 +803,22 @@ where
     ///   whose entry was already overwritten by a same-cycle respawn
     ///   must NOT evict the fresh entry).
     /// - inner error (`Ok((id, Err(_)))`) — no signer in hand, so the
-    ///   address is recovered via [`Self::find_signer_by_task_id`].
+    ///   address is recovered from the pending task id.
     /// - join error (panic or external abort) — same recovery path,
     ///   keyed off [`tokio::task::JoinError::id`].
     ///
     /// Returns silently when `joined` is `None` so the caller's
     /// `try_join_next_with_id` loop can use it unconditionally.
+    #[cfg(test)]
     fn apply_join_outcome(
         joined: Option<std::result::Result<(task::Id, Result<Address>), tokio::task::JoinError>>,
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
-        let Some(result) = joined else { return };
-        RegistrarMetrics::proof_tasks_completed().increment(1);
-        match result {
-            Ok((id, Ok(signer))) => {
-                let removed = Self::remove_if_task_matches(pending, signer, id);
-                debug!(
-                    task_id = ?id,
-                    signer = %signer,
-                    instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
-                    superseded = removed.is_none(),
-                    "proof task completed",
-                );
-            }
-            Ok((id, Err(e))) => {
-                let signer = Self::find_signer_by_task_id(pending, id);
-                let removed = signer.and_then(|s| Self::remove_if_task_matches(pending, s, id));
-                warn!(
-                    task_id = ?id,
-                    error = %e,
-                    signer = ?signer,
-                    instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
-                    superseded = signer.is_some() && removed.is_none(),
-                    "proof task failed"
-                );
-                RegistrarMetrics::processing_errors_total().increment(1);
-            }
-            Err(join_err) => {
-                let id = join_err.id();
-                let signer = Self::find_signer_by_task_id(pending, id);
-                let removed = signer.and_then(|s| Self::remove_if_task_matches(pending, s, id));
-                warn!(
-                    task_id = ?id,
-                    error = %join_err,
-                    signer = ?signer,
-                    instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
-                    superseded = signer.is_some() && removed.is_none(),
-                    "proof task join error (panic or abort)"
-                );
-                RegistrarMetrics::processing_errors_total().increment(1);
-            }
-        }
+        SignerManager::<P, R, T>::apply_join_outcome(joined, pending);
     }
 
     /// Cancels every pending task cooperatively, awaits them to natural
-    /// completion, and updates `pending` via [`Self::apply_join_outcome`].
+    /// completion, and updates `pending` via [`SignerManager::apply_join_outcome`].
     /// Used only at shutdown — see [`Self::run`].
     ///
     /// **No `JoinSet::abort_all`.** Aborting would drop futures at arbitrary
@@ -1129,32 +840,7 @@ where
         tasks: &mut JoinSet<Result<Address>>,
         pending: &mut HashMap<Address, PendingRegistration>,
     ) {
-        for task in pending.values() {
-            // Gate on `cancelled_by_reconcile`, NOT on
-            // `task.cancel.is_cancelled()`. Each `signer_cancel` is a
-            // child of `DriverConfig::cancel`, so by the time drain
-            // runs the parent has already auto-cancelled every child —
-            // `is_cancelled()` is `true` for all tasks regardless of
-            // who triggered the cancel. Using the reconcile flag lets
-            // us count every shutdown-driven cancellation exactly once
-            // while preserving the "reconcile counted at intent time"
-            // contract. `task.cancel.cancel()` is still issued for
-            // belt-and-braces (it's a no-op when the parent fired) so
-            // the bookkeeping stays correct if anyone ever decouples
-            // `signer_cancel` from the parent in the future.
-            if !task.cancelled_by_reconcile {
-                task.cancel.cancel();
-                RegistrarMetrics::proof_tasks_cancelled().increment(1);
-            }
-        }
-        // NOTE: we drain through `join_next_with_id` (not
-        // `JoinSet::shutdown`) so each terminal outcome flows through
-        // `apply_join_outcome` — keeping the `pending` map and the
-        // proof-task metrics consistent at shutdown.
-        while let Some(joined) = tasks.join_next_with_id().await {
-            Self::apply_join_outcome(Some(joined), pending);
-        }
-        RegistrarMetrics::proof_tasks_pending().set(0.0);
+        SignerManager::<P, R, T>::drain_proof_tasks(tasks, pending).await;
     }
 }
 
