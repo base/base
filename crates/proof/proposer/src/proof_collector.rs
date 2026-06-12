@@ -1188,17 +1188,43 @@ where
 
         let attempt = current_attempt + 1;
         state.pending_discard_roots.insert(target_block, claimed_l2_output_root);
-        match self
+        let request = match self
             .dispatcher
-            .dispatch_discard_retry(
-                target_block,
-                recovered,
-                claimed_l2_output_root,
-                self.collector.tee_kind(),
-                attempt,
-            )
+            .build_request(target_block, recovered, claimed_l2_output_root)
             .await
         {
+            Ok(request) => request,
+            Err(error) => {
+                warn!(target_block, error = %error, "Failed to build discard retry proof request");
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
+                state.retry_sessions.remove(&target_block);
+                return true;
+            }
+        };
+        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(
+            &request,
+            self.collector.tee_kind(),
+            attempt,
+        );
+        state.retry_sessions.insert(target_block, session_id.clone());
+
+        let dispatch = match self
+            .dispatcher
+            .requester_dispatcher()
+            .dispatch_tee_with_session_id(request, session_id.clone())
+            .await
+        {
+            Ok(dispatched) if dispatched.session_id == session_id => {
+                ProofDispatchAttempt::Accepted(dispatched)
+            }
+            Ok(dispatched) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
+                "prover service returned mismatched session_id: expected {}, got {}",
+                session_id, dispatched.session_id
+            ))),
+            Err(error) => ProofDispatchAttempt::DispatchFailed(error),
+        };
+
+        match dispatch {
             ProofDispatchAttempt::Accepted(dispatched) => {
                 info!(
                     target_block,
@@ -1213,7 +1239,11 @@ where
                 state.counted_failed_sessions.remove(&target_block);
             }
             ProofDispatchAttempt::BuildFailed(error) => {
-                warn!(target_block, error = %error, "Failed to build discard retry proof request");
+                warn!(
+                    target_block,
+                    error = %error,
+                    "Failed to build discard retry proof request"
+                );
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
                 state.retry_sessions.remove(&target_block);
             }
@@ -1226,6 +1256,10 @@ where
                         self.runtime.max_retries,
                         cache,
                     ) {
+                        state.discard_retry_counts.remove(&target_block);
+                        state.retry_sessions.remove(&target_block);
+                        state.pending_discard_roots.remove(&target_block);
+                        state.counted_failed_sessions.remove(&target_block);
                         return false;
                     }
                 } else {
@@ -1578,6 +1612,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discard_retry_dispatch_failure_preserves_intended_retry_session() {
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(200, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
+        let collector = ProofCollector::target_poller_aws_nitro(
+            Arc::clone(&requester),
+            Arc::clone(&rollup_client),
+        );
+        let dispatcher = ProofDispatcher::aws_nitro(
+            requester,
+            Arc::clone(&l1),
+            l2,
+            Arc::clone(&rollup_client),
+            ProofDispatcherConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+        let submitter = ProofSubmitter::new(
+            Arc::new(MockOutputProposer),
+            rollup_client,
+            l1,
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                block_interval: 100,
+                intermediate_block_interval: 100,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        );
+        let orchestrator = ProofCollectorOrchestrator::new(
+            collector,
+            dispatcher,
+            submitter,
+            Arc::new(NoopRecovery),
+            ProofCollectorRuntimeConfig {
+                block_interval: 100,
+                max_retries: 2,
+                submit_timeout: std::time::Duration::from_secs(60),
+            },
+        );
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(0xaa);
+        let request = orchestrator
+            .dispatcher
+            .build_request(target_block, &recovered(100), claimed_root)
+            .await
+            .expect("test setup should build request");
+        let expected_session_id =
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 1);
+        let mut state = ProofCollectorState::new();
+        let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
+
+        let should_continue = orchestrator
+            .dispatch_discard_retry(
+                target_block,
+                &recovered(100),
+                claimed_root,
+                &mut state,
+                &mut cache,
+                false,
+            )
+            .await;
+
+        assert!(should_continue);
+        assert_eq!(state.retry_sessions.get(&target_block), Some(&expected_session_id));
+        assert_eq!(state.pending_discard_roots.get(&target_block).copied(), Some(claimed_root));
+        assert!(cache.is_some());
+    }
+
+    #[tokio::test]
     async fn root_retry_build_failure_restarts_without_exhausting_retry_budget() {
         let proof_requester = Arc::new(MockProofRequester::default());
         let l1 = Arc::new(FailingL1);
@@ -1715,6 +1827,10 @@ mod tests {
         assert!(!should_continue);
         assert!(cache.is_none());
         assert!(state.retry_counts.is_empty());
+        assert!(state.discard_retry_counts.is_empty());
+        assert!(state.retry_sessions.is_empty());
+        assert!(state.pending_discard_roots.is_empty());
+        assert!(state.counted_failed_sessions.is_empty());
     }
 
     #[tokio::test]
