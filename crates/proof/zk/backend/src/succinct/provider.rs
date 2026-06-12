@@ -1,6 +1,6 @@
 //! Witness generation for Succinct ZK proving backends.
 
-use std::{error::Error, fmt, sync::Arc};
+use std::{error::Error as StdError, fmt, sync::Arc};
 
 use alloy_primitives::B256;
 use base_l1_head::{L1HeadCalculator, L1HeadError};
@@ -26,7 +26,7 @@ pub struct WitnessParams<'a> {
 }
 
 /// Source used to select the L1 head hash for witness generation.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum L1HeadSource<'a> {
     /// Use this exact L1 head hash.
     Pinned(B256),
@@ -41,6 +41,30 @@ pub enum L1HeadSource<'a> {
     },
 }
 
+impl fmt::Debug for L1HeadSource<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pinned(hash) => f.debug_tuple("Pinned").field(hash).finish(),
+            Self::SafeDbWithFallback { sequence_window, .. } => f
+                .debug_struct("SafeDbWithFallback")
+                .field("sequence_window", sequence_window)
+                .field("l1_node_url", &"<redacted>")
+                .field("base_consensus_url", &"<redacted>")
+                .finish(),
+        }
+    }
+}
+
+impl L1HeadSource<'_> {
+    /// Returns the source variant name without exposing configured URLs.
+    pub const fn variant_name(&self) -> &'static str {
+        match self {
+            Self::Pinned(_) => "Pinned",
+            Self::SafeDbWithFallback { .. } => "SafeDbWithFallback",
+        }
+    }
+}
+
 /// Errors raised while generating Succinct witness stdin.
 #[derive(Debug, Error)]
 pub enum WitnessError {
@@ -49,39 +73,41 @@ pub enum WitnessError {
     PinnedHostFetch {
         /// Underlying Succinct host error.
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: Box<dyn StdError + Send + Sync>,
     },
     /// `SafeDB` failed, then sequence-window L1-head calculation also failed.
-    #[error("failed to fetch Succinct host args via SafeDB and sequence-window fallback")]
+    #[error(
+        "SafeDB failed ({safe_db_source}), then sequence-window l1_head calculation also failed"
+    )]
     SafeDbFallbackL1Head {
         /// `SafeDB` host fetch error.
-        safe_db_source: Box<dyn Error + Send + Sync>,
+        safe_db_source: Box<dyn StdError + Send + Sync>,
         /// Sequence-window L1-head calculation error.
         #[source]
         l1_head_source: L1HeadError,
     },
     /// `SafeDB` failed, then fetching host arguments with the fallback L1 head also failed.
-    #[error("failed to fetch Succinct host args via SafeDB and fallback l1_head")]
+    #[error("SafeDB failed ({safe_db_source}), then fallback l1_head host fetch also failed")]
     SafeDbFallbackHostFetch {
         /// `SafeDB` host fetch error.
-        safe_db_source: Box<dyn Error + Send + Sync>,
+        safe_db_source: Box<dyn StdError + Send + Sync>,
         /// Fallback host fetch error.
         #[source]
-        fallback_source: Box<dyn Error + Send + Sync>,
+        fallback_source: Box<dyn StdError + Send + Sync>,
     },
     /// Running the Succinct host failed.
     #[error("failed to run Succinct host")]
     HostRun {
         /// Underlying Succinct host error.
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: Box<dyn StdError + Send + Sync>,
     },
     /// Converting the generated witness into SP1 stdin failed.
     #[error("failed to build SP1 stdin from Succinct witness")]
     Stdin {
         /// Underlying witness conversion error.
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: Box<dyn StdError + Send + Sync>,
     },
 }
 
@@ -119,7 +145,7 @@ impl OpSuccinctWitnessProvider {
         info!(
             start_block = start_block,
             end_block = end_block,
-            l1_head = ?l1_head,
+            l1_head_source = l1_head.variant_name(),
             "starting witness generation"
         );
 
@@ -187,7 +213,7 @@ impl OpSuccinctWitnessProvider {
             },
         };
 
-        debug!(host_args = ?host_args, "host args fetched");
+        debug!(start_block = start_block, end_block = end_block, "host args fetched");
 
         let witness =
             self.host.run(&host_args).await.map_err(|source| WitnessError::HostRun {
