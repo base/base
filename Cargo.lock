@@ -6467,6 +6467,7 @@ dependencies = [
  "base-common-genesis",
  "base-metrics",
  "clap",
+ "futures",
  "metrics",
  "rstest",
  "serde",
