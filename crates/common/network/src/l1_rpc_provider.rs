@@ -1,7 +1,5 @@
 //! L1 JSON-RPC provider.
 
-use std::vec::Vec;
-
 use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, U256};
