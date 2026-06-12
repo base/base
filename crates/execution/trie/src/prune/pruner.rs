@@ -49,20 +49,14 @@ where
     H: BlockHashReader,
 {
     fn run_inner(&self) -> BaseProofStoragePrunerResult {
-        let latest_block_opt = self.provider.get_latest_block_number()?;
-        if latest_block_opt.is_none() {
-            trace!(target: "trie::pruner", "No latest blocks in the proof storage");
+        let Some(((earliest_block, _), (latest_block, _))) = self
+            .provider
+            .get_earliest_block_number()?
+            .zip(self.provider.get_latest_block_number()?)
+        else {
+            trace!(target: "trie::pruner", "No earliest or latest block in the proof storage");
             return Ok(PrunerOutput::default());
-        }
-
-        let earliest_block_opt = self.provider.get_earliest_block_number()?;
-        if earliest_block_opt.is_none() {
-            trace!(target: "trie::pruner", "No earliest blocks in the proof storage");
-            return Ok(PrunerOutput::default());
-        }
-
-        let latest_block = latest_block_opt.unwrap().0;
-        let earliest_block = earliest_block_opt.unwrap().0;
+        };
 
         let target_earliest_block = self.target_earliest_block(latest_block);
         if earliest_block >= target_earliest_block {
@@ -93,7 +87,7 @@ where
                 current_earliest_block.saturating_add(self.prune_batch_size),
                 target_earliest_block,
             );
-            debug!(
+            info!(
                 target: "trie::pruner",
                 start_block = current_earliest_block,
                 end_block = batch_end_block,
@@ -181,7 +175,7 @@ where
 
         Metrics::record_prune_result(batch_output.clone());
 
-        debug!(
+        info!(
             target: "trie::pruner",
             ?batch_output,
             "Finished pruning batch of proof storage",
@@ -192,11 +186,14 @@ where
     /// Run the pruner
     pub fn run(&self) {
         let res = self.run_inner();
-        if let Err(e) = res {
-            error!(target: "trie::pruner", err=%e, "Pruner failed");
-            return;
+        match res {
+            Err(e) => {
+                error!(target: "trie::pruner", err=%e, "Pruner failed");
+            }
+            Ok(res) => {
+                info!(target: "trie::pruner", result = %res, "Finished pruning proof storage");
+            }
         }
-        info!(target: "trie::pruner", result = %res.unwrap(), "Finished pruning proof storage");
     }
 }
 
@@ -242,20 +239,6 @@ mod tests {
 
     fn b256(n: u64) -> B256 {
         keccak256(n.to_be_bytes())
-    }
-
-    #[cfg(not(feature = "metrics"))]
-    fn clone_store(
-        store: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
-    ) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
-        Arc::clone(store)
-    }
-
-    #[cfg(feature = "metrics")]
-    fn clone_store(
-        store: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
-    ) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
-        store.clone()
     }
 
     /// Build a block-with-parent for number `n` with deterministic hash.
@@ -461,7 +444,7 @@ mod tests {
             .withf(move |block_num| *block_num == 4)
             .returning(move |_| Ok(Some(b256(4))));
 
-        let pruner = BaseProofStoragePruner::new(clone_store(&store), block_hash_reader, 1, 1000);
+        let pruner = BaseProofStoragePruner::new(store.clone(), block_hash_reader, 1, 1000);
         let out = pruner.run_inner().expect("pruner ok");
         assert_eq!(out.start_block, 0);
         assert_eq!(out.end_block, 4, "pruned up to 4 (inclusive); new earliest is 4");
