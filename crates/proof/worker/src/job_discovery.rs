@@ -283,7 +283,7 @@ where
                 // accepted it. Leases expire server-side, so the job becomes claimable again when
                 // the requested lock duration elapses.
                 () = cancel.cancelled() => break,
-                result = self.poll_once() => result,
+                result = self.claim_once() => result,
             };
 
             match result {
@@ -325,13 +325,16 @@ where
         })
     }
 
-    /// Polls the prover service once, returning a proof generation task when a job is claimed.
-    pub async fn poll_once(&self) -> Result<JobDiscoveryPollOutcome, ProverServiceClientError> {
-        let Ok(permit) = Arc::clone(&self.generator_permits).try_acquire_owned() else {
-            debug!(
+    /// Waits for generator capacity, then claims at most one proof job.
+    ///
+    /// This can wait while all generator permits are in use; use a cancellable
+    /// `select!` when shutdown must interrupt capacity waiting.
+    pub async fn claim_once(&self) -> Result<JobDiscoveryPollOutcome, ProverServiceClientError> {
+        let Ok(permit) = Arc::clone(&self.generator_permits).acquire_owned().await else {
+            warn!(
                 worker_id = %self.config.worker_id,
                 worker_kind = self.config.claim_filter.log_label(),
-                "job discovery generator permits exhausted"
+                "job discovery permits closed"
             );
             return Ok(JobDiscoveryPollOutcome::Empty);
         };
@@ -393,8 +396,7 @@ where
         }
     }
 
-    /// Logs a finished proof task join result.
-    pub fn log_proof_task_join_result(result: Result<(), JoinError>) {
+    fn log_proof_task_join_result(result: Result<(), JoinError>) {
         match result {
             Ok(()) => {}
             Err(error) => {
@@ -403,8 +405,7 @@ where
         }
     }
 
-    /// Drains and logs completed proof generation tasks.
-    pub fn drain_finished_proof_tasks(proof_tasks: &mut JoinSet<()>) {
+    fn drain_finished_proof_tasks(proof_tasks: &mut JoinSet<()>) {
         while let Some(result) = proof_tasks.try_join_next() {
             Self::log_proof_task_join_result(result);
         }
@@ -583,7 +584,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn poll_once_returns_empty_when_no_job_is_available() {
+    async fn claim_once_returns_empty_when_no_job_is_available() {
         let client = MockWorkerClient::new(None);
         let generator = Arc::new(MockGenerator { can_claim: true, ..Default::default() });
         let discovery = JobDiscovery::new(
@@ -592,14 +593,14 @@ mod tests {
             JobDiscoveryConfig::zk("worker-a", ZkProofClaimType::Compressed, vec![ZkVm::Sp1]),
         );
 
-        let outcome = discovery.poll_once().await.expect("poll should succeed");
+        let outcome = discovery.claim_once().await.expect("claim should succeed");
 
         assert!(matches!(outcome, JobDiscoveryPollOutcome::Empty));
         assert_eq!(client.get_next_requests().len(), 1);
     }
 
     #[tokio::test]
-    async fn poll_once_skips_claim_when_generator_is_not_ready() {
+    async fn claim_once_skips_claim_when_generator_is_not_ready() {
         let client = MockWorkerClient::new(Some(compressed_job()));
         let discovery = JobDiscovery::new(
             client.clone(),
@@ -607,14 +608,30 @@ mod tests {
             JobDiscoveryConfig::zk("worker-a", ZkProofClaimType::Compressed, vec![ZkVm::Sp1]),
         );
 
-        let outcome = discovery.poll_once().await.expect("poll should succeed");
+        let outcome = discovery.claim_once().await.expect("claim should succeed");
 
         assert!(matches!(outcome, JobDiscoveryPollOutcome::Empty));
         assert!(client.get_next_requests().is_empty());
     }
 
     #[tokio::test]
-    async fn poll_once_spawns_generator_task_when_job_is_available() {
+    async fn claim_once_returns_empty_when_generator_permits_are_closed() {
+        let client = MockWorkerClient::new(Some(compressed_job()));
+        let discovery = JobDiscovery::new(
+            client.clone(),
+            Arc::new(MockGenerator { can_claim: true, ..Default::default() }),
+            JobDiscoveryConfig::zk("worker-a", ZkProofClaimType::Compressed, vec![ZkVm::Sp1]),
+        );
+        discovery.generator_permits.close();
+
+        let outcome = discovery.claim_once().await.expect("claim should succeed");
+
+        assert!(matches!(outcome, JobDiscoveryPollOutcome::Empty));
+        assert!(client.get_next_requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn claim_once_spawns_generator_task_when_job_is_available() {
         let client = MockWorkerClient::new(Some(compressed_job()));
         let generator = Arc::new(MockGenerator { can_claim: true, ..Default::default() });
         let generated = Arc::clone(&generator.generated);
@@ -624,7 +641,7 @@ mod tests {
             JobDiscoveryConfig::zk("worker-a", ZkProofClaimType::Compressed, vec![ZkVm::Sp1]),
         );
 
-        let outcome = discovery.poll_once().await.expect("poll should succeed");
+        let outcome = discovery.claim_once().await.expect("claim should succeed");
 
         let JobDiscoveryPollOutcome::Claimed { task } = outcome else {
             panic!("expected proof generator task to be returned");
@@ -634,25 +651,5 @@ mod tests {
             *generated.lock().expect("generated jobs lock should not be poisoned"),
             vec!["session-1".to_string()]
         );
-    }
-
-    #[tokio::test]
-    async fn poll_once_returns_empty_when_generator_permits_are_exhausted() {
-        let client = MockWorkerClient::new(Some(compressed_job()));
-        let discovery = JobDiscovery::new(
-            client.clone(),
-            Arc::new(MockGenerator { can_claim: true, ..Default::default() }),
-            JobDiscoveryConfig::zk("worker-a", ZkProofClaimType::Compressed, vec![ZkVm::Sp1]),
-        );
-
-        let first_outcome = discovery.poll_once().await.expect("poll should succeed");
-        let JobDiscoveryPollOutcome::Claimed { task } = first_outcome else {
-            panic!("expected proof generator task to be returned");
-        };
-        let second_outcome = discovery.poll_once().await.expect("poll should succeed");
-
-        assert!(matches!(second_outcome, JobDiscoveryPollOutcome::Empty));
-        assert_eq!(client.get_next_requests().len(), 1);
-        drop(task);
     }
 }

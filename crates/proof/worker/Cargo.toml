@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-worker"
-description = "Shared proof worker primitives."
+description = "Shared proof worker loop for prover-service hosts."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
