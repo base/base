@@ -7,6 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 pub use base_common_genesis::L1TxFormat;
+pub use base_common_network::{L1RpcProvider, L1RpcProviderError};
 
 mod metrics;
 pub use metrics::Metrics;
@@ -23,7 +24,7 @@ pub use blobs::{
 };
 
 mod chain_provider;
-pub use chain_provider::{AlloyChainProvider, AlloyChainProviderError, L1RpcProvider};
+pub use chain_provider::{AlloyChainProvider, AlloyChainProviderError};
 
 mod conf_depth;
 pub use conf_depth::{ConfDepthProvider, L1HeadNumber};

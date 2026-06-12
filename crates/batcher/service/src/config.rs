@@ -4,7 +4,8 @@ use std::{net::SocketAddr, time::Duration};
 
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::ThrottleConfig;
-use base_batcher_encoder::EncoderConfig;
+use base_batcher_encoder::{DaType, EncoderConfig};
+use base_common_genesis::L1TxFormat;
 use url::Url;
 
 /// Full batcher configuration combining RPC endpoints, identity, encoding
@@ -20,6 +21,8 @@ pub struct BatcherConfig {
     /// startup and uses the first one that responds; later endpoints serve as
     /// startup-time fallbacks only (no per-call rotation). Must be non-empty.
     pub l1_rpc_url: Vec<Url>,
+    /// Transaction format exposed by the L1 RPC endpoint.
+    pub l1_tx_format: L1TxFormat,
     /// L2 HTTP RPC endpoint(s). Used for all JSON-RPC calls including throttle
     /// control (`miner_setMaxDASize`). Must be HTTP/HTTPS URLs.
     ///
@@ -107,6 +110,7 @@ impl Default for BatcherConfig {
     fn default() -> Self {
         Self {
             l1_rpc_url: vec!["http://localhost:8545".parse().expect("valid default URL")],
+            l1_tx_format: L1TxFormat::default(),
             l1_ws_url: None,
             l2_rpc_url: vec!["http://localhost:9545".parse().expect("valid default URL")],
             l2_ws_url: None,
@@ -125,5 +129,29 @@ impl Default for BatcherConfig {
             wait_node_sync_timeout: Duration::from_secs(600),
             force_blobs_when_throttling: true,
         }
+    }
+}
+
+impl BatcherConfig {
+    /// Validate config constraints that cannot be expressed by individual CLI parsers.
+    pub fn validate(&self) -> eyre::Result<()> {
+        self.encoder_config.validate()?;
+
+        if self.l1_tx_format == L1TxFormat::Base {
+            if self.encoder_config.da_type != DaType::Calldata {
+                eyre::bail!(
+                    "--l1-tx-format base requires --data-availability-type calldata because a \
+                     Base parent chain has no blob DA endpoint"
+                );
+            }
+            if self.force_blobs_when_throttling {
+                eyre::bail!(
+                    "--l1-tx-format base requires --no-force-blobs-when-throttling because \
+                     throttling cannot force blob submissions onto a calldata-only parent"
+                );
+            }
+        }
+
+        Ok(())
     }
 }

@@ -3302,11 +3302,13 @@ dependencies = [
 name = "base-batcher-service"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
  "alloy-primitives",
  "alloy-provider 2.0.5",
  "alloy-rlp",
  "alloy-rpc-types-eth 2.0.5",
+ "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "async-trait",
  "base-batcher-admin",
@@ -3326,6 +3328,7 @@ dependencies = [
  "httpmock",
  "jsonrpsee",
  "miniz_oxide 0.9.1",
+ "serde_json",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3770,9 +3773,11 @@ name = "base-common-network"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.0.5",
+ "alloy-eips 2.0.5",
  "alloy-network 2.0.5",
  "alloy-primitives",
  "alloy-provider 2.0.5",
+ "alloy-rpc-client 2.0.5",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth 2.0.5",
  "alloy-transport 2.0.5",
@@ -3780,7 +3785,12 @@ dependencies = [
  "base-common-consensus",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "httpmock",
  "rstest",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
 ]
 
 [[package]]
