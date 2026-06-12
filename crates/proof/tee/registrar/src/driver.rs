@@ -8,16 +8,14 @@
 use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, hex};
-use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
-use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use rand::random;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
-    ProofTaskSet, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient,
-    Result, SignerClient, SignerManager, SignerManagerConfig,
+    ProofTaskSet, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, Result,
+    SignerClient, SignerLifecycle, SignerManagerConfig,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -160,13 +158,12 @@ pub struct ResolveOutcome {
     pub unresolved: bool,
 }
 
-/// Core registration loop tying together discovery, attestation polling,
-/// ZK proof generation, and onchain submission.
+/// Core registration loop tying together discovery, attestation polling, signer
+/// lifecycle reconciliation, and orphan cleanup.
 ///
-/// Generic over the discovery, proof generation, registry, transaction
-/// manager, and signer client backends so each can be mocked independently
-/// in tests.
-pub struct RegistrationDriver<D, P, R, T, S> {
+/// Generic over discovery, signer client, and signer lifecycle backends so each
+/// can be mocked independently in tests.
+pub struct RegistrationDriver<D, S, M> {
     discovery: D,
     signer_client: S,
     config: DriverConfig,
@@ -174,22 +171,20 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// time when CRL checking is enabled. `None` when CRL checking is disabled.
     cert_manager: Option<CertManager>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
-    signer_manager: Arc<SignerManager<P, R, T>>,
+    signer_manager: M,
 }
 
-impl<D, P, R, T, S> fmt::Debug for RegistrationDriver<D, P, R, T, S> {
+impl<D, S, M> fmt::Debug for RegistrationDriver<D, S, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegistrationDriver").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
-impl<D, P, R, T, S> RegistrationDriver<D, P, R, T, S>
+impl<D, S, M> RegistrationDriver<D, S, M>
 where
     D: InstanceDiscovery + 'static,
-    P: AttestationProofProvider + 'static,
-    R: RegistryClient + 'static,
-    T: TxManager + 'static,
     S: SignerClient + 'static,
+    M: SignerLifecycle + 'static,
 {
     /// Creates a new registration driver.
     ///
@@ -207,12 +202,10 @@ where
     /// misconfigured driver from silently bypassing CRL protection at runtime.
     pub fn new(
         discovery: D,
-        proof_provider: P,
-        registry: R,
-        tx_manager: T,
         signer_client: S,
         config: DriverConfig,
         nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
+        signer_manager: M,
     ) -> Result<Self> {
         let cert_manager = if config.crl.enabled {
             let Some(nitro_verifier) = nitro_verifier else {
@@ -227,12 +220,6 @@ where
         } else {
             None
         };
-        let signer_manager = Arc::new(SignerManager::new(
-            proof_provider,
-            registry,
-            tx_manager,
-            config.signer_manager.clone(),
-        ));
         Ok(Self { discovery, signer_client, config, cert_manager, signer_manager })
     }
 
@@ -691,20 +678,16 @@ mod tests {
     use alloy_sol_types::SolCall;
     use async_trait::async_trait;
     use base_proof_contracts::ITEEProverRegistry;
-    use base_proof_tee_nitro_attestation_prover::AttestationProof;
+    use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
     use base_tx_manager::{SendHandle, TxCandidate, TxManager};
     use hex_literal::hex;
     use k256::ecdsa::SigningKey;
     use rstest::rstest;
-    use tokio::task;
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
     use super::*;
-    use crate::{
-        InstanceHealthStatus, PendingRegistration, ProofTaskOutcome, RegistryClient, Result,
-        SignerClient,
-    };
+    use crate::{InstanceHealthStatus, RegistryClient, Result, SignerClient, SignerManager};
 
     // ── Shared constants ────────────────────────────────────────────────
 
@@ -1017,23 +1000,56 @@ mod tests {
         }
     }
 
-    /// Stub signer client that is unused by `deregister_orphans` tests.
-    #[derive(Debug)]
-    struct StubSignerClient;
+    /// Driver-level signer lifecycle mock. It records calls without running
+    /// proof generation or registry cleanup, keeping run-loop tests focused on
+    /// driver orchestration.
+    #[derive(Debug, Clone)]
+    struct MockSignerManager {
+        tx: SharedTxManager,
+        reconcile_calls: Arc<AtomicUsize>,
+        orphan_calls: Arc<Mutex<Vec<HashSet<Address>>>>,
+        cancel_after_orphan: CancellationToken,
+    }
 
-    #[async_trait]
-    impl SignerClient for StubSignerClient {
-        async fn signer_public_key(&self, _endpoint: &Url) -> Result<Vec<Vec<u8>>> {
-            unimplemented!("not used in deregister_orphans tests")
+    impl MockSignerManager {
+        fn new(tx: SharedTxManager, cancel_after_orphan: CancellationToken) -> Self {
+            Self {
+                tx,
+                reconcile_calls: Arc::new(AtomicUsize::new(0)),
+                orphan_calls: Arc::new(Mutex::new(Vec::new())),
+                cancel_after_orphan,
+            }
         }
 
-        async fn signer_attestation(
+        fn reconcile_count(&self) -> usize {
+            self.reconcile_calls.load(Ordering::SeqCst)
+        }
+
+        fn orphan_inputs(&self) -> Vec<HashSet<Address>> {
+            self.orphan_calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl SignerLifecycle for MockSignerManager {
+        type TransactionManager = SharedTxManager;
+
+        fn tx_manager(&self) -> &Self::TransactionManager {
+            &self.tx
+        }
+
+        fn reconcile_proof_tasks(
             &self,
-            _endpoint: &Url,
-            _user_data: Option<Vec<u8>>,
-            _nonce: Option<Vec<u8>>,
-        ) -> Result<Vec<Vec<u8>>> {
-            unimplemented!("not used in deregister_orphans tests")
+            _resolution: &DiscoveryResolution,
+            _proof_tasks: &mut ProofTaskSet,
+        ) {
+            self.reconcile_calls.fetch_add(1, Ordering::SeqCst);
+        }
+
+        async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
+            self.orphan_calls.lock().unwrap().push(protected_signers.clone());
+            self.cancel_after_orphan.cancel();
+            Ok(())
         }
     }
 
@@ -1060,6 +1076,12 @@ mod tests {
         }
     }
 
+    type CycleDriver = RegistrationDriver<
+        MockDiscovery,
+        MockSignerClient,
+        Arc<SignerManager<StubProofProvider, MockRegistry, SharedTxManager>>,
+    >;
+
     /// Builds a fully-configured driver for primitive-level tests that
     /// invoke `discover_and_resolve` and `run_orphan_dereg` directly
     /// (rather than the spawn pipeline in `run`). Returns an `Arc` so tests
@@ -1070,86 +1092,32 @@ mod tests {
         registry: MockRegistry,
         tx: SharedTxManager,
         cancel: CancellationToken,
-    ) -> Arc<
-        RegistrationDriver<
-            MockDiscovery,
+    ) -> Arc<CycleDriver> {
+        let config = default_config(cancel);
+        let signer_manager = Arc::new(SignerManager::new(
             StubProofProvider,
-            MockRegistry,
-            SharedTxManager,
-            MockSignerClient,
-        >,
-    > {
+            registry,
+            tx,
+            config.signer_manager.clone(),
+        ));
         Arc::new(
             RegistrationDriver::new(
                 MockDiscovery { instances },
-                StubProofProvider,
-                registry,
-                tx,
                 signer_client,
-                default_config(cancel),
+                config,
                 None,
+                signer_manager,
             )
             .expect("test driver construction succeeds"),
         )
     }
 
-    // ── Proof-task mock types ─────────────────────────────────────────
-
-    /// Proof provider that records the `(signer, attestation_bytes)` pair
-    /// passed to every `generate_proof_for_signer` invocation, then
-    /// returns `Err` so the spawned registration task exits without
-    /// reaching the tx-manager send path.
-    ///
-    /// Used by the spawn-pass indexing tests to assert that
-    /// [`SignerManager::reconcile_proof_tasks`] pairs each signer
-    /// with `attestations[idx]` and never with a sibling's blob.
-    #[derive(Debug, Clone, Default)]
-    struct RecordingProofProvider {
-        recorded: Arc<Mutex<HashMap<Address, Vec<u8>>>>,
-    }
-
-    impl RecordingProofProvider {
-        fn snapshot(&self) -> HashMap<Address, Vec<u8>> {
-            self.recorded.lock().unwrap().clone()
-        }
-    }
-
-    #[async_trait]
-    impl AttestationProofProvider for RecordingProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            unreachable!(
-                "RecordingProofProvider is only invoked via generate_proof_for_signer; \
-                 reaching generate_proof would mean the driver bypassed signer routing"
-            )
-        }
-
-        async fn generate_proof_for_signer(
-            &self,
-            attestation_bytes: &[u8],
-            signer_address: Address,
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            self.recorded.lock().unwrap().insert(signer_address, attestation_bytes.to_vec());
-            // Returning `Err` short-circuits the spawned task before it reaches
-            // `tx_manager.send()`, which we do not wire for the indexing tests.
-            Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
-                "RecordingProofProvider exits after capturing attestation".into(),
-            ))
-        }
-    }
-
     // ── Pipeline test infrastructure ────────────────────────────────────
     //
-    // Used by the `reconcile_proof_tasks`, `reap_finished_tasks`, and
-    // top-level `run` test suites added in this commit. Designed so the
-    // entire run loop can be driven from a `tokio::test` without real
-    // sleeps: the gated proof provider parks every spawned proof on a
-    // `CancellationToken` that the test releases when it has observed
-    // the behaviour it cares about.
+    // Used by top-level `run` tests. Designed so the entire run loop can be
+    // driven from a `tokio::test` without real sleeps: the gated proof provider
+    // parks every spawned proof on a `CancellationToken` that the test releases
+    // when it has observed the behaviour it cares about.
 
     /// Tightened poll interval for spawn-pipeline tests so we observe
     /// multiple cycles without burning real wall-time.
@@ -1319,10 +1287,8 @@ mod tests {
     /// the pipeline tests.
     type RunDriver = RegistrationDriver<
         MutableDiscovery,
-        GatedProofProvider,
-        MockRegistry,
-        SharedTxManager,
         MockSignerClient,
+        Arc<SignerManager<GatedProofProvider, MockRegistry, SharedTxManager>>,
     >;
 
     /// Bundles every handle a pipeline test needs to drive the loop.
@@ -1351,16 +1317,20 @@ mod tests {
 
             let mut config = default_config(cancel.clone());
             config.poll_interval = GATED_POLL_INTERVAL;
+            let signer_manager = Arc::new(SignerManager::new(
+                proof_provider,
+                registry,
+                tx.clone(),
+                config.signer_manager.clone(),
+            ));
 
             let driver = Arc::new(
                 RegistrationDriver::new(
                     discovery.clone(),
-                    proof_provider,
-                    registry,
-                    tx.clone(),
                     signer_client,
                     config,
                     None,
+                    signer_manager,
                 )
                 .expect("test driver construction succeeds"),
             );
@@ -1415,52 +1385,6 @@ mod tests {
         sent.iter().filter(|c| c.len() >= 4 && c[..4] == sel).count()
     }
 
-    /// Instance ID used by every `PendingRegistration` constructed for
-    /// the reconcile / reap unit tests. The string is opaque — only the
-    /// `Address` keying matters for cancel/spawn logic — but pinning it
-    /// to a single named const keeps test output readable and avoids
-    /// per-test magic strings.
-    const TEST_PENDING_INSTANCE_ID: &str = "i-pending-test";
-
-    /// Cooperative shutdown for any [`JoinSet`] / `pending` pair built
-    /// by a unit test (i.e. without spawning the full `run()` loop).
-    ///
-    /// Fires every per-task cancel token, then `abort_all`s as a
-    /// backstop and drains the `JoinSet` so test teardown doesn't leak
-    /// futures that are forever parked on their tokens. Mirrors the
-    /// production shutdown sequence in [`RegistrationDriver::run`].
-    async fn drain_test_tasks(proof_tasks: &mut ProofTaskSet) {
-        for task in proof_tasks.pending().values() {
-            task.cancel.cancel();
-        }
-        let tasks = proof_tasks.tasks_mut();
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
-        proof_tasks.pending_mut().clear();
-    }
-
-    /// Polling fixed point used by the reap-loop helper below — small
-    /// enough that even on a loaded runner the test still terminates
-    /// well inside [`GATED_WAIT_TIMEOUT`].
-    const REAP_POLL_INTERVAL: Duration = Duration::from_millis(1);
-
-    /// Repeatedly invokes [`ProofTaskSet::reap_finished_tasks`] until
-    /// `pending` is empty or [`GATED_WAIT_TIMEOUT`] elapses. The
-    /// production loop calls `reap_finished_tasks` exactly once per
-    /// cycle, so unit tests that drive it directly need to give the
-    /// runtime time to schedule the spawned task that they are waiting
-    /// to observe complete.
-    async fn reap_until_pending_empty(proof_tasks: &mut ProofTaskSet) {
-        let started = std::time::Instant::now();
-        while !proof_tasks.is_pending_empty() {
-            if started.elapsed() > GATED_WAIT_TIMEOUT {
-                panic!("timed out reaping {} pending task(s)", proof_tasks.pending_len());
-            }
-            proof_tasks.reap_finished_tasks();
-            tokio::time::sleep(REAP_POLL_INTERVAL).await;
-        }
-    }
-
     /// Builds a [`MockRegistry`] that reports zero registered signers.
     /// Used by every pipeline test that wants the onchain state to
     /// start empty.
@@ -1501,56 +1425,40 @@ mod tests {
         GatedRunHarness::new(initial, &all_keys, empty_registry())
     }
 
-    /// Builds a minimal [`PendingRegistration`] for unit-testing
-    /// reap/apply-outcome flows without spawning a real future. The
-    /// `task_id` is taken from the spawned placeholder's
-    /// `JoinHandle::id()` so join-error handling in
-    /// [`ProofTaskSet::apply_join_outcome`] can recover the
-    /// signer just as it does in production when the pending entry
-    /// is still current.
-    fn pending_registration_for_test(task_id: task::Id, instance_id: &str) -> PendingRegistration {
-        PendingRegistration {
-            instance_id: instance_id.to_string(),
-            task_id,
-            cancel: CancellationToken::new(),
-            cancelled_by_reconcile: false,
-        }
-    }
+    #[tokio::test]
+    async fn run_loop_uses_injected_signer_manager_boundary() {
+        let cancel = CancellationToken::new();
+        let mut config = default_config(cancel.clone());
+        config.poll_interval = GATED_POLL_INTERVAL;
 
-    fn proof_task_success_for_test(signer: Address) -> ProofTaskOutcome {
-        ProofTaskOutcome { signer, result: Ok(()) }
-    }
+        let tx = SharedTxManager::new();
+        let signer_manager = MockSignerManager::new(tx, cancel.clone());
+        let signer_manager_handle = signer_manager.clone();
+        let signer = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0))
+            .expect("test key derives");
 
-    fn proof_task_failure_for_test(signer: Address, error: RegistrarError) -> ProofTaskOutcome {
-        ProofTaskOutcome { signer, result: Err(error) }
-    }
+        let driver = RegistrationDriver::<MockDiscovery, MockSignerClient, MockSignerManager>::new(
+            MockDiscovery { instances: vec![instance(EP1, InstanceHealthStatus::Healthy)] },
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
+            config,
+            None,
+            signer_manager,
+        )
+        .expect("test driver construction succeeds");
 
-    /// Builds a synthetic [`DiscoveryResolution`] from a list of
-    /// `(endpoint, key)` pairs we want kept as registerable this
-    /// cycle.
-    fn dr_from_kept(kept: &[(&str, &[u8; 32])]) -> DiscoveryResolution {
-        let mut registerable = Vec::new();
-        let mut active_signers = HashSet::new();
-        for (ep, key) in kept {
-            let inst = instance(ep, InstanceHealthStatus::Healthy);
-            let addr = ProverClient::derive_address(&public_key_from_private(key)).unwrap();
-            active_signers.insert(addr);
-            registerable.push(RegisterableSigner {
-                instance: inst,
-                signer: addr,
-                attestation: b"gated-attestation".to_vec(),
-                enclave_index: 0,
-            });
-        }
-        let total = kept.len();
-        DiscoveryResolution {
-            registerable,
-            active_signers,
-            reachable_count: total,
-            total_count: total,
-            ok_to_dereg: true,
-            unresolved_instance_ids: HashSet::new(),
-        }
+        driver.run_loop().await.expect("driver exits after mock orphan pass cancels");
+
+        assert_eq!(
+            signer_manager_handle.reconcile_count(),
+            1,
+            "driver should delegate registerable reconciliation to signer manager",
+        );
+        let orphan_inputs = signer_manager_handle.orphan_inputs();
+        assert_eq!(orphan_inputs.len(), 1, "driver should delegate one orphan pass");
+        assert!(
+            orphan_inputs[0].contains(&signer),
+            "driver passes active signer set into orphan protection",
+        );
     }
 
     #[tokio::test]
@@ -1602,25 +1510,13 @@ mod tests {
 
     // ── discover_and_resolve + run_orphan_dereg tests ──────────────────
 
-    /// When discovery returns zero instances the active set is empty, so
-    /// every onchain signer is an orphan and must be deregistered.
-    /// Verifies both that `discover_and_resolve` flips `ok_to_dereg` to
-    /// `true` for the legitimate zero-instance case and that
-    /// `run_orphan_dereg` emits a deregistration tx per onchain signer.
-    #[rstest]
-    #[case::single_orphan(vec![ORPHAN_A])]
-    #[case::multiple_orphans(vec![ORPHAN_A, ORPHAN_B, ORPHAN_C])]
     #[tokio::test]
-    async fn run_orphan_dereg_deregisters_all_onchain_signers_when_discovery_is_empty(
-        #[case] orphans: Vec<Address>,
-    ) {
-        let expected_count = orphans.len();
-        let tx = SharedTxManager::new();
+    async fn discover_and_resolve_allows_orphan_pass_when_discovery_is_empty() {
         let driver = cycle_driver(
-            vec![], // no discovered instances
+            vec![],
             MockSignerClient::from_keys(&[]),
-            MockRegistry::with_signers(orphans.clone()),
-            tx.clone(),
+            MockRegistry::with_signers(vec![ORPHAN_A, ORPHAN_B, ORPHAN_C]),
+            SharedTxManager::new(),
             CancellationToken::new(),
         );
 
@@ -1630,20 +1526,6 @@ mod tests {
             resolution.ok_to_dereg,
             "zero-instance fleet drain is a legitimate empty active set",
         );
-
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
-
-        let sent = tx.sent_calldata();
-        assert_eq!(sent.len(), expected_count, "all onchain signers should be deregistered");
-
-        // Verify each deregistration targets the correct signer.
-        for orphan in orphans {
-            let expected = ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
-            assert!(
-                sent.iter().any(|s| s[..] == expected[..]),
-                "expected deregistration of {orphan}"
-            );
-        }
     }
 
     #[tokio::test]
@@ -1937,16 +1819,21 @@ mod tests {
             inner: MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
             cancel: cancel.clone(),
         };
+        let config = default_config(cancel);
+        let signer_manager = Arc::new(SignerManager::new(
+            StubProofProvider,
+            MockRegistry::all_registered(vec![ORPHAN_E]),
+            tx.clone(),
+            config.signer_manager.clone(),
+        ));
 
         let driver = Arc::new(
             RegistrationDriver::new(
                 MockDiscovery { instances },
-                StubProofProvider,
-                MockRegistry::all_registered(vec![ORPHAN_E]),
-                tx.clone(),
                 signer_client,
-                default_config(cancel),
+                config,
                 None,
+                signer_manager,
             )
             .expect("test driver construction succeeds"),
         );
@@ -2167,15 +2054,20 @@ mod tests {
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
 
         let tx = SharedTxManager::new();
+        let config = default_config(CancellationToken::new());
+        let signer_manager = Arc::new(SignerManager::new(
+            FailingProofProvider,
+            MockRegistry::with_signers(vec![signer_addr]),
+            tx.clone(),
+            config.signer_manager.clone(),
+        ));
         let driver = Arc::new(
             RegistrationDriver::new(
                 MockDiscovery { instances },
-                FailingProofProvider,
-                MockRegistry::with_signers(vec![signer_addr]),
-                tx.clone(),
                 signer_client,
-                default_config(CancellationToken::new()),
+                config,
                 None,
+                signer_manager,
             )
             .expect("test driver construction succeeds"),
         );
@@ -2266,16 +2158,20 @@ mod tests {
         let tx = SharedTxManager::new();
         let mut config = default_config(cancel);
         config.signer_manager.max_concurrency = max_concurrency;
+        let signer_manager = Arc::new(SignerManager::new(
+            StubProofProvider,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            config.signer_manager.clone(),
+        ));
 
         let driver = Arc::new(
             RegistrationDriver::new(
                 MockDiscovery { instances },
-                StubProofProvider,
-                MockRegistry::with_signers(vec![]),
-                tx.clone(),
                 signer_client,
                 config,
                 None,
+                signer_manager,
             )
             .expect("test driver construction succeeds"),
         );
@@ -2294,796 +2190,6 @@ mod tests {
         );
         // Resolution itself emits no onchain tx — the spawn pass owns registration.
         assert!(tx.sent_calldata().is_empty(), "discover_and_resolve must not send txs");
-    }
-
-    // ── cancel-aware registry await tests ──────────────────────────────
-    //
-    // `get_registered_signers` in `run_orphan_dereg` is wrapped in
-    // `select!` against the driver cancel token so a shutdown during the
-    // RPC drops the call immediately. Proof-handler-owned registry awaits
-    // are covered in `proof_handler::tests`.
-
-    /// Per-call stall registry: parks the configured method on a
-    /// never-completing future. Used to assert that the `select!`
-    /// wrapper in `run_orphan_dereg` short-circuits on cancel instead of
-    /// blocking on the RPC.
-    struct StallingRegistry {
-        signers: Vec<Address>,
-    }
-
-    impl StallingRegistry {
-        fn stalling_get_registered_signers(signers: Vec<Address>) -> Self {
-            Self { signers }
-        }
-    }
-
-    #[async_trait]
-    impl RegistryClient for StallingRegistry {
-        async fn is_registered(&self, _signer: Address) -> Result<bool> {
-            Ok(false)
-        }
-
-        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-            std::future::pending::<()>().await;
-            Ok(self.signers.clone())
-        }
-    }
-
-    /// Upper bound on how long a cancel must take to abort an in-flight
-    /// registry RPC. Generous enough to absorb CI jitter while still
-    /// failing fast on a regression (without the `select!` wrapper the
-    /// test would hang until the [`tokio::time::timeout`] backstop
-    /// fires, far above this bound).
-    const CANCEL_ABORT_BUDGET: Duration = Duration::from_secs(1);
-
-    /// Soft window the test sleeps between spawning the call-under-test
-    /// and firing the cancel token. Long enough that the spawned future
-    /// reaches its `is_registered` await point, short enough that the
-    /// total test time stays well under [`CANCEL_ABORT_BUDGET`].
-    const PRE_CANCEL_WARMUP: Duration = Duration::from_millis(50);
-
-    /// `run_orphan_dereg` MUST abort promptly when the configured cancel
-    /// token fires during the `get_registered_signers` RPC. Without the
-    /// `select!` wrap a stalled RPC here would extend drain latency by one
-    /// round-trip even though the function never reaches the per-orphan loop
-    /// that has its own cancel check.
-    #[tokio::test]
-    async fn run_orphan_dereg_aborts_promptly_when_cancel_fires_during_registry_stall() {
-        let cancel = CancellationToken::new();
-        let driver = Arc::new(
-            RegistrationDriver::new(
-                MockDiscovery { instances: vec![] },
-                StubProofProvider,
-                StallingRegistry::stalling_get_registered_signers(vec![]),
-                SharedTxManager::new(),
-                StubSignerClient,
-                default_config(cancel.clone()),
-                None,
-            )
-            .expect("driver constructs"),
-        );
-
-        let driver_clone = Arc::clone(&driver);
-        let cancel_clone = cancel.clone();
-        let handle = tokio::spawn(async move {
-            let active: HashSet<Address> = HashSet::new();
-            let start = tokio::time::Instant::now();
-            let res = driver_clone.signer_manager.run_orphan_dereg(&active).await;
-            (res, start.elapsed(), cancel_clone)
-        });
-
-        tokio::time::sleep(PRE_CANCEL_WARMUP).await;
-        cancel.cancel();
-
-        let (result, elapsed, _alive) = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
-            .await
-            .expect("run_orphan_dereg must not hang past the timeout")
-            .expect("spawned task must not panic");
-
-        assert!(result.is_ok(), "cancel-induced exit must be Ok(()): {result:?}");
-        assert!(
-            elapsed < CANCEL_ABORT_BUDGET,
-            "cancel must abort the registry stall within {CANCEL_ABORT_BUDGET:?} (took {elapsed:?})",
-        );
-    }
-
-    // ── reconcile_proof_tasks tests ─────────────────────────────────────
-    //
-    // These unit-tests exercise the spawn / cancel decisions without
-    // spinning up the run loop. They build a synthetic
-    // `DiscoveryResolution` via `dr_from_kept` and a hand-rolled
-    // `pending` map, then assert exactly which tasks get cancelled
-    // and which get spawned.
-
-    #[rstest]
-    #[case::no_pending_spawns_all(&[], &[(EP1, &HARDHAT_KEY_0)], 1, 0)]
-    #[case::pending_for_kept_spawns_nothing(&[(EP1, &HARDHAT_KEY_0)], &[(EP1, &HARDHAT_KEY_0)], 0, 0)]
-    #[case::pending_for_dropped_cancels_one(&[(EP1, &HARDHAT_KEY_0)], &[], 0, 1)]
-    #[case::pending_one_kept_one_dropped(
-        &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)],
-        &[(EP1, &HARDHAT_KEY_0)],
-        0,
-        1,
-    )]
-    #[case::two_new_signers_two_spawns(
-        &[],
-        &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)],
-        2,
-        0,
-    )]
-    #[tokio::test]
-    async fn reconcile_proof_tasks_cancel_and_spawn_passes(
-        #[case] pre_existing: &[(&'static str, &'static [u8; 32])],
-        #[case] kept: &[(&'static str, &'static [u8; 32])],
-        #[case] expected_new_spawns: usize,
-        #[case] expected_cancels: usize,
-    ) {
-        let harness = single_healthy_harness();
-        let mut proof_tasks = ProofTaskSet::new();
-
-        // Seed the pending map by spawning placeholder tasks for the
-        // pre-existing signers. These futures park on their per-task
-        // cancel token so cooperative cancellation is observable.
-        let mut seeded_cancels: Vec<CancellationToken> = Vec::new();
-        for (_, key) in pre_existing {
-            let signer = ProverClient::derive_address(&public_key_from_private(key)).unwrap();
-            let task_cancel = CancellationToken::new();
-            let task_cancel_inner = task_cancel.clone();
-            let handle = proof_tasks.tasks_mut().spawn(async move {
-                task_cancel_inner.cancelled().await;
-                proof_task_success_for_test(signer)
-            });
-            proof_tasks.pending_mut().insert(
-                signer,
-                PendingRegistration {
-                    instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                    task_id: handle.id(),
-                    cancel: task_cancel.clone(),
-                    cancelled_by_reconcile: false,
-                },
-            );
-            seeded_cancels.push(task_cancel);
-        }
-
-        let resolution = dr_from_kept(kept);
-        let pre_spawn_count = proof_tasks.pending_len();
-        let pre_cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
-
-        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
-
-        let post_cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
-        let new_spawns = proof_tasks.pending_len().saturating_sub(pre_spawn_count);
-
-        assert_eq!(new_spawns, expected_new_spawns, "spawn-pass count");
-        assert_eq!(post_cancelled - pre_cancelled, expected_cancels, "cancel-pass count");
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    #[tokio::test]
-    async fn reconcile_proof_tasks_idempotent_when_resolution_unchanged() {
-        // Running reconcile twice with the same resolution must not
-        // spawn duplicate tasks or cancel an already-pending one.
-        let harness = single_healthy_harness();
-        let mut proof_tasks = ProofTaskSet::new();
-
-        let resolution = dr_from_kept(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
-
-        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
-        let after_first = proof_tasks.pending_len();
-        let snapshot_ids: HashSet<_> = proof_tasks.pending().keys().copied().collect();
-
-        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
-
-        assert_eq!(proof_tasks.pending_len(), after_first, "idempotent: no extra spawns");
-        let after_second: HashSet<_> = proof_tasks.pending().keys().copied().collect();
-        assert_eq!(snapshot_ids, after_second, "pending signer keys unchanged across reconciles");
-        for task in proof_tasks.pending().values() {
-            assert!(!task.cancel.is_cancelled(), "kept task must not be cancelled");
-        }
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    /// Vanish-then-reappear: a signer cancelled in cycle N (because it
-    /// dropped from `registerable`) and then re-added in cycle N+1 must
-    /// spawn a fresh task in N+1 — the cancelled `pending` entry must
-    /// not block the respawn. Exercises the
-    /// `filter(|t| !t.cancel.is_cancelled())` on the `in_flight` build,
-    /// which is what enables single-cycle rolling-deploy convergence
-    /// instead of a 2-cycle (~60s at 30s poll) latency.
-    ///
-    /// With the address-keyed `pending` map (one entry per signer at
-    /// most), the fresh spawn-pass entry OVERWRITES the stale entry in
-    /// place. The stale task itself stays in the `JoinSet` until it
-    /// observes its cancel and exits; `apply_join_outcome`'s
-    /// `task_id`-match guard then prevents the stale task's terminal
-    /// outcome from evicting the fresh entry — that guard is exercised
-    /// indirectly via the `task_id` assertion below.
-    #[tokio::test]
-    async fn reconcile_proof_tasks_respawns_after_vanish_and_reappear() {
-        let harness = single_healthy_harness();
-        let mut proof_tasks = ProofTaskSet::new();
-
-        let signer =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-
-        // Cycle N: seed pending with a placeholder task for the signer.
-        // The placeholder parks on its cancel token so cooperative
-        // cancellation is observable without the task self-resolving.
-        let stale_cancel = CancellationToken::new();
-        let stale_cancel_inner = stale_cancel.clone();
-        let stale_handle = proof_tasks.tasks_mut().spawn(async move {
-            stale_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
-        });
-        let stale_task_id = stale_handle.id();
-        proof_tasks.pending_mut().insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: stale_task_id,
-                cancel: stale_cancel.clone(),
-                cancelled_by_reconcile: false,
-            },
-        );
-
-        // Cycle N+1: signer absent from resolution → cancel-pass fires
-        // but does not reap, so the (now cancelled) entry persists in
-        // `pending` keyed by `signer`.
-        let empty = dr_from_kept(&[]);
-        harness.driver.signer_manager.reconcile_proof_tasks(&empty, &mut proof_tasks);
-        assert!(stale_cancel.is_cancelled(), "stale task must be cancelled by reconcile");
-        assert_eq!(
-            proof_tasks.pending().get(&signer).map(|p| p.task_id),
-            Some(stale_task_id),
-            "cancelled entry still keyed by signer until reaped",
-        );
-        assert_eq!(
-            proof_tasks.pending_len(),
-            1,
-            "no fresh spawn yet (signer not registerable this cycle)"
-        );
-
-        // Cycle N+2 (BEFORE the stale entry is reaped): signer reappears
-        // → fresh spawn must happen this cycle, not deferred to N+3. The
-        // fresh entry overwrites the stale one in the address-keyed map;
-        // the stale task lives on in the JoinSet (parked on its cancel
-        // until drain).
-        let resurrected = dr_from_kept(&[(EP1, &HARDHAT_KEY_0)]);
-        harness.driver.signer_manager.reconcile_proof_tasks(&resurrected, &mut proof_tasks);
-
-        assert_eq!(
-            proof_tasks.pending_len(),
-            1,
-            "still exactly one entry per signer after respawn"
-        );
-        let fresh = proof_tasks
-            .pending()
-            .get(&signer)
-            .expect("fresh entry keyed by the resurrected signer");
-        assert_ne!(fresh.task_id, stale_task_id, "fresh task_id replaces the stale one");
-        assert!(!fresh.cancel.is_cancelled(), "fresh task carries a live cancel token");
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    /// Inconclusive-snapshot guard: when a signer's source instance
-    /// failed to resolve this cycle (its `instance_id` is recorded in
-    /// `DiscoveryResolution::unresolved_instance_ids`), reconcile MUST
-    /// NOT cancel that signer's in-flight proof task — the signer is
-    /// absent from `registerable` only because we couldn't tell this
-    /// cycle, not because we proved it's gone or ineligible. Without
-    /// this guard a single transient `signer_public_key` /
-    /// `signer_attestation` / CRL hiccup during a long (~70 min)
-    /// Boundless proof would abandon the in-flight work.
-    #[tokio::test]
-    async fn reconcile_proof_tasks_preserves_task_when_instance_fails_to_resolve() {
-        let harness = single_healthy_harness();
-        let mut proof_tasks = ProofTaskSet::new();
-
-        let signer =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-
-        // Seed pending with a placeholder task for the signer, tagged
-        // with the instance_id we'll later mark as unresolved.
-        let task_cancel = CancellationToken::new();
-        let task_cancel_inner = task_cancel.clone();
-        let handle = proof_tasks.tasks_mut().spawn(async move {
-            task_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
-        });
-        proof_tasks.pending_mut().insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: handle.id(),
-                cancel: task_cancel.clone(),
-                cancelled_by_reconcile: false,
-            },
-        );
-
-        // Build a resolution where the signer is absent from
-        // `registerable` (so `wanted` is empty) BUT the source
-        // instance is flagged as unresolved this cycle.
-        let mut unresolved = HashSet::new();
-        unresolved.insert(TEST_PENDING_INSTANCE_ID.to_string());
-        let resolution = DiscoveryResolution {
-            registerable: Vec::new(),
-            active_signers: HashSet::new(),
-            reachable_count: 0,
-            total_count: 1,
-            ok_to_dereg: false,
-            unresolved_instance_ids: unresolved,
-        };
-
-        harness.driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
-
-        assert!(
-            !task_cancel.is_cancelled(),
-            "task tied to an unresolved instance must be preserved across the cancel-pass",
-        );
-        assert_eq!(proof_tasks.pending_len(), 1, "no spurious spawn or eviction this cycle");
-
-        // Sanity contrast: same setup, but the instance is NOT
-        // unresolved → cancel-pass MUST fire. Asserts the previous
-        // arm's success was due to the guard, not unrelated logic.
-        let resolution_conclusive = DiscoveryResolution {
-            registerable: Vec::new(),
-            active_signers: HashSet::new(),
-            reachable_count: 1,
-            total_count: 1,
-            ok_to_dereg: true,
-            unresolved_instance_ids: HashSet::new(),
-        };
-        harness
-            .driver
-            .signer_manager
-            .reconcile_proof_tasks(&resolution_conclusive, &mut proof_tasks);
-        assert!(
-            task_cancel.is_cancelled(),
-            "with no inconclusive guard, the cancel-pass MUST fire on the same setup",
-        );
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    /// Orphan-dereg companion to
-    /// [`reconcile_proof_tasks_preserves_task_when_instance_fails_to_resolve`].
-    ///
-    /// When `resolve_instance` fails transiently for an instance whose
-    /// proof task is still in-flight, the signer is **absent from**
-    /// `resolution.active_signers` (no fresh evidence this cycle) but
-    /// is **present in** `pending` (reconcile preserves the task via
-    /// `unresolved_instance_ids`). If the preserved task succeeds and
-    /// registers the signer onchain right as the orphan-dereg pass
-    /// runs, the protected set assembled by
-    /// [`ProofTaskSet::protected_signers`] MUST union the two, otherwise
-    /// the very next call to `deregister_orphans` would deregister the
-    /// freshly-registered signer (TOCTOU race).
-    #[tokio::test]
-    async fn protected_signers_union_blocks_dereg_of_freshly_registered_signer() {
-        let signer =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-
-        // Registry reports the signer as already registered onchain —
-        // the state that exists immediately after the preserved task's
-        // `registerSigner` tx confirms.
-        let harness = GatedRunHarness::new(
-            vec![instance(EP1, InstanceHealthStatus::Healthy)],
-            &[(EP1, &HARDHAT_KEY_0)],
-            MockRegistry::with_signers(vec![signer]),
-        );
-
-        // Seed `pending` with an entry for the signer tied to an
-        // instance that is "unresolved" this cycle. Address-keying
-        // alone is what `protected_signers` consumes; the placeholder
-        // task is just there so cleanup runs through the same path the
-        // production loop does.
-        let mut proof_tasks = ProofTaskSet::new();
-        let task_cancel = CancellationToken::new();
-        let task_cancel_inner = task_cancel.clone();
-        let handle = proof_tasks.tasks_mut().spawn(async move {
-            task_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
-        });
-        proof_tasks.pending_mut().insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: handle.id(),
-                cancel: task_cancel,
-                cancelled_by_reconcile: false,
-            },
-        );
-
-        // `active_signers` is empty (the signer's source instance
-        // failed to resolve this cycle) but `ok_to_dereg` is true so
-        // the orphan pass would otherwise run unimpeded.
-        let mut unresolved = HashSet::new();
-        unresolved.insert(TEST_PENDING_INSTANCE_ID.to_string());
-        let resolution = DiscoveryResolution {
-            registerable: Vec::new(),
-            active_signers: HashSet::new(),
-            reachable_count: 1,
-            total_count: 1,
-            ok_to_dereg: true,
-            unresolved_instance_ids: unresolved,
-        };
-
-        let protected = proof_tasks.protected_signers(&resolution);
-        assert!(
-            protected.contains(&signer),
-            "protected set must include in-flight signer even when absent from active_signers",
-        );
-
-        harness.driver.signer_manager.run_orphan_dereg(&protected).await.unwrap();
-
-        let sent = harness.tx.sent_calldata();
-        assert_eq!(
-            count_deregister_calls(&sent),
-            0,
-            "orphan pass must NOT deregister a signer with an in-flight proof task",
-        );
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    /// Sanity contrast for
-    /// [`protected_signers_union_blocks_dereg_of_freshly_registered_signer`]:
-    /// with `pending` empty and the same onchain state, the orphan
-    /// pass MUST deregister the signer. Proves the previous test's
-    /// success was due to the union, not unrelated logic.
-    #[tokio::test]
-    async fn protected_signers_union_does_not_shield_when_pending_empty() {
-        let signer =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let harness = GatedRunHarness::new(
-            vec![instance(EP1, InstanceHealthStatus::Healthy)],
-            &[(EP1, &HARDHAT_KEY_0)],
-            MockRegistry::with_signers(vec![signer]),
-        );
-
-        let proof_tasks = ProofTaskSet::new();
-        let resolution = DiscoveryResolution {
-            registerable: Vec::new(),
-            active_signers: HashSet::new(),
-            reachable_count: 1,
-            total_count: 1,
-            ok_to_dereg: true,
-            unresolved_instance_ids: HashSet::new(),
-        };
-
-        let protected = proof_tasks.protected_signers(&resolution);
-        assert!(protected.is_empty(), "no pending → protected set is empty");
-
-        harness.driver.signer_manager.run_orphan_dereg(&protected).await.unwrap();
-
-        let sent = harness.tx.sent_calldata();
-        assert_eq!(
-            count_deregister_calls(&sent),
-            1,
-            "with no in-flight task and no active signer, orphan pass MUST deregister",
-        );
-    }
-
-    // ── drain_proof_tasks metric-gating test ────────────────────────────
-
-    /// At shutdown, [`ProofTaskSet::drain_proof_tasks`] MUST count
-    /// only the tasks whose cancellation it actually drives — tasks
-    /// already cancelled by a prior
-    /// [`SignerManager::reconcile_proof_tasks`] cancel-pass were
-    /// counted at intent time and double-counting them in the drain pass
-    /// would inflate the `proof_tasks_cancelled` counter. The gate uses
-    /// the `cancelled_by_reconcile` flag (not
-    /// `cancel.is_cancelled()`) because every per-task `signer_cancel`
-    /// is a child of `DriverConfig::cancel`, so by the time drain runs
-    /// the parent has already auto-cancelled every child token and
-    /// `is_cancelled()` no longer distinguishes the two cases.
-    ///
-    /// This test wires a real prometheus recorder via
-    /// [`metrics::with_local_recorder`], seeds three pending tasks (one
-    /// pre-flagged as `cancelled_by_reconcile = true`, two not), drains,
-    /// and asserts the counter increment equals exactly the unflagged
-    /// count.
-    #[cfg(feature = "metrics")]
-    mod drain_metric_tests {
-        use metrics_exporter_prometheus::PrometheusBuilder;
-
-        use super::*;
-
-        #[test]
-        fn drain_counts_only_tasks_not_already_cancelled_by_reconcile() {
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            let recorder = PrometheusBuilder::new().build_recorder();
-            let handle = recorder.handle();
-
-            metrics::with_local_recorder(&recorder, || {
-                rt.block_on(async {
-                    let mut proof_tasks = ProofTaskSet::new();
-
-                    // Seed: (key, was_flagged_by_reconcile). The flagged
-                    // task must NOT re-count at drain; the two unflagged
-                    // ones must count exactly once each.
-                    let seed: &[(&[u8; 32], bool)] =
-                        &[(&HARDHAT_KEY_0, true), (&HARDHAT_KEY_1, false), (&HARDHAT_KEY_2, false)];
-
-                    for (key, flagged) in seed {
-                        let signer =
-                            ProverClient::derive_address(&public_key_from_private(key)).unwrap();
-                        let cancel = CancellationToken::new();
-                        let cancel_inner = cancel.clone();
-                        let handle = proof_tasks.tasks_mut().spawn(async move {
-                            cancel_inner.cancelled().await;
-                            proof_task_success_for_test(signer)
-                        });
-                        proof_tasks.pending_mut().insert(
-                            signer,
-                            PendingRegistration {
-                                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                                task_id: handle.id(),
-                                cancel: cancel.clone(),
-                                cancelled_by_reconcile: *flagged,
-                            },
-                        );
-                        // Simulate the reconcile cancel-pass having
-                        // already fired for the flagged entry — this is
-                        // the precise state drain encounters at
-                        // shutdown for tasks reconcile already counted.
-                        if *flagged {
-                            cancel.cancel();
-                        }
-                    }
-
-                    proof_tasks.drain_proof_tasks().await;
-                });
-            });
-
-            let rendered = handle.render();
-            assert!(
-                rendered.contains("base_registrar_proof_tasks_cancelled 2"),
-                "drain must count only the unflagged tasks once each (expected 2); \
-                 double-count would render `3`, miscount `1`. Got:\n{rendered}",
-            );
-        }
-    }
-
-    // ── reconcile_proof_tasks: dedupe + indexing tests ─────────────────
-
-    /// Driver specialisation used by the spawn-pass indexing tests so a
-    /// [`RecordingProofProvider`] can capture the `(signer, attestation)`
-    /// pairs handed to each spawned task.
-    type RecordingDriver = RegistrationDriver<
-        MockDiscovery,
-        RecordingProofProvider,
-        MockRegistry,
-        SharedTxManager,
-        MockSignerClient,
-    >;
-
-    /// Builds a driver suitable for direct `reconcile_proof_tasks`
-    /// invocation: the registry reports no signers as registered (so
-    /// each task reaches the proof step), and the proof provider
-    /// records and exits.
-    fn recording_driver(
-        keys: &[(&str, &[u8; 32])],
-        proof_provider: RecordingProofProvider,
-    ) -> Arc<RecordingDriver> {
-        Arc::new(
-            RegistrationDriver::new(
-                MockDiscovery { instances: vec![] },
-                proof_provider,
-                MockRegistry::with_signers(vec![]),
-                SharedTxManager::new(),
-                MockSignerClient::from_keys(keys),
-                default_config(CancellationToken::new()),
-                None,
-            )
-            .expect("recording driver constructs cleanly"),
-        )
-    }
-
-    #[tokio::test]
-    async fn reconcile_proof_tasks_dedupes_signer_across_registerable_entries() {
-        // Two `RegisterableSigner` entries report the SAME signer
-        // address (misconfig: two prover instances were provisioned
-        // with identical enclave keys). The spawn pass must only
-        // spawn one task — duplicating would later trigger two
-        // `tx_manager.send()` calls for the same signer and waste
-        // nonces.
-        let proof_provider = RecordingProofProvider::default();
-        let driver = recording_driver(
-            &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_0)],
-            proof_provider.clone(),
-        );
-
-        // Both entries carry the same derived address but different
-        // attestation bytes so an accidental second spawn would be
-        // visible as a stale-attestation race in `recorded`.
-        let signer =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let entry_a = RegisterableSigner {
-            instance: instance(EP1, InstanceHealthStatus::Healthy),
-            signer,
-            attestation: b"attestation-from-instance-a".to_vec(),
-            enclave_index: 0,
-        };
-        let entry_b = RegisterableSigner {
-            instance: instance(EP2, InstanceHealthStatus::Healthy),
-            signer,
-            attestation: b"attestation-from-instance-b".to_vec(),
-            enclave_index: 0,
-        };
-        let resolution = DiscoveryResolution {
-            registerable: vec![entry_a, entry_b],
-            active_signers: HashSet::from([signer]),
-            reachable_count: 2,
-            total_count: 2,
-            ok_to_dereg: false,
-            unresolved_instance_ids: HashSet::new(),
-        };
-
-        let mut proof_tasks = ProofTaskSet::new();
-
-        driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
-
-        assert_eq!(
-            proof_tasks.pending_len(),
-            1,
-            "exactly one task should spawn for a duplicate signer"
-        );
-        let (&only_signer, _entry) = proof_tasks.pending().iter().next().unwrap();
-        assert_eq!(only_signer, signer, "the spawned task is keyed by the deduplicated signer");
-
-        // Let the single task run, record its attestation, and exit.
-        wait_for("the lone spawned task recorded its attestation", || {
-            !proof_provider.snapshot().is_empty()
-        })
-        .await;
-        drain_test_tasks(&mut proof_tasks).await;
-
-        let snap = proof_provider.snapshot();
-        assert_eq!(snap.len(), 1, "exactly one signer recorded across both entries");
-    }
-
-    #[rstest]
-    #[case::forward_order(false)]
-    #[case::reversed_order(true)]
-    #[tokio::test]
-    async fn reconcile_proof_tasks_pairs_attestation_with_signer(#[case] reverse: bool) {
-        // After the flatten in `discover_and_resolve`, each
-        // `RegisterableSigner` carries its own `(signer, attestation)`
-        // pair, so mispairing via the old `attestations[idx]` indexing
-        // bug class is structurally impossible. This test asserts the
-        // spawn pass forwards each entry's `signer` and `attestation`
-        // consistently — regardless of the order entries appear in the
-        // registerable vector — by recording the attestation the
-        // provider received per signer.
-        let signer_a =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let signer_b =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
-        assert_ne!(signer_a, signer_b, "test setup: distinct signer addresses");
-
-        let att_a: Vec<u8> = b"attestation-aligned-to-A".to_vec();
-        let att_b: Vec<u8> = b"attestation-aligned-to-B".to_vec();
-
-        let entry_a = RegisterableSigner {
-            instance: instance(EP1, InstanceHealthStatus::Healthy),
-            signer: signer_a,
-            attestation: att_a.clone(),
-            enclave_index: 0,
-        };
-        let entry_b = RegisterableSigner {
-            instance: instance(EP2, InstanceHealthStatus::Healthy),
-            signer: signer_b,
-            attestation: att_b.clone(),
-            enclave_index: 0,
-        };
-        let registerable = if reverse { vec![entry_b, entry_a] } else { vec![entry_a, entry_b] };
-
-        let proof_provider = RecordingProofProvider::default();
-        let driver = recording_driver(
-            &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)],
-            proof_provider.clone(),
-        );
-
-        let resolution = DiscoveryResolution {
-            registerable,
-            active_signers: HashSet::from([signer_a, signer_b]),
-            reachable_count: 2,
-            total_count: 2,
-            ok_to_dereg: false,
-            unresolved_instance_ids: HashSet::new(),
-        };
-
-        let mut proof_tasks = ProofTaskSet::new();
-
-        driver.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
-
-        wait_for("both signers recorded their attestations", || {
-            proof_provider.snapshot().len() == 2
-        })
-        .await;
-        drain_test_tasks(&mut proof_tasks).await;
-
-        let snap = proof_provider.snapshot();
-        assert_eq!(snap.get(&signer_a), Some(&att_a), "signer A got the A-aligned attestation");
-        assert_eq!(snap.get(&signer_b), Some(&att_b), "signer B got the B-aligned attestation");
-    }
-
-    // ── reap_finished_tasks + apply_join_outcome tests ─────────────────
-
-    #[rstest]
-    #[case::ok_outcome(true)]
-    #[case::err_outcome(false)]
-    #[tokio::test]
-    async fn reap_finished_tasks_drains_completed_and_evicts_pending(#[case] succeed: bool) {
-        // Spawn one task that completes immediately; reap_finished_tasks
-        // must remove it from `pending` regardless of inner success.
-        let mut proof_tasks = ProofTaskSet::new();
-
-        let handle = proof_tasks.tasks_mut().spawn(async move {
-            if succeed {
-                proof_task_success_for_test(HARDHAT_ACCOUNT)
-            } else {
-                proof_task_failure_for_test(
-                    HARDHAT_ACCOUNT,
-                    RegistrarError::Transaction("synthetic".into()),
-                )
-            }
-        });
-        proof_tasks.pending_mut().insert(
-            HARDHAT_ACCOUNT,
-            pending_registration_for_test(handle.id(), TEST_PENDING_INSTANCE_ID),
-        );
-
-        reap_until_pending_empty(&mut proof_tasks).await;
-
-        assert!(proof_tasks.is_pending_empty(), "completed task must be evicted from pending");
-        assert!(proof_tasks.is_join_set_empty(), "JoinSet must drain to empty");
-    }
-
-    #[tokio::test]
-    async fn reap_finished_tasks_leaves_in_flight_alone() {
-        // A task that never completes must remain in `pending` after
-        // `reap_finished_tasks` is called (it is non-blocking).
-        let mut proof_tasks = ProofTaskSet::new();
-
-        let cancel = CancellationToken::new();
-        let cancel_inner = cancel.clone();
-        let handle = proof_tasks.tasks_mut().spawn(async move {
-            cancel_inner.cancelled().await;
-            proof_task_success_for_test(HARDHAT_ACCOUNT)
-        });
-        proof_tasks.pending_mut().insert(
-            HARDHAT_ACCOUNT,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: handle.id(),
-                cancel,
-                cancelled_by_reconcile: false,
-            },
-        );
-
-        proof_tasks.reap_finished_tasks();
-
-        assert_eq!(proof_tasks.pending_len(), 1, "live task must remain in pending");
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    #[tokio::test]
-    async fn reap_finished_tasks_is_noop_when_pending_is_empty() {
-        // Sanity: the production loop calls `reap_finished_tasks` every
-        // cycle, including cycles with no pending work. It must not
-        // panic in that case.
-        let mut proof_tasks = ProofTaskSet::new();
-
-        proof_tasks.reap_finished_tasks();
-
-        assert!(proof_tasks.is_pending_empty(), "pending stays empty");
-        assert!(proof_tasks.is_join_set_empty(), "JoinSet stays empty");
     }
 
     // ── run() spawn-and-reap pipeline tests ─────────────────────────────
@@ -3356,178 +2462,7 @@ mod tests {
         assert_eq!(count_register_calls(&sent), 0, "no registration submitted at shutdown");
     }
 
-    // ── apply_join_outcome + run() additional coverage ──────────────────
-    //
-    // These cover three gaps left after the initial spawn-and-reap test
-    // suite: the panic arm of [`apply_join_outcome`], the proof-failure
-    // path through the registration manager, and a single cycle that
-    // fires both the registration and orphan-dereg passes.
-
-    #[tokio::test]
-    async fn apply_join_outcome_drops_pending_entry_when_task_panics() {
-        // The `Err(JoinError)` arm of `apply_join_outcome` must still
-        // remove the panicked task from `pending`. With the address-
-        // keyed map and the panic path losing the task's return value,
-        // the recovery routes through the task-id scan over `pending`
-        // to map `JoinError::id()` back to the signer address. The
-        // per-task cancel handle is dropped and the proof-task-completed
-        // metric still fires. The full reap path is exercised so this
-        // is also a coverage test for `reap_finished_tasks` routing the
-        // `JoinError` correctly.
-        let mut proof_tasks = ProofTaskSet::new();
-
-        let handle = proof_tasks.tasks_mut().spawn(async {
-            panic!("synthetic proof-task panic for apply_join_outcome test");
-        });
-        proof_tasks.pending_mut().insert(
-            HARDHAT_ACCOUNT,
-            pending_registration_for_test(handle.id(), TEST_PENDING_INSTANCE_ID),
-        );
-
-        reap_until_pending_empty(&mut proof_tasks).await;
-
-        assert!(proof_tasks.is_pending_empty(), "panicked task must be evicted from pending");
-        assert!(proof_tasks.is_join_set_empty(), "JoinSet must drain to empty");
-    }
-
-    /// Address-keyed cleanup safety: a stale task whose `pending` entry
-    /// was overwritten by a same-cycle respawn for the same signer
-    /// must NOT evict the fresh entry when its terminal success outcome
-    /// flows through [`ProofTaskSet::apply_join_outcome`]. The
-    /// `task_id`-match guard in the success arm is the protection — a
-    /// stale completion without the guard would leak the fresh task
-    /// from `pending` (orphaning its cancel handle) and corrupt
-    /// shutdown bookkeeping.
-    #[tokio::test]
-    async fn apply_join_outcome_preserves_fresh_entry_when_stale_task_completes_for_same_signer() {
-        let mut proof_tasks = ProofTaskSet::new();
-
-        let signer = HARDHAT_ACCOUNT;
-
-        // Stale task: spawn one that returns immediately. Capture its
-        // task_id but DO NOT insert it into `pending` keyed by signer —
-        // instead simulate the post-overwrite state where the stale
-        // entry is gone but its outcome is still in-flight on the
-        // JoinSet.
-        let stale_handle =
-            proof_tasks.tasks_mut().spawn(async move { proof_task_success_for_test(signer) });
-        let stale_task_id = stale_handle.id();
-
-        // Fresh task: spawn another, register it under `signer` in
-        // `pending`. This entry must survive the stale task's
-        // terminal outcome.
-        let fresh_cancel = CancellationToken::new();
-        let fresh_cancel_inner = fresh_cancel.clone();
-        let fresh_handle = proof_tasks.tasks_mut().spawn(async move {
-            fresh_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
-        });
-        let fresh_task_id = fresh_handle.id();
-        assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
-
-        proof_tasks.pending_mut().insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: fresh_task_id,
-                cancel: fresh_cancel.clone(),
-                cancelled_by_reconcile: false,
-            },
-        );
-
-        // Drain just the stale task; the fresh one parks on its
-        // cancel token so reap only sees the stale outcome.
-        let started = std::time::Instant::now();
-        loop {
-            if let Some(joined) = proof_tasks.tasks_mut().try_join_next_with_id() {
-                proof_tasks.apply_join_outcome(joined);
-                break;
-            }
-            if started.elapsed() > GATED_WAIT_TIMEOUT {
-                panic!("stale task never resolved");
-            }
-            tokio::time::sleep(REAP_POLL_INTERVAL).await;
-        }
-
-        assert_eq!(
-            proof_tasks.pending_len(),
-            1,
-            "fresh entry must NOT be evicted by stale completion"
-        );
-        let entry = proof_tasks.pending().get(&signer).expect("fresh entry still keyed by signer");
-        assert_eq!(entry.task_id, fresh_task_id, "fresh task_id preserved");
-        assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
-
-        // Tear down: cancel the fresh task and drain.
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    /// Mirror of the success-arm fresh/stale test for the
-    /// [`ProofTaskSet::apply_join_outcome`] inner-`Err` arm: a
-    /// stale task failing must NOT evict the fresh entry that
-    /// reconcile dropped into the slot for the same signer. The
-    /// task-id guard in the error arms is what enforces this — without
-    /// it, a stale failure could evict a fresh entry for the same
-    /// signer.
-    #[tokio::test]
-    async fn apply_join_outcome_err_arm_preserves_fresh_entry_when_stale_task_fails_for_same_signer()
-     {
-        let mut proof_tasks = ProofTaskSet::new();
-
-        let signer = HARDHAT_ACCOUNT;
-
-        // Stale task returns an immediate `Err`. Its task_id is NOT in
-        // `pending` — simulating the post-overwrite state.
-        let stale_handle = proof_tasks.tasks_mut().spawn(async move {
-            proof_task_failure_for_test(
-                signer,
-                RegistrarError::Config("synthetic stale proof failure".to_string()),
-            )
-        });
-        let stale_task_id = stale_handle.id();
-
-        // Fresh task parked on its cancel token; pending keys it under
-        // `signer`. This entry must survive the stale `Err` outcome.
-        let fresh_cancel = CancellationToken::new();
-        let fresh_cancel_inner = fresh_cancel.clone();
-        let fresh_handle = proof_tasks.tasks_mut().spawn(async move {
-            fresh_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
-        });
-        let fresh_task_id = fresh_handle.id();
-        assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
-
-        proof_tasks.pending_mut().insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: fresh_task_id,
-                cancel: fresh_cancel.clone(),
-                cancelled_by_reconcile: false,
-            },
-        );
-
-        // Drain just the stale task; the fresh one parks on its
-        // cancel token so reap only sees the stale outcome.
-        let started = std::time::Instant::now();
-        loop {
-            if let Some(joined) = proof_tasks.tasks_mut().try_join_next_with_id() {
-                proof_tasks.apply_join_outcome(joined);
-                break;
-            }
-            if started.elapsed() > GATED_WAIT_TIMEOUT {
-                panic!("stale task never resolved");
-            }
-            tokio::time::sleep(REAP_POLL_INTERVAL).await;
-        }
-
-        assert_eq!(proof_tasks.pending_len(), 1, "fresh entry must NOT be evicted by stale Err");
-        let entry = proof_tasks.pending().get(&signer).expect("fresh entry still keyed by signer");
-        assert_eq!(entry.task_id, fresh_task_id, "fresh task_id preserved");
-        assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
+    // ── run() additional coverage ─────────────────────────────────────
 
     #[tokio::test]
     async fn run_isolates_proof_failure_and_continues_pipeline_for_other_signers() {

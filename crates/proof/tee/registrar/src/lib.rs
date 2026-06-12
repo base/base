@@ -52,7 +52,8 @@ pub use registry::{RegistryClient, RegistryContractClient};
 
 mod signer_manager;
 pub use signer_manager::{
-    PendingRegistration, ProofTaskOutcome, ProofTaskSet, SignerManager, SignerManagerConfig,
+    PendingRegistration, ProofTaskOutcome, ProofTaskSet, SignerLifecycle, SignerManager,
+    SignerManagerConfig,
 };
 
 mod traits;

@@ -23,7 +23,8 @@ use base_proof_tee_registrar::{
     DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierClient,
     NitroVerifierContractClient, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError,
-    RegistrarMetrics, RegistrationDriver, RegistryContractClient, SignerManagerConfig,
+    RegistrarMetrics, RegistrationDriver, RegistryContractClient, SignerManager,
+    SignerManagerConfig,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use boundless_market::{
@@ -703,15 +704,19 @@ impl Cli {
         // would add complexity without benefit.
         ready.store(true, Ordering::SeqCst);
 
-        let cancel_guard = cancel.clone().drop_guard();
-        let driver = RegistrationDriver::new(
-            discovery,
+        let signer_manager = Arc::new(SignerManager::new(
             proof_provider,
             registry,
             tx_manager,
+            driver_config.signer_manager.clone(),
+        ));
+        let cancel_guard = cancel.clone().drop_guard();
+        let driver = RegistrationDriver::new(
+            discovery,
             signer_client,
             driver_config,
             nitro_verifier,
+            signer_manager,
         )?;
         let driver_result = driver.run().await;
         drop(cancel_guard);
