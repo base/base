@@ -882,8 +882,9 @@ where
         // that was cancelled in a previous cycle and has now reappeared
         // in `registerable` can spawn a fresh task immediately rather
         // than waiting two cycles (one to reap, one to respawn).
-        // The registration-manager in-flight mutex catches any brief
-        // overlap between the winding-down old task and the new task.
+        // The old task observes its cancellation token at registration
+        // checkpoints, and `apply_join_outcome`'s task_id-match guard keeps
+        // stale joins from evicting a fresh pending entry.
         // Updated as we spawn so a signer that appears in two registerable
         // entries within the same cycle (misconfig / discovery glitch —
         // two instances briefly backing the same enclave key) cannot
