@@ -133,16 +133,7 @@ impl L1RpcProvider {
         hash: B256,
     ) -> Result<(Header, Vec<TxEnvelope>), L1RpcProviderError> {
         match self {
-            Self::Base(p) => {
-                let block = fetch_full_block(p, hash).await?;
-                let header = block.header.into_consensus();
-                let transactions = block
-                    .transactions
-                    .into_transactions()
-                    .filter_map(|t| TxEnvelope::try_from(t.inner.into_inner()).ok())
-                    .collect();
-                Ok((header, transactions))
-            }
+            Self::Base(p) => Ok(base_block_into_header_and_txs(fetch_full_block(p, hash).await?)),
             Self::Ethereum(p) => {
                 let block = fetch_full_block(p, hash)
                     .await?
@@ -162,14 +153,7 @@ impl L1RpcProvider {
     ) -> Result<(Header, Vec<TxEnvelope>), L1RpcProviderError> {
         match self {
             Self::Base(p) => {
-                let block = fetch_full_block_by_number(p, number).await?;
-                let header = block.header.into_consensus();
-                let transactions = block
-                    .transactions
-                    .into_transactions()
-                    .filter_map(|t| TxEnvelope::try_from(t.inner.into_inner()).ok())
-                    .collect();
-                Ok((header, transactions))
+                Ok(base_block_into_header_and_txs(fetch_full_block_by_number(p, number).await?))
             }
             Self::Ethereum(p) => {
                 let block = fetch_full_block_by_number(p, number)
@@ -180,6 +164,24 @@ impl L1RpcProvider {
             }
         }
     }
+}
+
+/// Converts a Base full-block response into a consensus [`Header`] and Ethereum [`TxEnvelope`]s.
+///
+/// Deposit (`0x7E`) and EIP-8130 (`0x7D`) txs have no Ethereum `TxEnvelope` representation, so
+/// [`TxEnvelope::try_from`] drops them. That conversion is an exhaustive match in
+/// `base-common-consensus`, so a future Base tx variant forces a deliberate map/drop decision
+/// there at compile time rather than vanishing silently here.
+fn base_block_into_header_and_txs(
+    block: <Base as Network>::BlockResponse,
+) -> (Header, Vec<TxEnvelope>) {
+    let header = block.header.into_consensus();
+    let transactions = block
+        .transactions
+        .into_transactions()
+        .filter_map(|t| TxEnvelope::try_from(t.inner.into_inner()).ok())
+        .collect();
+    (header, transactions)
 }
 
 /// Fetches a block's receipts over JSON-RPC. Generic over the network so both providers share the

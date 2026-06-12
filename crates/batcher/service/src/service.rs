@@ -515,6 +515,10 @@ impl BatcherService {
                 .as_ref()
                 .ok_or_else(|| eyre::eyre!("batcher_private_key must be set before starting"))?
                 .address();
+            // The Ethereum-typed `l1_provider` above is reused elsewhere (e.g. the tx
+            // manager), so for the Base format we open a second, Base-typed connection to
+            // the same URL(s) rather than reuse it: decoding deposit/EIP-8130 entries
+            // requires the Base network's tx envelopes, which the Ethereum provider rejects.
             let scan_provider = match self.config.l1_tx_format {
                 L1TxFormat::Ethereum => L1RpcProvider::Ethereum(l1_provider.clone()),
                 L1TxFormat::Base => L1RpcProvider::Base(
