@@ -312,7 +312,7 @@ pub struct MonitoringConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus_node_rpc: Option<Url>,
     /// Live rollup upgrade configuration fetched from the consensus node when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "hardforks")]
     pub upgrades: Option<UpgradeConfig>,
     /// L1 `SystemConfig` contract address.
     pub system_config: Address,
@@ -417,6 +417,7 @@ struct MonitoringConfigOverride {
     flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
     consensus_node_rpc: Option<Url>,
+    #[serde(alias = "hardforks")]
     upgrades: Option<UpgradeConfig>,
     #[serde(default)]
     system_config: Option<Address>,

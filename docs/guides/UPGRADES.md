@@ -104,7 +104,7 @@ For namespaced upgrades with the `{ "base": { "azul": <timestamp> } }` JSON shap
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
-pub struct BaseBaseUpgradeConfig {
+pub struct BaseUpgradeConfig {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub azul: Option<u64>,
 }
@@ -112,7 +112,7 @@ pub struct BaseBaseUpgradeConfig {
 pub struct UpgradeConfig {
     // ... existing fields ...
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub base: Option<BaseBaseUpgradeConfig>,
+    pub base: Option<BaseUpgradeConfig>,
 }
 ```
 
@@ -222,7 +222,7 @@ Update the `UpgradeConfig` literal in both registry fixture files:
 upgrades: UpgradeConfig {
     // ... existing fields ...
     jovian_time: Some(BASE_MAINNET_JOVIAN_TIMESTAMP),
-    base: Some(BaseBaseUpgradeConfig { azul: Some(BASE_MAINNET_BASE_AZUL_TIMESTAMP) }),
+    base: Some(BaseUpgradeConfig { azul: Some(BASE_MAINNET_BASE_AZUL_TIMESTAMP) }),
 },
 ```
 
@@ -240,7 +240,7 @@ The `default_rollup_config()` function sets all upgrades active at genesis for d
 upgrades: UpgradeConfig {
     // ... existing fields ...
     jovian_time: Some(0),
-    base: Some(BaseBaseUpgradeConfig { azul: Some(0) }),
+    base: Some(BaseUpgradeConfig { azul: Some(0) }),
 },
 ```
 
