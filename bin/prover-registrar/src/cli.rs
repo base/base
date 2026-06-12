@@ -690,7 +690,6 @@ impl Cli {
             cancel: cancel.clone(),
             signer_manager: SignerManagerConfig {
                 registry_address: config.tee_prover_registry_address,
-                cancel: cancel.clone(),
                 max_concurrency: config.max_concurrency,
                 max_tx_retries: config.max_tx_retries,
                 tx_retry_delay: config.tx_retry_delay,

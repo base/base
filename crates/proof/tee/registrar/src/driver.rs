@@ -294,14 +294,22 @@ where
                     // broadcasting. Skip reconcile (and the orphan
                     // dereg pass) entirely when cancellation is set.
                     if !self.config.cancel.is_cancelled() {
-                        self.signer_manager.reconcile_proof_tasks(&resolution, &mut proof_tasks);
+                        self.signer_manager.reconcile_proof_tasks(
+                            &resolution,
+                            &mut proof_tasks,
+                            &self.config.cancel,
+                        );
                     }
 
                     if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
                         // Pending proof tasks can register while orphan cleanup
                         // is running, so protect those signers too.
                         let protected = proof_tasks.protected_signers(&resolution);
-                        if let Err(e) = self.signer_manager.run_orphan_dereg(&protected).await {
+                        if let Err(e) = self
+                            .signer_manager
+                            .run_orphan_dereg(&protected, &self.config.cancel)
+                            .await
+                        {
                             warn!(error = %e, "orphan deregistration pass failed");
                             RegistrarMetrics::processing_errors_total().increment(1);
                         }
@@ -1044,11 +1052,16 @@ mod tests {
             &self,
             _resolution: &DiscoveryResolution,
             _proof_tasks: &mut ProofTaskSet,
+            _cancel: &CancellationToken,
         ) {
             self.reconcile_calls.fetch_add(1, Ordering::SeqCst);
         }
 
-        async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
+        async fn run_orphan_dereg(
+            &self,
+            protected_signers: &HashSet<Address>,
+            _cancel: &CancellationToken,
+        ) -> Result<()> {
             self.orphan_calls.lock().unwrap().push(protected_signers.clone());
             self.cancel_after_orphan.cancel();
             Ok(())
@@ -1063,7 +1076,6 @@ mod tests {
             cancel: cancel.clone(),
             signer_manager: SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
-                cancel,
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
                 max_tx_retries: DEFAULT_MAX_TX_RETRIES,
                 tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
@@ -1503,7 +1515,11 @@ mod tests {
         assert!(resolution.ok_to_dereg, "single reachable instance clears the majority guard");
 
         // Orphan-dereg pass must not deregister the signer (it's in active_signers).
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver
+            .signer_manager
+            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+            .await
+            .unwrap();
 
         assert!(
             tx.sent_calldata().is_empty(),
@@ -1600,7 +1616,11 @@ mod tests {
         );
         // And `run_orphan_dereg` itself is cancel-aware — call it
         // directly to confirm it bails out without loading the registry.
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver
+            .signer_manager
+            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+            .await
+            .unwrap();
         assert!(tx.sent_calldata().is_empty(), "no txs should be sent after cancellation");
     }
 
@@ -1635,7 +1655,11 @@ mod tests {
         );
         assert!(resolution.ok_to_dereg, "single reachable instance clears the majority guard");
 
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver
+            .signer_manager
+            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+            .await
+            .unwrap();
 
         // No registration (draining) and no deregistration (signer is active).
         assert!(tx.sent_calldata().is_empty());
@@ -1705,7 +1729,11 @@ mod tests {
         );
 
         if resolution.ok_to_dereg {
-            driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+            driver
+                .signer_manager
+                .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+                .await
+                .unwrap();
             let sent = tx.sent_calldata();
             assert_eq!(sent.len(), 1, "{reachable_count}/4 reachable: should deregister orphan");
             let expected =
@@ -1848,7 +1876,11 @@ mod tests {
         );
         // run_orphan_dereg is cancel-aware — call it to confirm it bails
         // out without loading the registry or sending any tx.
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver
+            .signer_manager
+            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+            .await
+            .unwrap();
         assert!(
             tx.sent_calldata().is_empty(),
             "mid-cycle cancellation should prevent any orphan deregistration",
@@ -1888,7 +1920,11 @@ mod tests {
         assert!(resolution.active_signers.contains(&addr1));
         assert!(resolution.ok_to_dereg);
 
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver
+            .signer_manager
+            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+            .await
+            .unwrap();
 
         // No registration (draining) and no deregistration (both signers
         // are in active_signers).
@@ -1947,7 +1983,11 @@ mod tests {
         );
         assert!(resolution.ok_to_dereg);
 
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver
+            .signer_manager
+            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+            .await
+            .unwrap();
 
         assert!(
             tx.sent_calldata().is_empty(),
@@ -1994,7 +2034,11 @@ mod tests {
         );
         assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
 
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver
+            .signer_manager
+            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+            .await
+            .unwrap();
 
         assert!(
             tx.sent_calldata().is_empty(),
@@ -2029,7 +2073,11 @@ mod tests {
         assert!(resolution.unresolved_instance_ids.contains(&inst.instance_id));
         assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
 
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver
+            .signer_manager
+            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+            .await
+            .unwrap();
 
         assert!(
             tx.sent_calldata().is_empty(),
@@ -2086,7 +2134,11 @@ mod tests {
             "registerable list is computed without invoking the proof provider",
         );
 
-        driver.signer_manager.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+        driver
+            .signer_manager
+            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
+            .await
+            .unwrap();
 
         // No deregistration tx (signer is in active_signers despite the
         // proof failure path being possible downstream).

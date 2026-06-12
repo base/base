@@ -32,8 +32,6 @@ use crate::{
 pub struct SignerManagerConfig {
     /// `TEEProverRegistry` contract address on L1.
     pub registry_address: Address,
-    /// Cancellation token for graceful shutdown.
-    pub cancel: CancellationToken,
     /// Maximum number of signer registration proof tasks to run concurrently.
     pub max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
@@ -110,14 +108,26 @@ pub trait SignerLifecycle: Send + Sync + fmt::Debug {
     fn tx_manager(&self) -> &Self::TransactionManager;
 
     /// Reconciles in-flight registration tasks against fetched prover signers.
+    ///
+    /// New proof-task child tokens are derived from `cancel`, which is owned
+    /// by the driver so every signer lifecycle operation shares one shutdown
+    /// source of truth.
     fn reconcile_proof_tasks(
         &self,
         resolution: &DiscoveryResolution,
         proof_tasks: &mut ProofTaskSet,
+        cancel: &CancellationToken,
     );
 
     /// Queries onchain signers and deregisters orphans.
-    async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()>;
+    ///
+    /// The caller-provided cancellation token controls every registry read and
+    /// transaction submission attempted by the deregistration pass.
+    async fn run_orphan_dereg(
+        &self,
+        protected_signers: &HashSet<Address>,
+        cancel: &CancellationToken,
+    ) -> Result<()>;
 }
 
 #[async_trait]
@@ -137,12 +147,72 @@ where
         &self,
         resolution: &DiscoveryResolution,
         proof_tasks: &mut ProofTaskSet,
+        cancel: &CancellationToken,
     ) {
-        SignerManager::reconcile_proof_tasks(self, resolution, proof_tasks);
+        if cancel.is_cancelled() {
+            return;
+        }
+
+        let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
+        let mut live_signers = HashSet::new();
+
+        for (signer, task) in &mut proof_tasks.pending {
+            if task.cancel.is_cancelled() {
+                continue;
+            }
+
+            if wanted.contains(signer) {
+                live_signers.insert(*signer);
+                continue;
+            }
+
+            if resolution.unresolved_instance_ids.contains(&task.instance_id) {
+                live_signers.insert(*signer);
+                debug!(
+                    signer = %signer,
+                    instance = %task.instance_id,
+                    "preserving proof task: source instance failed to resolve this cycle (inconclusive)"
+                );
+            } else {
+                info!(
+                    signer = %signer,
+                    instance = %task.instance_id,
+                    "cancelling proof task: signer no longer registerable"
+                );
+                task.cancel.cancel();
+                task.cancelled_by_reconcile = true;
+                RegistrarMetrics::proof_tasks_cancelled().increment(1);
+            }
+        }
+
+        for entry in &resolution.registerable {
+            if !live_signers.insert(entry.signer) {
+                continue;
+            }
+            let signer_cancel = cancel.child_token();
+            let manager = Arc::clone(self);
+            let instance_owned = entry.instance.clone();
+            let instance_id = instance_owned.instance_id.clone();
+            let attestation = entry.attestation.clone();
+            let task_cancel = signer_cancel.clone();
+            let signer = entry.signer;
+            let enclave_index = entry.enclave_index;
+
+            proof_tasks.spawn_task(signer, instance_id, signer_cancel, async move {
+                let result = manager
+                    .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
+                    .await;
+                ProofTaskOutcome { signer, result }
+            });
+        }
     }
 
-    async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
-        self.as_ref().run_orphan_dereg(protected_signers).await
+    async fn run_orphan_dereg(
+        &self,
+        protected_signers: &HashSet<Address>,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
+        self.as_ref().run_orphan_dereg(protected_signers, cancel).await
     }
 }
 
@@ -300,66 +370,6 @@ where
     R: RegistryClient + 'static,
     T: TxManager + 'static,
 {
-    /// Reconciles in-flight registration tasks against fetched prover signers.
-    pub fn reconcile_proof_tasks(
-        self: &Arc<Self>,
-        resolution: &DiscoveryResolution,
-        proof_tasks: &mut ProofTaskSet,
-    ) {
-        let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
-        let mut live_signers = HashSet::new();
-
-        for (signer, task) in &mut proof_tasks.pending {
-            if task.cancel.is_cancelled() {
-                continue;
-            }
-
-            if wanted.contains(signer) {
-                live_signers.insert(*signer);
-                continue;
-            }
-
-            if resolution.unresolved_instance_ids.contains(&task.instance_id) {
-                live_signers.insert(*signer);
-                debug!(
-                    signer = %signer,
-                    instance = %task.instance_id,
-                    "preserving proof task: source instance failed to resolve this cycle (inconclusive)"
-                );
-            } else {
-                info!(
-                    signer = %signer,
-                    instance = %task.instance_id,
-                    "cancelling proof task: signer no longer registerable"
-                );
-                task.cancel.cancel();
-                task.cancelled_by_reconcile = true;
-                RegistrarMetrics::proof_tasks_cancelled().increment(1);
-            }
-        }
-
-        for entry in &resolution.registerable {
-            if !live_signers.insert(entry.signer) {
-                continue;
-            }
-            let signer_cancel = self.config.cancel.child_token();
-            let manager = Arc::clone(self);
-            let instance_owned = entry.instance.clone();
-            let instance_id = instance_owned.instance_id.clone();
-            let attestation = entry.attestation.clone();
-            let task_cancel = signer_cancel.clone();
-            let signer = entry.signer;
-            let enclave_index = entry.enclave_index;
-
-            proof_tasks.spawn_task(signer, instance_id, signer_cancel, async move {
-                let result = manager
-                    .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
-                    .await;
-                ProofTaskOutcome { signer, result }
-            });
-        }
-    }
-
     /// Runs a signer registration through [`RegistrationManager`].
     pub async fn run_proof_task(
         self: Arc<Self>,
@@ -386,13 +396,17 @@ where
     }
 
     /// Queries onchain signers and deregisters orphans.
-    pub async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
+    pub async fn run_orphan_dereg(
+        &self,
+        protected_signers: &HashSet<Address>,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
         let deregistration_manager = DeregistrationManager::new(
             self.config.registry_address,
             &self.registry,
             &self.tx_manager,
         );
 
-        deregistration_manager.run_orphan_dereg(protected_signers, &self.config.cancel).await
+        deregistration_manager.run_orphan_dereg(protected_signers, cancel).await
     }
 }
