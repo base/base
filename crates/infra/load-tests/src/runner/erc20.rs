@@ -65,12 +65,11 @@ impl LoadRunner {
             .rpc("get pending transaction count")?;
 
         // Phase 1: Deploy a standalone ERC20 if no contract address is configured.
-        let mut token_address: Option<Address> = self.config.transactions.iter().find_map(|t| {
-            match &t.tx_type {
+        let mut token_address: Option<Address> =
+            self.config.transactions.iter().find_map(|t| match &t.tx_type {
                 TxType::Erc20 { contract: Some(addr) } => Some(*addr),
                 _ => None,
-            }
-        });
+            });
 
         if token_address.is_none() {
             info!("deploying standalone ERC20 token");
