@@ -1160,7 +1160,7 @@ where
 
     /// Dispatches a retry-specific proof request after a discarded proof.
     ///
-    /// Returns `false` when the discard retry budget is exhausted and the caller should restart.
+    /// Returns `false` when the caller should restart before collecting more proofs.
     pub async fn dispatch_discard_retry(
         &self,
         target_block: u64,
@@ -1252,6 +1252,7 @@ where
                     error = %error,
                     "Immediate discard retry dispatch failed after failed proof session"
                 );
+                return false;
             }
         }
 
@@ -1667,7 +1668,7 @@ mod tests {
             )
             .await;
 
-        assert!(should_continue);
+        assert!(!should_continue);
         assert_eq!(state.retry_sessions.get(&target_block), Some(&expected_session_id));
         assert_eq!(state.pending_discard_roots.get(&target_block).copied(), Some(claimed_root));
         assert!(cache.is_some());
