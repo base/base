@@ -146,15 +146,14 @@ impl UpgradeActivationOverrides {
 /// overrides, so schedule application may replace the entire override set for a chain rather than
 /// merging with previously stored entries.
 ///
-/// This registry uses `spin::RwLock`, which cannot be locked again by the same thread. Do not
-/// keep a read or write guard alive while calling another [`RuntimeUpgradeRegistry`] method, or
-/// the thread will wait on its own lock forever.
+/// Internally this registry uses `spin::RwLock`, so access is routed through the helper methods on
+/// [`RuntimeUpgradeRegistry`] rather than exposing the raw lock to callers.
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeUpgradeRegistry;
 
 impl RuntimeUpgradeRegistry {
     /// Returns the global runtime upgrade activation registry.
-    pub fn registry() -> &'static RwLock<BTreeMap<u64, UpgradeActivationOverrides>> {
+    fn registry() -> &'static RwLock<BTreeMap<u64, UpgradeActivationOverrides>> {
         static REGISTRY: Once<RwLock<BTreeMap<u64, UpgradeActivationOverrides>>> = Once::new();
         REGISTRY.call_once(|| RwLock::new(BTreeMap::new()))
     }
@@ -177,24 +176,6 @@ impl RuntimeUpgradeRegistry {
     /// Returns all runtime activation overrides for a chain.
     pub fn overrides(chain_id: u64) -> Option<UpgradeActivationOverrides> {
         Self::read_registry().get(&chain_id).cloned()
-    }
-
-    /// Updates one chain's runtime activation overrides while holding the registry write lock.
-    pub fn update_chain<R>(
-        chain_id: u64,
-        f: impl FnOnce(&mut UpgradeActivationOverrides) -> R,
-    ) -> R {
-        let mut registry = Self::write_registry();
-        let result = {
-            let overrides = registry.entry(chain_id).or_default();
-            f(overrides)
-        };
-
-        if registry.get(&chain_id).is_some_and(UpgradeActivationOverrides::is_empty) {
-            registry.remove(&chain_id);
-        }
-
-        result
     }
 
     /// Replaces all runtime activation overrides for a chain.
