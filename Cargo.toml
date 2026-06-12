@@ -396,6 +396,7 @@ reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3
 reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
+reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
