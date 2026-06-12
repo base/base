@@ -1,7 +1,12 @@
+use std::future::Future;
+
+use alloy_primitives::Bytes;
+use alloy_rpc_types_eth::{BlockId, state::EvmOverrides};
 use reth_rpc_eth_api::{
-    FromEvmError, RpcConvert,
-    helpers::{Call, EthCall, estimate::EstimateCall},
+    FromEvmError, RpcConvert, RpcTxReq,
+    helpers::{Call, EthCall, SpawnBlocking, estimate::EstimateCall},
 };
+use tracing::{Instrument, info_span};
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
@@ -11,6 +16,29 @@ where
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
+    fn call(
+        &self,
+        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        block_number: Option<BlockId>,
+        overrides: EvmOverrides,
+    ) -> impl Future<Output = Result<Bytes, Self::Error>> + Send {
+        let block_number = block_number.unwrap_or_default();
+        let has_state_overrides = overrides.state.is_some();
+        let has_block_overrides = overrides.block.is_some();
+        let span = info_span!(
+            "eth_call",
+            block = ?block_number,
+            has_state_overrides,
+            has_block_overrides,
+        );
+
+        async move {
+            let _permit = self.acquire_owned_blocking_io().await;
+            let res = Call::transact_call_at(self, request, block_number, overrides).await?;
+            Self::Error::ensure_success(res.result)
+        }
+        .instrument(span)
+    }
 }
 
 impl<N, Rpc> EstimateCall for BaseEthApi<N, Rpc>
