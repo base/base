@@ -35,6 +35,8 @@ impl UpgradeActivationSink for RuntimeRegistrySink {
     fn finalize(&mut self) -> Result<(), Self::Error> {
         let updates = core::mem::take(&mut self.updates);
 
+        // The runtime registry mirrors the latest authoritative L1 schedule for this chain, so a
+        // refresh replaces the chain's entire override set instead of merging into prior state.
         if updates.is_empty() {
             RuntimeUpgradeRegistry::clear_chain(self.chain_id);
         } else {
