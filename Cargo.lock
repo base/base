@@ -6136,7 +6136,6 @@ dependencies = [
  "clap",
  "eyre",
  "serde",
- "tokio",
  "tracing",
 ]
 

@@ -23,6 +23,3 @@ base-cli-utils.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 # Required by base-cli-utils logging and metrics macro expansions.
 serde = { workspace = true, features = ["derive", "std"] }
-
-# Async
-tokio = { workspace = true, features = ["full"] }

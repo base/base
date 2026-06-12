@@ -4,7 +4,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 use serde as _;
-use tokio as _;
 
 mod cli;
 
