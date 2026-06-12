@@ -18,8 +18,8 @@ pub mod sequencer;
 pub mod state;
 mod trace_middleware;
 pub use trace_middleware::{
-    InboundOtelContext, OtelHttpMiddleware, OtelHttpMiddlewareLayer, OtelRpcMiddleware,
-    OtelRpcMiddlewareLayer,
+    InboundOtelContext, OtelHttpMiddleware, OtelHttpMiddlewareFuture, OtelHttpMiddlewareLayer,
+    OtelRpcMiddleware, OtelRpcMiddlewareLayer,
 };
 pub mod witness;
 

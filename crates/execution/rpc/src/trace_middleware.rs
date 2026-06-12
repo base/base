@@ -9,10 +9,7 @@
 
 use std::{
     future::Future,
-<<<<<<< HEAD
     pin::Pin,
-=======
->>>>>>> 33963da54 (fix(tracing): attach OTel context before span creation for correct parent-child linking)
     task::{Context as TaskContext, Poll},
 };
 
@@ -23,7 +20,6 @@ use opentelemetry_http::HeaderExtractor;
 use pin_project_lite::pin_project;
 use tower::{Layer, Service};
 use tracing::Instrument;
-<<<<<<< HEAD
 
 pin_project! {
     /// Future wrapper that keeps an extracted OTel context attached while the request is polled.
@@ -34,8 +30,6 @@ pin_project! {
         otel_cx: Option<InboundOtelContext>,
     }
 }
-=======
->>>>>>> 33963da54 (fix(tracing): attach OTel context before span creation for correct parent-child linking)
 
 /// Inbound [`opentelemetry::Context`] extracted from request headers.
 #[derive(Clone, Debug)]
