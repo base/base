@@ -1198,7 +1198,7 @@ where
                 warn!(target_block, error = %error, "Failed to build discard retry proof request");
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
                 state.retry_sessions.remove(&target_block);
-                return true;
+                return false;
             }
         };
         let session_id = ProposerProofAdapter::tee_discard_retry_session_id(
@@ -1208,24 +1208,13 @@ where
         );
         state.retry_sessions.insert(target_block, session_id.clone());
 
-        let dispatch = match self
+        let dispatch_error = match self
             .dispatcher
             .requester_dispatcher()
             .dispatch_tee_with_session_id(request, session_id.clone())
             .await
         {
             Ok(dispatched) if dispatched.session_id == session_id => {
-                ProofDispatchAttempt::Accepted(dispatched)
-            }
-            Ok(dispatched) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {}, got {}",
-                session_id, dispatched.session_id
-            ))),
-            Err(error) => ProofDispatchAttempt::DispatchFailed(error),
-        };
-
-        match dispatch {
-            ProofDispatchAttempt::Accepted(dispatched) => {
                 info!(
                     target_block,
                     session_id = %dispatched.session_id,
@@ -1237,38 +1226,32 @@ where
                 state.retry_sessions.insert(target_block, dispatched.session_id);
                 state.pending_discard_roots.remove(&target_block);
                 state.counted_failed_sessions.remove(&target_block);
+                None
             }
-            ProofDispatchAttempt::BuildFailed(error) => {
+            Ok(dispatched) => Some(ProposerError::Prover(format!(
+                "prover service returned mismatched session_id: expected {}, got {}",
+                session_id, dispatched.session_id
+            ))),
+            Err(error) => Some(error),
+        };
+
+        if let Some(error) = dispatch_error {
+            Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
+            if count_dispatch_failure {
+                if !state.handle_proof_failure(target_block, error, self.runtime.max_retries, cache)
+                {
+                    state.discard_retry_counts.remove(&target_block);
+                    state.retry_sessions.remove(&target_block);
+                    state.pending_discard_roots.remove(&target_block);
+                    state.counted_failed_sessions.remove(&target_block);
+                    return false;
+                }
+            } else {
                 warn!(
                     target_block,
                     error = %error,
-                    "Failed to build discard retry proof request"
+                    "Immediate discard retry dispatch failed after failed proof session"
                 );
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
-                state.retry_sessions.remove(&target_block);
-            }
-            ProofDispatchAttempt::DispatchFailed(error) => {
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
-                if count_dispatch_failure {
-                    if !state.handle_proof_failure(
-                        target_block,
-                        error,
-                        self.runtime.max_retries,
-                        cache,
-                    ) {
-                        state.discard_retry_counts.remove(&target_block);
-                        state.retry_sessions.remove(&target_block);
-                        state.pending_discard_roots.remove(&target_block);
-                        state.counted_failed_sessions.remove(&target_block);
-                        return false;
-                    }
-                } else {
-                    warn!(
-                        target_block,
-                        error = %error,
-                        "Immediate discard retry dispatch failed after failed proof session"
-                    );
-                }
             }
         }
 
@@ -1590,7 +1573,7 @@ mod tests {
         state.discard_retry_counts.insert(target_block, 1);
         let mut cache = Some(ProofRecoveryCache { game_count: 0, state: recovered(100) });
 
-        orchestrator
+        let should_continue = orchestrator
             .dispatch_discard_retry(
                 target_block,
                 &recovered(100),
@@ -1601,6 +1584,7 @@ mod tests {
             )
             .await;
 
+        assert!(!should_continue);
         assert!(!state.retry_sessions.contains_key(&target_block));
         assert_eq!(
             state.pending_discard_roots.get(&target_block).copied(),
