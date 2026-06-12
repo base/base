@@ -17,7 +17,7 @@ use tracing::{debug, info, warn};
 pub struct WitnessParams<'a> {
     /// First L2 block in the range, inclusive.
     pub start_block: u64,
-    /// Block past the last L2 block in the range.
+    /// Last L2 block in the range, inclusive.
     pub end_block: u64,
     /// Source for the L1 head hash used by the Succinct host.
     pub l1_head: L1HeadSource<'a>,
