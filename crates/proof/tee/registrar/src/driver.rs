@@ -797,7 +797,6 @@ where
             self.config.registry_address,
             &self.registry,
             &self.tx_manager,
-            &self.signer_history,
         );
         manager.run_orphan_dereg(protected_signers, &self.config.cancel).await
     }

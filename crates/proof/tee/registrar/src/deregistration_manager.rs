@@ -1,10 +1,6 @@
 //! Signer deregistration management for orphaned prover signers.
 
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashSet, fmt};
 
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
@@ -20,7 +16,6 @@ pub struct DeregistrationManager<'a, R: ?Sized, T: ?Sized> {
     registry_address: Address,
     registry: &'a R,
     tx_manager: &'a T,
-    signer_history: &'a Arc<Mutex<HashMap<Address, String>>>,
 }
 
 impl<R: ?Sized, T: ?Sized> fmt::Debug for DeregistrationManager<'_, R, T> {
@@ -33,13 +28,8 @@ impl<R: ?Sized, T: ?Sized> fmt::Debug for DeregistrationManager<'_, R, T> {
 
 impl<'a, R: ?Sized, T: ?Sized> DeregistrationManager<'a, R, T> {
     /// Creates a manager for orphan signer cleanup.
-    pub const fn new(
-        registry_address: Address,
-        registry: &'a R,
-        tx_manager: &'a T,
-        signer_history: &'a Arc<Mutex<HashMap<Address, String>>>,
-    ) -> Self {
-        Self { registry_address, registry, tx_manager, signer_history }
+    pub const fn new(registry_address: Address, registry: &'a R, tx_manager: &'a T) -> Self {
+        Self { registry_address, registry, tx_manager }
     }
 }
 
@@ -76,13 +66,8 @@ where
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
     pub async fn submit_deregistration(&self, signer: Address) -> bool {
         let candidate = self.candidate(signer);
-        let last_known_instance = {
-            let history = self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
-            history.get(&signer).cloned()
-        };
         info!(
             signer = %signer,
-            last_known_instance = ?last_known_instance,
             registry = %self.registry_address,
             calldata_len = candidate.tx_data.len(),
             "Deregistering signer"
@@ -119,10 +104,54 @@ where
         }
     }
 
-    /// Deregisters registered signers that are not currently protected.
+    /// Deregisters one orphan signer if it is still registered onchain.
     ///
-    /// Each candidate is checked against `isRegisteredSigner` before submitting a
-    /// transaction so stale `getRegisteredSigners()` entries do not loop forever.
+    /// Checks `isRegisteredSigner` before submitting a transaction so stale
+    /// `getRegisteredSigners()` entries do not loop forever.
+    pub async fn deregister_orphan(&self, signer: Address, cancel: &CancellationToken) -> bool {
+        if cancel.is_cancelled() {
+            debug!("shutdown requested, stopping orphan deregistration");
+            return false;
+        }
+
+        let registered = tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                debug!("shutdown requested while verifying orphan signer");
+                return false;
+            }
+            res = self.registry.is_registered(signer) => res,
+        };
+
+        match registered {
+            Ok(false) => {
+                warn!(
+                    signer = %signer,
+                    "signer appears in getRegisteredSigners but isRegisteredSigner is false, \
+                     skipping (possible EnumerableSet ghost entry)"
+                );
+                false
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    signer = %signer,
+                    "failed to verify signer registration status, skipping deregistration"
+                );
+                false
+            }
+            Ok(true) if cancel.is_cancelled() => {
+                debug!(
+                    signer = %signer,
+                    "shutdown requested before submitting orphan deregistration"
+                );
+                false
+            }
+            Ok(true) => self.submit_deregistration(signer).await,
+        }
+    }
+
+    /// Deregisters registered signers that are not currently protected.
     pub async fn deregister_orphans(
         &self,
         protected_signers: &HashSet<Address>,
@@ -142,34 +171,13 @@ where
         info!(count = orphans.len(), "deregistering orphan signers");
 
         let mut deregistered = 0usize;
-
         for signer in orphans {
             if cancel.is_cancelled() {
                 debug!("shutdown requested, stopping orphan deregistration");
                 break;
             }
 
-            match self.registry.is_registered(signer).await {
-                Ok(false) => {
-                    warn!(
-                        signer = %signer,
-                        "signer appears in getRegisteredSigners but isRegisteredSigner is false, \
-                         skipping (possible EnumerableSet ghost entry)"
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        signer = %signer,
-                        "failed to verify signer registration status, skipping deregistration"
-                    );
-                    continue;
-                }
-                Ok(true) => {}
-            }
-
-            if self.submit_deregistration(signer).await {
+            if self.deregister_orphan(signer, cancel).await {
                 RegistrarMetrics::deregistrations_total().increment(1);
                 deregistered += 1;
             }
@@ -209,9 +217,7 @@ mod tests {
     fn candidate_targets_registry_with_deregister_signer_calldata() {
         let registry = MockRegistry::with_signers(vec![SIGNER_A]);
         let tx_manager = MockTxManager::default();
-        let history = Arc::new(Mutex::new(HashMap::new()));
-        let manager =
-            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+        let manager = DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager);
 
         let candidate = manager.candidate(SIGNER_A);
 
@@ -236,9 +242,7 @@ mod tests {
     ) {
         let registry = MockRegistry::with_signers(registered_signers.clone());
         let tx_manager = MockTxManager::default();
-        let history = Arc::new(Mutex::new(HashMap::new()));
-        let manager =
-            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+        let manager = DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager);
         let protected_signers: HashSet<Address> = protected_signers.into_iter().collect();
 
         manager
@@ -253,9 +257,7 @@ mod tests {
     async fn deregister_orphans_submits_only_unprotected_signers() {
         let registry = MockRegistry::with_signers(vec![SIGNER_A, SIGNER_B]);
         let tx_manager = MockTxManager::default();
-        let history = Arc::new(Mutex::new(HashMap::new()));
-        let manager =
-            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+        let manager = DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager);
 
         manager
             .deregister_orphans(
@@ -281,9 +283,7 @@ mod tests {
             vec![SIGNER_B],
         );
         let tx_manager = MockTxManager::default();
-        let history = Arc::new(Mutex::new(HashMap::new()));
-        let manager =
-            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+        let manager = DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager);
 
         manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await.unwrap();
 
@@ -302,9 +302,7 @@ mod tests {
             vec![],
         );
         let tx_manager = MockTxManager::default();
-        let history = Arc::new(Mutex::new(HashMap::new()));
-        let manager =
-            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+        let manager = DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager);
 
         manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await.unwrap();
 
@@ -315,9 +313,7 @@ mod tests {
     async fn deregister_orphans_respects_cancellation() {
         let registry = MockRegistry::with_signers(vec![SIGNER_A]);
         let tx_manager = MockTxManager::default();
-        let history = Arc::new(Mutex::new(HashMap::new()));
-        let manager =
-            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+        let manager = DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager);
         let cancel = CancellationToken::new();
         cancel.cancel();
 
@@ -327,13 +323,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deregister_orphan_rechecks_cancellation_before_submission() {
+        let cancel = CancellationToken::new();
+        let registry =
+            MockRegistry::with_signers(vec![SIGNER_A]).cancel_on_is_registered(cancel.clone());
+        let tx_manager = MockTxManager::default();
+        let manager = DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager);
+
+        manager.deregister_orphan(SIGNER_A, &cancel).await;
+
+        assert!(tx_manager.take_candidates().is_empty());
+    }
+
+    #[tokio::test]
     async fn run_orphan_dereg_respects_cancellation_while_loading_signers() {
         let registry = MockRegistry::stalling_get_registered_signers();
         let get_registered_signers_started = registry.get_registered_signers_started();
         let tx_manager = MockTxManager::default();
-        let history = Arc::new(Mutex::new(HashMap::new()));
-        let manager =
-            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+        let manager = DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager);
         let cancel = CancellationToken::new();
         let protected_signers = HashSet::new();
 
@@ -362,6 +369,7 @@ mod tests {
         true_signers: HashSet<Address>,
         get_registered_signers_started: Arc<Notify>,
         stall_get_registered_signers: bool,
+        cancel_on_is_registered: Option<CancellationToken>,
     }
 
     impl MockRegistry {
@@ -378,6 +386,7 @@ mod tests {
                 true_signers: true_signers.into_iter().collect(),
                 get_registered_signers_started: Arc::new(Notify::new()),
                 stall_get_registered_signers: false,
+                cancel_on_is_registered: None,
             }
         }
 
@@ -387,17 +396,26 @@ mod tests {
                 true_signers: HashSet::new(),
                 get_registered_signers_started: Arc::new(Notify::new()),
                 stall_get_registered_signers: true,
+                cancel_on_is_registered: None,
             }
         }
 
         fn get_registered_signers_started(&self) -> Arc<Notify> {
             Arc::clone(&self.get_registered_signers_started)
         }
+
+        fn cancel_on_is_registered(mut self, cancel: CancellationToken) -> Self {
+            self.cancel_on_is_registered = Some(cancel);
+            self
+        }
     }
 
     #[async_trait]
     impl RegistryClient for MockRegistry {
         async fn is_registered(&self, signer: Address) -> Result<bool> {
+            if let Some(cancel) = &self.cancel_on_is_registered {
+                cancel.cancel();
+            }
             Ok(self.true_signers.contains(&signer))
         }
 
