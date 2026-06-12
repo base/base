@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use alloy_consensus::{
     Block, Header, TxReceipt,
@@ -24,7 +24,7 @@ use revm::{
     Database, DatabaseCommit,
     context::{
         Block as _,
-        result::{ExecutionResult, ResultAndState},
+        result::{ExecutionResult, ResultAndState, SuccessReason},
     },
     state::EvmState,
 };
@@ -68,6 +68,11 @@ pub struct PendingStateBuilder<E, ChainSpec> {
 
     prev_pending_blocks: Option<Arc<PendingBlocks>>,
     state_overrides: StateOverride,
+
+    /// Builder-provided receipts (from flashblock metadata), keyed by tx hash.
+    /// When present, these are used directly instead of re-executing the transaction,
+    /// eliminating the execution divergence described in #3274.
+    builder_receipts: Option<HashMap<B256, BaseTransactionReceipt>>,
 }
 
 impl<E, ChainSpec, DB> PendingStateBuilder<E, ChainSpec>
@@ -96,6 +101,7 @@ where
             state_overrides,
             chain_spec: chain_spec.clone(),
             receipt_builder: UnifiedReceiptBuilder::new(chain_spec),
+            builder_receipts: None,
         }
     }
 
@@ -107,6 +113,31 @@ where
     /// Returns a mutable reference to the underlying database.
     pub fn db_mut(&mut self) -> &mut DB {
         self.evm.db_mut()
+    }
+
+    /// Seeds block-level offsets when appending transactions to an already-executed pending block.
+    pub fn set_execution_offsets(&mut self, cumulative_gas_used: u64, next_log_index: usize) {
+        self.cumulative_gas_used = cumulative_gas_used;
+        self.next_log_index = next_log_index;
+    }
+
+    /// Returns the cumulative gas used for the current pending block.
+    pub const fn cumulative_gas_used(&self) -> u64 {
+        self.cumulative_gas_used
+    }
+
+    /// Returns the next log index for the current pending block.
+    pub const fn next_log_index(&self) -> usize {
+        self.next_log_index
+    }
+
+    /// Seeds builder-provided receipts that will be used instead of re-execution.
+    pub fn with_builder_receipts(
+        &mut self,
+        receipts: HashMap<B256, BaseTransactionReceipt>,
+    ) -> &mut Self {
+        self.builder_receipts = Some(receipts);
+        self
     }
 
     /// Executes a single transaction and updates internal state.
@@ -131,7 +162,19 @@ where
                 .unwrap_or_else(|| transaction.max_fee_per_gas())
         };
 
-        // Check if we have all the data we need to reuse the previous execution.
+        // Priority 1: Use builder-provided receipt if available (authoritative, from sequencer).
+        if let Some(ref builder_receipts) = self.builder_receipts {
+            if let Some(receipt) = builder_receipts.get(&tx_hash) {
+                return self.execute_with_builder_receipt(
+                    transaction,
+                    receipt.clone(),
+                    idx,
+                    effective_gas_price,
+                );
+            }
+        }
+
+        // Priority 2: Check if we have cached data from a previous execution.
         let cached_execution = self.prev_pending_blocks.as_ref().and_then(|p| {
             Some(CachedTransactionExecution {
                 receipt: p.get_receipt(tx_hash)?.clone(),
@@ -177,6 +220,63 @@ where
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Builds transaction result from a builder-provided receipt (no EVM execution).
+    ///
+    /// This path is used when the builder (sequencer) has already executed the transaction
+    /// and provided the authoritative receipt via flashblock metadata. No EVM state is
+    /// produced because the builder's state transitions are already committed.
+    fn execute_with_builder_receipt(
+        &mut self,
+        transaction: Recovered<BaseTxEnvelope>,
+        receipt: BaseTransactionReceipt,
+        idx: usize,
+        effective_gas_price: u128,
+    ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
+        let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
+            let BaseReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
+                return Err(ExecutionError::DepositReceiptMismatch.into());
+            };
+            (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
+        } else {
+            (None, None)
+        };
+
+        let gas_used = receipt.inner.gas_used;
+
+        let rpc_transaction = Transaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: transaction,
+                block_hash: None,
+                block_number: Some(self.pending_block.number),
+                block_timestamp: Some(self.pending_block.timestamp),
+                transaction_index: Some(idx as u64),
+                effective_gas_price: Some(effective_gas_price),
+            },
+            deposit_nonce,
+            deposit_receipt_version,
+        };
+
+        self.cumulative_gas_used = self
+            .cumulative_gas_used
+            .checked_add(gas_used)
+            .ok_or(ExecutionError::GasOverflow)?;
+        self.next_log_index += receipt.inner.logs().len();
+
+        Ok(ExecutedPendingTransaction {
+            rpc_transaction,
+            receipt,
+            state: EvmState::default(),
+            result: ExecutionResult::Success {
+                reason: SuccessReason::Stop,
+                gas_used,
+                gas_refunded: 0,
+                logs: Vec::new(),
+                output: revm::context::result::Output::Call(alloy_primitives::Bytes::new()),
+            },
+            execution_time_us: None,
+        })
     }
 
     /// Builds transaction result from cached receipt and state data.
