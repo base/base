@@ -16,7 +16,7 @@ use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
 use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
-use tracing::{debug, instrument, trace};
+use tracing::{Instrument, debug, debug_span, instrument, trace};
 
 /// The list of all supported Engine capabilities available over the engine endpoint.
 ///
@@ -270,12 +270,43 @@ where
     Validator: EngineApiValidator<EngineT>,
     ChainSpec: EthereumHardforks + Send + Sync + 'static,
 {
+    #[instrument(
+        level = "debug",
+        target = "rpc::engine",
+        skip_all,
+        fields(
+            block_hash = ?payload.execution_payload.block_hash,
+            block_number = payload.execution_payload.block_number,
+            parent_hash = ?payload.execution_payload.parent_hash,
+            tx_count = payload.execution_payload.transactions.len()
+        )
+    )]
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV2");
         let payload = ExecutionData::v2(payload);
-        Ok(self.inner.new_payload_v2_metered(payload).await?)
+        let submit_span = debug_span!(
+            target: "rpc::engine",
+            "submit_new_payload_v2",
+            block_hash = ?payload.block_hash(),
+            block_number = payload.block_number(),
+        );
+
+        Ok(self.inner.new_payload_v2_metered(payload).instrument(submit_span).await?)
     }
 
+    #[instrument(
+        level = "debug",
+        target = "rpc::engine",
+        skip_all,
+        fields(
+            block_hash = ?payload.payload_inner.payload_inner.block_hash,
+            block_number = payload.payload_inner.payload_inner.block_number,
+            parent_hash = ?payload.payload_inner.payload_inner.parent_hash,
+            tx_count = payload.payload_inner.payload_inner.transactions.len(),
+            versioned_hash_count = versioned_hashes.len(),
+            parent_beacon_block_root = ?parent_beacon_block_root
+        )
+    )]
     async fn new_payload_v3(
         &self,
         payload: ExecutionPayloadV3,
@@ -284,10 +315,30 @@ where
     ) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV3");
         let payload = ExecutionData::v3(payload, versioned_hashes, parent_beacon_block_root);
+        let submit_span = debug_span!(
+            target: "rpc::engine",
+            "submit_new_payload_v3",
+            block_hash = ?payload.block_hash(),
+            block_number = payload.block_number(),
+        );
 
-        Ok(self.inner.new_payload_v3_metered(payload).await?)
+        Ok(self.inner.new_payload_v3_metered(payload).instrument(submit_span).await?)
     }
 
+    #[instrument(
+        level = "debug",
+        target = "rpc::engine",
+        skip_all,
+        fields(
+            block_hash = ?payload.payload_inner.payload_inner.payload_inner.block_hash,
+            block_number = payload.payload_inner.payload_inner.payload_inner.block_number,
+            parent_hash = ?payload.payload_inner.payload_inner.payload_inner.parent_hash,
+            tx_count = payload.payload_inner.payload_inner.payload_inner.transactions.len(),
+            versioned_hash_count = versioned_hashes.len(),
+            parent_beacon_block_root = ?parent_beacon_block_root,
+            execution_request_count = execution_requests.len()
+        )
+    )]
     async fn new_payload_v4(
         &self,
         payload: BaseExecutionPayloadV4,
@@ -302,8 +353,14 @@ where
             parent_beacon_block_root,
             execution_requests,
         );
+        let submit_span = debug_span!(
+            target: "rpc::engine",
+            "submit_new_payload_v4",
+            block_hash = ?payload.block_hash(),
+            block_number = payload.block_number(),
+        );
 
-        Ok(self.inner.new_payload_v4_metered(payload).await?)
+        Ok(self.inner.new_payload_v4_metered(payload).instrument(submit_span).await?)
     }
 
     #[instrument(
