@@ -3,10 +3,8 @@ use std::sync::Arc;
 use alloy_provider::{Network, RootProvider};
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::{L1TxFormat, RollupConfig};
-use base_common_network::Base;
-use base_consensus_providers::{
-    L1BlobProvider, TypedL1Provider, OnlineBeaconClient, OnlineBlobProvider,
-};
+use base_common_network::{Base, L1RpcProvider};
+use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
 use base_optimism_rpc::OptimismRollupProviderExt;
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
@@ -257,10 +255,10 @@ impl Host {
 
         let l1_provider = match l1_tx_format {
             L1TxFormat::Ethereum => {
-                TypedL1Provider::Ethereum(rpc_provider(&self.config.prover.l1_eth_url).await?)
+                L1RpcProvider::Ethereum(rpc_provider(&self.config.prover.l1_eth_url).await?)
             }
             L1TxFormat::Base => {
-                TypedL1Provider::Base(rpc_provider::<Base>(&self.config.prover.l1_eth_url).await?)
+                L1RpcProvider::Base(rpc_provider::<Base>(&self.config.prover.l1_eth_url).await?)
             }
         };
         let blob_provider = match l1_beacon_url {

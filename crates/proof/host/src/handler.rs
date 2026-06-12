@@ -1343,7 +1343,7 @@ mod tests {
         });
         let l2_node = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         HostProviders {
-            l1: base_consensus_providers::TypedL1Provider::Ethereum(l1),
+            l1: base_common_network::L1RpcProvider::Ethereum(l1),
             blobs,
             l2,
             l2_node,

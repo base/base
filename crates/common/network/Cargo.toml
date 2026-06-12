@@ -20,19 +20,26 @@ base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 base-common-consensus = { workspace = true, features = ["alloy-compat", "std"] }
 
 # Alloy
+alloy-eips.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-transport.workspace = true
+alloy-rpc-client.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 
 # misc
+thiserror.workspace = true
 async-trait.workspace = true
 
 
 [dev-dependencies]
+url.workspace = true
 rstest.workspace = true
+httpmock.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [features]
 std = [

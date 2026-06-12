@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
-use base_batcher_service::{BatcherConfig, BatcherService};
+use base_batcher_service::{BatcherConfig, BatcherService, L1TxFormat};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_runtime::TokioRuntime;
 use base_tx_manager::SignerConfig;
@@ -54,6 +54,13 @@ pub(crate) struct BatcherArgs {
     /// startup-time fallbacks only (no per-call rotation).
     #[arg(long = "l1-rpc-url", env = "BATCHER_L1_RPC_URL", value_delimiter = ',', num_args = 1..)]
     pub l1_rpc_url: Vec<Url>,
+
+    /// Transaction format of the L1 chain: `ethereum` (default) or `base`.
+    ///
+    /// Use `base` for an appchain settling to Base. Base L1 blocks can contain deposit and
+    /// EIP-8130 transactions that standard Ethereum full-block decoding rejects.
+    #[arg(long = "l1-tx-format", env = "BATCHER_L1_TX_FORMAT", default_value_t = L1TxFormat::default())]
+    pub l1_tx_format: L1TxFormat,
 
     /// L2 HTTP RPC endpoint(s) (used for all JSON-RPC calls including throttle control).
     ///
@@ -301,9 +308,9 @@ impl BatcherArgs {
             compression_algo: base_batcher_encoder::CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
         };
-        encoder_config.validate()?;
-        Ok(BatcherConfig {
+        let config = BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,
+            l1_tx_format: self.l1_tx_format,
             l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
             parity_validator_l2_rpc_url: self.parity_validator_l2_rpc_url,
@@ -331,7 +338,9 @@ impl BatcherArgs {
             wait_node_sync: self.wait_node_sync,
             wait_node_sync_timeout: Duration::from_secs(self.wait_node_sync_timeout_secs),
             force_blobs_when_throttling: !self.no_force_blobs_when_throttling,
-        })
+        };
+        config.validate()?;
+        Ok(config)
     }
 
     /// Execute the batcher.
@@ -537,6 +546,36 @@ mod tests {
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
+    }
+
+    #[test]
+    fn into_config_rejects_base_l1_tx_format_with_blob_da() {
+        let cli = parse_cli(&["--l1-tx-format", "base"]);
+
+        assert!(cli.args.into_config().is_err());
+    }
+
+    #[test]
+    fn into_config_rejects_base_l1_tx_format_with_forced_blobs() {
+        let cli = parse_cli(&["--l1-tx-format", "base", "--data-availability-type", "calldata"]);
+
+        assert!(cli.args.into_config().is_err());
+    }
+
+    #[test]
+    fn into_config_accepts_base_l1_tx_format_with_calldata_only() {
+        let cli = parse_cli(&[
+            "--l1-tx-format",
+            "base",
+            "--data-availability-type",
+            "calldata",
+            "--no-force-blobs-when-throttling",
+        ]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.l1_tx_format, L1TxFormat::Base);
+        assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
+        assert!(!config.force_blobs_when_throttling);
     }
 
     #[test]

@@ -15,6 +15,9 @@ const _ALLOY_PRIMITIVES_USED: alloy_primitives::Address = alloy_primitives::Addr
 mod base;
 pub use base::Base;
 
+mod l1_rpc_provider;
+pub use l1_rpc_provider::{L1RpcProvider, L1RpcProviderError};
+
 mod builder;
 
 mod engine;

@@ -3,7 +3,7 @@ use std::array::TryFromSliceError;
 use alloy_primitives::B256;
 use alloy_rlp::Error as RlpError;
 use alloy_transport::TransportError;
-use base_consensus_providers::AlloyChainProviderError;
+use base_common_network::L1RpcProviderError;
 use base_proof_client::FaultProofProgramError;
 use base_proof_preimage::errors::{PreimageOracleError, WitnessOracleError};
 use thiserror::Error;
@@ -129,13 +129,13 @@ pub enum HostError {
     Io(#[from] std::io::Error),
 }
 
-impl From<AlloyChainProviderError> for HostError {
-    fn from(error: AlloyChainProviderError) -> Self {
+impl From<L1RpcProviderError> for HostError {
+    fn from(error: L1RpcProviderError) -> Self {
         match error {
-            AlloyChainProviderError::BlockNotFound(id) => Self::BlockNotFound(id.to_string()),
-            AlloyChainProviderError::Transport(error) => Self::Transport(error),
-            AlloyChainProviderError::TransactionBodiesUnavailable(_)
-            | AlloyChainProviderError::ReceiptsConversion(_) => Self::Custom(error.to_string()),
+            L1RpcProviderError::BlockNotFound(id) => Self::BlockNotFound(id.to_string()),
+            L1RpcProviderError::Transport(error) => Self::Transport(error),
+            L1RpcProviderError::TransactionBodiesUnavailable(_)
+            | L1RpcProviderError::ReceiptsConversion(_) => Self::Custom(error.to_string()),
         }
     }
 }

@@ -26,7 +26,7 @@ pub use blobs::{
 };
 
 mod chain_provider;
-pub use chain_provider::{AlloyChainProvider, AlloyChainProviderError, TypedL1Provider};
+pub use chain_provider::{AlloyChainProvider, AlloyChainProviderError};
 
 mod conf_depth;
 pub use conf_depth::{ConfDepthProvider, L1HeadNumber};

@@ -3101,6 +3101,7 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-source",
  "base-common-consensus",
+ "base-common-genesis",
  "base-common-network",
  "base-consensus-rpc",
  "base-metrics",
@@ -3590,16 +3591,23 @@ name = "base-common-network"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
  "alloy-network 2.4.1",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rpc-client",
  "alloy-rpc-types-engine",
  "alloy-transport",
  "async-trait",
  "base-common-consensus",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "httpmock",
  "rstest",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "url",
 ]
 
 [[package]]

@@ -4,7 +4,8 @@ use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
-use base_batcher_encoder::EncoderConfig;
+use base_batcher_encoder::{DaType, EncoderConfig};
+use base_common_genesis::L1TxFormat;
 use base_tx_manager::SignerConfig;
 use url::Url;
 
@@ -65,6 +66,9 @@ pub struct BatcherConfig {
     pub batch_inbox_override: Option<Address>,
     /// L2 block polling interval.
     pub poll_interval: Duration,
+    /// L1 parent-chain transaction format (Ethereum or Base). A Base parent chain (L3) has no
+    /// blob DA endpoint, so it requires calldata data-availability.
+    pub l1_tx_format: L1TxFormat,
     /// Encoder configuration.
     pub encoder_config: EncoderConfig,
     /// Maximum number of in-flight (unconfirmed) transactions.
@@ -125,6 +129,7 @@ impl Default for BatcherConfig {
             metrics_enabled: false,
             batch_inbox_override: None,
             poll_interval: Duration::from_secs(1),
+            l1_tx_format: L1TxFormat::default(),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,
             num_confirmations: 1,
@@ -137,5 +142,29 @@ impl Default for BatcherConfig {
             wait_node_sync_timeout: Duration::from_secs(600),
             force_blobs_when_throttling: true,
         }
+    }
+}
+
+impl BatcherConfig {
+    /// Validate config constraints that cannot be expressed by individual CLI parsers.
+    pub fn validate(&self) -> eyre::Result<()> {
+        self.encoder_config.validate()?;
+
+        if self.l1_tx_format == L1TxFormat::Base {
+            if self.encoder_config.da_type != DaType::Calldata {
+                eyre::bail!(
+                    "--l1-tx-format base requires --data-availability-type calldata because a \
+                     Base parent chain has no blob DA endpoint"
+                );
+            }
+            if self.force_blobs_when_throttling {
+                eyre::bail!(
+                    "--l1-tx-format base requires --no-force-blobs-when-throttling because \
+                     throttling cannot force blob submissions onto a calldata-only parent"
+                );
+            }
+        }
+
+        Ok(())
     }
 }

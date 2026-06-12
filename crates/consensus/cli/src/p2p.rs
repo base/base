@@ -10,7 +10,6 @@ use std::{
 };
 
 use alloy_primitives::{B256, b256};
-use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
@@ -574,8 +573,8 @@ impl P2PArgs {
                         .get_storage_at(
                             rollup_config.l1_system_config_address,
                             UNSAFE_BLOCK_SIGNER_ADDRESS_STORAGE_SLOT.into(),
+                            block_info.hash.into(),
                         )
-                        .hash(block_info.hash)
                         .await
                 }
             })

@@ -6,8 +6,8 @@ use alloy_primitives::{B256, Bytes};
 use alloy_provider::RootProvider;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_network::Base;
-use base_consensus_providers::{L1BlobProvider, TypedL1Provider};
+use base_common_network::{Base, L1RpcProvider};
+use base_consensus_providers::L1BlobProvider;
 use base_proof_primitives::ProofRequest;
 use serde::Serialize;
 
@@ -15,7 +15,7 @@ use serde::Serialize;
 #[derive(Debug, Clone)]
 pub struct HostProviders {
     /// The L1 EL provider.
-    pub l1: TypedL1Provider,
+    pub l1: L1RpcProvider,
     /// The L1 blob provider (beacon-backed, or calldata-only when no beacon is configured).
     pub blobs: L1BlobProvider,
     /// The L2 EL provider.
@@ -38,7 +38,7 @@ pub(crate) trait L1PreimageProvider {
 }
 
 #[async_trait]
-impl L1PreimageProvider for TypedL1Provider {
+impl L1PreimageProvider for L1RpcProvider {
     async fn raw_header_by_hash(&self, hash: B256) -> crate::Result<Bytes> {
         Ok(self.client().request("debug_getRawHeader", [hash]).await?)
     }
