@@ -295,6 +295,7 @@ impl BaseChainSpec {
     /// Returns a runtime hardfork ID for the given execution fork, if one exists.
     pub fn runtime_hardfork_id<H: Hardfork + ?Sized>(fork: &H) -> Option<&'static str> {
         match fork.name() {
+            "Regolith" => Some("regolith"),
             "Shanghai" | "Canyon" => Some("canyon"),
             "Cancun" | "Ecotone" => Some("ecotone"),
             "Fjord" => Some("fjord"),
@@ -465,8 +466,9 @@ impl BaseChainSpec {
                 hardforks.insert(EthereumHardfork::Shanghai, condition);
                 hardforks.insert(BaseUpgrade::Canyon, condition);
             }
-            // Delta affects rollup derivation but does not introduce an execution fork condition.
-            "delta" => {}
+            // These contract IDs affect rollup logic but do not introduce execution fork
+            // conditions in the chainspec.
+            "delta" | "pectrablobschedule" => {}
             "ecotone" => {
                 hardforks.insert(EthereumHardfork::Cancun, condition);
                 hardforks.insert(BaseUpgrade::Ecotone, condition);
@@ -480,8 +482,6 @@ impl BaseChainSpec {
             "holocene" => {
                 hardforks.insert(BaseUpgrade::Holocene, condition);
             }
-            // The Pectra blob schedule is consumed by rollup logic, not the execution chainspec.
-            "pectrablobschedule" => {}
             "isthmus" => {
                 hardforks.insert(EthereumHardfork::Prague, condition);
                 hardforks.insert(BaseUpgrade::Isthmus, condition);
@@ -594,11 +594,11 @@ impl EthChainSpec for BaseChainSpec {
     }
 
     fn base_fee_params_at_timestamp(&self, timestamp: u64) -> BaseFeeParams {
-        self.inner.base_fee_params_at_timestamp(timestamp)
+        self.runtime_chain_spec().base_fee_params_at_timestamp(timestamp)
     }
 
     fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
-        self.inner.blob_params_at_timestamp(timestamp)
+        self.runtime_chain_spec().blob_params_at_timestamp(timestamp)
     }
 
     fn deposit_contract(&self) -> Option<&DepositContract> {
@@ -648,7 +648,7 @@ impl EthChainSpec for BaseChainSpec {
         } else if Upgrades::is_holocene_active_at_timestamp(self, parent.timestamp()) {
             decode_holocene_base_fee(self, parent, target_timestamp).ok()
         } else {
-            self.inner.next_block_base_fee(parent, target_timestamp)
+            self.runtime_chain_spec().next_block_base_fee(parent, target_timestamp)
         }
     }
 }
@@ -951,6 +951,65 @@ mod tests {
 
         assert_eq!(spec.fork_id(&Head { number: 0, timestamp: 41, ..Default::default() }).next, 42);
         assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
+
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn runtime_registry_overrides_regolith_execution_paths() {
+        let chain_id = 9_100_005;
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .with_fork(BaseUpgrade::Regolith, ForkCondition::Never)
+            .build();
+
+        assert_eq!(spec.fork(BaseUpgrade::Regolith), ForkCondition::Never);
+        assert!(!spec.is_regolith_active_at_timestamp(42));
+
+        RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "regolith", 42);
+
+        assert_eq!(spec.fork(BaseUpgrade::Regolith), ForkCondition::Timestamp(42));
+        assert!(!spec.is_regolith_active_at_timestamp(41));
+        assert!(spec.is_regolith_active_at_timestamp(42));
+
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn runtime_registry_overrides_execution_fee_and_blob_params() {
+        let chain_id = 9_100_006;
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+        let mut config = ChainConfig::mainnet().clone();
+        config.chain_id = chain_id;
+        let spec = BaseChainSpec::try_from(&config).unwrap();
+        let timestamp = 42;
+        let parent = spec.genesis_header();
+        let static_base_fee = spec.inner.base_fee_params_at_timestamp(timestamp);
+        let static_blob_params = spec.inner.blob_params_at_timestamp(timestamp);
+        let static_next_base_fee = spec.inner.next_block_base_fee(parent, timestamp);
+
+        RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "canyon", timestamp);
+        RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "ecotone", timestamp);
+
+        let runtime_chain_spec = spec.runtime_chain_spec();
+
+        assert_eq!(
+            spec.base_fee_params_at_timestamp(timestamp),
+            runtime_chain_spec.base_fee_params_at_timestamp(timestamp)
+        );
+        assert_ne!(spec.base_fee_params_at_timestamp(timestamp), static_base_fee);
+        assert_eq!(
+            spec.blob_params_at_timestamp(timestamp),
+            runtime_chain_spec.blob_params_at_timestamp(timestamp)
+        );
+        assert_ne!(spec.blob_params_at_timestamp(timestamp), static_blob_params);
+        assert_eq!(
+            spec.next_block_base_fee(parent, timestamp),
+            runtime_chain_spec.next_block_base_fee(parent, timestamp)
+        );
+        assert_ne!(spec.next_block_base_fee(parent, timestamp), static_next_base_fee);
 
         RuntimeHardForkRegistry::clear_chain(chain_id);
     }
