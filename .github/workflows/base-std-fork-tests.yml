@@ -51,9 +51,7 @@ jobs:
       - name: Clone fork-test repositories
         shell: bash
         env:
-          # BASE_STD_TOKEN must be a PAT with Contents:Read on base/base-std.
-          # GITHUB_TOKEN is repo-scoped and cannot access other repos, even internal ones.
-          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -61,7 +59,6 @@ jobs:
           rm -rf "$workdir"
           mkdir -p "$workdir"
 
-          # base-std is internal — use gh CLI with a cross-repo PAT.
           gh repo clone base/base-std "$workdir/base-std" -- \
             --depth 1 --single-branch --branch "$BASE_STD_REF" \
             --recurse-submodules --shallow-submodules

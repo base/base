@@ -117,7 +117,7 @@ jobs:
         id: base-std
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -159,7 +159,7 @@ jobs:
         if: matrix.settings.smoke_test
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BASE_STD_SHA: ${{ steps.base-std.outputs.sha }}
         run: |
           set -euo pipefail
@@ -168,7 +168,6 @@ jobs:
           base_std_dir="$workdir/base-std"
           mkdir -p "$workdir"
 
-          gh auth setup-git
           gh repo clone base/base-std "$base_std_dir" -- --filter=blob:none --no-checkout
           git -C "$base_std_dir" fetch --depth 1 origin "$BASE_STD_SHA"
           git -C "$base_std_dir" checkout --detach FETCH_HEAD
