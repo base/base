@@ -190,8 +190,8 @@ impl RecentTxScanner {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{
-        SignableTransaction, TxEip1559, TxEnvelope, transaction::Recovered,
-        transaction::TransactionInfo,
+        SignableTransaction, TxEip1559, TxEnvelope,
+        transaction::{Recovered, TransactionInfo},
     };
     use alloy_eips::eip1898::BlockNumHash;
     use alloy_primitives::{Address, B256, TxKind, U256};
