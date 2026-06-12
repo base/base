@@ -195,9 +195,6 @@ impl ActivationRegistryStorage<'_> {
         }
 
         let caller = self.storage.caller();
-        if caller.is_zero() {
-            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
-        }
         let admin = self.authorized_admin(admin_config)?;
         if caller != admin {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
