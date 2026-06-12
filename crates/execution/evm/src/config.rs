@@ -16,7 +16,7 @@ use base_common_evm::{
 #[cfg(not(feature = "std"))]
 use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
-use base_common_rpc_types_engine::ExecutionData;
+use base_common_rpc_types_engine::BaseExecutionDataExt;
 use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
@@ -214,8 +214,9 @@ where
 }
 
 #[cfg(feature = "std")]
-impl<ChainSpec, N, R> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<ChainSpec, N, R>
+impl<ChainSpec, N, R, Payload> ConfigureEngineEvm<Payload> for BaseEvmConfig<ChainSpec, N, R>
 where
+    Payload: BaseExecutionDataExt,
     ChainSpec: EthChainSpec<Header = Header> + Upgrades,
     N: NodePrimitives<
             Receipt = R::Receipt,
@@ -228,14 +229,15 @@ where
     R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
     Self: Send + Sync + Unpin + Clone + 'static,
 {
-    fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
-        Ok(BaseEvmEnvBuilder::payload_evm_env(payload, self.chain_spec()))
+    fn evm_env_for_payload(&self, payload: &Payload) -> Result<EvmEnvFor<Self>, Self::Error> {
+        Ok(BaseEvmEnvBuilder::payload_evm_env(payload.execution_data(), self.chain_spec()))
     }
 
     fn context_for_payload<'a>(
         &self,
-        payload: &'a ExecutionData,
+        payload: &'a Payload,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        let payload = payload.execution_data();
         Ok(BaseBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
@@ -245,8 +247,9 @@ where
 
     fn tx_iterator_for_payload(
         &self,
-        payload: &ExecutionData,
+        payload: &Payload,
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
+        let payload = payload.execution_data();
         let transactions = payload.payload.transactions().clone();
         let convert = |encoded: Bytes| {
             let tx = TxTy::<Self::Primitives>::decode_2718_exact(encoded.as_ref())

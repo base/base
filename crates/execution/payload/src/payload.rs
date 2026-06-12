@@ -20,7 +20,7 @@ use base_common_consensus::{
 pub use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4,
+    BaseExecutionPayloadV4, TraceContextHeaders,
 };
 use base_execution_evm::BaseNextBlockEnvAttributes;
 use reth_chainspec::EthChainSpec;
@@ -218,6 +218,104 @@ impl<T> serde::Serialize for BasePayloadBuilderAttributes<T> {
     }
 }
 
+/// Lightweight trace context carrier for Base payload attributes.
+pub trait PayloadTraceContextExt: Clone {
+    /// Returns any attached trace context headers.
+    fn trace_context_headers(&self) -> Option<&TraceContextHeaders>;
+
+    /// Returns a copy of these attributes with the supplied trace context attached.
+    fn with_trace_context(self, trace_context: TraceContextHeaders) -> Self;
+
+    /// Captures the current OTel context and attaches it if supported.
+    fn with_current_trace_context(self) -> Self {
+        self.with_trace_context(TraceContextHeaders::from_current())
+    }
+}
+
+/// Accessor trait for Base payload attribute wrappers.
+pub trait BasePayloadAttributesExt<T>: PayloadTraceContextExt {
+    /// Returns the inner Base payload builder attributes.
+    fn payload_attributes(&self) -> &BasePayloadBuilderAttributes<T>;
+
+    /// Returns the inner Base payload builder attributes by value.
+    fn into_payload_attributes(self) -> BasePayloadBuilderAttributes<T>;
+}
+
+impl<T> PayloadTraceContextExt for BasePayloadBuilderAttributes<T>
+where
+    T: Clone,
+{
+    fn trace_context_headers(&self) -> Option<&TraceContextHeaders> {
+        None
+    }
+
+    fn with_trace_context(self, _trace_context: TraceContextHeaders) -> Self {
+        self
+    }
+}
+
+impl<T> BasePayloadAttributesExt<T> for BasePayloadBuilderAttributes<T>
+where
+    T: Clone,
+{
+    fn payload_attributes(&self) -> &BasePayloadBuilderAttributes<T> {
+        self
+    }
+
+    fn into_payload_attributes(self) -> BasePayloadBuilderAttributes<T> {
+        self
+    }
+}
+
+/// Payload attribute wrapper that preserves inbound trace context across async/task boundaries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TracedBasePayloadBuilderAttributes<T> {
+    /// Canonical Base payload attributes.
+    pub inner: BasePayloadBuilderAttributes<T>,
+    /// W3C trace context captured at ingress.
+    pub trace_context: TraceContextHeaders,
+}
+
+impl<T> TracedBasePayloadBuilderAttributes<T> {
+    /// Creates traced Base payload attributes with no trace context attached.
+    pub const fn new(inner: BasePayloadBuilderAttributes<T>) -> Self {
+        Self { inner, trace_context: TraceContextHeaders::new(None, None) }
+    }
+}
+
+impl<T> From<BasePayloadBuilderAttributes<T>> for TracedBasePayloadBuilderAttributes<T> {
+    fn from(inner: BasePayloadBuilderAttributes<T>) -> Self {
+        Self::new(inner)
+    }
+}
+
+impl<T> PayloadTraceContextExt for TracedBasePayloadBuilderAttributes<T>
+where
+    T: Clone,
+{
+    fn trace_context_headers(&self) -> Option<&TraceContextHeaders> {
+        (!self.trace_context.is_empty()).then_some(&self.trace_context)
+    }
+
+    fn with_trace_context(mut self, trace_context: TraceContextHeaders) -> Self {
+        self.trace_context = trace_context;
+        self
+    }
+}
+
+impl<T> BasePayloadAttributesExt<T> for TracedBasePayloadBuilderAttributes<T>
+where
+    T: Clone,
+{
+    fn payload_attributes(&self) -> &BasePayloadBuilderAttributes<T> {
+        &self.inner
+    }
+
+    fn into_payload_attributes(self) -> BasePayloadBuilderAttributes<T> {
+        self.inner
+    }
+}
+
 impl<'de, T> serde::Deserialize<'de> for BasePayloadBuilderAttributes<T>
 where
     T: Decodable2718 + Send + Sync + Debug + Unpin + 'static,
@@ -228,6 +326,30 @@ where
     {
         let attrs = BasePayloadAttributes::deserialize(deserializer)?;
         Self::try_new(B256::ZERO, attrs, 3).map_err(serde::de::Error::custom)
+    }
+}
+
+impl<T> serde::Serialize for TracedBasePayloadBuilderAttributes<T>
+where
+    T: Clone,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.inner.serialize(serializer)
+    }
+}
+
+impl<'de, T> serde::Deserialize<'de> for TracedBasePayloadBuilderAttributes<T>
+where
+    T: Clone + Decodable2718 + Send + Sync + Debug + Unpin + 'static,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        BasePayloadBuilderAttributes::deserialize(deserializer).map(Self::new)
     }
 }
 
@@ -253,6 +375,31 @@ where
 
     fn slot_number(&self) -> Option<u64> {
         self.payload_attributes.slot_number
+    }
+}
+
+impl<T> reth_payload_primitives::PayloadAttributes for TracedBasePayloadBuilderAttributes<T>
+where
+    T: Clone + Decodable2718 + Send + Sync + Debug + Unpin + 'static,
+{
+    fn payload_id(&self, parent_hash: &B256) -> PayloadId {
+        self.inner.payload_id(parent_hash)
+    }
+
+    fn timestamp(&self) -> u64 {
+        self.inner.timestamp()
+    }
+
+    fn withdrawals(&self) -> Option<&Vec<alloy_eips::eip4895::Withdrawal>> {
+        self.inner.withdrawals()
+    }
+
+    fn parent_beacon_block_root(&self) -> Option<B256> {
+        self.inner.parent_beacon_block_root()
+    }
+
+    fn slot_number(&self) -> Option<u64> {
+        self.inner.slot_number()
     }
 }
 
@@ -590,6 +737,22 @@ where
             parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
         })
+    }
+}
+
+impl<H, T, ChainSpec> BuildNextEnv<TracedBasePayloadBuilderAttributes<T>, H, ChainSpec>
+    for BaseNextBlockEnvAttributes
+where
+    H: BlockHeader,
+    T: SignedTransaction,
+    ChainSpec: EthChainSpec + Upgrades,
+{
+    fn build_next_env(
+        attributes: &TracedBasePayloadBuilderAttributes<T>,
+        parent: &SealedHeader<H>,
+        chain_spec: &ChainSpec,
+    ) -> Result<Self, PayloadBuilderError> {
+        Self::build_next_env(attributes.payload_attributes(), parent, chain_spec)
     }
 }
 

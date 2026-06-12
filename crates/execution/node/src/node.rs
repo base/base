@@ -11,12 +11,13 @@ use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseTxEnvelope};
-use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
+use base_common_rpc_types_engine::{BaseExecutionDataExt, BasePayloadAttributes};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
     Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadPrimitives,
+    TracedBasePayloadBuilderAttributes,
     builder::BasePayloadTransactions,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
 };
@@ -96,7 +97,7 @@ pub trait BaseFullNodeTypes:
         ChainSpec = BaseChainSpec,
         Primitives: PayloadPrimitives,
         Storage = BaseStorage,
-        Payload: EngineTypes<ExecutionData = ExecutionData>,
+        Payload: EngineTypes<ExecutionData: BaseExecutionDataExt>,
     >
 {
 }
@@ -106,7 +107,7 @@ impl<N> BaseFullNodeTypes for N where
             ChainSpec = BaseChainSpec,
             Primitives: PayloadPrimitives,
             Storage = BaseStorage,
-            Payload: EngineTypes<ExecutionData = ExecutionData>,
+            Payload: EngineTypes<ExecutionData: BaseExecutionDataExt>,
         >
 {
 }
@@ -182,6 +183,19 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
 
         BasePayloadBuilderAttributes::try_new(parent.hash(), attributes, 3)
             .expect("static dev payload attributes must decode")
+    }
+}
+
+impl PayloadAttributesBuilder<TracedBasePayloadBuilderAttributes<BaseTxEnvelope>>
+    for BaseLocalPayloadAttributesBuilder
+{
+    fn build(
+        &self,
+        parent: &SealedHeader<alloy_consensus::Header>,
+    ) -> TracedBasePayloadBuilderAttributes<BaseTxEnvelope> {
+        TracedBasePayloadBuilderAttributes::from(<Self as PayloadAttributesBuilder<
+            BasePayloadBuilderAttributes<BaseTxEnvelope>,
+        >>::build(self, parent))
     }
 }
 
@@ -1327,7 +1341,10 @@ pub struct BasePayloadValidatorBuilder;
 impl<Node> PayloadValidatorBuilder<Node> for BasePayloadValidatorBuilder
 where
     Node: FullNodeComponents<
-        Types: NodeTypes<ChainSpec: Upgrades, Payload: PayloadTypes<ExecutionData = ExecutionData>>,
+        Types: NodeTypes<
+            ChainSpec: Upgrades,
+            Payload: PayloadTypes<ExecutionData: BaseExecutionDataExt>,
+        >,
     >,
 {
     type Validator = BaseEngineValidator<

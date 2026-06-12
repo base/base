@@ -89,11 +89,12 @@
 use std::sync::Arc;
 
 use alloy_rpc_types_engine::ClientVersionV1;
-use base_common_rpc_types_engine::ExecutionData;
+use base_common_rpc_types_engine::BaseExecutionDataExt;
+use base_execution_payload_builder::PayloadTraceContextExt;
 use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{
-    AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, NodeTypes,
+    AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, NodeTypes, PayloadTypes,
 };
 use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
@@ -113,10 +114,13 @@ where
     N: FullNodeComponents<
         Types: NodeTypes<
             ChainSpec: EthereumHardforks,
-            Payload: EngineTypes<ExecutionData = ExecutionData>,
+            Payload: EngineTypes<ExecutionData: BaseExecutionDataExt>,
         >,
     >,
     EV: PayloadValidatorBuilder<N>,
+    <<N::Types as NodeTypes>::Payload as PayloadTypes>::ExecutionData:
+        From<base_common_rpc_types_engine::ExecutionData>,
+    <<N::Types as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes: PayloadTraceContextExt,
     EV::Validator: EngineApiValidator<<N::Types as NodeTypes>::Payload>,
 {
     type EngineApi = BaseEngineApi<

@@ -19,6 +19,9 @@ pub use envelope::{
     NetworkPayloadEnvelope, PayloadEnvelopeEncodeError, PayloadEnvelopeError, PayloadHash,
 };
 
+mod trace_context;
+pub use trace_context::{BaseExecutionDataExt, TraceContextHeaders, TracedExecutionData};
+
 mod sidecar;
 pub use sidecar::BaseExecutionPayloadSidecar;
 
