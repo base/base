@@ -21,3 +21,6 @@ pub use job_discovery::{
 
 mod proof_submitter;
 pub use proof_submitter::{ProofSubmitter, ProofSubmitterError};
+
+mod task;
+pub use task::{ProofSubmissionTask, ProofTaskController};

@@ -16,7 +16,7 @@ use base_prover_service_protocol::{
 };
 use base_retry::{DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use thiserror::Error;
-use tokio::time::sleep;
+use tokio::{task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -293,6 +293,24 @@ where
     }
 }
 
+impl<Client> ProofSubmitter<Client>
+where
+    Client: Clone + ProverWorkerProvider + 'static,
+{
+    /// Spawns proof submission as an async Tokio task.
+    #[must_use = "dropping the JoinHandle detaches the submission task"]
+    pub fn spawn_until_delivered(
+        &self,
+        request: WorkerSubmitProofRequest,
+        cancel: CancellationToken,
+    ) -> JoinHandle<Result<WorkerSubmitProofResponse, ProofSubmitterError>> {
+        let submitter = self.clone();
+        tokio::spawn(async move {
+            submitter.submit_until_delivered_or_cancelled(request, &cancel).await
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -310,6 +328,7 @@ mod tests {
     use tokio::{sync::Notify, time::timeout};
 
     use super::*;
+    use crate::ProofTaskController;
 
     #[derive(Clone, Debug)]
     struct MockWorkerClient {
@@ -516,6 +535,61 @@ mod tests {
         let result = timeout(Duration::from_secs(1), handle)
             .await
             .expect("submission task should finish after cancellation")
+            .expect("submission task should not panic");
+
+        assert!(matches!(result, Err(ProofSubmitterError::Cancelled)));
+        assert_eq!(client.submission_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn spawned_submitter_delivers_successfully() {
+        let client = MockWorkerClient::new(Vec::new());
+        let submitter = ProofSubmitter::new(client.clone());
+
+        let handle = submitter.spawn_until_delivered(submit_request(), CancellationToken::new());
+        let response = handle
+            .await
+            .expect("submission task should not panic")
+            .expect("submission should eventually succeed");
+
+        assert_eq!(response.job.status, ProofJobStatus::Succeeded);
+        assert_eq!(client.submission_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn spawned_submitter_stops_when_cancelled_before_submission() {
+        let client = MockWorkerClient::new(Vec::new());
+        let submitter = ProofSubmitter::new(client.clone());
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let handle = submitter.spawn_until_delivered(submit_request(), cancel);
+        let result = timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("cancelled submission task should finish")
+            .expect("submission task should not panic");
+
+        assert!(matches!(result, Err(ProofSubmitterError::Cancelled)));
+        assert_eq!(client.submission_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn task_controller_cancels_spawned_submission() {
+        let client = MockWorkerClient::new(vec![retryable_error()]);
+        let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(
+            RetryConfig::unbounded(Duration::from_secs(60), Duration::from_secs(60)),
+        );
+        let controller = ProofTaskController::new();
+
+        let handle = controller.spawn_submission(&submitter, submit_request());
+        timeout(Duration::from_secs(1), client.wait_for_submission_count(1))
+            .await
+            .expect("first submission attempt should happen");
+        controller.cancel_submissions();
+
+        let result = timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("cancelled submission task should finish")
             .expect("submission task should not panic");
 
         assert!(matches!(result, Err(ProofSubmitterError::Cancelled)));
