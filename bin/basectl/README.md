@@ -163,13 +163,18 @@ Conductor inspection and control commands for HA sequencer clusters.
 - `basectl conductor unpause <NODE>` resumes op-conductor's control loop on one
   node.
 - `basectl conductor pause-all` pauses op-conductor's control loop on every
-  current raft member from `conductor_clusterMembership`.
+  current raft member from `conductor_clusterMembership`, falling back to the
+  configured conductor list for static configs if membership lookup is unavailable.
 - `basectl conductor unpause-all` resumes op-conductor's control loop on every
-  current raft member from `conductor_clusterMembership`.
+  current raft member from `conductor_clusterMembership`, falling back to the
+  configured conductor list for static configs if membership lookup is unavailable.
 
 Conductor commands use the selected config's hardcoded `conductors` list when
 present. Otherwise, they discover the live raft membership from the global
 `--conductor-rpc` bootstrap URL or `discovery.bootstrap_rpc` in the config.
+Cluster-wide `pause-all` / `unpause-all` actions still prefer live membership
+when it is reachable so stale static entries are skipped, but they no longer
+hard-fail on static configs when the membership RPC is temporarily unavailable.
 
 | Flag | Description |
 |------|-------------|

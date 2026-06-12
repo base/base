@@ -262,9 +262,11 @@ pub(crate) enum ConductorCommands {
     Pause(ConductorNodeActionArgs),
     /// Resume op-conductor's control loop on one node.
     Unpause(ConductorNodeActionArgs),
-    /// Pause op-conductor's control loop on every current raft member.
+    /// Pause op-conductor's control loop on every current raft member, falling
+    /// back to the configured conductor list if static membership lookup is unavailable.
     PauseAll(ConductorClusterActionArgs),
-    /// Resume op-conductor's control loop on every current raft member.
+    /// Resume op-conductor's control loop on every current raft member, falling
+    /// back to the configured conductor list if static membership lookup is unavailable.
     UnpauseAll(ConductorClusterActionArgs),
 }
 

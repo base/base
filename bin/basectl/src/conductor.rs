@@ -9,6 +9,7 @@ use basectl_cli::{
     MonitoringConfig,
 };
 use serde::Serialize;
+use tracing::warn;
 use url::Url;
 
 use crate::{
@@ -38,6 +39,21 @@ impl NodeActionKind {
 enum ClusterActionKind {
     PauseAll,
     UnpauseAll,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ClusterNodeScope {
+    CurrentRaftMembers,
+    ConfiguredNodes,
+}
+
+impl ClusterNodeScope {
+    const fn description(self) -> &'static str {
+        match self {
+            Self::CurrentRaftMembers => "current raft members",
+            Self::ConfiguredNodes => "configured conductors",
+        }
+    }
 }
 
 impl ClusterActionKind {
@@ -169,20 +185,22 @@ async fn run_cluster_action(
     args: ConductorClusterActionArgs,
     action: ClusterActionKind,
 ) -> Result<()> {
-    let nodes = current_nodes_for_all(&source).await?;
+    let (nodes, node_scope) = current_nodes_for_cluster_action(&source).await?;
     let names = nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>().join(", ");
     let json_action = action.action();
     let prompt = match action {
         ClusterActionKind::PauseAll => format!(
-            "Type {} to pause conductor control loop on all {} current raft members ({}): ",
+            "Type {} to pause conductor control loop on all {} {} ({}): ",
             config.name,
             nodes.len(),
+            node_scope.description(),
             names
         ),
         ClusterActionKind::UnpauseAll => format!(
-            "Type {} to unpause conductor control loop on all {} current raft members ({}): ",
+            "Type {} to unpause conductor control loop on all {} {} ({}): ",
             config.name,
             nodes.len(),
+            node_scope.description(),
             names
         ),
     };
@@ -217,6 +235,34 @@ async fn current_nodes_for_action(source: &ConductorSource) -> Result<Vec<Conduc
     match source {
         ConductorSource::Static(nodes) => Ok(nodes.clone()),
         ConductorSource::Discover { .. } => current_nodes_for_all(source).await,
+    }
+}
+
+async fn current_nodes_for_cluster_action(
+    source: &ConductorSource,
+) -> Result<(Vec<ConductorNodeConfig>, ClusterNodeScope)> {
+    match source {
+        // Prefer live membership when it is reachable so stale static entries are
+        // not mutated unnecessarily, but fall back to the configured list so a
+        // temporary membership RPC outage does not block bulk actions entirely.
+        ConductorSource::Static(nodes) => {
+            match ConductorControl::current_membership(source).await {
+                Ok(membership) => Ok((
+                    ConductorControl::nodes_from_membership(source, &membership)?,
+                    ClusterNodeScope::CurrentRaftMembers,
+                )),
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        "membership lookup failed for static conductor source; falling back to configured node list"
+                    );
+                    Ok((nodes.clone(), ClusterNodeScope::ConfiguredNodes))
+                }
+            }
+        }
+        ConductorSource::Discover { .. } => {
+            Ok((current_nodes_for_all(source).await?, ClusterNodeScope::CurrentRaftMembers))
+        }
     }
 }
 

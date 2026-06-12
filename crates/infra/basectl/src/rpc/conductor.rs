@@ -307,8 +307,14 @@ impl ConductorControl {
             match target_node {
                 None => match ConductorApiClient::conductor_transfer_leader(&leader).await {
                     Ok(()) => {
-                        let observed = wait_for_stable_leader(nodes, None).await?;
-                        return describe_untargeted_transfer(&leader_name, &observed);
+                        let observed = wait_for_stable_leader(
+                            nodes,
+                            StableLeaderGoal::ReplacementFor(&leader_name),
+                        )
+                        .await?;
+                        return Ok(format!(
+                            "leadership transferred from {leader_name} to {observed}"
+                        ));
                     }
                     Err(error) if is_stale_leader_error(&error) => {
                         last_error = Some(error.to_string());
@@ -328,9 +334,11 @@ impl ConductorControl {
                     .await
                     {
                         Ok(()) => {
-                            let observed =
-                                wait_for_stable_leader(nodes, Some(target_node.name.as_str()))
-                                    .await?;
+                            let observed = wait_for_stable_leader(
+                                nodes,
+                                StableLeaderGoal::Specific(target_node.name.as_str()),
+                            )
+                            .await?;
                             return Ok(format!("leadership transferred to {observed}"));
                         }
                         Err(error) if is_stale_leader_error(&error) => {
@@ -396,6 +404,39 @@ struct LeaderLookup {
     failures: Vec<ConductorNodeFailure>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StableLeaderGoal<'a> {
+    Specific(&'a str),
+    ReplacementFor(&'a str),
+}
+
+impl StableLeaderGoal<'_> {
+    fn matches(self, observed: &str) -> bool {
+        match self {
+            Self::Specific(target) => observed == target,
+            Self::ReplacementFor(original) => observed != original,
+        }
+    }
+
+    fn timeout_message(
+        self,
+        observation_timeout: Duration,
+        last_observed: &str,
+        probe_suffix: &str,
+    ) -> String {
+        match self {
+            Self::Specific(target) => format!(
+                "leadership transfer submitted, but target {target} was not observed as stable leader after {}s (last observed leader: {last_observed}{probe_suffix})",
+                observation_timeout.as_secs(),
+            ),
+            Self::ReplacementFor(original) => format!(
+                "leadership transfer submitted, but no stable replacement leader for {original} was observed after {}s (last observed leader: {last_observed}{probe_suffix})",
+                observation_timeout.as_secs(),
+            ),
+        }
+    }
+}
+
 impl LeaderLookup {
     fn failure_summary(&self) -> Option<String> {
         (!self.failures.is_empty()).then(|| {
@@ -445,7 +486,7 @@ async fn find_conductor_leader(nodes: &[ConductorNodeConfig], timeout: Duration)
 
 async fn wait_for_stable_leader(
     nodes: &[ConductorNodeConfig],
-    expected: Option<&str>,
+    goal: StableLeaderGoal<'_>,
 ) -> anyhow::Result<String> {
     const LEADER_RPC_TIMEOUT: Duration = Duration::from_millis(500);
     const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -454,20 +495,24 @@ async fn wait_for_stable_leader(
     const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(6);
     const STABLE_OBSERVATIONS: usize = 2;
 
-    let deadline = tokio::time::Instant::now() + OBSERVATION_TIMEOUT;
+    let deadline = tokio::time::sleep(OBSERVATION_TIMEOUT);
+    tokio::pin!(deadline);
     let mut last_observed = None;
     let mut last_probe_error = None;
     let mut stable_name: Option<String> = None;
     let mut stable_observations = 0usize;
 
     loop {
-        let leader_lookup = find_conductor_leader(nodes, LEADER_RPC_TIMEOUT).await;
+        let leader_lookup = tokio::select! {
+            _ = &mut deadline => break,
+            leader_lookup = find_conductor_leader(nodes, LEADER_RPC_TIMEOUT) => leader_lookup,
+        };
         let failure_summary = leader_lookup.failure_summary();
         let observed = leader_lookup.leader.map(|(name, _)| name);
         if let Some(name) = observed {
             last_observed = Some(name.clone());
             let _ = last_probe_error.take();
-            if expected.is_none_or(|target| name == target) {
+            if goal.matches(name.as_str()) {
                 if stable_name.as_deref() == Some(name.as_str()) {
                     stable_observations += 1;
                 } else {
@@ -487,33 +532,17 @@ async fn wait_for_stable_leader(
             stable_observations = 0;
         }
 
-        if tokio::time::Instant::now() >= deadline {
-            break;
+        tokio::select! {
+            _ = &mut deadline => break,
+            _ = tokio::time::sleep(POLL_INTERVAL) => {}
         }
-        tokio::time::sleep(POLL_INTERVAL).await;
     }
 
     let last = last_observed.as_deref().unwrap_or("none");
     let probe_suffix = last_probe_error
         .as_deref()
         .map_or_else(String::new, |error| format!("; last probe errors: {error}"));
-    if let Some(target) = expected {
-        anyhow::bail!(
-            "leadership transfer submitted, but target {target} was not observed as stable leader after {}s (last observed leader: {last}{probe_suffix})",
-            OBSERVATION_TIMEOUT.as_secs(),
-        );
-    }
-    anyhow::bail!(
-        "leadership transfer submitted, but no stable leader was observed after {}s (last observed leader: {last}{probe_suffix})",
-        OBSERVATION_TIMEOUT.as_secs(),
-    )
-}
-
-fn describe_untargeted_transfer(leader_name: &str, observed: &str) -> anyhow::Result<String> {
-    if leader_name == observed {
-        anyhow::bail!("leadership transfer submitted, but leader remained on {leader_name}");
-    }
-    Ok(format!("leadership transferred from {leader_name} to {observed}"))
+    anyhow::bail!(goal.timeout_message(OBSERVATION_TIMEOUT, last, &probe_suffix))
 }
 
 fn is_stale_leader_error(error: &JsonRpcClientError) -> bool {
@@ -970,13 +999,15 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use base_consensus_rpc::{ClusterMembership, ServerInfo, ServerSuffrage};
     use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
     use url::Url;
 
     use super::{
         ConductorControl, ConductorFanoutReport, ConductorNodeFailure, LeaderLookup,
-        describe_untargeted_transfer, is_stale_leader_error,
+        StableLeaderGoal, is_stale_leader_error,
     };
     use crate::config::{ConductorNodeConfig, ConductorSource};
 
@@ -1089,13 +1120,35 @@ mod tests {
     }
 
     #[test]
-    fn untargeted_transfer_requires_observed_leader_change() {
-        let err = describe_untargeted_transfer("op-conductor-0", "op-conductor-0").unwrap_err();
+    fn stable_leader_goal_matches_expected_observations() {
+        assert!(StableLeaderGoal::Specific("op-conductor-1").matches("op-conductor-1"));
+        assert!(!StableLeaderGoal::Specific("op-conductor-1").matches("op-conductor-0"));
+        assert!(StableLeaderGoal::ReplacementFor("op-conductor-0").matches("op-conductor-1"));
+        assert!(!StableLeaderGoal::ReplacementFor("op-conductor-0").matches("op-conductor-0"));
+    }
 
-        assert!(err.to_string().contains("leader remained on op-conductor-0"));
-        assert_eq!(
-            describe_untargeted_transfer("op-conductor-0", "op-conductor-1").unwrap(),
-            "leadership transferred from op-conductor-0 to op-conductor-1"
+    #[test]
+    fn stable_leader_goal_formats_timeout_messages() {
+        let targeted = StableLeaderGoal::Specific("op-conductor-1").timeout_message(
+            Duration::from_secs(6),
+            "op-conductor-0",
+            "; last probe errors: timeout",
+        );
+        let replacement = StableLeaderGoal::ReplacementFor("op-conductor-0").timeout_message(
+            Duration::from_secs(6),
+            "op-conductor-0",
+            "",
+        );
+
+        assert!(
+            targeted.contains("target op-conductor-1 was not observed as stable leader after 6s")
+        );
+        assert!(
+            targeted.contains("last observed leader: op-conductor-0; last probe errors: timeout")
+        );
+        assert!(
+            replacement
+                .contains("no stable replacement leader for op-conductor-0 was observed after 6s")
         );
     }
 
