@@ -440,8 +440,7 @@ impl BaseChainSpec {
         hardfork_id: &str,
         condition: ForkCondition,
     ) -> bool {
-        let Some(contract_upgrade) = ContractUpgrade::from_contract_upgrade_id(hardfork_id)
-        else {
+        let Some(contract_upgrade) = ContractUpgrade::from_contract_upgrade_id(hardfork_id) else {
             return false;
         };
 

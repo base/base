@@ -4,8 +4,10 @@ use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 
-use crate::RuntimeUpgradeRegistry;
-use crate::{ChainGenesis, FeeConfig, HardForkConfig, UpgradeActivation, UpgradeActivationSink};
+use crate::{
+    ChainGenesis, FeeConfig, HardForkConfig, RuntimeUpgradeRegistry, UpgradeActivation,
+    UpgradeActivationSink,
+};
 
 /// The Rollup configuration.
 #[derive(Debug, Clone, Eq, PartialEq)]

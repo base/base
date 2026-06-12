@@ -63,7 +63,8 @@ impl UpgradeSignalRuntimeApplier {
         let mut staged_sink = sink.clone();
 
         for signal in &schedule.signals {
-            let activation = UpgradeActivation::from_timestamp(signal.positive_activation_timestamp());
+            let activation =
+                UpgradeActivation::from_timestamp(signal.positive_activation_timestamp());
             let supported = staged_sink.apply_activation(&signal.hardfork_id, activation)?;
 
             let action = if !supported {
