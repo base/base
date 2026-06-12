@@ -986,6 +986,11 @@ impl LoadRunner {
                     "b20 contract address not resolved; call setup_b20_tokens first".into(),
                 ));
             }
+            if let TxType::Erc20 { contract: None } = &tx_config.tx_type {
+                return Err(BaselineError::Config(
+                    "erc20 contract address not resolved; call setup_erc20_tokens first".into(),
+                ));
+            }
         }
 
         self.collector.reset();
