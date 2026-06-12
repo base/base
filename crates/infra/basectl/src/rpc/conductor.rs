@@ -272,14 +272,15 @@ impl ConductorControl {
         const TIMEOUT: Duration = Duration::from_millis(500);
         const SUBMIT_ATTEMPTS: usize = 3;
 
-        let target_node = target_name
-            .map(|target| {
+        let target_node = match target_name {
+            Some(target) => Some(
                 nodes
                     .iter()
                     .find(|n| n.name == target)
-                    .ok_or_else(|| anyhow::anyhow!("target node {target} not found"))
-            })
-            .transpose()?;
+                    .ok_or_else(|| anyhow::anyhow!("target node {target} not found"))?,
+            ),
+            None => None,
+        };
         let mut last_error = None;
 
         for _ in 0..SUBMIT_ATTEMPTS {
@@ -289,7 +290,7 @@ impl ConductorControl {
                 continue;
             };
 
-            match target_name {
+            match target_node {
                 None => match ConductorApiClient::conductor_transfer_leader(&leader).await {
                     Ok(()) => {
                         let observed = wait_for_stable_leader(nodes, None).await?;
@@ -303,13 +304,12 @@ impl ConductorControl {
                     }
                     Err(error) => return Err(anyhow::anyhow!("{error}")),
                 },
-                Some(target) => {
-                    if leader_name == target {
-                        let observed = wait_for_stable_leader(nodes, Some(target)).await?;
+                Some(target_node) => {
+                    if leader_name == target_node.name.as_str() {
+                        let observed =
+                            wait_for_stable_leader(nodes, Some(target_node.name.as_str())).await?;
                         return Ok(format!("leadership already on {observed}"));
                     }
-                    let target_node = target_node
-                        .ok_or_else(|| anyhow::anyhow!("target node {target} not found"))?;
                     match ConductorApiClient::conductor_transfer_leader_to_server(
                         &leader,
                         target_node.server_id.clone(),
@@ -318,7 +318,9 @@ impl ConductorControl {
                     .await
                     {
                         Ok(()) => {
-                            let observed = wait_for_stable_leader(nodes, Some(target)).await?;
+                            let observed =
+                                wait_for_stable_leader(nodes, Some(target_node.name.as_str()))
+                                    .await?;
                             return Ok(format!("leadership transferred to {observed}"));
                         }
                         Err(error) if is_stale_leader_error(&error) => {

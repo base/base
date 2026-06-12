@@ -266,11 +266,7 @@ fn print_fanout_action(action: &ConductorFanoutJson, json: bool) -> Result<()> {
     } else {
         let mut stdout = io::stdout().lock();
         if action.total == 0 {
-            writeln!(
-                stdout,
-                "WARN no conductor nodes to {}",
-                action.action.infinitive()
-            )?;
+            writeln!(stdout, "WARN no conductor nodes to {}", action.action.infinitive())?;
         } else if action.failures.is_empty() {
             writeln!(
                 stdout,
