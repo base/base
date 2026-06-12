@@ -241,6 +241,9 @@ fn print_status_pretty(status: &ConductorStatusJson) -> Result<()> {
     if let Some(version) = status.membership_version {
         table.row("membership_version", version.to_string());
     }
+    if let Some(error) = &status.membership_error {
+        table.row("membership_error", error);
+    }
     table.row("leader", status.leader.as_deref().unwrap_or("unknown"));
     table.row("paused", format!("{}/{} known paused", status.paused.paused, status.paused.known));
     for node in &status.nodes {
@@ -389,6 +392,8 @@ struct ConductorStatusJson {
     source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     membership_version: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    membership_error: Option<String>,
     leader: Option<String>,
     paused: PausedSummaryJson,
     nodes: Vec<ConductorNodeJson>,
@@ -416,6 +421,7 @@ impl ConductorStatusJson {
             network: network.to_string(),
             source,
             membership_version: snapshot.membership.as_ref().map(|membership| membership.version),
+            membership_error: snapshot.membership_error.clone(),
             leader,
             paused,
             nodes,
@@ -636,6 +642,7 @@ mod tests {
                 status("op-conductor-1", false, true),
             ],
             membership: None,
+            membership_error: None,
             discovered: false,
         };
 
@@ -645,6 +652,22 @@ mod tests {
         assert_eq!(value["leader"], "op-conductor-0");
         assert_eq!(value["paused"], json!({"known": 2, "paused": 1}));
         assert_eq!(value["nodes"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn status_json_includes_membership_error_when_lookup_fails() {
+        let snapshot = ConductorClusterSnapshot {
+            nodes: vec![node("op-conductor-0")],
+            statuses: vec![status("op-conductor-0", true, false)],
+            membership: None,
+            membership_error: Some("membership request timed out".to_string()),
+            discovered: false,
+        };
+
+        let value =
+            serde_json::to_value(ConductorStatusJson::from_snapshot("devnet", &snapshot)).unwrap();
+
+        assert_eq!(value["membershipError"], "membership request timed out");
     }
 
     #[test]

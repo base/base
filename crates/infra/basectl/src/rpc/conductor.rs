@@ -6,12 +6,12 @@ use base_consensus_rpc::{
 };
 use futures::{StreamExt, stream};
 use jsonrpsee::{
-    core::client::ClientT,
+    core::client::{ClientT, Error as JsonRpcClientError},
     http_client::{HttpClient, HttpClientBuilder},
     rpc_params,
 };
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::config::{ConductorNodeConfig, ConductorSource};
 
@@ -94,6 +94,8 @@ pub struct ConductorClusterSnapshot {
     pub statuses: Vec<ConductorNodeStatus>,
     /// Raft membership observed while fetching the snapshot.
     pub membership: Option<ClusterMembership>,
+    /// Error returned by the best-effort membership lookup for static snapshots.
+    pub membership_error: Option<String>,
     /// Whether this snapshot was built from discovered raft membership.
     pub discovered: bool,
 }
@@ -168,13 +170,20 @@ impl ConductorControl {
 
         match &source {
             ConductorSource::Static(nodes) => {
-                let membership = Self::current_membership(&source).await.ok();
+                let (membership, membership_error) = match Self::current_membership(&source).await {
+                    Ok(membership) => (Some(membership), None),
+                    Err(error) => {
+                        warn!(error = %error, "failed to fetch conductor cluster membership for static snapshot");
+                        (None, Some(error.to_string()))
+                    }
+                };
                 let clients = build_conductor_clients(nodes, RPC_TIMEOUT);
                 let statuses = fetch_conductor_statuses(&clients, membership.as_ref(), false).await;
                 Ok(ConductorClusterSnapshot {
                     nodes: nodes.clone(),
                     statuses,
                     membership,
+                    membership_error,
                     discovered: false,
                 })
             }
@@ -187,6 +196,7 @@ impl ConductorControl {
                     nodes,
                     statuses,
                     membership: Some(membership),
+                    membership_error: None,
                     discovered: true,
                 })
             }
@@ -284,8 +294,12 @@ impl ConductorControl {
         let mut last_error = None;
 
         for _ in 0..SUBMIT_ATTEMPTS {
-            let Some((leader_name, leader)) = find_conductor_leader(nodes, TIMEOUT).await else {
-                last_error = Some("no leader found in cluster".to_string());
+            let leader_lookup = find_conductor_leader(nodes, TIMEOUT).await;
+            let failure_summary = leader_lookup.failure_summary();
+            let Some((leader_name, leader)) = leader_lookup.leader else {
+                last_error = Some(
+                    failure_summary.unwrap_or_else(|| "no leader found in cluster".to_string()),
+                );
                 tokio::time::sleep(TIMEOUT).await;
                 continue;
             };
@@ -294,9 +308,7 @@ impl ConductorControl {
                 None => match ConductorApiClient::conductor_transfer_leader(&leader).await {
                     Ok(()) => {
                         let observed = wait_for_stable_leader(nodes, None).await?;
-                        return Ok(format!(
-                            "leadership transferred from {leader_name} to {observed}"
-                        ));
+                        return describe_untargeted_transfer(&leader_name, &observed);
                     }
                     Err(error) if is_stale_leader_error(&error) => {
                         last_error = Some(error.to_string());
@@ -306,9 +318,7 @@ impl ConductorControl {
                 },
                 Some(target_node) => {
                     if leader_name == target_node.name.as_str() {
-                        let observed =
-                            wait_for_stable_leader(nodes, Some(target_node.name.as_str())).await?;
-                        return Ok(format!("leadership already on {observed}"));
+                        return Ok(format!("leadership already on {}", target_node.name));
                     }
                     match ConductorApiClient::conductor_transfer_leader_to_server(
                         &leader,
@@ -380,23 +390,52 @@ impl ConductorControl {
     }
 }
 
-async fn find_conductor_leader(
-    nodes: &[ConductorNodeConfig],
-    timeout: Duration,
-) -> Option<(String, HttpClient)> {
-    futures::future::join_all(nodes.iter().map(|node| async move {
+#[derive(Debug)]
+struct LeaderLookup {
+    leader: Option<(String, HttpClient)>,
+    failures: Vec<ConductorNodeFailure>,
+}
+
+impl LeaderLookup {
+    fn failure_summary(&self) -> Option<String> {
+        (!self.failures.is_empty()).then(|| {
+            self.failures
+                .iter()
+                .map(|failure| format!("{}: {}", failure.name, failure.error))
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+    }
+}
+
+async fn find_conductor_leader(nodes: &[ConductorNodeConfig], timeout: Duration) -> LeaderLookup {
+    let results = futures::future::join_all(nodes.iter().map(|node| async move {
         let client = HttpClientBuilder::default()
             .request_timeout(timeout)
             .build(node.conductor_rpc.as_str())
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let is_leader = ConductorApiClient::conductor_leader(&client).await.unwrap_or(false);
-        Ok::<_, anyhow::Error>((node.name.clone(), client, is_leader))
+            .map_err(|error| {
+                debug!(error = %error, node = %node.name, rpc = %node.conductor_rpc, "failed to build conductor client for leader probe");
+                ConductorNodeFailure { name: node.name.clone(), error: error.to_string() }
+            })?;
+        let is_leader = ConductorApiClient::conductor_leader(&client).await.map_err(|error| {
+            debug!(error = %error, node = %node.name, rpc = %node.conductor_rpc, "failed to probe conductor leader");
+            ConductorNodeFailure { name: node.name.clone(), error: error.to_string() }
+        })?;
+        Ok::<_, ConductorNodeFailure>((node.name.clone(), client, is_leader))
     }))
-    .await
-    .into_iter()
-    .filter_map(Result::ok)
-    .find(|(_, _, is_leader)| *is_leader)
-    .map(|(name, client, _)| (name, client))
+    .await;
+
+    let mut leader = None;
+    let mut failures = Vec::new();
+    for result in results {
+        match result {
+            Ok((name, client, true)) if leader.is_none() => leader = Some((name, client)),
+            Ok(_) => {}
+            Err(failure) => failures.push(failure),
+        }
+    }
+
+    LeaderLookup { leader, failures }
 }
 
 async fn wait_for_stable_leader(
@@ -412,13 +451,17 @@ async fn wait_for_stable_leader(
 
     let deadline = tokio::time::Instant::now() + OBSERVATION_TIMEOUT;
     let mut last_observed = None;
+    let mut last_probe_error = None;
     let mut stable_name: Option<String> = None;
     let mut stable_observations = 0usize;
 
     loop {
-        let observed = find_conductor_leader(nodes, LEADER_RPC_TIMEOUT).await.map(|(name, _)| name);
+        let leader_lookup = find_conductor_leader(nodes, LEADER_RPC_TIMEOUT).await;
+        let failure_summary = leader_lookup.failure_summary();
+        let observed = leader_lookup.leader.map(|(name, _)| name);
         if let Some(name) = observed {
             last_observed = Some(name.clone());
+            let _ = last_probe_error.take();
             if expected.is_none_or(|target| name == target) {
                 if stable_name.as_deref() == Some(name.as_str()) {
                     stable_observations += 1;
@@ -434,6 +477,7 @@ async fn wait_for_stable_leader(
                 stable_observations = 0;
             }
         } else {
+            last_probe_error = failure_summary;
             stable_name = None;
             stable_observations = 0;
         }
@@ -445,20 +489,38 @@ async fn wait_for_stable_leader(
     }
 
     let last = last_observed.as_deref().unwrap_or("none");
+    let probe_suffix = last_probe_error
+        .as_deref()
+        .map_or_else(String::new, |error| format!("; last probe errors: {error}"));
     if let Some(target) = expected {
         anyhow::bail!(
-            "leadership transfer submitted, but target {target} was not observed as stable leader after {}s (last observed leader: {last})",
-            OBSERVATION_TIMEOUT.as_secs()
+            "leadership transfer submitted, but target {target} was not observed as stable leader after {}s (last observed leader: {last}{probe_suffix})",
+            OBSERVATION_TIMEOUT.as_secs(),
         );
     }
     anyhow::bail!(
-        "leadership transfer submitted, but no stable leader was observed after {}s (last observed leader: {last})",
-        OBSERVATION_TIMEOUT.as_secs()
+        "leadership transfer submitted, but no stable leader was observed after {}s (last observed leader: {last}{probe_suffix})",
+        OBSERVATION_TIMEOUT.as_secs(),
     )
 }
 
-fn is_stale_leader_error(error: &jsonrpsee::core::client::Error) -> bool {
-    error.to_string().contains("node is not the leader")
+fn describe_untargeted_transfer(leader_name: &str, observed: &str) -> anyhow::Result<String> {
+    if leader_name == observed {
+        anyhow::bail!("leadership transfer submitted, but leader remained on {leader_name}");
+    }
+    Ok(format!("leadership transferred from {leader_name} to {observed}"))
+}
+
+fn is_stale_leader_error(error: &JsonRpcClientError) -> bool {
+    const SERVER_ERROR_CODE: i32 = -32000;
+    const STALE_LEADER_MESSAGE: &str = "node is not the leader";
+
+    matches!(
+        error,
+        JsonRpcClientError::Call(payload)
+            if payload.code() == SERVER_ERROR_CODE
+                && payload.message() == STALE_LEADER_MESSAGE
+    )
 }
 
 /// Finds the current Raft leader and transfers leadership.
@@ -904,9 +966,13 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
 #[cfg(test)]
 mod tests {
     use base_consensus_rpc::{ClusterMembership, ServerInfo, ServerSuffrage};
+    use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
     use url::Url;
 
-    use super::{ConductorControl, ConductorFanoutReport, ConductorNodeFailure};
+    use super::{
+        ConductorControl, ConductorFanoutReport, ConductorNodeFailure, LeaderLookup,
+        describe_untargeted_transfer, is_stale_leader_error,
+    };
     use crate::config::{ConductorNodeConfig, ConductorSource};
 
     fn node(name: &str, server_id: &str) -> ConductorNodeConfig {
@@ -999,5 +1065,55 @@ mod tests {
             .expect_err("unknown member should fail");
 
         assert!(err.to_string().contains("sequencer-1"));
+    }
+
+    #[test]
+    fn leader_lookup_failure_summary_formats_node_errors() {
+        let lookup = LeaderLookup {
+            leader: None,
+            failures: vec![
+                ConductorNodeFailure { name: "a".to_string(), error: "timeout".to_string() },
+                ConductorNodeFailure {
+                    name: "b".to_string(),
+                    error: "connection refused".to_string(),
+                },
+            ],
+        };
+
+        assert_eq!(lookup.failure_summary().as_deref(), Some("a: timeout; b: connection refused"));
+    }
+
+    #[test]
+    fn untargeted_transfer_requires_observed_leader_change() {
+        let err = describe_untargeted_transfer("op-conductor-0", "op-conductor-0").unwrap_err();
+
+        assert!(err.to_string().contains("leader remained on op-conductor-0"));
+        assert_eq!(
+            describe_untargeted_transfer("op-conductor-0", "op-conductor-1").unwrap(),
+            "leadership transferred from op-conductor-0 to op-conductor-1"
+        );
+    }
+
+    #[test]
+    fn stale_leader_error_matches_typed_jsonrpc_shape() {
+        let stale = JsonRpcClientError::Call(ErrorObjectOwned::owned(
+            -32000,
+            "node is not the leader",
+            None::<()>,
+        ));
+        let other_message = JsonRpcClientError::Call(ErrorObjectOwned::owned(
+            -32000,
+            "different server error",
+            None::<()>,
+        ));
+        let other_code = JsonRpcClientError::Call(ErrorObjectOwned::owned(
+            -32603,
+            "node is not the leader",
+            None::<()>,
+        ));
+
+        assert!(is_stale_leader_error(&stale));
+        assert!(!is_stale_leader_error(&other_message));
+        assert!(!is_stale_leader_error(&other_code));
     }
 }
