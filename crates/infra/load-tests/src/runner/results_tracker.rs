@@ -258,9 +258,14 @@ impl ResultsTrackerInner {
             return;
         };
 
+        // block_latency measures submit -> block production using the header-derived block
+        // time, which is independent of how late the watcher polls the receipt. Using
+        // observed_at instead would fold receipt-poll backlog into the metric (captured
+        // separately as block_receipt_delay). block_time is anchored onto the monotonic
+        // clock at observation, so checked_duration_since stays in one clock domain.
         let block_latency = receipt
             .block_time
-            .map(|block_time| block_time.saturating_duration_since(pending.submit_time));
+            .and_then(|block_time| block_time.checked_duration_since(pending.submit_time));
         let block_receipt_delay = receipt
             .block_time
             .map(|block_time| receipt.observed_at.saturating_duration_since(block_time));
@@ -386,6 +391,105 @@ mod tests {
         assert!(metrics[0].reverted, "reverted flag should be set");
         assert_eq!(metrics[0].gas_used, 45_000);
         assert_eq!(tracker.total_in_flight(), 0);
+    }
+
+    #[test]
+    fn block_latency_is_independent_of_receipt_poll_lag() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(6);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+
+        // Block produced ~200ms after submit, but the watcher polls the receipt 30s late.
+        // block_latency must reflect production time (~200ms), not the 30s poll backlog;
+        // the backlog belongs to block_receipt_delay.
+        let block_time = Instant::now() + Duration::from_millis(200);
+        let observed_at = block_time + Duration::from_secs(30);
+        tracker.on_new_block(
+            BlockObservation { number: 11, block_time: Some(block_time), observed_at },
+            vec![BlockReceipt {
+                tx_hash,
+                block_number: 11,
+                gas_used: 21_000,
+                effective_gas_price: 1_000_000_000,
+                success: true,
+            }],
+        );
+
+        let metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(metrics.len(), 1);
+        let block_latency = metrics[0].block_latency.expect("block_latency must be set");
+        assert!(
+            block_latency < Duration::from_secs(1),
+            "block_latency must track production time, not poll lag, got {block_latency:?}"
+        );
+        assert_eq!(
+            metrics[0].block_receipt_delay,
+            Some(Duration::from_secs(30)),
+            "receipt poll lag must surface in block_receipt_delay"
+        );
+    }
+
+    #[test]
+    fn block_latency_is_none_when_header_time_unavailable() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(8);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        tracker.on_new_block(
+            BlockObservation { number: 13, block_time: None, observed_at: Instant::now() },
+            vec![BlockReceipt {
+                tx_hash,
+                block_number: 13,
+                gas_used: 21_000,
+                effective_gas_price: 1_000_000_000,
+                success: true,
+            }],
+        );
+
+        let metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(
+            metrics[0].block_latency, None,
+            "block_latency is header-derived and must be None without a header time"
+        );
+    }
+
+    #[test]
+    fn flashblock_latency_never_exceeds_block_latency() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(7);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+
+        // Healthy chain: flashblock precedes block production, which precedes the late poll.
+        let fb_at = Instant::now() + Duration::from_millis(100);
+        tracker.on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: fb_at }]);
+
+        let block_time = fb_at + Duration::from_millis(300);
+        let observed_at = block_time + Duration::from_secs(5);
+        tracker.on_new_block(
+            BlockObservation { number: 12, block_time: Some(block_time), observed_at },
+            vec![BlockReceipt {
+                tx_hash,
+                block_number: 12,
+                gas_used: 21_000,
+                effective_gas_price: 1_000_000_000,
+                success: true,
+            }],
+        );
+
+        let metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(metrics.len(), 1);
+        let fb = metrics[0].flashblocks_latency.expect("flashblocks_latency must be set");
+        let block = metrics[0].block_latency.expect("block_latency must be set");
+        assert!(
+            fb <= block,
+            "flashblock latency ({fb:?}) must not exceed block latency ({block:?})"
+        );
     }
 
     #[test]
