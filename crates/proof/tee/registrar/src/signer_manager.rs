@@ -6,6 +6,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    future::Future,
     sync::Arc,
     time::Duration,
 };
@@ -181,6 +182,29 @@ impl ProofTaskSet {
         protected
     }
 
+    /// Spawns a proof task and tracks its pending registration state.
+    pub fn spawn_task<F>(
+        &mut self,
+        signer: Address,
+        instance_id: String,
+        cancel: CancellationToken,
+        task: F,
+    ) where
+        F: Future<Output = ProofTaskOutcome> + Send + 'static,
+    {
+        let handle = self.tasks.spawn(task);
+        self.pending.insert(
+            signer,
+            PendingRegistration {
+                instance_id,
+                task_id: handle.id(),
+                cancel,
+                cancelled_by_reconcile: false,
+            },
+        );
+        RegistrarMetrics::proof_tasks_spawned().increment(1);
+    }
+
     /// Drains every task that has already finished from `tasks`.
     pub fn reap_finished_tasks(&mut self) {
         while let Some(joined) = self.tasks.try_join_next_with_id() {
@@ -327,22 +351,12 @@ where
             let signer = entry.signer;
             let enclave_index = entry.enclave_index;
 
-            let handle = proof_tasks.tasks.spawn(async move {
+            proof_tasks.spawn_task(signer, instance_id, signer_cancel, async move {
                 let result = manager
                     .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
                     .await;
                 ProofTaskOutcome { signer, result }
             });
-            proof_tasks.pending.insert(
-                signer,
-                PendingRegistration {
-                    instance_id,
-                    task_id: handle.id(),
-                    cancel: signer_cancel,
-                    cancelled_by_reconcile: false,
-                },
-            );
-            RegistrarMetrics::proof_tasks_spawned().increment(1);
         }
     }
 
