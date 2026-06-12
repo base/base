@@ -94,6 +94,11 @@ pub struct TestConfig {
     #[serde(default = "default_b20_mint_amount")]
     pub b20_mint_amount: String,
 
+    /// Amount of standalone ERC20 tokens to mint per sender during setup (in raw units,
+    /// as string). Only used when `erc20` transaction types are configured.
+    #[serde(default = "default_erc20_mint_amount")]
+    pub erc20_mint_amount: String,
+
     /// Optional real-token setup for mainnet-snapshot bidirectional swap workloads.
     #[serde(default)]
     pub real_token_setup: Option<RealTokenSetupConfig>,
@@ -123,6 +128,7 @@ impl Default for TestConfig {
             looper_contract: None,
             swap_token_amount: default_swap_token_amount(),
             b20_mint_amount: default_b20_mint_amount(),
+            erc20_mint_amount: default_erc20_mint_amount(),
             real_token_setup: None,
         }
     }
@@ -148,6 +154,7 @@ impl fmt::Debug for TestConfig {
             .field("looper_contract", &self.looper_contract)
             .field("swap_token_amount", &self.swap_token_amount)
             .field("b20_mint_amount", &self.b20_mint_amount)
+            .field("erc20_mint_amount", &self.erc20_mint_amount)
             .field("real_token_setup", &self.real_token_setup)
             .finish()
     }
@@ -194,10 +201,12 @@ pub enum TxTypeConfig {
         repeat_count: usize,
     },
 
-    /// ERC20 token transfer (requires deployed contract).
+    /// ERC20 token transfer. A standalone ERC20 is deployed during setup when `contract`
+    /// is omitted; otherwise the given pre-deployed token is used.
     Erc20 {
-        /// ERC20 contract address.
-        contract: String,
+        /// Pre-deployed ERC20 contract address, or omitted to deploy one during setup.
+        #[serde(default)]
+        contract: Option<String>,
     },
 
     /// Precompile call.
@@ -307,6 +316,12 @@ fn default_swap_token_amount() -> String {
 
 fn default_b20_mint_amount() -> String {
     "1000000000000000000000".to_string() // 1000 tokens (1000e18)
+}
+
+fn default_erc20_mint_amount() -> String {
+    // Raw units minted per sender. Far larger than any single transfer (1000–10000 raw
+    // units), so senders never drain across a run regardless of the token's decimals.
+    "1000000000000000000000".to_string()
 }
 
 impl TestConfig {
@@ -459,6 +474,16 @@ impl TestConfig {
         })
     }
 
+    /// Parses the standalone ERC20 mint amount string into a U256.
+    pub fn parse_erc20_mint_amount(&self) -> Result<alloy_primitives::U256> {
+        self.erc20_mint_amount.parse().map_err(|e| {
+            BaselineError::Config(format!(
+                "invalid erc20_mint_amount '{}': {e}",
+                self.erc20_mint_amount
+            ))
+        })
+    }
+
     /// Parses the optional real-token setup config.
     pub fn parse_real_token_setup(&self, chain_id: u64) -> Result<Option<RealTokenSetup>> {
         parse_real_token_setup(self.real_token_setup.as_ref(), &self.transactions, chain_id)
@@ -488,6 +513,7 @@ impl TestConfig {
             looper_contract: self.looper_contract.clone(),
             swap_token_amount: self.swap_token_amount.clone(),
             b20_mint_amount: self.b20_mint_amount.clone(),
+            erc20_mint_amount: self.erc20_mint_amount.clone(),
             real_token_setup: self
                 .real_token_setup
                 .as_ref()
@@ -566,12 +592,17 @@ impl TestConfig {
                 TxType::Calldata { max_size: *max_size, repeat_count: *repeat_count }
             }
             TxTypeConfig::Erc20 { contract } => {
-                let address = contract.parse::<Address>().map_err(|e| {
-                    BaselineError::Config(format!(
-                        "invalid erc20 contract address '{contract}': {e}"
-                    ))
-                })?;
-                TxType::Erc20 { contract: address }
+                let contract = contract
+                    .as_ref()
+                    .map(|c| {
+                        c.parse::<Address>().map_err(|e| {
+                            BaselineError::Config(format!(
+                                "invalid erc20 contract address '{c}': {e}"
+                            ))
+                        })
+                    })
+                    .transpose()?;
+                TxType::Erc20 { contract }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -740,6 +771,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::U256;
+
     use super::*;
 
     #[test]
@@ -1030,6 +1063,60 @@ transactions:
                 assert_eq!(*tick_spacing, 200);
             }
             _ => panic!("expected AerodromeCl"),
+        }
+    }
+
+    #[test]
+    fn parse_erc20_without_contract_defaults_to_unresolved() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 100
+    type: erc20
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        // Default mint amount is applied when omitted.
+        assert!(config.parse_erc20_mint_amount().unwrap() > U256::ZERO);
+
+        let load_config = config.to_load_config(Some(1337)).unwrap();
+        assert!(matches!(load_config.transactions[0].tx_type, TxType::Erc20 { contract: None }));
+    }
+
+    #[test]
+    fn shipped_erc20_devnet_example_parses() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/erc20-devnet.yaml");
+        let config = TestConfig::load(path).expect("erc20-devnet.yaml must parse");
+        let load_config = config.to_load_config(Some(1337)).expect("converts to load config");
+        assert!(
+            load_config
+                .transactions
+                .iter()
+                .any(|t| matches!(t.tx_type, TxType::Erc20 { contract: None })),
+            "example must configure an auto-deployed ERC20 workload"
+        );
+    }
+
+    #[test]
+    fn parse_erc20_with_contract_resolves_address() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+erc20_mint_amount: "12345"
+transactions:
+  - weight: 100
+    type: erc20
+    contract: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.parse_erc20_mint_amount().unwrap(), U256::from(12345u64));
+
+        let load_config = config.to_load_config(Some(1337)).unwrap();
+        match load_config.transactions[0].tx_type {
+            TxType::Erc20 { contract: Some(addr) } => {
+                assert_eq!(addr, Address::repeat_byte(0xaa));
+            }
+            _ => panic!("expected resolved ERC20 contract"),
         }
     }
 }

@@ -39,4 +39,6 @@ pub use load_runner::LoadRunner;
 
 mod b20;
 
+mod erc20;
+
 mod real_tokens;

@@ -224,6 +224,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     let funding_amount = test_config.parse_funding_amount()?;
     let swap_token_amount = test_config.parse_swap_token_amount()?;
     let b20_mint_amount = test_config.parse_b20_mint_amount()?;
+    let erc20_mint_amount = test_config.parse_erc20_mint_amount()?;
     let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
 
     let config_summary = test_config.to_summary();
@@ -242,6 +243,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             funding: funding_amount,
             swap_token: swap_token_amount,
             b20_mint: b20_mint_amount,
+            erc20_mint: erc20_mint_amount,
         },
         real_token_setup.as_ref(),
         &mp,
@@ -419,6 +421,7 @@ struct SetupAmounts {
     funding: U256,
     swap_token: U256,
     b20_mint: U256,
+    erc20_mint: U256,
 }
 
 /// Runs funding, token setup, and the load test loop, returning the metrics summary.
@@ -454,6 +457,12 @@ async fn run_test_phases(
         println!("Setting up B-20 tokens...");
         runner.setup_b20_tokens(funding_key.clone(), amounts.b20_mint).await?;
         println!("B-20 tokens ready.");
+    }
+
+    if runner.needs_erc20_setup() {
+        println!("Setting up standalone ERC20 token...");
+        runner.setup_erc20_tokens(funding_key.clone(), amounts.erc20_mint).await?;
+        println!("ERC20 token ready.");
     }
     println!();
 

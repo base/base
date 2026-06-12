@@ -198,10 +198,12 @@ impl LoadRunner {
                     generator = generator.with_payload(payload, weight_pct);
                 }
                 TxType::Erc20 { contract } => {
-                    generator = generator.with_payload(
-                        Erc20Payload::new(*contract, U256::from(1000), U256::from(10000)),
-                        weight_pct,
-                    );
+                    if let Some(contract) = contract {
+                        generator = generator.with_payload(
+                            Erc20Payload::new(*contract, U256::from(1000), U256::from(10000)),
+                            weight_pct,
+                        );
+                    }
                 }
                 TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
                     let payload = PrecompilePayload::with_options(
@@ -961,7 +963,7 @@ impl LoadRunner {
         Ok(())
     }
 
-    fn encode_erc20_mint(to: Address, amount: U256) -> Bytes {
+    pub(super) fn encode_erc20_mint(to: Address, amount: U256) -> Bytes {
         sol! {
             function mint(address to, uint256 amount) external;
         }

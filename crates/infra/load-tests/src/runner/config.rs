@@ -34,8 +34,8 @@ pub enum TxType {
     },
     /// ERC20 token transfer.
     Erc20 {
-        /// ERC20 contract address.
-        contract: Address,
+        /// Pre-deployed token address, or `None` to deploy a new token during setup.
+        contract: Option<Address>,
     },
     /// Precompile call.
     Precompile {

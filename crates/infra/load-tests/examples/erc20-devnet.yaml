@@ -1,0 +1,52 @@
+# Load Test Configuration - Standalone ERC20 transfers (Local Devnet)
+#
+# Drives 100% standalone Solidity ERC20 `transfer(...)` traffic. During setup the load
+# tester deploys a vanilla ERC20 (a standard OpenZeppelin ERC20 with an open mint) and mints
+# a balance to every sender, so transfers exercise real token movement rather than reverting.
+#
+# Runs against a locally running devnet (just devnet up).
+# Requires FUNDER_KEY env var (for devnet, use Anvil Account #1):
+#   FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+# HTTP submission endpoints. Batches are distributed across all configured URLs.
+transaction_submission_rpcs:
+  - "https://base-zeronet.cbhq.net"
+
+# RPC endpoint for reads and balance checks
+query_rpc: "https://base-zeronet-reth-rpc-donotuse.cbhq.net:8545"
+
+# Optional txpool admin nodes to clear for all sender addresses before startup.
+txpool_nodes: []
+
+
+# Builder flashblocks broadcast WebSocket endpoint
+flashblocks_ws: "ws://internal-zeronet-api-protocols-rollup-boo-93463458.us-east-1.elb.amazonaws.com/ws"
+
+# Number of sender accounts
+sender_count: 100
+
+# Target gas per second
+target_gps: 100000000
+
+in_flight_per_sender: 128
+batch_size: 200
+batch_timeout: "20ms"
+
+# Test duration
+duration: "60s"
+
+# Fixed seed for reproducible account generation
+seed: 12345
+
+# 0.01 ETH per account (covers gas; drained after test)
+funding_amount: "10000000000000000"
+
+# Standalone ERC20 tokens minted per sender during setup (raw units). Far larger than any
+# single transfer (1000–10000 raw units), so senders never underflow during a run.
+erc20_mint_amount: "1000000000000000000000"
+
+# Transaction mix: 100% standalone ERC20 transfers.
+transactions:
+  - weight: 100
+    type: erc20
+    # contract: "0x..."  # Optional: omit to deploy a standalone ERC20 during setup.

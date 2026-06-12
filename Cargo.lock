@@ -4944,6 +4944,7 @@ dependencies = [
  "base-common-flashblocks",
  "base-common-network",
  "base-common-precompiles",
+ "base-test-utils",
  "base-tx-manager",
  "eyre",
  "futures",

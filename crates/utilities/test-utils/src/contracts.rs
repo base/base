@@ -20,6 +20,12 @@ sol!(
 
 sol!(
     #[sol(rpc)]
+    LoadTestERC20,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/LoadTestERC20.sol/LoadTestERC20.json")
+);
+
+sol!(
+    #[sol(rpc)]
     TransparentUpgradeableProxy,
     concat!(
         env!("CARGO_MANIFEST_DIR"),
