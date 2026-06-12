@@ -1073,7 +1073,7 @@ mod tests {
     fn default_config(cancel: CancellationToken) -> DriverConfig {
         DriverConfig {
             poll_interval: Duration::from_secs(1),
-            cancel: cancel.clone(),
+            cancel,
             signer_manager: SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
