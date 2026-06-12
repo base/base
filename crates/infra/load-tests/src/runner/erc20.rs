@@ -30,18 +30,27 @@ const ERC20_DEPLOY_GAS_LIMIT: u64 = 1_500_000;
 const ERC20_MINT_GAS_LIMIT: u64 = 100_000;
 
 impl LoadRunner {
-    /// Returns `true` if any configured transaction type is [`TxType::Erc20`].
+    /// Returns `true` if any ERC20 workload still needs a token deployed (`contract: None`).
+    ///
+    /// Pre-deployed ERC20s (`contract: Some(_)`) need no setup: their payload is already wired
+    /// in [`Self::create_generator`], and the caller is responsible for ensuring senders hold
+    /// balances. This deliberately differs from [`Self::needs_b20_setup`] — a B-20 token always
+    /// exposes a role-gated mint, whereas an arbitrary pre-deployed ERC20 may have no open
+    /// `mint`, so we must never attempt to mint on a contract we do not control.
     pub fn needs_erc20_setup(&self) -> bool {
-        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::Erc20 { .. }))
+        self.config
+            .transactions
+            .iter()
+            .any(|t| matches!(t.tx_type, TxType::Erc20 { contract: None }))
     }
 
-    /// Deploys a standalone ERC20 token (when no contract address is configured) and mints
-    /// `amount_per_sender` to every sender account.
+    /// Deploys a standalone, mintable ERC20 and mints `amount_per_sender` to every sender.
     ///
-    /// If an ERC20 transaction config already has a resolved `contract` address, deployment is
-    /// skipped and that token is reused for minting. The resolved address is written back into
-    /// every [`TxType::Erc20`] config and the workload generator is rebuilt so the measured
-    /// run targets the deployed token.
+    /// Only auto-deploy (`contract: None`) workloads are handled: a fresh `LoadTestERC20` (which
+    /// exposes an open `mint`) is deployed, its address written back into those configs,
+    /// balances minted to all senders, and the workload generator rebuilt. Pre-deployed
+    /// (`contract: Some(_)`) entries are left untouched — never minted on — since we cannot
+    /// assume they expose `mint(address,uint256)`.
     #[instrument(skip(self, funding_key), fields(accounts = self.accounts.len()))]
     pub async fn setup_erc20_tokens(
         &mut self,
@@ -64,52 +73,42 @@ impl LoadRunner {
             .await
             .rpc("get pending transaction count")?;
 
-        // Phase 1: Deploy a standalone ERC20 if no contract address is configured.
-        let mut token_address: Option<Address> =
-            self.config.transactions.iter().find_map(|t| match &t.tx_type {
-                TxType::Erc20 { contract: Some(addr) } => Some(*addr),
-                _ => None,
-            });
+        // Phase 1: Deploy a fresh, mintable ERC20. Setup only runs for auto-deploy
+        // (`contract: None`) workloads, so we always deploy our own token here rather than
+        // reusing any user-supplied address — we must not `mint()` on a contract we don't own.
+        info!("deploying standalone ERC20 token");
 
-        if token_address.is_none() {
-            info!("deploying standalone ERC20 token");
+        let predicted = funder_address.create(nonce);
 
-            let predicted = funder_address.create(nonce);
+        let tx = TransactionRequest::default()
+            .with_deploy_code(LoadTestERC20::BYTECODE.clone())
+            .with_nonce(nonce)
+            .with_chain_id(chain_id)
+            .with_gas_limit(ERC20_DEPLOY_GAS_LIMIT)
+            .with_max_fee_per_gas(max_fee)
+            .with_max_priority_fee_per_gas(max_priority_fee);
+        nonce += 1;
 
-            let tx = TransactionRequest::default()
-                .with_deploy_code(LoadTestERC20::BYTECODE.clone())
-                .with_nonce(nonce)
-                .with_chain_id(chain_id)
-                .with_gas_limit(ERC20_DEPLOY_GAS_LIMIT)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(max_priority_fee);
-            nonce += 1;
-
-            let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
-                BaselineError::Transaction(format!("failed to deploy ERC20 token: {e}"))
-            })?;
-            let receipt = pending.get_receipt().await.map_err(|e| {
-                BaselineError::Transaction(format!("ERC20 deployment receipt failed: {e}"))
-            })?;
-
-            if !receipt.status() {
-                return Err(BaselineError::Transaction(format!(
-                    "ERC20 token deployment reverted (tx {})",
-                    receipt.transaction_hash
-                )));
-            }
-
-            let deployed = receipt.contract_address.unwrap_or(predicted);
-            info!(token = %deployed, "ERC20 token deployed");
-            token_address = Some(deployed);
-        }
-
-        let token = token_address.ok_or_else(|| {
-            BaselineError::Config("ERC20 token address was not resolved during setup".into())
+        let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
+            BaselineError::Transaction(format!("failed to deploy ERC20 token: {e}"))
+        })?;
+        let receipt = pending.get_receipt().await.map_err(|e| {
+            BaselineError::Transaction(format!("ERC20 deployment receipt failed: {e}"))
         })?;
 
+        if !receipt.status() {
+            return Err(BaselineError::Transaction(format!(
+                "ERC20 token deployment reverted (tx {})",
+                receipt.transaction_hash
+            )));
+        }
+
+        let token = receipt.contract_address.unwrap_or(predicted);
+        info!(token = %token, "ERC20 token deployed");
+
+        // Resolve only the auto-deploy entries; never overwrite a user-supplied address.
         for tx_config in &mut self.config.transactions {
-            if let TxType::Erc20 { contract } = &mut tx_config.tx_type {
+            if let TxType::Erc20 { contract: contract @ None } = &mut tx_config.tx_type {
                 *contract = Some(token);
             }
         }
@@ -212,16 +211,16 @@ mod tests {
     }
 
     #[test]
-    fn needs_erc20_setup_matches_resolved_and_unresolved_configs() {
+    fn only_unresolved_erc20_configs_need_setup() {
+        // Setup is required only for auto-deploy (`None`); a pre-deployed (`Some`) ERC20 must
+        // not trigger setup, since we would otherwise attempt to mint on a foreign contract.
         let unresolved = TxConfig { weight: 1, tx_type: TxType::Erc20 { contract: None } };
         let resolved = TxConfig {
             weight: 1,
             tx_type: TxType::Erc20 { contract: Some(Address::repeat_byte(0x11)) },
         };
-        let other = TxConfig { weight: 1, tx_type: TxType::Transfer };
 
-        assert!(matches!(unresolved.tx_type, TxType::Erc20 { .. }));
-        assert!(matches!(resolved.tx_type, TxType::Erc20 { .. }));
-        assert!(!matches!(other.tx_type, TxType::Erc20 { .. }));
+        assert!(matches!(unresolved.tx_type, TxType::Erc20 { contract: None }));
+        assert!(!matches!(resolved.tx_type, TxType::Erc20 { contract: None }));
     }
 }

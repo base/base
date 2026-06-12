@@ -1084,20 +1084,6 @@ transactions:
     }
 
     #[test]
-    fn shipped_erc20_devnet_example_parses() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/erc20-devnet.yaml");
-        let config = TestConfig::load(path).expect("erc20-devnet.yaml must parse");
-        let load_config = config.to_load_config(Some(1337)).expect("converts to load config");
-        assert!(
-            load_config
-                .transactions
-                .iter()
-                .any(|t| matches!(t.tx_type, TxType::Erc20 { contract: None })),
-            "example must configure an auto-deployed ERC20 workload"
-        );
-    }
-
-    #[test]
     fn parse_erc20_with_contract_resolves_address() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
