@@ -430,6 +430,11 @@ async fn find_conductor_leader(nodes: &[ConductorNodeConfig], timeout: Duration)
     for result in results {
         match result {
             Ok((name, client, true)) if leader.is_none() => leader = Some((name, client)),
+            Ok((name, _, true)) => {
+                let first_leader =
+                    leader.as_ref().map_or("unknown", |(leader_name, _)| leader_name.as_str());
+                warn!(first_leader = %first_leader, node = %name, "multiple nodes report is_leader=true; possible split-brain");
+            }
             Ok(_) => {}
             Err(failure) => failures.push(failure),
         }

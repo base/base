@@ -96,6 +96,8 @@ async fn run_transfer_leader(
 ) -> Result<()> {
     let nodes = current_nodes_for_action(&source).await?;
     if let Some(target) = args.target.as_deref() {
+        // Validate before prompting so a typo does not ask for confirmation and only
+        // fail after the operator already answered yes.
         find_node(&nodes, target)?;
     }
 
