@@ -406,14 +406,10 @@ impl<C> InitTable for HashedStoragesInit<C> {
         let mut by_address: HashMap<B256, Vec<(B256, U256)>> =
             HashMap::with_capacity(entries_iter.size_hint().0);
 
-        // Group entries by hashed address
         for (address, entry) in entries_iter {
             by_address.entry(address).or_default().push((entry.key, entry.value));
         }
-        // Store each address's storage entries
-        for (address, storages) in by_address {
-            store.store_hashed_storages(address, storages)?;
-        }
+        store.store_hashed_storages_bulk(by_address.into_iter().collect())?;
 
         Ok(())
     }
@@ -449,21 +445,18 @@ impl<C> InitTable for StoragesTrieInit<C> {
         let mut by_address: HashMap<B256, Vec<(Nibbles, Option<BranchNodeCompact>)>> =
             HashMap::with_capacity(entries_iter.size_hint().0);
 
-        // Group entries by hashed address
         for (hashed_address, storage_entry) in entries_iter {
             by_address
                 .entry(hashed_address)
                 .or_default()
                 .push((storage_entry.nibbles.0, Some(storage_entry.node)));
         }
-        // Store each address's storage trie branches
-        for (address, branches) in by_address {
-            store.store_storage_branches(address, branches)?;
-        }
+        store.store_storage_branches_bulk(by_address.into_iter().collect())?;
 
         Ok(())
     }
 }
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
