@@ -45,6 +45,12 @@ pub enum UpgradeSignalError {
         /// L2 chain ID whose runtime schedule was rejected.
         chain_id: u64,
     },
+    /// A Beryl activation signal was applied with a zero execution activation admin address.
+    #[error("activation admin address must not be zero for Beryl-enabled chain ID: {chain_id}")]
+    ZeroActivationAdminAddress {
+        /// L2 chain ID whose runtime schedule was rejected.
+        chain_id: u64,
+    },
 }
 
 impl UpgradeSignalError {
@@ -84,5 +90,10 @@ impl UpgradeSignalError {
     /// Creates a missing activation admin address error.
     pub const fn missing_activation_admin_address(chain_id: u64) -> Self {
         Self::MissingActivationAdminAddress { chain_id }
+    }
+
+    /// Creates a zero activation admin address error.
+    pub const fn zero_activation_admin_address(chain_id: u64) -> Self {
+        Self::ZeroActivationAdminAddress { chain_id }
     }
 }

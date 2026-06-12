@@ -149,14 +149,19 @@ impl UpgradeSignalRuntimeValidation {
         chain_id: u64,
         schedule: &UpgradeSignalSchedule,
     ) -> Result<(), UpgradeSignalError> {
-        if self.require_activation_admin_for_beryl
-            && self.activation_admin_address.is_none()
-            && schedule.signals.iter().any(|signal| {
-                signal.positive_activation_timestamp().is_some()
-                    && HardForkConfig::canonical_hardfork_id(&signal.hardfork_id) == Some("beryl")
-            })
-        {
-            return Err(UpgradeSignalError::missing_activation_admin_address(chain_id));
+        let positive_beryl_signal = schedule.signals.iter().any(|signal| {
+            signal.positive_activation_timestamp().is_some()
+                && HardForkConfig::canonical_hardfork_id(&signal.hardfork_id) == Some("beryl")
+        });
+
+        if self.require_activation_admin_for_beryl && positive_beryl_signal {
+            match self.activation_admin_address {
+                None => return Err(UpgradeSignalError::missing_activation_admin_address(chain_id)),
+                Some(address) if address.is_zero() => {
+                    return Err(UpgradeSignalError::zero_activation_admin_address(chain_id));
+                }
+                Some(_) => {}
+            }
         }
 
         Ok(())
@@ -333,7 +338,7 @@ impl UpgradeSignalRefresher {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::U256;
+    use alloy_primitives::{Address, U256};
     use base_common_genesis::{HardForkActivationSink, RuntimeHardForkRegistry};
 
     use super::*;
@@ -405,6 +410,20 @@ mod tests {
         let validation = UpgradeSignalRuntimeValidation::with_activation_admin_address(None);
 
         validation.validate_schedule(9_000_003, &schedule(&[("beryl", 0)])).unwrap();
+    }
+
+    #[test]
+    fn validation_rejects_positive_beryl_with_zero_activation_admin() {
+        let validation =
+            UpgradeSignalRuntimeValidation::with_activation_admin_address(Some(Address::ZERO));
+
+        let error =
+            validation.validate_schedule(9_000_003, &schedule(&[("beryl", 42)])).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "activation admin address must not be zero for Beryl-enabled chain ID: 9000003"
+        );
     }
 
     #[test]
