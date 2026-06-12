@@ -89,7 +89,7 @@ impl<P, R, T> SignerManager<P, R, T> {
     }
 
     /// Returns the transaction manager used by signer lifecycle operations.
-    pub fn tx_manager(&self) -> &T {
+    pub const fn tx_manager(&self) -> &T {
         &self.tx_manager
     }
 

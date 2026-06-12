@@ -218,8 +218,10 @@ where
 mod tests {
     use std::{
         future,
-        sync::atomic::{AtomicUsize, Ordering},
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
         time::Duration,
     };
 
