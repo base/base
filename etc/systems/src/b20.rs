@@ -551,7 +551,7 @@ impl<'a> B20PrecompileClient<'a> {
         input: Bytes,
         label: &'static str,
     ) -> Result<BaseTransactionReceipt> {
-        let nonce = self.provider.get_transaction_count(self.signer.address()).await?;
+        let nonce = self.provider.get_transaction_count(self.signer.address()).pending().await?;
         let (raw_tx, expected_tx_hash) = self.create_signed_tx(to, nonce, input).wrap_err(label)?;
 
         let pending_tx = self

@@ -9,7 +9,7 @@
 mod common;
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::RootProvider;
+use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use base_common_network::Base;
@@ -181,6 +181,9 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
             "updateAllowlist add non-member",
         )
         .await?;
+
+    let current_block = provider.get_block_number().await?;
+    common::wait_for_block(&provider, current_block + 1).await?;
 
     // Non-member is now authorized.
     assert!(

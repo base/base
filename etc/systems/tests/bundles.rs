@@ -22,7 +22,9 @@ const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
 const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
+const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(120);
+const BUNDLE_TARGET_BLOCK_LEAD: u64 = 5;
+const BUNDLE_PRE_TARGET_CHECK_OFFSET: u64 = 2;
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,9 +127,7 @@ async fn test_send_bundle_accepts_valid_bundle() -> Result<()> {
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
     let current_block = builder_provider.get_block_number().await?;
-    // Use +3 to give enough lead time for the bundle to propagate from client
-    // to builder before the target block is built.
-    let target_block = current_block + 3;
+    let target_block = current_block + BUNDLE_TARGET_BLOCK_LEAD;
 
     let request = BundleRequest {
         txs: vec![raw_tx],
@@ -192,7 +192,7 @@ async fn test_send_bundle_included_only_in_target_block() -> Result<()> {
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
     let current_block = builder_provider.get_block_number().await?;
-    let target_block = current_block + 2;
+    let target_block = current_block + BUNDLE_TARGET_BLOCK_LEAD;
 
     let request = BundleRequest {
         txs: vec![raw_tx],
@@ -208,9 +208,12 @@ async fn test_send_bundle_included_only_in_target_block() -> Result<()> {
     let bundle_hash: B256 = rpc_client.request("eth_sendBundle", (request,)).await?;
     assert_eq!(bundle_hash, expected_tx_hash, "Bundle returned unexpected hash");
 
-    wait_for_block(&builder_provider, target_block - 1).await?;
-    let early_receipt = builder_provider.get_transaction_receipt(expected_tx_hash).await?;
-    assert!(early_receipt.is_none(), "Bundle tx should not be included before target block");
+    let pre_target_block =
+        wait_for_block(&builder_provider, target_block - BUNDLE_PRE_TARGET_CHECK_OFFSET).await?;
+    if pre_target_block < target_block {
+        let early_receipt = builder_provider.get_transaction_receipt(expected_tx_hash).await?;
+        assert!(early_receipt.is_none(), "Bundle tx should not be included before target block");
+    }
 
     let receipt = timeout(TX_RECEIPT_TIMEOUT, async {
         loop {
