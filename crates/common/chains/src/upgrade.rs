@@ -1,4 +1,7 @@
-use alloy_hardforks::{ForkCondition, hardfork};
+use core::str::FromStr;
+
+use alloy_hardforks::{EthereumHardfork, ForkCondition, hardfork};
+use base_common_genesis::HardForkConfig;
 use revm::primitives::hardfork::SpecId;
 
 use crate::{ChainConfig, Upgrades};
@@ -42,6 +45,65 @@ hardfork!(
 impl BaseUpgrade {
     /// Latest Base upgrade used by default.
     pub const LATEST: Self = Self::Azul;
+
+    /// Returns the canonical lowercase upgrade ID.
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Bedrock => "bedrock",
+            Self::Regolith => "regolith",
+            Self::Canyon => "canyon",
+            Self::Ecotone => "ecotone",
+            Self::Fjord => "fjord",
+            Self::Granite => "granite",
+            Self::Holocene => "holocene",
+            Self::Isthmus => "isthmus",
+            Self::Jovian => "jovian",
+            Self::Azul => "azul",
+            Self::Beryl => "beryl",
+            Self::Cobalt => "cobalt",
+        }
+    }
+
+    /// Returns the Base upgrade that carries the given Ethereum hardfork on Base.
+    pub const fn from_ethereum_hardfork(fork: EthereumHardfork) -> Option<Self> {
+        match fork {
+            EthereumHardfork::Shanghai => Some(Self::Canyon),
+            EthereumHardfork::Cancun => Some(Self::Ecotone),
+            EthereumHardfork::Prague => Some(Self::Isthmus),
+            EthereumHardfork::Osaka => Some(Self::Azul),
+            _ => None,
+        }
+    }
+
+    /// Returns the Ethereum execution hardfork activated alongside this Base upgrade, if any.
+    pub const fn execution_hardfork(self) -> Option<EthereumHardfork> {
+        match self {
+            Self::Canyon => Some(EthereumHardfork::Shanghai),
+            Self::Ecotone => Some(EthereumHardfork::Cancun),
+            Self::Isthmus => Some(EthereumHardfork::Prague),
+            Self::Azul => Some(EthereumHardfork::Osaka),
+            _ => None,
+        }
+    }
+
+    /// Returns the Base upgrade represented by an execution or Base fork name.
+    pub fn from_fork_name(name: &str) -> Option<Self> {
+        match name {
+            "Bedrock" => Some(Self::Bedrock),
+            "Regolith" => Some(Self::Regolith),
+            "Shanghai" | "Canyon" => Some(Self::Canyon),
+            "Cancun" | "Ecotone" => Some(Self::Ecotone),
+            "Fjord" => Some(Self::Fjord),
+            "Granite" => Some(Self::Granite),
+            "Holocene" => Some(Self::Holocene),
+            "Prague" | "Isthmus" => Some(Self::Isthmus),
+            "Jovian" => Some(Self::Jovian),
+            "Osaka" | "Azul" => Some(Self::Azul),
+            "Beryl" => Some(Self::Beryl),
+            "Cobalt" => Some(Self::Cobalt),
+            _ => None,
+        }
+    }
 
     /// Converts the Base upgrade into its matching Ethereum execution spec.
     pub const fn into_eth_spec(self) -> SpecId {
@@ -143,11 +205,64 @@ impl BaseUpgrade {
     }
 }
 
+/// Canonical contract upgrade IDs used by the runtime upgrade signal.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum ContractUpgrade {
+    /// A contract upgrade that maps directly to a Base upgrade.
+    Upgrade(BaseUpgrade),
+    /// Delta affects rollup derivation but does not introduce an execution fork condition.
+    Delta,
+    /// The Pectra blob schedule affects rollup logic but not the execution chainspec.
+    PectraBlobSchedule,
+}
+
+impl ContractUpgrade {
+    /// Returns the canonical contract upgrade ID.
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Upgrade(upgrade) => upgrade.id(),
+            Self::Delta => "delta",
+            Self::PectraBlobSchedule => "pectra_blob_schedule",
+        }
+    }
+
+    /// Parses a contract upgrade ID or alias into its typed representation.
+    pub fn from_contract_upgrade_id(hardfork_id: &str) -> Option<Self> {
+        match HardForkConfig::canonical_hardfork_id(hardfork_id)? {
+            "delta" => Some(Self::Delta),
+            "pectra_blob_schedule" => Some(Self::PectraBlobSchedule),
+            canonical_id => BaseUpgrade::from_str(canonical_id).ok().map(Self::Upgrade),
+        }
+    }
+
+    /// Returns the contract upgrade represented by an execution or Base fork name.
+    pub fn from_fork_name(name: &str) -> Option<Self> {
+        BaseUpgrade::from_fork_name(name).map(Self::Upgrade)
+    }
+
+    /// Returns the Base upgrade for this contract upgrade, when it drives execution behavior.
+    pub const fn base_upgrade(self) -> Option<BaseUpgrade> {
+        match self {
+            Self::Upgrade(upgrade) => Some(upgrade),
+            Self::Delta | Self::PectraBlobSchedule => None,
+        }
+    }
+
+    /// Returns the Ethereum execution hardfork activated by this contract upgrade, if any.
+    pub const fn execution_hardfork(self) -> Option<EthereumHardfork> {
+        match self {
+            Self::Upgrade(upgrade) => upgrade.execution_hardfork(),
+            Self::Delta | Self::PectraBlobSchedule => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
 
     use alloy_chains::Chain;
+    use alloy_hardforks::EthereumHardfork;
 
     use super::*;
 
@@ -192,6 +307,62 @@ mod tests {
     }
 
     #[test]
+    fn base_upgrade_ids_match_runtime_signal_ids() {
+        assert_eq!(BaseUpgrade::Bedrock.id(), "bedrock");
+        assert_eq!(BaseUpgrade::Regolith.id(), "regolith");
+        assert_eq!(BaseUpgrade::Canyon.id(), "canyon");
+        assert_eq!(BaseUpgrade::Ecotone.id(), "ecotone");
+        assert_eq!(BaseUpgrade::Azul.id(), "azul");
+        assert_eq!(BaseUpgrade::Beryl.id(), "beryl");
+        assert_eq!(BaseUpgrade::Cobalt.id(), "cobalt");
+    }
+
+    #[test]
+    fn ethereum_hardforks_map_to_base_upgrades() {
+        assert_eq!(
+            BaseUpgrade::from_ethereum_hardfork(EthereumHardfork::Shanghai),
+            Some(BaseUpgrade::Canyon)
+        );
+        assert_eq!(
+            BaseUpgrade::from_ethereum_hardfork(EthereumHardfork::Cancun),
+            Some(BaseUpgrade::Ecotone)
+        );
+        assert_eq!(
+            BaseUpgrade::from_ethereum_hardfork(EthereumHardfork::Prague),
+            Some(BaseUpgrade::Isthmus)
+        );
+        assert_eq!(
+            BaseUpgrade::from_ethereum_hardfork(EthereumHardfork::Osaka),
+            Some(BaseUpgrade::Azul)
+        );
+        assert_eq!(BaseUpgrade::from_ethereum_hardfork(EthereumHardfork::London), None);
+    }
+
+    #[test]
+    fn fork_names_resolve_to_contract_upgrades() {
+        assert_eq!(
+            ContractUpgrade::from_fork_name(EthereumHardfork::Shanghai.name()),
+            Some(ContractUpgrade::Upgrade(BaseUpgrade::Canyon))
+        );
+        assert_eq!(
+            ContractUpgrade::from_fork_name(EthereumHardfork::Cancun.name()),
+            Some(ContractUpgrade::Upgrade(BaseUpgrade::Ecotone))
+        );
+        assert_eq!(
+            ContractUpgrade::from_fork_name(EthereumHardfork::Prague.name()),
+            Some(ContractUpgrade::Upgrade(BaseUpgrade::Isthmus))
+        );
+        assert_eq!(
+            ContractUpgrade::from_fork_name(EthereumHardfork::Osaka.name()),
+            Some(ContractUpgrade::Upgrade(BaseUpgrade::Azul))
+        );
+        assert_eq!(
+            ContractUpgrade::from_fork_name(BaseUpgrade::Beryl.name()),
+            Some(ContractUpgrade::Upgrade(BaseUpgrade::Beryl))
+        );
+    }
+
+    #[test]
     fn check_base_upgrade_eth_spec_mapping() {
         let test_cases = [
             (BaseUpgrade::Bedrock, SpecId::MERGE),
@@ -211,6 +382,32 @@ mod tests {
         for (base_upgrade, eth_spec) in test_cases {
             assert_eq!(base_upgrade.into_eth_spec(), eth_spec);
         }
+    }
+
+    #[test]
+    fn contract_upgrade_parses_aliases() {
+        assert_eq!(
+            ContractUpgrade::from_contract_upgrade_id("base_azul"),
+            Some(ContractUpgrade::Upgrade(BaseUpgrade::Azul))
+        );
+        assert_eq!(
+            ContractUpgrade::from_contract_upgrade_id("v2"),
+            Some(ContractUpgrade::Upgrade(BaseUpgrade::Beryl))
+        );
+        assert_eq!(
+            ContractUpgrade::from_contract_upgrade_id("pectra_blob_schedule"),
+            Some(ContractUpgrade::PectraBlobSchedule)
+        );
+    }
+
+    #[test]
+    fn contract_upgrade_tracks_execution_companions() {
+        assert_eq!(
+            ContractUpgrade::Upgrade(BaseUpgrade::Canyon).execution_hardfork(),
+            Some(EthereumHardfork::Shanghai)
+        );
+        assert_eq!(ContractUpgrade::Upgrade(BaseUpgrade::Regolith).execution_hardfork(), None);
+        assert_eq!(ContractUpgrade::Delta.execution_hardfork(), None);
     }
 
     /// Reverse lookup to find the upgrade given a chain ID and block timestamp.
