@@ -308,7 +308,8 @@ impl ConductorControl {
                         let observed = wait_for_stable_leader(nodes, Some(target)).await?;
                         return Ok(format!("leadership already on {observed}"));
                     }
-                    let target_node = target_node.expect("target node was validated above");
+                    let target_node = target_node
+                        .ok_or_else(|| anyhow::anyhow!("target node {target} not found"))?;
                     match ConductorApiClient::conductor_transfer_leader_to_server(
                         &leader,
                         target_node.server_id.clone(),
@@ -403,7 +404,7 @@ async fn wait_for_stable_leader(
     const LEADER_RPC_TIMEOUT: Duration = Duration::from_millis(500);
     const POLL_INTERVAL: Duration = Duration::from_millis(500);
     // Keep a short stabilization barrier so back-to-back conductor actions do
-    // not race leader churn, without forcing operators to wait for the old 12s window.
+    // not race leader churn, while still returning quickly once leadership settles.
     const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(6);
     const STABLE_OBSERVATIONS: usize = 2;
 
