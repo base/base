@@ -36,6 +36,7 @@ pub use doctor::{
 mod rpc;
 pub use rpc::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, ClInfoReport,
+    ConductorClusterSnapshot, ConductorControl, ConductorFanoutReport, ConductorNodeFailure,
     ConductorNodeStatus, ConductorPollUpdate, DiscoveryInfo, ElInfoReport, InitialBacklog,
     L1BlockInfo, L1ConnectionMode, LatestProposal, NodeEndpoint, NodeInfoReport, PausedPeers,
     PeerListReport, PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus, PodsPoller,

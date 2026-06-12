@@ -13,7 +13,7 @@ Global options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-c, --config <CONFIG>` | `mainnet` | Chain config: `mainnet`, `sepolia`, `devnet`, or a path to a config file |
-| `--conductor-rpc <URL>` | `http://localhost:5545` | Bootstrap conductor JSON-RPC URL for runtime cluster discovery. Overrides any hardcoded conductor list in the chain config. Set via `BASECTL_CONDUCTOR_RPC`. |
+| `--conductor-rpc <URL>` | | Bootstrap conductor JSON-RPC URL for runtime cluster discovery when the chain config has no hardcoded conductor list. If omitted, basectl uses `discovery.bootstrap_rpc` from config. Set via `BASECTL_CONDUCTOR_RPC`. |
 
 ## Commands
 
@@ -150,6 +150,48 @@ Important EL RPC note:
 - CL data comes from `opp2p_self`, `opp2p_peerStats`, and `opp2p_peers(true)` on the consensus RPC.
 - CL ban/unban commands use `opp2p_blockPeer`, `opp2p_unblockPeer`, and `opp2p_listBlockedPeers` underneath, but the basectl command surface uses ban/unban terminology so it can stay consistent when EL ban support is added later.
 
+### `basectl conductor`
+
+Conductor inspection and control commands for HA sequencer clusters.
+
+- `basectl conductor status` shows cluster membership, leader, pause state,
+  sequencer health, L1/L2 heads, and peer counts per node.
+- `basectl conductor transfer-leader [TARGET]` transfers raft leadership away
+  from the current leader, or to a named target node when `TARGET` is provided.
+- `basectl conductor pause <NODE>` pauses op-conductor's control loop on one
+  node.
+- `basectl conductor unpause <NODE>` resumes op-conductor's control loop on one
+  node.
+- `basectl conductor pause-all` pauses op-conductor's control loop on every
+  current raft member from `conductor_clusterMembership`.
+- `basectl conductor unpause-all` resumes op-conductor's control loop on every
+  current raft member from `conductor_clusterMembership`.
+
+Conductor commands use the selected config's hardcoded `conductors` list when
+present. Otherwise, they discover the live raft membership from the global
+`--conductor-rpc` bootstrap URL or `discovery.bootstrap_rpc` in the config.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | For `status`, emit a structured cluster status summary instead of the pretty table output. |
+
+Destructive conductor commands also support:
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip the interactive confirmation prompt for single-node actions. For `pause-all` / `unpause-all`, pass twice (`--yes --yes`) to skip the typed network-name confirmation. |
+| `--json` | Emit a structured action outcome instead of pretty text. Single-node actions require `--yes`; cluster-wide actions require `--yes --yes` so scripts do not hang on interactive confirmation. |
+
+Safety notes:
+
+- `pause` / `unpause` prompts with the exact node name and conductor RPC URL.
+- `transfer-leader` prompts with the target node or selected network.
+- `pause-all` / `unpause-all` require typing the selected network name unless
+  `--yes --yes` is provided.
+- Cluster-wide actions can partially succeed before one node fails. Pretty and
+  JSON output include the success and failure sets, and the command exits
+  non-zero when any node fails.
+
 ### `basectl doctor`
 
 Runs read-only diagnostics for a single node and prints one row per check. The
@@ -262,6 +304,23 @@ basectl -c sepolia p2p unban-all --cl-rpc https://your-cl.example/ --yes
 
 # If the EL RPC is restricted, EL peer count still works but EL admin-backed fields may be unavailable
 basectl -c sepolia p2p info --el-rpc https://your-public-el.example/ --cl-rpc https://your-cl.example/
+
+# Show devnet conductor cluster status
+basectl -c devnet conductor status
+
+# Conductor status as structured JSON
+basectl -c devnet conductor status --json | jq '{leader, paused, nodes: [.nodes[].name]}'
+
+# Transfer conductor leadership to a target node after confirmation
+basectl -c devnet conductor transfer-leader op-conductor-1
+
+# Pause and unpause one conductor node
+basectl -c devnet conductor pause op-conductor-0
+basectl -c devnet conductor unpause op-conductor-0 --yes --json | jq .
+
+# Cluster-wide conductor actions require typed confirmation, or --yes --yes for scripts
+basectl -c devnet conductor pause-all
+basectl -c devnet conductor unpause-all --yes --yes --json | jq .
 
 # Run doctor with values from the selected config
 basectl -c mainnet doctor

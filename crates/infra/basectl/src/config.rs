@@ -404,6 +404,26 @@ impl MonitoringConfig {
         }
         candidate
     }
+
+    /// Resolves the active conductor source from CLI flag and config.
+    ///
+    /// Precedence: hand-configured `conductors` list > CLI `--conductor-rpc`
+    /// flag > `discovery.bootstrap_rpc` from config.
+    pub fn conductor_source(&self, cli_flag: Option<Url>) -> Option<ConductorSource> {
+        if let Some(nodes) = self.conductors.clone() {
+            return Some(ConductorSource::Static(nodes));
+        }
+        if let Some(bootstrap) = cli_flag {
+            let ports = self.discovery.as_ref().map(|d| d.ports.clone()).unwrap_or_default();
+            return Some(ConductorSource::Discover { bootstrap, ports });
+        }
+        if let Some(d) = self.discovery.as_ref()
+            && let Some(bootstrap) = d.bootstrap_rpc.clone()
+        {
+            return Some(ConductorSource::Discover { bootstrap, ports: d.ports.clone() });
+        }
+        None
+    }
 }
 
 const fn default_blob_target() -> u64 {
@@ -755,5 +775,52 @@ mod tests {
     async fn test_unknown_config() {
         let result = MonitoringConfig::load("nonexistent").await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn conductor_source_prefers_static_nodes() {
+        let mut config = MonitoringConfig::devnet_base();
+        let cli_url = Url::parse("http://127.0.0.1:5545").unwrap();
+
+        let Some(ConductorSource::Static(nodes)) = config.conductor_source(Some(cli_url)) else {
+            panic!("expected static conductor source");
+        };
+
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0].name, "op-conductor-0");
+        config.conductors = None;
+        assert!(config.conductor_source(None).is_none());
+    }
+
+    #[test]
+    fn conductor_source_uses_cli_flag_without_static_nodes() {
+        let mut config = MonitoringConfig::mainnet();
+        let cli_url = Url::parse("http://127.0.0.1:5545").unwrap();
+
+        let Some(ConductorSource::Discover { bootstrap, ports }) =
+            config.conductor_source(Some(cli_url.clone()))
+        else {
+            panic!("expected discovered conductor source");
+        };
+
+        assert_eq!(bootstrap, cli_url);
+        assert_eq!(ports.conductor_rpc, 5545);
+        config.discovery = None;
+        assert!(config.conductor_source(None).is_none());
+    }
+
+    #[test]
+    fn conductor_source_uses_config_discovery_bootstrap() {
+        let mut config = MonitoringConfig::mainnet();
+        let bootstrap = Url::parse("http://10.0.0.1:5545").unwrap();
+        config.discovery.as_mut().unwrap().bootstrap_rpc = Some(bootstrap.clone());
+
+        let Some(ConductorSource::Discover { bootstrap: resolved, .. }) =
+            config.conductor_source(None)
+        else {
+            panic!("expected discovered conductor source");
+        };
+
+        assert_eq!(resolved, bootstrap);
     }
 }

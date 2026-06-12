@@ -16,19 +16,13 @@ pub(crate) struct Cli {
     pub(crate) config: String,
     /// Bootstrap conductor JSON-RPC URL for runtime cluster discovery.
     ///
-    /// When set, basectl ignores any hardcoded conductor list in the chain
-    /// config and instead asks this URL for the live raft membership, then
-    /// polls all discovered peers via templated ports.
+    /// When no hardcoded conductor list exists in the chain config, basectl
+    /// asks this URL for the live raft membership. If omitted, basectl uses
+    /// `discovery.bootstrap_rpc` from config.
     ///
-    /// Only applies to the conductor view (and views that embed it, like the
-    /// command center). Ignored by `flashblocks` and other non-TUI
-    /// subcommands.
-    #[arg(
-        long = "conductor-rpc",
-        env = "BASECTL_CONDUCTOR_RPC",
-        global = true,
-        default_value = "http://localhost:5545"
-    )]
+    /// Applies to the conductor view, views that embed it, and non-TUI
+    /// `basectl conductor` commands. Ignored by unrelated non-TUI subcommands.
+    #[arg(long = "conductor-rpc", env = "BASECTL_CONDUCTOR_RPC", global = true)]
     pub(crate) conductor_rpc: Option<Url>,
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
@@ -95,6 +89,11 @@ pub(crate) enum Commands {
     P2p {
         #[command(subcommand)]
         command: P2pCommands,
+    },
+    /// Inspect and control an HA conductor cluster.
+    Conductor {
+        #[command(subcommand)]
+        command: ConductorCommands,
     },
     /// Run read-only diagnostics for a single node.
     Doctor(DoctorArgs),
@@ -252,6 +251,70 @@ pub(crate) struct DestructiveClBulkArgs {
     pub(crate) json: bool,
 }
 
+/// HA conductor inspection and control commands.
+#[derive(Debug, Subcommand)]
+pub(crate) enum ConductorCommands {
+    /// Show current cluster status.
+    Status(ConductorStatusArgs),
+    /// Transfer raft leadership away from the current leader or to a target node.
+    TransferLeader(ConductorLeaderArgs),
+    /// Pause op-conductor's control loop on one node.
+    Pause(ConductorNodeActionArgs),
+    /// Resume op-conductor's control loop on one node.
+    Unpause(ConductorNodeActionArgs),
+    /// Pause op-conductor's control loop on every current raft member.
+    PauseAll(ConductorClusterActionArgs),
+    /// Resume op-conductor's control loop on every current raft member.
+    UnpauseAll(ConductorClusterActionArgs),
+}
+
+/// Flags for `basectl conductor status`.
+#[derive(Debug, Args)]
+pub(crate) struct ConductorStatusArgs {
+    /// Emit a structured JSON status summary instead of pretty text.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// Flags for `basectl conductor transfer-leader`.
+#[derive(Debug, Args)]
+pub(crate) struct ConductorLeaderArgs {
+    /// Optional target node name. If omitted, the leader transfers to any available peer.
+    #[arg(value_name = "TARGET")]
+    pub(crate) target: Option<String>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
+}
+
+/// Shared flags for single-node destructive `basectl conductor` commands.
+#[derive(Debug, Args)]
+pub(crate) struct ConductorNodeActionArgs {
+    /// Conductor node name from the selected config or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub(crate) node: String,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
+}
+
+/// Shared flags for cluster-wide destructive `basectl conductor` commands.
+#[derive(Debug, Args)]
+pub(crate) struct ConductorClusterActionArgs {
+    /// Skip the typed network-name confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text. Requires `--yes`.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
+}
+
 /// TUI monitor views.
 #[derive(Debug, Subcommand)]
 pub(crate) enum MonitorCommands {
@@ -396,6 +459,50 @@ mod tests {
                 "http://127.0.0.1:8545",
             ])
             .is_err()
+        );
+    }
+
+    #[test]
+    fn conductor_commands_parse() {
+        assert!(Cli::try_parse_from(["basectl", "conductor", "status", "--json"]).is_ok());
+        assert!(
+            Cli::try_parse_from([
+                "basectl",
+                "conductor",
+                "transfer-leader",
+                "op-conductor-1",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["basectl", "conductor", "pause", "op-conductor-0", "--yes",])
+                .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["basectl", "conductor", "unpause", "op-conductor-0", "--yes",])
+                .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["basectl", "conductor", "pause-all", "--yes", "--json",]).is_ok()
+        );
+        assert!(Cli::try_parse_from(["basectl", "conductor", "unpause-all"]).is_ok());
+    }
+
+    #[test]
+    fn destructive_conductor_json_requires_yes() {
+        assert!(
+            Cli::try_parse_from(["basectl", "conductor", "pause", "op-conductor-0", "--json",])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["basectl", "conductor", "transfer-leader", "--json"]).is_err()
+        );
+        assert!(Cli::try_parse_from(["basectl", "conductor", "pause-all", "--json"]).is_err());
+        assert!(Cli::try_parse_from(["basectl", "conductor", "unpause-all", "--json"]).is_err());
+        assert!(
+            Cli::try_parse_from(["basectl", "conductor", "pause-all", "--yes", "--json"]).is_ok()
         );
     }
 }

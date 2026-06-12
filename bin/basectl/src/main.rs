@@ -2,6 +2,7 @@
 
 mod block;
 mod cli;
+mod conductor;
 mod confirm;
 mod doctor;
 mod p2p;
@@ -41,6 +42,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(cli::Commands::P2p { command }) => {
             p2p::run(MonitoringConfig::load(config).await?, command).await
+        }
+        Some(cli::Commands::Conductor { command }) => {
+            conductor::run(MonitoringConfig::load(config).await?, conductor_rpc, command).await
         }
         Some(cli::Commands::Doctor(args)) => {
             let has_failures = doctor::run(MonitoringConfig::load(config).await?, args).await?;
