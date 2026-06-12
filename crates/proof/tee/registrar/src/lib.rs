@@ -45,7 +45,7 @@ mod proof_handler;
 pub use proof_handler::{ProofHandler, ProofHandlerConfig};
 
 mod registration_manager;
-pub use registration_manager::{InFlightRegistrationGuard, RegistrationManager};
+pub use registration_manager::RegistrationManager;
 
 mod registry;
 pub use registry::{RegistryClient, RegistryContractClient};

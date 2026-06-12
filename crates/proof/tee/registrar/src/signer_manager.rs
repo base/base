@@ -6,7 +6,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
@@ -73,7 +73,6 @@ pub struct SignerManager<P, R, T> {
     registry: R,
     tx_manager: T,
     proof_semaphore: Semaphore,
-    in_flight_registrations: Mutex<HashSet<Address>>,
     config: SignerManagerConfig,
 }
 
@@ -87,14 +86,7 @@ impl<P, R, T> SignerManager<P, R, T> {
     /// Creates a signer manager from the signer lifecycle dependencies.
     pub fn new(proof_provider: P, registry: R, tx_manager: T, config: SignerManagerConfig) -> Self {
         let proof_semaphore = Semaphore::new(config.max_concurrency.max(1));
-        Self {
-            proof_provider,
-            registry,
-            tx_manager,
-            proof_semaphore,
-            in_flight_registrations: Mutex::new(HashSet::new()),
-            config,
-        }
+        Self { proof_provider, registry, tx_manager, proof_semaphore, config }
     }
 
     /// Returns the transaction manager used by signer lifecycle operations.
@@ -351,7 +343,6 @@ where
             &self.registry,
             &self.tx_manager,
             &self.proof_semaphore,
-            &self.in_flight_registrations,
             ProofHandlerConfig {
                 registry_address: self.config.registry_address,
                 max_tx_retries: self.config.max_tx_retries,
