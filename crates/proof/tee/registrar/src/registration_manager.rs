@@ -22,7 +22,7 @@ use crate::{ProofHandler, ProofHandlerConfig, ProverInstance, RegistryClient, Re
 /// For each signer it confirms the signer still needs registration, starts the
 /// attestation proof request when needed, and passes the completed proof to
 /// [`ProofHandler`] for onchain registration. The caller owns task-level
-/// deduplication; production calls flow through [`crate::RegistrationDriver`].
+/// deduplication; production calls flow through [`crate::SignerManager`].
 pub struct RegistrationManager<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
     /// Proof provider used to submit or recover attestation proof requests.
     proof_provider: &'a P,
