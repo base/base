@@ -20,6 +20,9 @@ use base_test_utils::Account;
 /// L2 timestamp where the Beryl fork activates in these tests.
 pub(crate) const BERYL_ACTIVATION_TIMESTAMP: u64 = 4;
 
+/// L2 timestamp where the Cobalt fork activates in tests that opt into it.
+pub(crate) const COBALT_ACTIVATION_TIMESTAMP: u64 = 8;
+
 /// B-20 token storage slot for `total_supply`.
 const B20_TOTAL_SUPPLY_SLOT: U256 =
     uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434003_U256);
@@ -111,17 +114,29 @@ impl BerylTestEnv {
     /// Creates an environment with all forks through Azul active at genesis
     /// and Base Beryl active at timestamp 4.
     pub(crate) fn new() -> Self {
+        Self::with_cobalt_activation(None)
+    }
+
+    /// Creates an environment with Base Beryl and Cobalt scheduled.
+    pub(crate) fn new_with_cobalt() -> Self {
+        Self::with_cobalt_activation(Some(COBALT_ACTIVATION_TIMESTAMP))
+    }
+
+    fn with_cobalt_activation(cobalt_activation: Option<u64>) -> Self {
         let batcher_cfg = BatcherConfig {
             encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
             ..Default::default()
         };
 
-        let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        let mut rollup_cfg_builder = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
             .through_isthmus()
             .with_jovian_at(0)
             .with_azul_at(0)
-            .with_beryl_at(BERYL_ACTIVATION_TIMESTAMP)
-            .build();
+            .with_beryl_at(BERYL_ACTIVATION_TIMESTAMP);
+        if let Some(cobalt_activation) = cobalt_activation {
+            rollup_cfg_builder = rollup_cfg_builder.with_cobalt_at(cobalt_activation);
+        }
+        let rollup_cfg = rollup_cfg_builder.build();
         let chain_id = rollup_cfg.l2_chain_id.id();
         let harness = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -378,6 +393,13 @@ impl BerylTestEnv {
     /// Creates an activation registry `deactivate(feature)` transaction signed by the admin.
     pub(crate) fn deactivate_feature_tx(&self, feature: B256) -> BaseTxEnvelope {
         let input = Bytes::from(IActivationRegistry::deactivateCall { feature }.abi_encode());
+        self.create_tx(TxKind::Call(ActivationRegistryStorage::ADDRESS), input, Self::B20_GAS_LIMIT)
+    }
+
+    /// Creates an activation registry `setAdmin(newAdmin)` transaction signed by the admin.
+    pub(crate) fn set_activation_admin_tx(&self, new_admin: Address) -> BaseTxEnvelope {
+        let input =
+            Bytes::from(IActivationRegistry::setAdminCall { newAdmin: new_admin }.abi_encode());
         self.create_tx(TxKind::Call(ActivationRegistryStorage::ADDRESS), input, Self::B20_GAS_LIMIT)
     }
 

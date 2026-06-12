@@ -229,6 +229,7 @@ pub struct SetupContainer {
     isthmus_activation_block: Option<u64>,
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
+    base_cobalt_activation_block: Option<u64>,
     network_name: Option<String>,
 }
 
@@ -243,6 +244,7 @@ impl SetupContainer {
             isthmus_activation_block: None,
             base_azul_activation_block: None,
             base_beryl_activation_block: None,
+            base_cobalt_activation_block: None,
             network_name: None,
         }
     }
@@ -280,6 +282,12 @@ impl SetupContainer {
     /// Sets the L2 block number at which Base Beryl activates.
     pub const fn with_base_beryl_activation_block(mut self, block: u64) -> Self {
         self.base_beryl_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which Base Cobalt activates.
+    pub const fn with_base_cobalt_activation_block(mut self, block: u64) -> Self {
+        self.base_cobalt_activation_block = Some(block);
         self
     }
 
@@ -378,6 +386,10 @@ impl SetupContainer {
 
         if let Some(block) = self.base_beryl_activation_block {
             container = container.with_env_var("L2_BASE_BERYL_BLOCK", block.to_string());
+        }
+
+        if let Some(block) = self.base_cobalt_activation_block {
+            container = container.with_env_var("L2_BASE_COBALT_BLOCK", block.to_string());
         }
 
         let _container = container
