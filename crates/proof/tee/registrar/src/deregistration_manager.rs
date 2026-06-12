@@ -131,21 +131,17 @@ where
     ///
     /// Checks `isRegisteredSigner` before submitting a transaction so stale
     /// `getRegisteredSigners()` entries do not loop forever.
-    pub async fn deregister_orphan(
-        &self,
-        signer: Address,
-        cancel: &CancellationToken,
-    ) -> Result<bool> {
+    pub async fn deregister_orphan(&self, signer: Address, cancel: &CancellationToken) -> bool {
         if cancel.is_cancelled() {
             debug!("shutdown requested, stopping orphan deregistration");
-            return Ok(false);
+            return false;
         }
 
         let registered = tokio::select! {
             biased;
             () = cancel.cancelled() => {
                 debug!("shutdown requested while verifying orphan signer");
-                return Ok(false);
+                return false;
             }
             res = self.registry.is_registered(signer) => res,
         };
@@ -157,7 +153,7 @@ where
                     "signer appears in getRegisteredSigners but isRegisteredSigner is false, \
                      skipping (possible EnumerableSet ghost entry)"
                 );
-                Ok(false)
+                false
             }
             Err(e) => {
                 warn!(
@@ -165,16 +161,16 @@ where
                     signer = %signer,
                     "failed to verify signer registration status, skipping deregistration"
                 );
-                Ok(false)
+                false
             }
             Ok(true) if cancel.is_cancelled() => {
                 debug!(
                     signer = %signer,
                     "shutdown requested before submitting orphan deregistration"
                 );
-                Ok(false)
+                false
             }
-            Ok(true) => Ok(self.submit_deregistration(signer).await),
+            Ok(true) => self.submit_deregistration(signer).await,
         }
     }
 
@@ -204,8 +200,8 @@ where
         .buffer_unordered(concurrency);
 
         let mut deregistered = 0usize;
-        while let Some(result) = deregistrations.next().await {
-            if result? {
+        while let Some(deregistered_orphan) = deregistrations.next().await {
+            if deregistered_orphan {
                 RegistrarMetrics::deregistrations_total().increment(1);
                 deregistered += 1;
             }
@@ -373,7 +369,7 @@ mod tests {
         let manager =
             DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
 
-        manager.deregister_orphan(SIGNER_A, &cancel).await.unwrap();
+        manager.deregister_orphan(SIGNER_A, &cancel).await;
 
         assert!(tx_manager.take_candidates().is_empty());
     }

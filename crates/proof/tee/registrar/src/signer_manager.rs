@@ -58,9 +58,9 @@ pub struct PendingRegistration {
 
 /// Coordinates signer registration and orphan signer deregistration.
 pub struct SignerManager<P, R, T> {
-    proof_provider: Arc<P>,
-    registry: Arc<R>,
-    tx_manager: Arc<T>,
+    proof_provider: P,
+    registry: R,
+    tx_manager: T,
     proof_semaphore: Arc<Semaphore>,
     in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
     signer_history: Arc<Mutex<HashMap<Address, String>>>,
@@ -78,9 +78,9 @@ impl<P, R, T> SignerManager<P, R, T> {
     pub fn new(proof_provider: P, registry: R, tx_manager: T, config: SignerManagerConfig) -> Self {
         let proof_semaphore = Arc::new(Semaphore::new(config.max_concurrency.max(1)));
         Self {
-            proof_provider: Arc::new(proof_provider),
-            registry: Arc::new(registry),
-            tx_manager: Arc::new(tx_manager),
+            proof_provider,
+            registry,
+            tx_manager,
             proof_semaphore,
             in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
             signer_history: Arc::new(Mutex::new(HashMap::new())),
@@ -90,7 +90,7 @@ impl<P, R, T> SignerManager<P, R, T> {
 
     /// Returns the transaction manager used by signer lifecycle operations.
     pub fn tx_manager(&self) -> &T {
-        self.tx_manager.as_ref()
+        &self.tx_manager
     }
 
     /// Records last-known instance attribution for signer addresses.
@@ -297,10 +297,10 @@ where
         signer_cancel: CancellationToken,
     ) -> Result<Address> {
         let registration_manager = RegistrationManager::new(
-            self.proof_provider.as_ref(),
-            self.registry.as_ref(),
-            self.tx_manager.as_ref(),
-            self.proof_semaphore.as_ref(),
+            &self.proof_provider,
+            &self.registry,
+            &self.tx_manager,
+            &self.proof_semaphore,
             &self.in_flight_registrations,
             ProofHandlerConfig {
                 registry_address: self.config.registry_address,
@@ -318,11 +318,10 @@ where
     pub async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
         let deregistration_manager = DeregistrationManager::new(
             self.config.registry_address,
-            self.registry.as_ref(),
-            self.tx_manager.as_ref(),
+            &self.registry,
+            &self.tx_manager,
             &self.signer_history,
-        )
-        .with_max_concurrency(self.config.max_concurrency);
+        );
 
         deregistration_manager.run_orphan_dereg(protected_signers, &self.config.cancel).await
     }
