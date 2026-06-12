@@ -169,7 +169,7 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn rollup_config_upgrade_activation_uses_runtime_overrides() {
-        use base_common_genesis::RuntimeHardForkRegistry;
+        use base_common_genesis::RuntimeUpgradeRegistry;
 
         const CHAIN_ID: u64 = 9_777_001;
         const ACTIVATION: u64 = 42;
@@ -178,9 +178,9 @@ mod tests {
             l2_chain_id: alloy_chains::Chain::from_id(CHAIN_ID),
             ..RollupConfig::default()
         };
-        RuntimeHardForkRegistry::clear_chain(CHAIN_ID);
-        RuntimeHardForkRegistry::set_activation_timestamp(CHAIN_ID, "azul", ACTIVATION);
-        RuntimeHardForkRegistry::set_activation_timestamp(CHAIN_ID, "cobalt", ACTIVATION + 1);
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
+        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, "azul", ACTIVATION);
+        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, "cobalt", ACTIVATION + 1);
 
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Timestamp(ACTIVATION));
         assert_eq!(
@@ -188,6 +188,6 @@ mod tests {
             ForkCondition::Timestamp(ACTIVATION + 1)
         );
 
-        RuntimeHardForkRegistry::clear_chain(CHAIN_ID);
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
     }
 }

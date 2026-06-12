@@ -4,9 +4,8 @@ use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 
-#[cfg(feature = "std")]
-use crate::RuntimeHardForkRegistry;
-use crate::{ChainGenesis, FeeConfig, HardForkActivation, HardForkActivationSink, HardForkConfig};
+use crate::RuntimeUpgradeRegistry;
+use crate::{ChainGenesis, FeeConfig, HardForkConfig, UpgradeActivation, UpgradeActivationSink};
 
 /// The Rollup configuration.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -190,10 +189,9 @@ macro_rules! rollup_fork_methods {
 
 impl RollupConfig {
     /// Returns this rollup config's runtime-aware hardfork activation for a hardfork ID.
-    pub fn hardfork_activation(&self, hardfork_id: &str) -> Option<HardForkActivation> {
-        #[cfg(feature = "std")]
+    pub fn hardfork_activation(&self, hardfork_id: &str) -> Option<UpgradeActivation> {
         if let Some(activation) =
-            RuntimeHardForkRegistry::activation(self.l2_chain_id.id(), hardfork_id)
+            RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), hardfork_id)
         {
             return Some(activation);
         }
@@ -203,13 +201,12 @@ impl RollupConfig {
 
     /// Returns this rollup config's runtime-aware activation timestamp for a hardfork ID.
     pub fn hardfork_activation_timestamp(&self, hardfork_id: &str) -> Option<u64> {
-        self.hardfork_activation(hardfork_id).and_then(HardForkActivation::timestamp)
+        self.hardfork_activation(hardfork_id).and_then(UpgradeActivation::timestamp)
     }
 
     /// Applies runtime hardfork overrides to this rollup config's local hardfork view.
     pub fn apply_runtime_hardfork_overrides(&mut self) {
-        #[cfg(feature = "std")]
-        if let Some(overrides) = RuntimeHardForkRegistry::overrides(self.l2_chain_id.id()) {
+        if let Some(overrides) = RuntimeUpgradeRegistry::overrides(self.l2_chain_id.id()) {
             self.hardforks.apply_activation_overrides(&overrides);
         }
     }
@@ -240,13 +237,13 @@ impl RollupConfig {
     pub fn apply_hardfork_activation(
         &mut self,
         hardfork_id: &str,
-        activation: HardForkActivation,
+        activation: UpgradeActivation,
     ) -> bool {
         match activation {
-            HardForkActivation::Timestamp(timestamp) => {
+            UpgradeActivation::Timestamp(timestamp) => {
                 self.set_hardfork_activation_timestamp(hardfork_id, timestamp)
             }
-            HardForkActivation::Never => self.clear_hardfork_activation_timestamp(hardfork_id),
+            UpgradeActivation::Never => self.clear_hardfork_activation_timestamp(hardfork_id),
         }
     }
 
@@ -433,13 +430,13 @@ impl RollupConfig {
     }
 }
 
-impl HardForkActivationSink for RollupConfig {
+impl UpgradeActivationSink for RollupConfig {
     type Error = core::convert::Infallible;
 
     fn apply_activation(
         &mut self,
         hardfork_id: &str,
-        activation: HardForkActivation,
+        activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
         Ok(self.apply_hardfork_activation(hardfork_id, activation))
     }
@@ -883,10 +880,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn runtime_overrides_update_fork_checks_and_materialized_view() {
         let chain_id = 9_100_002;
-        crate::RuntimeHardForkRegistry::clear_chain(chain_id);
+        crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
         let cfg = RollupConfig {
             l2_chain_id: Chain::from_id(chain_id),
             hardforks: HardForkConfig { canyon_time: Some(10), ..Default::default() },
@@ -895,9 +891,9 @@ mod tests {
 
         assert!(cfg.is_canyon_active(10));
 
-        crate::RuntimeHardForkRegistry::clear_activation_timestamp(chain_id, "canyon");
-        crate::RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "azul", 42);
-        crate::RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "cobalt", 84);
+        crate::RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, "canyon");
+        crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, "azul", 42);
+        crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, "cobalt", 84);
 
         assert!(!cfg.is_canyon_active(10));
         assert!(cfg.is_base_azul_active(42));
@@ -908,7 +904,7 @@ mod tests {
         assert_eq!(materialized.hardforks.base.azul, Some(42));
         assert_eq!(materialized.hardforks.base.cobalt, Some(84));
 
-        crate::RuntimeHardForkRegistry::clear_chain(chain_id);
+        crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[test]

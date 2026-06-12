@@ -5,8 +5,7 @@ use alloc::{
     string::{String, ToString},
 };
 use core::fmt::Display;
-#[cfg(feature = "std")]
-use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Upgrade configuration for Base-specific upgrades.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
@@ -35,17 +34,17 @@ impl BaseUpgradeConfig {
     }
 }
 
-/// Runtime hardfork activation override.
+/// Runtime upgrade activation override.
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub enum HardForkActivation {
-    /// The hardfork is not activated.
+pub enum UpgradeActivation {
+    /// The upgrade is not activated.
     Never,
-    /// The hardfork activates at the given L2 timestamp.
+    /// The upgrade activates at the given L2 timestamp.
     Timestamp(u64),
 }
 
-impl HardForkActivation {
-    /// Converts an optional timestamp into a hardfork activation.
+impl UpgradeActivation {
+    /// Converts an optional timestamp into an upgrade activation.
     pub const fn from_timestamp(timestamp: Option<u64>) -> Self {
         match timestamp {
             Some(timestamp) => Self::Timestamp(timestamp),
@@ -53,7 +52,7 @@ impl HardForkActivation {
         }
     }
 
-    /// Returns the activation timestamp, if the hardfork is timestamp-activated.
+    /// Returns the activation timestamp, if the upgrade is timestamp-activated.
     pub const fn timestamp(self) -> Option<u64> {
         match self {
             Self::Never => None,
@@ -62,22 +61,22 @@ impl HardForkActivation {
     }
 }
 
-/// A target that can receive contract-backed hardfork activation updates.
+/// A target that can receive contract-backed upgrade activation updates.
 ///
 /// Implemented by every schedule destination (rollup config, execution chain spec, runtime
 /// registry) so a single applier can drive them all without per-target apply loops.
-pub trait HardForkActivationSink {
+pub trait UpgradeActivationSink {
     /// Error returned when an activation cannot be applied to this target.
     type Error;
 
-    /// Applies `activation` for the canonical hardfork ID.
+    /// Applies `activation` for the canonical contract hardfork ID.
     ///
     /// Returns `true` when the hardfork ID is supported by this target, `false` when it is
     /// unknown and was ignored.
     fn apply_activation(
         &mut self,
         hardfork_id: &str,
-        activation: HardForkActivation,
+        activation: UpgradeActivation,
     ) -> Result<bool, Self::Error>;
 
     /// Finalizes the target after a batch of activations (e.g. recompute derived state).
@@ -86,15 +85,15 @@ pub trait HardForkActivationSink {
     }
 }
 
-/// Runtime hardfork activation overrides for one chain.
+/// Runtime upgrade activation overrides for one chain.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct HardForkActivationOverrides {
-    /// Hardfork activations keyed by canonical contract hardfork ID.
-    pub activations: BTreeMap<String, HardForkActivation>,
+pub struct UpgradeActivationOverrides {
+    /// Upgrade activations keyed by canonical contract hardfork ID.
+    pub activations: BTreeMap<String, UpgradeActivation>,
 }
 
-impl HardForkActivationOverrides {
-    /// Creates empty runtime hardfork activation overrides.
+impl UpgradeActivationOverrides {
+    /// Creates empty runtime upgrade activation overrides.
     pub const fn new() -> Self {
         Self { activations: BTreeMap::new() }
     }
@@ -104,13 +103,13 @@ impl HardForkActivationOverrides {
         self.activations.is_empty()
     }
 
-    /// Returns the runtime activation override for a hardfork ID.
-    pub fn activation(&self, hardfork_id: &str) -> Option<HardForkActivation> {
+    /// Returns the runtime activation override for a contract hardfork ID.
+    pub fn activation(&self, hardfork_id: &str) -> Option<UpgradeActivation> {
         let hardfork_id = HardForkConfig::canonical_hardfork_id(hardfork_id)?;
         self.activations.get(hardfork_id).copied()
     }
 
-    /// Removes the runtime activation override for a hardfork ID.
+    /// Removes the runtime activation override for a contract hardfork ID.
     pub fn remove_activation(&mut self, hardfork_id: &str) -> bool {
         let Some(hardfork_id) = HardForkConfig::canonical_hardfork_id(hardfork_id) else {
             return false;
@@ -119,8 +118,8 @@ impl HardForkActivationOverrides {
         self.activations.remove(hardfork_id).is_some()
     }
 
-    /// Sets the runtime activation override for a hardfork ID.
-    pub fn set_activation(&mut self, hardfork_id: &str, activation: HardForkActivation) -> bool {
+    /// Sets the runtime activation override for a contract hardfork ID.
+    pub fn set_activation(&mut self, hardfork_id: &str, activation: UpgradeActivation) -> bool {
         let Some(hardfork_id) = HardForkConfig::canonical_hardfork_id(hardfork_id) else {
             return false;
         };
@@ -129,69 +128,52 @@ impl HardForkActivationOverrides {
         true
     }
 
-    /// Sets a runtime timestamp activation override for a hardfork ID.
+    /// Sets a runtime timestamp activation override for a contract hardfork ID.
     pub fn set_activation_timestamp(&mut self, hardfork_id: &str, timestamp: u64) -> bool {
-        self.set_activation(hardfork_id, HardForkActivation::Timestamp(timestamp))
+        self.set_activation(hardfork_id, UpgradeActivation::Timestamp(timestamp))
     }
 
-    /// Sets a runtime override that clears a hardfork activation.
+    /// Sets a runtime override that clears an upgrade activation.
     pub fn clear_activation_timestamp(&mut self, hardfork_id: &str) -> bool {
-        self.set_activation(hardfork_id, HardForkActivation::Never)
+        self.set_activation(hardfork_id, UpgradeActivation::Never)
     }
 }
 
-/// Process-local runtime hardfork activation registry.
-#[cfg(feature = "std")]
+/// Process-local runtime upgrade activation registry.
 #[derive(Debug, Clone, Copy)]
-pub struct RuntimeHardForkRegistry;
+pub struct RuntimeUpgradeRegistry;
 
-#[cfg(feature = "std")]
-impl RuntimeHardForkRegistry {
-    /// Returns the global runtime hardfork activation registry.
-    pub fn registry() -> &'static RwLock<BTreeMap<u64, HardForkActivationOverrides>> {
-        static REGISTRY: OnceLock<RwLock<BTreeMap<u64, HardForkActivationOverrides>>> =
-            OnceLock::new();
-        REGISTRY.get_or_init(|| RwLock::new(BTreeMap::new()))
+impl RuntimeUpgradeRegistry {
+    /// Returns the global runtime upgrade activation registry.
+    pub fn registry() -> &'static RwLock<BTreeMap<u64, UpgradeActivationOverrides>> {
+        static REGISTRY: Once<RwLock<BTreeMap<u64, UpgradeActivationOverrides>>> = Once::new();
+        REGISTRY.call_once(|| RwLock::new(BTreeMap::new()))
     }
 
-    /// Returns a registry read guard, recovering the inner value if the lock is poisoned.
-    fn read_registry() -> RwLockReadGuard<'static, BTreeMap<u64, HardForkActivationOverrides>> {
-        Self::registry().read().unwrap_or_else(|poisoned| {
-            tracing::warn!(
-                target: "runtime_hardfork_registry",
-                access = "read",
-                "recovering poisoned runtime hardfork registry lock"
-            );
-            poisoned.into_inner()
-        })
+    /// Returns a registry read guard.
+    fn read_registry() -> RwLockReadGuard<'static, BTreeMap<u64, UpgradeActivationOverrides>> {
+        Self::registry().read()
     }
 
-    /// Returns a registry write guard, recovering the inner value if the lock is poisoned.
-    fn write_registry() -> RwLockWriteGuard<'static, BTreeMap<u64, HardForkActivationOverrides>> {
-        Self::registry().write().unwrap_or_else(|poisoned| {
-            tracing::warn!(
-                target: "runtime_hardfork_registry",
-                access = "write",
-                "recovering poisoned runtime hardfork registry lock"
-            );
-            poisoned.into_inner()
-        })
+    /// Returns a registry write guard.
+    fn write_registry() -> RwLockWriteGuard<'static, BTreeMap<u64, UpgradeActivationOverrides>> {
+        Self::registry().write()
     }
 
-    /// Returns the runtime activation override for a chain and hardfork ID.
-    pub fn activation(chain_id: u64, hardfork_id: &str) -> Option<HardForkActivation> {
+    /// Returns the runtime activation override for a chain and contract hardfork ID.
+    pub fn activation(chain_id: u64, hardfork_id: &str) -> Option<UpgradeActivation> {
         Self::read_registry().get(&chain_id).and_then(|overrides| overrides.activation(hardfork_id))
     }
 
     /// Returns all runtime activation overrides for a chain.
-    pub fn overrides(chain_id: u64) -> Option<HardForkActivationOverrides> {
+    pub fn overrides(chain_id: u64) -> Option<UpgradeActivationOverrides> {
         Self::read_registry().get(&chain_id).cloned()
     }
 
     /// Updates one chain's runtime activation overrides while holding the registry write lock.
     pub fn update_chain<R>(
         chain_id: u64,
-        f: impl FnOnce(&mut HardForkActivationOverrides) -> R,
+        f: impl FnOnce(&mut UpgradeActivationOverrides) -> R,
     ) -> R {
         let mut registry = Self::write_registry();
         let result = {
@@ -199,7 +181,7 @@ impl RuntimeHardForkRegistry {
             f(overrides)
         };
 
-        if registry.get(&chain_id).is_some_and(HardForkActivationOverrides::is_empty) {
+        if registry.get(&chain_id).is_some_and(UpgradeActivationOverrides::is_empty) {
             registry.remove(&chain_id);
         }
 
@@ -207,7 +189,7 @@ impl RuntimeHardForkRegistry {
     }
 
     /// Replaces all runtime activation overrides for a chain.
-    pub fn replace_overrides(chain_id: u64, overrides: HardForkActivationOverrides) {
+    pub fn replace_overrides(chain_id: u64, overrides: UpgradeActivationOverrides) {
         Self::write_registry().insert(chain_id, overrides);
     }
 
@@ -216,7 +198,7 @@ impl RuntimeHardForkRegistry {
         Self::write_registry().remove(&chain_id);
     }
 
-    /// Removes one runtime activation override for a chain and hardfork ID.
+    /// Removes one runtime activation override for a chain and contract hardfork ID.
     pub fn remove_activation_override(chain_id: u64, hardfork_id: &str) -> bool {
         let mut registry = Self::write_registry();
         let Some(overrides) = registry.get_mut(&chain_id) else {
@@ -226,25 +208,25 @@ impl RuntimeHardForkRegistry {
         overrides.remove_activation(hardfork_id)
     }
 
-    /// Sets one runtime activation override for a chain and hardfork ID.
+    /// Sets one runtime activation override for a chain and contract hardfork ID.
     pub fn set_activation(
         chain_id: u64,
         hardfork_id: &str,
-        activation: HardForkActivation,
+        activation: UpgradeActivation,
     ) -> bool {
         let mut registry = Self::write_registry();
         let overrides = registry.entry(chain_id).or_default();
         overrides.set_activation(hardfork_id, activation)
     }
 
-    /// Sets one runtime timestamp activation override for a chain and hardfork ID.
+    /// Sets one runtime timestamp activation override for a chain and contract hardfork ID.
     pub fn set_activation_timestamp(chain_id: u64, hardfork_id: &str, timestamp: u64) -> bool {
-        Self::set_activation(chain_id, hardfork_id, HardForkActivation::Timestamp(timestamp))
+        Self::set_activation(chain_id, hardfork_id, UpgradeActivation::Timestamp(timestamp))
     }
 
-    /// Sets one runtime override that clears a chain hardfork activation.
+    /// Sets one runtime override that clears a chain upgrade activation.
     pub fn clear_activation_timestamp(chain_id: u64, hardfork_id: &str) -> bool {
-        Self::set_activation(chain_id, hardfork_id, HardForkActivation::Never)
+        Self::set_activation(chain_id, hardfork_id, UpgradeActivation::Never)
     }
 }
 
@@ -336,7 +318,7 @@ impl Display for UpgradeConfig {
 }
 
 impl HardForkConfig {
-    /// Canonical contract hardfork IDs supported by the runtime upgrade signal.
+    /// Canonical contract IDs supported by the runtime upgrade signal.
     pub const CONTRACT_HARDFORK_IDS: &'static [&'static str] = &[
         "regolith",
         "canyon",
@@ -368,7 +350,7 @@ impl HardForkConfig {
         self.base = HardforkConfig::default();
     }
 
-    /// Clears a timestamp-based hardfork activation time by contract hardfork ID.
+    /// Clears a timestamp-based activation time by contract hardfork ID.
     pub fn clear_activation_timestamp(&mut self, hardfork_id: &str) -> bool {
         match Self::canonical_hardfork_id(hardfork_id) {
             Some("regolith") => self.regolith_time = None,
@@ -390,25 +372,25 @@ impl HardForkConfig {
         true
     }
 
-    /// Applies a hardfork activation override by contract hardfork ID.
-    pub fn set_activation(&mut self, hardfork_id: &str, activation: HardForkActivation) -> bool {
+    /// Applies an upgrade activation override by contract hardfork ID.
+    pub fn set_activation(&mut self, hardfork_id: &str, activation: UpgradeActivation) -> bool {
         match activation {
-            HardForkActivation::Never => self.clear_activation_timestamp(hardfork_id),
-            HardForkActivation::Timestamp(timestamp) => {
+            UpgradeActivation::Never => self.clear_activation_timestamp(hardfork_id),
+            UpgradeActivation::Timestamp(timestamp) => {
                 self.set_activation_timestamp(hardfork_id, timestamp)
             }
         }
     }
 
-    /// Applies all hardfork activation overrides.
-    pub fn apply_activation_overrides(&mut self, overrides: &HardForkActivationOverrides) {
+    /// Applies all upgrade activation overrides.
+    pub fn apply_activation_overrides(&mut self, overrides: &UpgradeActivationOverrides) {
         for (hardfork_id, activation) in &overrides.activations {
             self.set_activation(hardfork_id, *activation);
         }
     }
 
-    /// Returns the activation for a timestamp-based hardfork ID.
-    pub fn activation(&self, hardfork_id: &str) -> Option<HardForkActivation> {
+    /// Returns the activation for a timestamp-based contract hardfork ID.
+    pub fn activation(&self, hardfork_id: &str) -> Option<UpgradeActivation> {
         let timestamp = match Self::canonical_hardfork_id(hardfork_id) {
             Some("regolith") => self.regolith_time,
             Some("canyon") => self.canyon_time,
@@ -426,15 +408,15 @@ impl HardForkConfig {
             _ => return None,
         };
 
-        Some(HardForkActivation::from_timestamp(timestamp))
+        Some(UpgradeActivation::from_timestamp(timestamp))
     }
 
-    /// Returns the activation timestamp for a timestamp-based hardfork ID.
+    /// Returns the activation timestamp for a timestamp-based contract hardfork ID.
     pub fn activation_timestamp(&self, hardfork_id: &str) -> Option<u64> {
-        self.activation(hardfork_id).and_then(HardForkActivation::timestamp)
+        self.activation(hardfork_id).and_then(UpgradeActivation::timestamp)
     }
 
-    /// Sets a timestamp-based hardfork activation time by contract hardfork ID.
+    /// Sets a timestamp-based activation time by contract hardfork ID.
     pub fn set_activation_timestamp(&mut self, hardfork_id: &str, timestamp: u64) -> bool {
         match Self::canonical_hardfork_id(hardfork_id) {
             Some("regolith") => self.regolith_time = Some(timestamp),
@@ -666,41 +648,40 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg(feature = "std")]
 mod runtime_tests {
     use super::*;
 
     #[test]
     fn runtime_registry_tracks_timestamp_and_never_overrides() {
         let chain_id = 9_100_001;
-        RuntimeHardForkRegistry::clear_chain(chain_id);
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
 
-        assert!(RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "base_azul", 42));
-        assert!(RuntimeHardForkRegistry::clear_activation_timestamp(chain_id, "beryl"));
-        assert!(RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "v3", 84));
-        assert!(!RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "unknown", 10));
+        assert!(RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, "base_azul", 42));
+        assert!(RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, "beryl"));
+        assert!(RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, "v3", 84));
+        assert!(!RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, "unknown", 10));
 
         assert_eq!(
-            RuntimeHardForkRegistry::activation(chain_id, "azul"),
-            Some(HardForkActivation::Timestamp(42))
+            RuntimeUpgradeRegistry::activation(chain_id, "azul"),
+            Some(UpgradeActivation::Timestamp(42))
         );
         assert_eq!(
-            RuntimeHardForkRegistry::activation(chain_id, "beryl"),
-            Some(HardForkActivation::Never)
+            RuntimeUpgradeRegistry::activation(chain_id, "beryl"),
+            Some(UpgradeActivation::Never)
         );
         assert_eq!(
-            RuntimeHardForkRegistry::activation(chain_id, "cobalt"),
-            Some(HardForkActivation::Timestamp(84))
+            RuntimeUpgradeRegistry::activation(chain_id, "cobalt"),
+            Some(UpgradeActivation::Timestamp(84))
         );
-        assert_eq!(RuntimeHardForkRegistry::activation(chain_id, "unknown"), None);
+        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, "unknown"), None);
 
-        RuntimeHardForkRegistry::clear_chain(chain_id);
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[test]
     fn hardfork_config_applies_activation_overrides() {
         let mut hardforks = HardForkConfig { canyon_time: Some(10), ..Default::default() };
-        let mut overrides = HardForkActivationOverrides::new();
+        let mut overrides = UpgradeActivationOverrides::new();
 
         assert!(overrides.clear_activation_timestamp("canyon"));
         assert!(overrides.set_activation_timestamp("azul", 42));

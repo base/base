@@ -4,11 +4,10 @@ mod addresses;
 pub use addresses::AddressList;
 
 mod hardfork;
-#[cfg(feature = "std")]
-pub use hardfork::RuntimeHardForkRegistry;
+pub use hardfork::RuntimeUpgradeRegistry;
 pub use hardfork::{
-    HardForkActivation, HardForkActivationOverrides, HardForkActivationSink, HardForkConfig,
-    HardforkConfig,
+    HardForkConfig, HardforkConfig, UpgradeActivation, UpgradeActivationOverrides,
+    UpgradeActivationSink,
 };
 
 mod roles;
