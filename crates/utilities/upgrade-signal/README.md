@@ -12,6 +12,3 @@ Three graduated rollout modes are supported:
 - **startup-apply** — pin activation timestamps into the chain spec at node startup
 - **runtime-admin** — write live overrides into `RuntimeHardForkRegistry` so fork checks reflect
   contract-sourced signals without a node restart
-
-See [`docs/guides/UPGRADE_SIGNAL.md`](../../../docs/guides/UPGRADE_SIGNAL.md) for the feature
-overview and code-path guide.
