@@ -290,8 +290,7 @@ where
             let handle = tasks.spawn(async move {
                 let result = manager
                     .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
-                    .await
-                    .map(|_| ());
+                    .await;
                 ProofTaskOutcome { signer, instance_id: outcome_instance_id, result }
             });
             pending.insert(
@@ -315,7 +314,7 @@ where
         enclave_index: usize,
         attestation_bytes: Vec<u8>,
         signer_cancel: CancellationToken,
-    ) -> Result<Address> {
+    ) -> Result<()> {
         let registration_manager = RegistrationManager::new(
             &self.proof_provider,
             &self.registry,
@@ -331,7 +330,7 @@ where
         registration_manager
             .register_signer(&instance, signer, enclave_index, &attestation_bytes, &signer_cancel)
             .await?;
-        Ok(signer)
+        Ok(())
     }
 
     /// Queries onchain signers and deregisters orphans.
