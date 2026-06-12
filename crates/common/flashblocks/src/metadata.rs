@@ -1,4 +1,3 @@
-rust
 //! Contains the [`Metadata`] type used in Flashblocks.
 
 use alloy_primitives::{B256, map::HashMap};
