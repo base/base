@@ -11,7 +11,7 @@ mod cert_revoker;
 pub use cert_revoker::CertRevoker;
 
 mod cert_manager;
-pub use cert_manager::CertManager;
+pub use cert_manager::{CertManager, CertRevocationChecker};
 
 mod crl;
 pub use crl::{

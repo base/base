@@ -25,9 +25,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
-    CertManager, CrlConfig, DeregistrationManager, InstanceDiscovery, InstanceHealthStatus,
-    NitroVerifierClient, ProofHandlerConfig, ProverClient, ProverInstance, RegistrarError,
-    RegistrarMetrics, RegistrationManager, RegistryClient, Result, SignerClient,
+    CertManager, CertRevocationChecker, CrlConfig, DeregistrationManager, InstanceDiscovery,
+    InstanceHealthStatus, NitroVerifierClient, ProofHandlerConfig, ProverClient, ProverInstance,
+    RegistrarError, RegistrarMetrics, RegistrationManager, RegistryClient, Result, SignerClient,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -236,7 +236,7 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     config: DriverConfig,
     /// Optional certificate revocation manager. Built once at construction
     /// time when CRL checking is enabled. `None` when CRL checking is disabled.
-    cert_manager: Option<CertManager>,
+    cert_manager: Option<CertManager<T>>,
     /// Bounds the number of proof-generation calls that may be in-flight
     /// across the spawned task pool at once. Sized from
     /// [`DriverConfig::max_concurrency`], matching the discovery/resolve
@@ -262,7 +262,7 @@ where
     D: InstanceDiscovery + 'static,
     P: AttestationProofProvider + 'static,
     R: RegistryClient + 'static,
-    T: TxManager + 'static,
+    T: TxManager + Clone + 'static,
     S: SignerClient + 'static,
 {
     /// Creates a new registration driver.
@@ -270,15 +270,14 @@ where
     /// When CRL checking is enabled, pre-builds the HTTP client used for
     /// CRL fetches so it can be reused across registration cycles. The
     /// optional `nitro_verifier` client consults the onchain durable
-    /// revocation sentinel before each registration; pass `None` to disable
-    /// the onchain pre-check (useful for tests and unit deployments).
+    /// revocation sentinel before each registration and provides the
+    /// `revokeCert` transaction destination.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrarError::Config`] when `config.crl.enabled` is `true`
-    /// and either the `nitro_verifier` client is missing or the
-    /// [`CertManager`] fails to initialize. Failing fast prevents a
-    /// misconfigured driver from silently bypassing CRL protection at runtime.
+    /// Returns [`RegistrarError::Config`] when the [`CertManager`] fails to
+    /// initialize. Failing fast prevents a misconfigured driver from silently
+    /// bypassing CRL protection at runtime.
     pub fn new(
         discovery: D,
         proof_provider: P,
@@ -289,15 +288,7 @@ where
         nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
     ) -> Result<Self> {
         let cert_manager = if config.crl.enabled {
-            let Some(nitro_verifier) = nitro_verifier else {
-                return Err(RegistrarError::Config(
-                    "CRL checking enabled but nitro_verifier client not configured; \
-                     a NitroEnclaveVerifier client is required as both the revokeCert \
-                     destination and the onchain revokedCerts sentinel source"
-                        .into(),
-                ));
-            };
-            Some(CertManager::new(&config.crl, nitro_verifier)?)
+            Some(CertManager::new(&config.crl, nitro_verifier, tx_manager.clone())?)
         } else {
             None
         };
@@ -601,10 +592,7 @@ where
                 })?;
             let cert_manager =
                 self.cert_manager.as_ref().expect("cert_manager required when CRL enabled");
-            match cert_manager
-                .check_and_revoke_crls(first_attestation, instance, &self.tx_manager)
-                .await
-            {
+            match cert_manager.check_and_revoke_crls(first_attestation, instance).await {
                 Ok(true) => {
                     warn!(
                         instance = %instance.instance_id,
