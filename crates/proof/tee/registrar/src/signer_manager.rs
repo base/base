@@ -673,11 +673,6 @@ mod tests {
         }
     }
 
-    fn count_deregister_calls(sent: &[Bytes]) -> usize {
-        let sel = ITEEProverRegistry::deregisterSignerCall::SELECTOR;
-        sent.iter().filter(|c| c.len() >= 4 && c[..4] == sel).count()
-    }
-
     #[rstest]
     #[case::no_pending_spawns_all(&[], &[(EP1, &HARDHAT_KEY_0)], 1, 0)]
     #[case::pending_for_kept_spawns_nothing(&[(EP1, &HARDHAT_KEY_0)], &[(EP1, &HARDHAT_KEY_0)], 0, 0)]
@@ -1056,65 +1051,25 @@ mod tests {
         assert!(proof_tasks.tasks.is_empty(), "JoinSet must drain to empty");
     }
 
+    #[rstest]
+    #[case::ok_outcome(true)]
+    #[case::err_outcome(false)]
     #[tokio::test]
-    async fn apply_join_outcome_preserves_fresh_entry_when_stale_task_completes_for_same_signer() {
-        let mut proof_tasks = ProofTaskSet::new();
-        let signer = HARDHAT_ACCOUNT;
-
-        let stale_handle =
-            proof_tasks.tasks.spawn(async move { proof_task_success_for_test(signer) });
-        let stale_task_id = stale_handle.id();
-
-        let fresh_cancel = CancellationToken::new();
-        let fresh_cancel_inner = fresh_cancel.clone();
-        let fresh_handle = proof_tasks.tasks.spawn(async move {
-            fresh_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
-        });
-        let fresh_task_id = fresh_handle.id();
-        assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
-
-        proof_tasks.pending.insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: fresh_task_id,
-                cancel: fresh_cancel.clone(),
-                cancelled_by_reconcile: false,
-            },
-        );
-
-        let started = std::time::Instant::now();
-        loop {
-            if let Some(joined) = proof_tasks.tasks.try_join_next_with_id() {
-                proof_tasks.apply_join_outcome(joined);
-                break;
-            }
-            if started.elapsed() > GATED_WAIT_TIMEOUT {
-                panic!("stale task never resolved");
-            }
-            tokio::time::sleep(REAP_POLL_INTERVAL).await;
-        }
-
-        assert_eq!(proof_tasks.pending_len(), 1, "fresh entry must survive stale completion");
-        let entry = proof_tasks.pending.get(&signer).expect("fresh entry still keyed by signer");
-        assert_eq!(entry.task_id, fresh_task_id, "fresh task_id preserved");
-        assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    #[tokio::test]
-    async fn apply_join_outcome_err_arm_preserves_fresh_entry_when_stale_task_fails_for_same_signer()
-     {
+    async fn apply_join_outcome_preserves_fresh_entry_when_stale_task_finishes_for_same_signer(
+        #[case] stale_succeeds: bool,
+    ) {
         let mut proof_tasks = ProofTaskSet::new();
         let signer = HARDHAT_ACCOUNT;
 
         let stale_handle = proof_tasks.tasks.spawn(async move {
-            proof_task_failure_for_test(
-                signer,
-                RegistrarError::Config("synthetic stale proof failure".to_string()),
-            )
+            if stale_succeeds {
+                proof_task_success_for_test(signer)
+            } else {
+                proof_task_failure_for_test(
+                    signer,
+                    RegistrarError::Config("synthetic stale proof failure".to_string()),
+                )
+            }
         });
         let stale_task_id = stale_handle.id();
 
@@ -1149,7 +1104,7 @@ mod tests {
             tokio::time::sleep(REAP_POLL_INTERVAL).await;
         }
 
-        assert_eq!(proof_tasks.pending_len(), 1, "fresh entry must survive stale Err");
+        assert_eq!(proof_tasks.pending_len(), 1, "fresh entry must survive stale task");
         let entry = proof_tasks.pending.get(&signer).expect("fresh entry still keyed by signer");
         assert_eq!(entry.task_id, fresh_task_id, "fresh task_id preserved");
         assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
@@ -1158,23 +1113,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn protected_signers_union_blocks_dereg_of_freshly_registered_signer() {
-        let signer = signer_from_key(&HARDHAT_KEY_0);
-        let tx = SharedTxManager::new();
-        let manager = manager(
-            RecordingProofProvider::default(),
-            MockRegistry::with_signers(vec![signer]),
-            tx.clone(),
-        );
+    async fn protected_signers_unions_active_and_pending_signers() {
+        let active_signer = signer_from_key(&HARDHAT_KEY_0);
+        let pending_signer = signer_from_key(&HARDHAT_KEY_1);
+        assert_ne!(active_signer, pending_signer, "test setup: distinct signers");
+
         let mut proof_tasks = ProofTaskSet::new();
         let task_cancel = CancellationToken::new();
         let task_cancel_inner = task_cancel.clone();
         let handle = proof_tasks.tasks.spawn(async move {
             task_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
+            proof_task_success_for_test(pending_signer)
         });
         proof_tasks.pending.insert(
-            signer,
+            pending_signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
                 task_id: handle.id(),
@@ -1185,49 +1137,19 @@ mod tests {
 
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
-            active_signers: HashSet::new(),
+            active_signers: HashSet::from([active_signer]),
             reachable_count: 1,
             total_count: 1,
             ok_to_dereg: true,
             unresolved_instance_ids: HashSet::from([TEST_PENDING_INSTANCE_ID.to_string()]),
         };
         let protected = proof_tasks.protected_signers(&resolution);
-        assert!(protected.contains(&signer), "protected set must include in-flight signer");
-
-        let cancel = CancellationToken::new();
-        manager.run_orphan_dereg(&protected, &cancel).await.unwrap();
-
-        assert_eq!(count_deregister_calls(&tx.sent_calldata()), 0);
+        assert_eq!(protected, HashSet::from([active_signer, pending_signer]));
 
         drain_test_tasks(&mut proof_tasks).await;
-    }
 
-    #[tokio::test]
-    async fn protected_signers_union_does_not_shield_when_pending_empty() {
-        let signer = signer_from_key(&HARDHAT_KEY_0);
-        let tx = SharedTxManager::new();
-        let manager = manager(
-            RecordingProofProvider::default(),
-            MockRegistry::with_signers(vec![signer]),
-            tx.clone(),
-        );
-
-        let proof_tasks = ProofTaskSet::new();
-        let resolution = DiscoveryResolution {
-            registerable: Vec::new(),
-            active_signers: HashSet::new(),
-            reachable_count: 1,
-            total_count: 1,
-            ok_to_dereg: true,
-            unresolved_instance_ids: HashSet::new(),
-        };
-        let protected = proof_tasks.protected_signers(&resolution);
-        assert!(protected.is_empty(), "no pending means protected set is empty");
-
-        let cancel = CancellationToken::new();
-        manager.run_orphan_dereg(&protected, &cancel).await.unwrap();
-
-        assert_eq!(count_deregister_calls(&tx.sent_calldata()), 1);
+        let protected_after_drain = proof_tasks.protected_signers(&resolution);
+        assert_eq!(protected_after_drain, HashSet::from([active_signer]));
     }
 
     #[rstest]

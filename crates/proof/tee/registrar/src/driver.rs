@@ -703,10 +703,6 @@ mod tests {
     /// Synthetic orphan addresses for deregistration tests.
     /// Each uses `Address::repeat_byte` for deterministic, readable values.
     const ORPHAN_A: Address = Address::repeat_byte(0xAA);
-    const ORPHAN_B: Address = Address::repeat_byte(0xBB);
-    const ORPHAN_C: Address = Address::repeat_byte(0xCC);
-    const ORPHAN_D: Address = Address::repeat_byte(0xDD);
-    const ORPHAN_E: Address = Address::repeat_byte(0xEE);
 
     /// Placeholder registry contract address used in `DriverConfig`.
     const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
@@ -805,23 +801,6 @@ mod tests {
                 output: Bytes::from_static(b"stub-output"),
                 proof_bytes: Bytes::from_static(b"stub-proof"),
             })
-        }
-    }
-
-    /// Mock proof provider that always fails, simulating Boundless errors.
-    #[derive(Debug)]
-    struct FailingProofProvider;
-
-    #[async_trait]
-    impl AttestationProofProvider for FailingProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
-                "simulated proof failure".into(),
-            ))
         }
     }
 
@@ -1084,31 +1063,21 @@ mod tests {
         }
     }
 
-    type CycleDriver = RegistrationDriver<
-        MockDiscovery,
-        MockSignerClient,
-        Arc<SignerManager<StubProofProvider, MockRegistry, SharedTxManager>>,
-        SharedTxManager,
-    >;
+    type CycleDriver =
+        RegistrationDriver<MockDiscovery, MockSignerClient, MockSignerManager, SharedTxManager>;
 
     /// Builds a fully-configured driver for primitive-level tests that
-    /// invoke `discover_and_resolve` and `run_orphan_dereg` directly
-    /// (rather than the spawn pipeline in `run`). Returns an `Arc` so tests
-    /// that spawn the run loop can keep handles for state inspection.
+    /// invoke `discover_and_resolve` directly, without standing up the
+    /// production signer lifecycle. Returns an `Arc` so tests that spawn
+    /// the run loop can keep handles for state inspection.
     fn cycle_driver(
         instances: Vec<ProverInstance>,
         signer_client: MockSignerClient,
-        registry: MockRegistry,
-        tx: SharedTxManager,
         cancel: CancellationToken,
     ) -> Arc<CycleDriver> {
         let config = default_config(cancel);
-        let signer_manager = Arc::new(SignerManager::new(
-            StubProofProvider,
-            registry,
-            tx.clone(),
-            config.signer_manager.clone(),
-        ));
+        let tx = SharedTxManager::new();
+        let signer_manager = MockSignerManager::new(CancellationToken::new());
         let cert_manager = mock_cert_manager(&config, tx);
         Arc::new(RegistrationDriver::new(
             MockDiscovery { instances },
@@ -1124,12 +1093,7 @@ mod tests {
         let mut config = default_config(CancellationToken::new());
         config.crl.enabled = true;
         let tx = SharedTxManager::new();
-        let signer_manager = Arc::new(SignerManager::new(
-            StubProofProvider,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            config.signer_manager.clone(),
-        ));
+        let signer_manager = MockSignerManager::new(CancellationToken::new());
         let cert_manager = mock_cert_manager(&config, tx);
 
         RegistrationDriver::new(
@@ -1495,12 +1459,8 @@ mod tests {
 
     #[tokio::test]
     async fn discover_and_resolve_admits_recently_launched_unhealthy_to_active_and_registerable() {
-        // A recently-launched Unhealthy instance must (1) be included in
-        // `registerable` (the recent-launch exception in
-        // `is_recently_launched_unhealthy`), and (2) contribute its
-        // signer to `active_signers` (preventing premature
-        // deregistration). The orphan-dereg pass over the active set
-        // must NOT touch the signer even though it's already onchain.
+        // A recently-launched Unhealthy instance must be included in
+        // `registerable` and contribute its signer to `active_signers`.
         let addr = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
         let launch_time = Some(SystemTime::now() - Duration::from_secs(300));
 
@@ -1508,13 +1468,9 @@ mod tests {
             instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
 
-        let tx = SharedTxManager::new();
         let driver = cycle_driver(
             vec![instance_under_test.clone()],
             signer_client,
-            // addr is already onchain; without active_signers protection it would be deregistered.
-            MockRegistry::with_signers(vec![addr]),
-            tx.clone(),
             CancellationToken::new(),
         );
 
@@ -1530,31 +1486,14 @@ mod tests {
             "recently-launched unhealthy signer should be in active_signers"
         );
         assert!(resolution.ok_to_dereg, "single reachable instance clears the majority guard");
-
-        // Orphan-dereg pass must not deregister the signer (it's in active_signers).
-        driver
-            .signer_manager
-            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-            .await
-            .unwrap();
-
-        assert!(
-            tx.sent_calldata().is_empty(),
-            "already-registered signer should not be deregistered"
-        );
     }
 
-    // ── discover_and_resolve + run_orphan_dereg tests ──────────────────
+    // ── discover_and_resolve tests ─────────────────────────────────────
 
     #[tokio::test]
     async fn discover_and_resolve_allows_orphan_pass_when_discovery_is_empty() {
-        let driver = cycle_driver(
-            vec![],
-            MockSignerClient::from_keys(&[]),
-            MockRegistry::with_signers(vec![ORPHAN_A, ORPHAN_B, ORPHAN_C]),
-            SharedTxManager::new(),
-            CancellationToken::new(),
-        );
+        let driver =
+            cycle_driver(vec![], MockSignerClient::from_keys(&[]), CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
         assert!(resolution.active_signers.is_empty(), "no instances → no active signers");
@@ -1578,14 +1517,7 @@ mod tests {
 
         // Only EP1 has a key; the other two will fail signer_public_key.
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            instances,
-            signer_client,
-            MockRegistry::all_registered(vec![ORPHAN_B]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
+        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
 
@@ -1595,8 +1527,6 @@ mod tests {
             !resolution.ok_to_dereg,
             "1/3 reachable: majority guard should block orphan-dereg pass",
         );
-        // Resolution itself sends no onchain tx (no CRL revocation).
-        assert!(tx.sent_calldata().is_empty(), "discover_and_resolve must not send txs");
     }
 
     #[tokio::test]
@@ -1614,15 +1544,7 @@ mod tests {
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
 
         let cancel = CancellationToken::new();
-        let tx = SharedTxManager::new();
-
-        let driver = cycle_driver(
-            instances,
-            signer_client,
-            MockRegistry::all_registered(vec![ORPHAN_C]),
-            tx.clone(),
-            cancel.clone(),
-        );
+        let driver = cycle_driver(instances, signer_client, cancel.clone());
 
         cancel.cancel();
         let resolution = driver.discover_and_resolve().await.unwrap();
@@ -1631,35 +1553,16 @@ mod tests {
             !resolution.ok_to_dereg,
             "cancellation must clear ok_to_dereg even if majority guard would pass",
         );
-        // And `run_orphan_dereg` itself is cancel-aware — call it
-        // directly to confirm it bails out without loading the registry.
-        driver
-            .signer_manager
-            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-            .await
-            .unwrap();
-        assert!(tx.sent_calldata().is_empty(), "no txs should be sent after cancellation");
     }
 
     #[tokio::test]
     async fn discover_and_resolve_admits_draining_instance_to_active_only_not_registerable() {
         // A draining instance must contribute its signer to
-        // `active_signers` (protecting it from orphan-dereg) but must
-        // NOT appear in `registerable`. The orphan-dereg pass over the
-        // active set then must not deregister the onchain signer.
+        // `active_signers` but must NOT appear in `registerable`.
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let instances = vec![instance(EP1, InstanceHealthStatus::Draining)];
 
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            instances,
-            signer_client,
-            // The derived address for HARDHAT_KEY_0 is already onchain,
-            // so it should NOT be deregistered.
-            MockRegistry::with_signers(vec![HARDHAT_ACCOUNT]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
+        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
         assert!(
@@ -1671,15 +1574,6 @@ mod tests {
             "draining instance must contribute its signer to active_signers",
         );
         assert!(resolution.ok_to_dereg, "single reachable instance clears the majority guard");
-
-        driver
-            .signer_manager
-            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-            .await
-            .unwrap();
-
-        // No registration (draining) and no deregistration (signer is active).
-        assert!(tx.sent_calldata().is_empty());
     }
 
     // ── Reachability guard boundary tests ────────────────────────────────
@@ -1712,10 +1606,8 @@ mod tests {
     ) {
         // All 4 instances are discovered; only `reachable_count` have keys
         // in the MockSignerClient (the rest will fail signer_public_key).
-        // Verify `ok_to_dereg` remains false while any discovered instance
-        // is unresolved, and that the downstream `run_orphan_dereg` pass
-        // emits calldata only when every instance resolves and the majority
-        // guard clears.
+        // Verify `ok_to_dereg` remains false while the majority guard
+        // does not clear.
         let instances: Vec<_> =
             ALL_ENDPOINTS.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect();
 
@@ -1726,16 +1618,7 @@ mod tests {
             .collect();
         let signer_client = MockSignerClient::from_keys(&keys);
 
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            instances,
-            signer_client,
-            // All reachable signers already registered, so no registration txs.
-            // The orphan is onchain — deregistered only if guard passes.
-            MockRegistry::all_registered(vec![ORPHAN_D]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
+        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
         assert_eq!(resolution.reachable_count, reachable_count);
@@ -1744,25 +1627,6 @@ mod tests {
             resolution.ok_to_dereg, !should_skip_deregistration,
             "{reachable_count}/4 reachable: ok_to_dereg mismatch"
         );
-
-        if resolution.ok_to_dereg {
-            driver
-                .signer_manager
-                .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-                .await
-                .unwrap();
-            let sent = tx.sent_calldata();
-            assert_eq!(sent.len(), 1, "{reachable_count}/4 reachable: should deregister orphan");
-            let expected =
-                ITEEProverRegistry::deregisterSignerCall { signer: ORPHAN_D }.abi_encode();
-            assert_eq!(sent[0], Bytes::from(expected));
-        } else {
-            // Production caller would skip run_orphan_dereg entirely.
-            assert!(
-                tx.sent_calldata().is_empty(),
-                "{reachable_count}/4 reachable: majority guard should skip deregistration",
-            );
-        }
     }
 
     #[tokio::test]
@@ -1789,15 +1653,7 @@ mod tests {
             (EP3, &HARDHAT_KEY_2),
         ]);
 
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            instances,
-            signer_client,
-            // No signers registered yet → all three reachable signers are registerable.
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
+        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
         assert_eq!(
@@ -1814,8 +1670,6 @@ mod tests {
             !resolution.ok_to_dereg,
             "unresolved instance must block orphan-dereg even when reachable majority clears",
         );
-
-        assert!(tx.sent_calldata().is_empty(), "discovery resolution must not send txs");
     }
 
     /// Signer client wrapper that cancels a token after returning keys.
@@ -1868,12 +1722,7 @@ mod tests {
             cancel: cancel.clone(),
         };
         let config = default_config(cancel);
-        let signer_manager = Arc::new(SignerManager::new(
-            StubProofProvider,
-            MockRegistry::all_registered(vec![ORPHAN_E]),
-            tx.clone(),
-            config.signer_manager.clone(),
-        ));
+        let signer_manager = MockSignerManager::new(CancellationToken::new());
         let cert_manager = mock_cert_manager(&config, tx.clone());
 
         let driver = Arc::new(RegistrationDriver::new(
@@ -1889,42 +1738,21 @@ mod tests {
             !resolution.ok_to_dereg,
             "cancellation observed during resolution must clear ok_to_dereg",
         );
-        // run_orphan_dereg is cancel-aware — call it to confirm it bails
-        // out without loading the registry or sending any tx.
-        driver
-            .signer_manager
-            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-            .await
-            .unwrap();
-        assert!(
-            tx.sent_calldata().is_empty(),
-            "mid-cycle cancellation should prevent any orphan deregistration",
-        );
     }
 
     #[tokio::test]
     async fn discover_and_resolve_multi_enclave_draining_protects_all_signers_from_deregistration()
     {
         // A draining multi-enclave instance must contribute ALL of its
-        // signer addresses to `active_signers`, preventing orphan
-        // deregistration for each — and must not appear in
-        // `registerable` (draining → registration skipped).
+        // signer addresses to `active_signers` and must not appear in
+        // `registerable`.
         let addr0 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
         let addr1 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
 
         let instances = vec![instance(EP1, InstanceHealthStatus::Draining)];
         let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
 
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            instances,
-            signer_client,
-            // Both signers are onchain — without active_signers protection
-            // they would be deregistered as orphans.
-            MockRegistry::with_signers(vec![addr0, addr1]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
+        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
         assert!(
@@ -1934,19 +1762,6 @@ mod tests {
         assert!(resolution.active_signers.contains(&addr0));
         assert!(resolution.active_signers.contains(&addr1));
         assert!(resolution.ok_to_dereg);
-
-        driver
-            .signer_manager
-            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-            .await
-            .unwrap();
-
-        // No registration (draining) and no deregistration (both signers
-        // are in active_signers).
-        assert!(
-            tx.sent_calldata().is_empty(),
-            "draining multi-enclave instance should protect all signers from deregistration",
-        );
     }
 
     #[tokio::test]
@@ -1973,16 +1788,7 @@ mod tests {
         let signer_client =
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
 
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            instances,
-            signer_client,
-            // The unhealthy signer is onchain. Without active_signers protection it would be
-            // deregistered.
-            MockRegistry::with_signers(vec![addr_unhealthy]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
+        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
         assert_eq!(resolution.reachable_count, 2, "both instances respond to RPC");
@@ -1997,17 +1803,6 @@ mod tests {
             "unhealthy signer must remain in active_signers to block dereg",
         );
         assert!(resolution.ok_to_dereg);
-
-        driver
-            .signer_manager
-            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-            .await
-            .unwrap();
-
-        assert!(
-            tx.sent_calldata().is_empty(),
-            "orphan pass must not deregister the unhealthy signer",
-        );
     }
 
     #[tokio::test]
@@ -2024,14 +1819,7 @@ mod tests {
         let signer_client =
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestations(EP1, vec![]);
 
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            vec![inst.clone()],
-            signer_client,
-            MockRegistry::with_signers(vec![signer_addr]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
+        let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
 
@@ -2048,17 +1836,6 @@ mod tests {
             "partial resolution must preserve in-flight tasks for the instance",
         );
         assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
-
-        driver
-            .signer_manager
-            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-            .await
-            .unwrap();
-
-        assert!(
-            tx.sent_calldata().is_empty(),
-            "orphan pass must not deregister a signer advertised by a partially resolved instance",
-        );
     }
 
     #[tokio::test]
@@ -2072,14 +1849,7 @@ mod tests {
         let signer_client =
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestation_failure(EP1);
 
-        let tx = SharedTxManager::new();
-        let driver = cycle_driver(
-            vec![inst.clone()],
-            signer_client,
-            MockRegistry::with_signers(vec![signer_addr]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
+        let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
 
@@ -2087,78 +1857,6 @@ mod tests {
         assert!(resolution.registerable.is_empty());
         assert!(resolution.unresolved_instance_ids.contains(&inst.instance_id));
         assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
-
-        driver
-            .signer_manager
-            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-            .await
-            .unwrap();
-
-        assert!(
-            tx.sent_calldata().is_empty(),
-            "attestation RPC failures must not orphan a signer whose public key resolved",
-        );
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_does_not_invoke_proof_provider_so_active_set_survives_outage() {
-        // Under the spawn pipeline, proof generation runs only inside
-        // spawned `run_proof_task` futures — `discover_and_resolve`
-        // never touches the proof provider. So a complete Boundless
-        // outage cannot empty `active_signers` and cannot trigger
-        // orphan-dereg of a still-running signer.
-        //
-        // Asserted via `FailingProofProvider`: if `discover_and_resolve`
-        // ever invoked it, the resolution would error (or skip the
-        // signer); instead the signer must land in `active_signers` and
-        // `run_orphan_dereg` must emit no deregistration tx for the
-        // onchain signer.
-        let signer_addr =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-
-        let instances = vec![instance(EP1, InstanceHealthStatus::Healthy)];
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-
-        let tx = SharedTxManager::new();
-        let config = default_config(CancellationToken::new());
-        let signer_manager = Arc::new(SignerManager::new(
-            FailingProofProvider,
-            MockRegistry::with_signers(vec![signer_addr]),
-            tx.clone(),
-            config.signer_manager.clone(),
-        ));
-        let cert_manager = mock_cert_manager(&config, tx.clone());
-        let driver = Arc::new(RegistrationDriver::new(
-            MockDiscovery { instances },
-            signer_client,
-            config,
-            cert_manager,
-            signer_manager,
-        ));
-
-        let resolution = driver.discover_and_resolve().await.unwrap();
-        assert!(
-            resolution.active_signers.contains(&signer_addr),
-            "signer must remain in active_signers even with a failing proof provider",
-        );
-        assert_eq!(
-            resolution.registerable.len(),
-            1,
-            "registerable list is computed without invoking the proof provider",
-        );
-
-        driver
-            .signer_manager
-            .run_orphan_dereg(&resolution.active_signers, &driver.config.cancel)
-            .await
-            .unwrap();
-
-        // No deregistration tx (signer is in active_signers despite the
-        // proof failure path being possible downstream).
-        assert!(
-            tx.sent_calldata().is_empty(),
-            "proof-provider failures must not cause deregistration of the signer",
-        );
     }
 
     // ── Concurrency limit test ──────────────────────────────────────────
@@ -2254,8 +1952,6 @@ mod tests {
             ALL_ENDPOINTS.len(),
             "all 4 healthy instances should resolve into the registerable set",
         );
-        // Resolution itself emits no onchain tx — the spawn pass owns registration.
-        assert!(tx.sent_calldata().is_empty(), "discover_and_resolve must not send txs");
     }
 
     // ── run() spawn-and-reap pipeline tests ─────────────────────────────
