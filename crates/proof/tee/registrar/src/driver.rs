@@ -25,9 +25,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
-    CertManager, CertRevocationChecker, CrlConfig, DeregistrationManager, InstanceDiscovery,
-    InstanceHealthStatus, NitroVerifierClient, ProofHandlerConfig, ProverClient, ProverInstance,
-    RegistrarError, RegistrarMetrics, RegistrationManager, RegistryClient, Result, SignerClient,
+    CertManager, CrlConfig, DeregistrationManager, InstanceDiscovery, InstanceHealthStatus,
+    NitroVerifierClient, ProofHandlerConfig, ProverClient, ProverInstance, RegistrarError,
+    RegistrarMetrics, RegistrationManager, RegistryClient, Result, SignerClient,
 };
 
 /// Default maximum number of instances processed concurrently.

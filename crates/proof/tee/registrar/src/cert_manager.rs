@@ -6,7 +6,6 @@
 
 use std::{fmt, sync::Arc};
 
-use async_trait::async_trait;
 use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::TxManager;
 use tracing::{debug, warn};
@@ -32,21 +31,6 @@ where
     }
 }
 
-/// Checks certificate revocation state and submits revocation transactions when needed.
-#[async_trait]
-pub trait CertRevocationChecker: Send + Sync + fmt::Debug {
-    /// Checks an attestation's intermediate certificates and submits revocations.
-    ///
-    /// Returns `Ok(true)` if any intermediate is revoked by either the
-    /// onchain sentinel or the AWS CRL layer, `Ok(false)` if every checked
-    /// intermediate is clean.
-    async fn check_and_revoke_crls(
-        &self,
-        attestation_bytes: &[u8],
-        instance: &ProverInstance,
-    ) -> Result<bool>;
-}
-
 impl<T> CertManager<T>
 where
     T: TxManager,
@@ -69,13 +53,7 @@ where
         })?;
         Ok(Self { http_client, nitro_verifier, tx_manager })
     }
-}
 
-#[async_trait]
-impl<T> CertRevocationChecker for CertManager<T>
-where
-    T: TxManager + 'static,
-{
     /// Checks an attestation's intermediate certificates and submits revocations.
     ///
     /// Returns `Ok(true)` if any intermediate is revoked by either the
@@ -86,7 +64,7 @@ where
     /// intermediates even if AWS later prunes its CRL. AWS CRLs are then
     /// checked for each intermediate, and every CRL hit is checked onchain
     /// before a `revokeCert` transaction is submitted.
-    async fn check_and_revoke_crls(
+    pub async fn check_and_revoke_crls(
         &self,
         attestation_bytes: &[u8],
         instance: &ProverInstance,
@@ -129,12 +107,7 @@ where
 
         Ok(true)
     }
-}
 
-impl<T> CertManager<T>
-where
-    T: TxManager,
-{
     /// Checks whether any intermediate certificate has already been revoked onchain.
     ///
     /// Root and leaf certificates are skipped because only intermediate
