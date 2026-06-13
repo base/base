@@ -642,6 +642,31 @@ mod tests {
         }
     }
 
+    fn spawn_pending_success_task(
+        proof_tasks: &mut ProofTaskSet,
+        signer: Address,
+        instance_id: &str,
+        cancelled_by_reconcile: bool,
+    ) -> (task::Id, CancellationToken) {
+        let cancel = CancellationToken::new();
+        let cancel_inner = cancel.clone();
+        let handle = proof_tasks.tasks.spawn(async move {
+            cancel_inner.cancelled().await;
+            proof_task_success_for_test(signer)
+        });
+        let task_id = handle.id();
+        proof_tasks.pending.insert(
+            signer,
+            PendingRegistration {
+                instance_id: instance_id.to_string(),
+                task_id,
+                cancel: cancel.clone(),
+                cancelled_by_reconcile,
+            },
+        );
+        (task_id, cancel)
+    }
+
     async fn wait_for(label: &str, predicate: impl Fn() -> bool) {
         let started = std::time::Instant::now();
         while !predicate() {
@@ -706,20 +731,11 @@ mod tests {
 
         for (_, key) in pre_existing {
             let signer = signer_from_key(key);
-            let task_cancel = CancellationToken::new();
-            let task_cancel_inner = task_cancel.clone();
-            let handle = proof_tasks.tasks.spawn(async move {
-                task_cancel_inner.cancelled().await;
-                proof_task_success_for_test(signer)
-            });
-            proof_tasks.pending.insert(
+            let (_, task_cancel) = spawn_pending_success_task(
+                &mut proof_tasks,
                 signer,
-                PendingRegistration {
-                    instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                    task_id: handle.id(),
-                    cancel: task_cancel.clone(),
-                    cancelled_by_reconcile: false,
-                },
+                TEST_PENDING_INSTANCE_ID,
+                false,
             );
             seeded_cancels.push(task_cancel);
         }
@@ -775,22 +791,8 @@ mod tests {
         let mut proof_tasks = ProofTaskSet::new();
         let signer = signer_from_key(&HARDHAT_KEY_0);
 
-        let stale_cancel = CancellationToken::new();
-        let stale_cancel_inner = stale_cancel.clone();
-        let stale_handle = proof_tasks.tasks.spawn(async move {
-            stale_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
-        });
-        let stale_task_id = stale_handle.id();
-        proof_tasks.pending.insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: stale_task_id,
-                cancel: stale_cancel.clone(),
-                cancelled_by_reconcile: false,
-            },
-        );
+        let (stale_task_id, stale_cancel) =
+            spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
 
         reconcile(&manager, &dr_from_kept(&[]), &mut proof_tasks);
         assert!(stale_cancel.is_cancelled(), "stale task must be cancelled by reconcile");
@@ -820,21 +822,8 @@ mod tests {
         let mut proof_tasks = ProofTaskSet::new();
         let signer = signer_from_key(&HARDHAT_KEY_0);
 
-        let task_cancel = CancellationToken::new();
-        let task_cancel_inner = task_cancel.clone();
-        let handle = proof_tasks.tasks.spawn(async move {
-            task_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
-        });
-        proof_tasks.pending.insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: handle.id(),
-                cancel: task_cancel.clone(),
-                cancelled_by_reconcile: false,
-            },
-        );
+        let (_, task_cancel) =
+            spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
 
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
@@ -1000,20 +989,11 @@ mod tests {
     async fn reap_finished_tasks_leaves_in_flight_alone() {
         let mut proof_tasks = ProofTaskSet::new();
 
-        let cancel = CancellationToken::new();
-        let cancel_inner = cancel.clone();
-        let handle = proof_tasks.tasks.spawn(async move {
-            cancel_inner.cancelled().await;
-            proof_task_success_for_test(HARDHAT_ACCOUNT)
-        });
-        proof_tasks.pending.insert(
+        spawn_pending_success_task(
+            &mut proof_tasks,
             HARDHAT_ACCOUNT,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: handle.id(),
-                cancel,
-                cancelled_by_reconcile: false,
-            },
+            TEST_PENDING_INSTANCE_ID,
+            false,
         );
 
         proof_tasks.reap_finished_tasks();
@@ -1073,24 +1053,9 @@ mod tests {
         });
         let stale_task_id = stale_handle.id();
 
-        let fresh_cancel = CancellationToken::new();
-        let fresh_cancel_inner = fresh_cancel.clone();
-        let fresh_handle = proof_tasks.tasks.spawn(async move {
-            fresh_cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
-        });
-        let fresh_task_id = fresh_handle.id();
+        let (fresh_task_id, _) =
+            spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
         assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
-
-        proof_tasks.pending.insert(
-            signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: fresh_task_id,
-                cancel: fresh_cancel.clone(),
-                cancelled_by_reconcile: false,
-            },
-        );
 
         let started = std::time::Instant::now();
         loop {
@@ -1119,20 +1084,11 @@ mod tests {
         assert_ne!(active_signer, pending_signer, "test setup: distinct signers");
 
         let mut proof_tasks = ProofTaskSet::new();
-        let task_cancel = CancellationToken::new();
-        let task_cancel_inner = task_cancel.clone();
-        let handle = proof_tasks.tasks.spawn(async move {
-            task_cancel_inner.cancelled().await;
-            proof_task_success_for_test(pending_signer)
-        });
-        proof_tasks.pending.insert(
+        spawn_pending_success_task(
+            &mut proof_tasks,
             pending_signer,
-            PendingRegistration {
-                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                task_id: handle.id(),
-                cancel: task_cancel,
-                cancelled_by_reconcile: false,
-            },
+            TEST_PENDING_INSTANCE_ID,
+            false,
         );
 
         let resolution = DiscoveryResolution {
@@ -1254,20 +1210,11 @@ mod tests {
 
                     for (key, flagged) in seed {
                         let signer = signer_from_key(key);
-                        let cancel = CancellationToken::new();
-                        let cancel_inner = cancel.clone();
-                        let handle = proof_tasks.tasks.spawn(async move {
-                            cancel_inner.cancelled().await;
-                            proof_task_success_for_test(signer)
-                        });
-                        proof_tasks.pending.insert(
+                        let (_, cancel) = spawn_pending_success_task(
+                            &mut proof_tasks,
                             signer,
-                            PendingRegistration {
-                                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
-                                task_id: handle.id(),
-                                cancel: cancel.clone(),
-                                cancelled_by_reconcile: *flagged,
-                            },
+                            TEST_PENDING_INSTANCE_ID,
+                            *flagged,
                         );
                         if *flagged {
                             cancel.cancel();

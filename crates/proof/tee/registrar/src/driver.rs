@@ -653,12 +653,9 @@ mod tests {
     };
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, B256, Bloom, Bytes, address};
+    use alloy_primitives::{Address, B256, Bloom, address};
     use alloy_rpc_types_eth::TransactionReceipt;
-    use alloy_sol_types::SolCall;
     use async_trait::async_trait;
-    use base_proof_contracts::ITEEProverRegistry;
-    use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
     use base_tx_manager::{SendHandle, TxCandidate, TxManager};
     use hex_literal::hex;
     use k256::ecdsa::SigningKey;
@@ -667,10 +664,7 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{
-        InstanceHealthStatus, NitroVerifierClient, RegistryClient, Result, SignerClient,
-        SignerManager,
-    };
+    use crate::{InstanceHealthStatus, NitroVerifierClient, Result, SignerClient};
 
     // ── Shared constants ────────────────────────────────────────────────
 
@@ -699,10 +693,6 @@ mod tests {
     const EP2: &str = "10.0.0.2:8000";
     const EP3: &str = "10.0.0.3:8000";
     const EP4: &str = "10.0.0.4:8000";
-
-    /// Synthetic orphan addresses for deregistration tests.
-    /// Each uses `Address::repeat_byte` for deterministic, readable values.
-    const ORPHAN_A: Address = Address::repeat_byte(0xAA);
 
     /// Placeholder registry contract address used in `DriverConfig`.
     const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
@@ -783,24 +773,6 @@ mod tests {
     impl InstanceDiscovery for MockDiscovery {
         async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
             Ok(self.instances.clone())
-        }
-    }
-
-    /// Mock proof provider that returns a dummy proof.
-    #[derive(Debug)]
-    struct StubProofProvider;
-
-    #[async_trait]
-    impl AttestationProofProvider for StubProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            Ok(AttestationProof {
-                output: Bytes::from_static(b"stub-output"),
-                proof_bytes: Bytes::from_static(b"stub-proof"),
-            })
         }
     }
 
@@ -893,44 +865,6 @@ mod tests {
         }
     }
 
-    /// Mock registry that returns a configured set of registered signers.
-    ///
-    /// By default, `is_registered` checks membership in the `signers` list
-    /// (matching real contract behavior). When `all_registered` is set, it
-    /// returns `true` unconditionally, which short-circuits the registration
-    /// path after the registry precheck.
-    #[derive(Debug)]
-    struct MockRegistry {
-        signers: Vec<Address>,
-        /// When `true`, `is_registered` returns `true` for all queries,
-        /// regardless of `signers` membership.
-        all_registered: bool,
-    }
-
-    impl MockRegistry {
-        fn with_signers(signers: Vec<Address>) -> Self {
-            Self { signers, all_registered: false }
-        }
-
-        fn all_registered(signers: Vec<Address>) -> Self {
-            Self { signers, all_registered: true }
-        }
-    }
-
-    #[async_trait]
-    impl RegistryClient for MockRegistry {
-        async fn is_registered(&self, signer: Address) -> Result<bool> {
-            if self.all_registered {
-                return Ok(true);
-            }
-            Ok(self.signers.contains(&signer))
-        }
-
-        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-            Ok(self.signers.clone())
-        }
-    }
-
     /// Mock Nitro verifier used to satisfy the driver's required certificate
     /// manager dependency in tests that do not exercise CRL checks.
     #[derive(Debug)]
@@ -953,36 +887,24 @@ mod tests {
 
     fn mock_cert_manager(
         config: &DriverConfig,
-        tx_manager: SharedTxManager,
-    ) -> CertManager<SharedTxManager> {
+        tx_manager: NoopTxManager,
+    ) -> CertManager<NoopTxManager> {
         CertManager::new(&config.crl, mock_nitro_verifier(), tx_manager)
             .expect("test cert manager builds")
     }
 
-    /// Mock tx manager that records submitted calldata for assertion.
-    #[derive(Debug, Clone)]
-    struct SharedTxManager {
-        sent: Arc<Mutex<Vec<Bytes>>>,
-    }
+    /// Minimal tx manager used only to satisfy the driver's certificate-manager
+    /// dependency in tests that do not exercise transaction submission.
+    #[derive(Debug, Clone, Copy)]
+    struct NoopTxManager;
 
-    impl SharedTxManager {
-        fn new() -> Self {
-            Self { sent: Arc::new(Mutex::new(vec![])) }
-        }
-
-        fn sent_calldata(&self) -> Vec<Bytes> {
-            self.sent.lock().unwrap().clone()
-        }
-    }
-
-    impl TxManager for SharedTxManager {
-        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            self.sent.lock().unwrap().push(candidate.tx_data);
+    impl TxManager for NoopTxManager {
+        async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
             Ok(stub_receipt())
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            unimplemented!("not used in tests")
+            unimplemented!("not used in driver tests")
         }
 
         fn sender_address(&self) -> Address {
@@ -1064,7 +986,7 @@ mod tests {
     }
 
     type CycleDriver =
-        RegistrationDriver<MockDiscovery, MockSignerClient, MockSignerManager, SharedTxManager>;
+        RegistrationDriver<MockDiscovery, MockSignerClient, MockSignerManager, NoopTxManager>;
 
     /// Builds a fully-configured driver for primitive-level tests that
     /// invoke `discover_and_resolve` directly, without standing up the
@@ -1076,9 +998,8 @@ mod tests {
         cancel: CancellationToken,
     ) -> Arc<CycleDriver> {
         let config = default_config(cancel);
-        let tx = SharedTxManager::new();
         let signer_manager = MockSignerManager::new(CancellationToken::new());
-        let cert_manager = mock_cert_manager(&config, tx);
+        let cert_manager = mock_cert_manager(&config, NoopTxManager);
         Arc::new(RegistrationDriver::new(
             MockDiscovery { instances },
             signer_client,
@@ -1092,9 +1013,8 @@ mod tests {
     fn new_accepts_injected_cert_manager() {
         let mut config = default_config(CancellationToken::new());
         config.crl.enabled = true;
-        let tx = SharedTxManager::new();
         let signer_manager = MockSignerManager::new(CancellationToken::new());
-        let cert_manager = mock_cert_manager(&config, tx);
+        let cert_manager = mock_cert_manager(&config, NoopTxManager);
 
         RegistrationDriver::new(
             MockDiscovery { instances: vec![] },
@@ -1104,336 +1024,25 @@ mod tests {
             signer_manager,
         );
     }
-    // ── Pipeline test infrastructure ────────────────────────────────────
-    //
-    // Used by top-level `run` tests. Designed so the entire run loop can be
-    // driven from a `tokio::test` without real sleeps: the gated proof provider
-    // parks every spawned proof on a `CancellationToken` that the test releases
-    // when it has observed the behaviour it cares about.
-
-    /// Tightened poll interval for spawn-pipeline tests so we observe
-    /// multiple cycles without burning real wall-time.
-    const GATED_POLL_INTERVAL: Duration = Duration::from_millis(25);
-
-    /// Soft timeout for `wait_for` polling assertions. Generous enough
-    /// to absorb CI jitter while still failing fast on a stuck pipeline.
-    const GATED_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-
-    /// Minimum number of run cycles a pipeline test must let elapse
-    /// before asserting that discovery is unblocked. Two cycles proves
-    /// the loop is not blocked behind a long proof (one would also pass
-    /// for a synchronous loop on its first iteration).
-    const MIN_CYCLES_IN_OBSERVATION_WINDOW: usize = 2;
-
-    /// Shared mutable state for [`GatedProofProvider`].
-    ///
-    /// `release` is a [`CancellationToken`] — not a [`tokio::sync::Notify`]
-    /// — so it is *latched*. A late-arriving proof task that calls
-    /// `generate_proof_for_signer` after `release_all()` returns
-    /// immediately, instead of missing a one-shot `notify_waiters` wakeup
-    /// and hanging forever. This eliminates a registration race the
-    /// earlier design suffered from.
-    #[derive(Debug, Default)]
-    struct GatedProofState {
-        release: CancellationToken,
-        call_count: AtomicUsize,
-        in_flight: AtomicUsize,
-        /// Optional per-signer failure routing. If a signer address is
-        /// present in this set, [`GatedProofProvider::generate_proof_for_signer`]
-        /// returns a synthetic [`ProverError::Boundless`] immediately
-        /// (skipping the release gate) so tests can observe the registration
-        /// failure path without having to stand up a second proof provider type. The check happens
-        /// before [`GatedProofState::call_count`] is incremented, so
-        /// failed signers do not contribute to the in-flight count
-        /// either.
-        fail_for: Mutex<HashSet<Address>>,
-    }
-
-    /// RAII guard that bumps and decrements [`GatedProofState::in_flight`].
-    struct InFlightGuard {
-        state: Arc<GatedProofState>,
-    }
-
-    impl InFlightGuard {
-        fn new(state: Arc<GatedProofState>) -> Self {
-            state.in_flight.fetch_add(1, Ordering::SeqCst);
-            Self { state }
-        }
-    }
-
-    impl Drop for InFlightGuard {
-        fn drop(&mut self) {
-            self.state.in_flight.fetch_sub(1, Ordering::SeqCst);
-        }
-    }
-
-    /// Proof provider that parks every call on a shared cancel token
-    /// until the test releases it, while tracking call and in-flight
-    /// counts (see [`GatedProofHandles::call_count`] and
-    /// [`GatedProofHandles::in_flight`]).
-    ///
-    /// Cancel-safe: the await on `release.cancelled()` is itself cancellable,
-    /// so when the registration manager's biased `select!` drops this future
-    /// on its own `signer_cancel`, no state is left hanging.
-    #[derive(Debug, Clone)]
-    struct GatedProofProvider {
-        state: Arc<GatedProofState>,
-    }
-
-    impl GatedProofProvider {
-        fn new() -> (Self, GatedProofHandles) {
-            let state = Arc::new(GatedProofState::default());
-            (Self { state: Arc::clone(&state) }, GatedProofHandles { state })
-        }
-    }
-
-    #[async_trait]
-    impl AttestationProofProvider for GatedProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            self.state.call_count.fetch_add(1, Ordering::SeqCst);
-            let _guard = InFlightGuard::new(Arc::clone(&self.state));
-            self.state.release.cancelled().await;
-            Ok(AttestationProof {
-                output: Bytes::from_static(b"gated-output"),
-                proof_bytes: Bytes::from_static(b"gated-proof"),
-            })
-        }
-
-        async fn generate_proof_for_signer(
-            &self,
-            attestation_bytes: &[u8],
-            signer_address: Address,
-            cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            if self.state.fail_for.lock().unwrap().contains(&signer_address) {
-                return Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
-                    "synthetic failure injected by GatedProofProvider".into(),
-                ));
-            }
-            self.generate_proof(attestation_bytes, cancel).await
-        }
-    }
-
-    /// Test-side handle for inspecting and releasing a [`GatedProofProvider`].
-    #[derive(Debug, Clone)]
-    struct GatedProofHandles {
-        state: Arc<GatedProofState>,
-    }
-
-    impl GatedProofHandles {
-        /// Releases every currently-blocked and every future proof call
-        /// (the token is latched).
-        fn release_all(&self) {
-            self.state.release.cancel();
-        }
-
-        fn call_count(&self) -> usize {
-            self.state.call_count.load(Ordering::SeqCst)
-        }
-
-        fn in_flight(&self) -> usize {
-            self.state.in_flight.load(Ordering::SeqCst)
-        }
-
-        /// Configures [`GatedProofProvider::generate_proof_for_signer`]
-        /// to return a synthetic [`ProverError::Boundless`] for the
-        /// given signer addresses on every subsequent call. The check
-        /// happens **before** the gate, so failing tasks do not affect
-        /// [`Self::call_count`] or [`Self::in_flight`].
-        fn fail_for_signers(&self, signers: impl IntoIterator<Item = Address>) {
-            self.state.fail_for.lock().unwrap().extend(signers);
-        }
-    }
-
-    /// Discovery whose returned instance list can be mutated mid-run.
-    ///
-    /// Lets a test simulate ASG scale-up/down between cycles without
-    /// restarting the driver.
-    #[derive(Debug, Clone)]
-    struct MutableDiscovery {
-        instances: Arc<Mutex<Vec<ProverInstance>>>,
-    }
-
-    impl MutableDiscovery {
-        fn new(initial: Vec<ProverInstance>) -> Self {
-            Self { instances: Arc::new(Mutex::new(initial)) }
-        }
-
-        fn set(&self, instances: Vec<ProverInstance>) {
-            *self.instances.lock().unwrap() = instances;
-        }
-    }
-
-    #[async_trait]
-    impl InstanceDiscovery for MutableDiscovery {
-        async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
-            Ok(self.instances.lock().unwrap().clone())
-        }
-    }
-
-    /// Type alias for the [`RegistrationDriver`] specialisation used by
-    /// the pipeline tests.
-    type RunDriver = RegistrationDriver<
-        MutableDiscovery,
-        MockSignerClient,
-        Arc<SignerManager<GatedProofProvider, MockRegistry, SharedTxManager>>,
-        SharedTxManager,
-    >;
-
-    /// Bundles every handle a pipeline test needs to drive the loop.
-    struct GatedRunHarness {
-        driver: Arc<RunDriver>,
-        cancel: CancellationToken,
-        discovery: MutableDiscovery,
-        proof: GatedProofHandles,
-        tx: SharedTxManager,
-    }
-
-    impl GatedRunHarness {
-        /// Builds a harness with the given initial instances + signer
-        /// keys; both come from `endpoints_to_keys` so the wiring
-        /// (instance ↔ key ↔ derived address) cannot drift.
-        fn new(
-            initial_instances: Vec<ProverInstance>,
-            endpoints_to_keys: &[(&str, &[u8; 32])],
-            registry: MockRegistry,
-        ) -> Self {
-            let discovery = MutableDiscovery::new(initial_instances);
-            let signer_client = MockSignerClient::from_keys(endpoints_to_keys);
-            let tx = SharedTxManager::new();
-            let cancel = CancellationToken::new();
-            let (proof_provider, proof_handles) = GatedProofProvider::new();
-
-            let mut config = default_config(cancel.clone());
-            config.poll_interval = GATED_POLL_INTERVAL;
-            let signer_manager = Arc::new(SignerManager::new(
-                proof_provider,
-                registry,
-                tx.clone(),
-                config.signer_manager.clone(),
-            ));
-            let cert_manager = mock_cert_manager(&config, tx.clone());
-
-            let driver = Arc::new(RegistrationDriver::new(
-                discovery.clone(),
-                signer_client,
-                config,
-                cert_manager,
-                signer_manager,
-            ));
-
-            Self { driver, cancel, discovery, proof: proof_handles, tx }
-        }
-
-        /// Spawns the registration loop on the current runtime, returning
-        /// the `JoinHandle` so the test can await shutdown.
-        fn spawn_run(&self) -> tokio::task::JoinHandle<Result<()>> {
-            let driver = Arc::clone(&self.driver);
-            tokio::spawn(async move { driver.run_loop().await })
-        }
-
-        /// Cancels the harness, awaits its run handle inside
-        /// [`GATED_WAIT_TIMEOUT`], and asserts the loop exited cleanly.
-        /// Every pipeline test must call this exactly once at the end
-        /// to drain in-flight proof tasks and surface unexpected panics.
-        async fn shutdown(&self, handle: tokio::task::JoinHandle<Result<()>>) {
-            self.cancel.cancel();
-            let outcome = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
-                .await
-                .expect("run() should observe cancel and stop within timeout")
-                .expect("run() task should not panic");
-            outcome.expect("run() should return Ok on graceful shutdown");
-        }
-    }
-
-    /// Polls `predicate` until it returns `true` or [`GATED_WAIT_TIMEOUT`]
-    /// elapses. Panics with `label` on timeout so test failures point at
-    /// the specific expectation that didn't fire.
-    async fn wait_for(label: &str, predicate: impl Fn() -> bool) {
-        let started = std::time::Instant::now();
-        while !predicate() {
-            if started.elapsed() > GATED_WAIT_TIMEOUT {
-                panic!("timed out waiting for: {label}");
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    }
-
-    /// Counts the number of `registerSigner` calldata frames in a
-    /// captured tx-manager log.
-    fn count_register_calls(sent: &[Bytes]) -> usize {
-        let sel = ITEEProverRegistry::registerSignerCall::SELECTOR;
-        sent.iter().filter(|c| c.len() >= 4 && c[..4] == sel).count()
-    }
-
-    /// Counts the number of `deregisterSigner` calldata frames.
-    fn count_deregister_calls(sent: &[Bytes]) -> usize {
-        let sel = ITEEProverRegistry::deregisterSignerCall::SELECTOR;
-        sent.iter().filter(|c| c.len() >= 4 && c[..4] == sel).count()
-    }
-
-    /// Builds a [`MockRegistry`] that reports zero registered signers.
-    /// Used by every pipeline test that wants the onchain state to
-    /// start empty.
-    fn empty_registry() -> MockRegistry {
-        MockRegistry::with_signers(vec![])
-    }
-
-    /// Builds the single-instance / single-key `(EP1, HARDHAT_KEY_0)`
-    /// harness used by most pipeline tests, with no signers registered
-    /// onchain. Centralising this pair removes ~5 lines of boilerplate
-    /// per test and makes it impossible for them to drift out of sync.
-    fn single_healthy_harness() -> GatedRunHarness {
-        GatedRunHarness::new(
-            vec![instance(EP1, InstanceHealthStatus::Healthy)],
-            &[(EP1, &HARDHAT_KEY_0)],
-            empty_registry(),
-        )
-    }
-
-    /// Builds an `n`-instance harness with all healthy instances and
-    /// no signers registered onchain. The signer client is seeded with
-    /// **every** endpoint in [`ALL_ENDPOINTS`] (not just the initial
-    /// `n`) so scale-up tests that swap the discovery list mid-run can
-    /// resolve public keys for instances that weren't part of the
-    /// original snapshot.
-    fn multi_healthy_harness(num_instances: usize) -> GatedRunHarness {
-        assert!(
-            num_instances <= ALL_ENDPOINTS.len(),
-            "fixture has only {} endpoints; requested {num_instances}",
-            ALL_ENDPOINTS.len()
-        );
-        let initial: Vec<_> = ALL_ENDPOINTS[..num_instances]
-            .iter()
-            .map(|ep| instance(ep, InstanceHealthStatus::Healthy))
-            .collect();
-        let all_keys: Vec<(&str, &[u8; 32])> =
-            ALL_ENDPOINTS.iter().copied().zip(ALL_KEYS.iter().copied()).collect();
-        GatedRunHarness::new(initial, &all_keys, empty_registry())
-    }
+    const FAST_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
     #[tokio::test]
     async fn run_loop_uses_injected_signer_manager_boundary() {
         let cancel = CancellationToken::new();
         let mut config = default_config(cancel.clone());
-        config.poll_interval = GATED_POLL_INTERVAL;
+        config.poll_interval = FAST_POLL_INTERVAL;
 
-        let tx = SharedTxManager::new();
         let signer_manager = MockSignerManager::new(cancel.clone());
         let signer_manager_handle = signer_manager.clone();
         let signer = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0))
             .expect("test key derives");
-        let cert_manager = mock_cert_manager(&config, tx);
+        let cert_manager = mock_cert_manager(&config, NoopTxManager);
 
         let driver = RegistrationDriver::<
             MockDiscovery,
             MockSignerClient,
             MockSignerManager,
-            SharedTxManager,
+            NoopTxManager,
         >::new(
             MockDiscovery { instances: vec![instance(EP1, InstanceHealthStatus::Healthy)] },
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
@@ -1715,7 +1324,6 @@ mod tests {
         let instances = vec![instance(EP1, InstanceHealthStatus::Healthy)];
 
         let cancel = CancellationToken::new();
-        let tx = SharedTxManager::new();
 
         let signer_client = CancellingSignerClient {
             inner: MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
@@ -1723,7 +1331,7 @@ mod tests {
         };
         let config = default_config(cancel);
         let signer_manager = MockSignerManager::new(CancellationToken::new());
-        let cert_manager = mock_cert_manager(&config, tx.clone());
+        let cert_manager = mock_cert_manager(&config, NoopTxManager);
 
         let driver = Arc::new(RegistrationDriver::new(
             MockDiscovery { instances },
@@ -1921,16 +1529,10 @@ mod tests {
         let (signer_client, peak) = ConcurrencyTrackingSignerClient::new(inner);
 
         let cancel = CancellationToken::new();
-        let tx = SharedTxManager::new();
         let mut config = default_config(cancel);
         config.signer_manager.max_concurrency = max_concurrency;
-        let signer_manager = Arc::new(SignerManager::new(
-            StubProofProvider,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            config.signer_manager.clone(),
-        ));
-        let cert_manager = mock_cert_manager(&config, tx.clone());
+        let signer_manager = MockSignerManager::new(CancellationToken::new());
+        let cert_manager = mock_cert_manager(&config, NoopTxManager);
 
         let driver = Arc::new(RegistrationDriver::new(
             MockDiscovery { instances },
@@ -1953,438 +1555,4 @@ mod tests {
             "all 4 healthy instances should resolve into the registerable set",
         );
     }
-
-    // ── run() spawn-and-reap pipeline tests ─────────────────────────────
-    //
-    // End-to-end tests for the new run() loop. Each test spawns the
-    // loop on the tokio runtime with a tightened poll interval, then
-    // observes the spawn/reap pipeline via the GatedProofProvider
-    // counters and the SharedTxManager calldata log. Cancellation is
-    // used to stop the loop cleanly between assertions.
-
-    #[rstest]
-    #[case::one_instance(1)]
-    #[case::two_instances(2)]
-    #[case::three_instances(3)]
-    #[case::four_instances(4)]
-    #[tokio::test]
-    async fn run_spawns_one_task_per_enclave_and_each_submits_registration(
-        #[case] num_instances: usize,
-    ) {
-        // `num_instances` healthy instances, one enclave each, none yet
-        // registered. The pipeline must spawn exactly `num_instances`
-        // proof tasks; once released they each submit a single
-        // registerSigner tx — independent of the fan-out width.
-        let harness = multi_healthy_harness(num_instances);
-
-        let run_handle = harness.spawn_run();
-
-        wait_for("every proof task parked in gate", || harness.proof.in_flight() == num_instances)
-            .await;
-
-        // Release the gate so the proof tasks return and registrations submit.
-        harness.proof.release_all();
-
-        wait_for("every registerSigner tx submitted", || {
-            count_register_calls(&harness.tx.sent_calldata()) == num_instances
-        })
-        .await;
-
-        harness.shutdown(run_handle).await;
-
-        assert_eq!(harness.proof.call_count(), num_instances, "exactly one proof per enclave");
-    }
-
-    #[rstest]
-    // Scale-down 2 → 1: cancel either the first-discovered or the
-    // last-discovered task, exhaustively.
-    #[case::two_instances_drop_first(2, &[0])]
-    #[case::two_instances_drop_last(2, &[1])]
-    // Scale-down 3 → 1: cancel two of three (covers middle index too).
-    #[case::three_instances_drop_two_keep_first(3, &[1, 2])]
-    #[case::three_instances_drop_two_keep_last(3, &[0, 1])]
-    #[tokio::test]
-    async fn run_cancels_in_flight_tasks_when_instances_vanish_mid_proof(
-        #[case] initial_count: usize,
-        #[case] drop_indices: &[usize],
-    ) {
-        // Start with `initial_count` healthy instances; observe every
-        // proof task parked. Remove the instances at `drop_indices` from
-        // discovery; the next cycle must cancel their tasks cooperatively
-        // (the signer_cancel token fires inside the registration manager's
-        // biased select! around generate_proof_for_signer), and the cancelled
-        // tasks exit Ok(()) without submitting a tx.
-        let harness = multi_healthy_harness(initial_count);
-
-        let run_handle = harness.spawn_run();
-
-        wait_for("every proof task parked in gate", || harness.proof.in_flight() == initial_count)
-            .await;
-
-        // Drop the chosen indices from discovery.
-        let drop_set: HashSet<usize> = drop_indices.iter().copied().collect();
-        let kept_endpoints: Vec<&'static str> = ALL_ENDPOINTS[..initial_count]
-            .iter()
-            .enumerate()
-            .filter_map(|(i, ep)| (!drop_set.contains(&i)).then_some(*ep))
-            .collect();
-        let kept_count = kept_endpoints.len();
-        let dropped_count = drop_indices.len();
-        harness.discovery.set(
-            kept_endpoints.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect(),
-        );
-
-        // The reconcile pass on the next cycle must cancel every
-        // dropped instance's task.
-        wait_for("dropped proof tasks cancelled", || harness.proof.in_flight() == kept_count).await;
-
-        // Surviving proofs are still parked; release the gate to let
-        // them through.
-        harness.proof.release_all();
-
-        wait_for("every surviving instance registered", || {
-            count_register_calls(&harness.tx.sent_calldata()) == kept_count
-        })
-        .await;
-
-        harness.shutdown(run_handle).await;
-
-        let sent = harness.tx.sent_calldata();
-        assert_eq!(
-            count_register_calls(&sent),
-            kept_count,
-            "{dropped_count} dropped instance(s) must NOT have submitted a registration"
-        );
-    }
-
-    #[rstest]
-    // The exact bug this entire refactor fixes: a long-running proof
-    // for one already-discovered instance must not block discovery
-    // from picking up newly-launched instances. We cover three
-    // scale-up sizes so a regression that, e.g., serialises one new
-    // task per N existing in-flight tasks would still be caught.
-    #[case::scale_up_1_to_2(1, 2)]
-    #[case::scale_up_1_to_3(1, 3)]
-    #[case::scale_up_2_to_4(2, 4)]
-    #[tokio::test]
-    async fn run_continues_discovery_while_proof_tasks_are_in_flight(
-        #[case] initial_count: usize,
-        #[case] final_count: usize,
-    ) {
-        assert!(final_count > initial_count, "test case must scale up");
-        let harness = multi_healthy_harness(initial_count);
-
-        let run_handle = harness.spawn_run();
-
-        wait_for("initial proof tasks parked in gate", || {
-            harness.proof.in_flight() == initial_count
-        })
-        .await;
-        let initial_call_count = harness.proof.call_count();
-
-        // Now scale up: add the new instances while the initial ones'
-        // proofs are still parked in the gate.
-        harness.discovery.set(
-            ALL_ENDPOINTS[..final_count]
-                .iter()
-                .map(|ep| instance(ep, InstanceHealthStatus::Healthy))
-                .collect(),
-        );
-
-        // Every new instance must enter the proof pipeline.
-        wait_for("all proof tasks spawned despite existing in-flight tasks", || {
-            harness.proof.in_flight() == final_count
-        })
-        .await;
-        let added = final_count - initial_count;
-        assert_eq!(
-            harness.proof.call_count() - initial_call_count,
-            added,
-            "newly-discovered instances must each have generated a proof"
-        );
-
-        // Release everything and let them register.
-        harness.proof.release_all();
-        wait_for("every instance registered", || {
-            count_register_calls(&harness.tx.sent_calldata()) == final_count
-        })
-        .await;
-
-        harness.shutdown(run_handle).await;
-    }
-
-    /// Reasons a healthy-looking input still produces no proof and no
-    /// registration tx, used to parametrize
-    /// [`run_does_not_register_when`].
-    #[derive(Debug, Clone, Copy)]
-    enum NoRegisterReason {
-        /// Instance is `Draining` — `should_register()` is `false`.
-        InstanceDraining,
-        /// Instance is `Unhealthy` with no recent launch time —
-        /// `should_register()` is `false` and the unhealthy-grace
-        /// window doesn't apply.
-        InstanceUnhealthy,
-        /// Instance is `Healthy` but the derived signer is already on the
-        /// onchain registry, so registration short-circuits in `is_registered()`.
-        SignerAlreadyRegistered,
-    }
-
-    /// Builds the (instance-list, registry) pair for each
-    /// [`NoRegisterReason`] case.
-    fn build_no_register_inputs(reason: NoRegisterReason) -> (Vec<ProverInstance>, MockRegistry) {
-        match reason {
-            NoRegisterReason::InstanceDraining => {
-                (vec![instance(EP1, InstanceHealthStatus::Draining)], empty_registry())
-            }
-            NoRegisterReason::InstanceUnhealthy => {
-                (vec![instance(EP1, InstanceHealthStatus::Unhealthy)], empty_registry())
-            }
-            NoRegisterReason::SignerAlreadyRegistered => {
-                let signer =
-                    ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-                (
-                    vec![instance(EP1, InstanceHealthStatus::Healthy)],
-                    MockRegistry::all_registered(vec![signer]),
-                )
-            }
-        }
-    }
-
-    #[rstest]
-    #[case::instance_draining(NoRegisterReason::InstanceDraining)]
-    #[case::instance_unhealthy_no_launch_time(NoRegisterReason::InstanceUnhealthy)]
-    #[case::signer_already_registered(NoRegisterReason::SignerAlreadyRegistered)]
-    #[tokio::test]
-    async fn run_does_not_register_when(#[case] reason: NoRegisterReason) {
-        // For every reason listed above, the pipeline must observe the
-        // instance (otherwise this test would pass trivially with a
-        // broken discovery loop) and then choose not to spawn a proof
-        // / not to submit a registration. The two `assert_eq!(0, …)`s
-        // are the same invariant — only the *reason* the input failed
-        // to register differs.
-        let (initial_instances, registry) = build_no_register_inputs(reason);
-        let harness = GatedRunHarness::new(initial_instances, &[(EP1, &HARDHAT_KEY_0)], registry);
-
-        let run_handle = harness.spawn_run();
-
-        // Let multiple cycles elapse so we can be confident the loop
-        // observed the instance and chose not to register.
-        tokio::time::sleep(GATED_POLL_INTERVAL * MIN_CYCLES_IN_OBSERVATION_WINDOW as u32).await;
-
-        assert_eq!(
-            harness.proof.call_count(),
-            0,
-            "generate_proof must not be called for reason: {reason:?}"
-        );
-        assert_eq!(
-            count_register_calls(&harness.tx.sent_calldata()),
-            0,
-            "no registration tx must be submitted for reason: {reason:?}"
-        );
-
-        harness.shutdown(run_handle).await;
-    }
-
-    #[tokio::test]
-    async fn run_deregisters_orphan_signer_via_orphan_pass() {
-        // No discovered instances → active_signers is empty →
-        // every onchain signer is an orphan. ok_to_dereg is true
-        // when total_count == 0, so the orphan pass fires and
-        // deregisters ORPHAN_A.
-        let harness = GatedRunHarness::new(vec![], &[], MockRegistry::with_signers(vec![ORPHAN_A]));
-
-        let run_handle = harness.spawn_run();
-
-        wait_for("ORPHAN_A deregistered", || {
-            count_deregister_calls(&harness.tx.sent_calldata()) == 1
-        })
-        .await;
-
-        harness.shutdown(run_handle).await;
-
-        assert_eq!(harness.proof.call_count(), 0, "no proofs needed for orphan-only cycle");
-    }
-
-    #[tokio::test]
-    async fn run_drains_pending_proof_tasks_on_shutdown() {
-        // When the cancel token fires while a proof task is still
-        // parked in the gate, the shutdown path must cancel + abort
-        // the JoinSet and the task must terminate cleanly (Ok via the
-        // signer_cancel select! branch).
-        let harness = single_healthy_harness();
-
-        let run_handle = harness.spawn_run();
-
-        wait_for("EP1 proof parked", || harness.proof.in_flight() == 1).await;
-
-        // Don't release the gate — let shutdown handle the cleanup.
-        harness.shutdown(run_handle).await;
-
-        let sent = harness.tx.sent_calldata();
-        assert_eq!(count_register_calls(&sent), 0, "no registration submitted at shutdown");
-    }
-
-    // ── run() additional coverage ─────────────────────────────────────
-
-    #[tokio::test]
-    async fn run_isolates_proof_failure_and_continues_pipeline_for_other_signers() {
-        // EP1's proof errors out; EP2's proof must still complete and
-        // submit a registration. This proves:
-        //   1. The failing task does not park the gate (EP1 errors
-        //      before the await in `generate_proof`), so the loop sees
-        //      exactly one in-flight task.
-        //   2. EP2's registration lands — the failing task did not
-        //      block the pipeline serially behind it.
-        //   3. The failed task is evicted from `pending`, so shutdown
-        //      drains cleanly within [`GATED_WAIT_TIMEOUT`].
-        //
-        // The failing signer's proof returns `Err` before the
-        // `tx_manager.send()` call in the registration manager, so it can never
-        // produce a `registerSigner` calldata frame — regardless of
-        // how many cycles re-spawn it under the static `MockRegistry`.
-        // Every entry in `count_register_calls` is therefore attributable
-        // to the surviving signer.
-        let harness = multi_healthy_harness(2);
-        let failing_signer =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let surviving_signer =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
-        assert_ne!(failing_signer, surviving_signer, "test setup: distinct signer addresses");
-        harness.proof.fail_for_signers([failing_signer]);
-
-        let run_handle = harness.spawn_run();
-
-        // Only the surviving signer's task should park in the gate; the failing
-        // task errors immediately and returns from registration without awaiting.
-        wait_for("exactly one proof parked (failing signer errored before the gate)", || {
-            harness.proof.in_flight() == 1
-        })
-        .await;
-
-        // Release the gate so the surviving signer can register.
-        harness.proof.release_all();
-        wait_for("surviving signer registered while failing signer errored", || {
-            count_register_calls(&harness.tx.sent_calldata()) >= 1
-        })
-        .await;
-
-        harness.shutdown(run_handle).await;
-
-        // Final state: at least one registration landed, the gate
-        // observed exactly one parked task (asserted above), and no
-        // tasks are still in flight after shutdown.
-        assert_eq!(harness.proof.in_flight(), 0, "every parked proof returned by shutdown");
-    }
-
-    #[tokio::test]
-    async fn run_handles_orphan_dereg_and_active_registration_in_same_cycle() {
-        // Mixed-mode cycle: EP1 is healthy + unregistered (so it must
-        // register), while ORPHAN_A is already onchain but has no
-        // backing instance (so it must be deregistered). Both passes
-        // must run in the same cycle and both transactions must land.
-        let harness = GatedRunHarness::new(
-            vec![instance(EP1, InstanceHealthStatus::Healthy)],
-            &[(EP1, &HARDHAT_KEY_0)],
-            MockRegistry::with_signers(vec![ORPHAN_A]),
-        );
-
-        let run_handle = harness.spawn_run();
-
-        // Orphan dereg runs in the foreground each cycle; it must
-        // submit immediately without waiting for the proof gate.
-        wait_for("ORPHAN_A deregistered", || {
-            count_deregister_calls(&harness.tx.sent_calldata()) == 1
-        })
-        .await;
-
-        // EP1's proof is parked in the gate; releasing it must let
-        // the registration through alongside the already-completed
-        // dereg.
-        wait_for("EP1 proof parked", || harness.proof.in_flight() == 1).await;
-        harness.proof.release_all();
-        wait_for("EP1 registered", || count_register_calls(&harness.tx.sent_calldata()) == 1).await;
-
-        harness.shutdown(run_handle).await;
-
-        let sent = harness.tx.sent_calldata();
-        assert_eq!(count_register_calls(&sent), 1, "EP1 registration submitted exactly once");
-        assert_eq!(
-            count_deregister_calls(&sent),
-            1,
-            "ORPHAN_A deregistration submitted exactly once"
-        );
-    }
-
-    /// `unhealthy_registration_window` parametric test: an `Unhealthy`
-    /// instance whose `launch_time` falls *inside* the window must register via
-    /// the full `run()` pipeline; one whose `launch_time` falls *outside* the
-    /// window, or who has no `launch_time` at all, must not register.
-    #[rstest]
-    // Recently-launched unhealthy instance: should register.
-    #[case::recent_launch_registers(
-        Some(Duration::from_secs(60 * 10)),
-        true,
-    )]
-    // Old unhealthy instance well past the window: should NOT register.
-    #[case::old_launch_does_not_register(
-        Some(Duration::from_secs(60 * 60 * 24)),
-        false,
-    )]
-    // Unhealthy instance with no launch_time: cannot age-gate, so
-    // defaults to the safe path and does NOT register.
-    #[case::missing_launch_does_not_register(None, false)]
-    #[tokio::test]
-    async fn run_registers_unhealthy_only_within_grace_window(
-        #[case] age_below_now: Option<Duration>,
-        #[case] expect_registration: bool,
-    ) {
-        let launch_time = age_below_now.map(|age| SystemTime::now() - age);
-        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
-        let harness = GatedRunHarness::new(vec![inst], &[(EP1, &HARDHAT_KEY_0)], empty_registry());
-
-        let run_handle = harness.spawn_run();
-
-        if expect_registration {
-            // Eligible instance: a proof task must park on the gate,
-            // then the registration must land once we release.
-            wait_for("eligible unhealthy proof parked in gate", || harness.proof.in_flight() == 1)
-                .await;
-            harness.proof.release_all();
-            wait_for("unhealthy-within-window signer registered", || {
-                count_register_calls(&harness.tx.sent_calldata()) >= 1
-            })
-            .await;
-        } else {
-            // Ineligible instance: give the loop at least a couple of
-            // cycles so a faulty short-circuit would have time to
-            // spawn a proof task and submit a tx. The gate stays
-            // unreleased — if anything parked we'd never reach the
-            // shutdown timeout below.
-            tokio::time::sleep(GATED_POLL_INTERVAL * MIN_CYCLES_IN_OBSERVATION_WINDOW as u32).await;
-            assert_eq!(
-                harness.proof.in_flight(),
-                0,
-                "ineligible unhealthy instance must not spawn a proof task"
-            );
-            assert!(
-                count_register_calls(&harness.tx.sent_calldata()) == 0,
-                "ineligible unhealthy instance must not register"
-            );
-        }
-
-        harness.shutdown(run_handle).await;
-    }
-
-    // NOTE on real-data fixtures: the pipeline tests above intentionally
-    // use the [`GatedProofProvider`] (which synthesises empty
-    // attestation-proof bytes) and the [`MockSignerClient`]'s default
-    // `b"mock-attestation"` byte string. The end-to-end run loop never
-    // parses these blobs in this test configuration: CRL pre-checks are
-    // disabled in [`default_config`], and `MockRegistry` does not verify
-    // calldata. The canonical 4-certificate chain from
-    // `crate::test_utils` is exercised separately and exhaustively by
-    // the cert manager tests, which target the actual cert-parsing code
-    // paths. Mixing real cert bytes into these orchestration tests would
-    // not exercise any additional code and would add ~3 KB of attestation
-    // byte literals to every test run.
 }
