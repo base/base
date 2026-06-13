@@ -226,36 +226,6 @@ impl ProofTaskSet {
         self.pending.len()
     }
 
-    /// Returns whether no pending proof tasks remain.
-    #[cfg(test)]
-    pub fn is_pending_empty(&self) -> bool {
-        self.pending.is_empty()
-    }
-
-    /// Returns the pending proof-task entries keyed by signer.
-    #[cfg(test)]
-    pub const fn pending(&self) -> &HashMap<Address, PendingRegistration> {
-        &self.pending
-    }
-
-    /// Returns mutable access to the pending proof-task entries.
-    #[cfg(test)]
-    pub const fn pending_mut(&mut self) -> &mut HashMap<Address, PendingRegistration> {
-        &mut self.pending
-    }
-
-    /// Returns whether the underlying join set is empty.
-    #[cfg(test)]
-    pub fn is_join_set_empty(&self) -> bool {
-        self.tasks.is_empty()
-    }
-
-    /// Returns mutable access to the underlying join set.
-    #[cfg(test)]
-    pub const fn tasks_mut(&mut self) -> &mut JoinSet<ProofTaskOutcome> {
-        &mut self.tasks
-    }
-
     /// Builds the protected-signer set for orphan deregistration.
     ///
     /// Includes both fetched prover signers and pending proof tasks so a signer
@@ -683,18 +653,18 @@ mod tests {
     }
 
     async fn drain_test_tasks(proof_tasks: &mut ProofTaskSet) {
-        for task in proof_tasks.pending().values() {
+        for task in proof_tasks.pending.values() {
             task.cancel.cancel();
         }
-        let tasks = proof_tasks.tasks_mut();
+        let tasks = &mut proof_tasks.tasks;
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
-        proof_tasks.pending_mut().clear();
+        proof_tasks.pending.clear();
     }
 
     async fn reap_until_pending_empty(proof_tasks: &mut ProofTaskSet) {
         let started = std::time::Instant::now();
-        while !proof_tasks.is_pending_empty() {
+        while !proof_tasks.pending.is_empty() {
             if started.elapsed() > GATED_WAIT_TIMEOUT {
                 panic!("timed out reaping {} pending task(s)", proof_tasks.pending_len());
             }
@@ -743,11 +713,11 @@ mod tests {
             let signer = signer_from_key(key);
             let task_cancel = CancellationToken::new();
             let task_cancel_inner = task_cancel.clone();
-            let handle = proof_tasks.tasks_mut().spawn(async move {
+            let handle = proof_tasks.tasks.spawn(async move {
                 task_cancel_inner.cancelled().await;
                 proof_task_success_for_test(signer)
             });
-            proof_tasks.pending_mut().insert(
+            proof_tasks.pending.insert(
                 signer,
                 PendingRegistration {
                     instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -786,14 +756,14 @@ mod tests {
 
         reconcile(&manager, &resolution, &mut proof_tasks);
         let after_first = proof_tasks.pending_len();
-        let snapshot_ids: HashSet<_> = proof_tasks.pending().keys().copied().collect();
+        let snapshot_ids: HashSet<_> = proof_tasks.pending.keys().copied().collect();
 
         reconcile(&manager, &resolution, &mut proof_tasks);
 
         assert_eq!(proof_tasks.pending_len(), after_first, "idempotent: no extra spawns");
-        let after_second: HashSet<_> = proof_tasks.pending().keys().copied().collect();
+        let after_second: HashSet<_> = proof_tasks.pending.keys().copied().collect();
         assert_eq!(snapshot_ids, after_second, "pending signer keys unchanged across reconciles");
-        for task in proof_tasks.pending().values() {
+        for task in proof_tasks.pending.values() {
             assert!(!task.cancel.is_cancelled(), "kept task must not be cancelled");
         }
 
@@ -812,12 +782,12 @@ mod tests {
 
         let stale_cancel = CancellationToken::new();
         let stale_cancel_inner = stale_cancel.clone();
-        let stale_handle = proof_tasks.tasks_mut().spawn(async move {
+        let stale_handle = proof_tasks.tasks.spawn(async move {
             stale_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer)
         });
         let stale_task_id = stale_handle.id();
-        proof_tasks.pending_mut().insert(
+        proof_tasks.pending.insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -830,7 +800,7 @@ mod tests {
         reconcile(&manager, &dr_from_kept(&[]), &mut proof_tasks);
         assert!(stale_cancel.is_cancelled(), "stale task must be cancelled by reconcile");
         assert_eq!(
-            proof_tasks.pending().get(&signer).map(|p| p.task_id),
+            proof_tasks.pending.get(&signer).map(|p| p.task_id),
             Some(stale_task_id),
             "cancelled entry still keyed by signer until reaped",
         );
@@ -838,7 +808,7 @@ mod tests {
         reconcile(&manager, &dr_from_kept(&[(EP1, &HARDHAT_KEY_0)]), &mut proof_tasks);
 
         assert_eq!(proof_tasks.pending_len(), 1, "still exactly one entry per signer");
-        let fresh = proof_tasks.pending().get(&signer).expect("fresh entry keyed by signer");
+        let fresh = proof_tasks.pending.get(&signer).expect("fresh entry keyed by signer");
         assert_ne!(fresh.task_id, stale_task_id, "fresh task_id replaces the stale one");
         assert!(!fresh.cancel.is_cancelled(), "fresh task carries a live cancel token");
 
@@ -857,11 +827,11 @@ mod tests {
 
         let task_cancel = CancellationToken::new();
         let task_cancel_inner = task_cancel.clone();
-        let handle = proof_tasks.tasks_mut().spawn(async move {
+        let handle = proof_tasks.tasks.spawn(async move {
             task_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer)
         });
-        proof_tasks.pending_mut().insert(
+        proof_tasks.pending.insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -937,7 +907,7 @@ mod tests {
         reconcile(&manager, &resolution, &mut proof_tasks);
 
         assert_eq!(proof_tasks.pending_len(), 1, "exactly one task should spawn");
-        let (&only_signer, _entry) = proof_tasks.pending().iter().next().unwrap();
+        let (&only_signer, _entry) = proof_tasks.pending.iter().next().unwrap();
         assert_eq!(only_signer, signer, "the task is keyed by the deduplicated signer");
 
         wait_for("the lone spawned task recorded its attestation", || {
@@ -1010,7 +980,7 @@ mod tests {
     async fn reap_finished_tasks_drains_completed_and_evicts_pending(#[case] succeed: bool) {
         let mut proof_tasks = ProofTaskSet::new();
 
-        let handle = proof_tasks.tasks_mut().spawn(async move {
+        let handle = proof_tasks.tasks.spawn(async move {
             if succeed {
                 proof_task_success_for_test(HARDHAT_ACCOUNT)
             } else {
@@ -1020,15 +990,15 @@ mod tests {
                 )
             }
         });
-        proof_tasks.pending_mut().insert(
+        proof_tasks.pending.insert(
             HARDHAT_ACCOUNT,
             pending_registration_for_test(handle.id(), TEST_PENDING_INSTANCE_ID),
         );
 
         reap_until_pending_empty(&mut proof_tasks).await;
 
-        assert!(proof_tasks.is_pending_empty(), "completed task must be evicted");
-        assert!(proof_tasks.is_join_set_empty(), "JoinSet must drain to empty");
+        assert!(proof_tasks.pending.is_empty(), "completed task must be evicted");
+        assert!(proof_tasks.tasks.is_empty(), "JoinSet must drain to empty");
     }
 
     #[tokio::test]
@@ -1037,11 +1007,11 @@ mod tests {
 
         let cancel = CancellationToken::new();
         let cancel_inner = cancel.clone();
-        let handle = proof_tasks.tasks_mut().spawn(async move {
+        let handle = proof_tasks.tasks.spawn(async move {
             cancel_inner.cancelled().await;
             proof_task_success_for_test(HARDHAT_ACCOUNT)
         });
-        proof_tasks.pending_mut().insert(
+        proof_tasks.pending.insert(
             HARDHAT_ACCOUNT,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -1064,26 +1034,26 @@ mod tests {
 
         proof_tasks.reap_finished_tasks();
 
-        assert!(proof_tasks.is_pending_empty(), "pending stays empty");
-        assert!(proof_tasks.is_join_set_empty(), "JoinSet stays empty");
+        assert!(proof_tasks.pending.is_empty(), "pending stays empty");
+        assert!(proof_tasks.tasks.is_empty(), "JoinSet stays empty");
     }
 
     #[tokio::test]
     async fn apply_join_outcome_drops_pending_entry_when_task_panics() {
         let mut proof_tasks = ProofTaskSet::new();
 
-        let handle = proof_tasks.tasks_mut().spawn(async {
+        let handle = proof_tasks.tasks.spawn(async {
             panic!("synthetic proof-task panic for apply_join_outcome test");
         });
-        proof_tasks.pending_mut().insert(
+        proof_tasks.pending.insert(
             HARDHAT_ACCOUNT,
             pending_registration_for_test(handle.id(), TEST_PENDING_INSTANCE_ID),
         );
 
         reap_until_pending_empty(&mut proof_tasks).await;
 
-        assert!(proof_tasks.is_pending_empty(), "panicked task must be evicted");
-        assert!(proof_tasks.is_join_set_empty(), "JoinSet must drain to empty");
+        assert!(proof_tasks.pending.is_empty(), "panicked task must be evicted");
+        assert!(proof_tasks.tasks.is_empty(), "JoinSet must drain to empty");
     }
 
     #[tokio::test]
@@ -1092,19 +1062,19 @@ mod tests {
         let signer = HARDHAT_ACCOUNT;
 
         let stale_handle =
-            proof_tasks.tasks_mut().spawn(async move { proof_task_success_for_test(signer) });
+            proof_tasks.tasks.spawn(async move { proof_task_success_for_test(signer) });
         let stale_task_id = stale_handle.id();
 
         let fresh_cancel = CancellationToken::new();
         let fresh_cancel_inner = fresh_cancel.clone();
-        let fresh_handle = proof_tasks.tasks_mut().spawn(async move {
+        let fresh_handle = proof_tasks.tasks.spawn(async move {
             fresh_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer)
         });
         let fresh_task_id = fresh_handle.id();
         assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
 
-        proof_tasks.pending_mut().insert(
+        proof_tasks.pending.insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -1116,7 +1086,7 @@ mod tests {
 
         let started = std::time::Instant::now();
         loop {
-            if let Some(joined) = proof_tasks.tasks_mut().try_join_next_with_id() {
+            if let Some(joined) = proof_tasks.tasks.try_join_next_with_id() {
                 proof_tasks.apply_join_outcome(joined);
                 break;
             }
@@ -1127,7 +1097,7 @@ mod tests {
         }
 
         assert_eq!(proof_tasks.pending_len(), 1, "fresh entry must survive stale completion");
-        let entry = proof_tasks.pending().get(&signer).expect("fresh entry still keyed by signer");
+        let entry = proof_tasks.pending.get(&signer).expect("fresh entry still keyed by signer");
         assert_eq!(entry.task_id, fresh_task_id, "fresh task_id preserved");
         assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
 
@@ -1140,7 +1110,7 @@ mod tests {
         let mut proof_tasks = ProofTaskSet::new();
         let signer = HARDHAT_ACCOUNT;
 
-        let stale_handle = proof_tasks.tasks_mut().spawn(async move {
+        let stale_handle = proof_tasks.tasks.spawn(async move {
             proof_task_failure_for_test(
                 signer,
                 RegistrarError::Config("synthetic stale proof failure".to_string()),
@@ -1150,14 +1120,14 @@ mod tests {
 
         let fresh_cancel = CancellationToken::new();
         let fresh_cancel_inner = fresh_cancel.clone();
-        let fresh_handle = proof_tasks.tasks_mut().spawn(async move {
+        let fresh_handle = proof_tasks.tasks.spawn(async move {
             fresh_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer)
         });
         let fresh_task_id = fresh_handle.id();
         assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
 
-        proof_tasks.pending_mut().insert(
+        proof_tasks.pending.insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -1169,7 +1139,7 @@ mod tests {
 
         let started = std::time::Instant::now();
         loop {
-            if let Some(joined) = proof_tasks.tasks_mut().try_join_next_with_id() {
+            if let Some(joined) = proof_tasks.tasks.try_join_next_with_id() {
                 proof_tasks.apply_join_outcome(joined);
                 break;
             }
@@ -1180,7 +1150,7 @@ mod tests {
         }
 
         assert_eq!(proof_tasks.pending_len(), 1, "fresh entry must survive stale Err");
-        let entry = proof_tasks.pending().get(&signer).expect("fresh entry still keyed by signer");
+        let entry = proof_tasks.pending.get(&signer).expect("fresh entry still keyed by signer");
         assert_eq!(entry.task_id, fresh_task_id, "fresh task_id preserved");
         assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
 
@@ -1199,11 +1169,11 @@ mod tests {
         let mut proof_tasks = ProofTaskSet::new();
         let task_cancel = CancellationToken::new();
         let task_cancel_inner = task_cancel.clone();
-        let handle = proof_tasks.tasks_mut().spawn(async move {
+        let handle = proof_tasks.tasks.spawn(async move {
             task_cancel_inner.cancelled().await;
             proof_task_success_for_test(signer)
         });
-        proof_tasks.pending_mut().insert(
+        proof_tasks.pending.insert(
             signer,
             PendingRegistration {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
@@ -1364,11 +1334,11 @@ mod tests {
                         let signer = signer_from_key(key);
                         let cancel = CancellationToken::new();
                         let cancel_inner = cancel.clone();
-                        let handle = proof_tasks.tasks_mut().spawn(async move {
+                        let handle = proof_tasks.tasks.spawn(async move {
                             cancel_inner.cancelled().await;
                             proof_task_success_for_test(signer)
                         });
-                        proof_tasks.pending_mut().insert(
+                        proof_tasks.pending.insert(
                             signer,
                             PendingRegistration {
                                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
