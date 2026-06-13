@@ -269,15 +269,16 @@ where
     ///
     /// When CRL checking is enabled, pre-builds the HTTP client used for
     /// CRL fetches so it can be reused across registration cycles. The
-    /// optional `nitro_verifier` client consults the onchain durable
+    /// required `nitro_verifier` client consults the onchain durable
     /// revocation sentinel before each registration and provides the
     /// `revokeCert` transaction destination.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrarError::Config`] when the [`CertManager`] fails to
-    /// initialize. Failing fast prevents a misconfigured driver from silently
-    /// bypassing CRL protection at runtime.
+    /// Returns [`RegistrarError::Config`] when `config.crl.enabled` is `true`
+    /// and either the `nitro_verifier` client is missing or the
+    /// [`CertManager`] fails to initialize. Failing fast prevents a
+    /// misconfigured driver from silently bypassing CRL protection at runtime.
     pub fn new(
         discovery: D,
         proof_provider: P,
@@ -288,6 +289,14 @@ where
         nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
     ) -> Result<Self> {
         let cert_manager = if config.crl.enabled {
+            let Some(nitro_verifier) = nitro_verifier else {
+                return Err(RegistrarError::Config(
+                    "CRL checking enabled but nitro_verifier client not configured; \
+                     a NitroEnclaveVerifier client is required as both the revokeCert \
+                     destination and the onchain revokedCerts sentinel source"
+                        .into(),
+                ));
+            };
             Some(CertManager::new(&config.crl, nitro_verifier, tx_manager.clone())?)
         } else {
             None
@@ -1537,6 +1546,25 @@ mod tests {
             )
             .expect("test driver construction succeeds"),
         )
+    }
+
+    #[test]
+    fn new_rejects_crl_enabled_without_nitro_verifier() {
+        let mut config = default_config(CancellationToken::new());
+        config.crl.enabled = true;
+
+        let err = RegistrationDriver::new(
+            MockDiscovery { instances: vec![] },
+            StubProofProvider,
+            MockRegistry::with_signers(vec![]),
+            SharedTxManager::new(),
+            MockSignerClient::from_keys(&[]),
+            config,
+            None,
+        )
+        .expect_err("enabled CRL requires a Nitro verifier client");
+
+        assert!(matches!(err, RegistrarError::Config(_)));
     }
 
     // ── Proof-task mock types ─────────────────────────────────────────

@@ -19,7 +19,7 @@ use crate::{
 /// Manages Nitro certificate revocation checks and revocation transaction submission.
 pub struct CertManager<T> {
     http_client: reqwest::Client,
-    nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
+    nitro_verifier: Arc<dyn NitroVerifierClient>,
     tx_manager: T,
 }
 
@@ -56,22 +56,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrarError::Config`] if CRL checking is enabled without a
-    /// verifier client, or if the CRL HTTP client cannot be built.
+    /// Returns [`RegistrarError::Config`] if the CRL HTTP client cannot be built.
     pub fn new(
         config: &CrlConfig,
-        nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
+        nitro_verifier: Arc<dyn NitroVerifierClient>,
         tx_manager: T,
     ) -> Result<Self> {
-        if config.enabled && nitro_verifier.is_none() {
-            return Err(RegistrarError::Config(
-                "CRL checking enabled but nitro_verifier client not configured; \
-                 a NitroEnclaveVerifier client is required as both the revokeCert \
-                 destination and the onchain revokedCerts sentinel source"
-                    .into(),
-            ));
-        }
-
         let http_client = crl::build_crl_http_client(config.fetch_timeout).map_err(|e| {
             RegistrarError::Config(format!(
                 "failed to build CRL HTTP client (Layer 2 / AWS CRL fetch): {e}"
@@ -145,23 +135,6 @@ impl<T> CertManager<T>
 where
     T: TxManager,
 {
-    /// Returns the configured Nitro verifier client.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RegistrarError::Config`] when no verifier was configured.
-    /// This is valid only while CRL checking is disabled because the manager is
-    /// built unconditionally by the registrar service.
-    pub fn nitro_verifier(&self) -> Result<&dyn NitroVerifierClient> {
-        self.nitro_verifier.as_deref().ok_or_else(|| {
-            RegistrarError::Config(
-                "CRL verifier client is not configured; this should only be called when CRL \
-                 checking is enabled"
-                    .into(),
-            )
-        })
-    }
-
     /// Checks whether any intermediate certificate has already been revoked onchain.
     ///
     /// Root and leaf certificates are skipped because only intermediate
@@ -177,9 +150,8 @@ where
         cert_infos: &[crl::CertCrlInfo],
         instance_id: &str,
     ) -> Result<bool> {
-        let nitro_verifier = self.nitro_verifier()?;
         for info in crl::CertCrlInfo::intermediates(cert_infos) {
-            if nitro_verifier.is_revoked(info.path_digest).await? {
+            if self.nitro_verifier.is_revoked(info.path_digest).await? {
                 let cert = info.intermediate_label();
                 warn!(
                     cert = %cert,
@@ -202,23 +174,12 @@ where
         revoked_certs: &[crl::RevokedCertInfo],
         instance: &ProverInstance,
     ) {
-        let nitro_verifier = match self.nitro_verifier() {
-            Ok(nitro_verifier) => nitro_verifier,
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    instance = %instance.instance_id,
-                    "cannot submit revokeCert without a Nitro verifier client"
-                );
-                return;
-            }
-        };
-        let verifier_address = nitro_verifier.address();
+        let verifier_address = self.nitro_verifier.address();
         let cert_revoker = CertRevoker::new(verifier_address, &self.tx_manager);
 
         for revoked in revoked_certs {
             let cert = revoked.intermediate_label();
-            match nitro_verifier.is_revoked(revoked.path_digest).await {
+            match self.nitro_verifier.is_revoked(revoked.path_digest).await {
                 Ok(true) => {
                     warn!(
                         cert = %cert,
@@ -388,7 +349,7 @@ mod tests {
     fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager<MockTxManager> {
         CertManager {
             http_client: reqwest::Client::new(),
-            nitro_verifier: Some(verifier),
+            nitro_verifier: verifier,
             tx_manager: MockTxManager::default(),
         }
     }
@@ -402,21 +363,19 @@ mod tests {
         }
     }
 
-    fn crl_config(enabled: bool) -> CrlConfig {
-        CrlConfig { enabled, nitro_verifier_address: None, fetch_timeout: Duration::from_secs(1) }
+    fn crl_config() -> CrlConfig {
+        CrlConfig {
+            enabled: true,
+            nitro_verifier_address: None,
+            fetch_timeout: Duration::from_secs(1),
+        }
     }
 
     #[test]
-    fn new_allows_disabled_crl_without_verifier() {
-        let result = CertManager::new(&crl_config(false), None, MockTxManager::default());
+    fn new_builds_crl_manager_with_verifier() {
+        let verifier = Arc::new(MockNitroVerifier::default());
+        let result = CertManager::new(&crl_config(), verifier, MockTxManager::default());
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn new_rejects_enabled_crl_without_verifier() {
-        let err = CertManager::new(&crl_config(true), None, MockTxManager::default())
-            .expect_err("enabled CRL requires a verifier");
-        assert!(matches!(err, RegistrarError::Config(_)));
     }
 
     fn revoked_cert(path_digest: B256) -> crl::RevokedCertInfo {
