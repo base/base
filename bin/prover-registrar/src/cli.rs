@@ -18,7 +18,7 @@ use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CrlConfig,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CertManager, CrlConfig,
     DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY,
     DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierClient,
@@ -704,17 +704,18 @@ impl Cli {
         let signer_manager = Arc::new(SignerManager::new(
             proof_provider,
             registry,
-            tx_manager,
+            tx_manager.clone(),
             driver_config.signer_manager.clone(),
         ));
+        let cert_manager = CertManager::new(&driver_config.crl, nitro_verifier, tx_manager)?;
         let cancel_guard = cancel.clone().drop_guard();
         let driver = RegistrationDriver::new(
             discovery,
             signer_client,
             driver_config,
-            nitro_verifier,
+            cert_manager,
             signer_manager,
-        )?;
+        );
         let driver_result = driver.run().await;
         drop(cancel_guard);
 

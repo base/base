@@ -5,18 +5,19 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned onchain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
+use std::{collections::HashSet, fmt, time::Duration};
 
 use alloy_primitives::{Address, hex};
+use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use rand::random;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
-    CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
-    ProofTaskSet, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, Result,
-    SignerClient, SignerLifecycle, SignerManagerConfig,
+    CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
+    ProverInstance, RegistrarError, RegistrarMetrics, Result, SignerClient, SignerLifecycle,
+    SignerManagerConfig,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -166,57 +167,50 @@ pub struct ResolveOutcome {
 ///
 /// Generic over discovery, signer client, and signer lifecycle backends so each
 /// can be mocked independently in tests.
-pub struct RegistrationDriver<D, S, M>
+pub struct RegistrationDriver<D, S, M, T>
 where
     M: SignerLifecycle,
+    T: TxManager,
 {
     discovery: D,
     signer_client: S,
     config: DriverConfig,
     /// Certificate revocation manager. The driver only calls it when CRL
     /// checking is enabled.
-    cert_manager: CertManager<M::TransactionManager>,
+    cert_manager: CertManager<T>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
     signer_manager: M,
 }
 
-impl<D, S, M> fmt::Debug for RegistrationDriver<D, S, M>
+impl<D, S, M, T> fmt::Debug for RegistrationDriver<D, S, M, T>
 where
     M: SignerLifecycle,
+    T: TxManager,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegistrationDriver").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
-impl<D, S, M> RegistrationDriver<D, S, M>
+impl<D, S, M, T> RegistrationDriver<D, S, M, T>
 where
     D: InstanceDiscovery + 'static,
     S: SignerClient + 'static,
     M: SignerLifecycle + 'static,
-    M::TransactionManager: Clone,
+    T: TxManager + 'static,
 {
     /// Creates a new registration driver.
     ///
-    /// Pre-builds the HTTP client used for CRL fetches so it can be reused
-    /// across registration cycles. The required `nitro_verifier` client
-    /// consults the onchain durable revocation sentinel before each
-    /// registration and provides the `revokeCert` transaction destination.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RegistrarError::Config`] when the [`CertManager`] fails to
-    /// initialize.
+    /// Accepts a pre-built certificate manager so CRL client construction and
+    /// revocation transaction wiring stay outside the core driver loop.
     pub fn new(
         discovery: D,
         signer_client: S,
         config: DriverConfig,
-        nitro_verifier: Arc<dyn NitroVerifierClient>,
+        cert_manager: CertManager<T>,
         signer_manager: M,
-    ) -> Result<Self> {
-        let cert_manager =
-            CertManager::new(&config.crl, nitro_verifier, signer_manager.tx_manager().clone())?;
-        Ok(Self { discovery, signer_client, config, cert_manager, signer_manager })
+    ) -> Self {
+        Self { discovery, signer_client, config, cert_manager, signer_manager }
     }
 
     /// Runs the registration loop until cancelled.
@@ -681,7 +675,10 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{InstanceHealthStatus, RegistryClient, Result, SignerClient, SignerManager};
+    use crate::{
+        InstanceHealthStatus, NitroVerifierClient, RegistryClient, Result, SignerClient,
+        SignerManager,
+    };
 
     // ── Shared constants ────────────────────────────────────────────────
 
@@ -983,6 +980,14 @@ mod tests {
         Arc::new(MockNitroVerifier)
     }
 
+    fn mock_cert_manager(
+        config: &DriverConfig,
+        tx_manager: SharedTxManager,
+    ) -> CertManager<SharedTxManager> {
+        CertManager::new(&config.crl, mock_nitro_verifier(), tx_manager)
+            .expect("test cert manager builds")
+    }
+
     /// Mock tx manager that records submitted calldata for assertion.
     #[derive(Debug, Clone)]
     struct SharedTxManager {
@@ -1019,16 +1024,14 @@ mod tests {
     /// driver orchestration.
     #[derive(Debug, Clone)]
     struct MockSignerManager {
-        tx: SharedTxManager,
         reconcile_calls: Arc<AtomicUsize>,
         orphan_calls: Arc<Mutex<Vec<HashSet<Address>>>>,
         cancel_after_orphan: CancellationToken,
     }
 
     impl MockSignerManager {
-        fn new(tx: SharedTxManager, cancel_after_orphan: CancellationToken) -> Self {
+        fn new(cancel_after_orphan: CancellationToken) -> Self {
             Self {
-                tx,
                 reconcile_calls: Arc::new(AtomicUsize::new(0)),
                 orphan_calls: Arc::new(Mutex::new(Vec::new())),
                 cancel_after_orphan,
@@ -1046,12 +1049,6 @@ mod tests {
 
     #[async_trait]
     impl SignerLifecycle for MockSignerManager {
-        type TransactionManager = SharedTxManager;
-
-        fn tx_manager(&self) -> &Self::TransactionManager {
-            &self.tx
-        }
-
         fn reconcile_proof_tasks(
             &self,
             _resolution: &DiscoveryResolution,
@@ -1099,6 +1096,7 @@ mod tests {
         MockDiscovery,
         MockSignerClient,
         Arc<SignerManager<StubProofProvider, MockRegistry, SharedTxManager>>,
+        SharedTxManager,
     >;
 
     /// Builds a fully-configured driver for primitive-level tests that
@@ -1116,40 +1114,39 @@ mod tests {
         let signer_manager = Arc::new(SignerManager::new(
             StubProofProvider,
             registry,
-            tx,
+            tx.clone(),
             config.signer_manager.clone(),
         ));
-        Arc::new(
-            RegistrationDriver::new(
-                MockDiscovery { instances },
-                signer_client,
-                config,
-                mock_nitro_verifier(),
-                signer_manager,
-            )
-            .expect("test driver construction succeeds"),
-        )
+        let cert_manager = mock_cert_manager(&config, tx);
+        Arc::new(RegistrationDriver::new(
+            MockDiscovery { instances },
+            signer_client,
+            config,
+            cert_manager,
+            signer_manager,
+        ))
     }
 
     #[test]
-    fn new_accepts_required_nitro_verifier_when_crl_enabled() {
+    fn new_accepts_injected_cert_manager() {
         let mut config = default_config(CancellationToken::new());
         config.crl.enabled = true;
+        let tx = SharedTxManager::new();
         let signer_manager = Arc::new(SignerManager::new(
             StubProofProvider,
             MockRegistry::with_signers(vec![]),
-            SharedTxManager::new(),
+            tx.clone(),
             config.signer_manager.clone(),
         ));
+        let cert_manager = mock_cert_manager(&config, tx);
 
         RegistrationDriver::new(
             MockDiscovery { instances: vec![] },
             MockSignerClient::from_keys(&[]),
             config,
-            mock_nitro_verifier(),
+            cert_manager,
             signer_manager,
-        )
-        .expect("required Nitro verifier client builds the driver");
+        );
     }
     // ── Pipeline test infrastructure ────────────────────────────────────
     //
@@ -1328,6 +1325,7 @@ mod tests {
         MutableDiscovery,
         MockSignerClient,
         Arc<SignerManager<GatedProofProvider, MockRegistry, SharedTxManager>>,
+        SharedTxManager,
     >;
 
     /// Bundles every handle a pipeline test needs to drive the loop.
@@ -1362,17 +1360,15 @@ mod tests {
                 tx.clone(),
                 config.signer_manager.clone(),
             ));
+            let cert_manager = mock_cert_manager(&config, tx.clone());
 
-            let driver = Arc::new(
-                RegistrationDriver::new(
-                    discovery.clone(),
-                    signer_client,
-                    config,
-                    mock_nitro_verifier(),
-                    signer_manager,
-                )
-                .expect("test driver construction succeeds"),
-            );
+            let driver = Arc::new(RegistrationDriver::new(
+                discovery.clone(),
+                signer_client,
+                config,
+                cert_manager,
+                signer_manager,
+            ));
 
             Self { driver, cancel, discovery, proof: proof_handles, tx }
         }
@@ -1471,19 +1467,24 @@ mod tests {
         config.poll_interval = GATED_POLL_INTERVAL;
 
         let tx = SharedTxManager::new();
-        let signer_manager = MockSignerManager::new(tx, cancel.clone());
+        let signer_manager = MockSignerManager::new(cancel.clone());
         let signer_manager_handle = signer_manager.clone();
         let signer = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0))
             .expect("test key derives");
+        let cert_manager = mock_cert_manager(&config, tx);
 
-        let driver = RegistrationDriver::<MockDiscovery, MockSignerClient, MockSignerManager>::new(
+        let driver = RegistrationDriver::<
+            MockDiscovery,
+            MockSignerClient,
+            MockSignerManager,
+            SharedTxManager,
+        >::new(
             MockDiscovery { instances: vec![instance(EP1, InstanceHealthStatus::Healthy)] },
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
             config,
-            mock_nitro_verifier(),
+            cert_manager,
             signer_manager,
-        )
-        .expect("test driver construction succeeds");
+        );
 
         driver.run_loop().await.expect("driver exits after mock orphan pass cancels");
 
@@ -1881,17 +1882,15 @@ mod tests {
             tx.clone(),
             config.signer_manager.clone(),
         ));
+        let cert_manager = mock_cert_manager(&config, tx.clone());
 
-        let driver = Arc::new(
-            RegistrationDriver::new(
-                MockDiscovery { instances },
-                signer_client,
-                config,
-                mock_nitro_verifier(),
-                signer_manager,
-            )
-            .expect("test driver construction succeeds"),
-        );
+        let driver = Arc::new(RegistrationDriver::new(
+            MockDiscovery { instances },
+            signer_client,
+            config,
+            cert_manager,
+            signer_manager,
+        ));
 
         let resolution = driver.discover_and_resolve().await.unwrap();
         assert!(
@@ -2136,16 +2135,14 @@ mod tests {
             tx.clone(),
             config.signer_manager.clone(),
         ));
-        let driver = Arc::new(
-            RegistrationDriver::new(
-                MockDiscovery { instances },
-                signer_client,
-                config,
-                mock_nitro_verifier(),
-                signer_manager,
-            )
-            .expect("test driver construction succeeds"),
-        );
+        let cert_manager = mock_cert_manager(&config, tx.clone());
+        let driver = Arc::new(RegistrationDriver::new(
+            MockDiscovery { instances },
+            signer_client,
+            config,
+            cert_manager,
+            signer_manager,
+        ));
 
         let resolution = driver.discover_and_resolve().await.unwrap();
         assert!(
@@ -2243,17 +2240,15 @@ mod tests {
             tx.clone(),
             config.signer_manager.clone(),
         ));
+        let cert_manager = mock_cert_manager(&config, tx.clone());
 
-        let driver = Arc::new(
-            RegistrationDriver::new(
-                MockDiscovery { instances },
-                signer_client,
-                config,
-                mock_nitro_verifier(),
-                signer_manager,
-            )
-            .expect("test driver construction succeeds"),
-        );
+        let driver = Arc::new(RegistrationDriver::new(
+            MockDiscovery { instances },
+            signer_client,
+            config,
+            cert_manager,
+            signer_manager,
+        ));
 
         let resolution = driver.discover_and_resolve().await.unwrap();
 
