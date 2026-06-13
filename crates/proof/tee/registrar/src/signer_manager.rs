@@ -403,11 +403,10 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_primitives::{Address, address};
+    use alloy_primitives::Address;
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
     use rstest::rstest;
-    use tokio::task;
 
     use super::*;
     use crate::{
@@ -419,7 +418,6 @@ mod tests {
         },
     };
 
-    const HARDHAT_ACCOUNT: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const TEST_PENDING_INSTANCE_ID: &str = "i-pending-test";
     const GATED_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
     const REAP_POLL_INTERVAL: Duration = Duration::from_millis(1);
@@ -497,7 +495,7 @@ mod tests {
         manager.reconcile_proof_tasks(resolution, proof_tasks, &cancel);
     }
 
-    fn dr_from_kept(kept: &[(&str, &[u8; 32])]) -> DiscoveryResolution {
+    fn resolution_from_registerable(kept: &[(&str, &[u8; 32])]) -> DiscoveryResolution {
         let mut registerable = Vec::new();
         let mut active_signers = HashSet::new();
         for (ep, key) in kept {
@@ -522,45 +520,21 @@ mod tests {
         }
     }
 
-    fn proof_task_success_for_test(signer: Address) -> ProofTaskOutcome {
-        ProofTaskOutcome { signer, result: Ok(()) }
-    }
-
-    fn proof_task_failure_for_test(signer: Address, error: RegistrarError) -> ProofTaskOutcome {
-        ProofTaskOutcome { signer, result: Err(error) }
-    }
-
-    fn pending_registration_for_test(task_id: task::Id, instance_id: &str) -> PendingRegistration {
-        PendingRegistration {
-            instance_id: instance_id.to_string(),
-            task_id,
-            cancel: CancellationToken::new(),
-            cancelled_by_reconcile: false,
-        }
-    }
-
     fn spawn_pending_success_task(
         proof_tasks: &mut ProofTaskSet,
         signer: Address,
         instance_id: &str,
         cancelled_by_reconcile: bool,
-    ) -> (task::Id, CancellationToken) {
+    ) -> (tokio::task::Id, CancellationToken) {
         let cancel = CancellationToken::new();
         let cancel_inner = cancel.clone();
-        let handle = proof_tasks.tasks.spawn(async move {
+        proof_tasks.spawn_task(signer, instance_id.to_string(), cancel.clone(), async move {
             cancel_inner.cancelled().await;
-            proof_task_success_for_test(signer)
+            ProofTaskOutcome { signer, result: Ok(()) }
         });
-        let task_id = handle.id();
-        proof_tasks.pending.insert(
-            signer,
-            PendingRegistration {
-                instance_id: instance_id.to_string(),
-                task_id,
-                cancel: cancel.clone(),
-                cancelled_by_reconcile,
-            },
-        );
+        let entry = proof_tasks.pending.get_mut(&signer).expect("spawned task is pending");
+        entry.cancelled_by_reconcile = cancelled_by_reconcile;
+        let task_id = entry.task_id;
         (task_id, cancel)
     }
 
@@ -621,7 +595,7 @@ mod tests {
             seeded_cancels.push(task_cancel);
         }
 
-        let resolution = dr_from_kept(kept);
+        let resolution = resolution_from_registerable(kept);
         let pre_task_count = proof_tasks.tasks.len();
         let expected_pending = pre_existing.len() + expected_new_spawns;
         let pre_cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
@@ -647,7 +621,7 @@ mod tests {
         let (stale_task_id, stale_cancel) =
             spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
 
-        reconcile(&manager, &dr_from_kept(&[]), &mut proof_tasks);
+        reconcile(&manager, &resolution_from_registerable(&[]), &mut proof_tasks);
         assert!(stale_cancel.is_cancelled(), "stale task must be cancelled by reconcile");
         assert_eq!(
             proof_tasks.pending.get(&signer).map(|p| p.task_id),
@@ -655,7 +629,11 @@ mod tests {
             "cancelled entry still keyed by signer until reaped",
         );
 
-        reconcile(&manager, &dr_from_kept(&[(EP1, &HARDHAT_KEY_0)]), &mut proof_tasks);
+        reconcile(
+            &manager,
+            &resolution_from_registerable(&[(EP1, &HARDHAT_KEY_0)]),
+            &mut proof_tasks,
+        );
 
         assert_eq!(proof_tasks.pending_len(), 1, "still exactly one entry per signer");
         let fresh = proof_tasks.pending.get(&signer).expect("fresh entry keyed by signer");
@@ -790,12 +768,13 @@ mod tests {
     #[tokio::test]
     async fn reap_finished_tasks_drains_completed_and_evicts_pending() {
         let mut proof_tasks = ProofTaskSet::new();
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
-        let handle =
-            proof_tasks.tasks.spawn(async move { proof_task_success_for_test(HARDHAT_ACCOUNT) });
-        proof_tasks.pending.insert(
-            HARDHAT_ACCOUNT,
-            pending_registration_for_test(handle.id(), TEST_PENDING_INSTANCE_ID),
+        proof_tasks.spawn_task(
+            signer,
+            TEST_PENDING_INSTANCE_ID.to_string(),
+            CancellationToken::new(),
+            async move { ProofTaskOutcome { signer, result: Ok(()) } },
         );
 
         reap_until_pending_empty(&mut proof_tasks).await;
@@ -807,13 +786,9 @@ mod tests {
     #[tokio::test]
     async fn reap_finished_tasks_leaves_in_flight_alone() {
         let mut proof_tasks = ProofTaskSet::new();
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
-        spawn_pending_success_task(
-            &mut proof_tasks,
-            HARDHAT_ACCOUNT,
-            TEST_PENDING_INSTANCE_ID,
-            false,
-        );
+        spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
 
         proof_tasks.reap_finished_tasks();
 
@@ -825,13 +800,15 @@ mod tests {
     #[tokio::test]
     async fn apply_join_outcome_drops_pending_entry_when_task_panics() {
         let mut proof_tasks = ProofTaskSet::new();
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
-        let handle = proof_tasks.tasks.spawn(async {
-            panic!("synthetic proof-task panic for apply_join_outcome test");
-        });
-        proof_tasks.pending.insert(
-            HARDHAT_ACCOUNT,
-            pending_registration_for_test(handle.id(), TEST_PENDING_INSTANCE_ID),
+        proof_tasks.spawn_task(
+            signer,
+            TEST_PENDING_INSTANCE_ID.to_string(),
+            CancellationToken::new(),
+            async {
+                panic!("synthetic proof-task panic for apply_join_outcome test");
+            },
         );
 
         reap_until_pending_empty(&mut proof_tasks).await;
@@ -843,13 +820,13 @@ mod tests {
     #[tokio::test]
     async fn apply_join_outcome_preserves_fresh_entry_when_stale_task_fails_for_same_signer() {
         let mut proof_tasks = ProofTaskSet::new();
-        let signer = HARDHAT_ACCOUNT;
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
         let stale_handle = proof_tasks.tasks.spawn(async move {
-            proof_task_failure_for_test(
+            ProofTaskOutcome {
                 signer,
-                RegistrarError::Config("synthetic stale proof failure".to_string()),
-            )
+                result: Err(RegistrarError::Config("synthetic stale proof failure".to_string())),
+            }
         });
         let stale_task_id = stale_handle.id();
 

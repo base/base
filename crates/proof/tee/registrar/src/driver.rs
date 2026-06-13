@@ -668,9 +668,6 @@ mod tests {
         },
     };
 
-    // ── Mock implementations ────────────────────────────────────────────
-
-    /// Configurable mock discovery that returns a pre-set list of instances.
     #[derive(Debug)]
     struct MockDiscovery {
         instances: Vec<ProverInstance>,
@@ -683,61 +680,41 @@ mod tests {
         }
     }
 
-    /// Mock signer client that returns pre-configured public keys and attestations
-    /// per endpoint.
-    ///
-    /// If an endpoint is not in the `keys` map, the call returns an error
-    /// (simulating an unreachable instance).
     #[derive(Debug)]
     struct MockSignerClient {
-        /// Maps endpoint URL → list of uncompressed public key bytes (one per enclave).
         keys: HashMap<Url, Vec<Vec<u8>>>,
-        /// Maps endpoint URL → list of attestation blobs (one per enclave).
-        /// Falls back to `b"mock-attestation"` if not configured.
         attestations: HashMap<Url, Vec<Vec<u8>>>,
-        /// Endpoints whose attestation RPC should fail.
         fail_attestation: HashSet<Url>,
     }
 
     impl MockSignerClient {
-        /// Creates a mock with the given host:port-to-private-key mappings.
-        /// Each endpoint gets a single enclave key wrapped in a Vec.
-        /// The public key is derived automatically from each private key.
-        /// An `http://` scheme is prepended to each host:port string.
         fn from_keys(entries: &[(&str, &[u8; 32])]) -> Self {
             let keys = entries
                 .iter()
                 .map(|(ep, pk)| {
-                    let url = Url::parse(&format!("http://{ep}")).unwrap();
+                    let url = endpoint_url(ep);
                     (url, vec![public_key_from_private(pk)])
                 })
                 .collect();
             Self { keys, attestations: HashMap::new(), fail_attestation: HashSet::new() }
         }
 
-        /// Creates a mock that returns multiple public keys for a single endpoint,
-        /// simulating a multi-enclave instance.
         fn multi_enclave(host_port: &str, private_keys: &[&[u8; 32]]) -> Self {
-            let url = Url::parse(&format!("http://{host_port}")).unwrap();
             let pubs = private_keys.iter().map(|pk| public_key_from_private(pk)).collect();
             Self {
-                keys: HashMap::from([(url, pubs)]),
+                keys: HashMap::from([(endpoint_url(host_port), pubs)]),
                 attestations: HashMap::new(),
                 fail_attestation: HashSet::new(),
             }
         }
 
-        /// Configures attestation blobs for a given endpoint.
         fn with_attestations(mut self, host_port: &str, attestations: Vec<Vec<u8>>) -> Self {
-            let url = Url::parse(&format!("http://{host_port}")).unwrap();
-            self.attestations.insert(url, attestations);
+            self.attestations.insert(endpoint_url(host_port), attestations);
             self
         }
 
-        /// Configures the attestation RPC for a given endpoint to fail.
         fn with_attestation_failure(mut self, host_port: &str) -> Self {
-            let url = Url::parse(&format!("http://{host_port}")).unwrap();
-            self.fail_attestation.insert(url);
+            self.fail_attestation.insert(endpoint_url(host_port));
             self
         }
     }
@@ -766,10 +743,13 @@ mod tests {
             if let Some(atts) = self.attestations.get(endpoint) {
                 return Ok(atts.clone());
             }
-            // Default: one dummy attestation per key at this endpoint.
             let count = self.keys.get(endpoint).map_or(1, |k| k.len());
             Ok(vec![b"mock-attestation".to_vec(); count])
         }
+    }
+
+    fn endpoint_url(host_port: &str) -> Url {
+        Url::parse(&format!("http://{host_port}")).unwrap()
     }
 
     fn mock_cert_manager(
@@ -780,9 +760,6 @@ mod tests {
             .expect("test cert manager builds")
     }
 
-    /// Driver-level signer lifecycle mock. It records calls without running
-    /// proof generation or registry cleanup, keeping run-loop tests focused on
-    /// driver orchestration.
     #[derive(Debug, Clone)]
     struct MockSignerManager {
         reconcile_calls: Arc<AtomicUsize>,
@@ -829,8 +806,6 @@ mod tests {
             Ok(())
         }
     }
-
-    // ── Driver constructors ─────────────────────────────────────────────
 
     fn default_config(cancel: CancellationToken) -> DriverConfig {
         DriverConfig {
@@ -940,8 +915,6 @@ mod tests {
         assert!(resolution.ok_to_dereg, "resolved instance permits orphan cleanup");
     }
 
-    // ── discover_and_resolve tests ─────────────────────────────────────
-
     #[tokio::test]
     async fn discover_and_resolve_allows_orphan_pass_when_discovery_is_empty() {
         let driver =
@@ -957,9 +930,6 @@ mod tests {
 
     #[tokio::test]
     async fn discover_and_resolve_clears_ok_to_dereg_when_cancelled_before_run() {
-        // Cancellation observed by `discover_and_resolve` after the
-        // resolve loop completes must drive `ok_to_dereg = false` so the
-        // production caller skips `run_orphan_dereg` entirely.
         let instances = vec![healthy_prover_instance(EP1), healthy_prover_instance(EP2)];
 
         let signer_client =
@@ -976,11 +946,6 @@ mod tests {
 
     #[tokio::test]
     async fn discover_and_resolve_includes_all_reachable_when_one_instance_is_unreachable() {
-        // An unreachable instance must not prevent other instances from
-        // being resolved into `registerable` in the same cycle, and its
-        // instance id must land in `unresolved_instance_ids` so the
-        // production reconcile pass doesn't cancel any in-flight task
-        // tied to it.
         let unreachable = healthy_prover_instance(EP4);
         let reachable = [
             healthy_prover_instance(EP1),
@@ -991,7 +956,6 @@ mod tests {
             .chain(reachable.iter().cloned())
             .collect::<Vec<_>>();
 
-        // EP4 has no keys → signer_public_key will error.
         let signer_client = MockSignerClient::from_keys(&[
             (EP1, &HARDHAT_KEY_0),
             (EP2, &HARDHAT_KEY_1),
@@ -1016,9 +980,6 @@ mod tests {
     #[tokio::test]
     async fn discover_and_resolve_multi_enclave_draining_protects_all_signers_from_deregistration()
     {
-        // A draining multi-enclave instance must contribute ALL of its
-        // signer addresses to `active_signers` and must not appear in
-        // `registerable`.
         let addr0 = signer_from_private_key(&HARDHAT_KEY_0);
         let addr1 = signer_from_private_key(&HARDHAT_KEY_1);
 
@@ -1039,15 +1000,6 @@ mod tests {
 
     #[tokio::test]
     async fn discover_and_resolve_unhealthy_instance_is_reachable_but_not_registerable() {
-        // An unhealthy instance (failing ALB health checks) that is still
-        // reachable by the registrar (responds to JSON-RPC) must:
-        //   1. NOT be registerable (should_register = false for Unhealthy
-        //      outside the recent-launch window)
-        //   2. Contribute its signers to `active_signers` (preventing dereg)
-        //
-        // This matters because "unhealthy" in ALB terms does not mean
-        // the registrar can't connect — the instance may be failing
-        // application-level health checks while still responding to RPC.
         let addr_unhealthy = signer_from_private_key(&HARDHAT_KEY_0);
         let addr_healthy = signer_from_private_key(&HARDHAT_KEY_1);
 
@@ -1056,7 +1008,6 @@ mod tests {
             healthy_prover_instance(EP2),
         ];
 
-        // Both instances are reachable via MockSignerClient.
         let signer_client =
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
 
@@ -1083,12 +1034,6 @@ mod tests {
     async fn discover_and_resolve_attestation_failure_keeps_signer_active_and_unresolved(
         #[case] rpc_error: bool,
     ) {
-        // If the registrar reaches signer_public_key successfully but
-        // then cannot fetch or pair an attestation with the signer, the
-        // instance is still reachable and advertising that signer. The
-        // signer must remain protected from orphan deregistration, while
-        // the instance is marked unresolved so any in-flight proof task is
-        // preserved for a later conclusive cycle.
         let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
         let inst = healthy_prover_instance(EP1);
         let signer_client = if rpc_error {
@@ -1116,10 +1061,6 @@ mod tests {
         assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
     }
 
-    // ── Concurrency limit test ──────────────────────────────────────────
-
-    /// Signer client that tracks the peak number of concurrent
-    /// `signer_public_key` calls. Used to verify `max_concurrency`.
     #[derive(Debug)]
     struct ConcurrencyTrackingSignerClient {
         inner: MockSignerClient,
@@ -1142,7 +1083,6 @@ mod tests {
             let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak.fetch_max(current, Ordering::SeqCst);
 
-            // Yield to give other futures a chance to enter concurrently.
             tokio::task::yield_now().await;
 
             let result = self.inner.signer_public_key(endpoint).await;
@@ -1162,10 +1102,6 @@ mod tests {
 
     #[tokio::test]
     async fn discover_and_resolve_respects_max_concurrency() {
-        // Resolve 4 instances with a limited `max_concurrency` and verify
-        // the peak concurrent `signer_public_key` count observed inside
-        // `discover_and_resolve`'s `buffer_unordered` loop never exceeds
-        // the configured bound. All 4 must end up in `registerable`.
         let max_concurrency = 2;
         let endpoints = [EP1, EP2, EP3, EP4];
         let private_keys = [&HARDHAT_KEY_0, &HARDHAT_KEY_1, &HARDHAT_KEY_2, &HARDHAT_KEY_3];
