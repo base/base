@@ -828,14 +828,14 @@ mod tests {
         }
     }
 
-    type CycleDriver =
-        RegistrationDriver<MockDiscovery, MockSignerClient, MockSignerManager, NoopTxManager>;
-
-    fn cycle_driver(
+    fn cycle_driver<S>(
         instances: Vec<ProverInstance>,
-        signer_client: MockSignerClient,
+        signer_client: S,
         cancel: CancellationToken,
-    ) -> CycleDriver {
+    ) -> RegistrationDriver<MockDiscovery, S, MockSignerManager, NoopTxManager>
+    where
+        S: SignerClient + 'static,
+    {
         let config = default_config(cancel);
         let signer_manager = MockSignerManager::new(CancellationToken::new());
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
@@ -942,6 +942,66 @@ mod tests {
         let resolution = driver.discover_and_resolve().await.unwrap();
 
         assert!(!resolution.ok_to_dereg, "cancellation must clear ok_to_dereg",);
+    }
+
+    #[derive(Debug)]
+    struct CancellingSignerClient {
+        inner: MockSignerClient,
+        cancel: CancellationToken,
+    }
+
+    #[async_trait]
+    impl SignerClient for CancellingSignerClient {
+        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+            let result = self.inner.signer_public_key(endpoint).await;
+            if result.is_ok() {
+                self.cancel.cancel();
+            }
+            result
+        }
+
+        async fn signer_attestation(
+            &self,
+            endpoint: &Url,
+            user_data: Option<Vec<u8>>,
+            nonce: Option<Vec<u8>>,
+        ) -> Result<Vec<Vec<u8>>> {
+            self.inner.signer_attestation(endpoint, user_data, nonce).await
+        }
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_clears_ok_to_dereg_when_cancelled_mid_resolution() {
+        let cancel = CancellationToken::new();
+        let signer_client = CancellingSignerClient {
+            inner: MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
+            cancel: cancel.clone(),
+        };
+        let driver = cycle_driver(vec![healthy_prover_instance(EP1)], signer_client, cancel);
+
+        let resolution = driver.discover_and_resolve().await.unwrap();
+
+        assert!(
+            !resolution.ok_to_dereg,
+            "cancellation observed during resolution must clear ok_to_dereg",
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_majority_unreachable_clears_ok_to_dereg() {
+        let instances = vec![
+            healthy_prover_instance(EP1),
+            healthy_prover_instance(EP2),
+            healthy_prover_instance(EP3),
+        ];
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
+
+        let resolution = driver.discover_and_resolve().await.unwrap();
+
+        assert_eq!(resolution.reachable_count, 1);
+        assert_eq!(resolution.total_count, 3);
+        assert!(!resolution.ok_to_dereg, "1/3 reachable must block orphan-deregistration",);
     }
 
     #[tokio::test]
