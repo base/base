@@ -448,6 +448,7 @@ where
                 prev_pending_blocks.clone(),
                 l1_block_info,
                 state_overrides,
+                flashblock.metadata.access_list.clone(),
             );
 
             pending_state_builder
