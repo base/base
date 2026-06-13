@@ -484,6 +484,7 @@ where
             None,
             latest_block_l1_block_info.clone(),
             state_overrides,
+            flashblock.metadata.access_list.clone(),
         );
         pending_state_builder.set_execution_offsets(
             prev_pending_blocks.latest_block_cumulative_gas_used(),
@@ -615,6 +616,7 @@ where
             None,
             l1_block_info.clone(),
             state_overrides,
+            flashblock.metadata.access_list.clone(),
         );
         pending_state_builder.apply_pre_execution_changes(
             previous_header.hash_slow(),
@@ -767,6 +769,7 @@ where
                 prev_pending_blocks.clone(),
                 l1_block_info,
                 state_overrides,
+                flashblock.metadata.access_list.clone(),
             );
 
             pending_state_builder
