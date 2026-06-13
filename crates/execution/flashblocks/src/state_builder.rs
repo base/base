@@ -304,7 +304,18 @@ where
         } else {
             0
         };
-
+         // Pre-load builder-accessed addresses so consumer's DB cache
+        // matches builder's state, addressing divergence in #3274.
+        if let Some(ref access_list) = self.access_list {
+            for account_change in &access_list.account_changes {
+                self.evm
+                    .db_mut()
+                    .basic(account_change.address)
+                    .map_err(|e| {
+                        StateProcessorError::Execution(ExecutionError::EvmEnv(e.to_string()))
+                    })?;
+            }
+        }
         let start = Instant::now();
         let transact_result = self.evm.transact(&transaction);
         let elapsed_us = start.elapsed().as_micros();
