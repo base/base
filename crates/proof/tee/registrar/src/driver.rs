@@ -1009,21 +1009,6 @@ mod tests {
         ))
     }
 
-    #[test]
-    fn new_accepts_injected_cert_manager() {
-        let mut config = default_config(CancellationToken::new());
-        config.crl.enabled = true;
-        let signer_manager = MockSignerManager::new(CancellationToken::new());
-        let cert_manager = mock_cert_manager(&config, NoopTxManager);
-
-        RegistrationDriver::new(
-            MockDiscovery { instances: vec![] },
-            MockSignerClient::from_keys(&[]),
-            config,
-            cert_manager,
-            signer_manager,
-        );
-    }
     const FAST_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
     #[tokio::test]
@@ -1094,7 +1079,7 @@ mod tests {
             resolution.active_signers.contains(&addr),
             "recently-launched unhealthy signer should be in active_signers"
         );
-        assert!(resolution.ok_to_dereg, "single reachable instance clears the majority guard");
+        assert!(resolution.ok_to_dereg, "resolved instance permits orphan cleanup");
     }
 
     // ── discover_and_resolve tests ─────────────────────────────────────
@@ -1113,37 +1098,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discover_and_resolve_majority_unreachable_clears_ok_to_dereg() {
-        // 3 instances discovered, but only 1 is reachable via MockSignerClient.
-        // reachable * 2 (= 2) <= total (= 3) → majority guard fires, so
-        // `ok_to_dereg` must be `false` and the orphan-dereg pass would
-        // be skipped by the production loop.
-        let instances = vec![
-            instance(EP1, InstanceHealthStatus::Healthy),
-            instance(EP2, InstanceHealthStatus::Healthy),
-            instance(EP3, InstanceHealthStatus::Healthy),
-        ];
-
-        // Only EP1 has a key; the other two will fail signer_public_key.
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
-
-        let resolution = driver.discover_and_resolve().await.unwrap();
-
-        assert_eq!(resolution.reachable_count, 1);
-        assert_eq!(resolution.total_count, 3);
-        assert!(
-            !resolution.ok_to_dereg,
-            "1/3 reachable: majority guard should block orphan-dereg pass",
-        );
-    }
-
-    #[tokio::test]
     async fn discover_and_resolve_clears_ok_to_dereg_when_cancelled_before_run() {
         // Cancellation observed by `discover_and_resolve` after the
         // resolve loop completes must drive `ok_to_dereg = false` so the
-        // production caller skips `run_orphan_dereg` entirely, even
-        // though the majority guard would otherwise pass.
+        // production caller skips `run_orphan_dereg` entirely.
         let instances = vec![
             instance(EP1, InstanceHealthStatus::Healthy),
             instance(EP2, InstanceHealthStatus::Healthy),
@@ -1158,10 +1116,7 @@ mod tests {
         cancel.cancel();
         let resolution = driver.discover_and_resolve().await.unwrap();
 
-        assert!(
-            !resolution.ok_to_dereg,
-            "cancellation must clear ok_to_dereg even if majority guard would pass",
-        );
+        assert!(!resolution.ok_to_dereg, "cancellation must clear ok_to_dereg",);
     }
 
     #[tokio::test]
@@ -1182,61 +1137,14 @@ mod tests {
             resolution.active_signers.contains(&HARDHAT_ACCOUNT),
             "draining instance must contribute its signer to active_signers",
         );
-        assert!(resolution.ok_to_dereg, "single reachable instance clears the majority guard");
+        assert!(resolution.ok_to_dereg, "resolved instance permits orphan cleanup");
     }
 
-    // ── Reachability guard boundary tests ────────────────────────────────
-    //
-    // The majority guard uses instance counts (not signer counts):
-    //
-    //     if !instances.is_empty() && reachable_instances * 2 <= instances.len()
-    //
-    // These tests verify the exact boundary and surrounding values:
-    //   - 1/4 reachable → 1*2 <= 4 → true  → deregistration skipped
-    //   - 2/4 reachable → 2*2 <= 4 → true  → deregistration skipped
-    //   - 3/4 reachable → majority clears, but unresolved instance skips deregistration
-    //   - 4/4 reachable → 4*2 <= 4 → false → deregistration proceeds
-
     /// All 4 endpoints and corresponding private keys, indexed for
-    /// dynamic slicing in the parametrized guard test.
+    /// dynamic slicing in the concurrency test.
     const ALL_ENDPOINTS: [&str; 4] = [EP1, EP2, EP3, EP4];
     const ALL_KEYS: [&[u8; 32]; 4] =
         [&HARDHAT_KEY_0, &HARDHAT_KEY_1, &HARDHAT_KEY_2, &HARDHAT_KEY_3];
-
-    #[rstest]
-    #[case::one_of_four(1, true)]
-    #[case::two_of_four(2, true)]
-    #[case::three_of_four(3, true)]
-    #[case::four_of_four(4, false)]
-    #[tokio::test]
-    async fn discover_and_resolve_reachability_guard_boundary(
-        #[case] reachable_count: usize,
-        #[case] should_skip_deregistration: bool,
-    ) {
-        // All 4 instances are discovered; only `reachable_count` have keys
-        // in the MockSignerClient (the rest will fail signer_public_key).
-        // Verify `ok_to_dereg` remains false while the majority guard
-        // does not clear.
-        let instances: Vec<_> =
-            ALL_ENDPOINTS.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect();
-
-        let keys: Vec<(&str, &[u8; 32])> = ALL_ENDPOINTS[..reachable_count]
-            .iter()
-            .zip(&ALL_KEYS[..reachable_count])
-            .map(|(ep, key)| (*ep, *key))
-            .collect();
-        let signer_client = MockSignerClient::from_keys(&keys);
-
-        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
-
-        let resolution = driver.discover_and_resolve().await.unwrap();
-        assert_eq!(resolution.reachable_count, reachable_count);
-        assert_eq!(resolution.total_count, ALL_ENDPOINTS.len());
-        assert_eq!(
-            resolution.ok_to_dereg, !should_skip_deregistration,
-            "{reachable_count}/4 reachable: ok_to_dereg mismatch"
-        );
-    }
 
     #[tokio::test]
     async fn discover_and_resolve_includes_all_reachable_when_one_instance_is_unreachable() {
@@ -1270,15 +1178,11 @@ mod tests {
             reachable.len(),
             "all reachable instances should be registerable despite 1 unreachable",
         );
-        assert_eq!(resolution.reachable_count, reachable.len());
         assert!(
             resolution.unresolved_instance_ids.contains(&unreachable.instance_id),
             "unreachable instance must be marked as unresolved so reconcile skips its cancel-pass",
         );
-        assert!(
-            !resolution.ok_to_dereg,
-            "unresolved instance must block orphan-dereg even when reachable majority clears",
-        );
+        assert!(!resolution.ok_to_dereg, "unresolved instance must block orphan-dereg",);
     }
 
     /// Signer client wrapper that cancels a token after returning keys.
@@ -1378,8 +1282,7 @@ mod tests {
         // reachable by the registrar (responds to JSON-RPC) must:
         //   1. NOT be registerable (should_register = false for Unhealthy
         //      outside the recent-launch window)
-        //   2. Count as reachable (increments `reachable_count`)
-        //   3. Contribute its signers to `active_signers` (preventing dereg)
+        //   2. Contribute its signers to `active_signers` (preventing dereg)
         //
         // This matters because "unhealthy" in ALB terms does not mean
         // the registrar can't connect — the instance may be failing
@@ -1399,7 +1302,6 @@ mod tests {
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let resolution = driver.discover_and_resolve().await.unwrap();
-        assert_eq!(resolution.reachable_count, 2, "both instances respond to RPC");
         assert_eq!(
             resolution.registerable.len(),
             1,

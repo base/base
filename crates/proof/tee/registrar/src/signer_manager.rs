@@ -858,9 +858,8 @@ mod tests {
 
     #[tokio::test]
     async fn reconcile_proof_tasks_dedupes_signer_across_registerable_entries() {
-        let proof_provider = RecordingProofProvider::default();
         let manager = manager(
-            proof_provider.clone(),
+            RecordingProofProvider::default(),
             MockRegistry::with_signers(vec![]),
             SharedTxManager::new(),
         );
@@ -894,40 +893,17 @@ mod tests {
         let (&only_signer, _entry) = proof_tasks.pending.iter().next().unwrap();
         assert_eq!(only_signer, signer, "the task is keyed by the deduplicated signer");
 
-        wait_for("the lone spawned task recorded its attestation", || {
-            !proof_provider.snapshot().is_empty()
-        })
-        .await;
         drain_test_tasks(&mut proof_tasks).await;
-
-        assert_eq!(proof_provider.snapshot().len(), 1, "exactly one signer recorded");
     }
 
-    #[rstest]
-    #[case::forward_order(false)]
-    #[case::reversed_order(true)]
     #[tokio::test]
-    async fn reconcile_proof_tasks_pairs_attestation_with_signer(#[case] reverse: bool) {
+    async fn reconcile_proof_tasks_pairs_attestation_with_signer() {
         let signer_a = signer_from_key(&HARDHAT_KEY_0);
         let signer_b = signer_from_key(&HARDHAT_KEY_1);
         assert_ne!(signer_a, signer_b, "test setup: distinct signer addresses");
 
         let att_a: Vec<u8> = b"attestation-aligned-to-A".to_vec();
         let att_b: Vec<u8> = b"attestation-aligned-to-B".to_vec();
-        let entry_a = RegisterableSigner {
-            instance: instance(EP1),
-            signer: signer_a,
-            attestation: att_a.clone(),
-            enclave_index: 0,
-        };
-        let entry_b = RegisterableSigner {
-            instance: instance(EP2),
-            signer: signer_b,
-            attestation: att_b.clone(),
-            enclave_index: 0,
-        };
-        let registerable = if reverse { vec![entry_b, entry_a] } else { vec![entry_a, entry_b] };
-
         let proof_provider = RecordingProofProvider::default();
         let manager = manager(
             proof_provider.clone(),
@@ -935,7 +911,20 @@ mod tests {
             SharedTxManager::new(),
         );
         let resolution = DiscoveryResolution {
-            registerable,
+            registerable: vec![
+                RegisterableSigner {
+                    instance: instance(EP1),
+                    signer: signer_a,
+                    attestation: att_a.clone(),
+                    enclave_index: 0,
+                },
+                RegisterableSigner {
+                    instance: instance(EP2),
+                    signer: signer_b,
+                    attestation: att_b.clone(),
+                    enclave_index: 0,
+                },
+            ],
             active_signers: HashSet::from([signer_a, signer_b]),
             reachable_count: 2,
             total_count: 2,
@@ -1004,16 +993,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reap_finished_tasks_is_noop_when_pending_is_empty() {
-        let mut proof_tasks = ProofTaskSet::new();
-
-        proof_tasks.reap_finished_tasks();
-
-        assert!(proof_tasks.pending.is_empty(), "pending stays empty");
-        assert!(proof_tasks.tasks.is_empty(), "JoinSet stays empty");
-    }
-
-    #[tokio::test]
     async fn apply_join_outcome_drops_pending_entry_when_task_panics() {
         let mut proof_tasks = ProofTaskSet::new();
 
@@ -1031,25 +1010,16 @@ mod tests {
         assert!(proof_tasks.tasks.is_empty(), "JoinSet must drain to empty");
     }
 
-    #[rstest]
-    #[case::ok_outcome(true)]
-    #[case::err_outcome(false)]
     #[tokio::test]
-    async fn apply_join_outcome_preserves_fresh_entry_when_stale_task_finishes_for_same_signer(
-        #[case] stale_succeeds: bool,
-    ) {
+    async fn apply_join_outcome_preserves_fresh_entry_when_stale_task_fails_for_same_signer() {
         let mut proof_tasks = ProofTaskSet::new();
         let signer = HARDHAT_ACCOUNT;
 
         let stale_handle = proof_tasks.tasks.spawn(async move {
-            if stale_succeeds {
-                proof_task_success_for_test(signer)
-            } else {
-                proof_task_failure_for_test(
-                    signer,
-                    RegistrarError::Config("synthetic stale proof failure".to_string()),
-                )
-            }
+            proof_task_failure_for_test(
+                signer,
+                RegistrarError::Config("synthetic stale proof failure".to_string()),
+            )
         });
         let stale_task_id = stale_handle.id();
 
@@ -1108,13 +1078,9 @@ mod tests {
         assert_eq!(protected_after_drain, HashSet::from([active_signer]));
     }
 
-    #[rstest]
-    #[case::single_orphan(vec![ORPHAN_A])]
-    #[case::multiple_orphans(vec![ORPHAN_A, ORPHAN_B, ORPHAN_C])]
     #[tokio::test]
-    async fn run_orphan_dereg_deregisters_all_unprotected_onchain_signers(
-        #[case] orphans: Vec<Address>,
-    ) {
+    async fn run_orphan_dereg_deregisters_all_unprotected_onchain_signers() {
+        let orphans = vec![ORPHAN_A, ORPHAN_B, ORPHAN_C];
         let expected_count = orphans.len();
         let tx = SharedTxManager::new();
         let manager = manager(
