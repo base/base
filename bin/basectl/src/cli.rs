@@ -21,7 +21,8 @@ pub(crate) struct Cli {
     /// `discovery.bootstrap_rpc` from config.
     ///
     /// Applies to the conductor view, views that embed it, and non-TUI
-    /// `basectl conductor` commands. Ignored by unrelated non-TUI subcommands.
+    /// `basectl conductor` / `basectl sequencer` commands. Ignored by
+    /// unrelated non-TUI subcommands.
     #[arg(long = "conductor-rpc", env = "BASECTL_CONDUCTOR_RPC", global = true)]
     pub(crate) conductor_rpc: Option<Url>,
     #[command(subcommand)]
@@ -94,6 +95,11 @@ pub(crate) enum Commands {
     Conductor {
         #[command(subcommand)]
         command: ConductorCommands,
+    },
+    /// Inspect and control sequencer activity on HA conductor nodes.
+    Sequencer {
+        #[command(subcommand)]
+        command: SequencerCommands,
     },
     /// Run read-only diagnostics for a single node.
     Doctor(DoctorArgs),
@@ -317,6 +323,61 @@ pub(crate) struct ConductorClusterActionArgs {
     pub(crate) json: bool,
 }
 
+/// Sequencer inspection and control commands.
+#[derive(Debug, Subcommand)]
+pub(crate) enum SequencerCommands {
+    /// Show sequencer state for every node or one selected node.
+    Status(SequencerStatusArgs),
+    /// Start sequencing on one node.
+    Start(SequencerStartArgs),
+    /// Stop sequencing on one node.
+    Stop(SequencerNodeActionArgs),
+}
+
+/// Flags for `basectl sequencer status`.
+#[derive(Debug, Args)]
+pub(crate) struct SequencerStatusArgs {
+    /// Optional node name from the selected config or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub(crate) node: Option<String>,
+    /// Emit a structured JSON status summary instead of pretty text.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// Flags for `basectl sequencer start`.
+#[derive(Debug, Args)]
+pub(crate) struct SequencerStartArgs {
+    /// Sequencer node name from the selected config or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub(crate) node: String,
+    /// Unsafe head hash to pass to `admin_startSequencer`.
+    ///
+    /// If omitted, basectl uses the node's currently observed unsafe L2 hash.
+    #[arg(value_name = "UNSAFE_HEAD")]
+    pub(crate) unsafe_head: Option<String>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
+}
+
+/// Flags for `basectl sequencer stop`.
+#[derive(Debug, Args)]
+pub(crate) struct SequencerNodeActionArgs {
+    /// Sequencer node name from the selected config or discovered raft server ID.
+    #[arg(value_name = "NODE")]
+    pub(crate) node: String,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
+}
+
 /// TUI monitor views.
 #[derive(Debug, Subcommand)]
 pub(crate) enum MonitorCommands {
@@ -477,6 +538,25 @@ mod tests {
     }
 
     #[test]
+    fn sequencer_commands_parse() {
+        assert!(try_parse(["basectl", "sequencer", "status", "--json"]).is_ok());
+        assert!(try_parse(["basectl", "sequencer", "status", "op-conductor-0"]).is_ok());
+        assert!(
+            try_parse([
+                "basectl",
+                "sequencer",
+                "start",
+                "op-conductor-0",
+                "0x1111111111111111111111111111111111111111111111111111111111111111",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+        assert!(try_parse(["basectl", "sequencer", "stop", "op-conductor-0", "--yes",]).is_ok());
+    }
+
+    #[test]
     fn destructive_conductor_json_requires_yes() {
         assert!(try_parse(["basectl", "conductor", "pause", "op-conductor-0", "--json",]).is_err());
         assert!(try_parse(["basectl", "conductor", "transfer-leader", "--json"]).is_err());
@@ -484,5 +564,19 @@ mod tests {
         assert!(try_parse(["basectl", "conductor", "unpause-all", "--json"]).is_err());
         assert!(try_parse(["basectl", "conductor", "pause-all", "--yes", "--json"]).is_ok());
         assert!(try_parse(["basectl", "conductor", "unpause-all", "--yes", "--json"]).is_ok());
+    }
+
+    #[test]
+    fn destructive_sequencer_json_requires_yes() {
+        assert!(try_parse(["basectl", "sequencer", "start", "op-conductor-0", "--json",]).is_err());
+        assert!(try_parse(["basectl", "sequencer", "stop", "op-conductor-0", "--json",]).is_err());
+        assert!(
+            try_parse(["basectl", "sequencer", "start", "op-conductor-0", "--yes", "--json",])
+                .is_ok()
+        );
+        assert!(
+            try_parse(["basectl", "sequencer", "stop", "op-conductor-0", "--yes", "--json",])
+                .is_ok()
+        );
     }
 }

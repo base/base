@@ -1,13 +1,58 @@
 use std::time::Duration;
 
 use alloy_primitives::B256;
-use anyhow::Result;
+use anyhow::{Context, Result, ensure};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient};
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
+use url::Url;
 
 use super::PausedPeers;
 use crate::config::ConductorNodeConfig;
+
+/// Returns whether the consensus node reports the sequencer as active.
+pub async fn fetch_sequencer_active(cl_rpc: &Url) -> Result<bool> {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let client = HttpClientBuilder::default()
+        .request_timeout(TIMEOUT)
+        .build(cl_rpc.as_str())
+        .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
+    AdminApiClient::admin_sequencer_active(&client)
+        .await
+        .with_context(|| format!("calling admin_sequencerActive on {cl_rpc}"))
+}
+
+/// Starts the sequencer via the consensus node's `admin_startSequencer` RPC.
+pub async fn start_sequencer(cl_rpc: &Url, unsafe_head: B256) -> Result<()> {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    ensure!(unsafe_head != B256::ZERO, "unsafe head must not be zero");
+    let client = HttpClientBuilder::default()
+        .request_timeout(TIMEOUT)
+        .build(cl_rpc.as_str())
+        .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
+    AdminApiClient::admin_start_sequencer(&client, unsafe_head)
+        .await
+        .with_context(|| format!("calling admin_startSequencer on {cl_rpc}"))
+}
+
+/// Stops the sequencer via the consensus node's `admin_stopSequencer` RPC.
+///
+/// Returns the unsafe head hash captured at the moment the sequencer stopped.
+pub async fn stop_sequencer(cl_rpc: &Url) -> Result<B256> {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let client = HttpClientBuilder::default()
+        .request_timeout(TIMEOUT)
+        .build(cl_rpc.as_str())
+        .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
+    let unsafe_head = AdminApiClient::admin_stop_sequencer(&client)
+        .await
+        .with_context(|| format!("calling admin_stopSequencer on {cl_rpc}"))?;
+    ensure!(unsafe_head != B256::ZERO, "admin_stopSequencer on {cl_rpc} returned zero unsafe head");
+    Ok(unsafe_head)
+}
 
 /// Starts the sequencer on a single node via `admin_startSequencer`.
 ///
@@ -19,22 +64,10 @@ pub async fn start_sequencer_node(
     unsafe_head: B256,
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
-    const TIMEOUT: Duration = Duration::from_secs(5);
-
-    let outcome: anyhow::Result<String> = async {
-        if unsafe_head == B256::ZERO {
-            return Err(anyhow::anyhow!("unsafe_head must not be zero"));
-        }
-        let client = HttpClientBuilder::default()
-            .request_timeout(TIMEOUT)
-            .build(node.cl_rpc.as_str())
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        AdminApiClient::admin_start_sequencer(&client, unsafe_head)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(format!("sequencer started on {} at {unsafe_head}", node.name))
-    }
-    .await;
+    let outcome = start_sequencer(&node.cl_rpc, unsafe_head)
+        .await
+        .with_context(|| format!("starting sequencer on {} via {}", node.name, node.cl_rpc))
+        .map(|()| format!("sequencer started on {} at {unsafe_head}", node.name));
 
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }
@@ -47,19 +80,10 @@ pub async fn stop_sequencer_node(
     node: ConductorNodeConfig,
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
-    const TIMEOUT: Duration = Duration::from_secs(5);
-
-    let outcome: anyhow::Result<String> = async {
-        let client = HttpClientBuilder::default()
-            .request_timeout(TIMEOUT)
-            .build(node.cl_rpc.as_str())
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let head = AdminApiClient::admin_stop_sequencer(&client)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(format!("sequencer stopped on {} at {head}", node.name))
-    }
-    .await;
+    let outcome = stop_sequencer(&node.cl_rpc)
+        .await
+        .with_context(|| format!("stopping sequencer on {} via {}", node.name, node.cl_rpc))
+        .map(|head| format!("sequencer stopped on {} at {head}", node.name));
 
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }

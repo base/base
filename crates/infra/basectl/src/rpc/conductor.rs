@@ -4,7 +4,7 @@ use base_consensus_rpc::{
     AdminApiClient, BaseP2PApiClient, ClusterMembership, ConductorApiClient, RollupNodeApiClient,
     ServerSuffrage,
 };
-use futures::{StreamExt, stream};
+use futures::{StreamExt, stream, stream::FuturesUnordered};
 use jsonrpsee::{
     core::client::{ClientT, Error as JsonRpcClientError},
     http_client::{HttpClient, HttpClientBuilder},
@@ -215,21 +215,24 @@ impl ConductorControl {
             anyhow::bail!("no conductor nodes configured");
         }
 
+        let mut probes: FuturesUnordered<_> = nodes
+            .iter()
+            .map(|node| async move {
+                let client = HttpClientBuilder::default()
+                    .request_timeout(TIMEOUT)
+                    .build(node.conductor_rpc.as_str())
+                    .map_err(|error| format!("{}: {error}", node.name))?;
+                ConductorApiClient::conductor_cluster_membership(&client)
+                    .await
+                    .map_err(|error| format!("{}: {error}", node.name))
+            })
+            .collect();
+
         let mut failures = Vec::new();
-        for node in nodes {
-            let client = match HttpClientBuilder::default()
-                .request_timeout(TIMEOUT)
-                .build(node.conductor_rpc.as_str())
-            {
-                Ok(client) => client,
-                Err(error) => {
-                    failures.push(format!("{}: {error}", node.name));
-                    continue;
-                }
-            };
-            match ConductorApiClient::conductor_cluster_membership(&client).await {
+        while let Some(result) = probes.next().await {
+            match result {
                 Ok(membership) => return Ok(membership),
-                Err(error) => failures.push(format!("{}: {error}", node.name)),
+                Err(error) => failures.push(error),
             }
         }
 
@@ -546,15 +549,52 @@ async fn wait_for_stable_leader(
 }
 
 fn is_stale_leader_error(error: &JsonRpcClientError) -> bool {
-    const SERVER_ERROR_CODE: i32 = -32000;
-    const STALE_LEADER_MESSAGE: &str = "node is not the leader";
+    match error {
+        JsonRpcClientError::Call(payload) => is_stale_leader_message(payload.message()),
+        JsonRpcClientError::Custom(message) => is_stale_leader_message(message),
+        JsonRpcClientError::RestartNeeded(inner) => is_stale_leader_error(inner),
+        _ => false,
+    }
+}
 
-    matches!(
-        error,
-        JsonRpcClientError::Call(payload)
-            if payload.code() == SERVER_ERROR_CODE
-                && payload.message() == STALE_LEADER_MESSAGE
-    )
+fn is_stale_leader_message(message: &str) -> bool {
+    let normalized =
+        message
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() { character.to_ascii_lowercase() } else { ' ' }
+            })
+            .collect::<String>();
+    let words = normalized.split_whitespace().collect::<Vec<_>>();
+
+    words.windows(2).any(|window| window == ["stale", "leader"])
+        || words.windows(4).any(|window| window == ["no", "longer", "the", "leader"])
+        || words.iter().enumerate().any(|(index, word)| {
+            if *word != "not" {
+                return false;
+            }
+
+            let tail = &words[index + 1..];
+            let Some(leader_offset) = tail.iter().position(|candidate| *candidate == "leader")
+            else {
+                return false;
+            };
+            let fillers = &tail[..leader_offset];
+            fillers.len() <= 3
+                && fillers.iter().all(|candidate| {
+                    matches!(
+                        *candidate,
+                        "the"
+                            | "a"
+                            | "an"
+                            | "current"
+                            | "currently"
+                            | "conductor"
+                            | "raft"
+                            | "cluster"
+                    )
+                })
+        })
 }
 
 /// Finds the current Raft leader and transfers leadership.
@@ -999,7 +1039,7 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
     use base_consensus_rpc::{ClusterMembership, ServerInfo, ServerSuffrage};
     use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
@@ -1153,25 +1193,37 @@ mod tests {
     }
 
     #[test]
-    fn stale_leader_error_matches_typed_jsonrpc_shape() {
+    fn stale_leader_error_matches_message_variants() {
         let stale = JsonRpcClientError::Call(ErrorObjectOwned::owned(
             -32000,
             "node is not the leader",
             None::<()>,
         ));
-        let other_message = JsonRpcClientError::Call(ErrorObjectOwned::owned(
+        let capitalized = JsonRpcClientError::Call(ErrorObjectOwned::owned(
             -32000,
-            "different server error",
+            "Node is not the leader.",
             None::<()>,
         ));
-        let other_code = JsonRpcClientError::Call(ErrorObjectOwned::owned(
+        let wrapped = JsonRpcClientError::RestartNeeded(Arc::new(JsonRpcClientError::Call(
+            ErrorObjectOwned::owned(
+                -32603,
+                "node is not currently the conductor leader",
+                None::<()>,
+            ),
+        )));
+        let stale_phrase = JsonRpcClientError::Custom(
+            "leadership transfer failed because this node is no longer the leader".to_string(),
+        );
+        let unrelated = JsonRpcClientError::Call(ErrorObjectOwned::owned(
             -32603,
-            "node is not the leader",
+            "leader could not be contacted",
             None::<()>,
         ));
 
         assert!(is_stale_leader_error(&stale));
-        assert!(!is_stale_leader_error(&other_message));
-        assert!(!is_stale_leader_error(&other_code));
+        assert!(is_stale_leader_error(&capitalized));
+        assert!(is_stale_leader_error(&wrapped));
+        assert!(is_stale_leader_error(&stale_phrase));
+        assert!(!is_stale_leader_error(&unrelated));
     }
 }

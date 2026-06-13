@@ -12,7 +12,7 @@ use jsonrpsee::{
 };
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{AdminApiServer, SequencerAdminAPIClient};
+use crate::{AdminApiServer, SequencerAdminAPIClient, SequencerAdminAPIError};
 
 /// The query types to the network actor for the admin api.
 #[derive(Debug)]
@@ -68,6 +68,16 @@ fn sequencer_unavailable() -> ErrorObject<'static> {
     ErrorObject::owned(-32001, "sequencer not available on this node", None::<()>)
 }
 
+/// Preserves the sequencer admin failure message instead of collapsing it into
+/// a generic JSON-RPC internal error.
+fn sequencer_admin_error(error: SequencerAdminAPIError) -> ErrorObject<'static> {
+    let (code, message) = match error {
+        SequencerAdminAPIError::NotLeader => (-32002, error.to_string()),
+        other => (ErrorCode::InternalError.code(), other.to_string()),
+    };
+    ErrorObject::owned(code, message, None::<()>)
+}
+
 #[async_trait]
 impl<SequencerAdminAPIClient_> AdminApiServer for AdminRpc<SequencerAdminAPIClient_>
 where
@@ -104,10 +114,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .is_sequencer_active()
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        sequencer_client.is_sequencer_active().await.map_err(sequencer_admin_error)
     }
 
     async fn admin_start_sequencer(&self, unsafe_head: B256) -> RpcResult<()> {
@@ -116,10 +123,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .start_sequencer(unsafe_head)
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        sequencer_client.start_sequencer(unsafe_head).await.map_err(sequencer_admin_error)
     }
 
     async fn admin_stop_sequencer(&self) -> RpcResult<B256> {
@@ -128,10 +132,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .stop_sequencer()
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        sequencer_client.stop_sequencer().await.map_err(sequencer_admin_error)
     }
 
     async fn admin_conductor_enabled(&self) -> RpcResult<bool> {
@@ -140,10 +141,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .is_conductor_enabled()
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        sequencer_client.is_conductor_enabled().await.map_err(sequencer_admin_error)
     }
 
     async fn admin_recover_mode(&self) -> RpcResult<bool> {
@@ -152,10 +150,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .is_recovery_mode()
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        sequencer_client.is_recovery_mode().await.map_err(sequencer_admin_error)
     }
 
     async fn admin_set_recover_mode(&self, mode: bool) -> RpcResult<()> {
@@ -164,10 +159,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .set_recovery_mode(mode)
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        sequencer_client.set_recovery_mode(mode).await.map_err(sequencer_admin_error)
     }
 
     async fn admin_override_leader(&self) -> RpcResult<()> {
@@ -176,10 +168,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .override_leader()
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        sequencer_client.override_leader().await.map_err(sequencer_admin_error)
     }
 
     async fn admin_reset_derivation_pipeline(&self) -> RpcResult<()> {
@@ -188,9 +177,34 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .reset_derivation_pipeline()
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        sequencer_client.reset_derivation_pipeline().await.map_err(sequencer_admin_error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sequencer_admin_error;
+    use crate::SequencerAdminAPIError;
+
+    #[test]
+    fn sequencer_admin_error_preserves_request_message() {
+        let error = sequencer_admin_error(SequencerAdminAPIError::RequestError(
+            "block hash mismatch: engine unsafe head is 0x1, caller requested 0x2".to_string(),
+        ));
+
+        assert_eq!(error.code(), jsonrpsee::types::ErrorCode::InternalError.code());
+        assert!(
+            error
+                .message()
+                .contains("block hash mismatch: engine unsafe head is 0x1, caller requested 0x2")
+        );
+    }
+
+    #[test]
+    fn sequencer_admin_error_uses_specific_code_for_not_leader() {
+        let error = sequencer_admin_error(SequencerAdminAPIError::NotLeader);
+
+        assert_eq!(error.code(), -32002);
+        assert_eq!(error.message(), "Node is not the conductor leader.");
     }
 }

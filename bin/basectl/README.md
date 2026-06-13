@@ -13,7 +13,7 @@ Global options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-c, --config <CONFIG>` | `mainnet` | Chain config: `mainnet`, `sepolia`, `devnet`, or a path to a config file |
-| `--conductor-rpc <URL>` | | Bootstrap conductor JSON-RPC URL for runtime cluster discovery when the chain config has no hardcoded conductor list. If omitted, basectl uses `discovery.bootstrap_rpc` from config. Set via `BASECTL_CONDUCTOR_RPC`. |
+| `--conductor-rpc <URL>` | | Bootstrap conductor JSON-RPC URL for runtime cluster discovery when the chain config has no hardcoded conductor list. Used by `basectl conductor` and `basectl sequencer`. If omitted, basectl uses `discovery.bootstrap_rpc` from config. Set via `BASECTL_CONDUCTOR_RPC`. |
 
 ## Commands
 
@@ -192,6 +192,48 @@ Safety notes:
   JSON output include the success and failure sets, and the command exits
   non-zero when any node fails.
 
+### `basectl sequencer`
+
+Sequencer inspection and control commands for the nodes in an HA conductor
+cluster.
+
+- `basectl sequencer status [NODE]` shows sequencer activity, health, pause
+  state, L1/L2 heads, and peer counts for every node, or for one selected node
+  when `NODE` is provided.
+- `basectl sequencer start <NODE> [UNSAFE_HEAD]` starts sequencing on one node
+  through the consensus node's `admin_startSequencer` RPC.
+- `basectl sequencer stop <NODE>` stops sequencing on one node through the
+  consensus node's `admin_stopSequencer` RPC.
+
+Like `basectl conductor`, sequencer commands use the selected config's
+hardcoded `conductors` list when present and otherwise discover the live raft
+membership from the global `--conductor-rpc` bootstrap URL or
+`discovery.bootstrap_rpc` in the config.
+
+When `start` omits `UNSAFE_HEAD`, basectl uses the node's currently observed
+unsafe L2 hash. This matches the existing TUI behavior and the sequencer RPC's
+safety contract: the requested hash must match the node's current engine unsafe
+head.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | For `status`, emit a structured JSON status summary instead of the pretty table output. |
+
+Destructive sequencer commands also support:
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip the interactive confirmation prompt. |
+| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. |
+
+Safety notes:
+
+- `start` prompts with the exact node name, CL RPC URL, and unsafe head hash.
+- `stop` prompts with the exact node name and CL RPC URL.
+- After `start` / `stop`, basectl polls `admin_sequencerActive` for up to 6s
+  before reporting success so an acknowledged RPC is not confused with the node
+  actually reaching the desired state.
+
 ### `basectl doctor`
 
 Runs read-only diagnostics for a single node and prints one row per check. The
@@ -321,6 +363,21 @@ basectl -c devnet conductor unpause op-conductor-0 --yes --json | jq .
 # Cluster-wide conductor actions require typed confirmation, or --yes for scripts
 basectl -c devnet conductor pause-all
 basectl -c devnet conductor unpause-all --yes --json | jq .
+
+# Show sequencer state for every devnet conductor node
+basectl -c devnet sequencer status
+
+# Show sequencer state for one node as JSON
+basectl -c devnet sequencer status op-conductor-0 --json | jq .
+
+# Stop a sequencer node and capture the returned unsafe head
+basectl -c devnet sequencer stop op-conductor-0 --yes --json | jq '{node, unsafeHead}'
+
+# Start a sequencer node using its currently observed unsafe head
+basectl -c devnet sequencer start op-conductor-0 --yes
+
+# Start a sequencer node with an explicit unsafe head hash
+basectl -c devnet sequencer start op-conductor-0 0x1111111111111111111111111111111111111111111111111111111111111111 --yes --json | jq .
 
 # Run doctor with values from the selected config
 basectl -c mainnet doctor
