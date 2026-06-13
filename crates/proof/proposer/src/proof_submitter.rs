@@ -68,150 +68,6 @@ impl std::fmt::Display for SubmitAction {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::{collections::HashMap, sync::Arc};
-
-    use async_trait::async_trait;
-    use base_proof_contracts::encode_extra_data;
-    use base_proof_primitives::ProofResult;
-
-    use super::*;
-    use crate::test_utils::{
-        MockAggregateVerifier, MockDisputeGameFactory, MockL1, MockRollupClient, test_proposal,
-        test_sync_status,
-    };
-
-    const TEST_GAME_TYPE: u32 = 42;
-    const TEST_BLOCK_INTERVAL: u64 = 100;
-
-    #[derive(Debug, Default)]
-    struct RecordingOutputProposer {
-        created: std::sync::Mutex<u32>,
-        verified: std::sync::Mutex<Vec<Address>>,
-    }
-
-    #[async_trait]
-    impl OutputProposer for RecordingOutputProposer {
-        async fn propose_output(
-            &self,
-            _proposal: &Proposal,
-            _parent_address: Address,
-            _intermediate_roots: &[B256],
-        ) -> Result<(), ProposerError> {
-            *self.created.lock().unwrap() += 1;
-            Ok(())
-        }
-
-        async fn verify_proposal_proof(
-            &self,
-            game_address: Address,
-            _proposal: &Proposal,
-        ) -> Result<(), ProposerError> {
-            self.verified.lock().unwrap().push(game_address);
-            Ok(())
-        }
-    }
-
-    fn proof_result(target_block: u64) -> ProofResult {
-        let mut aggregate_proposal = test_proposal(target_block);
-        aggregate_proposal.l1_origin_hash = B256::ZERO;
-        let proposals: Vec<Proposal> = (1..=target_block).map(test_proposal).collect();
-        ProofResult::Tee { aggregate_proposal, proposals }
-    }
-
-    fn submitter(
-        output_proposer: Arc<RecordingOutputProposer>,
-        factory: MockDisputeGameFactory,
-        verifier: MockAggregateVerifier,
-    ) -> ProofSubmitter<MockL1, MockRollupClient> {
-        let output_roots = HashMap::from([(TEST_BLOCK_INTERVAL, B256::repeat_byte(0x64))]);
-        ProofSubmitter::new(
-            output_proposer,
-            Arc::new(MockRollupClient {
-                sync_status: test_sync_status(TEST_BLOCK_INTERVAL, B256::ZERO),
-                output_roots,
-                max_safe_block: None,
-            }),
-            Arc::new(MockL1 { latest_block_number: 1000 }),
-            Arc::new(factory),
-            Arc::new(verifier),
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                game_type: TEST_GAME_TYPE,
-                block_interval: TEST_BLOCK_INTERVAL,
-                intermediate_block_interval: TEST_BLOCK_INTERVAL,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
-        )
-    }
-
-    fn existing_game_factory(game_address: Address) -> MockDisputeGameFactory {
-        let root = B256::repeat_byte(0x64);
-        let extra_data = encode_extra_data(TEST_BLOCK_INTERVAL, Address::ZERO, &[root]);
-        let mut factory = MockDisputeGameFactory::with_games(vec![]);
-        factory.uuid_games.insert((TEST_GAME_TYPE, root, extra_data), game_address);
-        factory
-    }
-
-    #[tokio::test]
-    async fn submit_attaches_proof_to_existing_matching_game() {
-        let game_address = Address::repeat_byte(0xAA);
-        let output = Arc::new(RecordingOutputProposer::default());
-        let submitter = submitter(
-            Arc::clone(&output),
-            existing_game_factory(game_address),
-            MockAggregateVerifier::default(),
-        );
-
-        let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
-
-        assert!(result.is_ok());
-        assert_eq!(*output.created.lock().unwrap(), 0);
-        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
-    }
-
-    #[tokio::test]
-    async fn submit_treats_existing_tee_proof_as_success() {
-        let game_address = Address::repeat_byte(0xAA);
-        let mut verifier = MockAggregateVerifier::default();
-        verifier.tee_prover_map.insert(game_address, Address::repeat_byte(0xBB));
-        let output = Arc::new(RecordingOutputProposer::default());
-        let submitter =
-            submitter(Arc::clone(&output), existing_game_factory(game_address), verifier);
-
-        let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
-
-        assert!(result.is_ok());
-        assert_eq!(*output.created.lock().unwrap(), 0);
-        assert!(output.verified.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn submit_creates_game_when_no_match_exists() {
-        let output = Arc::new(RecordingOutputProposer::default());
-        let submitter = submitter(
-            Arc::clone(&output),
-            MockDisputeGameFactory::with_games(vec![]),
-            MockAggregateVerifier::default(),
-        );
-
-        let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
-
-        assert!(result.is_ok());
-        assert_eq!(*output.created.lock().unwrap(), 1);
-        assert!(output.verified.lock().unwrap().is_empty());
-    }
-}
-
 /// Configuration for [`ProofSubmitter`].
 ///
 /// Bundles the scalar parameters the submitter needs at construction time so
@@ -690,5 +546,149 @@ where
             .into_iter()
             .map(|(block_number, result)| result.map(|root| (block_number, root)))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use async_trait::async_trait;
+    use base_proof_contracts::encode_extra_data;
+    use base_proof_primitives::ProofResult;
+
+    use super::*;
+    use crate::test_utils::{
+        MockAggregateVerifier, MockDisputeGameFactory, MockL1, MockRollupClient, test_proposal,
+        test_sync_status,
+    };
+
+    const TEST_GAME_TYPE: u32 = 42;
+    const TEST_BLOCK_INTERVAL: u64 = 100;
+
+    #[derive(Debug, Default)]
+    struct RecordingOutputProposer {
+        created: std::sync::Mutex<u32>,
+        verified: std::sync::Mutex<Vec<Address>>,
+    }
+
+    #[async_trait]
+    impl OutputProposer for RecordingOutputProposer {
+        async fn propose_output(
+            &self,
+            _proposal: &Proposal,
+            _parent_address: Address,
+            _intermediate_roots: &[B256],
+        ) -> Result<(), ProposerError> {
+            *self.created.lock().unwrap() += 1;
+            Ok(())
+        }
+
+        async fn verify_proposal_proof(
+            &self,
+            game_address: Address,
+            _proposal: &Proposal,
+        ) -> Result<(), ProposerError> {
+            self.verified.lock().unwrap().push(game_address);
+            Ok(())
+        }
+    }
+
+    fn proof_result(target_block: u64) -> ProofResult {
+        let mut aggregate_proposal = test_proposal(target_block);
+        aggregate_proposal.l1_origin_hash = B256::ZERO;
+        let proposals: Vec<Proposal> = (1..=target_block).map(test_proposal).collect();
+        ProofResult::Tee { aggregate_proposal, proposals }
+    }
+
+    fn submitter(
+        output_proposer: Arc<RecordingOutputProposer>,
+        factory: MockDisputeGameFactory,
+        verifier: MockAggregateVerifier,
+    ) -> ProofSubmitter<MockL1, MockRollupClient> {
+        let output_roots = HashMap::from([(TEST_BLOCK_INTERVAL, B256::repeat_byte(0x64))]);
+        ProofSubmitter::new(
+            output_proposer,
+            Arc::new(MockRollupClient {
+                sync_status: test_sync_status(TEST_BLOCK_INTERVAL, B256::ZERO),
+                output_roots,
+                max_safe_block: None,
+            }),
+            Arc::new(MockL1 { latest_block_number: 1000 }),
+            Arc::new(factory),
+            Arc::new(verifier),
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                game_type: TEST_GAME_TYPE,
+                block_interval: TEST_BLOCK_INTERVAL,
+                intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        )
+    }
+
+    fn existing_game_factory(game_address: Address) -> MockDisputeGameFactory {
+        let root = B256::repeat_byte(0x64);
+        let extra_data = encode_extra_data(TEST_BLOCK_INTERVAL, Address::ZERO, &[root]);
+        let mut factory = MockDisputeGameFactory::with_games(vec![]);
+        factory.uuid_games.insert((TEST_GAME_TYPE, root, extra_data), game_address);
+        factory
+    }
+
+    #[tokio::test]
+    async fn submit_attaches_proof_to_existing_matching_game() {
+        let game_address = Address::repeat_byte(0xAA);
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter = submitter(
+            Arc::clone(&output),
+            existing_game_factory(game_address),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
+    }
+
+    #[tokio::test]
+    async fn submit_treats_existing_tee_proof_as_success() {
+        let game_address = Address::repeat_byte(0xAA);
+        let mut verifier = MockAggregateVerifier::default();
+        verifier.tee_prover_map.insert(game_address, Address::repeat_byte(0xBB));
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter =
+            submitter(Arc::clone(&output), existing_game_factory(game_address), verifier);
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert!(output.verified.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_creates_game_when_no_match_exists() {
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter = submitter(
+            Arc::clone(&output),
+            MockDisputeGameFactory::with_games(vec![]),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(*output.created.lock().unwrap(), 1);
+        assert!(output.verified.lock().unwrap().is_empty());
     }
 }
