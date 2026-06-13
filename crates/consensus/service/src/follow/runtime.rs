@@ -1,6 +1,7 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::B256;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::{
     sync::mpsc,
@@ -14,10 +15,41 @@ use crate::follow::{
     local::FollowLocalClient,
     prefetcher::{PREFETCH_WINDOW, PayloadPrefetcher, PrefetchedPayload},
     proof_gate::ProofGate,
+    recovery,
     source::RemoteClient,
 };
 
 const SAFETY_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Outcome of the safety loop / a single safe-finalized update pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SafetyOutcome {
+    /// Safe/finalized labels were updated, intentionally skipped, or the loop was cancelled.
+    Updated,
+    /// The local chain diverged from the source and was reset to the common ancestor; fetch/insert
+    /// must restart from `ancestor` to replay the source chain forward.
+    Reorged {
+        /// Common-ancestor block number to restart fetch/insert from.
+        ancestor: u64,
+    },
+}
+
+/// Result of evaluating one coherent source label block against the local chain at that height.
+enum LabelOutcome {
+    /// Promote the local block as the new label.
+    Promote(L2BlockInfo),
+    /// Skip promotion this round (label out of range, or local block missing).
+    Skip,
+    /// The local block at the label's height has a different hash than the source.
+    Diverged {
+        /// Block number that diverged.
+        number: u64,
+        /// Hash on the local node.
+        local: B256,
+        /// Hash on the source node.
+        remote: B256,
+    },
+}
 
 #[derive(Debug)]
 pub(super) struct FollowRuntime<Local, Remote, Gate> {
@@ -95,25 +127,33 @@ where
         local: Arc<Local>,
         source: Arc<Remote>,
         engine: Arc<dyn FollowEngine>,
+        generation: CancellationToken,
         cancellation: CancellationToken,
-    ) -> Result<(), FollowError> {
+    ) -> Result<SafetyOutcome, FollowError> {
         let mut ticker = time::interval(SAFETY_POLL_INTERVAL);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
             if cancellation.is_cancelled() {
-                return Ok(());
+                return Ok(SafetyOutcome::Updated);
             }
 
             ticker.tick().await;
-            if let Err(e) = Self::update_safe_and_finalized(
+            match Self::update_safe_and_finalized(
                 Arc::clone(&local),
                 Arc::clone(&source),
                 Arc::clone(&engine),
+                generation.clone(),
             )
             .await
             {
-                warn!(target: "follow", error = %e, "Failed to update safe/finalized labels");
+                Ok(SafetyOutcome::Updated) => {}
+                // A recovery reorg ends the loop so the caller restarts fetch/insert from the
+                // common ancestor.
+                Ok(outcome @ SafetyOutcome::Reorged { .. }) => return Ok(outcome),
+                Err(e) => {
+                    warn!(target: "follow", error = %e, "Failed to update safe/finalized labels");
+                }
             }
         }
     }
@@ -122,60 +162,98 @@ where
         local: Arc<Local>,
         source: Arc<Remote>,
         engine: Arc<dyn FollowEngine>,
-    ) -> Result<(), FollowError> {
+        generation: CancellationToken,
+    ) -> Result<SafetyOutcome, FollowError> {
         let latest = local
             .block_info(BlockNumberOrTag::Latest)
             .await?
             .ok_or(FollowError::LocalBlockUnavailable(BlockNumberOrTag::Latest))?;
         let Some(local_safe) = local.block_info(BlockNumberOrTag::Safe).await? else {
             debug!(target: "follow", "Skipping safe/finalized update because local safe label is unavailable");
-            return Ok(());
+            return Ok(SafetyOutcome::Updated);
         };
         let local_finalized = local.block_info(BlockNumberOrTag::Finalized).await?;
 
-        // Read number and hash from the same response, matching op-node's `L2BlockRefByLabel`.
+        // One coherent read per label: the number and hash come from the same response, so a
+        // load-balanced multi-replica source can no longer supply a safe height from one backend
+        // and a by-number hash from another (mirrors op-node `L2BlockRefByLabel`).
         let source_safe = source.get_block_info(BlockNumberOrTag::Safe).await?;
-        let safe = Self::verified_local_block(
+        let safe = match Self::evaluate_label(
             &local,
             &source_safe,
             local_safe.block_info.number,
             latest.block_info.number,
         )
-        .await?;
-        if let Some(safe_block) = safe.as_ref() {
-            Self::validate_source_l1_origin(local.as_ref(), safe_block).await?;
-        }
+        .await?
+        {
+            LabelOutcome::Promote(block) => {
+                Self::validate_source_l1_origin(local.as_ref(), &block).await?;
+                Some(block)
+            }
+            LabelOutcome::Skip => None,
+            LabelOutcome::Diverged { number, local: local_hash, remote } => {
+                // The source is authoritative for the L2 chain in follow mode. Rather than wedge
+                // forever, reset to the common ancestor and replay the source chain forward.
+                warn!(
+                    target: "follow",
+                    number,
+                    local = %local_hash,
+                    source = %remote,
+                    "Local chain diverged from source safe head; recovering to common ancestor",
+                );
+                generation.cancel();
+                let finalized = local_finalized
+                    .as_ref()
+                    .ok_or(FollowError::LocalBlockUnavailable(BlockNumberOrTag::Finalized))?;
+                let ancestor =
+                    recovery::recover(local.as_ref(), source.as_ref(), &engine, finalized, number)
+                        .await?;
+                return Ok(SafetyOutcome::Reorged { ancestor });
+            }
+        };
 
         let safe_limit = safe.as_ref().unwrap_or(&local_safe).block_info.number;
 
         // Finalized floor at the local finalized head (never unwind), ceiling at the safe head.
         let source_finalized = source.get_block_info(BlockNumberOrTag::Finalized).await?;
         let local_finalized_number =
-            local_finalized.map(|block| block.block_info.number).unwrap_or_default();
-        let finalized = Self::verified_local_block(
+            local_finalized.as_ref().map(|block| block.block_info.number).unwrap_or_default();
+        let finalized = match Self::evaluate_label(
             &local,
             &source_finalized,
             local_finalized_number,
             latest.block_info.number.min(safe_limit),
         )
-        .await?;
-        if let Some(finalized_block) = finalized.as_ref() {
-            Self::validate_source_l1_origin(local.as_ref(), finalized_block).await?;
-        }
+        .await?
+        {
+            LabelOutcome::Promote(block) => {
+                Self::validate_source_l1_origin(local.as_ref(), &block).await?;
+                Some(block)
+            }
+            LabelOutcome::Skip => None,
+            LabelOutcome::Diverged { number, local: local_hash, remote } => {
+                return Err(FollowError::SourceBlockHashMismatch {
+                    number,
+                    local: local_hash,
+                    remote,
+                });
+            }
+        };
 
-        engine.update_safe_finalized_blocks(safe, finalized).await
+        engine.update_safe_finalized_blocks(safe, finalized).await?;
+        Ok(SafetyOutcome::Updated)
     }
 
-    /// Returns the local block at a coherent source label's height (`{number, hash}` from a single
-    /// read) when the number is within `[floor, ceiling]` and the local hash matches the source
-    /// hash. Labels outside the local range, or missing locally, are skipped. In-range hash
-    /// divergence returns `SourceBlockHashMismatch`.
-    async fn verified_local_block(
+    /// Evaluates a coherent source label block (`{number, hash}` from a single read) against the
+    /// local chain at the same height. Returns [`LabelOutcome::Skip`] when the label is out of
+    /// `[floor, ceiling]` or the local block is missing, [`LabelOutcome::Promote`] when the hashes
+    /// match, and [`LabelOutcome::Diverged`] when the local block at that height differs.
+    async fn evaluate_label(
         local: &Local,
         source_block: &BlockInfo,
         floor: u64,
         ceiling: u64,
-    ) -> Result<Option<L2BlockInfo>, FollowError> {
+    ) -> Result<LabelOutcome, FollowError> {
         let number = source_block.number;
         if number < floor || number > ceiling {
             debug!(
@@ -186,19 +264,19 @@ where
                 hash = %source_block.hash,
                 "Skipping source label outside local range"
             );
-            return Ok(None);
+            return Ok(LabelOutcome::Skip);
         }
         let Some(local_block) = local.block_info(number.into()).await? else {
-            return Ok(None);
+            return Ok(LabelOutcome::Skip);
         };
         if local_block.block_info.hash != source_block.hash {
-            return Err(FollowError::SourceBlockHashMismatch {
+            return Ok(LabelOutcome::Diverged {
                 number,
                 local: local_block.block_info.hash,
                 remote: source_block.hash,
             });
         }
-        Ok(Some(local_block))
+        Ok(LabelOutcome::Promote(local_block))
     }
 
     /// Verifies that a hash-verified local block's L1 origin is canonical in the local L1 view.
@@ -230,33 +308,61 @@ where
     Gate: ProofGate + 'static,
 {
     pub(super) async fn start(mut self) -> Result<(), FollowError> {
-        let next_insert = self.follow_from_block.block_info.number.saturating_add(1);
-        let (blocks_to_insert_tx, blocks_to_insert_rx) = mpsc::channel(PREFETCH_WINDOW);
-        let prefetcher = PayloadPrefetcher::new(
-            Arc::clone(&self.source),
-            self.cancellation.clone(),
-            blocks_to_insert_tx,
-        );
-        let fetch_loop = prefetcher.run(self.follow_from_block.block_info.number);
-        let insert_loop = Self::run_ordered_insert_loop(
-            Arc::clone(&self.engine),
-            self.cancellation.clone(),
-            blocks_to_insert_rx,
-            next_insert,
-            &mut self.proof_gate,
-            self.insert_delay,
-        );
-        let safety_loop = Self::run_update_safe_finalized_heads_loop(
-            Arc::clone(&self.local),
-            Arc::clone(&self.source),
-            Arc::clone(&self.engine),
-            self.cancellation.clone(),
-        );
+        let mut head_number = self.follow_from_block.block_info.number;
 
-        tokio::select! {
-            result = fetch_loop => result,
-            result = insert_loop => result,
-            result = safety_loop => result,
+        loop {
+            if self.cancellation.is_cancelled() {
+                return Ok(());
+            }
+
+            let next_insert = head_number.saturating_add(1);
+
+            // Fetch + insert share a child token so a recovery reorg can restart just those loops
+            // from the new head while the parent cancellation still drives full shutdown.
+            let generation = self.cancellation.child_token();
+            let (blocks_to_insert_tx, blocks_to_insert_rx) = mpsc::channel(PREFETCH_WINDOW);
+            let prefetcher = PayloadPrefetcher::new(
+                Arc::clone(&self.source),
+                generation.clone(),
+                blocks_to_insert_tx,
+            );
+            let fetch_loop = prefetcher.run(head_number);
+            let insert_loop = Self::run_ordered_insert_loop(
+                Arc::clone(&self.engine),
+                generation.clone(),
+                blocks_to_insert_rx,
+                next_insert,
+                &mut self.proof_gate,
+                self.insert_delay,
+            );
+            let safety_loop = Self::run_update_safe_finalized_heads_loop(
+                Arc::clone(&self.local),
+                Arc::clone(&self.source),
+                Arc::clone(&self.engine),
+                generation.clone(),
+                self.cancellation.clone(),
+            );
+
+            let outcome = tokio::select! {
+                result = fetch_loop => result.map(|()| SafetyOutcome::Updated),
+                result = insert_loop => result.map(|()| SafetyOutcome::Updated),
+                result = safety_loop => result,
+            }?;
+
+            match outcome {
+                SafetyOutcome::Reorged { ancestor } => {
+                    // The engine reset the unsafe head down to `ancestor` (a block it has, so the
+                    // forkchoice update was Valid). Restart fetch/insert from there to replay the
+                    // source chain forward.
+                    info!(
+                        target: "follow",
+                        ancestor,
+                        "Reset to common ancestor; restarting follow fetch/insert",
+                    );
+                    head_number = ancestor;
+                }
+                SafetyOutcome::Updated => return Ok(()),
+            }
         }
     }
 }
@@ -296,7 +402,19 @@ mod tests {
     struct RecordingEngine {
         inserted: Mutex<Vec<u64>>,
         labels: Mutex<Vec<(Option<u64>, Option<u64>)>>,
+        reset: Mutex<Vec<u64>>,
         delay: Duration,
+    }
+
+    impl RecordingEngine {
+        fn new(delay: Duration) -> Self {
+            Self {
+                inserted: Mutex::new(Vec::new()),
+                labels: Mutex::new(Vec::new()),
+                reset: Mutex::new(Vec::new()),
+                delay,
+            }
+        }
     }
 
     #[derive(Debug)]
@@ -364,6 +482,11 @@ mod tests {
                 .push((safe.map(|v| v.block_info.number), finalized.map(|v| v.block_info.number)));
             Ok(())
         }
+
+        async fn reset_to_ancestor(&self, ancestor: L2BlockInfo) -> Result<(), FollowError> {
+            self.reset.lock().await.push(ancestor.block_info.number);
+            Ok(())
+        }
     }
 
     fn block_info(number: u64) -> L2BlockInfo {
@@ -426,11 +549,7 @@ mod tests {
 
     #[tokio::test]
     async fn ordered_insertion_consumes_channel_order() {
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let mut proof_gate = NoopProofGate;
         let (blocks_to_insert_tx, blocks_to_insert_rx) = mpsc::channel(PREFETCH_WINDOW);
         blocks_to_insert_tx.send(payload(1)).await.expect("send 1");
@@ -456,11 +575,7 @@ mod tests {
 
     #[tokio::test]
     async fn ordered_insertion_rejects_out_of_order_channel_input() {
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let mut proof_gate = NoopProofGate;
         let (blocks_to_insert_tx, blocks_to_insert_rx) = mpsc::channel(PREFETCH_WINDOW);
         blocks_to_insert_tx.send(payload(2)).await.expect("send 2");
@@ -482,11 +597,7 @@ mod tests {
 
     #[tokio::test]
     async fn ordered_insertion_applies_configured_insert_delay() {
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let mut proof_gate = NoopProofGate;
         let (blocks_to_insert_tx, blocks_to_insert_rx) = mpsc::channel(PREFETCH_WINDOW);
         blocks_to_insert_tx.send(payload(1)).await.expect("send 1");
@@ -566,11 +677,7 @@ mod tests {
             })
         });
         source.expect_get_payload_by_number().returning(|number| Ok(payload(number)));
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let cancellation = CancellationToken::new();
         let proof_gate = ActiveProofGate::new(Arc::clone(&local), DEFAULT_PROOFS_MAX_BLOCKS_AHEAD)
             .await
@@ -612,16 +719,13 @@ mod tests {
             .expect_get_block_info()
             .with(eq(BlockNumberOrTag::Finalized))
             .returning(|_| Ok(source_block_info(6)));
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
         FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
             local,
             Arc::new(source),
             engine_for_update,
+            CancellationToken::new(),
         )
         .await
         .expect("labels");
@@ -643,16 +747,13 @@ mod tests {
             .expect_get_block_info()
             .with(eq(BlockNumberOrTag::Finalized))
             .returning(|_| Ok(source_block_info(6)));
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
         FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
             local,
             Arc::new(source),
             engine_for_update,
+            CancellationToken::new(),
         )
         .await
         .expect("labels");
@@ -710,16 +811,13 @@ mod tests {
                 _ => panic!("unexpected local block lookup: {tag:?}"),
             })
         });
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
         FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
             Arc::new(local),
             Arc::new(MockRemoteClient::new()),
             engine_for_update,
+            CancellationToken::new(),
         )
         .await
         .expect("skip update");
@@ -728,31 +826,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn safe_label_rejects_source_hash_mismatch() {
-        // Safe label hash disagrees with the local block at that height; returns
-        // SourceBlockHashMismatch and does not promote labels.
+    async fn safe_divergence_recovers_to_ancestor() {
+        // A coherent read of the safe label (number + hash together) disagrees with the local block
+        // at that height (number 10). Rather than wedge, recovery finds the common ancestor and
+        // resets to it. Here by-number reads agree everywhere below 10, so the highest common block
+        // is 9: recovery resets to 9 and the pass returns Reorged { ancestor: 9 } so the caller
+        // restarts fetch/insert from there.
         let local = Arc::new(local_client(10, 8, 7, 100));
         let mut source = MockRemoteClient::new();
-        source.expect_get_block_info().with(eq(BlockNumberOrTag::Safe)).times(1).returning(|_| {
+        source.expect_get_block_info().with(eq(BlockNumberOrTag::Safe)).returning(|_| {
             Ok(BlockInfo { number: 10, hash: B256::from([99; 32]), ..Default::default() })
         });
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        source
+            .expect_get_block_info()
+            .withf(|tag| matches!(tag, BlockNumberOrTag::Number(_)))
+            .returning(|tag| {
+                let BlockNumberOrTag::Number(number) = tag else { unreachable!() };
+                Ok(source_block_info(number))
+            });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+        let generation = CancellationToken::new();
 
-        let error =
+        let outcome =
             FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
                 local,
                 Arc::new(source),
                 engine_for_update,
+                generation.clone(),
             )
             .await
-            .expect_err("mismatched source hash");
+            .expect("recover from divergence");
 
-        assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 10, .. }));
+        assert_eq!(outcome, SafetyOutcome::Reorged { ancestor: 9 });
+        assert!(generation.is_cancelled());
+        assert_eq!(*engine.reset.lock().await, vec![9]);
         assert!(engine.labels.lock().await.is_empty());
     }
 
@@ -792,6 +900,7 @@ mod tests {
                 Arc::new(local),
                 Arc::new(source),
                 engine_for_update,
+                CancellationToken::new(),
             )
             .await
             .expect_err("verified local L1 origin must match local canonical L1");
@@ -805,8 +914,9 @@ mod tests {
 
     #[tokio::test]
     async fn finalized_label_rejects_source_hash_mismatch() {
-        // Safe label is consistent so evaluation reaches finalized; the in-range finalized hash
-        // disagrees with local, which returns SourceBlockHashMismatch.
+        // The safe label is consistent (so evaluation reaches the finalized read), but the in-range
+        // finalized block's hash disagrees with the local block: surface the existing mismatch
+        // error and never reset.
         let local = Arc::new(local_client(10, 9, 7, 100));
         let mut source = MockRemoteClient::new();
         source
@@ -816,11 +926,7 @@ mod tests {
         source.expect_get_block_info().with(eq(BlockNumberOrTag::Finalized)).times(1).returning(
             |_| Ok(BlockInfo { number: 8, hash: B256::from([99; 32]), ..Default::default() }),
         );
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
 
         let error =
@@ -828,23 +934,95 @@ mod tests {
                 local,
                 Arc::new(source),
                 engine_for_update,
+                CancellationToken::new(),
             )
             .await
             .expect_err("mismatched finalized hash");
 
         assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 8, .. }));
         assert!(engine.labels.lock().await.is_empty());
+        assert!(engine.reset.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn find_common_ancestor_binary_search() {
+        // Local and source agree at and below block 5 and disagree above it. A divergence detected
+        // at block 10 must converge to block 5 as the highest common ancestor.
+        let mut local = MockFollowLocalClient::new();
+        local.expect_block_info().returning(|tag| {
+            let number = match tag {
+                BlockNumberOrTag::Number(n) => n,
+                BlockNumberOrTag::Finalized => 2,
+                _ => 0,
+            };
+            // Above the agreement boundary the local chain is on a different fork.
+            let hash = if number <= 5 {
+                B256::from([number as u8; 32])
+            } else {
+                B256::from([number as u8 + 100; 32])
+            };
+            Ok(Some(L2BlockInfo {
+                block_info: base_protocol::BlockInfo { number, hash, ..Default::default() },
+                ..Default::default()
+            }))
+        });
+        let mut source = MockRemoteClient::new();
+        source.expect_get_block_info().returning(|tag| {
+            let number = match tag {
+                BlockNumberOrTag::Number(n) => n,
+                _ => 0,
+            };
+            Ok(source_block_info(number))
+        });
+
+        let finalized = block_info(2);
+        let ancestor = recovery::find_common_ancestor(&local, &source, &finalized, 10)
+            .await
+            .expect("common ancestor");
+
+        assert_eq!(ancestor.block_info.number, 5);
+    }
+
+    #[tokio::test]
+    async fn recover_rejects_finalized_hash_mismatch() {
+        // If the source disagrees with the local node even at the finalized height, finality has
+        // diverged. Recovery cannot safely reset below finalized, so surface the existing mismatch
+        // error and never reset.
+        let mut local = MockFollowLocalClient::new();
+        local.expect_block_info().returning(|tag| {
+            Ok(Some(match tag {
+                BlockNumberOrTag::Finalized => block_info(7),
+                BlockNumberOrTag::Number(number) => block_info(number),
+                _ => block_info(0),
+            }))
+        });
+        let mut source = MockRemoteClient::new();
+        source.expect_get_block_info().returning(|tag| {
+            let number = match tag {
+                BlockNumberOrTag::Number(n) => n,
+                _ => 0,
+            };
+            Ok(BlockInfo {
+                number,
+                hash: B256::from([number as u8 + 100; 32]),
+                ..Default::default()
+            })
+        });
+        let engine: Arc<dyn FollowEngine> = Arc::new(RecordingEngine::new(Duration::ZERO));
+        let finalized = block_info(7);
+
+        let error = recovery::recover(&local, &source, &engine, &finalized, 10)
+            .await
+            .expect_err("finalized divergence");
+
+        assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 7, .. }));
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn insert_loop_benchmark_prefetches_source_fetch_latency() {
         let local = Arc::new(local_client(0, 0, 0, 100));
         let source = DelayedSource { latest: 25, fetch_delay: Duration::from_millis(30) };
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::from_millis(50),
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::from_millis(50)));
         let cancellation = CancellationToken::new();
         let engine_for_runtime: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
         let runtime = FollowRuntime::new(

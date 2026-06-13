@@ -73,6 +73,25 @@ pub enum FollowError {
         remote: B256,
     },
 
+    /// A recovery reorg was refused because it would rewind below the finalized head.
+    #[error("refusing to reorg to block {number} below the finalized head {finalized}")]
+    ReorgBelowFinalized {
+        /// Block number we were asked to reorg to.
+        number: u64,
+        /// Current local finalized head number.
+        finalized: u64,
+    },
+
+    /// The engine did not confirm the forkchoice reset to the common ancestor. This usually means
+    /// the EL returned `Syncing`, so recovery cannot safely replay payloads yet.
+    #[error("engine did not confirm reset to ancestor block {number} ({hash})")]
+    ResetToAncestorUnconfirmed {
+        /// Ancestor block number.
+        number: u64,
+        /// Ancestor block hash.
+        hash: B256,
+    },
+
     /// The local engine rejected a follow-mode task.
     #[error("engine task failed with {severity} severity: {error}")]
     EngineTask {
