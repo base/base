@@ -91,6 +91,7 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         l1_block_info: L1BlockInfo,
         state_overrides: StateOverride,
+        access_list: Option<FlashblockAccessList>,
     ) -> Self {
         Self {
             pending_block,
@@ -102,6 +103,7 @@ where
             state_overrides,
             chain_spec: chain_spec.clone(),
             receipt_builder: UnifiedReceiptBuilder::new(chain_spec),
+            access_list,
         }
     }
 
