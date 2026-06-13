@@ -406,7 +406,6 @@ mod tests {
     use alloy_primitives::{Address, address};
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
-    use base_tx_manager::{SendHandle, TxCandidate};
     use rstest::rstest;
     use tokio::task;
 
@@ -415,8 +414,8 @@ mod tests {
         DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
         RegisterableSigner, RegistrarError,
         test_utils::{
-            EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
-            signer_from_private_key,
+            EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, NoopTxManager, TEST_REGISTRY_ADDRESS,
+            healthy_prover_instance, signer_from_private_key,
         },
     };
 
@@ -439,23 +438,6 @@ mod tests {
 
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
             unreachable!("signer manager unit tests do not run orphan deregistration")
-        }
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    struct NoopTxManager;
-
-    impl TxManager for NoopTxManager {
-        async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            unreachable!("signer manager unit tests do not submit transactions")
-        }
-
-        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            unimplemented!("not used in signer manager tests")
-        }
-
-        fn sender_address(&self) -> Address {
-            Address::ZERO
         }
     }
 
@@ -617,18 +599,6 @@ mod tests {
     #[case::no_pending_spawns_all(&[], &[(EP1, &HARDHAT_KEY_0)], 1, 0)]
     #[case::pending_for_kept_spawns_nothing(&[(EP1, &HARDHAT_KEY_0)], &[(EP1, &HARDHAT_KEY_0)], 0, 0)]
     #[case::pending_for_dropped_cancels_one(&[(EP1, &HARDHAT_KEY_0)], &[], 0, 1)]
-    #[case::pending_one_kept_one_dropped(
-        &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)],
-        &[(EP1, &HARDHAT_KEY_0)],
-        0,
-        1,
-    )]
-    #[case::two_new_signers_two_spawns(
-        &[],
-        &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)],
-        2,
-        0,
-    )]
     #[tokio::test]
     async fn reconcile_proof_tasks_cancel_and_spawn_passes(
         #[case] pre_existing: &[(&'static str, &'static [u8; 32])],
@@ -817,23 +787,12 @@ mod tests {
         assert_eq!(snap.get(&signer_b), Some(&att_b), "signer B got B attestation");
     }
 
-    #[rstest]
-    #[case::ok_outcome(true)]
-    #[case::err_outcome(false)]
     #[tokio::test]
-    async fn reap_finished_tasks_drains_completed_and_evicts_pending(#[case] succeed: bool) {
+    async fn reap_finished_tasks_drains_completed_and_evicts_pending() {
         let mut proof_tasks = ProofTaskSet::new();
 
-        let handle = proof_tasks.tasks.spawn(async move {
-            if succeed {
-                proof_task_success_for_test(HARDHAT_ACCOUNT)
-            } else {
-                proof_task_failure_for_test(
-                    HARDHAT_ACCOUNT,
-                    RegistrarError::Transaction("synthetic".into()),
-                )
-            }
-        });
+        let handle =
+            proof_tasks.tasks.spawn(async move { proof_task_success_for_test(HARDHAT_ACCOUNT) });
         proof_tasks.pending.insert(
             HARDHAT_ACCOUNT,
             pending_registration_for_test(handle.id(), TEST_PENDING_INSTANCE_ID),

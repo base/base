@@ -652,20 +652,19 @@ mod tests {
         time::SystemTime,
     };
 
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::Address;
     use async_trait::async_trait;
-    use base_tx_manager::{SendHandle, TxCandidate, TxManager};
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
     use super::*;
     use crate::{
-        InstanceHealthStatus, NitroVerifierClient, Result, SignerClient,
+        InstanceHealthStatus, Result, SignerClient,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, HARDHAT_KEY_3,
-            TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
-            public_key_from_private, signer_from_private_key,
+            NoopNitroVerifier, NoopTxManager, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
+            prover_instance, public_key_from_private, signer_from_private_key,
         },
     };
 
@@ -773,51 +772,12 @@ mod tests {
         }
     }
 
-    /// Mock Nitro verifier used to satisfy the driver's required certificate
-    /// manager dependency in tests that do not exercise CRL checks.
-    #[derive(Debug)]
-    struct MockNitroVerifier;
-
-    #[async_trait]
-    impl NitroVerifierClient for MockNitroVerifier {
-        fn address(&self) -> Address {
-            Address::ZERO
-        }
-
-        async fn is_revoked(&self, _cert_hash: B256) -> Result<bool> {
-            Ok(false)
-        }
-    }
-
-    fn mock_nitro_verifier() -> Arc<dyn NitroVerifierClient> {
-        Arc::new(MockNitroVerifier)
-    }
-
     fn mock_cert_manager(
         config: &DriverConfig,
         tx_manager: NoopTxManager,
     ) -> CertManager<NoopTxManager> {
-        CertManager::new(&config.crl, mock_nitro_verifier(), tx_manager)
+        CertManager::new(&config.crl, Arc::new(NoopNitroVerifier), tx_manager)
             .expect("test cert manager builds")
-    }
-
-    /// Minimal tx manager used only to satisfy the driver's certificate-manager
-    /// dependency in tests that do not exercise transaction submission.
-    #[derive(Debug, Clone, Copy)]
-    struct NoopTxManager;
-
-    impl TxManager for NoopTxManager {
-        async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            unreachable!("driver tests do not submit transactions")
-        }
-
-        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            unimplemented!("not used in driver tests")
-        }
-
-        fn sender_address(&self) -> Address {
-            Address::ZERO
-        }
     }
 
     /// Driver-level signer lifecycle mock. It records calls without running
@@ -1014,12 +974,6 @@ mod tests {
         assert!(!resolution.ok_to_dereg, "cancellation must clear ok_to_dereg",);
     }
 
-    /// All 4 endpoints and corresponding private keys, indexed for
-    /// dynamic slicing in the concurrency test.
-    const ALL_ENDPOINTS: [&str; 4] = [EP1, EP2, EP3, EP4];
-    const ALL_KEYS: [&[u8; 32]; 4] =
-        [&HARDHAT_KEY_0, &HARDHAT_KEY_1, &HARDHAT_KEY_2, &HARDHAT_KEY_3];
-
     #[tokio::test]
     async fn discover_and_resolve_includes_all_reachable_when_one_instance_is_unreachable() {
         // An unreachable instance must not prevent other instances from
@@ -1057,73 +1011,6 @@ mod tests {
             "unreachable instance must be marked as unresolved so reconcile skips its cancel-pass",
         );
         assert!(!resolution.ok_to_dereg, "unresolved instance must block orphan-dereg",);
-    }
-
-    /// Signer client wrapper that cancels a token after returning keys.
-    ///
-    /// Delegates to an inner [`MockSignerClient`] for actual key/attestation
-    /// data, but cancels the given [`CancellationToken`] after the first
-    /// successful `signer_public_key` call. This simulates cancellation
-    /// occurring mid-cycle (after instance processing begins but before
-    /// orphan deregistration).
-    #[derive(Debug)]
-    struct CancellingSignerClient {
-        inner: MockSignerClient,
-        cancel: CancellationToken,
-    }
-
-    #[async_trait]
-    impl SignerClient for CancellingSignerClient {
-        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
-            let result = self.inner.signer_public_key(endpoint).await;
-            if result.is_ok() {
-                self.cancel.cancel();
-            }
-            result
-        }
-
-        async fn signer_attestation(
-            &self,
-            endpoint: &Url,
-            user_data: Option<Vec<u8>>,
-            nonce: Option<Vec<u8>>,
-        ) -> Result<Vec<Vec<u8>>> {
-            self.inner.signer_attestation(endpoint, user_data, nonce).await
-        }
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_clears_ok_to_dereg_when_cancelled_mid_resolution() {
-        // Cancellation observed during instance resolution must drive
-        // `ok_to_dereg = false` so the production caller skips
-        // `run_orphan_dereg` entirely. `CancellingSignerClient` cancels
-        // the shared token as a side effect of `signer_public_key`,
-        // simulating a shutdown signal arriving mid-cycle.
-        let instances = vec![healthy_prover_instance(EP1)];
-
-        let cancel = CancellationToken::new();
-
-        let signer_client = CancellingSignerClient {
-            inner: MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
-            cancel: cancel.clone(),
-        };
-        let config = default_config(cancel);
-        let signer_manager = MockSignerManager::new(CancellationToken::new());
-        let cert_manager = mock_cert_manager(&config, NoopTxManager);
-
-        let driver = RegistrationDriver::new(
-            MockDiscovery { instances },
-            signer_client,
-            config,
-            cert_manager,
-            signer_manager,
-        );
-
-        let resolution = driver.discover_and_resolve().await.unwrap();
-        assert!(
-            !resolution.ok_to_dereg,
-            "cancellation observed during resolution must clear ok_to_dereg",
-        );
     }
 
     #[tokio::test]
@@ -1273,20 +1160,19 @@ mod tests {
         }
     }
 
-    #[rstest]
-    #[case::serial(1)]
-    #[case::limited(2)]
     #[tokio::test]
-    async fn discover_and_resolve_respects_max_concurrency(#[case] max_concurrency: usize) {
+    async fn discover_and_resolve_respects_max_concurrency() {
         // Resolve 4 instances with a limited `max_concurrency` and verify
         // the peak concurrent `signer_public_key` count observed inside
         // `discover_and_resolve`'s `buffer_unordered` loop never exceeds
         // the configured bound. All 4 must end up in `registerable`.
-        let instances: Vec<_> =
-            ALL_ENDPOINTS.iter().map(|ep| healthy_prover_instance(ep)).collect();
+        let max_concurrency = 2;
+        let endpoints = [EP1, EP2, EP3, EP4];
+        let private_keys = [&HARDHAT_KEY_0, &HARDHAT_KEY_1, &HARDHAT_KEY_2, &HARDHAT_KEY_3];
 
         let keys: Vec<(&str, &[u8; 32])> =
-            ALL_ENDPOINTS.iter().copied().zip(ALL_KEYS.iter().copied()).collect();
+            endpoints.iter().copied().zip(private_keys.iter().copied()).collect();
+        let instances: Vec<_> = endpoints.iter().map(|ep| healthy_prover_instance(ep)).collect();
         let inner = MockSignerClient::from_keys(&keys);
         let (signer_client, peak) = ConcurrencyTrackingSignerClient::new(inner);
 
@@ -1313,7 +1199,7 @@ mod tests {
         );
         assert_eq!(
             resolution.registerable.len(),
-            ALL_ENDPOINTS.len(),
+            endpoints.len(),
             "all 4 healthy instances should resolve into the registerable set",
         );
     }

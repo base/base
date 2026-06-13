@@ -6,11 +6,13 @@
 
 use std::time::SystemTime;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
+use async_trait::async_trait;
+use base_tx_manager::{SendHandle, TxCandidate, TxManager};
 use hex_literal::hex;
 use k256::ecdsa::SigningKey;
 
-use crate::{InstanceHealthStatus, ProverClient, ProverInstance};
+use crate::{InstanceHealthStatus, NitroVerifierClient, ProverClient, ProverInstance, Result};
 
 /// Well-known Hardhat / Anvil account #0 private key.
 pub const HARDHAT_KEY_0: [u8; 32] =
@@ -42,6 +44,39 @@ pub const EP4: &str = "10.0.0.4:8000";
 
 /// Placeholder registry contract address used in registrar test configs.
 pub const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
+
+/// Tx manager stub for tests that only need to satisfy generic bounds.
+#[derive(Debug, Clone, Copy)]
+pub struct NoopTxManager;
+
+impl TxManager for NoopTxManager {
+    async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
+        unreachable!("NoopTxManager does not submit transactions")
+    }
+
+    async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+        unreachable!("NoopTxManager does not submit async transactions")
+    }
+
+    fn sender_address(&self) -> Address {
+        Address::ZERO
+    }
+}
+
+/// Nitro verifier stub for tests that do not exercise revocation checks.
+#[derive(Debug)]
+pub struct NoopNitroVerifier;
+
+#[async_trait]
+impl NitroVerifierClient for NoopNitroVerifier {
+    fn address(&self) -> Address {
+        Address::ZERO
+    }
+
+    async fn is_revoked(&self, _cert_hash: B256) -> Result<bool> {
+        Ok(false)
+    }
+}
 
 /// Derives the uncompressed 65-byte public key from a private key.
 pub fn public_key_from_private(private_key: &[u8; 32]) -> Vec<u8> {
