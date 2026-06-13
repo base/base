@@ -18,9 +18,10 @@ use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CrlConfig,
-    DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY,
-    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CertManager,
+    CertRevocationChecker, CrlConfig, DEFAULT_CRL_FETCH_TIMEOUT_SECS,
+    DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_RECOVERY_ATTEMPTS,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierClient,
     NitroVerifierContractClient, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError,
     RegistrarMetrics, RegistrationDriver, RegistryContractClient, SignerManager,
@@ -632,16 +633,17 @@ impl Cli {
             config.l1_rpc_url.clone(),
         );
 
-        // Optional onchain revocation pre-check client; only built when CRL
-        // checking is enabled and the verifier address is configured.
+        // Built unconditionally; the driver only invokes it when CRL checking
+        // is enabled.
         let nitro_verifier: Option<Arc<dyn NitroVerifierClient>> =
-            match (config.crl.enabled, config.crl.nitro_verifier_address) {
-                (true, Some(verifier_address)) => Some(Arc::new(NitroVerifierContractClient::new(
+            config.crl.nitro_verifier_address.map(|verifier_address| {
+                Arc::new(NitroVerifierContractClient::new(
                     verifier_address,
                     config.l1_rpc_url.clone(),
-                ))),
-                _ => None,
-            };
+                )) as Arc<dyn NitroVerifierClient>
+            });
+        let cert_manager: Arc<dyn CertRevocationChecker> =
+            Arc::new(CertManager::new(&config.crl, nitro_verifier, tx_manager.clone())?);
 
         // ── 6. Build proof provider ──────────────────────────────────────────
         let proof_provider: Box<dyn AttestationProofProvider> = match config.proving {
@@ -715,7 +717,7 @@ impl Cli {
             discovery,
             signer_client,
             driver_config,
-            nitro_verifier,
+            cert_manager,
             signer_manager,
         )?;
         let driver_result = driver.run().await;

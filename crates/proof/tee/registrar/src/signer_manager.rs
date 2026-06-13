@@ -86,27 +86,16 @@ impl<P, R, T> SignerManager<P, R, T> {
         let proof_semaphore = Semaphore::new(config.max_concurrency.max(1));
         Self { proof_provider, registry, tx_manager, proof_semaphore, config }
     }
-
-    /// Returns the transaction manager used by signer lifecycle operations.
-    pub const fn tx_manager(&self) -> &T {
-        &self.tx_manager
-    }
 }
 
 /// Driver-facing signer lifecycle boundary.
 ///
 /// The production implementation is [`SignerManager`], but the driver only
-/// needs to reconcile proof tasks, run orphan cleanup, and expose the tx
-/// manager for CRL revocation. Keeping this as a trait lets driver tests mock
-/// signer lifecycle behavior without standing up proof tasks or registry state.
+/// needs to reconcile proof tasks and run orphan cleanup. Keeping this as a
+/// trait lets driver tests mock signer lifecycle behavior without standing up
+/// proof tasks or registry state.
 #[async_trait]
 pub trait SignerLifecycle: Send + Sync + fmt::Debug {
-    /// Transaction manager type used for CRL revocation checks.
-    type TransactionManager: TxManager + 'static;
-
-    /// Returns the transaction manager used by CRL revocation checks.
-    fn tx_manager(&self) -> &Self::TransactionManager;
-
     /// Reconciles in-flight registration tasks against fetched prover signers.
     ///
     /// New proof-task child tokens are derived from `cancel`, which is owned
@@ -137,12 +126,6 @@ where
     R: RegistryClient + 'static,
     T: TxManager + 'static,
 {
-    type TransactionManager = T;
-
-    fn tx_manager(&self) -> &Self::TransactionManager {
-        self.as_ref().tx_manager()
-    }
-
     fn reconcile_proof_tasks(
         &self,
         resolution: &DiscoveryResolution,

@@ -14,9 +14,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
-    CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
-    ProofTaskSet, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, Result,
-    SignerClient, SignerLifecycle, SignerManagerConfig,
+    CertRevocationChecker, CrlConfig, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet,
+    ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, Result, SignerClient,
+    SignerLifecycle, SignerManagerConfig,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -170,9 +170,8 @@ pub struct RegistrationDriver<D, S, M> {
     discovery: D,
     signer_client: S,
     config: DriverConfig,
-    /// Optional certificate revocation manager. Built once at construction
-    /// time when CRL checking is enabled. `None` when CRL checking is disabled.
-    cert_manager: Option<CertManager>,
+    /// Certificate revocation manager. Called only when CRL checking is enabled.
+    cert_manager: Arc<dyn CertRevocationChecker>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
     signer_manager: M,
 }
@@ -191,38 +190,20 @@ where
 {
     /// Creates a new registration driver.
     ///
-    /// When CRL checking is enabled, pre-builds the HTTP client used for
-    /// CRL fetches so it can be reused across registration cycles. The
-    /// optional `nitro_verifier` client consults the onchain durable
-    /// revocation sentinel before each registration; pass `None` to disable
-    /// the onchain pre-check (useful for tests and unit deployments).
+    /// Requires a pre-built certificate revocation checker so CRL fetches and
+    /// `revokeCert` submissions can be reused across registration cycles.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrarError::Config`] when `config.crl.enabled` is `true`
-    /// and either the `nitro_verifier` client is missing or the
-    /// [`CertManager`] fails to initialize. Failing fast prevents a
-    /// misconfigured driver from silently bypassing CRL protection at runtime.
+    /// Currently infallible, but returns [`Result`] to preserve the driver
+    /// construction API used by callers.
     pub fn new(
         discovery: D,
         signer_client: S,
         config: DriverConfig,
-        nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
+        cert_manager: Arc<dyn CertRevocationChecker>,
         signer_manager: M,
     ) -> Result<Self> {
-        let cert_manager = if config.crl.enabled {
-            let Some(nitro_verifier) = nitro_verifier else {
-                return Err(RegistrarError::Config(
-                    "CRL checking enabled but nitro_verifier client not configured; \
-                     a NitroEnclaveVerifier client is required as both the revokeCert \
-                     destination and the onchain revokedCerts sentinel source"
-                        .into(),
-                ));
-            };
-            Some(CertManager::new(&config.crl, nitro_verifier)?)
-        } else {
-            None
-        };
         Ok(Self { discovery, signer_client, config, cert_manager, signer_manager })
     }
 
@@ -502,16 +483,7 @@ where
                     instance: instance.endpoint.to_string(),
                     source: "no attestations available for CRL check".into(),
                 })?;
-            let cert_manager =
-                self.cert_manager.as_ref().expect("cert_manager required when CRL enabled");
-            match cert_manager
-                .check_and_revoke_crls(
-                    first_attestation,
-                    instance,
-                    self.signer_manager.tx_manager(),
-                )
-                .await
-            {
+            match self.cert_manager.check_and_revoke_crls(first_attestation, instance).await {
                 Ok(true) => {
                     warn!(
                         instance = %instance.instance_id,
@@ -1015,16 +987,14 @@ mod tests {
     /// driver orchestration.
     #[derive(Debug, Clone)]
     struct MockSignerManager {
-        tx: SharedTxManager,
         reconcile_calls: Arc<AtomicUsize>,
         orphan_calls: Arc<Mutex<Vec<HashSet<Address>>>>,
         cancel_after_orphan: CancellationToken,
     }
 
     impl MockSignerManager {
-        fn new(tx: SharedTxManager, cancel_after_orphan: CancellationToken) -> Self {
+        fn new(cancel_after_orphan: CancellationToken) -> Self {
             Self {
-                tx,
                 reconcile_calls: Arc::new(AtomicUsize::new(0)),
                 orphan_calls: Arc::new(Mutex::new(Vec::new())),
                 cancel_after_orphan,
@@ -1042,12 +1012,6 @@ mod tests {
 
     #[async_trait]
     impl SignerLifecycle for MockSignerManager {
-        type TransactionManager = SharedTxManager;
-
-        fn tx_manager(&self) -> &Self::TransactionManager {
-            &self.tx
-        }
-
         fn reconcile_proof_tasks(
             &self,
             _resolution: &DiscoveryResolution,
@@ -1066,6 +1030,24 @@ mod tests {
             self.cancel_after_orphan.cancel();
             Ok(())
         }
+    }
+
+    #[derive(Debug)]
+    struct NoopCertRevocationChecker;
+
+    #[async_trait]
+    impl CertRevocationChecker for NoopCertRevocationChecker {
+        async fn check_and_revoke_crls(
+            &self,
+            _attestation_bytes: &[u8],
+            _instance: &ProverInstance,
+        ) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    fn noop_cert_manager() -> Arc<dyn CertRevocationChecker> {
+        Arc::new(NoopCertRevocationChecker)
     }
 
     // ── Driver constructors ─────────────────────────────────────────────
@@ -1120,7 +1102,7 @@ mod tests {
                 MockDiscovery { instances },
                 signer_client,
                 config,
-                None,
+                noop_cert_manager(),
                 signer_manager,
             )
             .expect("test driver construction succeeds"),
@@ -1344,7 +1326,7 @@ mod tests {
                     discovery.clone(),
                     signer_client,
                     config,
-                    None,
+                    noop_cert_manager(),
                     signer_manager,
                 )
                 .expect("test driver construction succeeds"),
@@ -1446,8 +1428,7 @@ mod tests {
         let mut config = default_config(cancel.clone());
         config.poll_interval = GATED_POLL_INTERVAL;
 
-        let tx = SharedTxManager::new();
-        let signer_manager = MockSignerManager::new(tx, cancel.clone());
+        let signer_manager = MockSignerManager::new(cancel.clone());
         let signer_manager_handle = signer_manager.clone();
         let signer = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0))
             .expect("test key derives");
@@ -1456,7 +1437,7 @@ mod tests {
             MockDiscovery { instances: vec![instance(EP1, InstanceHealthStatus::Healthy)] },
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
             config,
-            None,
+            noop_cert_manager(),
             signer_manager,
         )
         .expect("test driver construction succeeds");
@@ -1863,7 +1844,7 @@ mod tests {
                 MockDiscovery { instances },
                 signer_client,
                 config,
-                None,
+                noop_cert_manager(),
                 signer_manager,
             )
             .expect("test driver construction succeeds"),
@@ -2117,7 +2098,7 @@ mod tests {
                 MockDiscovery { instances },
                 signer_client,
                 config,
-                None,
+                noop_cert_manager(),
                 signer_manager,
             )
             .expect("test driver construction succeeds"),
@@ -2225,7 +2206,7 @@ mod tests {
                 MockDiscovery { instances },
                 signer_client,
                 config,
-                None,
+                noop_cert_manager(),
                 signer_manager,
             )
             .expect("test driver construction succeeds"),
