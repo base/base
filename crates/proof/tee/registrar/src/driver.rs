@@ -167,11 +167,7 @@ pub struct ResolveOutcome {
 ///
 /// Generic over discovery, signer client, and signer lifecycle backends so each
 /// can be mocked independently in tests.
-pub struct RegistrationDriver<D, S, M, T>
-where
-    M: SignerLifecycle,
-    T: TxManager,
-{
+pub struct RegistrationDriver<D, S, M, T> {
     discovery: D,
     signer_client: S,
     config: DriverConfig,
@@ -182,11 +178,7 @@ where
     signer_manager: M,
 }
 
-impl<D, S, M, T> fmt::Debug for RegistrationDriver<D, S, M, T>
-where
-    M: SignerLifecycle,
-    T: TxManager,
-{
+impl<D, S, M, T> fmt::Debug for RegistrationDriver<D, S, M, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegistrationDriver").field("config", &self.config).finish_non_exhaustive()
     }
