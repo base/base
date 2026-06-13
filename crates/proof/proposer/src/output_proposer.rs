@@ -7,16 +7,18 @@
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{
-    encode_create_calldata, encode_extra_data, game_already_exists_selector,
+    already_proven_selector, encode_create_calldata, encode_extra_data,
+    encode_verify_proposal_proof_calldata, game_already_exists_selector,
     invalid_parent_game_selector, invalid_signer_selector, l1_origin_too_old_selector,
 };
-use base_proof_primitives::Proposal;
+use base_proof_primitives::{ProofEncoder, Proposal};
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tracing::info;
 
 use crate::error::ProposerError;
 
 const GAME_ALREADY_EXISTS: &str = "GameAlreadyExists";
+const ALREADY_PROVEN: &str = "AlreadyProven";
 const L1_ORIGIN_TOO_OLD: &str = "L1OriginTooOld";
 const INVALID_PARENT_GAME: &str = "InvalidParentGame";
 const INVALID_SIGNER: &str = "InvalidSigner";
@@ -28,6 +30,7 @@ const INVALID_SIGNER: &str = "InvalidSigner";
 /// Display string for non-`ExecutionReverted` variants (e.g. `Rpc`).
 fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     let game_exists_selector = game_already_exists_selector();
+    let already_proven = already_proven_selector();
     let l1_origin_selector = l1_origin_too_old_selector();
     let invalid_parent_selector = invalid_parent_game_selector();
     let invalid_signer = invalid_signer_selector();
@@ -38,6 +41,12 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
         }
         if data.as_ref().is_some_and(|d| d.starts_with(&game_exists_selector)) {
             return ProposerError::GameAlreadyExists;
+        }
+        if reason.as_deref().is_some_and(|r| r.contains(ALREADY_PROVEN)) {
+            return ProposerError::ProofAlreadyVerified;
+        }
+        if data.as_ref().is_some_and(|d| d.starts_with(&already_proven)) {
+            return ProposerError::ProofAlreadyVerified;
         }
         if reason.as_deref().is_some_and(|r| r.contains(L1_ORIGIN_TOO_OLD)) {
             return ProposerError::L1OriginTooOld;
@@ -66,6 +75,10 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     {
         return ProposerError::GameAlreadyExists;
     }
+    if msg.contains(&alloy_primitives::hex::encode(already_proven)) || msg.contains(ALREADY_PROVEN)
+    {
+        return ProposerError::ProofAlreadyVerified;
+    }
     if msg.contains(&alloy_primitives::hex::encode(l1_origin_selector))
         || msg.contains(L1_ORIGIN_TOO_OLD)
     {
@@ -93,6 +106,18 @@ pub trait OutputProposer: Send + Sync {
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError>;
+
+    /// Attaches a proof to an already-existing matching dispute game.
+    async fn verify_proposal_proof(
+        &self,
+        game_address: Address,
+        proposal: &Proposal,
+    ) -> Result<(), ProposerError> {
+        Err(ProposerError::Internal(format!(
+            "verify_proposal_proof not implemented for game {game_address} at block {}",
+            proposal.l2_block_number
+        )))
+    }
 }
 
 /// No-op output proposer that logs proposals without submitting transactions.
@@ -113,6 +138,20 @@ impl OutputProposer for DryRunProposer {
             output_root = ?proposal.output_root,
             intermediate_roots_count = intermediate_roots.len(),
             "DRY RUN: would create dispute game (skipping submission)"
+        );
+        Ok(())
+    }
+
+    async fn verify_proposal_proof(
+        &self,
+        game_address: Address,
+        proposal: &Proposal,
+    ) -> Result<(), ProposerError> {
+        info!(
+            game_address = %game_address,
+            l2_block_number = proposal.l2_block_number,
+            output_root = ?proposal.output_root,
+            "DRY RUN: would attach proof to existing dispute game (skipping submission)"
         );
         Ok(())
     }
@@ -183,6 +222,48 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             l2_block_number,
             block_number = receipt.block_number,
             "Proposal transaction confirmed"
+        );
+        Ok(())
+    }
+
+    async fn verify_proposal_proof(
+        &self,
+        game_address: Address,
+        proposal: &Proposal,
+    ) -> Result<(), ProposerError> {
+        let l2_block_number = proposal.l2_block_number;
+        let proof_data = ProofEncoder::encode_dispute_proof_bytes(&proposal.signature)
+            .map_err(|e| ProposerError::Internal(e.to_string()))?;
+        let calldata = encode_verify_proposal_proof_calldata(proof_data);
+
+        let candidate = TxCandidate {
+            tx_data: calldata,
+            to: Some(game_address),
+            value: U256::ZERO,
+            ..Default::default()
+        };
+
+        info!(
+            l2_block_number,
+            game_address = %game_address,
+            tx_data_len = candidate.tx_data.len(),
+            "Attaching proof to existing dispute game"
+        );
+
+        let receipt = self.tx_manager.send(candidate).await.map_err(classify_tx_manager_error)?;
+
+        let tx_hash = receipt.transaction_hash;
+
+        if !receipt.inner.status() {
+            return Err(ProposerError::TxReverted(format!("transaction {tx_hash} reverted")));
+        }
+
+        info!(
+            %tx_hash,
+            l2_block_number,
+            game_address = %game_address,
+            block_number = receipt.block_number,
+            "Proposal proof attachment transaction confirmed"
         );
         Ok(())
     }

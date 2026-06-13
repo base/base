@@ -56,7 +56,8 @@ base_metrics::define_metrics! {
             "config",
             "internal",
             "tx_manager",
-            "game_already_exists"
+            "game_already_exists",
+            "proof_already_verified"
         ]
     )]
     errors_total: counter,

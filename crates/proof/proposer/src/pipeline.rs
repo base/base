@@ -233,8 +233,11 @@ where
             Arc::clone(&output_proposer),
             Arc::clone(&rollup_client),
             Arc::clone(&l1_client),
+            Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
+            Arc::clone(&verifier_client),
             ProofSubmitterConfig {
                 proposer_address: config.driver.proposer_address,
+                game_type: config.driver.game_type,
                 block_interval: config.driver.block_interval,
                 intermediate_block_interval: config.driver.intermediate_block_interval,
                 tee_image_hash: config.driver.tee_image_hash,

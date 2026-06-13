@@ -1297,8 +1297,8 @@ mod tests {
         proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
         proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
         test_utils::{
-            MockL1, MockL2, MockOutputProposer, MockProofRequester, MockRollupClient,
-            test_proposal, test_sync_status,
+            MockAggregateVerifier, MockDisputeGameFactory, MockL1, MockL2, MockOutputProposer,
+            MockProofRequester, MockRollupClient, test_proposal, test_sync_status,
         },
     };
 
@@ -1479,6 +1479,34 @@ mod tests {
         ProofCollector::aws_nitro(proof_requester, rollup_client, block_interval, 4)
     }
 
+    fn make_submitter<L1>(
+        output_proposer: Arc<dyn OutputProposer>,
+        rollup_client: Arc<MockRollupClient>,
+        l1: Arc<L1>,
+        block_interval: u64,
+        intermediate_block_interval: u64,
+    ) -> ProofSubmitter<L1, MockRollupClient>
+    where
+        L1: L1Provider + 'static,
+    {
+        ProofSubmitter::new(
+            output_proposer,
+            rollup_client,
+            l1,
+            Arc::new(MockDisputeGameFactory::with_games(vec![])),
+            Arc::new(MockAggregateVerifier::default()),
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                game_type: 0,
+                block_interval,
+                intermediate_block_interval,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        )
+    }
+
     fn make_orchestrator(
         block_interval: u64,
     ) -> ProofCollectorOrchestrator<MockL1, MockL2, MockRollupClient, NoopRecovery> {
@@ -1515,19 +1543,8 @@ mod tests {
                 tee_image_hash: B256::repeat_byte(0x05),
             },
         );
-        let submitter = ProofSubmitter::new(
-            Arc::new(MockOutputProposer),
-            rollup_client,
-            l1,
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                block_interval,
-                intermediate_block_interval: 300,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
-        );
+        let submitter =
+            make_submitter(Arc::new(MockOutputProposer), rollup_client, l1, block_interval, 300);
 
         ProofCollectorOrchestrator::new(
             collector,
@@ -1639,19 +1656,7 @@ mod tests {
                 tee_image_hash: B256::repeat_byte(0x05),
             },
         );
-        let submitter = ProofSubmitter::new(
-            Arc::new(MockOutputProposer),
-            rollup_client,
-            l1,
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                block_interval: 100,
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
-        );
+        let submitter = make_submitter(Arc::new(MockOutputProposer), rollup_client, l1, 100, 100);
         let orchestrator = ProofCollectorOrchestrator::new(
             collector,
             dispatcher,
@@ -1733,19 +1738,7 @@ mod tests {
                 tee_image_hash: B256::repeat_byte(0x05),
             },
         );
-        let submitter = ProofSubmitter::new(
-            Arc::new(MockOutputProposer),
-            rollup_client,
-            l1,
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                block_interval: 100,
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
-        );
+        let submitter = make_submitter(Arc::new(MockOutputProposer), rollup_client, l1, 100, 100);
         let orchestrator = ProofCollectorOrchestrator::new(
             collector,
             dispatcher,
@@ -1804,19 +1797,7 @@ mod tests {
                 tee_image_hash: B256::repeat_byte(0x05),
             },
         );
-        let submitter = ProofSubmitter::new(
-            Arc::new(MockOutputProposer),
-            rollup_client,
-            l1,
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                block_interval: 100,
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
-        );
+        let submitter = make_submitter(Arc::new(MockOutputProposer), rollup_client, l1, 100, 100);
         let orchestrator = ProofCollectorOrchestrator::new(
             collector,
             dispatcher,
@@ -1886,18 +1867,12 @@ mod tests {
                 tee_image_hash: B256::repeat_byte(0x05),
             },
         );
-        let submitter = ProofSubmitter::new(
+        let submitter = make_submitter(
             Arc::new(MockOutputProposer),
             rollup_client,
             Arc::new(FailingL1),
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                block_interval: 100,
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
+            100,
+            100,
         );
         let orchestrator = ProofCollectorOrchestrator::new(
             collector,
@@ -1948,19 +1923,7 @@ mod tests {
                 tee_image_hash: B256::repeat_byte(0x05),
             },
         );
-        let submitter = ProofSubmitter::new(
-            Arc::new(MockOutputProposer),
-            rollup_client,
-            l1,
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                block_interval: 100,
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
-        );
+        let submitter = make_submitter(Arc::new(MockOutputProposer), rollup_client, l1, 100, 100);
         let orchestrator = ProofCollectorOrchestrator::new(
             collector,
             dispatcher,
@@ -2021,19 +1984,7 @@ mod tests {
                 tee_image_hash: B256::repeat_byte(0x05),
             },
         );
-        let submitter = ProofSubmitter::new(
-            Arc::new(MockOutputProposer),
-            rollup_client,
-            l1,
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                block_interval: 100,
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
-        );
+        let submitter = make_submitter(Arc::new(MockOutputProposer), rollup_client, l1, 100, 100);
         let orchestrator = ProofCollectorOrchestrator::new(
             collector,
             dispatcher,
@@ -2112,19 +2063,8 @@ mod tests {
                 tee_image_hash: B256::repeat_byte(0x05),
             },
         );
-        let submitter = ProofSubmitter::new(
-            Arc::new(DiscardingOutputProposer),
-            rollup_client,
-            l1,
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                block_interval: 100,
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
-        );
+        let submitter =
+            make_submitter(Arc::new(DiscardingOutputProposer), rollup_client, l1, 100, 100);
         let orchestrator = ProofCollectorOrchestrator::new(
             collector,
             dispatcher,
@@ -2183,19 +2123,7 @@ mod tests {
                 tee_image_hash: B256::repeat_byte(0x05),
             },
         );
-        let submitter = ProofSubmitter::new(
-            Arc::new(MockOutputProposer),
-            rollup_client,
-            l1,
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                block_interval: 100,
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
-            },
-        );
+        let submitter = make_submitter(Arc::new(MockOutputProposer), rollup_client, l1, 100, 100);
         let orchestrator = ProofCollectorOrchestrator::new(
             collector,
             dispatcher,

@@ -239,6 +239,8 @@ pub struct MockAggregateVerifier {
     pub failing_addresses: HashSet<Address>,
     /// Map of game address to intermediate output roots.
     pub intermediate_roots_map: HashMap<Address, Vec<B256>>,
+    /// Map of game address to TEE prover returned by `tee_prover()`.
+    pub tee_prover_map: HashMap<Address, Address>,
 }
 
 impl MockAggregateVerifier {
@@ -268,8 +270,8 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn zk_prover(&self, _: Address) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
     }
-    async fn tee_prover(&self, _: Address) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+    async fn tee_prover(&self, addr: Address) -> Result<Address, ContractError> {
+        Ok(self.tee_prover_map.get(&addr).copied().unwrap_or(Address::ZERO))
     }
     async fn starting_block_number(&self, _: Address) -> Result<u64, ContractError> {
         Ok(0)
