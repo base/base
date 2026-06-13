@@ -203,7 +203,7 @@ where
     ///
     /// Accepts a pre-built certificate manager so CRL client construction and
     /// revocation transaction wiring stay outside the core driver loop.
-    pub fn new(
+    pub const fn new(
         discovery: D,
         signer_client: S,
         config: DriverConfig,
