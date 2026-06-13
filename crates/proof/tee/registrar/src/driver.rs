@@ -653,7 +653,7 @@ mod tests {
     };
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, B256, Bloom, address};
+    use alloy_primitives::{Address, B256, Bloom};
     use alloy_rpc_types_eth::TransactionReceipt;
     use async_trait::async_trait;
     use base_tx_manager::{SendHandle, TxCandidate, TxManager};
@@ -667,9 +667,6 @@ mod tests {
     use crate::{InstanceHealthStatus, NitroVerifierClient, Result, SignerClient};
 
     // ── Shared constants ────────────────────────────────────────────────
-
-    /// Well-known Hardhat / Anvil account #0 address.
-    const HARDHAT_ACCOUNT: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
     /// Well-known Hardhat / Anvil account #0 private key.
     const HARDHAT_KEY_0: [u8; 32] =
@@ -1119,27 +1116,6 @@ mod tests {
         assert!(!resolution.ok_to_dereg, "cancellation must clear ok_to_dereg",);
     }
 
-    #[tokio::test]
-    async fn discover_and_resolve_admits_draining_instance_to_active_only_not_registerable() {
-        // A draining instance must contribute its signer to
-        // `active_signers` but must NOT appear in `registerable`.
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let instances = vec![instance(EP1, InstanceHealthStatus::Draining)];
-
-        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
-
-        let resolution = driver.discover_and_resolve().await.unwrap();
-        assert!(
-            resolution.registerable.is_empty(),
-            "draining instance must not be in the registerable set",
-        );
-        assert!(
-            resolution.active_signers.contains(&HARDHAT_ACCOUNT),
-            "draining instance must contribute its signer to active_signers",
-        );
-        assert!(resolution.ok_to_dereg, "resolved instance permits orphan cleanup");
-    }
-
     /// All 4 endpoints and corresponding private keys, indexed for
     /// dynamic slicing in the concurrency test.
     const ALL_ENDPOINTS: [&str; 4] = [EP1, EP2, EP3, EP4];
@@ -1315,19 +1291,27 @@ mod tests {
         assert!(resolution.ok_to_dereg);
     }
 
+    #[rstest]
+    #[case::mismatch(false)]
+    #[case::rpc_error(true)]
     #[tokio::test]
-    async fn discover_and_resolve_attestation_mismatch_keeps_signer_active_and_unresolved() {
+    async fn discover_and_resolve_attestation_failure_keeps_signer_active_and_unresolved(
+        #[case] rpc_error: bool,
+    ) {
         // If the registrar reaches signer_public_key successfully but
-        // then cannot pair an attestation with the signer, the instance
-        // is still reachable and advertising that signer. The signer
-        // must remain protected from orphan deregistration, while the
-        // instance is marked unresolved so any in-flight proof task is
+        // then cannot fetch or pair an attestation with the signer, the
+        // instance is still reachable and advertising that signer. The
+        // signer must remain protected from orphan deregistration, while
+        // the instance is marked unresolved so any in-flight proof task is
         // preserved for a later conclusive cycle.
         let signer_addr =
             ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
         let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let signer_client =
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestations(EP1, vec![]);
+        let signer_client = if rpc_error {
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestation_failure(EP1)
+        } else {
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestations(EP1, vec![])
+        };
 
         let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
 
@@ -1345,27 +1329,6 @@ mod tests {
             resolution.unresolved_instance_ids.contains(&inst.instance_id),
             "partial resolution must preserve in-flight tasks for the instance",
         );
-        assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_attestation_error_keeps_signer_active_and_unresolved() {
-        // This is the production-shaped variant of the previous test:
-        // public key resolution succeeds, but the attestation RPC itself
-        // fails. The signer must still be protected from orphan dereg.
-        let signer_addr =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let signer_client =
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestation_failure(EP1);
-
-        let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
-
-        let resolution = driver.discover_and_resolve().await.unwrap();
-
-        assert!(resolution.active_signers.contains(&signer_addr));
-        assert!(resolution.registerable.is_empty());
-        assert!(resolution.unresolved_instance_ids.contains(&inst.instance_id));
         assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
     }
 

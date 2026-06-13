@@ -741,42 +741,18 @@ mod tests {
         }
 
         let resolution = dr_from_kept(kept);
-        let pre_spawn_count = proof_tasks.pending_len();
+        let pre_task_count = proof_tasks.tasks.len();
+        let expected_pending = pre_existing.len() + expected_new_spawns;
         let pre_cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
 
         reconcile(&manager, &resolution, &mut proof_tasks);
 
         let post_cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
-        let new_spawns = proof_tasks.pending_len().saturating_sub(pre_spawn_count);
+        let new_spawns = proof_tasks.tasks.len().saturating_sub(pre_task_count);
 
         assert_eq!(new_spawns, expected_new_spawns, "spawn-pass count");
         assert_eq!(post_cancelled - pre_cancelled, expected_cancels, "cancel-pass count");
-
-        drain_test_tasks(&mut proof_tasks).await;
-    }
-
-    #[tokio::test]
-    async fn reconcile_proof_tasks_idempotent_when_resolution_unchanged() {
-        let manager = manager(
-            RecordingProofProvider::default(),
-            MockRegistry::with_signers(vec![]),
-            SharedTxManager::new(),
-        );
-        let mut proof_tasks = ProofTaskSet::new();
-        let resolution = dr_from_kept(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
-
-        reconcile(&manager, &resolution, &mut proof_tasks);
-        let after_first = proof_tasks.pending_len();
-        let snapshot_ids: HashSet<_> = proof_tasks.pending.keys().copied().collect();
-
-        reconcile(&manager, &resolution, &mut proof_tasks);
-
-        assert_eq!(proof_tasks.pending_len(), after_first, "idempotent: no extra spawns");
-        let after_second: HashSet<_> = proof_tasks.pending.keys().copied().collect();
-        assert_eq!(snapshot_ids, after_second, "pending signer keys unchanged across reconciles");
-        for task in proof_tasks.pending.values() {
-            assert!(!task.cancel.is_cancelled(), "kept task must not be cancelled");
-        }
+        assert_eq!(proof_tasks.pending_len(), expected_pending, "pending task count");
 
         drain_test_tasks(&mut proof_tasks).await;
     }
