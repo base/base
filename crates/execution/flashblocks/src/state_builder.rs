@@ -18,6 +18,7 @@ use base_common_evm::{BaseHaltReason, L1BlockInfo, ensure_create2_deployer};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use base_execution_rpc::BaseReceiptBuilder as BaseRpcReceiptBuilder;
+use base_access_lists::FlashblockAccessList;
 use reth_evm::{Evm, FromRecoveredTx};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use revm::{
@@ -68,6 +69,11 @@ pub struct PendingStateBuilder<E, ChainSpec> {
 
     prev_pending_blocks: Option<Arc<PendingBlocks>>,
     state_overrides: StateOverride,
+    /// Optional access list from the builder's flashblock metadata.
+    /// Addresses in this list are pre-loaded into the EVM database
+    /// before re-executing, aligning the consumer's DB cache with
+    /// the builder's state to eliminate execution divergence (see #3274).
+    access_list: Option<FlashblockAccessList>,
 }
 
 impl<E, ChainSpec, DB> PendingStateBuilder<E, ChainSpec>
