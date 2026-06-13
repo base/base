@@ -407,52 +407,26 @@ mod tests {
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
     use base_tx_manager::{SendHandle, TxCandidate};
-    use hex_literal::hex;
-    use k256::ecdsa::SigningKey;
     use rstest::rstest;
     use tokio::task;
 
     use super::*;
     use crate::{
         DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-        InstanceHealthStatus, ProverClient, RegisterableSigner, RegistrarError,
+        RegisterableSigner, RegistrarError,
+        test_utils::{
+            EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
+            signer_from_private_key,
+        },
     };
 
     const HARDHAT_ACCOUNT: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-    const HARDHAT_KEY_0: [u8; 32] =
-        hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-    const HARDHAT_KEY_1: [u8; 32] =
-        hex!("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
-    #[cfg(feature = "metrics")]
-    const HARDHAT_KEY_2: [u8; 32] =
-        hex!("5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
-    const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
     const TEST_PENDING_INSTANCE_ID: &str = "i-pending-test";
-    const EP1: &str = "10.0.0.1:8000";
-    const EP2: &str = "10.0.0.2:8000";
     const GATED_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
     const REAP_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
     type TestSignerManager =
         Arc<SignerManager<RecordingProofProvider, MockRegistry, NoopTxManager>>;
-
-    fn public_key_from_private(private_key: &[u8; 32]) -> Vec<u8> {
-        let signing_key = SigningKey::from_slice(private_key).unwrap();
-        signing_key.verifying_key().to_encoded_point(false).as_bytes().to_vec()
-    }
-
-    fn signer_from_key(private_key: &[u8; 32]) -> Address {
-        ProverClient::derive_address(&public_key_from_private(private_key)).unwrap()
-    }
-
-    fn instance(host_port: &str) -> ProverInstance {
-        ProverInstance {
-            instance_id: format!("i-{host_port}"),
-            endpoint: url::Url::parse(&format!("http://{host_port}")).unwrap(),
-            health_status: InstanceHealthStatus::Healthy,
-            launch_time: None,
-        }
-    }
 
     #[derive(Debug)]
     struct MockRegistry;
@@ -545,8 +519,8 @@ mod tests {
         let mut registerable = Vec::new();
         let mut active_signers = HashSet::new();
         for (ep, key) in kept {
-            let inst = instance(ep);
-            let addr = signer_from_key(key);
+            let inst = healthy_prover_instance(ep);
+            let addr = signer_from_private_key(key);
             active_signers.insert(addr);
             registerable.push(RegisterableSigner {
                 instance: inst,
@@ -667,7 +641,7 @@ mod tests {
         let mut seeded_cancels = Vec::new();
 
         for (_, key) in pre_existing {
-            let signer = signer_from_key(key);
+            let signer = signer_from_private_key(key);
             let (_, task_cancel) = spawn_pending_success_task(
                 &mut proof_tasks,
                 signer,
@@ -698,7 +672,7 @@ mod tests {
     async fn reconcile_proof_tasks_respawns_after_vanish_and_reappear() {
         let manager = manager(RecordingProofProvider::default());
         let mut proof_tasks = ProofTaskSet::new();
-        let signer = signer_from_key(&HARDHAT_KEY_0);
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
         let (stale_task_id, stale_cancel) =
             spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
@@ -725,7 +699,7 @@ mod tests {
     async fn reconcile_proof_tasks_preserves_task_when_instance_fails_to_resolve() {
         let manager = manager(RecordingProofProvider::default());
         let mut proof_tasks = ProofTaskSet::new();
-        let signer = signer_from_key(&HARDHAT_KEY_0);
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
         let (_, task_cancel) =
             spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
@@ -764,17 +738,17 @@ mod tests {
     #[tokio::test]
     async fn reconcile_proof_tasks_dedupes_signer_across_registerable_entries() {
         let manager = manager(RecordingProofProvider::default());
-        let signer = signer_from_key(&HARDHAT_KEY_0);
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
         let resolution = DiscoveryResolution {
             registerable: vec![
                 RegisterableSigner {
-                    instance: instance(EP1),
+                    instance: healthy_prover_instance(EP1),
                     signer,
                     attestation: b"attestation-from-instance-a".to_vec(),
                     enclave_index: 0,
                 },
                 RegisterableSigner {
-                    instance: instance(EP2),
+                    instance: healthy_prover_instance(EP2),
                     signer,
                     attestation: b"attestation-from-instance-b".to_vec(),
                     enclave_index: 0,
@@ -799,8 +773,8 @@ mod tests {
 
     #[tokio::test]
     async fn reconcile_proof_tasks_pairs_attestation_with_signer() {
-        let signer_a = signer_from_key(&HARDHAT_KEY_0);
-        let signer_b = signer_from_key(&HARDHAT_KEY_1);
+        let signer_a = signer_from_private_key(&HARDHAT_KEY_0);
+        let signer_b = signer_from_private_key(&HARDHAT_KEY_1);
         assert_ne!(signer_a, signer_b, "test setup: distinct signer addresses");
 
         let att_a: Vec<u8> = b"attestation-aligned-to-A".to_vec();
@@ -810,13 +784,13 @@ mod tests {
         let resolution = DiscoveryResolution {
             registerable: vec![
                 RegisterableSigner {
-                    instance: instance(EP1),
+                    instance: healthy_prover_instance(EP1),
                     signer: signer_a,
                     attestation: att_a.clone(),
                     enclave_index: 0,
                 },
                 RegisterableSigner {
-                    instance: instance(EP2),
+                    instance: healthy_prover_instance(EP2),
                     signer: signer_b,
                     attestation: att_b.clone(),
                     enclave_index: 0,
@@ -946,8 +920,8 @@ mod tests {
 
     #[tokio::test]
     async fn protected_signers_unions_active_and_pending_signers() {
-        let active_signer = signer_from_key(&HARDHAT_KEY_0);
-        let pending_signer = signer_from_key(&HARDHAT_KEY_1);
+        let active_signer = signer_from_private_key(&HARDHAT_KEY_0);
+        let pending_signer = signer_from_private_key(&HARDHAT_KEY_1);
         assert_ne!(active_signer, pending_signer, "test setup: distinct signers");
 
         let mut proof_tasks = ProofTaskSet::new();
@@ -980,6 +954,7 @@ mod tests {
         use metrics_exporter_prometheus::PrometheusBuilder;
 
         use super::*;
+        use crate::test_utils::HARDHAT_KEY_2;
 
         #[test]
         fn drain_counts_only_tasks_not_already_cancelled_by_reconcile() {
@@ -994,7 +969,7 @@ mod tests {
                         &[(&HARDHAT_KEY_0, true), (&HARDHAT_KEY_1, false), (&HARDHAT_KEY_2, false)];
 
                     for (key, flagged) in seed {
-                        let signer = signer_from_key(key);
+                        let signer = signer_from_private_key(key);
                         let (_, cancel) = spawn_pending_success_task(
                             &mut proof_tasks,
                             signer,

@@ -655,80 +655,19 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_tx_manager::{SendHandle, TxCandidate, TxManager};
-    use hex_literal::hex;
-    use k256::ecdsa::SigningKey;
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
     use super::*;
-    use crate::{InstanceHealthStatus, NitroVerifierClient, Result, SignerClient};
-
-    // ── Shared constants ────────────────────────────────────────────────
-
-    /// Well-known Hardhat / Anvil account #0 private key.
-    const HARDHAT_KEY_0: [u8; 32] =
-        hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-
-    /// Hardhat / Anvil account #1 private key.
-    const HARDHAT_KEY_1: [u8; 32] =
-        hex!("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
-
-    /// Hardhat / Anvil account #2 private key.
-    const HARDHAT_KEY_2: [u8; 32] =
-        hex!("5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
-
-    /// Hardhat / Anvil account #3 private key.
-    const HARDHAT_KEY_3: [u8; 32] =
-        hex!("7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6");
-
-    /// Prover instance endpoints for tests. Each simulates a distinct
-    /// EC2 instance at a private IP.
-    const EP1: &str = "10.0.0.1:8000";
-    const EP2: &str = "10.0.0.2:8000";
-    const EP3: &str = "10.0.0.3:8000";
-    const EP4: &str = "10.0.0.4:8000";
-
-    /// Placeholder registry contract address used in `DriverConfig`.
-    const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
-
-    // ── Test helpers ─────────────────────────────────────────────────────
-
-    /// Derives the uncompressed 65-byte public key from a private key.
-    fn public_key_from_private(private_key: &[u8; 32]) -> Vec<u8> {
-        let signing_key = SigningKey::from_slice(private_key).unwrap();
-        signing_key.verifying_key().to_encoded_point(false).as_bytes().to_vec()
-    }
-
-    /// Builds a [`ProverInstance`] with the given host:port and health status.
-    ///
-    /// Prepends `http://` to form a valid URL automatically. The `launch_time`
-    /// defaults to `None` — use [`instance_with_launch_time`] for tests that
-    /// need a specific launch time.
-    fn instance(host_port: &str, status: InstanceHealthStatus) -> ProverInstance {
-        let endpoint = Url::parse(&format!("http://{host_port}")).unwrap();
-        ProverInstance {
-            instance_id: format!("i-{host_port}"),
-            endpoint,
-            health_status: status,
-            launch_time: None,
-        }
-    }
-
-    /// Builds a [`ProverInstance`] with an explicit `launch_time`.
-    fn instance_with_launch_time(
-        host_port: &str,
-        status: InstanceHealthStatus,
-        launch_time: Option<SystemTime>,
-    ) -> ProverInstance {
-        let endpoint = Url::parse(&format!("http://{host_port}")).unwrap();
-        ProverInstance {
-            instance_id: format!("i-{host_port}"),
-            endpoint,
-            health_status: status,
-            launch_time,
-        }
-    }
+    use crate::{
+        InstanceHealthStatus, NitroVerifierClient, Result, SignerClient,
+        test_utils::{
+            EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, HARDHAT_KEY_3,
+            TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
+            public_key_from_private, signer_from_private_key,
+        },
+    };
 
     // ── Mock implementations ────────────────────────────────────────────
 
@@ -957,25 +896,21 @@ mod tests {
     type CycleDriver =
         RegistrationDriver<MockDiscovery, MockSignerClient, MockSignerManager, NoopTxManager>;
 
-    /// Builds a fully-configured driver for primitive-level tests that
-    /// invoke `discover_and_resolve` directly, without standing up the
-    /// production signer lifecycle. Returns an `Arc` so tests that spawn
-    /// the run loop can keep handles for state inspection.
     fn cycle_driver(
         instances: Vec<ProverInstance>,
         signer_client: MockSignerClient,
         cancel: CancellationToken,
-    ) -> Arc<CycleDriver> {
+    ) -> CycleDriver {
         let config = default_config(cancel);
         let signer_manager = MockSignerManager::new(CancellationToken::new());
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
-        Arc::new(RegistrationDriver::new(
+        RegistrationDriver::new(
             MockDiscovery { instances },
             signer_client,
             config,
             cert_manager,
             signer_manager,
-        ))
+        )
     }
 
     const FAST_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -988,17 +923,11 @@ mod tests {
 
         let signer_manager = MockSignerManager::new(cancel.clone());
         let signer_manager_handle = signer_manager.clone();
-        let signer = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0))
-            .expect("test key derives");
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
 
-        let driver = RegistrationDriver::<
-            MockDiscovery,
-            MockSignerClient,
-            MockSignerManager,
-            NoopTxManager,
-        >::new(
-            MockDiscovery { instances: vec![instance(EP1, InstanceHealthStatus::Healthy)] },
+        let driver = RegistrationDriver::new(
+            MockDiscovery { instances: vec![healthy_prover_instance(EP1)] },
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
             config,
             cert_manager,
@@ -1024,11 +953,11 @@ mod tests {
     async fn discover_and_resolve_admits_recently_launched_unhealthy_to_active_and_registerable() {
         // A recently-launched Unhealthy instance must be included in
         // `registerable` and contribute its signer to `active_signers`.
-        let addr = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let addr = signer_from_private_key(&HARDHAT_KEY_0);
         let launch_time = Some(SystemTime::now() - Duration::from_secs(300));
 
         let instance_under_test =
-            instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
+            prover_instance(EP1, InstanceHealthStatus::Unhealthy, launch_time);
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
 
         let driver = cycle_driver(
@@ -1071,10 +1000,7 @@ mod tests {
         // Cancellation observed by `discover_and_resolve` after the
         // resolve loop completes must drive `ok_to_dereg = false` so the
         // production caller skips `run_orphan_dereg` entirely.
-        let instances = vec![
-            instance(EP1, InstanceHealthStatus::Healthy),
-            instance(EP2, InstanceHealthStatus::Healthy),
-        ];
+        let instances = vec![healthy_prover_instance(EP1), healthy_prover_instance(EP2)];
 
         let signer_client =
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
@@ -1101,11 +1027,11 @@ mod tests {
         // instance id must land in `unresolved_instance_ids` so the
         // production reconcile pass doesn't cancel any in-flight task
         // tied to it.
-        let unreachable = instance(EP4, InstanceHealthStatus::Healthy);
+        let unreachable = healthy_prover_instance(EP4);
         let reachable = [
-            instance(EP1, InstanceHealthStatus::Healthy),
-            instance(EP2, InstanceHealthStatus::Healthy),
-            instance(EP3, InstanceHealthStatus::Healthy),
+            healthy_prover_instance(EP1),
+            healthy_prover_instance(EP2),
+            healthy_prover_instance(EP3),
         ];
         let instances = std::iter::once(unreachable.clone())
             .chain(reachable.iter().cloned())
@@ -1173,7 +1099,7 @@ mod tests {
         // `run_orphan_dereg` entirely. `CancellingSignerClient` cancels
         // the shared token as a side effect of `signer_public_key`,
         // simulating a shutdown signal arriving mid-cycle.
-        let instances = vec![instance(EP1, InstanceHealthStatus::Healthy)];
+        let instances = vec![healthy_prover_instance(EP1)];
 
         let cancel = CancellationToken::new();
 
@@ -1185,13 +1111,13 @@ mod tests {
         let signer_manager = MockSignerManager::new(CancellationToken::new());
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
 
-        let driver = Arc::new(RegistrationDriver::new(
+        let driver = RegistrationDriver::new(
             MockDiscovery { instances },
             signer_client,
             config,
             cert_manager,
             signer_manager,
-        ));
+        );
 
         let resolution = driver.discover_and_resolve().await.unwrap();
         assert!(
@@ -1206,10 +1132,10 @@ mod tests {
         // A draining multi-enclave instance must contribute ALL of its
         // signer addresses to `active_signers` and must not appear in
         // `registerable`.
-        let addr0 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let addr1 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+        let addr0 = signer_from_private_key(&HARDHAT_KEY_0);
+        let addr1 = signer_from_private_key(&HARDHAT_KEY_1);
 
-        let instances = vec![instance(EP1, InstanceHealthStatus::Draining)];
+        let instances = vec![prover_instance(EP1, InstanceHealthStatus::Draining, None)];
         let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
@@ -1235,13 +1161,13 @@ mod tests {
         // This matters because "unhealthy" in ALB terms does not mean
         // the registrar can't connect — the instance may be failing
         // application-level health checks while still responding to RPC.
-        let addr_unhealthy =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let addr_healthy =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+        let addr_unhealthy = signer_from_private_key(&HARDHAT_KEY_0);
+        let addr_healthy = signer_from_private_key(&HARDHAT_KEY_1);
 
-        let healthy_inst = instance(EP2, InstanceHealthStatus::Healthy);
-        let instances = vec![instance(EP1, InstanceHealthStatus::Unhealthy), healthy_inst.clone()];
+        let instances = vec![
+            prover_instance(EP1, InstanceHealthStatus::Unhealthy, None),
+            healthy_prover_instance(EP2),
+        ];
 
         // Both instances are reachable via MockSignerClient.
         let signer_client =
@@ -1276,9 +1202,8 @@ mod tests {
         // signer must remain protected from orphan deregistration, while
         // the instance is marked unresolved so any in-flight proof task is
         // preserved for a later conclusive cycle.
-        let signer_addr =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
+        let inst = healthy_prover_instance(EP1);
         let signer_client = if rpc_error {
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestation_failure(EP1)
         } else {
@@ -1358,7 +1283,7 @@ mod tests {
         // `discover_and_resolve`'s `buffer_unordered` loop never exceeds
         // the configured bound. All 4 must end up in `registerable`.
         let instances: Vec<_> =
-            ALL_ENDPOINTS.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect();
+            ALL_ENDPOINTS.iter().map(|ep| healthy_prover_instance(ep)).collect();
 
         let keys: Vec<(&str, &[u8; 32])> =
             ALL_ENDPOINTS.iter().copied().zip(ALL_KEYS.iter().copied()).collect();
@@ -1371,13 +1296,13 @@ mod tests {
         let signer_manager = MockSignerManager::new(CancellationToken::new());
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
 
-        let driver = Arc::new(RegistrationDriver::new(
+        let driver = RegistrationDriver::new(
             MockDiscovery { instances },
             signer_client,
             config,
             cert_manager,
             signer_manager,
-        ));
+        );
 
         let resolution = driver.discover_and_resolve().await.unwrap();
 
