@@ -632,16 +632,13 @@ impl Cli {
             config.l1_rpc_url.clone(),
         );
 
-        // Optional onchain revocation pre-check client; only built when CRL
-        // checking is enabled and the verifier address is configured.
-        let nitro_verifier: Option<Arc<dyn NitroVerifierClient>> =
-            match (config.crl.enabled, config.crl.nitro_verifier_address) {
-                (true, Some(verifier_address)) => Some(Arc::new(NitroVerifierContractClient::new(
-                    verifier_address,
-                    config.l1_rpc_url.clone(),
-                ))),
-                _ => None,
-            };
+        // The driver always carries a certificate manager, but only calls it
+        // when CRL checking is enabled. When disabled and no verifier address
+        // is configured, bind the unused client to the zero address.
+        let nitro_verifier_address = config.crl.nitro_verifier_address.unwrap_or(Address::ZERO);
+        let nitro_verifier: Arc<dyn NitroVerifierClient> = Arc::new(
+            NitroVerifierContractClient::new(nitro_verifier_address, config.l1_rpc_url.clone()),
+        );
 
         // ── 6. Build proof provider ──────────────────────────────────────────
         let proof_provider: Box<dyn AttestationProofProvider> = match config.proving {

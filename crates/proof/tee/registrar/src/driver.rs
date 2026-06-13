@@ -173,9 +173,9 @@ where
     discovery: D,
     signer_client: S,
     config: DriverConfig,
-    /// Optional certificate revocation manager. Built once at construction
-    /// time when CRL checking is enabled. `None` when CRL checking is disabled.
-    cert_manager: Option<CertManager<M::TransactionManager>>,
+    /// Certificate revocation manager. The driver only calls it when CRL
+    /// checking is enabled.
+    cert_manager: CertManager<M::TransactionManager>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
     signer_manager: M,
 }
@@ -198,42 +198,24 @@ where
 {
     /// Creates a new registration driver.
     ///
-    /// When CRL checking is enabled, pre-builds the HTTP client used for
-    /// CRL fetches so it can be reused across registration cycles. The
-    /// required `nitro_verifier` client consults the onchain durable
-    /// revocation sentinel before each registration and provides the
-    /// `revokeCert` transaction destination.
+    /// Pre-builds the HTTP client used for CRL fetches so it can be reused
+    /// across registration cycles. The required `nitro_verifier` client
+    /// consults the onchain durable revocation sentinel before each
+    /// registration and provides the `revokeCert` transaction destination.
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrarError::Config`] when `config.crl.enabled` is `true`
-    /// and either the `nitro_verifier` client is missing or the
-    /// [`CertManager`] fails to initialize. Failing fast prevents a
-    /// misconfigured driver from silently bypassing CRL protection at runtime.
+    /// Returns [`RegistrarError::Config`] when the [`CertManager`] fails to
+    /// initialize.
     pub fn new(
         discovery: D,
         signer_client: S,
         config: DriverConfig,
-        nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
+        nitro_verifier: Arc<dyn NitroVerifierClient>,
         signer_manager: M,
     ) -> Result<Self> {
-        let cert_manager = if config.crl.enabled {
-            let Some(nitro_verifier) = nitro_verifier else {
-                return Err(RegistrarError::Config(
-                    "CRL checking enabled but nitro_verifier client not configured; \
-                     a NitroEnclaveVerifier client is required as both the revokeCert \
-                     destination and the onchain revokedCerts sentinel source"
-                        .into(),
-                ));
-            };
-            Some(CertManager::new(
-                &config.crl,
-                nitro_verifier,
-                signer_manager.tx_manager().clone(),
-            )?)
-        } else {
-            None
-        };
+        let cert_manager =
+            CertManager::new(&config.crl, nitro_verifier, signer_manager.tx_manager().clone())?;
         Ok(Self { discovery, signer_client, config, cert_manager, signer_manager })
     }
 
@@ -513,9 +495,7 @@ where
                     instance: instance.endpoint.to_string(),
                     source: "no attestations available for CRL check".into(),
                 })?;
-            let cert_manager =
-                self.cert_manager.as_ref().expect("cert_manager required when CRL enabled");
-            match cert_manager.check_and_revoke_crls(first_attestation, instance).await {
+            match self.cert_manager.check_and_revoke_crls(first_attestation, instance).await {
                 Ok(true) => {
                     warn!(
                         instance = %instance.instance_id,
@@ -983,6 +963,26 @@ mod tests {
         }
     }
 
+    /// Mock Nitro verifier used to satisfy the driver's required certificate
+    /// manager dependency in tests that do not exercise CRL checks.
+    #[derive(Debug)]
+    struct MockNitroVerifier;
+
+    #[async_trait]
+    impl NitroVerifierClient for MockNitroVerifier {
+        fn address(&self) -> Address {
+            Address::ZERO
+        }
+
+        async fn is_revoked(&self, _cert_hash: B256) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    fn mock_nitro_verifier() -> Arc<dyn NitroVerifierClient> {
+        Arc::new(MockNitroVerifier)
+    }
+
     /// Mock tx manager that records submitted calldata for assertion.
     #[derive(Debug, Clone)]
     struct SharedTxManager {
@@ -1124,7 +1124,7 @@ mod tests {
                 MockDiscovery { instances },
                 signer_client,
                 config,
-                None,
+                mock_nitro_verifier(),
                 signer_manager,
             )
             .expect("test driver construction succeeds"),
@@ -1132,7 +1132,7 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_crl_enabled_without_nitro_verifier() {
+    fn new_accepts_required_nitro_verifier_when_crl_enabled() {
         let mut config = default_config(CancellationToken::new());
         config.crl.enabled = true;
         let signer_manager = Arc::new(SignerManager::new(
@@ -1142,16 +1142,14 @@ mod tests {
             config.signer_manager.clone(),
         ));
 
-        let err = RegistrationDriver::new(
+        RegistrationDriver::new(
             MockDiscovery { instances: vec![] },
             MockSignerClient::from_keys(&[]),
             config,
-            None,
+            mock_nitro_verifier(),
             signer_manager,
         )
-        .expect_err("enabled CRL requires a Nitro verifier client");
-
-        assert!(matches!(err, RegistrarError::Config(_)));
+        .expect("required Nitro verifier client builds the driver");
     }
     // ── Pipeline test infrastructure ────────────────────────────────────
     //
@@ -1370,7 +1368,7 @@ mod tests {
                     discovery.clone(),
                     signer_client,
                     config,
-                    None,
+                    mock_nitro_verifier(),
                     signer_manager,
                 )
                 .expect("test driver construction succeeds"),
@@ -1482,7 +1480,7 @@ mod tests {
             MockDiscovery { instances: vec![instance(EP1, InstanceHealthStatus::Healthy)] },
             MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
             config,
-            None,
+            mock_nitro_verifier(),
             signer_manager,
         )
         .expect("test driver construction succeeds");
@@ -1889,7 +1887,7 @@ mod tests {
                 MockDiscovery { instances },
                 signer_client,
                 config,
-                None,
+                mock_nitro_verifier(),
                 signer_manager,
             )
             .expect("test driver construction succeeds"),
@@ -2143,7 +2141,7 @@ mod tests {
                 MockDiscovery { instances },
                 signer_client,
                 config,
-                None,
+                mock_nitro_verifier(),
                 signer_manager,
             )
             .expect("test driver construction succeeds"),
@@ -2251,7 +2249,7 @@ mod tests {
                 MockDiscovery { instances },
                 signer_client,
                 config,
-                None,
+                mock_nitro_verifier(),
                 signer_manager,
             )
             .expect("test driver construction succeeds"),
