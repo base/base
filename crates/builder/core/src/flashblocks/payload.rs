@@ -1108,20 +1108,20 @@ where
 
     // finalize and build the FAL
     let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
-    let _access_list = fal_builder.build(min_tx_index, max_tx_index);
+    let access_list = fal_builder.build(min_tx_index, max_tx_index);
 
     let metadata: FlashblocksMetadata =
         if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
             FlashblocksMetadata {
                 block_number: ctx.parent().number + 1,
-                access_list: None,
+                access_list: Some(access_list.clone()),
                 receipts: None,
                 new_account_balances: None,
             }
         } else {
             FlashblocksMetadata {
                 block_number: ctx.parent().number + 1,
-                access_list: None,
+                access_list: Some(access_list.clone()),
                 new_account_balances: Some(new_account_balances),
                 receipts: Some(receipts_with_hash),
             }
