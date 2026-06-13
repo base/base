@@ -1134,15 +1134,7 @@ mod tests {
         }
     }
 
-    struct StallingRegistry {
-        signers: Vec<Address>,
-    }
-
-    impl StallingRegistry {
-        fn stalling_get_registered_signers(signers: Vec<Address>) -> Self {
-            Self { signers }
-        }
-    }
+    struct StallingRegistry;
 
     #[async_trait]
     impl RegistryClient for StallingRegistry {
@@ -1152,7 +1144,7 @@ mod tests {
 
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
             std::future::pending::<()>().await;
-            Ok(self.signers.clone())
+            Ok(vec![])
         }
     }
 
@@ -1161,7 +1153,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let manager = Arc::new(SignerManager::new(
             RecordingProofProvider::default(),
-            StallingRegistry::stalling_get_registered_signers(vec![]),
+            StallingRegistry,
             SharedTxManager::new(),
             config(),
         ));
