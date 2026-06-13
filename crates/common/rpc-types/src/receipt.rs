@@ -109,7 +109,6 @@ mod l1_fee_scalar_serde {
     where
         S: serde::Serializer,
     {
-        use alloc::string::ToString;
         if let Some(v) = value {
             return s.serialize_str(&v.to_string());
         }
@@ -120,7 +119,6 @@ mod l1_fee_scalar_serde {
     where
         D: serde::Deserializer<'de>,
     {
-        use alloc::string::String;
         let s: Option<String> = Option::deserialize(deserializer)?;
         if let Some(s) = s {
             return Ok(Some(s.parse::<f64>().map_err(de::Error::custom)?));
