@@ -46,7 +46,8 @@ pub struct SignerManagerConfig {
 /// each signer has at most one active registration task.
 #[derive(Debug)]
 pub struct PendingRegistration {
-    /// Originating instance ID, recorded only for logging.
+    /// Originating instance ID, used to preserve tasks when the source
+    /// instance is unresolved and to attribute log lines.
     pub instance_id: String,
     /// `JoinSet` task id for this proof task.
     pub task_id: task::Id,
