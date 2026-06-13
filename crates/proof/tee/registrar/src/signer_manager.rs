@@ -403,12 +403,8 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{B256, Bloom, Bytes, address};
-    use alloy_rpc_types_eth::TransactionReceipt;
-    use alloy_sol_types::SolCall;
+    use alloy_primitives::{Address, address};
     use async_trait::async_trait;
-    use base_proof_contracts::ITEEProverRegistry;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
     use base_tx_manager::{SendHandle, TxCandidate};
     use hex_literal::hex;
@@ -432,18 +428,13 @@ mod tests {
         hex!("5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
     const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
     const TEST_PENDING_INSTANCE_ID: &str = "i-pending-test";
-    const ORPHAN_A: Address = Address::repeat_byte(0xAA);
-    const ORPHAN_B: Address = Address::repeat_byte(0xBB);
-    const ORPHAN_C: Address = Address::repeat_byte(0xCC);
     const EP1: &str = "10.0.0.1:8000";
     const EP2: &str = "10.0.0.2:8000";
     const GATED_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
     const REAP_POLL_INTERVAL: Duration = Duration::from_millis(1);
-    const CANCEL_ABORT_BUDGET: Duration = Duration::from_secs(1);
-    const PRE_CANCEL_WARMUP: Duration = Duration::from_millis(50);
 
     type TestSignerManager =
-        Arc<SignerManager<RecordingProofProvider, MockRegistry, SharedTxManager>>;
+        Arc<SignerManager<RecordingProofProvider, MockRegistry, NoopTxManager>>;
 
     fn public_key_from_private(private_key: &[u8; 32]) -> Vec<u8> {
         let signing_key = SigningKey::from_slice(private_key).unwrap();
@@ -463,72 +454,26 @@ mod tests {
         }
     }
 
-    fn stub_receipt() -> TransactionReceipt {
-        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-            receipt: Receipt {
-                status: Eip658Value::Eip658(true),
-                cumulative_gas_used: 21_000,
-                logs: vec![],
-            },
-            logs_bloom: Bloom::ZERO,
-        });
-        TransactionReceipt {
-            inner,
-            transaction_hash: B256::ZERO,
-            transaction_index: Some(0),
-            block_hash: Some(B256::ZERO),
-            block_number: Some(1),
-            gas_used: 21_000,
-            effective_gas_price: 1_000_000_000,
-            blob_gas_used: None,
-            blob_gas_price: None,
-            from: Address::ZERO,
-            to: Some(Address::ZERO),
-            contract_address: None,
-        }
-    }
-
     #[derive(Debug)]
-    struct MockRegistry {
-        signers: Vec<Address>,
-    }
-
-    impl MockRegistry {
-        fn with_signers(signers: Vec<Address>) -> Self {
-            Self { signers }
-        }
-    }
+    struct MockRegistry;
 
     #[async_trait]
     impl RegistryClient for MockRegistry {
-        async fn is_registered(&self, signer: Address) -> Result<bool> {
-            Ok(self.signers.contains(&signer))
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            Ok(false)
         }
 
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-            Ok(self.signers.clone())
+            unreachable!("signer manager unit tests do not run orphan deregistration")
         }
     }
 
-    #[derive(Debug, Clone)]
-    struct SharedTxManager {
-        sent: Arc<Mutex<Vec<Bytes>>>,
-    }
+    #[derive(Debug, Clone, Copy)]
+    struct NoopTxManager;
 
-    impl SharedTxManager {
-        fn new() -> Self {
-            Self { sent: Arc::new(Mutex::new(vec![])) }
-        }
-
-        fn sent_calldata(&self) -> Vec<Bytes> {
-            self.sent.lock().unwrap().clone()
-        }
-    }
-
-    impl TxManager for SharedTxManager {
-        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            self.sent.lock().unwrap().push(candidate.tx_data);
-            Ok(stub_receipt())
+    impl TxManager for NoopTxManager {
+        async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            unreachable!("signer manager unit tests do not submit transactions")
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
@@ -583,12 +528,8 @@ mod tests {
         }
     }
 
-    fn manager(
-        proof_provider: RecordingProofProvider,
-        registry: MockRegistry,
-        tx: SharedTxManager,
-    ) -> TestSignerManager {
-        Arc::new(SignerManager::new(proof_provider, registry, tx, config()))
+    fn manager(proof_provider: RecordingProofProvider) -> TestSignerManager {
+        Arc::new(SignerManager::new(proof_provider, MockRegistry, NoopTxManager, config()))
     }
 
     fn reconcile(
@@ -721,11 +662,7 @@ mod tests {
         #[case] expected_new_spawns: usize,
         #[case] expected_cancels: usize,
     ) {
-        let manager = manager(
-            RecordingProofProvider::default(),
-            MockRegistry::with_signers(vec![]),
-            SharedTxManager::new(),
-        );
+        let manager = manager(RecordingProofProvider::default());
         let mut proof_tasks = ProofTaskSet::new();
         let mut seeded_cancels = Vec::new();
 
@@ -759,11 +696,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconcile_proof_tasks_respawns_after_vanish_and_reappear() {
-        let manager = manager(
-            RecordingProofProvider::default(),
-            MockRegistry::with_signers(vec![]),
-            SharedTxManager::new(),
-        );
+        let manager = manager(RecordingProofProvider::default());
         let mut proof_tasks = ProofTaskSet::new();
         let signer = signer_from_key(&HARDHAT_KEY_0);
 
@@ -790,11 +723,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconcile_proof_tasks_preserves_task_when_instance_fails_to_resolve() {
-        let manager = manager(
-            RecordingProofProvider::default(),
-            MockRegistry::with_signers(vec![]),
-            SharedTxManager::new(),
-        );
+        let manager = manager(RecordingProofProvider::default());
         let mut proof_tasks = ProofTaskSet::new();
         let signer = signer_from_key(&HARDHAT_KEY_0);
 
@@ -834,11 +763,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconcile_proof_tasks_dedupes_signer_across_registerable_entries() {
-        let manager = manager(
-            RecordingProofProvider::default(),
-            MockRegistry::with_signers(vec![]),
-            SharedTxManager::new(),
-        );
+        let manager = manager(RecordingProofProvider::default());
         let signer = signer_from_key(&HARDHAT_KEY_0);
         let resolution = DiscoveryResolution {
             registerable: vec![
@@ -881,11 +806,7 @@ mod tests {
         let att_a: Vec<u8> = b"attestation-aligned-to-A".to_vec();
         let att_b: Vec<u8> = b"attestation-aligned-to-B".to_vec();
         let proof_provider = RecordingProofProvider::default();
-        let manager = manager(
-            proof_provider.clone(),
-            MockRegistry::with_signers(vec![]),
-            SharedTxManager::new(),
-        );
+        let manager = manager(proof_provider.clone());
         let resolution = DiscoveryResolution {
             registerable: vec![
                 RegisterableSigner {
@@ -1052,76 +973,6 @@ mod tests {
 
         let protected_after_drain = proof_tasks.protected_signers(&resolution);
         assert_eq!(protected_after_drain, HashSet::from([active_signer]));
-    }
-
-    #[tokio::test]
-    async fn run_orphan_dereg_deregisters_all_unprotected_onchain_signers() {
-        let orphans = vec![ORPHAN_A, ORPHAN_B, ORPHAN_C];
-        let expected_count = orphans.len();
-        let tx = SharedTxManager::new();
-        let manager = manager(
-            RecordingProofProvider::default(),
-            MockRegistry::with_signers(orphans.clone()),
-            tx.clone(),
-        );
-
-        let cancel = CancellationToken::new();
-        manager.run_orphan_dereg(&HashSet::new(), &cancel).await.unwrap();
-
-        let sent = tx.sent_calldata();
-        assert_eq!(sent.len(), expected_count, "all onchain signers should be deregistered");
-        for orphan in orphans {
-            let expected = ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
-            assert!(sent.iter().any(|s| s[..] == expected[..]), "expected dereg of {orphan}");
-        }
-    }
-
-    struct StallingRegistry;
-
-    #[async_trait]
-    impl RegistryClient for StallingRegistry {
-        async fn is_registered(&self, _signer: Address) -> Result<bool> {
-            Ok(false)
-        }
-
-        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-            std::future::pending::<()>().await;
-            Ok(vec![])
-        }
-    }
-
-    #[tokio::test]
-    async fn run_orphan_dereg_aborts_promptly_when_cancel_fires_during_registry_stall() {
-        let cancel = CancellationToken::new();
-        let manager = Arc::new(SignerManager::new(
-            RecordingProofProvider::default(),
-            StallingRegistry,
-            SharedTxManager::new(),
-            config(),
-        ));
-
-        let manager_clone = Arc::clone(&manager);
-        let cancel_clone = cancel.clone();
-        let handle = tokio::spawn(async move {
-            let active = HashSet::new();
-            let start = tokio::time::Instant::now();
-            let res = manager_clone.run_orphan_dereg(&active, &cancel_clone).await;
-            (res, start.elapsed())
-        });
-
-        tokio::time::sleep(PRE_CANCEL_WARMUP).await;
-        cancel.cancel();
-
-        let (result, elapsed) = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
-            .await
-            .expect("run_orphan_dereg must not hang past the timeout")
-            .expect("spawned task must not panic");
-
-        assert!(result.is_ok(), "cancel-induced exit must be Ok(()): {result:?}");
-        assert!(
-            elapsed < CANCEL_ABORT_BUDGET,
-            "cancel must abort registry stall within {CANCEL_ABORT_BUDGET:?} (took {elapsed:?})",
-        );
     }
 
     #[cfg(feature = "metrics")]

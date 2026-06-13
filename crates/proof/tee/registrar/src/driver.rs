@@ -652,9 +652,7 @@ mod tests {
         time::SystemTime,
     };
 
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, B256, Bloom};
-    use alloy_rpc_types_eth::TransactionReceipt;
+    use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_tx_manager::{SendHandle, TxCandidate, TxManager};
     use hex_literal::hex;
@@ -700,32 +698,6 @@ mod tests {
     fn public_key_from_private(private_key: &[u8; 32]) -> Vec<u8> {
         let signing_key = SigningKey::from_slice(private_key).unwrap();
         signing_key.verifying_key().to_encoded_point(false).as_bytes().to_vec()
-    }
-
-    /// Builds a minimal `TransactionReceipt` for mock tx managers.
-    fn stub_receipt() -> TransactionReceipt {
-        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-            receipt: Receipt {
-                status: Eip658Value::Eip658(true),
-                cumulative_gas_used: 21_000,
-                logs: vec![],
-            },
-            logs_bloom: Bloom::ZERO,
-        });
-        TransactionReceipt {
-            inner,
-            transaction_hash: B256::ZERO,
-            transaction_index: Some(0),
-            block_hash: Some(B256::ZERO),
-            block_number: Some(1),
-            gas_used: 21_000,
-            effective_gas_price: 1_000_000_000,
-            blob_gas_used: None,
-            blob_gas_price: None,
-            from: Address::ZERO,
-            to: Some(Address::ZERO),
-            contract_address: None,
-        }
     }
 
     /// Builds a [`ProverInstance`] with the given host:port and health status.
@@ -897,7 +869,7 @@ mod tests {
 
     impl TxManager for NoopTxManager {
         async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            Ok(stub_receipt())
+            unreachable!("driver tests do not submit transactions")
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
