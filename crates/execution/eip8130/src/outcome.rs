@@ -9,8 +9,8 @@ use alloy_primitives::{Address, B256};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispatchOutcome {
     /// Authentication fully resolved to an `actorId` by a verifying authenticator
-    /// (native secp256k1 ecrecover, the K1 contract, P-256, or `WebAuthn`). The
-    /// signature has been cryptographically verified against `hash`.
+    /// (native secp256k1 ecrecover sentinel, P-256, or `WebAuthn`). The signature
+    /// has been cryptographically verified against `hash`.
     Authenticated {
         /// The resolved actor id.
         actor_id: B256,
