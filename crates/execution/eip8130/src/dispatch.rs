@@ -15,8 +15,15 @@ use sha2::{Digest, Sha256};
 use crate::{AuthError, DispatchOutcome};
 
 sol! {
-    /// Mirror of `OpenZeppelin` `WebAuthn.WebAuthnAuth`, used to ABI-decode the
-    /// `WebAuthn` authenticator's `data` blob (`abi.encode(WebAuthnAuth, x, y)`).
+    /// Mirror of `OpenZeppelin` `WebAuthn.WebAuthnAuth` (verified against
+    /// `openzeppelin-contracts/utils/cryptography/WebAuthn.sol`), used to
+    /// ABI-decode the deployed `WebAuthnAuthenticator`'s `data` blob, which is
+    /// `abi.encode(WebAuthn.WebAuthnAuth, bytes32 x, bytes32 y)`.
+    ///
+    /// Field order and types must match positionally — ABI decoding is positional.
+    /// Note this is OZ's layout (`r, s` first, as `bytes32`), which deliberately
+    /// differs from Coinbase/Daimo `webauthn-sol` (`authenticatorData,
+    /// clientDataJSON, ..., uint256 r, s`); the deployed contract imports OZ.
     struct WebAuthnAuth {
         bytes32 r;
         bytes32 s;
