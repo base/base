@@ -74,17 +74,12 @@ impl AuthenticatorDispatch {
         if authenticator == Eip8130Constants::REVOKED_AUTHENTICATOR {
             return Err(AuthError::Revoked);
         }
-        // Native secp256k1: the EOA path and the `ECRECOVER_AUTHENTICATOR`
-        // sentinel use raw ecrecover semantics (no malleability rejection).
+        // secp256k1 is the native ecrecover sentinel only. The deployed
+        // `K1_AUTHENTICATOR` contract is intentionally not accepted on the
+        // enshrined path (see `Eip8130Contracts::K1_AUTHENTICATOR`); it falls
+        // through to the non-canonical rejection below.
         if authenticator == Eip8130Constants::ECRECOVER_AUTHENTICATOR {
-            let actor_id = Self::ecrecover(hash, data, false)?;
-            return Ok(DispatchOutcome::Authenticated { actor_id });
-        }
-        // The deployed K1 authenticator contract uses OpenZeppelin `ECDSA.recover`,
-        // which requires `v in {27, 28}` and rejects high-`s`. Mirror it exactly.
-        if authenticator == Eip8130Contracts::K1_AUTHENTICATOR {
-            let actor_id = Self::ecrecover(hash, data, true)?;
-            return Ok(DispatchOutcome::Authenticated { actor_id });
+            return Ok(DispatchOutcome::Authenticated { actor_id: Self::ecrecover(hash, data)? });
         }
         if authenticator == Eip8130Contracts::P256_AUTHENTICATOR {
             return Ok(DispatchOutcome::Authenticated { actor_id: Self::p256(hash, data)? });
@@ -109,22 +104,29 @@ impl AuthenticatorDispatch {
         B256::from(id)
     }
 
-    /// Native secp256k1 recovery. `oz_strict` mirrors `OpenZeppelin` `ECDSA.recover`
-    /// (require `v in {27, 28}`, reject high-`s`); when `false`, raw ecrecover
-    /// semantics apply (accept `v in {0, 1, 27, 28}`, any `s`).
-    fn ecrecover(hash: B256, data: &[u8], oz_strict: bool) -> Result<B256, AuthError> {
+    /// Native secp256k1 ecrecover for the `ECRECOVER_AUTHENTICATOR` sentinel,
+    /// matching the on-chain reference (`AccountConfiguration._recoverSigner`,
+    /// i.e. the EVM `ecrecover` precompile): requires `v in {27, 28}` and accepts
+    /// any `s` (the precompile does not reject malleable high-`s`).
+    /// `actorId = bytes32(bytes20(recovered))`.
+    ///
+    /// `k256`'s recovery rejects high-`s`, so a high-`s` input is canonicalized to
+    /// its low-`s` malleable equivalent with the recovery parity flipped — this
+    /// recovers the identical key, since `ecrecover(h, v, r, s)` equals
+    /// `ecrecover(h, v ^ 1, r, n - s)`.
+    fn ecrecover(hash: B256, data: &[u8]) -> Result<B256, AuthError> {
         if data.len() != 65 {
             return Err(AuthError::MalformedAuth);
         }
-        let recovery = match data[64] {
+        let mut recovery = match data[64] {
             27 | 28 => data[64] - 27,
-            v @ (0 | 1) if !oz_strict => v,
             _ => return Err(AuthError::InvalidSignature),
         };
-        let signature =
+        let mut signature =
             K256Signature::from_slice(&data[..64]).map_err(|_| AuthError::InvalidSignature)?;
-        if oz_strict && signature.normalize_s().is_some() {
-            return Err(AuthError::InvalidSignature);
+        if let Some(low_s) = signature.normalize_s() {
+            signature = low_s;
+            recovery ^= 1;
         }
         let recovery_id = RecoveryId::from_byte(recovery).ok_or(AuthError::InvalidSignature)?;
         let key = K256VerifyingKey::recover_from_prehash(hash.as_slice(), &signature, recovery_id)
@@ -349,54 +351,54 @@ mod tests {
     }
 
     #[test]
-    fn ecrecover_native_accepts_v_0_or_1_but_k1_contract_requires_27_or_28() {
+    fn ecrecover_requires_v_27_or_28() {
         let key = k1_key();
         let mut sig = k1_sig(&key, HASH);
-        sig[64] -= 27; // 0 or 1
-
-        // Native ecrecover accepts raw v in {0, 1}.
-        assert!(
+        sig[64] -= 27; // 0 or 1: invalid for the EVM ecrecover sentinel.
+        assert_eq!(
             AuthenticatorDispatch::authenticate(
                 HASH,
                 Eip8130Constants::ECRECOVER_AUTHENTICATOR,
                 &sig,
-            )
-            .is_ok()
-        );
-        // The K1 contract mirrors OZ ECDSA.recover, which requires v in {27, 28}.
-        assert_eq!(
-            AuthenticatorDispatch::authenticate(HASH, Eip8130Contracts::K1_AUTHENTICATOR, &sig),
+            ),
             Err(AuthError::InvalidSignature),
         );
     }
 
     #[test]
-    fn k1_contract_resolves_with_v_27_or_28() {
-        let key = k1_key();
-        let out = AuthenticatorDispatch::authenticate(
-            HASH,
-            Eip8130Contracts::K1_AUTHENTICATOR,
-            &k1_sig(&key, HASH),
-        )
-        .unwrap();
-        let expected = AuthenticatorDispatch::address_actor_id(k1_address(&key));
-        assert_eq!(out, DispatchOutcome::Authenticated { actor_id: expected });
+    fn k1_authenticator_contract_is_not_canonical() {
+        // secp256k1 is the native ecrecover sentinel; the deployed K1 contract is
+        // intentionally not accepted on the enshrined path.
+        assert_eq!(
+            AuthenticatorDispatch::authenticate(
+                HASH,
+                Eip8130Contracts::K1_AUTHENTICATOR,
+                &k1_sig(&k1_key(), HASH),
+            ),
+            Err(AuthError::NotCanonical(Eip8130Contracts::K1_AUTHENTICATOR)),
+        );
     }
 
     #[test]
-    fn k1_contract_rejects_high_s() {
+    fn ecrecover_accepts_high_s() {
+        // The EVM ecrecover precompile does not reject malleable high-s; the
+        // native sentinel must match. Negating s yields the high-s counterpart,
+        // and flipping the recovery parity recovers the same signer.
         let key = k1_key();
         let (sig, recid) = key.sign_prehash_recoverable(HASH.as_slice()).unwrap();
-        // Negate s to obtain the malleable high-s counterpart.
         let s_high = -*sig.s();
         let high = K256Signature::from_scalars(sig.r().to_bytes(), s_high.to_bytes()).unwrap();
         let mut bytes = [0u8; 65];
         bytes[..64].copy_from_slice(&high.to_bytes());
-        bytes[64] = recid.to_byte() + 27;
-        assert_eq!(
-            AuthenticatorDispatch::authenticate(HASH, Eip8130Contracts::K1_AUTHENTICATOR, &bytes),
-            Err(AuthError::InvalidSignature),
-        );
+        bytes[64] = (recid.to_byte() ^ 1) + 27;
+        let out = AuthenticatorDispatch::authenticate(
+            HASH,
+            Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+            &bytes,
+        )
+        .unwrap();
+        let expected = AuthenticatorDispatch::address_actor_id(k1_address(&key));
+        assert_eq!(out, DispatchOutcome::Authenticated { actor_id: expected });
     }
 
     #[test]
