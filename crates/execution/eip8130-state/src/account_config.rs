@@ -201,13 +201,19 @@ impl AccountState {
     #[must_use]
     pub fn from_word(word: U256) -> Self {
         let b = word.to_be_bytes::<32>();
+        let mut multichain = [0u8; 8];
+        let mut local = [0u8; 8];
         let mut unlocks_at = [0u8; 8];
+        let mut unlock_delay = [0u8; 2];
+        multichain.copy_from_slice(&b[24..32]); // uint64
+        local.copy_from_slice(&b[16..24]); // uint64
         unlocks_at[3..].copy_from_slice(&b[11..16]); // uint40: 5 bytes, big-endian
+        unlock_delay.copy_from_slice(&b[9..11]); // uint16
         Self {
-            multichain_sequence: u64::from_be_bytes(b[24..32].try_into().expect("8 bytes")),
-            local_sequence: u64::from_be_bytes(b[16..24].try_into().expect("8 bytes")),
+            multichain_sequence: u64::from_be_bytes(multichain),
+            local_sequence: u64::from_be_bytes(local),
             unlocks_at: u64::from_be_bytes(unlocks_at),
-            unlock_delay: u16::from_be_bytes(b[9..11].try_into().expect("2 bytes")),
+            unlock_delay: u16::from_be_bytes(unlock_delay),
         }
     }
 }

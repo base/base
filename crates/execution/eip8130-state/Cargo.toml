@@ -19,7 +19,7 @@ alloy-primitives.workspace = true
 
 # base
 base-precompile-macros.workspace = true
-base-precompile-storage = { workspace = true }
+base-precompile-storage.workspace = true
 base-common-consensus = { workspace = true, default-features = false }
 
 # revm
