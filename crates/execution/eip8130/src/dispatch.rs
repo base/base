@@ -74,10 +74,8 @@ impl AuthenticatorDispatch {
         if authenticator == Eip8130Constants::REVOKED_AUTHENTICATOR {
             return Err(AuthError::Revoked);
         }
-        // secp256k1 is the native ecrecover sentinel only. The deployed
-        // `K1_AUTHENTICATOR` contract is intentionally not accepted on the
-        // enshrined path (see `Eip8130Contracts::K1_AUTHENTICATOR`); it falls
-        // through to the non-canonical rejection below.
+        // secp256k1 is the protocol-reserved native ecrecover sentinel
+        // (`address(1)`); there is no deployed secp256k1 authenticator contract.
         if authenticator == Eip8130Constants::ECRECOVER_AUTHENTICATOR {
             return Ok(DispatchOutcome::Authenticated { actor_id: Self::ecrecover(hash, data)? });
         }
@@ -362,20 +360,6 @@ mod tests {
                 &sig,
             ),
             Err(AuthError::InvalidSignature),
-        );
-    }
-
-    #[test]
-    fn k1_authenticator_contract_is_not_canonical() {
-        // secp256k1 is the native ecrecover sentinel; the deployed K1 contract is
-        // intentionally not accepted on the enshrined path.
-        assert_eq!(
-            AuthenticatorDispatch::authenticate(
-                HASH,
-                Eip8130Contracts::K1_AUTHENTICATOR,
-                &k1_sig(&k1_key(), HASH),
-            ),
-            Err(AuthError::NotCanonical(Eip8130Contracts::K1_AUTHENTICATOR)),
         );
     }
 

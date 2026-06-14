@@ -81,19 +81,10 @@ impl Eip8130Contracts {
     // Canonical authenticators (accepted on the EIP-8130 block-validation path)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// secp256k1 (ECDSA) authenticator contract.
-    ///
-    /// Pinned for drift tracking, but **not** on the enshrined allowlist
-    /// ([`Self::CANONICAL_AUTHENTICATORS`]): on EIP-8130 chains secp256k1 is the
-    /// protocol-reserved native ecrecover sentinel
-    /// [`Eip8130Constants::ECRECOVER_AUTHENTICATOR`](super::Eip8130Constants::ECRECOVER_AUTHENTICATOR)
-    /// (`address(1)`). This deployed `IAuthenticator` contract form exists for
-    /// non-8130 chains and is intentionally not accepted on the enshrined path.
-    pub const K1_AUTHENTICATOR: Address = address!("0x39221FB37Df105B22316328e88632C9684861466");
-
-    /// keccak256 of the `K1_AUTHENTICATOR` deployment init code.
-    pub const K1_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0x07a31dfd4ba2e2a529d9642b98430ea299bac428fe83312c54d16f519568d7d5");
+    // Note: secp256k1 has no contract entry. It is the protocol-reserved native
+    // ecrecover sentinel
+    // [`Eip8130Constants::ECRECOVER_AUTHENTICATOR`](super::Eip8130Constants::ECRECOVER_AUTHENTICATOR)
+    // (`address(1)`), handled directly by the protocol, not a deployed contract.
 
     /// secp256r1 / P-256 (raw) authenticator contract.
     pub const P256_AUTHENTICATOR: Address = address!("0x3AE129D846CD1CAf0369b4Caa56c188E18E11B15");
@@ -124,8 +115,7 @@ impl Eip8130Contracts {
     ///
     /// secp256k1 is **not** a contract entry here: on EIP-8130 chains it is the
     /// protocol-reserved native ecrecover sentinel (`address(1)`), handled
-    /// directly by the protocol. The deployed [`Self::K1_AUTHENTICATOR`] contract
-    /// is therefore intentionally excluded; see its docs.
+    /// directly by the protocol rather than via a deployed authenticator contract.
     pub const CANONICAL_AUTHENTICATORS: [Address; 3] =
         [Self::P256_AUTHENTICATOR, Self::WEBAUTHN_AUTHENTICATOR, Self::DELEGATE_AUTHENTICATOR];
 
@@ -133,8 +123,7 @@ impl Eip8130Contracts {
     /// allowlist ([`Self::CANONICAL_AUTHENTICATORS`]).
     ///
     /// This intentionally does not account for the native ecrecover sentinel
-    /// (`address(1)`), which is handled separately by the protocol; see the
-    /// allowlist docs for the TBD around final membership.
+    /// (`address(1)`), which is handled separately by the protocol.
     #[must_use]
     pub fn is_canonical_authenticator(authenticator: &Address) -> bool {
         Self::CANONICAL_AUTHENTICATORS.contains(authenticator)
@@ -158,7 +147,6 @@ mod tests {
                 Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT,
                 Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT_INIT_CODE_HASH,
             ),
-            (Eip8130Contracts::K1_AUTHENTICATOR, Eip8130Contracts::K1_AUTHENTICATOR_INIT_CODE_HASH),
             (
                 Eip8130Contracts::P256_AUTHENTICATOR,
                 Eip8130Contracts::P256_AUTHENTICATOR_INIT_CODE_HASH,
@@ -185,8 +173,6 @@ mod tests {
         for auth in Eip8130Contracts::CANONICAL_AUTHENTICATORS {
             assert!(Eip8130Contracts::is_canonical_authenticator(&auth));
         }
-        // secp256k1 is the native ecrecover sentinel, not the deployed K1 contract.
-        assert!(!Eip8130Contracts::is_canonical_authenticator(&Eip8130Contracts::K1_AUTHENTICATOR));
         assert!(!Eip8130Contracts::is_canonical_authenticator(&Address::ZERO));
     }
 }
