@@ -145,8 +145,14 @@ impl ActorAuthorizer {
             return Err(AuthorizeError::Expired { actor_id, expiry: config.expiry });
         }
         // `_resolvePolicyTarget`: address(0) when ungated, else the policy manager
-        // (never the signed commitment). `get_policy` yields exactly that as `.0`.
-        let policy_target = storage.get_policy(account, actor_id)?.0;
+        // (never the signed commitment). Resolved from the `config` already in
+        // hand so an ungated actor costs no extra read and a gated one reads only
+        // the manager slot (no `actor_config` re-read).
+        let policy_target = if config.policy_type == 0 {
+            Address::ZERO
+        } else {
+            storage.get_policy_manager(account, actor_id)?
+        };
         Ok(ResolvedActor {
             actor_id,
             scope: config.scope,

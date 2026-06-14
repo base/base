@@ -71,6 +71,16 @@ impl AccountConfigurationStorage<'_> {
         Ok((manager, commitment))
     }
 
+    /// Reads only the stored policy *manager* slot for `(account, actor_id)`,
+    /// without the `actor_config` re-read that [`Self::get_policy`] performs to
+    /// gate on `policy_type`. Callers that already hold the [`ActorConfig`] (and
+    /// have confirmed `policy_type != 0`) use this to resolve a policy target with
+    /// a single trie/DB hit on the validation hot path. Mirrors the manager read
+    /// in `AccountConfiguration._resolvePolicyTarget`.
+    pub fn get_policy_manager(&self, account: Address, actor_id: B256) -> Result<Address> {
+        self.policy_manager.at(&actor_id).at(&account).read()
+    }
+
     /// Returns the per-account [`AccountState`] (sequences + lock fields).
     pub fn get_account_state(&self, account: Address) -> Result<AccountState> {
         Ok(AccountState::from_word(self.account_state.at(&account).read()?))
@@ -333,6 +343,18 @@ mod tests {
             acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(gated).unwrap();
             acc.policy_commitment.at_mut(&ACTOR).at_mut(&ACCOUNT).write(commitment).unwrap();
             assert_eq!(acc.get_policy(ACCOUNT, ACTOR).unwrap(), (manager, commitment));
+        });
+    }
+
+    #[test]
+    fn get_policy_manager_reads_only_the_manager_slot() {
+        let manager = address!("0x00000000000000000000000000000000000000d4");
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut acc = AccountConfigurationStorage::new(ctx);
+            // No actor_config written: the targeted read does not gate on it.
+            acc.policy_manager.at_mut(&ACTOR).at_mut(&ACCOUNT).write(manager).unwrap();
+            assert_eq!(acc.get_policy_manager(ACCOUNT, ACTOR).unwrap(), manager);
         });
     }
 
