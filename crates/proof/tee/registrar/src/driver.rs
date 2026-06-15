@@ -91,17 +91,6 @@ pub struct DiscoveryResolution {
     pub unresolved_instance_ids: HashSet<String>,
 }
 
-/// Per-instance result of address resolution and registration gating.
-#[derive(Debug)]
-pub struct ResolveOutcome {
-    /// Signer addresses derived from the instance's enclave public keys.
-    pub addresses: Vec<Address>,
-    /// Pre-fetched attestation blobs when the instance is register-eligible.
-    pub attestations: Option<Vec<Vec<u8>>>,
-    /// Whether resolution ended inconclusively after addresses were known.
-    pub unresolved: bool,
-}
-
 /// Core registration loop tying together discovery, attestation polling, signer
 /// lifecycle reconciliation, and orphan cleanup.
 ///
@@ -217,13 +206,12 @@ where
 
     /// Returns addresses always for active signer tracking.
     /// Returns attestations only when the instance is registerable.
-    async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
+    async fn resolve_instance(
+        &self,
+        instance: &ProverInstance,
+    ) -> Result<(Vec<Address>, Option<Vec<Vec<u8>>>, bool)> {
         if self.config.cancel.is_cancelled() {
-            return Ok(ResolveOutcome {
-                addresses: Vec::new(),
-                attestations: None,
-                unresolved: false,
-            });
+            return Ok((Vec::new(), None, false));
         }
 
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
@@ -234,7 +222,7 @@ where
             .collect::<Result<Vec<_>>>()?;
 
         if addresses.is_empty() {
-            return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
+            return Ok((addresses, None, false));
         }
 
         if !instance.health_status.should_register() {
@@ -244,7 +232,7 @@ where
                     instance = %instance.instance_id,
                     "instance not registerable, skipping registration"
                 );
-                return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
+                return Ok((addresses, None, false));
             }
             info!(
                 instance = %instance.instance_id,
@@ -255,7 +243,7 @@ where
         }
 
         if self.config.cancel.is_cancelled() {
-            return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
+            return Ok((addresses, None, false));
         }
 
         let nonce: [u8; 32] = random();
@@ -277,7 +265,7 @@ where
                     "failed to fetch signer attestations after resolving signer addresses"
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
-                return Ok(ResolveOutcome { addresses, attestations: None, unresolved: true });
+                return Ok((addresses, None, true));
             }
         };
 
@@ -289,13 +277,13 @@ where
                 "signer attestation count was lower than signer public key count"
             );
             RegistrarMetrics::processing_errors_total().increment(1);
-            return Ok(ResolveOutcome { addresses, attestations: None, unresolved: true });
+            return Ok((addresses, None, true));
         }
 
         if self.config.crl.enabled {
             // skip CRL work after cancellation
             if self.config.cancel.is_cancelled() {
-                return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
+                return Ok((addresses, None, false));
             }
             let first_attestation = &all_attestations[0];
             match self.cert_manager.check_and_revoke_crls(first_attestation, instance).await {
@@ -304,7 +292,7 @@ where
                         instance = %instance.instance_id,
                         "certificate revoked, skipping registration for this instance"
                     );
-                    return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
+                    return Ok((addresses, None, false));
                 }
                 Ok(false) => {}
                 Err(e) => {
@@ -317,7 +305,7 @@ where
             }
         }
 
-        Ok(ResolveOutcome { addresses, attestations: Some(all_attestations), unresolved: false })
+        Ok((addresses, Some(all_attestations), false))
     }
 
     /// Runs one discovery cycle and resolves every instance into a [`DiscoveryResolution`].
@@ -363,17 +351,17 @@ where
         // natural boundary.
         while let Some((instance, result)) = futs.next().await {
             match result {
-                Ok(outcome) => {
+                Ok((addresses, attestations, unresolved)) => {
                     reachable_count += 1;
-                    for addr in &outcome.addresses {
+                    for addr in &addresses {
                         active_signers.insert(*addr);
                     }
-                    if outcome.unresolved {
+                    if unresolved {
                         unresolved_instance_ids.insert(instance.instance_id.clone());
                     }
-                    if let Some(attestations) = outcome.attestations {
+                    if let Some(attestations) = attestations {
                         for (enclave_index, (signer, attestation)) in
-                            outcome.addresses.into_iter().zip(attestations).enumerate()
+                            addresses.into_iter().zip(attestations).enumerate()
                         {
                             registerable.push(RegisterableSigner {
                                 instance: instance.clone(),
