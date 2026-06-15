@@ -30,7 +30,7 @@ const PCR0_LENGTH: usize = 48;
 fn config_hash(rollup_config: &RollupConfig) -> Result<B256> {
     let chain_id = rollup_config.l2_chain_id.id();
     let mut per_chain = PerChainConfig::from_rollup_config(rollup_config)
-        .ok_or(NitroError::UnsupportedChain(chain_id))?;
+        .ok_or(NitroError::MissingSystemConfig(chain_id))?;
     per_chain.force_defaults();
     Ok(per_chain.hash())
 }
