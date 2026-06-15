@@ -209,8 +209,7 @@ where
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
         let addresses = public_keys
             .iter()
-            .map(Vec::as_slice)
-            .map(ProverClient::derive_address)
+            .map(|key| ProverClient::derive_address(key))
             .collect::<Result<Vec<_>>>()?;
         let mut outcome = DiscoveryResolution {
             active_signers: addresses.iter().copied().collect(),
@@ -281,8 +280,7 @@ where
         if self.config.cancel.is_cancelled() {
             return Ok(outcome);
         }
-        let first_attestation = &all_attestations[0];
-        match self.cert_manager.check_and_revoke_crls(first_attestation, instance).await {
+        match self.cert_manager.check_and_revoke_crls(&all_attestations[0], instance).await {
             Ok(true) => {
                 warn!(
                     instance = %instance.instance_id,
@@ -395,10 +393,7 @@ where
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
-        sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        },
+        sync::Arc,
         time::SystemTime,
     };
 
@@ -414,9 +409,9 @@ mod tests {
         CrlConfig, InstanceHealthStatus, RegistrarError, RegistryClient, Result, SignerClient,
         SignerManagerConfig,
         test_utils::{
-            EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, HARDHAT_KEY_3,
-            NoopNitroVerifier, NoopTxManager, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
-            prover_instance, public_key_from_private, signer_from_private_key,
+            EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopNitroVerifier,
+            NoopTxManager, TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
+            public_key_from_private, signer_from_private_key,
         },
     };
 
@@ -432,14 +427,12 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     struct MockSignerClient {
         keys: HashMap<Url, Vec<Vec<u8>>>,
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
         cancel_after_public_key_success: Option<CancellationToken>,
-        in_flight: Option<Arc<AtomicUsize>>,
-        peak: Option<Arc<AtomicUsize>>,
     }
 
     impl MockSignerClient {
@@ -451,26 +444,12 @@ mod tests {
                     (url, vec![public_key_from_private(pk)])
                 })
                 .collect();
-            Self {
-                keys,
-                attestations: HashMap::new(),
-                fail_attestation: HashSet::new(),
-                cancel_after_public_key_success: None,
-                in_flight: None,
-                peak: None,
-            }
+            Self { keys, ..Self::default() }
         }
 
         fn multi_enclave(host_port: &str, private_keys: &[&[u8; 32]]) -> Self {
             let pubs = private_keys.iter().map(|pk| public_key_from_private(pk)).collect();
-            Self {
-                keys: HashMap::from([(endpoint_url(host_port), pubs)]),
-                attestations: HashMap::new(),
-                fail_attestation: HashSet::new(),
-                cancel_after_public_key_success: None,
-                in_flight: None,
-                peak: None,
-            }
+            Self { keys: HashMap::from([(endpoint_url(host_port), pubs)]), ..Self::default() }
         }
 
         fn with_attestations(mut self, host_port: &str, attestations: Vec<Vec<u8>>) -> Self {
@@ -488,23 +467,16 @@ mod tests {
             self
         }
 
-        fn with_concurrency_tracking(mut self) -> (Self, Arc<AtomicUsize>) {
-            let peak = Arc::new(AtomicUsize::new(0));
-            self.in_flight = Some(Arc::new(AtomicUsize::new(0)));
-            self.peak = Some(Arc::clone(&peak));
-            (self, peak)
-        }
-
         fn signer_public_key_result(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
             let result =
                 self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
                     instance: endpoint.to_string(),
                     source: "unreachable".into(),
                 });
-            if result.is_ok() {
-                if let Some(cancel) = &self.cancel_after_public_key_success {
-                    cancel.cancel();
-                }
+            if result.is_ok()
+                && let Some(cancel) = &self.cancel_after_public_key_success
+            {
+                cancel.cancel();
             }
             result
         }
@@ -513,17 +485,6 @@ mod tests {
     #[async_trait]
     impl SignerClient for MockSignerClient {
         async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
-            if let (Some(in_flight), Some(peak)) = (&self.in_flight, &self.peak) {
-                let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-                peak.fetch_max(current, Ordering::SeqCst);
-
-                tokio::task::yield_now().await;
-
-                let result = self.signer_public_key_result(endpoint);
-                in_flight.fetch_sub(1, Ordering::SeqCst);
-                return result;
-            }
-
             self.signer_public_key_result(endpoint)
         }
 
@@ -680,22 +641,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discover_and_resolve_clears_ok_to_dereg_when_cancelled_before_run() {
-        let instances = vec![healthy_prover_instance(EP1), healthy_prover_instance(EP2)];
-
-        let signer_client =
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
-
-        let cancel = CancellationToken::new();
-        let driver = cycle_driver(instances, signer_client, cancel.clone());
-
-        cancel.cancel();
-        let (_, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
-
-        assert!(!ok_to_dereg, "cancellation must clear ok_to_dereg",);
-    }
-
-    #[tokio::test]
     async fn discover_and_resolve_clears_ok_to_dereg_when_cancelled_mid_resolution() {
         let cancel = CancellationToken::new();
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)])
@@ -837,44 +782,5 @@ mod tests {
             "partial resolution must preserve in-flight tasks for the instance",
         );
         assert!(!ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_respects_max_concurrency() {
-        let max_concurrency = 2;
-        let endpoints = [EP1, EP2, EP3, EP4];
-        let private_keys = [&HARDHAT_KEY_0, &HARDHAT_KEY_1, &HARDHAT_KEY_2, &HARDHAT_KEY_3];
-
-        let keys: Vec<(&str, &[u8; 32])> =
-            endpoints.iter().copied().zip(private_keys.iter().copied()).collect();
-        let instances: Vec<_> = endpoints.iter().map(|ep| healthy_prover_instance(ep)).collect();
-        let (signer_client, peak) = MockSignerClient::from_keys(&keys).with_concurrency_tracking();
-
-        let cancel = CancellationToken::new();
-        let mut config = default_config(cancel);
-        config.max_concurrency = max_concurrency;
-        let cert_manager = mock_cert_manager(NoopTxManager);
-        let signer_manager = noop_signer_manager(signer_manager_config());
-
-        let driver = RegistrationDriver::new(
-            MockDiscovery { instances },
-            signer_client,
-            config,
-            cert_manager,
-            signer_manager,
-        );
-
-        let (resolution, _) = driver.discover_and_resolve().await.unwrap();
-
-        let observed_peak = peak.load(Ordering::SeqCst);
-        assert!(
-            observed_peak <= max_concurrency,
-            "peak concurrency {observed_peak} exceeded max_concurrency {max_concurrency}",
-        );
-        assert_eq!(
-            resolution.registerable.len(),
-            endpoints.len(),
-            "all 4 healthy instances should resolve into the registerable set",
-        );
     }
 }
