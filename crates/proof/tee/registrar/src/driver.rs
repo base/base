@@ -367,30 +367,7 @@ where
         Ok(ResolveOutcome { addresses, attestations: Some(all_attestations), unresolved: false })
     }
 
-    /// Runs one discovery cycle and resolves every instance into the
-    /// [`DiscoveryResolution`] consumed by the spawn-and-reap loop.
-    ///
-    /// This fans out per-instance resolution work concurrently (bounded by
-    /// [`SignerManagerConfig::max_concurrency`]). No registration transactions are
-    /// submitted here; the [`Self::run`] loop spawns a dedicated task per
-    /// registerable signer instead, so long Boundless proofs do not block the
-    /// next discovery cycle.
-    ///
-    /// **Why no outer cancel-select.** `resolve_instance` performs several
-    /// side effects before deciding whether an instance is registerable. The
-    /// buffered stream is therefore drained to natural completion; each
-    /// `resolve_instance` short-circuits on the configured cancellation token between
-    /// awaits. Shutdown latency is bounded by `max_concurrency` × the slowest
-    /// signer-RPC / CRL-fetch timeout, not by long proof work (which lives in
-    /// the spawned proof tasks).
-    ///
-    /// The returned `ok_to_dereg` flag bakes in the cancellation policy
-    /// (token not cancelled), the inconclusive-resolution guard (no
-    /// `unresolved_instance_ids`), and the majority guard
-    /// (`reachable * 2 > total`). The empty-discovery case sets it to
-    /// `true` so legitimate fleet drains still let orphan cleanup proceed —
-    /// except when the driver is cancelled, in which case the orphan dereg
-    /// pass is skipped so we don't acquire nonces during shutdown.
+    /// Runs one discovery cycle and resolves every instance into a [`DiscoveryResolution`].
     async fn discover_and_resolve(&self) -> Result<DiscoveryResolution> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
