@@ -186,24 +186,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashSet,
-        sync::{
-            Mutex,
-            atomic::{AtomicBool, AtomicU32, Ordering},
-        },
-        time::Duration,
-    };
+    use std::sync::Mutex;
 
-    use alloy_primitives::{Address, B256, Bytes, FixedBytes};
+    use alloy_primitives::{Address, B256, Bytes};
     use alloy_sol_types::SolCall;
     use async_trait::async_trait;
     use base_proof_contracts::INitroEnclaveVerifier;
     use base_tx_manager::{TxCandidate, TxManagerError};
-    use rstest::rstest;
 
     use super::*;
-    use crate::test_utils::{CertFixtures, INTER1_HEX, INTER2_HEX, LEAF_HEX, ROOT_HEX};
 
     const ONCHAIN_TEST_INSTANCE_ID: &str = "i-onchain-revocation-test";
     const TEST_VERIFIER_ADDRESS: Address = Address::repeat_byte(0xAB);
@@ -215,26 +206,36 @@ mod tests {
     /// Mock [`NitroVerifierClient`] for unit-testing the onchain pre-check.
     #[derive(Debug, Default)]
     struct MockNitroVerifier {
-        revoked: HashSet<FixedBytes<32>>,
-        fail_next: AtomicBool,
-        call_count: AtomicU32,
+        revoked: Vec<B256>,
+        state: Mutex<MockNitroVerifierState>,
+    }
+
+    #[derive(Debug, Default)]
+    struct MockNitroVerifierState {
+        fail_next: bool,
+        call_count: u32,
     }
 
     impl MockNitroVerifier {
-        fn revoking(hashes: impl IntoIterator<Item = FixedBytes<32>>) -> Self {
-            Self {
-                revoked: hashes.into_iter().collect(),
-                fail_next: AtomicBool::new(false),
-                call_count: AtomicU32::new(0),
-            }
+        fn revoking(hashes: impl IntoIterator<Item = B256>) -> Self {
+            Self { revoked: hashes.into_iter().collect(), ..Self::default() }
         }
 
         fn failing() -> Self {
             Self {
-                revoked: HashSet::new(),
-                fail_next: AtomicBool::new(true),
-                call_count: AtomicU32::new(0),
+                state: Mutex::new(MockNitroVerifierState { fail_next: true, call_count: 0 }),
+                ..Self::default()
             }
+        }
+
+        fn call_count(&self) -> u32 {
+            self.state.lock().unwrap().call_count
+        }
+
+        fn should_fail_next_call(&self) -> bool {
+            let mut state = self.state.lock().unwrap();
+            state.call_count += 1;
+            std::mem::take(&mut state.fail_next)
         }
     }
 
@@ -244,9 +245,8 @@ mod tests {
             TEST_VERIFIER_ADDRESS
         }
 
-        async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool> {
-            self.call_count.fetch_add(1, Ordering::SeqCst);
-            if self.fail_next.swap(false, Ordering::SeqCst) {
+        async fn is_revoked(&self, cert_hash: B256) -> Result<bool> {
+            if self.should_fail_next_call() {
                 return Err(RegistrarError::NitroVerifierCall {
                     context: "revokedCerts(0xdeadbeef)".into(),
                     source: "boom".into(),
@@ -282,28 +282,25 @@ mod tests {
         }
     }
 
-    fn full_chain_der() -> Vec<Vec<u8>> {
-        CertFixtures::decode_chain(&[ROOT_HEX, INTER1_HEX, INTER2_HEX, LEAF_HEX])
+    fn cert_info(index: usize) -> crl::CertCrlInfo {
+        crl::CertCrlInfo {
+            index,
+            serial_number: Vec::new(),
+            crl_url: None,
+            path_digest: path_digest_for(index),
+        }
     }
 
-    fn chain_subset(indices: &[usize]) -> Vec<Vec<u8>> {
-        let full = full_chain_der();
-        indices.iter().map(|&i| full[i].clone()).collect()
+    fn cert_infos(indices: &[usize]) -> Vec<crl::CertCrlInfo> {
+        indices.iter().copied().map(cert_info).collect()
     }
 
-    fn path_digest_for(index: usize) -> FixedBytes<32> {
-        let der = full_chain_der();
-        let refs: Vec<&[u8]> = der.iter().map(Vec::as_slice).collect();
-        crl::CertCrlInfo::from_chain(&refs)
-            .expect("static fixtures parse")
-            .remove(index)
-            .path_digest
+    fn path_digest_for(index: usize) -> B256 {
+        B256::repeat_byte(index as u8)
     }
 
     fn full_chain_cert_infos() -> Vec<crl::CertCrlInfo> {
-        let der = full_chain_der();
-        let refs: Vec<&[u8]> = der.iter().map(Vec::as_slice).collect();
-        crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse")
+        cert_infos(&[ROOT_INDEX, INTER1_INDEX, INTER2_INDEX, LEAF_INDEX])
     }
 
     fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager<MockTxManager> {
@@ -324,18 +321,13 @@ mod tests {
         }
     }
 
-    fn crl_config() -> CrlConfig {
-        CrlConfig {
-            enabled: true,
-            nitro_verifier_address: None,
-            fetch_timeout: Duration::from_secs(1),
-        }
-    }
-
     #[tokio::test]
     async fn check_and_revoke_crls_noops_when_disabled() {
-        let mut config = crl_config();
-        config.enabled = false;
+        let config = CrlConfig {
+            enabled: false,
+            nitro_verifier_address: None,
+            fetch_timeout: std::time::Duration::from_secs(1),
+        };
         let verifier = Arc::new(MockNitroVerifier::default());
         let cert_manager = CertManager::new(
             &config,
@@ -348,11 +340,7 @@ mod tests {
             cert_manager.check_and_revoke_crls(b"not-an-attestation", &test_instance()).await;
 
         assert!(!result.expect("disabled CRL checks must no-op"));
-        assert_eq!(
-            verifier.call_count.load(Ordering::SeqCst),
-            0,
-            "disabled CRL checks must not query the verifier",
-        );
+        assert_eq!(verifier.call_count(), 0, "disabled CRL checks must not query the verifier",);
     }
 
     fn revoked_cert(path_digest: B256) -> crl::RevokedCertInfo {
@@ -370,7 +358,7 @@ mod tests {
         let result = cert_manager
             .has_onchain_revoked_intermediate(&cert_infos, ONCHAIN_TEST_INSTANCE_ID)
             .await;
-        (result, verifier.call_count.load(Ordering::SeqCst))
+        (result, verifier.call_count())
     }
 
     #[tokio::test]
@@ -385,25 +373,23 @@ mod tests {
         assert_eq!(calls, 2, "every intermediate must be queried when none are revoked");
     }
 
-    #[rstest]
-    #[case::inter1_revoked(INTER1_INDEX, 1)]
-    #[case::inter2_revoked(INTER2_INDEX, 2)]
     #[tokio::test]
-    async fn onchain_revocation_check_blocks_when_any_intermediate_revoked(
-        #[case] revoked_index: usize,
-        #[case] expected_calls_at_short_circuit: u32,
-    ) {
-        let verifier = MockNitroVerifier::revoking([path_digest_for(revoked_index)]);
-        let (result, calls) = run_pre_check(verifier).await;
+    async fn onchain_revocation_check_blocks_when_any_intermediate_revoked() {
+        for (revoked_index, expected_calls_at_short_circuit) in
+            [(INTER1_INDEX, 1), (INTER2_INDEX, 2)]
+        {
+            let verifier = MockNitroVerifier::revoking([path_digest_for(revoked_index)]);
+            let (result, calls) = run_pre_check(verifier).await;
 
-        assert!(
-            result.expect("revoked-intermediate query must succeed"),
-            "revoked intermediate must block registration",
-        );
-        assert_eq!(
-            calls, expected_calls_at_short_circuit,
-            "pre-check must short-circuit at the first revoked intermediate",
-        );
+            assert!(
+                result.expect("revoked-intermediate query must succeed"),
+                "revoked intermediate must block registration",
+            );
+            assert_eq!(
+                calls, expected_calls_at_short_circuit,
+                "pre-check must short-circuit at the first revoked intermediate",
+            );
+        }
     }
 
     #[tokio::test]
@@ -418,31 +404,28 @@ mod tests {
         );
     }
 
-    #[rstest]
-    #[case::root_only(&[ROOT_INDEX], 0)]
-    #[case::root_and_leaf(&[ROOT_INDEX, LEAF_INDEX], 0)]
-    #[case::three_cert(&[ROOT_INDEX, INTER1_INDEX, LEAF_INDEX], 1)]
     #[tokio::test]
-    async fn onchain_revocation_check_queries_intermediates_only(
-        #[case] indices: &[usize],
-        #[case] expected_calls: u32,
-    ) {
-        let owned = chain_subset(indices);
-        let refs: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
-        let cert_infos = crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse");
-        let verifier = Arc::new(MockNitroVerifier::default());
-        let cert_manager = test_cert_manager(Arc::clone(&verifier));
+    async fn onchain_revocation_check_queries_intermediates_only() {
+        for (indices, expected_calls) in [
+            (&[ROOT_INDEX][..], 0),
+            (&[ROOT_INDEX, LEAF_INDEX][..], 0),
+            (&[ROOT_INDEX, INTER1_INDEX, LEAF_INDEX][..], 1),
+        ] {
+            let cert_infos = cert_infos(indices);
+            let verifier = Arc::new(MockNitroVerifier::default());
+            let cert_manager = test_cert_manager(Arc::clone(&verifier));
 
-        let result = cert_manager
-            .has_onchain_revoked_intermediate(&cert_infos, ONCHAIN_TEST_INSTANCE_ID)
-            .await;
+            let result = cert_manager
+                .has_onchain_revoked_intermediate(&cert_infos, ONCHAIN_TEST_INSTANCE_ID)
+                .await;
 
-        assert!(!result.expect("query must succeed"), "clean chain not revoked");
-        assert_eq!(
-            verifier.call_count.load(Ordering::SeqCst),
-            expected_calls,
-            "only intermediates (root and leaf skipped) should produce RPC calls",
-        );
+            assert!(!result.expect("query must succeed"), "clean chain not revoked");
+            assert_eq!(
+                verifier.call_count(),
+                expected_calls,
+                "only intermediates (root and leaf skipped) should produce RPC calls",
+            );
+        }
     }
 
     #[tokio::test]
@@ -457,7 +440,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            verifier.call_count.load(Ordering::SeqCst),
+            verifier.call_count(),
             1,
             "CRL-hit cert should be checked onchain before deciding whether to submit revokeCert",
         );
@@ -476,7 +459,7 @@ mod tests {
             .submit_revocations_for_revoked_certs(&[revoked_cert(path_digest)], &instance)
             .await;
 
-        assert_eq!(verifier.call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(verifier.call_count(), 1);
         let candidates = cert_manager.tx_manager.take_candidates();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].to, Some(TEST_VERIFIER_ADDRESS));
@@ -494,7 +477,7 @@ mod tests {
             .submit_revocations_for_revoked_certs(&[revoked_cert(path_digest)], &instance)
             .await;
 
-        assert_eq!(verifier.call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(verifier.call_count(), 1);
         let candidates = cert_manager.tx_manager.take_candidates();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].to, Some(TEST_VERIFIER_ADDRESS));
