@@ -52,11 +52,6 @@ where
     /// Returns `Ok(true)` if any intermediate is revoked by either the
     /// onchain sentinel or the AWS CRL layer, `Ok(false)` if every checked
     /// intermediate is clean.
-    ///
-    /// The durable onchain pre-check preserves previously-revoked
-    /// intermediates even if AWS later prunes its CRL. AWS CRLs are then
-    /// checked for each intermediate, and every CRL hit is checked onchain
-    /// before a `revokeCert` transaction is submitted.
     pub async fn check_and_revoke_crls(
         &self,
         attestation_bytes: &[u8],
@@ -215,11 +210,6 @@ mod tests {
         fn call_count(&self) -> u32 {
             self.call_count.load(Ordering::Relaxed)
         }
-
-        fn should_fail_next_call(&self) -> bool {
-            self.call_count.fetch_add(1, Ordering::Relaxed);
-            self.fail_next.swap(false, Ordering::Relaxed)
-        }
     }
 
     #[async_trait]
@@ -229,7 +219,8 @@ mod tests {
         }
 
         async fn is_revoked(&self, cert_hash: B256) -> Result<bool> {
-            if self.should_fail_next_call() {
+            self.call_count.fetch_add(1, Ordering::Relaxed);
+            if self.fail_next.swap(false, Ordering::Relaxed) {
                 return Err(RegistrarError::NitroVerifierCall {
                     context: "revokedCerts(0xdeadbeef)".into(),
                     source: "boom".into(),
@@ -370,28 +361,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_revocations_skips_revoke_cert_when_already_revoked() {
+    async fn submit_revocations_checks_onchain_before_sending() {
         let path_digest = path_digest_for(INTER1_INDEX);
-        let verifier = Arc::new(MockNitroVerifier::revoking(path_digest));
-        let cert_manager = test_cert_manager(Arc::clone(&verifier));
-        let instance = test_instance();
 
-        cert_manager
-            .submit_revocations_for_revoked_certs(&[revoked_cert(path_digest)], &instance)
-            .await;
-
-        assert_eq!(
-            verifier.call_count(),
-            1,
-            "CRL-hit cert should be checked onchain before deciding whether to submit revokeCert",
-        );
-        assert_eq!(cert_manager.tx_manager.send_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn submit_revocations_submits_revoke_cert_when_needed() {
-        for verifier in [MockNitroVerifier::default(), MockNitroVerifier::failing()] {
-            let path_digest = path_digest_for(INTER1_INDEX);
+        for (case, verifier, expected_send_count) in [
+            ("already revoked", MockNitroVerifier::revoking(path_digest), 0),
+            ("clean", MockNitroVerifier::default(), 1),
+            ("RPC failure", MockNitroVerifier::failing(), 1),
+        ] {
             let verifier = Arc::new(verifier);
             let cert_manager = test_cert_manager(Arc::clone(&verifier));
             let instance = test_instance();
@@ -400,8 +377,12 @@ mod tests {
                 .submit_revocations_for_revoked_certs(&[revoked_cert(path_digest)], &instance)
                 .await;
 
-            assert_eq!(verifier.call_count(), 1);
-            assert_eq!(cert_manager.tx_manager.send_count(), 1);
+            assert_eq!(verifier.call_count(), 1, "{case}: should check onchain once");
+            assert_eq!(
+                cert_manager.tx_manager.send_count(),
+                expected_send_count,
+                "{case}: unexpected revokeCert send count",
+            );
         }
     }
 }
