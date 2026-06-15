@@ -22,11 +22,7 @@ impl<N, Rpc> EthCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<BaseEthApiEvm<N, Rpc>> + From<ProviderError>,
-    Rpc: RpcConvert<
-            Primitives = N::Primitives,
-            Error = BaseEthApiError,
-            Evm = BaseEthApiEvm<N, Rpc>,
-        >,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = BaseEthApiEvm<N, Rpc>>,
 {
     fn call(
         &self,
@@ -42,11 +38,7 @@ impl<N, Rpc> EstimateCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<BaseEthApiEvm<N, Rpc>> + From<ProviderError>,
-    Rpc: RpcConvert<
-            Primitives = N::Primitives,
-            Error = BaseEthApiError,
-            Evm = BaseEthApiEvm<N, Rpc>,
-        >,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = BaseEthApiEvm<N, Rpc>>,
 {
 }
 
@@ -54,11 +46,7 @@ impl<N, Rpc> Call for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<BaseEthApiEvm<N, Rpc>> + From<ProviderError>,
-    Rpc: RpcConvert<
-            Primitives = N::Primitives,
-            Error = BaseEthApiError,
-            Evm = BaseEthApiEvm<N, Rpc>,
-        >,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = BaseEthApiEvm<N, Rpc>>,
 {
     #[inline]
     fn call_gas_limit(&self) -> u64 {
@@ -85,11 +73,7 @@ impl<N, Rpc> BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<BaseEthApiEvm<N, Rpc>> + From<ProviderError>,
-    Rpc: RpcConvert<
-            Primitives = N::Primitives,
-            Error = BaseEthApiError,
-            Evm = BaseEthApiEvm<N, Rpc>,
-        >,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = BaseEthApiEvm<N, Rpc>>,
     Self: reth_rpc_eth_api::EthApiTypes<Error = BaseEthApiError, RpcConvert = Rpc>,
     Self: LoadPendingBlock,
 {
