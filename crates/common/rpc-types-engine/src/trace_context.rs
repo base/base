@@ -18,11 +18,11 @@ impl TraceContextHeaders {
     }
 
     /// Returns true if no trace headers are present.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.traceparent.is_none() && self.tracestate.is_none()
     }
 
-    /// Captures the current OTel context into W3C headers.
+    /// Captures the current `OTel` context into W3C headers.
     #[cfg(feature = "reth")]
     pub fn from_current() -> Self {
         use opentelemetry::{Context, global, propagation::Injector};
@@ -47,7 +47,7 @@ impl TraceContextHeaders {
         headers
     }
 
-    /// Attaches these W3C headers as the current OTel parent context.
+    /// Attaches these W3C headers as the current `OTel` parent context.
     #[cfg(feature = "reth")]
     pub fn attach_as_parent(&self) -> Option<opentelemetry::ContextGuard> {
         use opentelemetry::{global, propagation::Extractor, trace::TraceContextExt};
@@ -100,7 +100,7 @@ pub trait BaseExecutionDataExt: Clone {
     /// Returns a copy of this payload with the supplied trace context attached.
     fn with_trace_context(self, trace_context: TraceContextHeaders) -> Self;
 
-    /// Captures the current OTel context and attaches it to this payload if supported.
+    /// Captures the current `OTel` context and attaches it to this payload if supported.
     #[cfg(feature = "reth")]
     fn with_current_trace_context(self) -> Self {
         self.with_trace_context(TraceContextHeaders::from_current())
