@@ -477,6 +477,7 @@ mod tests {
         keys: HashMap<Url, Vec<Vec<u8>>>,
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
+        cancel_after_public_key_success: Option<CancellationToken>,
     }
 
     impl MockSignerClient {
@@ -488,7 +489,12 @@ mod tests {
                     (url, vec![public_key_from_private(pk)])
                 })
                 .collect();
-            Self { keys, attestations: HashMap::new(), fail_attestation: HashSet::new() }
+            Self {
+                keys,
+                attestations: HashMap::new(),
+                fail_attestation: HashSet::new(),
+                cancel_after_public_key_success: None,
+            }
         }
 
         fn multi_enclave(host_port: &str, private_keys: &[&[u8; 32]]) -> Self {
@@ -497,6 +503,7 @@ mod tests {
                 keys: HashMap::from([(endpoint_url(host_port), pubs)]),
                 attestations: HashMap::new(),
                 fail_attestation: HashSet::new(),
+                cancel_after_public_key_success: None,
             }
         }
 
@@ -509,15 +516,27 @@ mod tests {
             self.fail_attestation.insert(endpoint_url(host_port));
             self
         }
+
+        fn with_cancel_after_public_key_success(mut self, cancel: CancellationToken) -> Self {
+            self.cancel_after_public_key_success = Some(cancel);
+            self
+        }
     }
 
     #[async_trait]
     impl SignerClient for MockSignerClient {
         async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
-            self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
-                instance: endpoint.to_string(),
-                source: "unreachable".into(),
-            })
+            let result =
+                self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
+                    instance: endpoint.to_string(),
+                    source: "unreachable".into(),
+                });
+            if result.is_ok() {
+                if let Some(cancel) = &self.cancel_after_public_key_success {
+                    cancel.cancel();
+                }
+            }
+            result
         }
 
         async fn signer_attestation(
@@ -736,39 +755,11 @@ mod tests {
         assert!(!resolution.ok_to_dereg, "cancellation must clear ok_to_dereg",);
     }
 
-    #[derive(Debug)]
-    struct CancellingSignerClient {
-        inner: MockSignerClient,
-        cancel: CancellationToken,
-    }
-
-    #[async_trait]
-    impl SignerClient for CancellingSignerClient {
-        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
-            let result = self.inner.signer_public_key(endpoint).await;
-            if result.is_ok() {
-                self.cancel.cancel();
-            }
-            result
-        }
-
-        async fn signer_attestation(
-            &self,
-            endpoint: &Url,
-            user_data: Option<Vec<u8>>,
-            nonce: Option<Vec<u8>>,
-        ) -> Result<Vec<Vec<u8>>> {
-            self.inner.signer_attestation(endpoint, user_data, nonce).await
-        }
-    }
-
     #[tokio::test]
     async fn discover_and_resolve_clears_ok_to_dereg_when_cancelled_mid_resolution() {
         let cancel = CancellationToken::new();
-        let signer_client = CancellingSignerClient {
-            inner: MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
-            cancel: cancel.clone(),
-        };
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)])
+            .with_cancel_after_public_key_success(cancel.clone());
         let driver = cycle_driver(vec![healthy_prover_instance(EP1)], signer_client, cancel);
 
         let resolution = driver.discover_and_resolve().await.unwrap();
