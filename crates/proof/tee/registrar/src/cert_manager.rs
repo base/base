@@ -362,8 +362,12 @@ mod tests {
         let mut config = crl_config();
         config.enabled = false;
         let verifier = Arc::new(MockNitroVerifier::default());
-        let cert_manager = CertManager::new(&config, verifier.clone(), MockTxManager::default())
-            .expect("disabled cert manager still builds");
+        let cert_manager = CertManager::new(
+            &config,
+            Arc::<MockNitroVerifier>::clone(&verifier),
+            MockTxManager::default(),
+        )
+        .expect("disabled cert manager still builds");
 
         let result =
             cert_manager.check_and_revoke_crls(b"not-an-attestation", &test_instance()).await;
