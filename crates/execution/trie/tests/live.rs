@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{BlockHeader, Header, SignableTransaction, TxEip2930, constants::ETH_TO_WEI};
+use alloy_consensus::{BlockHeader, Header, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
 use base_execution_trie::{
-    BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
+    BaseProofsStorage, BaseProofsStorageError, MdbxProofsStorage, initialize::InitializationJob,
     live::LiveTrieCollector,
 };
 use derive_more::Constructor;
@@ -17,7 +17,7 @@ use reth_ethereum_primitives::{Block, BlockBody, Receipt, Transaction, Transacti
 use reth_evm::{ConfigureEvm, execute::Executor};
 use reth_evm_ethereum::EthEvmConfig;
 use reth_node_api::{NodePrimitives, NodeTypesWithDB};
-use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
+use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
     ProviderFactory, StateRootProvider,
@@ -36,9 +36,37 @@ fn public_key_to_address(pubkey: secp256k1::PublicKey) -> Address {
 
 /// Signs a transaction with the given keypair.
 fn sign_tx_with_key_pair(key_pair: Keypair, tx: Transaction) -> TransactionSigned {
+    use alloy_consensus::SignableTransaction;
+    use reth_primitives_traits::crypto::secp256k1::sign_message;
     let secret = B256::from_slice(&key_pair.secret_bytes());
     let sig = sign_message(secret, tx.signature_hash()).unwrap();
     tx.into_signed(sig).into()
+}
+
+#[cfg(feature = "metrics")]
+fn clone_storage(
+    storage: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
+) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    storage.clone()
+}
+
+#[cfg(not(feature = "metrics"))]
+fn clone_storage(
+    storage: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
+) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    Arc::clone(storage)
+}
+
+#[cfg(feature = "metrics")]
+fn wrap_storage(storage: Arc<MdbxProofsStorage>) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    storage.into()
+}
+
+#[cfg(not(feature = "metrics"))]
+const fn wrap_storage(
+    storage: Arc<MdbxProofsStorage>,
+) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    storage
 }
 
 /// Specification for a transaction within a block
@@ -218,7 +246,7 @@ fn run_test_scenario<N>(
     provider_factory: ProviderFactory<N>,
     chain_spec: Arc<ChainSpec>,
     key_pair: Keypair,
-    storage: BaseProofsStorage<Arc<RocksdbProofsStorage>>,
+    storage: BaseProofsStorage<Arc<MdbxProofsStorage>>,
 ) -> eyre::Result<()>
 where
     N: ProviderNodeTypes<
@@ -252,7 +280,7 @@ where
     {
         let provider = provider_factory.db_ref();
         let tx = provider.tx()?;
-        let initialization_job = InitializationJob::new(storage.clone(), tx);
+        let initialization_job = InitializationJob::new(clone_storage(&storage), tx);
         initialization_job.run(last_block_number, last_block_hash)?;
     }
 
@@ -297,8 +325,7 @@ where
 #[test]
 fn test_execute_and_store_block_updates() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
 
     // Create a keypair for signing transactions
     let secp = Secp256k1::new();
@@ -324,14 +351,15 @@ fn test_execute_and_store_block_updates() {
         vec![BlockSpec::new(vec![TxSpec::transfer(recipient, U256::from(1))])],
     );
 
-    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, storage).unwrap();
+    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, wrap_storage(storage))
+        .unwrap();
 }
 
 #[test]
 fn test_execute_and_store_block_updates_missing_parent_block() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
+        wrap_storage(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -350,7 +378,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        storage.clone(),
+        clone_storage(&storage),
     )
     .unwrap();
 
@@ -384,8 +412,8 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
 #[test]
 fn test_execute_and_store_block_updates_state_root_mismatch() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
+        wrap_storage(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -407,7 +435,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        storage.clone(),
+        clone_storage(&storage),
     )
     .unwrap();
 
@@ -449,8 +477,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
 #[test]
 fn test_multiple_blocks_before_and_after_initialization() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -480,15 +507,15 @@ fn test_multiple_blocks_before_and_after_initialization() {
         ],
     );
 
-    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, storage).unwrap();
+    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, wrap_storage(storage))
+        .unwrap();
 }
 
 /// Test with blocks containing multiple transactions
 #[test]
 fn test_blocks_with_multiple_transactions() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -512,5 +539,6 @@ fn test_blocks_with_multiple_transactions() {
         ])],
     );
 
-    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, storage).unwrap();
+    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, wrap_storage(storage))
+        .unwrap();
 }
