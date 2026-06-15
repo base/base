@@ -16,7 +16,7 @@ use eyre::Result;
 use futures::StreamExt;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
-use reth_cli_commands::download::DownloadDefaults;
+use reth_cli_commands::download::{DownloadCommand, DownloadDefaults};
 use reth_node_core::{args::DatadirArgs, dirs::DataDirPath};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
@@ -31,7 +31,7 @@ use tracing::info;
 #[derive(Debug, Parser)]
 pub struct BaseDownloadCommand<C: ChainSpecParser> {
     #[command(flatten)]
-    inner: reth_cli_commands::download::DownloadCommand<C>,
+    inner: DownloadCommand<C>,
 
     /// Also download the proofs database for fault proof support.
     ///
@@ -48,9 +48,10 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
         let Self { inner, proofs } = self;
 
         let (data_dir, chain_id) = if proofs {
-            let chain = inner.chain_spec().map(|cs| cs.chain()).ok_or_else(|| {
-                eyre::eyre!("--proofs requires a resolvable chain spec (use --chain)")
-            })?;
+            let chain = inner
+                .chain_spec()
+                .ok_or_else(|| eyre::eyre!("--proofs flag is only on Base"))?
+                .chain();
             let chain_id = chain.id();
             let dir = reth_node_core::dirs::PlatformPath::<DataDirPath>::default()
                 .with_chain(chain, resolve_datadir_args(std::env::args_os()));

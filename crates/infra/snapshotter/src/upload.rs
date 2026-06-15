@@ -521,10 +521,9 @@ fn build_published_manifest(
 
     for (component_name, component) in &mut manifest.components {
         if let reth_cli_commands::download::manifest::ComponentManifest::Single(single) = component
+            && matches!(component_name.as_str(), "state" | "rocksdb_indices")
         {
-            if matches!(component_name.as_str(), "state" | "rocksdb_indices") {
-                single.file = format!("../{timestamp}/{}", single.file);
-            }
+            single.file = format!("../{timestamp}/{}", single.file);
         }
     }
 
