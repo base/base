@@ -1,6 +1,6 @@
 //! Contains the `ChannelOut` primitive for Base.
 
-use alloc::{sync::Arc, vec, vec::Vec};
+use alloc::{sync::Arc, vec};
 
 use alloy_rlp::Encodable;
 use base_common_genesis::RollupConfig;

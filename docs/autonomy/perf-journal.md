@@ -842,3 +842,40 @@ Results:
 - PR hygiene: existing open PR remains `#2409`, no new PR needed
 Next:
 - the two-factor sweep closes the additivity question; the signature-hash path is now well-characterized at the component level and shows clear independent costs for calldata, access lists, and authorization lists; future production-optimization work would need to target upstream `signature_hash()` implementations inside the alloy crate (specifically typed-tx RLP encoding or keccak buffer handling), which is outside the scope of safe in-repo changes; if this path is revisited again, shift focus to a different service hotspot area (consensus derivation, batcher encoding, or zk polling) where local code changes can produce measurable gains
+
+## 2026-06-15 11:40 UTC
+Focus: `base-batcher-encoder` redundant per-block DA backlog recalculation in `step()` loop.
+Hypothesis: `step()` recomputes `block_da_backlog_bytes(block)` for every block cursor position, duplicating an identical scan already performed in `add_block()`. Caching the per-block backlog bytes in a parallel `VecDeque<u64>` should eliminate the redundant per-step transaction-iteration cost.
+Commands:
+- added `block_backlog_bytes: VecDeque<u64>` field to `BatchEncoder`, populated in `add_block()` and consumed in `step()` instead of calling `block_da_backlog_bytes()`
+- updated `confirm()`, `reset()`, `prune_safe()`, and `Debug` impl to maintain the parallel cache
+- added `crates/batcher/encoder/benches/step_throughput.rs` with `single_batch_4096_blocks` and `span_batch_4096_blocks` Criterion benches
+- `cargo test -p base-batcher-encoder -- --nocapture` — `60 passed`
+- `cargo clippy -p base-batcher-encoder --tests --benches --no-deps -- -D warnings` — clean
+- `cargo bench -p base-batcher-encoder --bench step_throughput -- --warm-up-time 0.5 --measurement-time 1.5 --sample-size 15`
+- `cargo bench -p base-batcher-encoder --bench da_backlog -- --warm-up-time 0.5 --measurement-time 1.5 --sample-size 20`
+Results:
+- DA backlog getter remains O(1): `4096_blocks_pending` median 201.03 ps (~-2.18% vs prior run, p=0.00 < 0.05); `4096_blocks_half_encoded` median 201.87 ps (flat, p=0.89)
+- new step throughput bench results: `single_batch_4096_blocks` median ~708 ms, `span_batch_4096_blocks` median ~1570 ms
+- the step-path improvement is hard to isolate in total time because compression, channel management, and batch encoding dominate the budget; however, the eliminated per-step `block_da_backlog_bytes` call is a clear algorithmic simplification that removes O(transactions) work on every step iteration
+- created PR `#3536` (the prior run had PR `#2409` which was previously open but has since been closed/merged; no active PR existed for this branch)
+Next:
+- revisit encoder step throughput with larger block counts to amplify the per-step savings; alternatively pivot to `ChannelOut::output_frame` or `ShadowCompressor` as the next measurable encoder bottleneck given that compression dominates the step budget
+
+## 2026-06-15 15:05 UTC
+Focus: `base-batcher-encoder` step-path component splitting to quantify composition vs compression vs channel-close framing budget.
+Hypothesis: the prior end-to-end step throughput bench (~678-708ms for 4096 blocks) mixes block composition, compression/channel add_batch, and close_current_channel (flush, output_frame, and Arc-ing frames); splitting those phases should reveal whether composition or compression is the next viable micro-optimization target, or whether the channel-close path absorbs most of the budget.
+Commands:
+- added `crates/batcher/encoder/benches/step_components.rs` with three Criterion groups: `composition` (block_to_single_batch only), `add_batch` (write RLP-wrapped batches into a ShadowCompressor ChannelOut), and `full` (the combined step loop, sanity-checked against existing `step_throughput`)
+- wired `[[bench]] name = "step_components"` in `crates/batcher/encoder/Cargo.toml`
+- `cargo bench -p base-batcher-encoder --bench step_components`
+- `cargo clippy -p base-batcher-encoder --tests --benches --no-deps -- -D warnings` — clean
+- `cargo test -p base-batcher-encoder -- --nocapture` — `60 passed`
+Results:
+- composition-only (`single_4096_blocks`): median `9.52 ms` (~2.34 µs per block)
+- add_batch-only (`single_4096_batches_into_channel`): median `7.35 ms` (~1.80 µs per block)
+- combined composition + add_batch = ~16.87 ms, which is only ~2.5% of the full step loop
+- full step (`single_4096_blocks`): median `678.66 ms`, consistent with the existing `step_throughput` bench at ~682-708ms
+- interpretation: block-to-single-batch composition and per-batch compression together account for only ~2.5% of the total step budget; the remaining ~97.5% is absorbed by close_current_channel (flush, output_frame, Arc-ing frames, compression finalization) and the overall step/loop overhead; future optimization work on a per-block micro-level is unlikely to move the dial — the next meaningful gain comes from the channel-close path, specifically compression finalization and frame output during `close_current_channel`
+Next:
+- focus on `close_current_channel` internals: add a targeted bench that measures flush + output_frame + Arc-frame-creation together, then evaluate whether batched frame output, buffer recycling, or compressor finalization optimization is measurable
