@@ -222,15 +222,12 @@ where
 
     /// Recently launched unhealthy instances may still register.
     fn is_recently_launched_unhealthy(&self, instance: &ProverInstance) -> bool {
-        if instance.health_status != InstanceHealthStatus::Unhealthy {
-            return false;
-        }
-        if self.config.unhealthy_registration_window.is_zero() {
-            return false;
-        }
-        instance.launch_time.is_some_and(|lt| {
-            lt.elapsed().is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
-        })
+        instance.health_status == InstanceHealthStatus::Unhealthy
+            && !self.config.unhealthy_registration_window.is_zero()
+            && instance.launch_time.is_some_and(|lt| {
+                lt.elapsed()
+                    .is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
+            })
     }
 
     /// Returns addresses always for active signer tracking.
