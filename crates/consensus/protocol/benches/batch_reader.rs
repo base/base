@@ -29,16 +29,18 @@ const SYNTHETIC_SIGNATURE_HASH_RICH_STORAGE_KEYS_PER_ENTRY: usize = 4;
 const SYNTHETIC_SIGNATURE_HASH_RICH_AUTHORIZATION_COUNT: usize = 4;
 const LEGACY_DIMENSION_SENSITIVITY_SHAPES: [SyntheticSignatureHashShape; 2] =
     [SyntheticSignatureHashShape::Simple, SyntheticSignatureHashShape::InputHeavy];
-const ACCESS_LIST_DIMENSION_SENSITIVITY_SHAPES: [SyntheticSignatureHashShape; 3] = [
+const ACCESS_LIST_DIMENSION_SENSITIVITY_SHAPES: [SyntheticSignatureHashShape; 4] = [
     SyntheticSignatureHashShape::Simple,
     SyntheticSignatureHashShape::InputHeavy,
     SyntheticSignatureHashShape::AccessListHeavy,
+    SyntheticSignatureHashShape::InputPlusAccessList,
 ];
-const EIP7702_DIMENSION_SENSITIVITY_SHAPES: [SyntheticSignatureHashShape; 4] = [
+const EIP7702_DIMENSION_SENSITIVITY_SHAPES: [SyntheticSignatureHashShape; 5] = [
     SyntheticSignatureHashShape::Simple,
     SyntheticSignatureHashShape::InputHeavy,
     SyntheticSignatureHashShape::AccessListHeavy,
     SyntheticSignatureHashShape::AuthorizationHeavy,
+    SyntheticSignatureHashShape::InputPlusAuthorization,
 ];
 
 #[derive(Clone)]
@@ -90,6 +92,8 @@ enum SyntheticSignatureHashShape {
     InputHeavy,
     AccessListHeavy,
     AuthorizationHeavy,
+    InputPlusAccessList,
+    InputPlusAuthorization,
     Rich,
 }
 
@@ -480,6 +484,8 @@ impl SyntheticSignatureHashShape {
             Self::InputHeavy => "input_heavy",
             Self::AccessListHeavy => "access_list_heavy",
             Self::AuthorizationHeavy => "authorization_heavy",
+            Self::InputPlusAccessList => "input_plus_access_list",
+            Self::InputPlusAuthorization => "input_plus_authorization",
             Self::Rich => "rich",
         }
     }
@@ -487,25 +493,33 @@ impl SyntheticSignatureHashShape {
     const fn input_len(self) -> usize {
         match self {
             Self::Simple | Self::AccessListHeavy | Self::AuthorizationHeavy => 32,
-            Self::InputHeavy | Self::Rich => SYNTHETIC_SIGNATURE_HASH_RICH_INPUT_LEN,
+            Self::InputHeavy
+            | Self::InputPlusAccessList
+            | Self::InputPlusAuthorization
+            | Self::Rich => SYNTHETIC_SIGNATURE_HASH_RICH_INPUT_LEN,
         }
     }
 
     const fn access_list_entry_count(self) -> usize {
         match self {
-            Self::AccessListHeavy | Self::Rich => {
+            Self::AccessListHeavy | Self::InputPlusAccessList | Self::Rich => {
                 SYNTHETIC_SIGNATURE_HASH_RICH_ACCESS_LIST_ENTRY_COUNT
             }
-            Self::Simple | Self::InputHeavy | Self::AuthorizationHeavy => 0,
+            Self::Simple
+            | Self::InputHeavy
+            | Self::AuthorizationHeavy
+            | Self::InputPlusAuthorization => 0,
         }
     }
 
     const fn authorization_count(self) -> usize {
         match self {
-            Self::AuthorizationHeavy | Self::Rich => {
+            Self::AuthorizationHeavy | Self::InputPlusAuthorization | Self::Rich => {
                 SYNTHETIC_SIGNATURE_HASH_RICH_AUTHORIZATION_COUNT
             }
-            Self::Simple | Self::InputHeavy | Self::AccessListHeavy => 1,
+            Self::Simple | Self::InputHeavy | Self::AccessListHeavy | Self::InputPlusAccessList => {
+                1
+            }
         }
     }
 }
