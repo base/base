@@ -9,7 +9,7 @@ use base_prover_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Errors raised while preparing or submitting a generated proof.
 #[derive(Debug, Error)]
@@ -63,7 +63,36 @@ where
         &self,
         request: HeartbeatRequest,
     ) -> Result<HeartbeatResponse, ProverServiceClientError> {
-        self.client.heartbeat(request).await
+        let session_id = request.session_id.clone();
+        let lock_id = request.lock_id.clone();
+        let worker_id = request.worker_id.clone();
+        let lock_duration_seconds = request.lock_duration_seconds;
+
+        match self.client.heartbeat(request).await {
+            Ok(response) => {
+                debug!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    lock_duration_seconds = lock_duration_seconds,
+                    status = ?response.job.status,
+                    lock_expires_at = ?response.job.lock_expires_at,
+                    "proof job heartbeat delivered"
+                );
+                Ok(response)
+            }
+            Err(error) => {
+                warn!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    lock_duration_seconds = lock_duration_seconds,
+                    error = %error,
+                    "proof job heartbeat failed"
+                );
+                Err(error)
+            }
+        }
     }
 
     /// Submits a generated proof through the worker API once.
