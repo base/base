@@ -181,6 +181,7 @@ impl ProverRuntimeArgs {
                 genesis_l1_hash = %rpc.genesis.l1.hash,
                 genesis_l1_number = rpc.genesis.l1.number,
                 genesis_l2_hash = %rpc.genesis.l2.hash,
+                genesis_l2_number = rpc.genesis.l2.number,
                 genesis_l2_time = rpc.genesis.l2_time,
                 deposit_contract = %rpc.deposit_contract_address,
                 system_config_address = %rpc.l1_system_config_address,
