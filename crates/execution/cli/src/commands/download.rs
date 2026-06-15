@@ -4,7 +4,11 @@
 //! handles the Base-specific proofs database download separately using the
 //! same snapshot source and manifest.
 
-use std::{path::Path, sync::Arc};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use base_execution_chainspec::BaseChainSpec;
 use clap::Parser;
@@ -13,6 +17,7 @@ use futures::StreamExt;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::download::DownloadDefaults;
+use reth_node_core::args::DatadirArgs;
 use reth_node_core::dirs::DataDirPath;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
@@ -41,23 +46,22 @@ pub struct BaseDownloadCommand<C: ChainSpecParser> {
 impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
     /// Executes the download command.
     pub async fn execute<N>(self) -> Result<()> {
-        let proofs = self.proofs;
+        let Self { inner, proofs } = self;
 
         let (data_dir, chain_id) = if proofs {
-            let chain = self.inner.chain_spec().map(|cs| cs.chain()).ok_or_else(|| {
+            let chain = inner.chain_spec().map(|cs| cs.chain()).ok_or_else(|| {
                 eyre::eyre!("--proofs requires a resolvable chain spec (use --chain)")
             })?;
             let chain_id = chain.id();
-            let datadir_args = resolve_datadir_args();
             let dir = reth_node_core::dirs::PlatformPath::<DataDirPath>::default()
-                .with_chain(chain, datadir_args);
+                .with_chain(chain, resolve_datadir_args(std::env::args_os()));
             info!(target: "reth::cli", datadir = %dir.data_dir().display(), "Resolved datadir for proofs download");
             (Some(dir), Some(chain_id))
         } else {
             (None, None)
         };
 
-        self.inner.execute::<N>().await?;
+        inner.execute::<N>().await?;
 
         if let (Some(data_dir), Some(chain_id)) = (data_dir, chain_id) {
             let target_dir = data_dir.data_dir().to_path_buf();
@@ -68,37 +72,35 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
     }
 }
 
+/// Extracts `--datadir` from the current process args without doing a second
+/// permissive clap parse of the whole command.
+fn resolve_datadir_args(args: impl IntoIterator<Item = OsString>) -> DatadirArgs {
+    let mut datadir_args = DatadirArgs::default();
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else { continue };
+
+        if arg == "--datadir" {
+            if let Some(value) = args.next() {
+                datadir_args.datadir = PathBuf::from(value).into();
+            }
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("--datadir=") {
+            datadir_args.datadir = PathBuf::from(value).into();
+        }
+    }
+
+    datadir_args
+}
+
 impl<C: ChainSpecParser> BaseDownloadCommand<C> {
     /// Returns the underlying chain spec.
     pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
         self.inner.chain_spec()
     }
-}
-
-/// Re-parses `DatadirArgs` from the process CLI args so the proofs download
-/// uses the same `--datadir` the user passed to the inner download command.
-///
-/// This is necessary because `DownloadCommand`'s fields are private — we cannot
-/// read `env.datadir` directly. Clap's `ignore_errors` ensures unknown flags
-/// (which belong to the inner command) are silently skipped.
-///
-/// # Limitations
-///
-/// This approach is fragile: `ignore_errors` can silently fall back to the
-/// default datadir if arg parsing is ambiguous, and re-parsing `std::env::args()`
-/// may diverge from the inner command's parse in wrapper/subcommand scenarios.
-/// The caller logs the resolved path so operators can verify correctness.
-///
-/// The proper fix is to expose `datadir` from `DownloadCommand` upstream in reth.
-fn resolve_datadir_args() -> reth_node_core::args::DatadirArgs {
-    #[derive(clap::Parser)]
-    #[command(ignore_errors = true)]
-    struct DatadirOnly {
-        #[command(flatten)]
-        datadir: reth_node_core::args::DatadirArgs,
-    }
-
-    DatadirOnly::parse_from(std::env::args()).datadir
 }
 
 /// Metadata parsed from the manifest's `proofs` component.
@@ -203,7 +205,24 @@ impl ProofsDownloader {
         let dest_path = cache_dir.join(&entry.file_name);
         let part_path = cache_dir.join(format!("{}.part", entry.file_name));
 
-        let existing_size = tokio::fs::metadata(&part_path).await.map(|m| m.len()).unwrap_or(0);
+        let mut existing_size = tokio::fs::metadata(&part_path).await.map(|m| m.len()).unwrap_or(0);
+
+        if existing_size == entry.expected_size {
+            info!(target: "reth::cli", "Part file already matches expected size, skipping download");
+            tokio::fs::rename(&part_path, &dest_path).await?;
+            return Ok(dest_path);
+        }
+
+        if existing_size > entry.expected_size {
+            info!(
+                target: "reth::cli",
+                existing_size,
+                expected_size = entry.expected_size,
+                "Part file exceeds expected size, restarting proofs download"
+            );
+            tokio::fs::remove_file(&part_path).await.ok();
+            existing_size = 0;
+        }
 
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(30))
@@ -310,6 +329,8 @@ impl ProofsDownloader {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use axum::{
         Router,
         extract::State,
@@ -427,6 +448,35 @@ mod tests {
     fn download_without_proofs_flag() {
         let cli = TestCli::parse_from(["test"]);
         assert!(!cli.args.proofs, "--proofs should default to false");
+    }
+
+    #[test]
+    fn resolve_datadir_args_reads_explicit_flag() {
+        let datadir = resolve_datadir_args([
+            OsString::from("test"),
+            OsString::from("--datadir"),
+            OsString::from("/tmp/base-download-test"),
+        ]);
+
+        assert_eq!(
+            datadir.datadir,
+            PathBuf::from("/tmp/base-download-test").into(),
+            "resolver should read --datadir VALUE"
+        );
+    }
+
+    #[test]
+    fn resolve_datadir_args_reads_equals_syntax() {
+        let datadir = resolve_datadir_args([
+            OsString::from("test"),
+            OsString::from("--datadir=/tmp/base-download-test"),
+        ]);
+
+        assert_eq!(
+            datadir.datadir,
+            PathBuf::from("/tmp/base-download-test").into(),
+            "resolver should read --datadir=VALUE"
+        );
     }
 
     #[tokio::test]
@@ -688,6 +738,46 @@ mod tests {
         let downloaded = std::fs::read(&dest).unwrap();
 
         assert_eq!(downloaded, archive, "should discard stale .part and download fresh archive");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn download_archive_uses_completed_part_file_without_requesting_range() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"already-complete")]);
+
+        let (base_url, handle) = {
+            use axum::{Router, routing::get};
+
+            let app = Router::new().route(
+                "/proofs.tar.zst",
+                get(|| async { (StatusCode::RANGE_NOT_SATISFIABLE, Vec::<u8>::new()) }),
+            );
+
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let url = format!("http://127.0.0.1:{}", addr.port());
+            let h = tokio::spawn(async move {
+                axum::serve(listener, app).await.ok();
+            });
+            (url, h)
+        };
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let part_path = cache_dir.path().join("proofs.tar.zst.part");
+        std::fs::write(&part_path, &archive).unwrap();
+
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path()).await.unwrap();
+
+        assert_eq!(dest, cache_dir.path().join("proofs.tar.zst"));
+        assert_eq!(std::fs::read(&dest).unwrap(), archive);
+        assert!(!Path::new(&part_path).exists(), "completed .part should be renamed into place");
 
         handle.abort();
     }
