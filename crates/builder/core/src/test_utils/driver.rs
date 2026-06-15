@@ -321,7 +321,10 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     async fn fcu(&self, attribs: BasePayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
         let latest = self.latest().await?.header.hash;
         let attribs = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(latest, attribs, 3)?;
-        let response = self.engine_api.update_forkchoice(latest, latest, Some(attribs)).await?;
+        let response = self
+            .engine_api
+            .update_forkchoice(latest, latest, Some(attribs.into()))
+            .await?;
 
         Ok(response)
     }
