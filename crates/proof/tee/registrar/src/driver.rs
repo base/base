@@ -224,20 +224,7 @@ where
         Ok(())
     }
 
-    /// Returns `true` if the instance is [`InstanceHealthStatus::Unhealthy`]
-    /// and was launched within the configured
-    /// [`DriverConfig::unhealthy_registration_window`].
-    ///
-    /// New EC2 instances may fail ALB health checks while the application is
-    /// still initializing. This predicate lets the registrar attempt
-    /// registration during that warm-up period rather than waiting for the
-    /// instance to become healthy.
-    ///
-    /// Returns `false` if:
-    /// - The instance is not `Unhealthy` (other statuses have their own rules).
-    /// - The window is zero (feature disabled).
-    /// - The instance has no launch time (e.g. discovery didn't return one).
-    /// - The launch time is in the future (clock skew — treated as unknown).
+    /// Recently launched unhealthy instances may still register.
     fn is_recently_launched_unhealthy(&self, instance: &ProverInstance) -> bool {
         if instance.health_status != InstanceHealthStatus::Unhealthy {
             return false;
