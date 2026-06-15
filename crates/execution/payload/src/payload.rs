@@ -226,7 +226,7 @@ pub trait PayloadTraceContextExt: Clone {
     /// Returns a copy of these attributes with the supplied trace context attached.
     fn with_trace_context(self, trace_context: TraceContextHeaders) -> Self;
 
-    /// Captures the current OTel context and attaches it if supported.
+    /// Captures the current `OTel` context and attaches it if supported.
     fn with_current_trace_context(self) -> Self {
         self.with_trace_context(TraceContextHeaders::from_current())
     }
@@ -258,11 +258,11 @@ impl<T> BasePayloadAttributesExt<T> for BasePayloadBuilderAttributes<T>
 where
     T: Clone,
 {
-    fn payload_attributes(&self) -> &BasePayloadBuilderAttributes<T> {
+    fn payload_attributes(&self) -> &Self {
         self
     }
 
-    fn into_payload_attributes(self) -> BasePayloadBuilderAttributes<T> {
+    fn into_payload_attributes(self) -> Self {
         self
     }
 }
