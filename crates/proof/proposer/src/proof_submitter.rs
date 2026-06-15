@@ -275,7 +275,7 @@ where
         let extra_data = encode_extra_data(target_block, parent_address, &intermediate_roots);
         let existing_game = self
             .factory_client
-            .games(self.config.game_type, aggregate_proposal.output_root, extra_data)
+            .games(self.config.game_type, aggregate_proposal.output_root, extra_data.clone())
             .await
             .map_err(|e| {
                 SubmitAction::Failed(ProposerError::Contract(format!(
@@ -314,6 +314,26 @@ where
             Err(e) => {
                 if e.is_game_already_exists() {
                     drop(propose_timer);
+                    info!(target_block, "Game already exists, checking fresh state from chain");
+                    let raced_game = self
+                        .factory_client
+                        .games(self.config.game_type, aggregate_proposal.output_root, extra_data)
+                        .await
+                        .map_err(|e| {
+                            SubmitAction::Failed(ProposerError::Contract(format!(
+                                "matching game lookup after duplicate create failed: {e}"
+                            )))
+                        })?;
+                    if raced_game != Address::ZERO {
+                        return self
+                            .attach_existing_game_proof(
+                                raced_game,
+                                aggregate_proposal,
+                                target_block,
+                            )
+                            .await;
+                    }
+
                     info!(
                         target_block,
                         "Game already exists, next tick will load fresh state from chain"
@@ -546,11 +566,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{
+        collections::{HashMap, VecDeque},
+        sync::Arc,
+    };
 
+    use alloy_primitives::{Bytes, U256};
     use async_trait::async_trait;
-    use base_proof_contracts::encode_extra_data;
+    use base_proof_contracts::{ContractError, GameAtIndex, encode_extra_data};
     use base_proof_primitives::ProofResult;
+    use rstest::rstest;
 
     use super::*;
     use crate::test_utils::{
@@ -565,6 +590,7 @@ mod tests {
     struct RecordingOutputProposer {
         created: std::sync::Mutex<u32>,
         verified: std::sync::Mutex<Vec<Address>>,
+        create_error: std::sync::Mutex<Option<ProposerError>>,
         verify_error: std::sync::Mutex<Option<ProposerError>>,
     }
 
@@ -577,6 +603,9 @@ mod tests {
             _intermediate_roots: &[B256],
         ) -> Result<(), ProposerError> {
             *self.created.lock().unwrap() += 1;
+            if let Some(error) = self.create_error.lock().unwrap().take() {
+                return Err(error);
+            }
             Ok(())
         }
 
@@ -605,6 +634,14 @@ mod tests {
         factory: MockDisputeGameFactory,
         verifier: MockAggregateVerifier,
     ) -> ProofSubmitter<MockL1, MockRollupClient> {
+        submitter_with_factory(output_proposer, Arc::new(factory), verifier)
+    }
+
+    fn submitter_with_factory(
+        output_proposer: Arc<RecordingOutputProposer>,
+        factory: Arc<dyn DisputeGameFactoryClient>,
+        verifier: MockAggregateVerifier,
+    ) -> ProofSubmitter<MockL1, MockRollupClient> {
         let output_roots = HashMap::from([(TEST_BLOCK_INTERVAL, B256::repeat_byte(0x64))]);
         ProofSubmitter::new(
             output_proposer,
@@ -614,7 +651,7 @@ mod tests {
                 max_safe_block: None,
             }),
             Arc::new(MockL1 { latest_block_number: 1000 }),
-            Arc::new(factory),
+            factory,
             Arc::new(verifier),
             ProofSubmitterConfig {
                 proposer_address: Address::repeat_byte(0x04),
@@ -634,6 +671,40 @@ mod tests {
         let mut factory = MockDisputeGameFactory::with_games(vec![]);
         factory.uuid_games.insert((TEST_GAME_TYPE, root, extra_data), game_address);
         factory
+    }
+
+    #[derive(Debug)]
+    struct SequentialGameFactory {
+        responses: std::sync::Mutex<VecDeque<Address>>,
+    }
+
+    impl SequentialGameFactory {
+        fn new(responses: impl IntoIterator<Item = Address>) -> Self {
+            Self { responses: std::sync::Mutex::new(responses.into_iter().collect()) }
+        }
+    }
+
+    #[async_trait]
+    impl DisputeGameFactoryClient for SequentialGameFactory {
+        async fn game_count(&self) -> Result<u64, ContractError> {
+            Ok(0)
+        }
+
+        async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
+            Err(ContractError::Validation(format!("index {index} out of bounds")))
+        }
+
+        async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {
+            Ok(U256::ZERO)
+        }
+
+        async fn game_impls(&self, _: u32) -> Result<Address, ContractError> {
+            Ok(Address::ZERO)
+        }
+
+        async fn games(&self, _: u32, _: B256, _: Bytes) -> Result<Address, ContractError> {
+            Ok(self.responses.lock().unwrap().pop_front().unwrap_or(Address::ZERO))
+        }
     }
 
     #[tokio::test]
@@ -656,13 +727,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_treats_already_verified_attach_as_success() {
+    async fn submit_attaches_proof_after_game_already_exists_race() {
         let game_address = Address::repeat_byte(0xAA);
         let output = Arc::new(RecordingOutputProposer::default());
-        *output.verify_error.lock().unwrap() = Some(ProposerError::ProofAlreadyVerified);
-        let submitter = submitter(
+        *output.create_error.lock().unwrap() = Some(ProposerError::GameAlreadyExists);
+        let submitter = submitter_with_factory(
             Arc::clone(&output),
-            existing_game_factory(game_address),
+            Arc::new(SequentialGameFactory::new([Address::ZERO, game_address])),
             MockAggregateVerifier::default(),
         );
 
@@ -671,7 +742,7 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert_eq!(*output.created.lock().unwrap(), 1);
         assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
     }
 
@@ -693,31 +764,33 @@ mod tests {
         assert!(output.verified.lock().unwrap().is_empty());
     }
 
-    #[tokio::test]
-    async fn submit_discards_when_attach_rejects_l1_origin_too_old() {
-        let game_address = Address::repeat_byte(0xAA);
-        let output = Arc::new(RecordingOutputProposer::default());
-        *output.verify_error.lock().unwrap() = Some(ProposerError::L1OriginTooOld);
-        let submitter = submitter(
-            Arc::clone(&output),
-            existing_game_factory(game_address),
-            MockAggregateVerifier::default(),
-        );
-
-        let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
-
-        assert!(matches!(result, Err(SubmitAction::Discard(ProposerError::L1OriginTooOld))));
-        assert_eq!(*output.created.lock().unwrap(), 0);
-        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
+    #[derive(Debug, Clone, Copy)]
+    enum ExpectedAttachErrorAction {
+        Success,
+        Discard(&'static str),
     }
 
+    #[rstest]
+    #[case::already_verified(
+        ProposerError::ProofAlreadyVerified,
+        ExpectedAttachErrorAction::Success
+    )]
+    #[case::l1_origin_too_old(
+        ProposerError::L1OriginTooOld,
+        ExpectedAttachErrorAction::Discard(ProposerError::ERROR_TYPE_L1_ORIGIN_TOO_OLD)
+    )]
+    #[case::invalid_signer(
+        ProposerError::InvalidSigner,
+        ExpectedAttachErrorAction::Discard(ProposerError::ERROR_TYPE_INVALID_SIGNER)
+    )]
     #[tokio::test]
-    async fn submit_discards_when_attach_rejects_invalid_signer() {
+    async fn submit_handles_existing_game_attach_error(
+        #[case] error: ProposerError,
+        #[case] expected: ExpectedAttachErrorAction,
+    ) {
         let game_address = Address::repeat_byte(0xAA);
         let output = Arc::new(RecordingOutputProposer::default());
-        *output.verify_error.lock().unwrap() = Some(ProposerError::InvalidSigner);
+        *output.verify_error.lock().unwrap() = Some(error);
         let submitter = submitter(
             Arc::clone(&output),
             existing_game_factory(game_address),
@@ -728,7 +801,12 @@ mod tests {
             .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
-        assert!(matches!(result, Err(SubmitAction::Discard(ProposerError::InvalidSigner))));
+        match expected {
+            ExpectedAttachErrorAction::Success => assert!(result.is_ok()),
+            ExpectedAttachErrorAction::Discard(label) => assert!(
+                matches!(result, Err(SubmitAction::Discard(ref error)) if error.metric_label() == label)
+            ),
+        }
         assert_eq!(*output.created.lock().unwrap(), 0);
         assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
     }
