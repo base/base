@@ -16,7 +16,7 @@ use crate::{RegistrarError, Result};
 /// Reads the durable revocation sentinel from the onchain
 /// `NitroEnclaveVerifier`.
 #[async_trait]
-pub trait NitroVerifierClient: Send + Sync {
+pub trait NitroVerifierClient: Send + Sync + std::fmt::Debug {
     /// Returns the onchain address of the verifier this client is bound to.
     /// Used by the driver as the destination for `revokeCert` transactions.
     fn address(&self) -> Address;

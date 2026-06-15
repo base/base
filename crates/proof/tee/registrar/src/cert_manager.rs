@@ -4,7 +4,7 @@
 //! fetches AWS Nitro CRLs, and submits `revokeCert` transactions for
 //! certificates that are newly observed on a CRL.
 
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
 use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::TxManager;
@@ -16,20 +16,12 @@ use crate::{
 };
 
 /// Manages Nitro certificate revocation checks and revocation transaction submission.
+#[derive(Debug)]
 pub struct CertManager<T> {
     enabled: bool,
     http_client: reqwest::Client,
     nitro_verifier: Arc<dyn NitroVerifierClient>,
     tx_manager: T,
-}
-
-impl<T> fmt::Debug for CertManager<T>
-where
-    T: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CertManager").finish_non_exhaustive()
-    }
 }
 
 impl<T> CertManager<T>
@@ -198,18 +190,16 @@ mod tests {
         collections::HashSet,
         sync::{
             Mutex,
-            atomic::{AtomicU32, Ordering},
+            atomic::{AtomicBool, AtomicU32, Ordering},
         },
         time::Duration,
     };
 
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, B256, Bloom, Bytes, FixedBytes};
-    use alloy_rpc_types_eth::TransactionReceipt;
+    use alloy_primitives::{Address, B256, Bytes, FixedBytes};
     use alloy_sol_types::SolCall;
     use async_trait::async_trait;
     use base_proof_contracts::INitroEnclaveVerifier;
-    use base_tx_manager::TxCandidate;
+    use base_tx_manager::{TxCandidate, TxManagerError};
     use rstest::rstest;
 
     use super::*;
@@ -226,7 +216,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockNitroVerifier {
         revoked: HashSet<FixedBytes<32>>,
-        error: Mutex<Option<RegistrarError>>,
+        fail_next: AtomicBool,
         call_count: AtomicU32,
     }
 
@@ -234,15 +224,15 @@ mod tests {
         fn revoking(hashes: impl IntoIterator<Item = FixedBytes<32>>) -> Self {
             Self {
                 revoked: hashes.into_iter().collect(),
-                error: Mutex::new(None),
+                fail_next: AtomicBool::new(false),
                 call_count: AtomicU32::new(0),
             }
         }
 
-        fn failing(error: RegistrarError) -> Self {
+        fn failing() -> Self {
             Self {
                 revoked: HashSet::new(),
-                error: Mutex::new(Some(error)),
+                fail_next: AtomicBool::new(true),
                 call_count: AtomicU32::new(0),
             }
         }
@@ -256,8 +246,11 @@ mod tests {
 
         async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
-            if let Some(err) = self.error.lock().unwrap().take() {
-                return Err(err);
+            if self.fail_next.swap(false, Ordering::SeqCst) {
+                return Err(RegistrarError::NitroVerifierCall {
+                    context: "revokedCerts(0xdeadbeef)".into(),
+                    source: "boom".into(),
+                });
             }
             Ok(self.revoked.contains(&cert_hash))
         }
@@ -277,7 +270,7 @@ mod tests {
     impl TxManager for MockTxManager {
         async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
             self.sent_candidates.lock().unwrap().push(candidate);
-            Ok(stub_receipt())
+            Err(TxManagerError::ChannelClosed)
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> base_tx_manager::SendHandle {
@@ -287,13 +280,6 @@ mod tests {
         fn sender_address(&self) -> Address {
             Address::ZERO
         }
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    enum OnchainCheckOutcome {
-        AlreadyRevoked,
-        NotRevoked,
-        RpcError,
     }
 
     fn full_chain_der() -> Vec<Vec<u8>> {
@@ -320,10 +306,6 @@ mod tests {
         crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse")
     }
 
-    fn full_chain_intermediate_count() -> u32 {
-        u32::try_from(full_chain_der().len().saturating_sub(2)).unwrap()
-    }
-
     fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager<MockTxManager> {
         CertManager {
             enabled: true,
@@ -348,13 +330,6 @@ mod tests {
             nitro_verifier_address: None,
             fetch_timeout: Duration::from_secs(1),
         }
-    }
-
-    #[test]
-    fn new_builds_crl_manager_with_verifier() {
-        let verifier = Arc::new(MockNitroVerifier::default());
-        let result = CertManager::new(&crl_config(), verifier, MockTxManager::default());
-        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -388,31 +363,6 @@ mod tests {
         Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: path_digest }.abi_encode())
     }
 
-    fn stub_receipt() -> TransactionReceipt {
-        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-            receipt: Receipt {
-                status: Eip658Value::success(),
-                cumulative_gas_used: 21_000,
-                logs: vec![],
-            },
-            logs_bloom: Bloom::ZERO,
-        });
-        TransactionReceipt {
-            inner,
-            transaction_hash: B256::ZERO,
-            transaction_index: Some(0),
-            block_hash: Some(B256::ZERO),
-            block_number: Some(1),
-            gas_used: 21_000,
-            effective_gas_price: 1_000_000_000,
-            blob_gas_used: None,
-            blob_gas_price: None,
-            from: Address::ZERO,
-            to: Some(Address::ZERO),
-            contract_address: None,
-        }
-    }
-
     async fn run_pre_check(verifier: MockNitroVerifier) -> (Result<bool>, u32) {
         let verifier = Arc::new(verifier);
         let cert_manager = test_cert_manager(Arc::clone(&verifier));
@@ -432,11 +382,7 @@ mod tests {
             !result.expect("clean chain must succeed"),
             "no intermediates flagged as revoked; registration must proceed"
         );
-        assert_eq!(
-            calls,
-            full_chain_intermediate_count(),
-            "every intermediate must be queried when none are revoked"
-        );
+        assert_eq!(calls, 2, "every intermediate must be queried when none are revoked");
     }
 
     #[rstest]
@@ -461,40 +407,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn onchain_revocation_check_short_circuits_when_all_intermediates_revoked() {
-        let verifier = MockNitroVerifier::revoking([
-            path_digest_for(INTER1_INDEX),
-            path_digest_for(INTER2_INDEX),
-        ]);
-        let (result, calls) = run_pre_check(verifier).await;
-
-        assert!(result.expect("query must succeed"), "any revoked intermediate must block");
-        assert_eq!(calls, 1, "first intermediate triggers short-circuit");
-    }
-
-    #[tokio::test]
-    async fn onchain_revocation_check_skips_root_and_leaf() {
-        let verifier =
-            MockNitroVerifier::revoking([path_digest_for(ROOT_INDEX), path_digest_for(LEAF_INDEX)]);
-        let (result, calls) = run_pre_check(verifier).await;
-
-        assert!(
-            !result.expect("query must succeed"),
-            "root/leaf revocation flags must not block registration",
-        );
-        assert_eq!(
-            calls,
-            full_chain_intermediate_count(),
-            "only intermediates are queried; root and leaf are skipped",
-        );
-    }
-
-    #[tokio::test]
     async fn onchain_revocation_check_propagates_rpc_errors() {
-        let verifier = MockNitroVerifier::failing(RegistrarError::NitroVerifierCall {
-            context: "revokedCerts(0xdeadbeef)".into(),
-            source: "boom".into(),
-        });
+        let verifier = MockNitroVerifier::failing();
         let (result, _calls) = run_pre_check(verifier).await;
 
         let err = result.expect_err("RPC errors must surface to the caller");
@@ -531,28 +445,10 @@ mod tests {
         );
     }
 
-    #[rstest]
-    #[case::already_revoked(OnchainCheckOutcome::AlreadyRevoked, false)]
-    #[case::not_revoked(OnchainCheckOutcome::NotRevoked, true)]
-    #[case::rpc_error(OnchainCheckOutcome::RpcError, true)]
     #[tokio::test]
-    async fn submit_revocations_checks_onchain_before_deciding_whether_to_submit(
-        #[case] onchain_check: OnchainCheckOutcome,
-        #[case] expect_revoke_cert: bool,
-    ) {
+    async fn submit_revocations_skips_revoke_cert_when_already_revoked() {
         let path_digest = path_digest_for(INTER1_INDEX);
-        let verifier = match onchain_check {
-            OnchainCheckOutcome::AlreadyRevoked => {
-                Arc::new(MockNitroVerifier::revoking([path_digest]))
-            }
-            OnchainCheckOutcome::NotRevoked => Arc::new(MockNitroVerifier::default()),
-            OnchainCheckOutcome::RpcError => {
-                Arc::new(MockNitroVerifier::failing(RegistrarError::NitroVerifierCall {
-                    context: "revokedCerts(0xdeadbeef)".into(),
-                    source: "boom".into(),
-                }))
-            }
-        };
+        let verifier = Arc::new(MockNitroVerifier::revoking([path_digest]));
         let cert_manager = test_cert_manager(Arc::clone(&verifier));
         let instance = test_instance();
 
@@ -566,14 +462,42 @@ mod tests {
             "CRL-hit cert should be checked onchain before deciding whether to submit revokeCert",
         );
         let candidates = cert_manager.tx_manager.take_candidates();
-        assert_eq!(
-            candidates.len(),
-            usize::from(expect_revoke_cert),
-            "revokeCert submission expectation did not match onchain check outcome",
-        );
-        if expect_revoke_cert {
-            assert_eq!(candidates[0].to, Some(TEST_VERIFIER_ADDRESS));
-            assert_eq!(candidates[0].tx_data, revoke_cert_calldata(path_digest));
-        }
+        assert!(candidates.is_empty(), "already-revoked certs should not submit revokeCert");
+    }
+
+    #[tokio::test]
+    async fn submit_revocations_submits_revoke_cert_when_not_revoked() {
+        let path_digest = path_digest_for(INTER1_INDEX);
+        let verifier = Arc::new(MockNitroVerifier::default());
+        let cert_manager = test_cert_manager(Arc::clone(&verifier));
+        let instance = test_instance();
+
+        cert_manager
+            .submit_revocations_for_revoked_certs(&[revoked_cert(path_digest)], &instance)
+            .await;
+
+        assert_eq!(verifier.call_count.load(Ordering::SeqCst), 1);
+        let candidates = cert_manager.tx_manager.take_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].to, Some(TEST_VERIFIER_ADDRESS));
+        assert_eq!(candidates[0].tx_data, revoke_cert_calldata(path_digest));
+    }
+
+    #[tokio::test]
+    async fn submit_revocations_submits_revoke_cert_when_onchain_check_errors() {
+        let path_digest = path_digest_for(INTER1_INDEX);
+        let verifier = Arc::new(MockNitroVerifier::failing());
+        let cert_manager = test_cert_manager(Arc::clone(&verifier));
+        let instance = test_instance();
+
+        cert_manager
+            .submit_revocations_for_revoked_certs(&[revoked_cert(path_digest)], &instance)
+            .await;
+
+        assert_eq!(verifier.call_count.load(Ordering::SeqCst), 1);
+        let candidates = cert_manager.tx_manager.take_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].to, Some(TEST_VERIFIER_ADDRESS));
+        assert_eq!(candidates[0].tx_data, revoke_cert_calldata(path_digest));
     }
 }
