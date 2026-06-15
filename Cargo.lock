@@ -4690,6 +4690,7 @@ dependencies = [
  "secp256k1 0.30.0",
  "serde",
  "serial_test",
+ "static_assertions",
  "strum 0.27.2",
  "tempfile",
  "test-case",

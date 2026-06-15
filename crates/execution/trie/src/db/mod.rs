@@ -13,9 +13,9 @@ mod rocksdb;
 pub use rocksdb::{
     ProofWindowValue, RocksDbHistoryTable, RocksDbLatestVersionResult, RocksdbAccountCursor,
     RocksdbBatchSession, RocksdbHistoryDeleteBatch, RocksdbPreparedHistoryDeletes,
-    RocksdbPreparedPrune, RocksdbProofsCompression, RocksdbProofsStorage,
-    RocksdbProofsStorageOptions, RocksdbPrunePlan, RocksdbReadSnapshot, RocksdbReplacementState,
-    RocksdbStorageCursor, RocksdbTrieCursor, RocksdbVersionedCursor,
+    RocksdbPreparedPrune, RocksdbProofsStorage, RocksdbProofsStorageOptions, RocksdbPrunePlan,
+    RocksdbReadSnapshot, RocksdbReplacementState, RocksdbStorageCursor, RocksdbTrieCursor,
+    RocksdbVersionedCursor,
 };
 
 mod cursor;

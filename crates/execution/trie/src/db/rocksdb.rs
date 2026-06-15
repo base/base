@@ -58,15 +58,13 @@ const PACKED_NIBBLES_KEY_LEN: usize = 33;
 const BLOCK_NUMBER_KEY_LEN: usize = 8;
 const DEFAULT_BLOCK_CACHE_SIZE: usize = 1024 << 20;
 const DEFAULT_BLOCK_SIZE: usize = 16 * 1024;
-const DEFAULT_BYTES_PER_SYNC: u64 = 1_048_576;
+const DEFAULT_BYTES_PER_SYNC: u64 = 4_194_304;
 const DEFAULT_COMPACTION_READAHEAD_SIZE: usize = 0;
 const DEFAULT_DIRECT_IO_FOR_FLUSH_AND_COMPACTION: bool = true;
 const DEFAULT_LEVEL_ZERO_FILE_NUM_COMPACTION_TRIGGER: i32 = 4;
 const DEFAULT_LEVEL_ZERO_SLOWDOWN_WRITES_TRIGGER: i32 = 20;
 const DEFAULT_LEVEL_ZERO_STOP_WRITES_TRIGGER: i32 = 36;
-const DEFAULT_RATE_LIMITER_FAIRNESS: i32 = 10;
-const DEFAULT_RATE_LIMITER_REFILL_PERIOD_US: i64 = 100_000;
-const DEFAULT_MAX_BACKGROUND_JOBS: i32 = 4;
+const DEFAULT_MAX_BACKGROUND_JOBS: i32 = 8;
 const DEFAULT_MAX_SUBCOMPACTIONS: u32 = 1;
 const DEFAULT_MAX_OPEN_FILES: i32 = -1;
 const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 3;
@@ -74,36 +72,9 @@ const DEFAULT_TARGET_FILE_SIZE_BASE: u64 = 256 * 1024 * 1024;
 const DEFAULT_WRITE_BUFFER_SIZE: usize = 64 * 1024 * 1024;
 const DEFAULT_BLOOM_BITS_PER_KEY: f64 = 10.0;
 
-/// Compression policy for `RocksDB` proof-history column families.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum RocksdbProofsCompression {
-    /// Disable compression for new files.
-    None,
-    /// Use LZ4 compression for new files.
-    #[default]
-    Lz4,
-    /// Use ZSTD compression for new files.
-    Zstd,
-}
-
-impl RocksdbProofsCompression {
-    /// Returns the corresponding `RocksDB` compression type.
-    pub const fn db_compression_type(self) -> DBCompressionType {
-        match self {
-            Self::None => DBCompressionType::None,
-            Self::Lz4 => DBCompressionType::Lz4,
-            Self::Zstd => DBCompressionType::Zstd,
-        }
-    }
-}
-
 /// Options for opening [`RocksdbProofsStorage`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RocksdbProofsStorageOptions {
-    /// Compression for non-bottommost proof-history files.
-    pub compression: RocksdbProofsCompression,
-    /// Compression for bottommost proof-history files.
-    pub bottommost_compression: RocksdbProofsCompression,
     /// LRU block cache size in bytes.
     pub block_cache_size: usize,
     /// Number of bytes `RocksDB` should write before asking the OS to start syncing.
@@ -130,19 +101,11 @@ pub struct RocksdbProofsStorageOptions {
     pub target_file_size_base: u64,
     /// Whether flush and compaction files should use direct I/O.
     pub use_direct_io_for_flush_and_compaction: bool,
-    /// Optional `RocksDB` write rate limit in bytes per second.
-    pub rate_limit_bytes_per_sec: Option<i64>,
-    /// Rate limiter refill period in microseconds.
-    pub rate_limiter_refill_period_us: i64,
-    /// Rate limiter fairness.
-    pub rate_limiter_fairness: i32,
 }
 
 impl Default for RocksdbProofsStorageOptions {
     fn default() -> Self {
         Self {
-            compression: RocksdbProofsCompression::Lz4,
-            bottommost_compression: RocksdbProofsCompression::Lz4,
             block_cache_size: DEFAULT_BLOCK_CACHE_SIZE,
             bytes_per_sync: DEFAULT_BYTES_PER_SYNC,
             compaction_readahead_size: DEFAULT_COMPACTION_READAHEAD_SIZE,
@@ -156,9 +119,6 @@ impl Default for RocksdbProofsStorageOptions {
             write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
             target_file_size_base: DEFAULT_TARGET_FILE_SIZE_BASE,
             use_direct_io_for_flush_and_compaction: DEFAULT_DIRECT_IO_FOR_FLUSH_AND_COMPACTION,
-            rate_limit_bytes_per_sec: None,
-            rate_limiter_refill_period_us: DEFAULT_RATE_LIMITER_REFILL_PERIOD_US,
-            rate_limiter_fairness: DEFAULT_RATE_LIMITER_FAIRNESS,
         }
     }
 }
@@ -358,17 +318,8 @@ impl fmt::Debug for RocksdbProofsStorage {
 impl<'db> RocksdbReadSnapshot<'db> {
     /// Creates a new read snapshot wrapper for the given database.
     pub fn new(db: &'db RocksDb) -> Self {
-        Self::assert_send_sync();
-
         let snapshot = db.snapshot();
         Self { db, snapshot }
-    }
-
-    /// Asserts at compile time that the snapshot wrapper is `Send + Sync`.
-    pub const fn assert_send_sync()
-    where
-        Self: Send + Sync,
-    {
     }
 
     /// Returns a column family handle by name from this snapshot's database.
@@ -383,6 +334,8 @@ impl<'db> RocksdbReadSnapshot<'db> {
         &self.snapshot
     }
 }
+
+static_assertions::assert_impl_all!(RocksdbReadSnapshot<'static>: Send, Sync);
 
 impl fmt::Debug for RocksdbReadSnapshot<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -573,13 +526,6 @@ impl RocksdbProofsStorage {
         options.set_use_direct_io_for_flush_and_compaction(
             storage_options.use_direct_io_for_flush_and_compaction,
         );
-        if let Some(rate_limit_bytes_per_sec) = storage_options.rate_limit_bytes_per_sec {
-            options.set_ratelimiter(
-                rate_limit_bytes_per_sec,
-                storage_options.rate_limiter_refill_period_us,
-                storage_options.rate_limiter_fairness,
-            );
-        }
         options.set_wal_ttl_seconds(0);
         options.set_wal_size_limit_mb(0);
         options
@@ -644,10 +590,8 @@ impl RocksdbProofsStorage {
             options.set_compression_type(DBCompressionType::None);
             options.set_bottommost_compression_type(DBCompressionType::None);
         } else {
-            options.set_compression_type(storage_options.compression.db_compression_type());
-            options.set_bottommost_compression_type(
-                storage_options.bottommost_compression.db_compression_type(),
-            );
+            options.set_compression_type(DBCompressionType::Lz4);
+            options.set_bottommost_compression_type(DBCompressionType::Lz4);
         }
         options
     }
@@ -1317,9 +1261,10 @@ impl RocksdbProofsStorage {
         let mut hashed_acc_candidates: HashMap<B256, u64> = HashMap::default();
         let mut hashed_storage_candidates: HashMap<HashedStorageKey, u64> = HashMap::default();
 
-        for (block_number, change_set) in self
+        for result in self
             .iter_change_sets_from_snapshot(snapshot, (earliest.saturating_add(1))..=target_block)?
         {
+            let (block_number, change_set) = result?;
             for key in change_set.account_trie_keys {
                 acc_candidates
                     .entry(key)
@@ -1462,24 +1407,32 @@ impl RocksdbProofsStorage {
     pub fn iter_change_sets_from_snapshot(
         &self,
         snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
-        block_range: impl RangeBounds<u64>,
-    ) -> BaseProofsStorageResult<Vec<(u64, ChangeSet)>> {
+        block_range: impl RangeBounds<u64> + 'static,
+    ) -> BaseProofsStorageResult<impl Iterator<Item = BaseProofsStorageResult<(u64, ChangeSet)>>>
+    {
         let cf = self.cf(<BlockChangeSet as Table>::NAME)?;
         let start = range_start(&block_range);
         let start_key = encode_block_number(start);
-        let iter = snapshot.iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
-        let mut rows = Vec::new();
 
-        for item in iter {
-            let (raw_key, raw_value) = item.map_err(rocksdb_error)?;
-            let block_number = decode_block_number(&raw_key)?;
-            if !block_range.contains(&block_number) {
-                break;
-            }
-            rows.push((block_number, ChangeSet::decompress(&raw_value)?));
-        }
+        let iter = snapshot
+            .iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward))
+            .map(move |item| -> Result<Option<(u64, ChangeSet)>, BaseProofsStorageError> {
+                let (raw_key, raw_value) = item.map_err(rocksdb_error)?;
+                let block_number = decode_block_number(&raw_key)?;
+                if !block_range.contains(&block_number) {
+                    // break
+                    return Ok(None);
+                }
 
-        Ok(rows)
+                Ok(Some((block_number, ChangeSet::decompress(&raw_value)?)))
+            })
+            .map_while(|item| match item {
+                Err(e) => Some(Err(e)),
+                Ok(None) => None,
+                Ok(Some(item)) => Some(Ok(item)),
+            });
+
+        Ok(iter)
     }
 
     /// Prepares a prune batch for advancing the earliest retained block.
