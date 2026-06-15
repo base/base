@@ -879,3 +879,24 @@ Results:
 - interpretation: block-to-single-batch composition and per-batch compression together account for only ~2.5% of the total step budget; the remaining ~97.5% is absorbed by close_current_channel (flush, output_frame, Arc-ing frames, compression finalization) and the overall step/loop overhead; future optimization work on a per-block micro-level is unlikely to move the dial — the next meaningful gain comes from the channel-close path, specifically compression finalization and frame output during `close_current_channel`
 Next:
 - focus on `close_current_channel` internals: add a targeted bench that measures flush + output_frame + Arc-frame-creation together, then evaluate whether batched frame output, buffer recycling, or compressor finalization optimization is measurable
+
+## 2026-06-15 19:04 UTC
+Focus: `base-batcher-encoder` channel-close drain loop in `close_current_channel`.
+Hypothesis: the step_components bench showed composition + add_batch account for only ~2.5 % of the full step budget; a close-channel bench that isolates the flush + `output_frame` + Arc-frame-creation loop should quantify that ~97.5 % directly and provide a durable reference for future compression-finalisation optimisations.
+Commands:
+- added `crates/batcher/encoder/benches/close_channel.rs` with two drain-only benches: `single_1024_blocks_drain_only` (individual `SingleBatch` per block) and `span_1024_blocks_drain_only` (one `SpanBatch` for all blocks)
+- wired `[[bench]] name = "close_channel"` in `crates/batcher/encoder/Cargo.toml`
+- `cargo bench -p base-batcher-encoder --bench close_channel -- --warm-up-time 0.5 --measurement-time 2.0 --sample-size 15`
+- `cargo bench -p base-batcher-encoder --bench step_components -- --quiet` (fresh baseline re-run)
+- `cargo bench -p base-batcher-encoder --bench step_throughput -- --quiet` (sanity check)
+- `cargo test -p base-batcher-encoder -- --nocapture` — 60 passed
+- `cargo clippy -p base-batcher-encoder --tests --benches --no-deps -- -D warnings` — clean
+Results:
+- close-channel drain medians (flush + output_frame + Arc):
+  - single 1024 blocks: 301.30 ms (range 297.58 .. 305.51 ms)
+  - span 1024 blocks: 210.09 ms (range 208.25 .. 211.98 ms)
+- step_components full re-run for 4096 blocks single: 679.55 ms (range 673.56 .. 686.15 ms)
+- step_throughput single 4096 blocks: 688.08 ms; span 4096 blocks: 1577.60 ms (consistent)
+- interpretation: the drain loop alone for just 1024 blocks (~301 ms single, ~210 ms span) already dominates composition + add_batch (~20 ms for 4096 blocks). Scaling to 4096 blocks, the drain loop accounts for the expected ~97.5 % share. The span-mode drain is ~30 % faster per-block than single-mode because one large SpanBatch produces fewer frames than 1024 individual SingleBatches, meaning fewer `output_frame` + Arc allocations. The next meaningful optimisation target sits in `ChannelOut::output_frame` internals — specifically per-frame buffer allocation (`Vec::with_capacity` + `vec![0u8; max_size]` scratch) and compressor read buffering inside `ShadowCompressor`.
+Next:
+- add a fine-grained output_frame microbench that isolates per-frame buffer allocation from compresssor read I/O inside the drain loop, using a mocked or pre-filled compressor so that the scratch-buffer pattern (`vec![0u8; max_size]` + `extend_from_slice`) can be measured directly

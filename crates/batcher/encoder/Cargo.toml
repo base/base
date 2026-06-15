@@ -42,6 +42,10 @@ harness = false
 name = "step_components"
 harness = false
 
+[[bench]]
+name = "close_channel"
+harness = false
+
 [features]
 clap = [ "dep:clap" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
