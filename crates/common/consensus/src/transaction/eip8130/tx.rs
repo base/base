@@ -306,13 +306,13 @@ fn encode_compact_tail(tx: &TxEip8130) -> Vec<u8> {
     let mut calls = Vec::with_capacity(TxEip8130::calls_encoded_length(&tx.calls));
     TxEip8130::encode_calls(&tx.calls, &mut calls);
 
-    let account_changes = alloy_rlp::encode(&tx.account_changes);
-    let tail_payload_length =
-        Bytes::from(account_changes.clone()).length() + Bytes::from(calls.clone()).length();
+    let account_changes = Bytes::from(alloy_rlp::encode(&tx.account_changes));
+    let calls = Bytes::from(calls);
+    let tail_payload_length = account_changes.length() + calls.length();
     let mut tail = Vec::with_capacity(length_of_length(tail_payload_length) + tail_payload_length);
     Header { list: true, payload_length: tail_payload_length }.encode(&mut tail);
-    Bytes::from(account_changes).encode(&mut tail);
-    Bytes::from(calls).encode(&mut tail);
+    account_changes.encode(&mut tail);
+    calls.encode(&mut tail);
     tail
 }
 
