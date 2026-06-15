@@ -73,17 +73,24 @@ impl Scope {
 }
 
 /// Initial actor installed on a newly-created account.
+///
+/// Per [EIP-8130], a create entry's initial actors are `[actorId, authenticator]`
+/// tuples, always registered as unrestricted owners (`scope = 0x00`, no expiry,
+/// no policy). Scope, expiry, and policy are deliberately not expressible here
+/// and default to their zero values; restricted keys are added afterwards via a
+/// [`ConfigChange`]. The field order matches the wire encoding and the
+/// address-derivation commitment (`actorId || authenticator`).
+///
+/// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct InitialActor {
+    /// Actor identifier (the authenticator-derived `actorId`).
+    pub actor_id: B256,
     /// Address of the authenticator contract (e.g. an ERC-1271 authenticator).
     pub authenticator: Address,
-    /// Actor identifier passed to the authenticator.
-    pub actor_id: B256,
-    /// Scope bitmask granted to this actor.
-    pub scope: Scope,
 }
 
 /// Operation performed by an [`ActorChange`] inside a [`ConfigChange`].
@@ -117,6 +124,16 @@ impl ActorChangeType {
 }
 
 /// A single actor authorization or revocation inside a [`ConfigChange`].
+///
+/// Per [EIP-8130], `data` is the operation-specific, contract-ABI-encoded blob:
+/// `abi.encode(ActorConfig, bytes policyData)` for an `Authorize` (carrying the
+/// new actor's authenticator, scope, expiry, policy type, and policy data), and
+/// empty for a `Revoke`. It is opaque at this layer — decoded only where the
+/// change is applied (native authorization or `applySignedActorChanges`) — and
+/// is the value hashed (`keccak256(data)`) in the config-change signature
+/// payload, so the same blob is interpreted identically on every path.
+///
+/// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -124,20 +141,15 @@ impl ActorChangeType {
 pub struct ActorChange {
     /// Operation (authorize / revoke).
     pub change_type: ActorChangeType,
-    /// Authenticator contract address.
-    pub authenticator: Address,
     /// Actor identifier.
     pub actor_id: B256,
-    /// Scope bitmask (relevant for `Authorize`; ignored on `Revoke`).
-    pub scope: Scope,
+    /// Operation-specific ABI-encoded data (opaque at this layer).
+    pub data: Bytes,
 }
 
 impl ActorChange {
     fn rlp_fields_len(&self) -> usize {
-        self.change_type.op_byte().length()
-            + self.authenticator.length()
-            + self.actor_id.length()
-            + self.scope.length()
+        self.change_type.op_byte().length() + self.actor_id.length() + self.data.length()
     }
 }
 
@@ -147,9 +159,8 @@ impl Encodable for ActorChange {
         let header = Header { list: true, payload_length: fields_len };
         header.encode(out);
         self.change_type.op_byte().encode(out);
-        self.authenticator.encode(out);
         self.actor_id.encode(out);
-        self.scope.encode(out);
+        self.data.encode(out);
     }
 
     fn length(&self) -> usize {
@@ -168,9 +179,8 @@ impl Decodable for ActorChange {
         let op = u8::decode(buf)?;
         let change_type = ActorChangeType::from_op_byte(op)
             .ok_or(alloy_rlp::Error::Custom("invalid ActorChange op byte"))?;
-        let authenticator = Address::decode(buf)?;
         let actor_id = B256::decode(buf)?;
-        let scope = Scope::decode(buf)?;
+        let data = Bytes::decode(buf)?;
         let consumed = started_len - buf.len();
         if consumed != header.payload_length {
             return Err(alloy_rlp::Error::ListLengthMismatch {
@@ -178,7 +188,7 @@ impl Decodable for ActorChange {
                 got: consumed,
             });
         }
-        Ok(Self { change_type, authenticator, actor_id, scope })
+        Ok(Self { change_type, actor_id, data })
     }
 }
 
@@ -333,9 +343,8 @@ mod tests {
     fn actor_change_rlp_roundtrip() {
         let oc = ActorChange {
             change_type: ActorChangeType::Authorize,
-            authenticator: address!("0x00000000000000000000000000000000000000aa"),
             actor_id: b256!("0x1111111111111111111111111111111111111111111111111111111111111111"),
-            scope: Scope(Eip8130Constants::SCOPE_SIGNATURE | Eip8130Constants::SCOPE_SENDER),
+            data: bytes!("00000000000000000000000000000000000000000000000000000000000000aa"),
         };
         let mut buf = Vec::new();
         oc.encode(&mut buf);
@@ -350,11 +359,10 @@ mod tests {
             user_salt: b256!("0x2222222222222222222222222222222222222222222222222222222222222222"),
             code: bytes!("6080604052"),
             initial_actors: vec![InitialActor {
-                authenticator: address!("0x00000000000000000000000000000000000000bb"),
                 actor_id: b256!(
                     "0x3333333333333333333333333333333333333333333333333333333333333333"
                 ),
-                scope: Scope(Eip8130Constants::SCOPE_SIGNATURE),
+                authenticator: address!("0x00000000000000000000000000000000000000bb"),
             }],
         });
         let mut buf = Vec::new();
@@ -372,11 +380,10 @@ mod tests {
             sequence: 7,
             actor_changes: vec![ActorChange {
                 change_type: ActorChangeType::Revoke,
-                authenticator: address!("0x00000000000000000000000000000000000000cc"),
                 actor_id: b256!(
                     "0x4444444444444444444444444444444444444444444444444444444444444444"
                 ),
-                scope: Scope::UNRESTRICTED,
+                data: Bytes::new(),
             }],
             auth: bytes!("aabbcc"),
         });

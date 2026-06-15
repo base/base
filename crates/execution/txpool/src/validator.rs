@@ -8,9 +8,11 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use base_common_chains::Upgrades;
-use base_common_consensus::{AccountChange, Eip8130Constants, Eip8130Signed};
+use base_common_consensus::{
+    AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Signed, InitialActor,
+};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use parking_lot::RwLock;
@@ -330,9 +332,7 @@ where
                     if create.code.is_empty() || create.initial_actors.is_empty() {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    Self::validate_actor_iter(&create.initial_actors, |o| {
-                        (&o.authenticator, &o.actor_id)
-                    })?;
+                    Self::validate_initial_actors(&create.initial_actors)?;
                 }
                 AccountChange::ConfigChange(cfg) => {
                     config_count += 1;
@@ -349,9 +349,7 @@ where
                     if Self::authenticator_out_of_range(&cfg_authenticator) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    Self::validate_actor_iter(&cfg.actor_changes, |o| {
-                        (&o.authenticator, &o.actor_id)
-                    })?;
+                    Self::validate_actor_changes(&cfg.actor_changes)?;
                 }
                 AccountChange::Delegation(_) => {
                     delegation_count += 1;
@@ -364,27 +362,57 @@ where
         Ok(())
     }
 
-    /// Shared validation for any actor-bearing slice (`initial_actors` on
-    /// `Create`, `actor_changes` on `ConfigChange`). Enforces that the slice
-    /// length is bounded by [`Eip8130Constants::MAX_ACTORS_PER_ENTRY`] (anti-DoS
-    /// cap on memory + work spent on duplicate detection), that every authenticator
-    /// address is at or above the `ECRECOVER_AUTHENTICATOR` floor, never equals the
-    /// `REVOKED_AUTHENTICATOR` sentinel, and that no two entries share the same
-    /// `actor_id`.
-    fn validate_actor_iter<T>(
-        actors: &[T],
-        project: impl Fn(&T) -> (&Address, &B256),
-    ) -> Result<(), InvalidPoolTransactionError> {
+    /// Validates `Create.initial_actors`: the slice length is bounded by
+    /// [`Eip8130Constants::MAX_ACTORS_PER_ENTRY`] (anti-DoS cap on memory + work
+    /// spent on duplicate detection), every `authenticator` is at or above the
+    /// `ECRECOVER_AUTHENTICATOR` floor and never the `REVOKED_AUTHENTICATOR`
+    /// sentinel, and no two entries share the same `actor_id`.
+    fn validate_initial_actors(actors: &[InitialActor]) -> Result<(), InvalidPoolTransactionError> {
         if actors.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let mut seen = BTreeSet::new();
-        for entry in actors {
-            let (authenticator, actor_id) = project(entry);
-            if Self::authenticator_out_of_range(authenticator) {
+        for actor in actors {
+            if Self::authenticator_out_of_range(&actor.authenticator) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
-            if !seen.insert(*actor_id) {
+            if !seen.insert(actor.actor_id) {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates `ConfigChange.actor_changes`: the same length cap and
+    /// `actor_id`-uniqueness rules as [`Self::validate_initial_actors`], plus the
+    /// reserved/`REVOKED` authenticator bound for the *new* actor of each
+    /// `Authorize`. The authenticator lives in the ABI-encoded `data`
+    /// (`abi.encode(ActorConfig, bytes)`), where `ActorConfig.authenticator` is
+    /// the right-aligned address in the first 32-byte word, so it is read from
+    /// `data[12..32]` without a full decode; the remaining structure is validated
+    /// where the change is applied. A `Revoke` carries empty `data` and names no
+    /// authenticator, so only the cap and uniqueness apply.
+    ///
+    /// Per EIP-8130 a config change MAY authorize a non-canonical authenticator
+    /// (for in-EVM use such as recovery keys); only the reserved window
+    /// (`< ECRECOVER_AUTHENTICATOR`) and the `REVOKED_AUTHENTICATOR` sentinel are
+    /// rejected here, matching the bound applied to the other auth surfaces.
+    fn validate_actor_changes(changes: &[ActorChange]) -> Result<(), InvalidPoolTransactionError> {
+        if changes.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
+        let mut seen = BTreeSet::new();
+        for change in changes {
+            if change.change_type == ActorChangeType::Authorize {
+                if change.data.len() < 32 {
+                    return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                }
+                let authenticator = Address::from_slice(&change.data[12..32]);
+                if Self::authenticator_out_of_range(&authenticator) {
+                    return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                }
+            }
+            if !seen.insert(change.actor_id) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
         }
@@ -507,7 +535,7 @@ mod tests {
     use base_common_consensus::{
         AccountChange, ActorChange, ActorChangeType, BasePrimitives, BaseTransactionSigned,
         BaseTxEnvelope, ConfigChange, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed,
-        InitialActor, Scope, TxDeposit, TxEip8130,
+        InitialActor, TxDeposit, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
@@ -858,10 +886,18 @@ mod tests {
 
     fn make_initial_actor(actor_id_byte: u8) -> InitialActor {
         InitialActor {
-            authenticator: ok_authenticator(),
             actor_id: B256::repeat_byte(actor_id_byte),
-            scope: Scope::UNRESTRICTED,
+            authenticator: ok_authenticator(),
         }
+    }
+
+    /// Builds an `Authorize` actor-change whose ABI-encoded `data` carries
+    /// `authenticator` in the first word (`ActorConfig.authenticator`), matching
+    /// the layout the validator reads from `data[12..32]`.
+    fn make_authorize_change(actor_id: B256, authenticator: Address) -> ActorChange {
+        let mut data = vec![0u8; 160];
+        data[12..32].copy_from_slice(authenticator.as_slice());
+        ActorChange { change_type: ActorChangeType::Authorize, actor_id, data: Bytes::from(data) }
     }
 
     fn make_valid_create_entry() -> CreateEntry {
@@ -1064,15 +1100,16 @@ mod tests {
         ));
     }
 
+    // An `Authorize` change must not register a new actor against the
+    // `REVOKED_AUTHENTICATOR` sentinel; the authenticator is read from the
+    // leading word of the ABI-encoded `data`.
     #[test]
     fn rejects_eip8130_config_change_with_revoked_authenticator_in_actor_changes() {
         let cfg = ConfigChange {
-            actor_changes: vec![ActorChange {
-                change_type: ActorChangeType::Revoke,
-                authenticator: Eip8130Constants::REVOKED_AUTHENTICATOR,
-                actor_id: B256::repeat_byte(0x01),
-                scope: Scope::UNRESTRICTED,
-            }],
+            actor_changes: vec![make_authorize_change(
+                B256::repeat_byte(0x01),
+                Eip8130Constants::REVOKED_AUTHENTICATOR,
+            )],
             ..make_valid_config_change()
         };
         let tx = TxEip8130 {
@@ -1088,14 +1125,11 @@ mod tests {
     #[test]
     fn rejects_eip8130_config_change_with_duplicate_actor_ids() {
         let dup_id = B256::repeat_byte(0x07);
-        let mk = |id| ActorChange {
-            change_type: ActorChangeType::Authorize,
-            authenticator: ok_authenticator(),
-            actor_id: id,
-            scope: Scope::UNRESTRICTED,
-        };
         let cfg = ConfigChange {
-            actor_changes: vec![mk(dup_id), mk(dup_id)],
+            actor_changes: vec![
+                make_authorize_change(dup_id, ok_authenticator()),
+                make_authorize_change(dup_id, ok_authenticator()),
+            ],
             ..make_valid_config_change()
         };
         let tx = TxEip8130 {
@@ -1111,12 +1145,7 @@ mod tests {
     #[test]
     fn rejects_eip8130_config_change_with_too_many_actor_changes() {
         let actor_changes = (0..(Eip8130Constants::MAX_ACTORS_PER_ENTRY + 1))
-            .map(|i| ActorChange {
-                change_type: ActorChangeType::Authorize,
-                authenticator: ok_authenticator(),
-                actor_id: B256::repeat_byte(i as u8),
-                scope: Scope::UNRESTRICTED,
-            })
+            .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
             .collect();
         let cfg = ConfigChange { actor_changes, ..make_valid_config_change() };
         let tx = TxEip8130 {
