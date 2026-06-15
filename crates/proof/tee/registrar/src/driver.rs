@@ -149,11 +149,7 @@ where
     }
 
     /// Runs the registration loop until cancelled.
-    pub async fn run(self) -> Result<()> {
-        self.run_loop().await
-    }
-
-    async fn run_loop(&self) -> Result<()> {
+    pub async fn run(&self) -> Result<()> {
         info!(
             poll_interval = ?self.config.poll_interval,
             registry = %self.config.signer_manager.registry_address,
@@ -647,7 +643,7 @@ mod tests {
     const FAST_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
     #[tokio::test]
-    async fn run_loop_uses_injected_signer_manager_boundary() {
+    async fn run_uses_injected_signer_manager_boundary() {
         let cancel = CancellationToken::new();
         let mut config = default_config(cancel.clone());
         config.poll_interval = FAST_POLL_INTERVAL;
@@ -665,7 +661,7 @@ mod tests {
             signer_manager,
         );
 
-        driver.run_loop().await.expect("driver exits after mock orphan pass cancels");
+        driver.run().await.expect("driver exits after mock orphan pass cancels");
 
         assert_eq!(
             signer_manager_handle.reconcile_count(),
