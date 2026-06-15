@@ -459,7 +459,7 @@ impl ConductorStatusJson {
             .iter()
             .map(|node| {
                 let status = snapshot.statuses.iter().find(|status| status.name == node.name);
-                ConductorNodeJson::from_node_status(node, status)
+                ConductorNodeJson::from_node_status(node, status, snapshot.discovered)
             })
             .collect::<Vec<_>>();
         let leader =
@@ -517,7 +517,11 @@ struct ConductorNodeJson {
 }
 
 impl ConductorNodeJson {
-    fn from_node_status(node: &ConductorNodeConfig, status: Option<&ConductorNodeStatus>) -> Self {
+    fn from_node_status(
+        node: &ConductorNodeConfig,
+        status: Option<&ConductorNodeStatus>,
+        discovered: bool,
+    ) -> Self {
         Self {
             name: node.name.clone(),
             server_id: node.server_id.clone(),
@@ -547,7 +551,7 @@ impl ConductorNodeJson {
             suffrage: status.and_then(|status| {
                 status.suffrage.map(|suffrage| format!("{suffrage:?}").to_ascii_lowercase())
             }),
-            discovered: status.is_some_and(|status| status.discovered),
+            discovered,
         }
     }
 
@@ -743,12 +747,28 @@ mod tests {
         node_status.sequencer_active = Some(true);
 
         let compact =
-            ConductorNodeJson::from_node_status(&node, Some(&node_status)).compact_status();
+            ConductorNodeJson::from_node_status(&node, Some(&node_status), false).compact_status();
 
         assert!(compact.contains("conductor_active=false"));
         assert!(compact.contains("conductor_paused=true"));
         assert!(compact.contains("sequencer_active=true"));
         assert!(compact.contains("sequencer_healthy=true"));
+    }
+
+    #[test]
+    fn status_json_preserves_discovered_provenance_for_offline_nodes() {
+        let snapshot = ConductorClusterSnapshot {
+            nodes: vec![node("op-conductor-0")],
+            statuses: Vec::new(),
+            membership: None,
+            membership_error: None,
+            discovered: true,
+        };
+
+        let value =
+            serde_json::to_value(ConductorStatusJson::from_snapshot("devnet", &snapshot)).unwrap();
+
+        assert_eq!(value["nodes"][0]["discovered"], true);
     }
 
     #[test]

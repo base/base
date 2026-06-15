@@ -16,7 +16,7 @@ use basectl_cli::{
 };
 use serde::Serialize;
 use tokio::time::{Instant, sleep, timeout};
-use tracing::warn;
+use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{
@@ -47,8 +47,21 @@ async fn run_status(
     source: ConductorSource,
     args: SequencerStatusArgs,
 ) -> Result<()> {
+    info!(
+        network = %config.name,
+        selected_node = %args.node.as_deref().unwrap_or("all"),
+        "fetching sequencer status"
+    );
     let snapshot = ConductorControl::snapshot(source).await?;
     let status = SequencerStatusJson::from_snapshot(&config.name, &snapshot, args.node.as_deref())?;
+    debug!(
+        network = %config.name,
+        leader = ?status.leader,
+        node_count = status.nodes.len(),
+        membership_version = ?status.membership_version,
+        membership_error = ?status.membership_error,
+        "sequencer status snapshot ready"
+    );
     if args.json {
         JsonOutput::print(&status)?;
     } else {
@@ -62,10 +75,31 @@ async fn run_start(
     source: ConductorSource,
     args: SequencerStartArgs,
 ) -> Result<()> {
+    info!(
+        network = %config.name,
+        requested_node = %args.node,
+        requested_unsafe_head = ?args.unsafe_head,
+        "running sequencer start command"
+    );
     let snapshot = ConductorControl::snapshot(source.clone()).await?;
     let node = find_node(&snapshot.nodes, &args.node)?;
     let status = snapshot_node_status(&snapshot, &node.name);
-    ensure_start_allowed(&snapshot, node, status)?;
+    debug!(
+        node = %node.name,
+        cl_rpc = %node.cl_rpc,
+        conductor_leader = ?status.and_then(|status| status.is_leader),
+        sequencer_active = ?status.and_then(|status| status.sequencer_active),
+        "resolved sequencer start target"
+    );
+    if let Err(error) = ensure_start_allowed(&snapshot, node, status) {
+        warn!(
+            error = %error,
+            node = %node.name,
+            cl_rpc = %node.cl_rpc,
+            "sequencer start preflight failed"
+        );
+        return Err(error);
+    }
     if snapshot.statuses.iter().all(|status| status.is_leader != Some(true))
         && status.and_then(|status| status.is_leader).is_none()
     {
@@ -76,18 +110,58 @@ async fn run_start(
         );
     }
     let (unsafe_head, unsafe_head_source) =
-        resolve_start_hash(&snapshot, node, args.unsafe_head.as_deref())?;
-    ensure_start_request_matches_observed_head(status, unsafe_head, unsafe_head_source)?;
+        match resolve_start_hash(&snapshot, node, args.unsafe_head.as_deref()) {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    node = %node.name,
+                    cl_rpc = %node.cl_rpc,
+                    "failed to resolve sequencer start unsafe head"
+                );
+                return Err(error);
+            }
+        };
+    if let Err(error) =
+        ensure_start_request_matches_observed_head(status, unsafe_head, unsafe_head_source)
+    {
+        warn!(
+            error = %error,
+            node = %node.name,
+            cl_rpc = %node.cl_rpc,
+            unsafe_head = %unsafe_head,
+            unsafe_head_source = %unsafe_head_source.as_str(),
+            "sequencer start unsafe head validation failed"
+        );
+        return Err(error);
+    }
     let prompt =
         format!("Start sequencer on {} ({}) at {}? [y/N] ", node.name, node.cl_rpc, unsafe_head);
     if !confirm_or_abort(&prompt, args.yes)? {
+        debug!(node = %node.name, cl_rpc = %node.cl_rpc, "sequencer start confirmation declined");
         return Ok(());
     }
 
+    info!(
+        network = %config.name,
+        node = %node.name,
+        cl_rpc = %node.cl_rpc,
+        unsafe_head = %unsafe_head,
+        unsafe_head_source = %unsafe_head_source.as_str(),
+        "calling admin_startSequencer"
+    );
     start_sequencer(&node.cl_rpc, unsafe_head)
         .await
         .with_context(|| format!("starting sequencer on {} via {}", node.name, node.cl_rpc))?;
     wait_for_expected_state(node, SequencerAction::Start, Some(unsafe_head)).await?;
+    info!(
+        network = %config.name,
+        node = %node.name,
+        cl_rpc = %node.cl_rpc,
+        unsafe_head = %unsafe_head,
+        unsafe_head_source = %unsafe_head_source.as_str(),
+        "sequencer start completed"
+    );
 
     let message = format!("sequencer started on {} at {}", node.name, unsafe_head);
     print_action(
@@ -101,19 +175,53 @@ async fn run_stop(
     source: ConductorSource,
     args: SequencerNodeActionArgs,
 ) -> Result<()> {
+    info!(
+        network = %config.name,
+        requested_node = %args.node,
+        "running sequencer stop command"
+    );
     let snapshot = ConductorControl::snapshot(source).await?;
     let node = find_node(&snapshot.nodes, &args.node)?;
     let status = snapshot_node_status(&snapshot, &node.name);
-    ensure_stop_allowed(node, status)?;
+    debug!(
+        node = %node.name,
+        cl_rpc = %node.cl_rpc,
+        conductor_leader = ?status.and_then(|status| status.is_leader),
+        sequencer_active = ?status.and_then(|status| status.sequencer_active),
+        "resolved sequencer stop target"
+    );
+    if let Err(error) = ensure_stop_allowed(node, status) {
+        warn!(
+            error = %error,
+            node = %node.name,
+            cl_rpc = %node.cl_rpc,
+            "sequencer stop preflight failed"
+        );
+        return Err(error);
+    }
     let prompt = format!("Stop sequencer on {} ({})? [y/N] ", node.name, node.cl_rpc);
     if !confirm_or_abort(&prompt, args.yes)? {
+        debug!(node = %node.name, cl_rpc = %node.cl_rpc, "sequencer stop confirmation declined");
         return Ok(());
     }
 
+    info!(
+        network = %config.name,
+        node = %node.name,
+        cl_rpc = %node.cl_rpc,
+        "calling admin_stopSequencer"
+    );
     let unsafe_head = stop_sequencer(&node.cl_rpc)
         .await
         .with_context(|| format!("stopping sequencer on {} via {}", node.name, node.cl_rpc))?;
     wait_for_expected_state(node, SequencerAction::Stop, Some(unsafe_head)).await?;
+    info!(
+        network = %config.name,
+        node = %node.name,
+        cl_rpc = %node.cl_rpc,
+        unsafe_head = %unsafe_head,
+        "sequencer stop completed"
+    );
 
     let message = format!("sequencer stopped on {} at {}", node.name, unsafe_head);
     print_action(&SequencerActionJson::stop(&config.name, node, unsafe_head, message), args.json)
@@ -299,6 +407,16 @@ where
     let mut last_observed = None;
     let mut last_error = None;
 
+    debug!(
+        node = %node.name,
+        cl_rpc = %node.cl_rpc,
+        action = %action.infinitive(),
+        expected_active,
+        observation_timeout_ms = observation_timeout.as_millis() as u64,
+        poll_interval_ms = poll_interval.as_millis() as u64,
+        "waiting for sequencer state convergence"
+    );
+
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
@@ -311,9 +429,26 @@ where
                 if last_error.is_some() {
                     last_error = None;
                 }
+                debug!(
+                    node = %node.name,
+                    cl_rpc = %node.cl_rpc,
+                    action = %action.infinitive(),
+                    observed_active = is_active,
+                    matching_observations,
+                    required_observations = REQUIRED_OBSERVATIONS,
+                    "observed sequencer state"
+                );
                 if is_active == expected_active {
                     matching_observations += 1;
                     if matching_observations >= REQUIRED_OBSERVATIONS {
+                        info!(
+                            node = %node.name,
+                            cl_rpc = %node.cl_rpc,
+                            action = %action.infinitive(),
+                            expected_active,
+                            matching_observations,
+                            "sequencer state converged"
+                        );
                         return Ok(());
                     }
                 } else {
@@ -322,9 +457,22 @@ where
             }
             Ok(Err(error)) => {
                 matching_observations = 0;
+                debug!(
+                    error = %error,
+                    node = %node.name,
+                    cl_rpc = %node.cl_rpc,
+                    action = %action.infinitive(),
+                    "failed to poll sequencer state"
+                );
                 last_error = Some(error.to_string());
             }
             Err(_) => {
+                debug!(
+                    node = %node.name,
+                    cl_rpc = %node.cl_rpc,
+                    action = %action.infinitive(),
+                    "timed out waiting for sequencer state poll"
+                );
                 last_error = Some("timed out waiting for admin_sequencerActive".to_string());
                 break;
             }
@@ -337,6 +485,16 @@ where
         sleep(sleep_for).await;
     }
 
+    warn!(
+        node = %node.name,
+        cl_rpc = %node.cl_rpc,
+        action = %action.infinitive(),
+        expected_active,
+        unsafe_head = ?unsafe_head,
+        last_observed,
+        last_error = ?last_error,
+        "sequencer state did not converge after successful RPC"
+    );
     bail!(action.timeout_message(node, unsafe_head, last_observed, last_error.as_deref()))
 }
 
@@ -434,6 +592,15 @@ enum UnsafeHeadSource {
     Observed,
 }
 
+impl UnsafeHeadSource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::Observed => "observed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SequencerActionJson {
@@ -511,7 +678,7 @@ impl SequencerStatusJson {
             .filter(|node| selected_node.is_none_or(|selected_node| node.name == selected_node))
             .map(|node| {
                 let status = snapshot.statuses.iter().find(|status| status.name == node.name);
-                SequencerNodeJson::from_node_status(node, status)
+                SequencerNodeJson::from_node_status(node, status, snapshot.discovered)
             })
             .collect::<Vec<_>>();
 
@@ -582,7 +749,11 @@ struct SequencerNodeJson {
 }
 
 impl SequencerNodeJson {
-    fn from_node_status(node: &ConductorNodeConfig, status: Option<&ConductorNodeStatus>) -> Self {
+    fn from_node_status(
+        node: &ConductorNodeConfig,
+        status: Option<&ConductorNodeStatus>,
+        discovered: bool,
+    ) -> Self {
         let is_leader = status.and_then(|status| status.is_leader);
         Self {
             name: node.name.clone(),
@@ -607,7 +778,7 @@ impl SequencerNodeJson {
             el_block: status.and_then(|status| status.el_block),
             el_syncing: status.and_then(|status| status.el_syncing),
             el_peer_count: status.and_then(|status| status.el_peer_count),
-            discovered: status.is_some_and(|status| status.discovered),
+            discovered,
         }
     }
 
@@ -889,6 +1060,24 @@ mod tests {
         assert_eq!(value["leader"], "op-conductor-0");
         assert_eq!(value["nodes"].as_array().unwrap().len(), 1);
         assert_eq!(value["nodes"][0]["name"], "op-conductor-1");
+    }
+
+    #[test]
+    fn status_json_preserves_discovered_provenance_for_offline_nodes() {
+        let snapshot = ConductorClusterSnapshot {
+            nodes: vec![node("op-conductor-0")],
+            statuses: Vec::new(),
+            membership: None,
+            membership_error: None,
+            discovered: true,
+        };
+
+        let value = serde_json::to_value(
+            SequencerStatusJson::from_snapshot("devnet", &snapshot, None).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(value["nodes"][0]["discovered"], true);
     }
 
     #[test]

@@ -88,7 +88,11 @@ pub struct ConductorControl;
 /// One-shot conductor cluster snapshot.
 #[derive(Debug, Clone)]
 pub struct ConductorClusterSnapshot {
-    /// Node configs used for this snapshot.
+    /// Effective node configs used for this snapshot.
+    ///
+    /// For static sources, this is filtered to the live raft membership when
+    /// that membership can be fetched; otherwise it falls back to the full
+    /// configured node list.
     pub nodes: Vec<ConductorNodeConfig>,
     /// Per-node status rows fetched from the cluster.
     pub statuses: Vec<ConductorNodeStatus>,
@@ -169,7 +173,7 @@ impl ConductorControl {
         const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 
         match &source {
-            ConductorSource::Static(nodes) => {
+            ConductorSource::Static(_) => {
                 let (membership, membership_error) = match Self::current_membership(&source).await {
                     Ok(membership) => (Some(membership), None),
                     Err(error) => {
@@ -177,10 +181,11 @@ impl ConductorControl {
                         (None, Some(error.to_string()))
                     }
                 };
-                let clients = build_conductor_clients(nodes, RPC_TIMEOUT);
+                let nodes = Self::snapshot_nodes(&source, membership.as_ref())?;
+                let clients = build_conductor_clients(&nodes, RPC_TIMEOUT);
                 let statuses = fetch_conductor_statuses(&clients, membership.as_ref(), false).await;
                 Ok(ConductorClusterSnapshot {
-                    nodes: nodes.clone(),
+                    nodes,
                     statuses,
                     membership,
                     membership_error,
@@ -189,7 +194,7 @@ impl ConductorControl {
             }
             ConductorSource::Discover { .. } => {
                 let membership = Self::current_membership(&source).await?;
-                let nodes = Self::nodes_from_membership(&source, &membership)?;
+                let nodes = Self::snapshot_nodes(&source, Some(&membership))?;
                 let clients = build_conductor_clients(&nodes, RPC_TIMEOUT);
                 let statuses = fetch_conductor_statuses(&clients, Some(&membership), true).await;
                 Ok(ConductorClusterSnapshot {
@@ -200,6 +205,23 @@ impl ConductorControl {
                     discovered: true,
                 })
             }
+        }
+    }
+
+    fn snapshot_nodes(
+        source: &ConductorSource,
+        membership: Option<&ClusterMembership>,
+    ) -> anyhow::Result<Vec<ConductorNodeConfig>> {
+        match membership {
+            Some(membership) => Self::nodes_from_membership(source, membership),
+            None => match source {
+                ConductorSource::Static(nodes) => Ok(nodes.clone()),
+                ConductorSource::Discover { .. } => {
+                    anyhow::bail!(
+                        "conductor cluster membership is required for discovered snapshots"
+                    )
+                }
+            },
         }
     }
 
@@ -1141,6 +1163,35 @@ mod tests {
             .expect_err("unknown member should fail");
 
         assert!(err.to_string().contains("sequencer-1"));
+    }
+
+    #[test]
+    fn snapshot_nodes_filter_static_source_to_live_membership() {
+        let source = ConductorSource::Static(vec![
+            node("op-conductor-0", "sequencer-0"),
+            node("op-conductor-1", "sequencer-1"),
+        ]);
+        let membership = membership(&["sequencer-1"]);
+
+        let nodes = ConductorControl::snapshot_nodes(&source, Some(&membership)).unwrap();
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "op-conductor-1");
+        assert_eq!(nodes[0].server_id, "sequencer-1");
+    }
+
+    #[test]
+    fn snapshot_nodes_fall_back_to_static_config_when_membership_is_unavailable() {
+        let source = ConductorSource::Static(vec![
+            node("op-conductor-0", "sequencer-0"),
+            node("op-conductor-1", "sequencer-1"),
+        ]);
+
+        let nodes = ConductorControl::snapshot_nodes(&source, None).unwrap();
+
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].name, "op-conductor-0");
+        assert_eq!(nodes[1].name, "op-conductor-1");
     }
 
     #[test]

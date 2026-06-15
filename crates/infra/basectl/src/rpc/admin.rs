@@ -41,7 +41,9 @@ pub async fn start_sequencer(cl_rpc: &Url, unsafe_head: B256) -> Result<()> {
 ///
 /// Returns the unsafe head hash captured at the moment the sequencer stopped.
 pub async fn stop_sequencer(cl_rpc: &Url) -> Result<B256> {
-    const TIMEOUT: Duration = Duration::from_secs(5);
+    // `admin_stopSequencer` may defer its response until the seal pipeline
+    // finishes and the final unsafe head is known.
+    const TIMEOUT: Duration = Duration::from_secs(60);
 
     let client = HttpClientBuilder::default()
         .request_timeout(TIMEOUT)
