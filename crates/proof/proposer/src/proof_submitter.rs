@@ -350,21 +350,6 @@ where
         aggregate_proposal: &Proposal,
         target_block: u64,
     ) -> Result<(), SubmitAction> {
-        let tee_prover = self.verifier_client.tee_prover(game_address).await.map_err(|e| {
-            SubmitAction::Failed(ProposerError::Contract(format!(
-                "teeProver lookup failed for game {game_address}: {e}"
-            )))
-        })?;
-        if tee_prover != Address::ZERO {
-            info!(
-                target_block,
-                game_address = %game_address,
-                tee_prover = %tee_prover,
-                "Existing dispute game already has a TEE proof"
-            );
-            return Ok(());
-        }
-
         let game_l1_head = self.verifier_client.l1_head(game_address).await.map_err(|e| {
             SubmitAction::Failed(ProposerError::Contract(format!(
                 "l1Head lookup failed for game {game_address}: {e}"
@@ -404,6 +389,16 @@ where
                     "TEE proof was attached by another submitter"
                 );
                 Ok(())
+            }
+            Err(e) if e.is_l1_origin_too_old() => {
+                attach_timer.disarm();
+                warn!(
+                    error = %e,
+                    target_block,
+                    game_address = %game_address,
+                    "Proof L1 origin is too old, discarding proof to re-prove"
+                );
+                Err(SubmitAction::Discard(e))
             }
             Err(e) if e.is_invalid_signer() => {
                 attach_timer.disarm();
@@ -661,13 +656,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_treats_existing_tee_proof_as_success() {
+    async fn submit_treats_already_verified_attach_as_success() {
         let game_address = Address::repeat_byte(0xAA);
-        let mut verifier = MockAggregateVerifier::default();
-        verifier.tee_prover_map.insert(game_address, Address::repeat_byte(0xBB));
         let output = Arc::new(RecordingOutputProposer::default());
-        let submitter =
-            submitter(Arc::clone(&output), existing_game_factory(game_address), verifier);
+        *output.verify_error.lock().unwrap() = Some(ProposerError::ProofAlreadyVerified);
+        let submitter = submitter(
+            Arc::clone(&output),
+            existing_game_factory(game_address),
+            MockAggregateVerifier::default(),
+        );
 
         let result = submitter
             .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
@@ -675,7 +672,7 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(*output.created.lock().unwrap(), 0);
-        assert!(output.verified.lock().unwrap().is_empty());
+        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
     }
 
     #[tokio::test]
@@ -694,6 +691,26 @@ mod tests {
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));
         assert_eq!(*output.created.lock().unwrap(), 0);
         assert!(output.verified.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_discards_when_attach_rejects_l1_origin_too_old() {
+        let game_address = Address::repeat_byte(0xAA);
+        let output = Arc::new(RecordingOutputProposer::default());
+        *output.verify_error.lock().unwrap() = Some(ProposerError::L1OriginTooOld);
+        let submitter = submitter(
+            Arc::clone(&output),
+            existing_game_factory(game_address),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(matches!(result, Err(SubmitAction::Discard(ProposerError::L1OriginTooOld))));
+        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
     }
 
     #[tokio::test]
