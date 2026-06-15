@@ -28,13 +28,6 @@ use crate::{
 /// serialization separately.
 pub const DEFAULT_MAX_CONCURRENCY: usize = 4;
 
-/// Default maximum number of transaction submission retries for transient
-/// errors before giving up.
-pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
-
-/// Default delay between transaction submission retries.
-pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
-
 /// Default duration (in seconds) after launch during which unhealthy
 /// instances are still eligible for registration.
 ///
@@ -400,14 +393,13 @@ mod tests {
     use alloy_primitives::Address;
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
-    use rstest::rstest;
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
     use super::*;
     use crate::{
-        CrlConfig, InstanceHealthStatus, RegistrarError, RegistryClient, Result, SignerClient,
-        SignerManagerConfig,
+        CrlConfig, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, InstanceHealthStatus,
+        RegistrarError, RegistryClient, Result, SignerClient, SignerManagerConfig,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopNitroVerifier,
             NoopTxManager, TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
@@ -415,15 +407,10 @@ mod tests {
         },
     };
 
-    #[derive(Debug)]
-    struct MockDiscovery {
-        instances: Vec<ProverInstance>,
-    }
-
     #[async_trait]
-    impl InstanceDiscovery for MockDiscovery {
+    impl InstanceDiscovery for Vec<ProverInstance> {
         async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
-            Ok(self.instances.clone())
+            Ok(self.clone())
         }
     }
 
@@ -466,8 +453,11 @@ mod tests {
             self.cancel_after_public_key_success = Some(cancel);
             self
         }
+    }
 
-        fn signer_public_key_result(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+    #[async_trait]
+    impl SignerClient for MockSignerClient {
+        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
             let result =
                 self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
                     instance: endpoint.to_string(),
@@ -479,13 +469,6 @@ mod tests {
                 cancel.cancel();
             }
             result
-        }
-    }
-
-    #[async_trait]
-    impl SignerClient for MockSignerClient {
-        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
-            self.signer_public_key_result(endpoint)
         }
 
         async fn signer_attestation(
@@ -540,63 +523,43 @@ mod tests {
         Url::parse(&format!("http://{host_port}")).unwrap()
     }
 
-    fn mock_cert_manager<T: TxManager + 'static>(tx_manager: T) -> CertManager<T> {
-        CertManager::new(&crl_config(false), Arc::new(NoopNitroVerifier), tx_manager)
-            .expect("test cert manager builds")
-    }
-
-    fn crl_config(enabled: bool) -> CrlConfig {
-        CrlConfig {
-            enabled,
-            nitro_verifier_address: None,
-            fetch_timeout: Duration::from_secs(crate::DEFAULT_CRL_FETCH_TIMEOUT_SECS),
-        }
-    }
-
-    fn noop_signer_manager(
-        config: SignerManagerConfig,
-    ) -> Arc<SignerManager<NoopProofProvider, NoopRegistry, NoopTxManager>> {
-        Arc::new(SignerManager::new(NoopProofProvider, NoopRegistry, NoopTxManager, config))
-    }
-
-    fn default_config(cancel: CancellationToken) -> DriverConfig {
-        DriverConfig {
+    fn cycle_driver<S>(
+        instances: Vec<ProverInstance>,
+        signer_client: S,
+        cancel: CancellationToken,
+    ) -> RegistrationDriver<Vec<ProverInstance>, S, NoopProofProvider, NoopRegistry, NoopTxManager>
+    where
+        S: SignerClient + 'static,
+    {
+        let config = DriverConfig {
             poll_interval: Duration::from_secs(1),
             cancel,
             max_concurrency: DEFAULT_MAX_CONCURRENCY,
             unhealthy_registration_window: Duration::from_secs(
                 DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
             ),
-        }
-    }
+        };
+        let crl_config = CrlConfig {
+            enabled: false,
+            nitro_verifier_address: None,
+            fetch_timeout: Duration::from_secs(crate::DEFAULT_CRL_FETCH_TIMEOUT_SECS),
+        };
+        let cert_manager =
+            CertManager::new(&crl_config, Arc::new(NoopNitroVerifier), NoopTxManager)
+                .expect("test cert manager builds");
+        let signer_manager = Arc::new(SignerManager::new(
+            NoopProofProvider,
+            NoopRegistry,
+            NoopTxManager,
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            },
+        ));
 
-    fn signer_manager_config() -> SignerManagerConfig {
-        SignerManagerConfig {
-            registry_address: TEST_REGISTRY_ADDRESS,
-            max_concurrency: DEFAULT_MAX_CONCURRENCY,
-            max_tx_retries: DEFAULT_MAX_TX_RETRIES,
-            tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-        }
-    }
-
-    fn cycle_driver<S>(
-        instances: Vec<ProverInstance>,
-        signer_client: S,
-        cancel: CancellationToken,
-    ) -> RegistrationDriver<MockDiscovery, S, NoopProofProvider, NoopRegistry, NoopTxManager>
-    where
-        S: SignerClient + 'static,
-    {
-        let config = default_config(cancel);
-        let cert_manager = mock_cert_manager(NoopTxManager);
-        let signer_manager = noop_signer_manager(signer_manager_config());
-        RegistrationDriver::new(
-            MockDiscovery { instances },
-            signer_client,
-            config,
-            cert_manager,
-            signer_manager,
-        )
+        RegistrationDriver::new(instances, signer_client, config, cert_manager, signer_manager)
     }
 
     #[tokio::test]
@@ -617,17 +580,10 @@ mod tests {
         );
 
         let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
-        assert_eq!(
-            resolution.registerable.len(),
-            1,
-            "recently-launched unhealthy instance should be registerable"
-        );
+        assert_eq!(resolution.registerable.len(), 1);
         assert_eq!(resolution.registerable[0].signer, addr);
-        assert!(
-            resolution.active_signers.contains(&addr),
-            "recently-launched unhealthy signer should be in active_signers"
-        );
-        assert!(ok_to_dereg, "resolved instance permits orphan cleanup");
+        assert!(resolution.active_signers.contains(&addr));
+        assert!(ok_to_dereg);
     }
 
     #[tokio::test]
@@ -636,8 +592,8 @@ mod tests {
             cycle_driver(vec![], MockSignerClient::from_keys(&[]), CancellationToken::new());
 
         let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
-        assert!(resolution.active_signers.is_empty(), "no instances → no active signers");
-        assert!(ok_to_dereg, "zero-instance fleet drain is a legitimate empty active set",);
+        assert!(resolution.active_signers.is_empty());
+        assert!(ok_to_dereg);
     }
 
     #[tokio::test]
@@ -649,7 +605,7 @@ mod tests {
 
         let (_, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
 
-        assert!(!ok_to_dereg, "cancellation observed during resolution must clear ok_to_dereg",);
+        assert!(!ok_to_dereg);
     }
 
     #[tokio::test]
@@ -664,7 +620,7 @@ mod tests {
 
         let (_, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
 
-        assert!(!ok_to_dereg, "1/3 reachable must block orphan-deregistration",);
+        assert!(!ok_to_dereg);
     }
 
     #[tokio::test]
@@ -688,16 +644,9 @@ mod tests {
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
-        assert_eq!(
-            resolution.registerable.len(),
-            reachable.len(),
-            "all reachable instances should be registerable despite 1 unreachable",
-        );
-        assert!(
-            resolution.unresolved_instance_ids.contains(&unreachable.instance_id),
-            "unreachable instance must be marked as unresolved so reconcile skips its cancel-pass",
-        );
-        assert!(!ok_to_dereg, "unresolved instance must block orphan-dereg",);
+        assert_eq!(resolution.registerable.len(), reachable.len());
+        assert!(resolution.unresolved_instance_ids.contains(&unreachable.instance_id));
+        assert!(!ok_to_dereg);
     }
 
     #[tokio::test]
@@ -712,10 +661,7 @@ mod tests {
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
-        assert!(
-            resolution.registerable.is_empty(),
-            "draining instance must not appear in the registerable set",
-        );
+        assert!(resolution.registerable.is_empty());
         assert!(resolution.active_signers.contains(&addr0));
         assert!(resolution.active_signers.contains(&addr1));
         assert!(ok_to_dereg);
@@ -737,50 +683,30 @@ mod tests {
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
         let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
-        assert_eq!(
-            resolution.registerable.len(),
-            1,
-            "only the healthy instance should be registerable",
-        );
+        assert_eq!(resolution.registerable.len(), 1);
         assert_eq!(resolution.registerable[0].signer, addr_healthy);
-        assert!(
-            resolution.active_signers.contains(&addr_unhealthy),
-            "unhealthy signer must remain in active_signers to block dereg",
-        );
+        assert!(resolution.active_signers.contains(&addr_unhealthy));
         assert!(ok_to_dereg);
     }
 
-    #[rstest]
-    #[case::mismatch(false)]
-    #[case::rpc_error(true)]
     #[tokio::test]
-    async fn discover_and_resolve_attestation_failure_keeps_signer_active_and_unresolved(
-        #[case] rpc_error: bool,
-    ) {
+    async fn discover_and_resolve_attestation_failure_keeps_signer_active_and_unresolved() {
         let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
         let inst = healthy_prover_instance(EP1);
-        let signer_client = if rpc_error {
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestation_failure(EP1)
-        } else {
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestations(EP1, vec![])
-        };
+        let signer_clients = [
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestations(EP1, vec![]),
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestation_failure(EP1),
+        ];
 
-        let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
+        for signer_client in signer_clients {
+            let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
 
-        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
+            let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
 
-        assert!(
-            resolution.active_signers.contains(&signer_addr),
-            "partial resolution must keep the signer in the active set",
-        );
-        assert!(
-            resolution.registerable.is_empty(),
-            "without a matching attestation the signer must not be registerable",
-        );
-        assert!(
-            resolution.unresolved_instance_ids.contains(&inst.instance_id),
-            "partial resolution must preserve in-flight tasks for the instance",
-        );
-        assert!(!ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
+            assert!(resolution.active_signers.contains(&signer_addr));
+            assert!(resolution.registerable.is_empty());
+            assert!(resolution.unresolved_instance_ids.contains(&inst.instance_id));
+            assert!(!ok_to_dereg);
+        }
     }
 }

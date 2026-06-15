@@ -26,6 +26,13 @@ use crate::{
     RegistrarMetrics, RegistrationManager, RegistryClient, Result,
 };
 
+/// Default maximum number of transaction submission retries for transient
+/// errors before giving up.
+pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
+
+/// Default delay between transaction submission retries.
+pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
+
 /// Runtime settings for signer lifecycle management.
 #[derive(Debug, Clone)]
 pub struct SignerManagerConfig {
