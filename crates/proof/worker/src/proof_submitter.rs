@@ -4,25 +4,9 @@
 //! `WorkerSubmitProofRequest` from their own proof result type, then hand the
 //! request to this shared worker component for delivery.
 
-use std::time::Duration;
-
 use base_prover_service_client::ProverServiceClientError;
-use base_retry::{
-    DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, MIN_RETRY_DELAY, RetryConfig,
-};
+use base_retry::{DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use thiserror::Error;
-
-/// Minimum delay used to avoid tight retry loops.
-pub const MIN_PROOF_SUBMITTER_BACKOFF: Duration = MIN_RETRY_DELAY;
-
-/// Default initial retry delay for proof submission.
-pub const DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF: Duration = DEFAULT_UNBOUNDED_INITIAL_DELAY;
-
-/// Default maximum retry delay for proof submission.
-pub const DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF: Duration = DEFAULT_UNBOUNDED_MAX_DELAY;
-
-/// Exponential backoff configuration for proof submission retries.
-pub type ProofSubmitterBackoffConfig = RetryConfig;
 
 /// Errors raised while preparing or submitting a generated proof.
 #[derive(Debug, Error)]
@@ -50,7 +34,7 @@ impl ProofSubmitterError {
 #[derive(Clone, Debug)]
 pub struct ProofSubmitter<Client> {
     client: Client,
-    backoff: ProofSubmitterBackoffConfig,
+    backoff: RetryConfig,
 }
 
 impl<Client> ProofSubmitter<Client> {
@@ -58,21 +42,21 @@ impl<Client> ProofSubmitter<Client> {
     pub const fn new(client: Client) -> Self {
         Self {
             client,
-            backoff: ProofSubmitterBackoffConfig::unbounded(
-                DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF,
-                DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF,
+            backoff: RetryConfig::unbounded(
+                DEFAULT_UNBOUNDED_INITIAL_DELAY,
+                DEFAULT_UNBOUNDED_MAX_DELAY,
             ),
         }
     }
 
     /// Sets the retry backoff config.
-    pub const fn with_backoff_config(mut self, backoff: ProofSubmitterBackoffConfig) -> Self {
+    pub const fn with_backoff_config(mut self, backoff: RetryConfig) -> Self {
         self.backoff = backoff;
         self
     }
 
     /// Returns the configured retry backoff.
-    pub const fn backoff_config(&self) -> ProofSubmitterBackoffConfig {
+    pub const fn backoff_config(&self) -> RetryConfig {
         self.backoff
     }
 
