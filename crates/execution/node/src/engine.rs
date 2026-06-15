@@ -11,7 +11,8 @@ use base_common_rpc_types_engine::{
 };
 use base_execution_consensus::isthmus;
 use base_execution_payload_builder::{
-    BaseExecutionPayloadValidator, BasePayloadAttributesExt, BasePayloadTypes,
+    BaseExecutionPayloadValidator, BasePayloadAttributesExt, BasePayloadBuilderAttributes,
+    BasePayloadTypes,
 };
 use reth_consensus::ConsensusError;
 use reth_node_api::{
