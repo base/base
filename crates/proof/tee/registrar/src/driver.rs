@@ -116,6 +116,7 @@ pub struct ResolveOutcome {
 ///
 /// Generic over discovery, signer client, and signer lifecycle backends so each
 /// can be mocked independently in tests.
+#[derive(Debug)]
 pub struct RegistrationDriver<D, S, M, T> {
     discovery: D,
     signer_client: S,
@@ -599,28 +600,20 @@ mod tests {
             .expect("test cert manager builds")
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug)]
     struct MockSignerManager {
-        reconcile_calls: Arc<AtomicUsize>,
-        orphan_calls: Arc<Mutex<Vec<HashSet<Address>>>>,
+        reconcile_calls: AtomicUsize,
+        orphan_calls: Mutex<Vec<HashSet<Address>>>,
         cancel_after_orphan: CancellationToken,
     }
 
     impl MockSignerManager {
         fn new(cancel_after_orphan: CancellationToken) -> Self {
             Self {
-                reconcile_calls: Arc::new(AtomicUsize::new(0)),
-                orphan_calls: Arc::new(Mutex::new(Vec::new())),
+                reconcile_calls: AtomicUsize::new(0),
+                orphan_calls: Mutex::new(Vec::new()),
                 cancel_after_orphan,
             }
-        }
-
-        fn reconcile_count(&self) -> usize {
-            self.reconcile_calls.load(Ordering::SeqCst)
-        }
-
-        fn orphan_inputs(&self) -> Vec<HashSet<Address>> {
-            self.orphan_calls.lock().unwrap().clone()
         }
     }
 
@@ -696,7 +689,6 @@ mod tests {
         config.poll_interval = FAST_POLL_INTERVAL;
 
         let signer_manager = MockSignerManager::new(cancel.clone());
-        let signer_manager_handle = signer_manager.clone();
         let signer = signer_from_private_key(&HARDHAT_KEY_0);
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
 
@@ -711,11 +703,11 @@ mod tests {
         driver.run().await.expect("driver exits after mock orphan pass cancels");
 
         assert_eq!(
-            signer_manager_handle.reconcile_count(),
+            driver.signer_manager.reconcile_calls.load(Ordering::SeqCst),
             1,
             "driver should delegate registerable reconciliation to signer manager",
         );
-        let orphan_inputs = signer_manager_handle.orphan_inputs();
+        let orphan_inputs = driver.signer_manager.orphan_calls.lock().unwrap();
         assert_eq!(orphan_inputs.len(), 1, "driver should delegate one orphan pass");
         assert!(
             orphan_inputs[0].contains(&signer),
