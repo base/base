@@ -459,6 +459,7 @@ mod tests {
     #[derive(Debug)]
     enum ExpectedClassification {
         GameAlreadyExists,
+        ProofAlreadyVerified,
         L1OriginTooOld,
         InvalidParentGame,
         InvalidSigner,
@@ -495,6 +496,32 @@ mod tests {
         },
         ExpectedClassification::GameAlreadyExists,
         "raw data contains selector"
+    )]
+    #[case::rpc_with_already_proven_selector_hex(
+        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::already_proven_selector()))),
+        ExpectedClassification::ProofAlreadyVerified,
+        "AlreadyProven selector hex in Rpc message"
+    )]
+    #[case::rpc_with_already_proven_name(
+        TxManagerError::Rpc(format!("{ALREADY_PROVEN}()")),
+        ExpectedClassification::ProofAlreadyVerified,
+        "AlreadyProven name in Rpc message"
+    )]
+    #[case::reverted_with_already_proven_reason(
+        TxManagerError::ExecutionReverted {
+            reason: Some(format!("{ALREADY_PROVEN}()")),
+            data: None,
+        },
+        ExpectedClassification::ProofAlreadyVerified,
+        "AlreadyProven reason string contains name"
+    )]
+    #[case::reverted_with_already_proven_selector_data(
+        TxManagerError::ExecutionReverted {
+            reason: None,
+            data: Some(Bytes::from(base_proof_contracts::already_proven_selector().to_vec())),
+        },
+        ExpectedClassification::ProofAlreadyVerified,
+        "AlreadyProven raw data contains selector"
     )]
     #[case::rpc_with_l1_origin_selector_hex(
         TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::l1_origin_too_old_selector()))),
@@ -602,6 +629,10 @@ mod tests {
                 matches!(result, ProposerError::GameAlreadyExists),
                 "{scenario}: expected GameAlreadyExists, got {result:?}"
             ),
+            ExpectedClassification::ProofAlreadyVerified => assert!(
+                matches!(result, ProposerError::ProofAlreadyVerified),
+                "{scenario}: expected ProofAlreadyVerified, got {result:?}"
+            ),
             ExpectedClassification::L1OriginTooOld => assert!(
                 matches!(result, ProposerError::L1OriginTooOld),
                 "{scenario}: expected L1OriginTooOld, got {result:?}"
@@ -626,6 +657,14 @@ mod tests {
     #[case::other_error(ProposerError::Contract("other".into()), false)]
     fn test_is_game_already_exists(#[case] err: ProposerError, #[case] expected: bool) {
         assert_eq!(err.is_game_already_exists(), expected);
+    }
+
+    #[rstest]
+    #[case::proof_already_verified(ProposerError::ProofAlreadyVerified, true)]
+    #[case::game_already_exists(ProposerError::GameAlreadyExists, false)]
+    #[case::other_error(ProposerError::Contract("other".into()), false)]
+    fn test_is_proof_already_verified(#[case] err: ProposerError, #[case] expected: bool) {
+        assert_eq!(err.is_proof_already_verified(), expected);
     }
 
     #[rstest]
