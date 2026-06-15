@@ -222,6 +222,42 @@ pub async fn disconnect_peer(cl_rpc: &Url, peer_id: &str) -> Result<()> {
     }
 }
 
+/// Bans a consensus-layer peer through `opp2p_blockPeer`.
+pub async fn ban_peer(cl_rpc: &Url, peer_id: &str) -> Result<()> {
+    let cl_client = connect_cl(cl_rpc)?;
+    match BaseP2PApiClient::opp2p_block_peer(&cl_client, peer_id.to_string()).await {
+        Ok(()) => Ok(()),
+        Err(err) if is_jsonrpc_method_not_found(&err) => {
+            Err(err).with_context(|| format!("`opp2p_blockPeer` not exposed by {cl_rpc}"))
+        }
+        Err(err) => Err(err).with_context(|| format!("calling opp2p_blockPeer on {cl_rpc}")),
+    }
+}
+
+/// Unbans a consensus-layer peer through `opp2p_unblockPeer`.
+pub async fn unban_peer(cl_rpc: &Url, peer_id: &str) -> Result<()> {
+    let cl_client = connect_cl(cl_rpc)?;
+    match BaseP2PApiClient::opp2p_unblock_peer(&cl_client, peer_id.to_string()).await {
+        Ok(()) => Ok(()),
+        Err(err) if is_jsonrpc_method_not_found(&err) => {
+            Err(err).with_context(|| format!("`opp2p_unblockPeer` not exposed by {cl_rpc}"))
+        }
+        Err(err) => Err(err).with_context(|| format!("calling opp2p_unblockPeer on {cl_rpc}")),
+    }
+}
+
+/// Lists consensus-layer peers banned through `opp2p_blockPeer`.
+pub async fn list_banned_peers(cl_rpc: &Url) -> Result<Vec<String>> {
+    let cl_client = connect_cl(cl_rpc)?;
+    match BaseP2PApiClient::opp2p_list_blocked_peers(&cl_client).await {
+        Ok(peers) => Ok(peers),
+        Err(err) if is_jsonrpc_method_not_found(&err) => {
+            Err(err).with_context(|| format!("`opp2p_listBlockedPeers` not exposed by {cl_rpc}"))
+        }
+        Err(err) => Err(err).with_context(|| format!("calling opp2p_listBlockedPeers on {cl_rpc}")),
+    }
+}
+
 /// Fetches execution-layer advertised endpoint and peer-count summary.
 pub async fn fetch_el_info(rpc: &Url) -> Result<ElInfoReport> {
     let el_provider = connect_el(rpc).await?;

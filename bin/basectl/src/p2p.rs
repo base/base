@@ -6,14 +6,16 @@ use anyhow::{Context, Result, anyhow, bail};
 use base_consensus_peers::BootNode;
 use basectl_cli::{
     JsonOutput, KeyValueTable, MonitoringConfig, NodeEndpoint, PeerListReport, PeerStatsReport,
-    PeerSummary, add_peer, connect_peer, disconnect_peer, fetch_connected_peers, fetch_info,
-    fetch_raw_info, fetch_raw_peers, remove_peer,
+    PeerSummary, add_peer, ban_peer, connect_peer, disconnect_peer, fetch_connected_peers,
+    fetch_info, fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_peer,
 };
 use serde::Serialize;
 use url::Url;
 
 use crate::{
-    cli::{DestructivePeerArgs, P2pArgs, P2pCommands},
+    cli::{
+        DestructiveClBulkArgs, DestructiveClPeerArgs, DestructivePeerArgs, P2pArgs, P2pCommands,
+    },
     confirm::confirm,
 };
 
@@ -24,6 +26,9 @@ pub(crate) async fn run(config: MonitoringConfig, command: P2pCommands) -> Resul
         P2pCommands::Info(args) => run_info(config, args).await,
         P2pCommands::AddPeer(args) => run_add_peer(config, args).await,
         P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await,
+        P2pCommands::Ban(args) => run_ban_peer(config, args).await,
+        P2pCommands::Unban(args) => run_unban_peer(config, args).await,
+        P2pCommands::UnbanAll(args) => run_unban_all(config, args).await,
     }
 }
 
@@ -139,6 +144,86 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
         }
     }
 
+    Ok(())
+}
+
+async fn run_ban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -> Result<()> {
+    let DestructiveClPeerArgs { peer_id, cl_rpc: cl_rpc_override, yes, json } = args;
+    let peer_id = parse_cl_peer_id(&peer_id)?;
+    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p ban")?;
+    let prompt = format!("Ban CL peer {peer_id} through {cl_rpc}? [y/N] ");
+    if !confirm(&prompt, yes)? {
+        println!("aborted");
+        return Ok(());
+    }
+
+    ban_peer(&cl_rpc, &peer_id).await?;
+    let disconnect_error =
+        disconnect_peer(&cl_rpc, &peer_id).await.err().map(|err| err.to_string());
+    print_peer_action(
+        &PeerActionJson::cl_with_disconnect_error(
+            &config.name,
+            PeerAction::Ban,
+            peer_id,
+            disconnect_error,
+        ),
+        json,
+    )?;
+    Ok(())
+}
+
+async fn run_unban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -> Result<()> {
+    let DestructiveClPeerArgs { peer_id, cl_rpc: cl_rpc_override, yes, json } = args;
+    let peer_id = parse_cl_peer_id(&peer_id)?;
+    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p unban")?;
+    let prompt = format!("Unban CL peer {peer_id} through {cl_rpc}? [y/N] ");
+    if !confirm(&prompt, yes)? {
+        println!("aborted");
+        return Ok(());
+    }
+
+    unban_peer(&cl_rpc, &peer_id).await?;
+    print_peer_action(&PeerActionJson::cl(&config.name, PeerAction::Unban, peer_id), json)?;
+    Ok(())
+}
+
+async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) -> Result<()> {
+    let DestructiveClBulkArgs { cl_rpc: cl_rpc_override, yes, json } = args;
+    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p unban-all")?;
+    let mut peer_ids = list_banned_peers(&cl_rpc).await?;
+    peer_ids.sort();
+
+    if peer_ids.is_empty() {
+        if json {
+            print_peer_action(
+                &PeerActionJson::cl_bulk(&config.name, PeerAction::UnbanAll, vec![]),
+                json,
+            )?;
+        } else {
+            println!("no peers are currently banned");
+        }
+        return Ok(());
+    }
+
+    let prompt = format!("Unban all {} banned CL peers through {cl_rpc}? [y/N] ", peer_ids.len());
+    if !confirm(&prompt, yes)? {
+        println!("aborted");
+        return Ok(());
+    }
+
+    let mut results = Vec::with_capacity(peer_ids.len());
+    for peer_id in peer_ids {
+        match unban_peer(&cl_rpc, &peer_id).await {
+            Ok(()) => results.push(PeerBulkActionResultJson::ok(peer_id)),
+            Err(err) => results.push(PeerBulkActionResultJson::err(peer_id, err.to_string())),
+        }
+    }
+    let action = PeerActionJson::cl_bulk(&config.name, PeerAction::UnbanAll, results);
+    let failed = action.failed_count();
+    print_peer_action(&action, json)?;
+    if failed > 0 {
+        bail!("failed to unban {failed} CL peer(s)");
+    }
     Ok(())
 }
 
@@ -258,20 +343,66 @@ fn parse_remove_target(raw: &str) -> Result<RemoveTarget> {
     if target.contains(':') || target.contains('/') {
         bail!("remove-peer needs a bare libp2p peer ID for CL targets, not a URL or multiaddr");
     }
+
+    Ok(RemoveTarget::PeerId(parse_cl_peer_id(target)?))
+}
+
+fn parse_cl_peer_id(raw: &str) -> Result<String> {
+    let target = raw.trim();
+    if target.is_empty() {
+        bail!("CL peer ID cannot be empty");
+    }
+    if target.starts_with("enode://") {
+        bail!("CL peer actions need a bare libp2p peer ID, not an enode record");
+    }
+    if target.starts_with("enr:") {
+        bail!(
+            "CL peer actions need a bare libp2p peer ID; ENR records are only accepted by add-peer"
+        );
+    }
+    if target.split_whitespace().count() != 1 {
+        bail!("CL peer ID must not contain whitespace");
+    }
+    if target.contains(':') || target.contains('/') {
+        bail!("CL peer actions need a bare libp2p peer ID, not a URL or multiaddr");
+    }
     if target.len() < MIN_LIBP2P_PEER_ID_LEN {
         bail!(
             "CL peer ID `{target}` looks too short to be a valid libp2p peer ID; expected a base58-encoded string (e.g. 16Uiu2HAm...)"
         );
     }
 
-    Ok(RemoveTarget::PeerId(target.to_string()))
+    Ok(target.to_string())
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged, rename_all = "camelCase")]
 enum PeerActionJson {
-    El { network: String, action: PeerAction, layer: PeerLayer, target: String, accepted: bool },
-    Cl { network: String, action: PeerAction, layer: PeerLayer, target: String },
+    El {
+        network: String,
+        action: PeerAction,
+        layer: PeerLayer,
+        target: String,
+        accepted: bool,
+    },
+    Cl {
+        network: String,
+        action: PeerAction,
+        layer: PeerLayer,
+        target: String,
+        #[serde(rename = "disconnectError")]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        disconnect_error: Option<String>,
+    },
+    ClBulk {
+        network: String,
+        action: PeerAction,
+        layer: PeerLayer,
+        attempted: usize,
+        succeeded: usize,
+        failed: usize,
+        results: Vec<PeerBulkActionResultJson>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -280,6 +411,12 @@ enum PeerAction {
     Add,
     #[serde(rename = "removePeer")]
     Remove,
+    #[serde(rename = "banPeer")]
+    Ban,
+    #[serde(rename = "unbanPeer")]
+    Unban,
+    #[serde(rename = "unbanAll")]
+    UnbanAll,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -305,7 +442,63 @@ impl PeerActionJson {
     }
 
     fn cl(network: &str, action: PeerAction, target: String) -> Self {
-        Self::Cl { network: network.to_string(), action, layer: PeerLayer::Cl, target }
+        Self::cl_with_disconnect_error(network, action, target, None)
+    }
+
+    fn cl_with_disconnect_error(
+        network: &str,
+        action: PeerAction,
+        target: String,
+        disconnect_error: Option<String>,
+    ) -> Self {
+        Self::Cl {
+            network: network.to_string(),
+            action,
+            layer: PeerLayer::Cl,
+            target,
+            disconnect_error,
+        }
+    }
+
+    fn cl_bulk(network: &str, action: PeerAction, results: Vec<PeerBulkActionResultJson>) -> Self {
+        let attempted = results.len();
+        let succeeded = results.iter().filter(|result| result.ok).count();
+        let failed = attempted.saturating_sub(succeeded);
+        Self::ClBulk {
+            network: network.to_string(),
+            action,
+            layer: PeerLayer::Cl,
+            attempted,
+            succeeded,
+            failed,
+            results,
+        }
+    }
+
+    const fn failed_count(&self) -> usize {
+        match self {
+            Self::ClBulk { failed, .. } => *failed,
+            _ => 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PeerBulkActionResultJson {
+    target: String,
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+impl PeerBulkActionResultJson {
+    const fn ok(target: String) -> Self {
+        Self { target, ok: true, error: None }
+    }
+
+    const fn err(target: String, error: String) -> Self {
+        Self { target, ok: false, error: Some(error) }
     }
 }
 
@@ -340,6 +533,29 @@ fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
         }
         PeerActionJson::Cl { action: PeerAction::Remove, target, .. } => {
             writeln!(stdout, "OK CL disconnected {target}")?;
+        }
+        PeerActionJson::Cl { action: PeerAction::Ban, target, disconnect_error, .. } => {
+            if let Some(error) = disconnect_error {
+                writeln!(stdout, "OK CL banned {target} (disconnect warning: {error})")?;
+            } else {
+                writeln!(stdout, "OK CL banned {target}")?;
+            }
+        }
+        PeerActionJson::Cl { action: PeerAction::Unban, target, .. } => {
+            writeln!(stdout, "OK CL unbanned {target}")?;
+        }
+        PeerActionJson::ClBulk { succeeded, failed, results, .. } => {
+            writeln!(stdout, "OK CL unbanned {succeeded} banned peer(s)")?;
+            if *failed > 0 {
+                writeln!(stdout, "failed to unban {failed} banned peer(s)")?;
+                for result in results.iter().filter(|result| !result.ok) {
+                    let error = result.error.as_deref().unwrap_or("unknown error");
+                    writeln!(stdout, "  {}: {error}", result.target)?;
+                }
+            }
+        }
+        PeerActionJson::El { action, .. } | PeerActionJson::Cl { action, .. } => {
+            bail!("unsupported peer action for pretty output: {action:?}");
         }
     }
     Ok(())
@@ -550,8 +766,8 @@ mod tests {
     use url::Url;
 
     use super::{
-        AddTarget, PeerAction, PeerActionJson, RemoveTarget, parse_add_target, parse_remove_target,
-        resolve_cl_rpc,
+        AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, RemoveTarget,
+        parse_add_target, parse_cl_peer_id, parse_remove_target, resolve_cl_rpc,
     };
 
     const VALID_ENODE: &str = "enode://d7dfaea49c7ef37701e668652bcf1bc63d3abb2ae97593374a949e175e4ff128730a2f35199f3462a56298b981dfc395a5abebd2d6f0284ffe5bdc3d8e258b86@127.0.0.1:30304?discport=30301";
@@ -687,6 +903,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_cl_peer_id_accepts_peer_id() {
+        let peer_id = "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12";
+
+        assert_eq!(parse_cl_peer_id(peer_id).unwrap(), peer_id);
+    }
+
+    #[test]
+    fn parse_cl_peer_id_rejects_non_peer_ids() {
+        for target in [
+            "",
+            "hello",
+            VALID_ENODE,
+            VALID_ENR,
+            "/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample",
+            "https://example.com",
+            "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12 extra",
+        ] {
+            assert!(parse_cl_peer_id(target).is_err(), "target should be rejected: {target}");
+        }
+    }
+
+    #[test]
     fn peer_action_json_serializes_typed_action_and_layer() {
         let el = serde_json::to_value(PeerActionJson::el(
             "devnet",
@@ -721,6 +959,71 @@ mod tests {
                 "action": "removePeer",
                 "layer": "cl",
                 "target": "16Uiu2HAmExamplePeerId",
+            })
+        );
+
+        let ban = serde_json::to_value(PeerActionJson::cl_with_disconnect_error(
+            "devnet",
+            PeerAction::Ban,
+            "16Uiu2HAmExamplePeerId".to_string(),
+            Some("already disconnected".to_string()),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            ban,
+            json!({
+                "network": "devnet",
+                "action": "banPeer",
+                "layer": "cl",
+                "target": "16Uiu2HAmExamplePeerId",
+                "disconnectError": "already disconnected",
+            })
+        );
+
+        let unban = serde_json::to_value(PeerActionJson::cl(
+            "devnet",
+            PeerAction::Unban,
+            "16Uiu2HAmExamplePeerId".to_string(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            unban,
+            json!({
+                "network": "devnet",
+                "action": "unbanPeer",
+                "layer": "cl",
+                "target": "16Uiu2HAmExamplePeerId",
+            })
+        );
+
+        let unban_all = serde_json::to_value(PeerActionJson::cl_bulk(
+            "devnet",
+            PeerAction::UnbanAll,
+            vec![
+                PeerBulkActionResultJson::ok("16Uiu2HAmExamplePeerId".to_string()),
+                PeerBulkActionResultJson::err(
+                    "12D3KooExamplePeerId".to_string(),
+                    "unavailable".to_string(),
+                ),
+            ],
+        ))
+        .unwrap();
+
+        assert_eq!(
+            unban_all,
+            json!({
+                "network": "devnet",
+                "action": "unbanAll",
+                "layer": "cl",
+                "attempted": 2,
+                "succeeded": 1,
+                "failed": 1,
+                "results": [
+                    { "target": "16Uiu2HAmExamplePeerId", "ok": true },
+                    { "target": "12D3KooExamplePeerId", "ok": false, "error": "unavailable" }
+                ],
             })
         );
     }

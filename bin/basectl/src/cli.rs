@@ -152,6 +152,12 @@ pub(crate) enum P2pCommands {
     AddPeer(DestructivePeerArgs),
     /// Remove a single execution or consensus peer.
     RemovePeer(DestructivePeerArgs),
+    /// Ban a single consensus peer.
+    Ban(DestructiveClPeerArgs),
+    /// Unban a single consensus peer.
+    Unban(DestructiveClPeerArgs),
+    /// Unban all currently banned consensus peers.
+    UnbanAll(DestructiveClBulkArgs),
 }
 
 /// Shared flags for the read-only `basectl p2p` subcommands.
@@ -192,6 +198,45 @@ pub(crate) struct DestructivePeerArgs {
     /// fleet. Pass this flag to query a single node directly.
     #[arg(long = "el-rpc", value_name = "URL")]
     pub(crate) el_rpc: Option<Url>,
+    /// Override the consensus-node RPC URL.
+    ///
+    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
+    /// so non-devnet users must pass this flag (or set the field in
+    /// their YAML config).
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub(crate) cl_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
+}
+
+/// Shared flags for destructive consensus-only `basectl p2p` peer subcommands.
+#[derive(Debug, Args)]
+pub(crate) struct DestructiveClPeerArgs {
+    /// Consensus libp2p peer ID.
+    #[arg(value_name = "PEER_ID")]
+    pub(crate) peer_id: String,
+    /// Override the consensus-node RPC URL.
+    ///
+    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
+    /// so non-devnet users must pass this flag (or set the field in
+    /// their YAML config).
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub(crate) cl_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
+}
+
+/// Shared flags for destructive consensus-only `basectl p2p` bulk subcommands.
+#[derive(Debug, Args)]
+pub(crate) struct DestructiveClBulkArgs {
     /// Override the consensus-node RPC URL.
     ///
     /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
@@ -259,6 +304,15 @@ mod tests {
             Cli::try_parse_from(["basectl", "p2p", "add-peer", "enr:example", "--json"]).is_err()
         );
         assert!(
+            Cli::try_parse_from(["basectl", "p2p", "ban", "16Uiu2HAmExamplePeerId", "--json",])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["basectl", "p2p", "unban", "16Uiu2HAmExamplePeerId", "--json",])
+                .is_err()
+        );
+        assert!(Cli::try_parse_from(["basectl", "p2p", "unban-all", "--json"]).is_err());
+        assert!(
             Cli::try_parse_from([
                 "basectl",
                 "p2p",
@@ -268,6 +322,80 @@ mod tests {
                 "--yes",
             ])
             .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "basectl",
+                "p2p",
+                "ban",
+                "16Uiu2HAmExamplePeerId",
+                "--cl-rpc",
+                "http://127.0.0.1:9545",
+                "--json",
+                "--yes",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "basectl",
+                "p2p",
+                "unban",
+                "16Uiu2HAmExamplePeerId",
+                "--cl-rpc",
+                "http://127.0.0.1:9545",
+                "--json",
+                "--yes",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "basectl",
+                "p2p",
+                "unban-all",
+                "--cl-rpc",
+                "http://127.0.0.1:9545",
+                "--json",
+                "--yes",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn destructive_cl_p2p_commands_reject_el_rpc() {
+        assert!(
+            Cli::try_parse_from([
+                "basectl",
+                "p2p",
+                "ban",
+                "16Uiu2HAmExamplePeerId",
+                "--el-rpc",
+                "http://127.0.0.1:8545",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "basectl",
+                "p2p",
+                "unban",
+                "16Uiu2HAmExamplePeerId",
+                "--el-rpc",
+                "http://127.0.0.1:8545",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "basectl",
+                "p2p",
+                "unban-all",
+                "--el-rpc",
+                "http://127.0.0.1:8545",
+            ])
+            .is_err()
         );
     }
 }

@@ -3,7 +3,7 @@ use std::cmp;
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use reth_provider::BlockHashReader;
 use tokio::time::Instant;
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     BaseProofsStorage, BaseProofsStore,
@@ -20,8 +20,8 @@ pub struct BaseProofStoragePruner<P, H> {
     provider: BaseProofsStorage<P>,
     /// Reader to fetch block hash by block number
     block_hash_reader: H,
-    /// Keep at least these many recent blocks
-    min_block_interval: u64,
+    /// Keep at least these many recent blocks.
+    retention_blocks: u64,
     /// Maximum number of blocks to prune in one database transaction
     prune_batch_size: u64,
 }
@@ -31,10 +31,15 @@ impl<P, H> BaseProofStoragePruner<P, H> {
     pub const fn new(
         provider: BaseProofsStorage<P>,
         block_hash_reader: H,
-        min_block_interval: u64,
+        retention_blocks: u64,
         prune_batch_size: u64,
     ) -> Self {
-        Self { provider, block_hash_reader, min_block_interval, prune_batch_size }
+        assert!(prune_batch_size > 0, "prune batch size must be greater than zero");
+        Self { provider, block_hash_reader, retention_blocks, prune_batch_size }
+    }
+
+    const fn target_earliest_block(&self, latest_block: u64) -> u64 {
+        latest_block.saturating_sub(self.retention_blocks)
     }
 }
 
@@ -44,34 +49,27 @@ where
     H: BlockHashReader,
 {
     fn run_inner(&self) -> BaseProofStoragePrunerResult {
-        let latest_block_opt = self.provider.get_latest_block_number()?;
-        if latest_block_opt.is_none() {
-            trace!(target: "trie::pruner", "No latest blocks in the proof storage");
+        let Some(((earliest_block, _), (latest_block, _))) = self
+            .provider
+            .get_earliest_block_number()?
+            .zip(self.provider.get_latest_block_number()?)
+        else {
+            trace!(target: "trie::pruner", "No earliest or latest block in the proof storage");
             return Ok(PrunerOutput::default());
-        }
+        };
 
-        let earliest_block_opt = self.provider.get_earliest_block_number()?;
-        if earliest_block_opt.is_none() {
-            trace!(target: "trie::pruner", "No earliest blocks in the proof storage");
-            return Ok(PrunerOutput::default());
-        }
-
-        let latest_block = latest_block_opt.unwrap().0;
-        let earliest_block = earliest_block_opt.unwrap().0;
-
-        let interval = latest_block.saturating_sub(earliest_block);
-        if interval <= self.min_block_interval {
+        let target_earliest_block = self.target_earliest_block(latest_block);
+        if earliest_block >= target_earliest_block {
             trace!(target: "trie::pruner", "Nothing to prune");
             return Ok(PrunerOutput::default());
         }
-
-        // at this point `latest_block` is always greater than `min_block_interval`
-        let target_earliest_block = latest_block - self.min_block_interval;
 
         info!(
             target: "trie::pruner",
             from_block = earliest_block,
             to_block = target_earliest_block,
+            latest_block,
+            retention_blocks = self.retention_blocks,
            "Starting pruning proof storage",
         );
 
@@ -85,8 +83,18 @@ where
         // Prune in batches
         while current_earliest_block < target_earliest_block {
             // Calculate the end of this batch
-            let batch_end_block =
-                cmp::min(current_earliest_block + self.prune_batch_size, target_earliest_block);
+            let batch_end_block = cmp::min(
+                current_earliest_block.saturating_add(self.prune_batch_size),
+                target_earliest_block,
+            );
+            info!(
+                target: "trie::pruner",
+                start_block = current_earliest_block,
+                end_block = batch_end_block,
+                target_earliest_block,
+                batch_size = batch_end_block.saturating_sub(current_earliest_block),
+                "Starting proof storage prune batch",
+            );
 
             let batch_output = self.prune_batch(current_earliest_block, batch_end_block)?;
 
@@ -102,6 +110,26 @@ where
     /// Prunes a single batch of blocks.
     fn prune_batch(&self, start_block: u64, end_block: u64) -> Result<PrunerOutput, PrunerError> {
         let batch_start_time = Instant::now();
+        debug!(
+            target: "trie::pruner",
+            start_block,
+            end_block,
+            "Resolving proof storage prune batch block hashes",
+        );
+        if end_block == 0 {
+            trace!(
+                target: "trie::pruner",
+                start_block,
+                end_block,
+                "Skipping proof storage prune batch at genesis block",
+            );
+            return Ok(PrunerOutput {
+                duration: batch_start_time.elapsed(),
+                start_block,
+                end_block,
+                ..Default::default()
+            });
+        }
 
         // Fetch the block hash for the new earliest block of this batch.
         //
@@ -126,7 +154,20 @@ where
             block: BlockNumHash { number: end_block, hash: new_earliest_block_hash },
         };
 
-        // Commit this batch
+        debug!(
+            target: "trie::pruner",
+            start_block,
+            end_block,
+            block_hash = ?new_earliest_block_hash,
+            "Resolved proof storage prune batch block hashes",
+        );
+
+        debug!(
+            target: "trie::pruner",
+            start_block,
+            end_block,
+            "Applying proof storage prune batch",
+        );
         let write_counts = self.provider.prune_earliest_state(block_with_parent)?;
 
         let duration = batch_start_time.elapsed();
@@ -145,11 +186,14 @@ where
     /// Run the pruner
     pub fn run(&self) {
         let res = self.run_inner();
-        if let Err(e) = res {
-            error!(target: "trie::pruner", err=%e, "Pruner failed");
-            return;
+        match res {
+            Err(e) => {
+                error!(target: "trie::pruner", err=%e, "Pruner failed");
+            }
+            Ok(res) => {
+                info!(target: "trie::pruner", result = %res, "Finished pruning proof storage");
+            }
         }
-        info!(target: "trie::pruner", result = %res.unwrap(), "Finished pruning proof storage");
     }
 }
 

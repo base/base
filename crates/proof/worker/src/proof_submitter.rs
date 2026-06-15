@@ -21,7 +21,7 @@ use base_retry::{
     DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, MIN_RETRY_DELAY, RetryConfig,
 };
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Minimum delay used to avoid tight retry loops.
 pub const MIN_PROOF_SUBMITTER_BACKOFF: Duration = MIN_RETRY_DELAY;
@@ -105,7 +105,36 @@ where
         &self,
         request: HeartbeatRequest,
     ) -> Result<HeartbeatResponse, ProverServiceClientError> {
-        self.client.heartbeat(request).await
+        let session_id = request.session_id.clone();
+        let lock_id = request.lock_id.clone();
+        let worker_id = request.worker_id.clone();
+        let lock_duration_seconds = request.lock_duration_seconds;
+
+        match self.client.heartbeat(request).await {
+            Ok(response) => {
+                debug!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    lock_duration_seconds = lock_duration_seconds,
+                    status = ?response.job.status,
+                    lock_expires_at = ?response.job.lock_expires_at,
+                    "proof job heartbeat delivered"
+                );
+                Ok(response)
+            }
+            Err(error) => {
+                warn!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    lock_duration_seconds = lock_duration_seconds,
+                    error = %error,
+                    "proof job heartbeat failed"
+                );
+                Err(error)
+            }
+        }
     }
 
     /// Submits a generated proof through the worker API once.

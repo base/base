@@ -299,7 +299,8 @@ where
 #[test]
 fn test_execute_and_store_block_updates() {
     let dir = TempDir::new().unwrap();
-    let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     // Create a keypair for signing transactions
     let secp = Secp256k1::new();
@@ -450,7 +451,8 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
 #[test]
 fn test_multiple_blocks_before_and_after_initialization() {
     let dir = TempDir::new().unwrap();
-    let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -487,7 +489,8 @@ fn test_multiple_blocks_before_and_after_initialization() {
 #[test]
 fn test_blocks_with_multiple_transactions() {
     let dir = TempDir::new().unwrap();
-    let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
