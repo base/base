@@ -27,4 +27,31 @@ pub enum TxAuthError {
         /// The resolved actor's scope bitfield.
         scope: u8,
     },
+
+    /// A config change targets a locked account. All config changes are rejected
+    /// while locked. Mirrors `AccountConfiguration`'s `onlyUnlocked` modifier.
+    #[error("account is locked")]
+    AccountLocked,
+
+    /// A config change is bound to a chain other than `0` (multichain) or the
+    /// local chain. Mirrors `require(chainId == 0 || chainId == block.chainid)`.
+    #[error("config change chain id {got} is neither 0 nor the local chain {expected}")]
+    ConfigChainId {
+        /// The local chain id.
+        expected: u64,
+        /// The chain id carried by the config change.
+        got: u64,
+    },
+
+    /// A config change's sequence does not match the account's current sequence
+    /// for its channel. The contract reads the sequence from state, so a
+    /// mismatch means the entry is stale or out of order (and its signed digest
+    /// would not match the value that will actually be applied).
+    #[error("config change sequence {got} does not match the expected {expected}")]
+    ConfigSequence {
+        /// The sequence read from the account's state for the entry's channel.
+        expected: u64,
+        /// The sequence carried by the config change.
+        got: u64,
+    },
 }

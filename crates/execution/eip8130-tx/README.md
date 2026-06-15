@@ -20,6 +20,27 @@ An actor with `scope == 0` (unrestricted) satisfies every context; otherwise the
 relevant scope bit must be set, matching `AccountConfiguration`'s
 `scope == 0 || scope & REQUIRED != 0` rule.
 
+## Config-change authorization
+
+[`ConfigChangeAuthorizer`] authorizes an account-configuration change (a
+`ConfigChange` entry in `account_changes`) against the account's config — the
+native mirror of `AccountConfiguration.applySignedActorChanges`'s authorization
+tail. For one entry it:
+
+1. rejects a **locked** account (`onlyUnlocked`);
+2. enforces the **chain binding** and selects the sequence channel
+   (`chain_id == 0` → multichain, else local);
+3. requires the entry's `sequence` to equal the account's current channel
+   sequence (the value the contract reads from state and the signer signs over);
+4. reconstructs the **`SignedActorChanges`** digest (byte-identical to
+   `_computeSignedActorChangesDigest`), authorizes the entry's `auth` through the
+   [`ActorAuthorizer`], and requires **`SCOPE_CONFIG`**.
+
+It authorizes a single entry against the account's *current* on-chain sequence;
+ordering/sequence advancement across multiple same-channel entries in one
+transaction, and **applying** the changes (decoding `data`, mutating
+`actor_config`), are layered on top.
+
 ## Sender auth formats
 
 The sender auth blob differs by path, mirroring the wire format:
@@ -34,9 +55,12 @@ The sender auth blob differs by path, mirroring the wire format:
 
 ## Scope (what this is and is not)
 
-This layer covers **sender + payer** authorization and scope gating only. It does
-**not** validate account changes (the `SCOPE_CONFIG` owner-changes path, layered
-next), 2D nonces, gas/payment amounts, account locking, or call execution — those
-consume the [`TxActors`] this returns.
+This layer covers **sender + payer** authorization (via [`ActorTxVerifier`]) and
+single-entry **config-change** authorization (via [`ConfigChangeAuthorizer`]),
+each with its scope gate, plus the config-change lock/chain/sequence checks. It
+does **not** apply account changes, simulate cross-entry sequencing, or validate
+2D nonces, gas/payment amounts, or call execution — those consume the
+[`TxActors`] / [`ResolvedActor`] these return.
 
 [`Eip8130Signed`]: base_common_consensus::Eip8130Signed
+[`ResolvedActor`]: base_execution_eip8130_authorize::ResolvedActor
