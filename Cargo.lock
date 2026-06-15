@@ -4539,6 +4539,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-eip8130-tx"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-common-consensus",
+ "base-execution-eip8130-authorize",
+ "base-execution-eip8130-state",
+ "base-precompile-storage",
+ "k256",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "base-execution-evm"
 version = "0.0.0"
 dependencies = [
