@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use alloy_primitives::Address;
 #[cfg(any(target_os = "linux", feature = "local"))]
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use alloy_provider::{Provider, ProviderBuilder};
 use base_cli_utils::{LogConfig, RuntimeManager};
@@ -195,6 +195,8 @@ impl ProverRuntimeArgs {
                 deposit_contract = %rpc.deposit_contract_address,
                 system_config_address = %rpc.l1_system_config_address,
                 batcher_address = %rpc.genesis.system_config.batcher_addr,
+                gas_limit = rpc.genesis.system_config.gas_limit,
+                scalar = %rpc.genesis.system_config.scalar,
                 "overriding genesis config from L2 node RPC"
             );
 
@@ -206,8 +208,10 @@ impl ProverRuntimeArgs {
             rollup_config.deposit_contract_address = rpc.deposit_contract_address;
             rollup_config.l1_system_config_address = rpc.l1_system_config_address;
 
-            rollup_config.genesis.system_config.get_or_insert_default().batcher_address =
-                rpc.genesis.system_config.batcher_addr;
+            let sc = rollup_config.genesis.system_config.get_or_insert_default();
+            sc.batcher_address = rpc.genesis.system_config.batcher_addr;
+            sc.gas_limit = rpc.genesis.system_config.gas_limit;
+            sc.scalar = rpc.genesis.system_config.scalar;
         }
 
         let l1_config = base_common_chains::L1_CONFIGS
@@ -609,6 +613,9 @@ struct BlockRefRpcResponse {
 struct SystemConfigRpcResponse {
     #[serde(alias = "batcherAddr")]
     batcher_addr: Address,
+    #[serde(alias = "gasLimit")]
+    gas_limit: u64,
+    scalar: U256,
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
