@@ -242,14 +242,13 @@ mod tests {
     #[test]
     fn test_base_proofs_state_provider_ref_debug() {
         let latest: Box<dyn StateProvider + Send> = Box::<NoopProvider>::default();
-        let storage: crate::BaseProofsStorage<InMemoryProofsStorage> =
-            InMemoryProofsStorage::new().into();
+        let storage: crate::BaseProofsStorage<InMemoryProofsStorage> = InMemoryProofsStorage::new();
         let block_number = 42u64;
 
         let provider = BaseProofsStateProviderRef::new(latest, &storage, block_number);
 
         assert_eq!(
-            format!("{:?}", provider),
+            format!("{provider:?}"),
             "BaseProofsStateProviderRef { storage: InMemoryProofsStorage { inner: RwLock { data: InMemoryStorageInner { account_branches: {}, storage_branches: {}, hashed_accounts: {}, hashed_storages: {}, trie_updates: {}, post_states: {}, earliest_block: None, anchor_block: None } } }, block_number: 42 }"
         );
     }
