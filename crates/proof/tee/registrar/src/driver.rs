@@ -652,21 +652,32 @@ mod tests {
         time::SystemTime,
     };
 
-    use alloy_primitives::Address;
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_primitives::{Address, B256, Bloom, Bytes};
+    use alloy_rpc_types_eth::TransactionReceipt;
+    use alloy_sol_types::SolCall;
     use async_trait::async_trait;
+    use base_proof_contracts::ITEEProverRegistry;
+    use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
+    use base_tx_manager::{SendHandle, TxCandidate};
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
     use super::*;
     use crate::{
-        InstanceHealthStatus, Result, SignerClient,
+        InstanceHealthStatus, RegistryClient, Result, SignerClient, SignerManager,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, HARDHAT_KEY_3,
             NoopNitroVerifier, NoopTxManager, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
             prover_instance, public_key_from_private, signer_from_private_key,
         },
     };
+
+    const ALL_ENDPOINTS: [&str; 4] = [EP1, EP2, EP3, EP4];
+    const ALL_KEYS: [&[u8; 32]; 4] =
+        [&HARDHAT_KEY_0, &HARDHAT_KEY_1, &HARDHAT_KEY_2, &HARDHAT_KEY_3];
+    const GATED_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
     #[derive(Debug)]
     struct MockDiscovery {
@@ -677,6 +688,28 @@ mod tests {
     impl InstanceDiscovery for MockDiscovery {
         async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
             Ok(self.instances.clone())
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct MutableDiscovery {
+        instances: Arc<Mutex<Vec<ProverInstance>>>,
+    }
+
+    impl MutableDiscovery {
+        fn new(initial: Vec<ProverInstance>) -> Self {
+            Self { instances: Arc::new(Mutex::new(initial)) }
+        }
+
+        fn set(&self, instances: Vec<ProverInstance>) {
+            *self.instances.lock().unwrap() = instances;
+        }
+    }
+
+    #[async_trait]
+    impl InstanceDiscovery for MutableDiscovery {
+        async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
+            Ok(self.instances.lock().unwrap().clone())
         }
     }
 
@@ -752,12 +785,246 @@ mod tests {
         Url::parse(&format!("http://{host_port}")).unwrap()
     }
 
-    fn mock_cert_manager(
+    fn stub_receipt() -> TransactionReceipt {
+        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: Eip658Value::Eip658(true),
+                cumulative_gas_used: 21_000,
+                logs: vec![],
+            },
+            logs_bloom: Bloom::ZERO,
+        });
+        TransactionReceipt {
+            inner,
+            transaction_hash: B256::ZERO,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        }
+    }
+
+    fn mock_cert_manager<T: TxManager + 'static>(
         config: &DriverConfig,
-        tx_manager: NoopTxManager,
-    ) -> CertManager<NoopTxManager> {
+        tx_manager: T,
+    ) -> CertManager<T> {
         CertManager::new(&config.crl, Arc::new(NoopNitroVerifier), tx_manager)
             .expect("test cert manager builds")
+    }
+
+    #[derive(Debug, Clone)]
+    struct MockRegistry;
+
+    #[async_trait]
+    impl RegistryClient for MockRegistry {
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            Ok(vec![])
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct SharedTxManager {
+        sent: Arc<Mutex<Vec<Bytes>>>,
+    }
+
+    impl SharedTxManager {
+        fn new() -> Self {
+            Self { sent: Arc::new(Mutex::new(vec![])) }
+        }
+
+        fn sent_calldata(&self) -> Vec<Bytes> {
+            self.sent.lock().unwrap().clone()
+        }
+    }
+
+    impl TxManager for SharedTxManager {
+        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            self.sent.lock().unwrap().push(candidate.tx_data);
+            Ok(stub_receipt())
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+            unreachable!("driver tests do not submit async transactions")
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    #[derive(Debug)]
+    struct GatedProofState {
+        release: CancellationToken,
+        call_count: AtomicUsize,
+        in_flight: AtomicUsize,
+    }
+
+    impl Default for GatedProofState {
+        fn default() -> Self {
+            Self {
+                release: CancellationToken::new(),
+                call_count: AtomicUsize::new(0),
+                in_flight: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct GatedProofProvider {
+        state: Arc<GatedProofState>,
+    }
+
+    impl GatedProofProvider {
+        fn new() -> (Self, GatedProofHandles) {
+            let state = Arc::new(GatedProofState::default());
+            (Self { state: Arc::clone(&state) }, GatedProofHandles { state })
+        }
+    }
+
+    #[async_trait]
+    impl AttestationProofProvider for GatedProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            self.state.call_count.fetch_add(1, Ordering::SeqCst);
+            self.state.in_flight.fetch_add(1, Ordering::SeqCst);
+
+            let result = tokio::select! {
+                biased;
+                () = cancel.cancelled() => {
+                    Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
+                        "proof cancelled by test harness".into(),
+                    ))
+                }
+                () = self.state.release.cancelled() => {
+                    Ok(AttestationProof {
+                        output: Bytes::new(),
+                        proof_bytes: Bytes::from_static(b"gated-proof"),
+                    })
+                }
+            };
+            self.state.in_flight.fetch_sub(1, Ordering::SeqCst);
+            result
+        }
+
+        async fn generate_proof_for_signer(
+            &self,
+            attestation_bytes: &[u8],
+            signer_address: Address,
+            cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            let mut proof = self.generate_proof(attestation_bytes, cancel).await?;
+            proof.output = Bytes::copy_from_slice(signer_address.as_slice());
+            Ok(proof)
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct GatedProofHandles {
+        state: Arc<GatedProofState>,
+    }
+
+    impl GatedProofHandles {
+        fn release_all(&self) {
+            self.state.release.cancel();
+        }
+
+        fn call_count(&self) -> usize {
+            self.state.call_count.load(Ordering::SeqCst)
+        }
+
+        fn in_flight(&self) -> usize {
+            self.state.in_flight.load(Ordering::SeqCst)
+        }
+    }
+
+    type RunDriver = RegistrationDriver<
+        MutableDiscovery,
+        MockSignerClient,
+        Arc<SignerManager<GatedProofProvider, MockRegistry, SharedTxManager>>,
+        SharedTxManager,
+    >;
+
+    #[derive(Debug)]
+    struct GatedRunHarness {
+        driver: Arc<RunDriver>,
+        cancel: CancellationToken,
+        discovery: MutableDiscovery,
+        proof: GatedProofHandles,
+        tx: SharedTxManager,
+    }
+
+    impl GatedRunHarness {
+        fn new(
+            initial_instances: Vec<ProverInstance>,
+            endpoints_to_keys: &[(&str, &[u8; 32])],
+        ) -> Self {
+            let discovery = MutableDiscovery::new(initial_instances);
+            let signer_client = MockSignerClient::from_keys(endpoints_to_keys);
+            let cancel = CancellationToken::new();
+            let mut config = default_config(cancel.clone());
+            config.poll_interval = FAST_POLL_INTERVAL;
+            let registry = MockRegistry;
+            let tx = SharedTxManager::new();
+            let (proof_provider, proof_handles) = GatedProofProvider::new();
+            let signer_manager = Arc::new(SignerManager::new(
+                proof_provider,
+                registry,
+                tx.clone(),
+                config.signer_manager.clone(),
+            ));
+            let cert_manager = mock_cert_manager(&config, tx.clone());
+            let driver = Arc::new(RegistrationDriver::new(
+                discovery.clone(),
+                signer_client,
+                config,
+                cert_manager,
+                signer_manager,
+            ));
+
+            Self { driver, cancel, discovery, proof: proof_handles, tx }
+        }
+
+        fn spawn_run(&self) -> tokio::task::JoinHandle<Result<()>> {
+            let driver = Arc::clone(&self.driver);
+            tokio::spawn(async move { driver.run_loop().await })
+        }
+
+        async fn shutdown(&self, handle: tokio::task::JoinHandle<Result<()>>) {
+            self.cancel.cancel();
+            let outcome = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
+                .await
+                .expect("run loop should observe cancellation")
+                .expect("run loop task should not panic");
+            outcome.expect("run loop should stop cleanly");
+        }
+    }
+
+    async fn wait_for(label: &str, predicate: impl Fn() -> bool) {
+        let started = std::time::Instant::now();
+        while !predicate() {
+            if started.elapsed() > GATED_WAIT_TIMEOUT {
+                panic!("timed out waiting for: {label}");
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    fn count_register_calls(sent: &[Bytes]) -> usize {
+        let sel = ITEEProverRegistry::registerSignerCall::SELECTOR;
+        sent.iter().filter(|c| c.starts_with(&sel)).count()
     }
 
     #[derive(Debug, Clone)]
@@ -882,6 +1149,56 @@ mod tests {
             orphan_inputs[0].contains(&signer),
             "driver passes active signer set into orphan protection",
         );
+    }
+
+    #[rstest]
+    #[case::one_instance(1)]
+    #[case::two_instances(2)]
+    #[tokio::test]
+    async fn run_loop_registers_each_discovered_enclave(#[case] num_instances: usize) {
+        let keys: Vec<(&str, &[u8; 32])> =
+            ALL_ENDPOINTS.iter().copied().zip(ALL_KEYS.iter().copied()).collect();
+        let instances: Vec<_> =
+            ALL_ENDPOINTS[..num_instances].iter().map(|ep| healthy_prover_instance(ep)).collect();
+        let harness = GatedRunHarness::new(instances, &keys);
+
+        let run_handle = harness.spawn_run();
+
+        wait_for("every proof task parked in gate", || harness.proof.in_flight() == num_instances)
+            .await;
+        harness.proof.release_all();
+        wait_for("every registerSigner transaction submitted", || {
+            count_register_calls(&harness.tx.sent_calldata()) == num_instances
+        })
+        .await;
+        harness.shutdown(run_handle).await;
+
+        assert_eq!(harness.proof.call_count(), num_instances, "exactly one proof per enclave");
+    }
+
+    #[tokio::test]
+    async fn run_loop_continues_discovery_while_proofs_are_in_flight() {
+        let keys: Vec<(&str, &[u8; 32])> =
+            ALL_ENDPOINTS.iter().copied().zip(ALL_KEYS.iter().copied()).collect();
+        let harness = GatedRunHarness::new(vec![healthy_prover_instance(EP1)], &keys);
+
+        let run_handle = harness.spawn_run();
+
+        wait_for("initial proof task parked in gate", || harness.proof.in_flight() == 1).await;
+        harness.discovery.set(vec![healthy_prover_instance(EP1), healthy_prover_instance(EP2)]);
+        wait_for("newly discovered proof task parked while first proof is still in flight", || {
+            harness.proof.in_flight() == 2
+        })
+        .await;
+
+        harness.proof.release_all();
+        wait_for("both registerSigner transactions submitted", || {
+            count_register_calls(&harness.tx.sent_calldata()) == 2
+        })
+        .await;
+        harness.shutdown(run_handle).await;
+
+        assert_eq!(harness.proof.call_count(), 2, "new signer must not wait for old proof");
     }
 
     #[tokio::test]
