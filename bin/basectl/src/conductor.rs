@@ -327,18 +327,18 @@ fn print_fanout_action(action: &ConductorFanoutJson, json: bool) -> Result<()> {
                 action.total
             )?;
         } else {
+            let failures = action
+                .failures
+                .iter()
+                .map(|f| format!("{}: {}", f.name, f.error))
+                .collect::<Vec<_>>()
+                .join("; ");
             writeln!(
                 stdout,
-                "WARN conductor {} on {}/{} nodes; failures: {}",
+                "WARN conductor {} on {}/{} nodes; failures: {failures}",
                 action.action.past_tense(),
                 action.successes.len(),
-                action.total,
-                action
-                    .failures
-                    .iter()
-                    .map(|failure| format!("{}: {}", failure.name, failure.error))
-                    .collect::<Vec<_>>()
-                    .join("; ")
+                action.total
             )?;
         }
     }
