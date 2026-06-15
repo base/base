@@ -323,7 +323,10 @@ where
         = BaseProofsHashedCursorWithMetrics<S::AccountHashedCursor<'tx>>
     where
         Self: 'tx;
-    type Tx = S::Tx;
+    type Tx<'tx>
+        = S::Tx<'tx>
+    where
+        Self: 'tx;
 
     #[inline]
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -337,7 +340,7 @@ where
 
     #[inline]
     fn storage_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
@@ -347,7 +350,7 @@ where
 
     #[inline]
     fn account_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
         let cursor = self.storage.account_trie_cursor(max_block_number)?;
@@ -356,7 +359,7 @@ where
 
     #[inline]
     fn storage_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
@@ -366,7 +369,7 @@ where
 
     #[inline]
     fn account_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let cursor = self.storage.account_hashed_cursor(max_block_number)?;
@@ -374,21 +377,22 @@ where
     }
 
     #[inline]
-    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
+    fn ro_tx<'tx>(&'tx self) -> BaseProofsStorageResult<Self::Tx<'tx>> {
         let tx = self.storage.ro_tx()?;
         self.tx_acquisitions.fetch_add(1, Ordering::Relaxed);
         Ok(tx)
     }
 
     #[inline]
-    fn storage_trie_cursor_with_tx<'tx>(
+    fn storage_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         let cursor =
             self.storage.storage_trie_cursor_with_tx(tx, hashed_address, max_block_number)?;
@@ -396,27 +400,29 @@ where
     }
 
     #[inline]
-    fn account_trie_cursor_with_tx<'tx>(
+    fn account_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         let cursor = self.storage.account_trie_cursor_with_tx(tx, max_block_number)?;
         Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     #[inline]
-    fn storage_hashed_cursor_with_tx<'tx>(
+    fn storage_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         let cursor =
             self.storage.storage_hashed_cursor_with_tx(tx, hashed_address, max_block_number)?;
@@ -424,13 +430,14 @@ where
     }
 
     #[inline]
-    fn account_hashed_cursor_with_tx<'tx>(
+    fn account_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         let cursor = self.storage.account_hashed_cursor_with_tx(tx, max_block_number)?;
         Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
@@ -456,8 +463,9 @@ where
         &self,
         new_earliest_block_ref: BlockWithParent,
     ) -> BaseProofsStorageResult<WriteCounts> {
+        let result = self.storage.prune_earliest_state(new_earliest_block_ref)?;
         BlockMetrics::earliest_number().set(new_earliest_block_ref.block.number as f64);
-        self.storage.prune_earliest_state(new_earliest_block_ref)
+        Ok(result)
     }
 
     #[inline]

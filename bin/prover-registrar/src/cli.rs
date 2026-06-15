@@ -18,12 +18,13 @@ use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CrlConfig,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CertManager, CrlConfig,
     DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY,
     DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierClient,
     NitroVerifierContractClient, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError,
-    RegistrarMetrics, RegistrationDriver, RegistryContractClient,
+    RegistrarMetrics, RegistrationDriver, RegistryContractClient, SignerManager,
+    SignerManagerConfig,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use boundless_market::{
@@ -196,14 +197,14 @@ struct BoundlessArgs {
     ///
     /// Maximum wall-clock time the registrar will wait for a Boundless
     /// proof to be fulfilled before giving up. Purely a client-side cap
-    /// on `wait_for_request_fulfillment` — not submitted on-chain. The
-    /// on-chain request lifetime is controlled by
+    /// on `wait_for_request_fulfillment` — not submitted onchain. The
+    /// onchain request lifetime is controlled by
     /// `--boundless-offer-lock-timeout-secs` (and the SDK-derived
     /// `Offer.timeout = 2 * lockTimeout` default).
     ///
-    /// Should be set greater than the on-chain `Offer.timeout` plus
+    /// Should be set greater than the onchain `Offer.timeout` plus
     /// headroom for clock skew, RPC latency, and the indexer catching
-    /// up after the on-chain `Fulfilled` event. The default of 1260 s
+    /// up after the onchain `Fulfilled` event. The default of 1260 s
     /// covers a `lockTimeout = 600 s` (10 min) deployment, in which
     /// the SDK derives `Offer.timeout = 1200 s` (20 min total request
     /// lifetime) and 1260 s gives ~60 s of headroom over that expiry.
@@ -285,7 +286,7 @@ struct BoundlessArgs {
     boundless_max_recovery_attempts: u32,
 
     /// Maximum age (in seconds) of a recovered proof's attestation timestamp
-    /// before it is considered stale. Should be slightly below the on-chain
+    /// before it is considered stale. Should be slightly below the onchain
     /// `MAX_AGE` to account for clock skew. Defaults to 3300 s (55 minutes).
     #[arg(
         long,
@@ -301,12 +302,12 @@ struct CrlArgs {
     /// Enable on-demand CRL checking at registration time.
     /// When enabled, intermediate certificates are checked against CRL
     /// distribution points before signer registration. Revoked certificates
-    /// trigger a `revokeCert` transaction on-chain.
+    /// trigger a `revokeCert` transaction onchain.
     #[arg(long, env = cli_env!("CRL_CHECK_ENABLED"), default_value_t = false)]
     crl_check_enabled: bool,
 
     /// `NitroEnclaveVerifier` contract address. Required when
-    /// `--crl-check-enabled` is set; consulted both for the durable on-chain
+    /// `--crl-check-enabled` is set; consulted both for the durable onchain
     /// `revokedCerts` pre-check and as the destination for outgoing
     /// `revokeCert` transactions.
     ///
@@ -631,16 +632,13 @@ impl Cli {
             config.l1_rpc_url.clone(),
         );
 
-        // Optional on-chain revocation pre-check client; only built when CRL
-        // checking is enabled and the verifier address is configured.
-        let nitro_verifier: Option<Arc<dyn NitroVerifierClient>> =
-            match (config.crl.enabled, config.crl.nitro_verifier_address) {
-                (true, Some(verifier_address)) => Some(Arc::new(NitroVerifierContractClient::new(
-                    verifier_address,
-                    config.l1_rpc_url.clone(),
-                ))),
-                _ => None,
-            };
+        // The driver always carries a certificate manager, but only calls it
+        // when CRL checking is enabled. When disabled and no verifier address
+        // is configured, bind the unused client to the zero address.
+        let nitro_verifier_address = config.crl.nitro_verifier_address.unwrap_or(Address::ZERO);
+        let nitro_verifier: Arc<dyn NitroVerifierClient> = Arc::new(
+            NitroVerifierContractClient::new(nitro_verifier_address, config.l1_rpc_url.clone()),
+        );
 
         // ── 6. Build proof provider ──────────────────────────────────────────
         let proof_provider: Box<dyn AttestationProofProvider> = match config.proving {
@@ -685,12 +683,14 @@ impl Cli {
         // ── 8. Build and run driver ──────────────────────────────────────────
         let signer_client = ProverClient::new(config.prover_timeout);
         let driver_config = DriverConfig {
-            registry_address: config.tee_prover_registry_address,
             poll_interval: config.poll_interval,
             cancel: cancel.clone(),
-            max_concurrency: config.max_concurrency,
-            max_tx_retries: config.max_tx_retries,
-            tx_retry_delay: config.tx_retry_delay,
+            signer_manager: SignerManagerConfig {
+                registry_address: config.tee_prover_registry_address,
+                max_concurrency: config.max_concurrency,
+                max_tx_retries: config.max_tx_retries,
+                tx_retry_delay: config.tx_retry_delay,
+            },
             unhealthy_registration_window: config.unhealthy_registration_window,
             crl: config.crl,
         };
@@ -701,16 +701,21 @@ impl Cli {
         // would add complexity without benefit.
         ready.store(true, Ordering::SeqCst);
 
+        let signer_manager = Arc::new(SignerManager::new(
+            proof_provider,
+            registry,
+            tx_manager.clone(),
+            driver_config.signer_manager.clone(),
+        ));
+        let cert_manager = CertManager::new(&driver_config.crl, nitro_verifier, tx_manager)?;
         let cancel_guard = cancel.clone().drop_guard();
         let driver = RegistrationDriver::new(
             discovery,
-            proof_provider,
-            registry,
-            tx_manager,
             signer_client,
             driver_config,
-            nitro_verifier,
-        )?;
+            cert_manager,
+            signer_manager,
+        );
         let driver_result = driver.run().await;
         drop(cancel_guard);
 

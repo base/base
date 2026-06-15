@@ -21,8 +21,8 @@ const PRUNE_BATCH_SIZE: u64 = 2000;
 /// Periodic pruner task: constructs the pruner and runs it every interval.
 #[derive(Debug)]
 pub struct BaseProofStoragePrunerTask<P, H> {
-    pruner: Arc<BaseProofStoragePruner<P, H>>,
-    min_block_interval: u64,
+    pruner: BaseProofStoragePruner<P, H>,
+    retention_blocks: u64,
     task_run_interval: Duration,
 }
 
@@ -32,26 +32,22 @@ where
     H: BlockHashReader + Send + Sync + 'static,
 {
     /// Initialize a new [`BaseProofStoragePrunerTask`]
-    pub fn new(
+    pub const fn new(
         provider: BaseProofsStorage<P>,
         hash_reader: H,
-        min_block_interval: u64,
+        retention_blocks: u64,
         task_run_interval: Duration,
     ) -> Self {
-        let pruner = Arc::new(BaseProofStoragePruner::new(
-            provider,
-            hash_reader,
-            min_block_interval,
-            PRUNE_BATCH_SIZE,
-        ));
-        Self { pruner, min_block_interval, task_run_interval }
+        let pruner =
+            BaseProofStoragePruner::new(provider, hash_reader, retention_blocks, PRUNE_BATCH_SIZE);
+        Self { pruner, retention_blocks, task_run_interval }
     }
 
     /// Run forever (until `cancel`), executing one prune pass per `task_run_interval`.
     pub async fn run(self, mut signal: GracefulShutdown) {
         info!(
             target: "trie::pruner_task",
-            min_block_interval = self.min_block_interval,
+            retention_blocks = self.retention_blocks,
             interval_secs = self.task_run_interval.as_secs(),
             "Starting pruner task"
         );
@@ -59,6 +55,7 @@ where
         let mut interval = time::interval(self.task_run_interval);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+        let pruner = Arc::new(self.pruner);
         loop {
             tokio::select! {
                 _ = &mut signal => {
@@ -66,10 +63,7 @@ where
                     break;
                 }
                 _ = interval.tick() => {
-                    // `pruner.run()` performs blocking MDBX read/write transactions; offload
-                    // to a blocking worker so the tokio runtime stays responsive (and the
-                    // shutdown branch above can preempt on the next tick).
-                    let pruner = Arc::clone(&self.pruner);
+                    let pruner = Arc::clone(&pruner);
                     if let Err(e) = tokio::task::spawn_blocking(move || pruner.run()).await {
                         warn!(target: "trie::pruner_task", err=%e, "Pruner blocking task failed");
                     }

@@ -29,7 +29,7 @@ mod driver;
 pub use driver::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DiscoveryResolution, DriverConfig,
-    PendingRegistration, RegisterableSigner, RegistrationDriver, ResolveOutcome,
+    RegisterableSigner, RegistrationDriver, ResolveOutcome,
 };
 
 mod error;
@@ -49,6 +49,12 @@ pub use registration_manager::RegistrationManager;
 
 mod registry;
 pub use registry::{RegistryClient, RegistryContractClient};
+
+mod signer_manager;
+pub use signer_manager::{
+    PendingRegistration, ProofTaskOutcome, ProofTaskSet, SignerLifecycle, SignerManager,
+    SignerManagerConfig,
+};
 
 mod traits;
 pub use traits::{InstanceDiscovery, SignerClient};

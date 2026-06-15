@@ -464,7 +464,6 @@ impl<C> InitTable for StoragesTrieInit<C> {
         Ok(())
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
