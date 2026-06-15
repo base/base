@@ -12,6 +12,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     io::Read,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
@@ -30,6 +31,9 @@ const EXTRA_CHUNKS_BUFFER: u64 = 2;
 /// Maximum number of chunks allowed before bailing to prevent OOM.
 /// At 500k blocks per file, 100k chunks covers 50 billion blocks.
 const MAX_CHUNKS: u64 = 100_000;
+
+/// Interval between periodic progress logs during long-running archive compression.
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Static file component types that produce chunked archives.
 const CHUNKED_COMPONENTS: &[(&str, &str)] = &[
@@ -239,10 +243,11 @@ impl SnapshotGenerator {
         let state_files = state_source_files(source_datadir)?;
         let (state_size, state_output_files) =
             package_single_component(output_dir, "state.tar.zst", &state_files)?;
+        let state_decompressed_size: u64 = state_output_files.iter().map(|f| f.size).sum();
         info!(
             component = "state",
             compressed_size = state_size,
-            decompressed_size = state_output_files.iter().map(|f| f.size).sum::<u64>(),
+            decompressed_size = state_decompressed_size,
             file_count = state_files.len(),
             "packaged mdbx state database"
         );
@@ -251,7 +256,7 @@ impl SnapshotGenerator {
             ComponentManifest::Single(SingleArchive {
                 file: "state.tar.zst".to_string(),
                 size: state_size,
-                decompressed_size: state_output_files.iter().map(|f| f.size).sum::<u64>(),
+                decompressed_size: state_decompressed_size,
                 blake3: None,
                 output_files: state_output_files,
             }),
@@ -261,10 +266,11 @@ impl SnapshotGenerator {
         if !rocksdb_files.is_empty() {
             let (rocksdb_size, rocksdb_output_files) =
                 package_single_component(output_dir, "rocksdb_indices.tar.zst", &rocksdb_files)?;
+            let rocksdb_decompressed_size: u64 = rocksdb_output_files.iter().map(|f| f.size).sum();
             info!(
                 component = "rocksdb_indices",
                 compressed_size = rocksdb_size,
-                decompressed_size = rocksdb_output_files.iter().map(|f| f.size).sum::<u64>(),
+                decompressed_size = rocksdb_decompressed_size,
                 file_count = rocksdb_files.len(),
                 "packaged rocksdb indices"
             );
@@ -273,7 +279,7 @@ impl SnapshotGenerator {
                 ComponentManifest::Single(SingleArchive {
                     file: "rocksdb_indices.tar.zst".to_string(),
                     size: rocksdb_size,
-                    decompressed_size: rocksdb_output_files.iter().map(|f| f.size).sum::<u64>(),
+                    decompressed_size: rocksdb_decompressed_size,
                     blake3: None,
                     output_files: rocksdb_output_files,
                 }),
@@ -590,12 +596,19 @@ fn compute_output_files_and_archive(
     files: &[PlannedFile],
     mut archive: Option<(&mut tar::Builder<zstd::Encoder<'_, std::fs::File>>, &Path)>,
 ) -> Result<Vec<OutputFileChecksum>> {
+    let archive_name = archive.as_ref().and_then(|(_, path)| {
+        path.file_name().map(|n| n.to_string_lossy().to_string())
+    });
+    let total_bytes: u64 =
+        files.iter().filter_map(|f| std::fs::metadata(&f.source_path).ok().map(|m| m.len())).sum();
+    let mut progress = archive_name.map(|name| ArchiveProgress::new(name, total_bytes));
+
     let mut output_files = Vec::with_capacity(files.len());
     for planned in files {
         let expected_size = std::fs::metadata(&planned.source_path)?.len();
 
         let source_file = std::fs::File::open(&planned.source_path)?;
-        let mut reader = HashingReader::new(source_file);
+        let mut reader = HashingReader::new(source_file, progress.as_mut());
 
         if let Some((builder, archive_path)) = archive.as_mut() {
             let mut header = tar::Header::new_gnu();
@@ -633,15 +646,48 @@ fn compute_output_files_and_archive(
     Ok(output_files)
 }
 
-struct HashingReader<R> {
+/// Cumulative compression progress shared across every file in a single archive,
+/// emitting a throttled log so large single-file archives report progress mid-stream.
+struct ArchiveProgress {
+    archive_name: String,
+    total_bytes: u64,
+    started: Instant,
+    last_log: Instant,
+    bytes_done: u64,
+}
+
+impl ArchiveProgress {
+    fn new(archive_name: String, total_bytes: u64) -> Self {
+        let now = Instant::now();
+        Self { archive_name, total_bytes, started: now, last_log: now, bytes_done: 0 }
+    }
+
+    fn record(&mut self, n: u64) {
+        self.bytes_done += n;
+        if self.last_log.elapsed() >= PROGRESS_LOG_INTERVAL {
+            info!(
+                archive = %self.archive_name,
+                bytes_done = self.bytes_done,
+                total_bytes = self.total_bytes,
+                percent = progress_percent(self.bytes_done, self.total_bytes),
+                elapsed_secs = self.started.elapsed().as_secs(),
+                "compressing archive"
+            );
+            self.last_log = Instant::now();
+        }
+    }
+}
+
+struct HashingReader<'a, R> {
     inner: R,
     hasher: blake3::Hasher,
     bytes_read: u64,
+    progress: Option<&'a mut ArchiveProgress>,
 }
 
-impl<R: Read> HashingReader<R> {
-    fn new(inner: R) -> Self {
-        Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0 }
+impl<'a, R: Read> HashingReader<'a, R> {
+    fn new(inner: R, progress: Option<&'a mut ArchiveProgress>) -> Self {
+        Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0, progress }
     }
 
     fn finalize(self) -> String {
@@ -649,12 +695,15 @@ impl<R: Read> HashingReader<R> {
     }
 }
 
-impl<R: Read> Read for HashingReader<R> {
+impl<R: Read> Read for HashingReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let n = self.inner.read(buf)?;
         if n > 0 {
             self.bytes_read += n as u64;
             self.hasher.update(&buf[..n]);
+            if let Some(progress) = self.progress.as_mut() {
+                progress.record(n as u64);
+            }
         }
         Ok(n)
     }
@@ -673,6 +722,10 @@ fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
     }
     files.sort_unstable();
     Ok(files)
+}
+
+const fn progress_percent(done: u64, total: u64) -> u64 {
+    if total == 0 { 100 } else { done.saturating_mul(100) / total }
 }
 
 #[cfg(test)]

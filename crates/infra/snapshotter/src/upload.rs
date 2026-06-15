@@ -14,6 +14,11 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
@@ -36,6 +41,9 @@ const MULTIPART_THRESHOLD: u64 = 100 * 1024 * 1024;
 
 /// Part size for multipart uploads (100 `MiB`).
 const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Interval between periodic progress logs while uploading snapshot artifacts.
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Determines whether a snapshot component is re-uploaded every run
 /// or can be skipped when the remote copy already matches.
@@ -244,34 +252,50 @@ impl SnapshotUploader {
             "diff analysis complete"
         );
 
-        let static_prefix_ref = &static_prefix;
-        stream::iter(static_uploads)
-            .map(|file| async move { self.upload_file(&file, static_prefix_ref).await })
-            .buffer_unordered(MAX_CONCURRENT_UPLOADS)
-            .try_collect::<Vec<()>>()
-            .await?;
+        let total_bytes = total_upload_bytes(&static_uploads, &run_uploads, &manifest_path).await;
+        let uploaded = Arc::new(AtomicU64::new(0));
+        let progress = spawn_upload_progress(Arc::clone(&uploaded), total_bytes);
 
-        let run_prefix_ref = &run_prefix;
-        stream::iter(run_uploads)
-            .map(|file| async move { self.upload_file(&file, run_prefix_ref).await })
-            .buffer_unordered(MAX_CONCURRENT_UPLOADS)
-            .try_collect::<Vec<()>>()
-            .await?;
-
-        let published_manifest = build_published_manifest(
-            local_manifest,
-            self.public_static_files_base_url().as_deref(),
-            timestamp,
-        )?;
         let manifest_key = format!("{run_prefix}/manifest.json");
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(&manifest_key)
-            .body(ByteStream::from(published_manifest))
-            .send()
-            .await
-            .with_context(|| format!("failed to upload {manifest_key}"))?;
+        let upload_result = async {
+            let static_prefix_ref = &static_prefix;
+            let uploaded_ref = &uploaded;
+            stream::iter(static_uploads)
+                .map(|file| async move {
+                    self.upload_file(&file, static_prefix_ref, uploaded_ref).await
+                })
+                .buffer_unordered(MAX_CONCURRENT_UPLOADS)
+                .try_collect::<Vec<()>>()
+                .await?;
+
+            let run_prefix_ref = &run_prefix;
+            stream::iter(run_uploads)
+                .map(|file| async move {
+                    self.upload_file(&file, run_prefix_ref, uploaded_ref).await
+                })
+                .buffer_unordered(MAX_CONCURRENT_UPLOADS)
+                .try_collect::<Vec<()>>()
+                .await?;
+
+            let published_manifest = build_published_manifest(
+                local_manifest,
+                self.public_static_files_base_url().as_deref(),
+                timestamp,
+            )?;
+            self.client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(&manifest_key)
+                .body(ByteStream::from(published_manifest))
+                .send()
+                .await
+                .with_context(|| format!("failed to upload {manifest_key}"))?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        progress.abort();
+        upload_result?;
 
         info!(
             run_prefix = %run_prefix,
@@ -349,7 +373,13 @@ impl SnapshotUploader {
     }
 
     /// Uploads a single file, using multipart upload for files above the threshold.
-    async fn upload_file(&self, file_path: &Path, dest_prefix: &str) -> Result<()> {
+    /// On success, adds the uploaded byte count to `uploaded` for progress tracking.
+    async fn upload_file(
+        &self,
+        file_path: &Path,
+        dest_prefix: &str,
+        uploaded: &AtomicU64,
+    ) -> Result<()> {
         let file_name = file_path
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file_path.display()))?
@@ -360,11 +390,14 @@ impl SnapshotUploader {
 
         if file_size > MULTIPART_THRESHOLD {
             debug!(key = %key, size = file_size, "uploading file (multipart)");
-            self.upload_multipart(file_path, &key, file_size).await
+            self.upload_multipart(file_path, &key, file_size, uploaded).await?;
         } else {
             debug!(key = %key, size = file_size, "uploading file");
-            self.upload_single(file_path, &key).await
+            self.upload_single(file_path, &key).await?;
+            uploaded.fetch_add(file_size, Ordering::Relaxed);
         }
+
+        Ok(())
     }
 
     async fn upload_single(&self, file_path: &Path, key: &str) -> Result<()> {
@@ -384,7 +417,13 @@ impl SnapshotUploader {
         Ok(())
     }
 
-    async fn upload_multipart(&self, file_path: &Path, key: &str, file_size: u64) -> Result<()> {
+    async fn upload_multipart(
+        &self,
+        file_path: &Path,
+        key: &str,
+        file_size: u64,
+        uploaded: &AtomicU64,
+    ) -> Result<()> {
         let create_resp = self
             .client
             .create_multipart_upload()
@@ -399,7 +438,7 @@ impl SnapshotUploader {
             .ok_or_else(|| anyhow::anyhow!("no upload_id returned for {key}"))?
             .to_string();
 
-        let result = self.upload_parts(file_path, key, &upload_id, file_size).await;
+        let result = self.upload_parts(file_path, key, &upload_id, file_size, uploaded).await;
 
         match result {
             Ok(parts) => {
@@ -438,6 +477,7 @@ impl SnapshotUploader {
         key: &str,
         upload_id: &str,
         file_size: u64,
+        uploaded: &AtomicU64,
     ) -> Result<Vec<CompletedPart>> {
         let planned: Vec<(u64, i32)> = std::iter::successors(Some(0u64), |&offset| {
             let next = offset + MULTIPART_PART_SIZE;
@@ -454,8 +494,11 @@ impl SnapshotUploader {
             .map(|(offset, part_number)| {
                 let length = std::cmp::min(MULTIPART_PART_SIZE, file_size - offset);
                 async move {
-                    self.upload_single_part(file_path, key, upload_id, part_number, offset, length)
-                        .await
+                    let part = self
+                        .upload_single_part(file_path, key, upload_id, part_number, offset, length)
+                        .await?;
+                    uploaded.fetch_add(length, Ordering::Relaxed);
+                    Ok::<CompletedPart, anyhow::Error>(part)
                 }
             })
             .buffer_unordered(MAX_CONCURRENT_UPLOADS)
@@ -528,6 +571,49 @@ fn build_published_manifest(
     }
 
     Ok(serde_json::to_vec_pretty(&manifest)?)
+}
+
+async fn total_upload_bytes(
+    static_uploads: &[PathBuf],
+    run_uploads: &[PathBuf],
+    manifest_path: &Path,
+) -> u64 {
+    let mut total = 0u64;
+    let files = static_uploads
+        .iter()
+        .map(PathBuf::as_path)
+        .chain(run_uploads.iter().map(PathBuf::as_path))
+        .chain(std::iter::once(manifest_path));
+    for file in files {
+        if let Ok(meta) = tokio::fs::metadata(file).await {
+            total += meta.len();
+        }
+    }
+    total
+}
+
+fn spawn_upload_progress(
+    uploaded: Arc<AtomicU64>,
+    total_bytes: u64,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let started = Instant::now();
+        let mut ticker = tokio::time::interval(PROGRESS_LOG_INTERVAL);
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            let done = uploaded.load(Ordering::Relaxed);
+            let percent =
+                if total_bytes == 0 { 100 } else { done.saturating_mul(100) / total_bytes };
+            info!(
+                bytes_uploaded = done,
+                total_bytes,
+                percent,
+                elapsed_secs = started.elapsed().as_secs(),
+                "uploading snapshot artifacts (progress)"
+            );
+        }
+    })
 }
 
 #[cfg(test)]
