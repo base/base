@@ -8,16 +8,18 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     PgTransactionEventSink, RpcEventReader, S3EventReaderWriter, TransactionEventIngestConfig,
-    serve_transaction_event_ingest,
+    transaction_event_router,
 };
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
+use axum::{BoxError, error_handling::HandleErrorLayer, http::StatusCode};
 use base_cli_utils::LogConfig;
 use clap::{Parser, ValueEnum};
-use jsonrpsee::server::ServerBuilder;
+use jsonrpsee::server::{ServerBuilder, stop_channel};
 use moka::{policy::EvictionPolicy, sync::Cache};
-use tokio::sync::mpsc;
+use tokio::{net::TcpListener, sync::mpsc};
+use tower::ServiceBuilder;
 use tracing::info;
 
 base_cli_utils::define_log_args!("TIPS_AUDIT");
@@ -102,10 +104,6 @@ struct Args {
     /// Maximum Postgres connections used by the transaction-event ingest sink.
     #[arg(long, env = "TIPS_AUDIT_POSTGRES_MAX_CONNECTIONS", default_value = "10")]
     postgres_max_connections: u32,
-
-    /// HTTP port for Vector transaction-event batch ingest.
-    #[arg(long, env = "TIPS_AUDIT_TRANSACTION_EVENT_HTTP_PORT", default_value = "8080")]
-    transaction_event_http_port: u16,
 
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
@@ -197,7 +195,6 @@ async fn run_server(args: Args) -> Result<()> {
         metrics_addr = %args.metrics.addr,
         metrics_port = args.metrics.port,
         rpc_port = args.rpc_port,
-        transaction_event_http_port = args.transaction_event_http_port,
         transaction_event_http_path = %args.transaction_event_http_path,
         transaction_event_http_enabled = args.postgres_url.is_some(),
         rpc_cache_capacity = args.rpc_cache_capacity,
@@ -230,27 +227,38 @@ async fn run_server(args: Args) -> Result<()> {
     if let Some(sink) = transaction_event_sink.clone() {
         rpc_module = rpc_module.with_transaction_event_store(sink);
     }
-    let rpc_server = ServerBuilder::default()
-        .build(rpc_addr)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to build RPC server: {e}"))?;
-    let rpc_handle = rpc_server.start(rpc_module.into_rpc());
-    info!(rpc_addr = %rpc_addr, "Audit archiver RPC server started");
+    let (rpc_stop_handle, _rpc_server_handle) = stop_channel();
+    let rpc_service =
+        ServerBuilder::default().to_service_builder().build(rpc_module.into_rpc(), rpc_stop_handle);
+    let rpc_service = ServiceBuilder::new()
+        .layer(HandleErrorLayer::new(|error: BoxError| async move {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("audit archiver RPC service error: {error}"),
+            )
+        }))
+        .service(rpc_service);
 
-    let transaction_event_ingest = if let Some(sink) = transaction_event_sink {
+    let http_app = if let Some(sink) = transaction_event_sink {
         let config = TransactionEventIngestConfig {
-            listen_addr: SocketAddr::from(([0, 0, 0, 0], args.transaction_event_http_port)),
+            listen_addr: rpc_addr,
             path: args.transaction_event_http_path.clone(),
             max_batch_size: args.transaction_event_max_batch_size,
             max_event_bytes: args.transaction_event_max_event_bytes,
             max_data_bytes: args.transaction_event_max_data_bytes,
             max_request_bytes: args.transaction_event_max_request_bytes,
         };
-        Some(tokio::spawn(serve_transaction_event_ingest(Arc::new(sink), config)))
+        let path = config.path.clone();
+        info!(rpc_addr = %rpc_addr, %path, "transaction event HTTP ingest enabled on audit RPC server");
+        transaction_event_router(Arc::new(sink), config).fallback_service(rpc_service)
     } else {
         info!("transaction event HTTP ingest disabled; TIPS_AUDIT_POSTGRES_URL is not set");
-        None
+        axum::Router::new().fallback_service(rpc_service)
     };
+
+    let http_listener = TcpListener::bind(rpc_addr).await?;
+    let http_server = axum::serve(http_listener, http_app);
+    info!(rpc_addr = %rpc_addr, "Audit archiver HTTP server started");
 
     let mut archiver = AuditArchiver::new(
         reader,
@@ -264,16 +272,8 @@ async fn run_server(args: Args) -> Result<()> {
 
     tokio::select! {
         result = archiver.run() => result,
-        _ = rpc_handle.stopped() => {
-            Err(anyhow::anyhow!("RPC server stopped unexpectedly"))
-        }
-        result = async {
-            match transaction_event_ingest {
-                Some(handle) => handle.await.map_err(|e| anyhow::anyhow!("transaction event ingest task join error: {e}"))?,
-                None => std::future::pending().await,
-            }
-        } => {
-            result.map_err(|e| anyhow::anyhow!("transaction event ingest server stopped unexpectedly: {e}"))
+        result = http_server => {
+            result.map_err(|e| anyhow::anyhow!("audit archiver HTTP server stopped unexpectedly: {e}"))
         }
     }
 }

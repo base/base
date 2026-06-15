@@ -49,7 +49,7 @@ sinks:
     type: http
     inputs:
       - parse_transaction_events
-    uri: http://audit-archiver:9101/v1/transaction-events/batch
+    uri: http://audit-archiver:9100/v1/transaction-events/batch
     method: post
     request:
       headers:

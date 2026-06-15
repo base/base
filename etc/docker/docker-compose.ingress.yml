@@ -135,7 +135,6 @@ services:
     ports:
       - "${AUDIT_METRICS_PORT}:${AUDIT_METRICS_PORT}"
       - "${AUDIT_RPC_PORT}:${AUDIT_RPC_PORT}"
-      - "${AUDIT_TRANSACTION_EVENT_HTTP_PORT}:${AUDIT_TRANSACTION_EVENT_HTTP_PORT}"
     environment:
       - TIPS_AUDIT_METRICS_ADDR=0.0.0.0
       - TIPS_AUDIT_METRICS_PORT=${AUDIT_METRICS_PORT}
@@ -147,7 +146,6 @@ services:
       - TIPS_AUDIT_S3_ACCESS_KEY_ID=minioadmin
       - TIPS_AUDIT_S3_SECRET_ACCESS_KEY=minioadmin
       - TIPS_AUDIT_POSTGRES_URL=postgres://audit_archiver:audit_archiver@transaction-events-postgres:5432/transaction_events?sslmode=disable
-      - TIPS_AUDIT_TRANSACTION_EVENT_HTTP_PORT=${AUDIT_TRANSACTION_EVENT_HTTP_PORT}
     networks:
       default:
         ipv4_address: ${AUDIT_ARCHIVER_ADVERTISE_IP}

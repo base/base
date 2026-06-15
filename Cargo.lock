@@ -2315,6 +2315,7 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
+ "axum 0.8.9",
  "base-cli-utils",
  "clap",
  "dotenvy",
@@ -2322,6 +2323,7 @@ dependencies = [
  "moka",
  "serde",
  "tokio",
+ "tower 0.5.3",
  "tracing",
 ]
 

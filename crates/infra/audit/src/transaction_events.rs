@@ -431,7 +431,11 @@ pub async fn serve_transaction_event_ingest(
     Ok(())
 }
 
-fn transaction_event_router(
+/// Builds the Vector-facing transaction event ingest router.
+///
+/// The route-specific request body limit is applied only to this router, so it
+/// can be mounted alongside other HTTP services without changing their limits.
+pub fn transaction_event_router(
     sink: Arc<dyn TransactionEventSink>,
     config: TransactionEventIngestConfig,
 ) -> Router {

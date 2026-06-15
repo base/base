@@ -43,6 +43,7 @@ pub use transaction_events::{
     TransactionEventBatchStatus, TransactionEventIngestConfig, TransactionEventInsertOutcome,
     TransactionEventItemResult, TransactionEventItemStatus, TransactionEventRecord,
     TransactionEventSink, TransactionEventStorageError, serve_transaction_event_ingest,
+    transaction_event_router,
 };
 
 mod types;
