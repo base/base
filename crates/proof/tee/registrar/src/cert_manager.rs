@@ -139,30 +139,6 @@ where
         let cert_revoker = CertRevoker::new(verifier_address, &self.tx_manager);
 
         for revoked in revoked_certs {
-            match self.nitro_verifier.is_revoked(revoked.path_digest).await {
-                Ok(true) => {
-                    warn!(
-                        cert_index = revoked.index,
-                        path_digest = %revoked.path_digest,
-                        instance = %instance.instance_id,
-                        "certificate already revoked onchain, skipping revokeCert"
-                    );
-                    RegistrarMetrics::onchain_revocations_detected().increment(1);
-                    continue;
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        cert_index = revoked.index,
-                        path_digest = %revoked.path_digest,
-                        instance = %instance.instance_id,
-                        "onchain revocation check failed for CRL hit; submitting revokeCert"
-                    );
-                    RegistrarMetrics::onchain_revocation_check_errors().increment(1);
-                }
-            }
-
             warn!(
                 cert_index = revoked.index,
                 path_digest = %revoked.path_digest,
@@ -186,7 +162,6 @@ mod tests {
     use crate::test_utils::{NoopNitroVerifier, NoopTxManager};
 
     const ONCHAIN_TEST_INSTANCE_ID: &str = "i-onchain-revocation-test";
-    const TEST_VERIFIER_ADDRESS: Address = Address::repeat_byte(0xAB);
     const INTER1_INDEX: usize = 1;
     const INTER2_INDEX: usize = 2;
 
@@ -215,7 +190,7 @@ mod tests {
     #[async_trait]
     impl crate::NitroVerifierClient for MockNitroVerifier {
         fn address(&self) -> Address {
-            TEST_VERIFIER_ADDRESS
+            Address::ZERO
         }
 
         async fn is_revoked(&self, cert_hash: B256) -> Result<bool> {
@@ -303,10 +278,6 @@ mod tests {
         assert!(!result.expect("disabled CRL checks must no-op"));
     }
 
-    fn revoked_cert(path_digest: B256) -> crl::RevokedCertInfo {
-        crl::RevokedCertInfo { index: INTER1_INDEX, path_digest }
-    }
-
     async fn run_pre_check(verifier: MockNitroVerifier) -> (Result<bool>, u32) {
         let verifier = Arc::new(verifier);
         let cert_manager = test_cert_manager(Arc::clone(&verifier));
@@ -361,28 +332,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_revocations_checks_onchain_before_sending() {
+    async fn submit_revocations_sends_crl_hits_without_rechecking_onchain() {
         let path_digest = path_digest_for(INTER1_INDEX);
+        let verifier = Arc::new(MockNitroVerifier::default());
+        let cert_manager = test_cert_manager(Arc::clone(&verifier));
+        let instance = test_instance();
 
-        for (case, verifier, expected_send_count) in [
-            ("already revoked", MockNitroVerifier::revoking(path_digest), 0),
-            ("clean", MockNitroVerifier::default(), 1),
-            ("RPC failure", MockNitroVerifier::failing(), 1),
-        ] {
-            let verifier = Arc::new(verifier);
-            let cert_manager = test_cert_manager(Arc::clone(&verifier));
-            let instance = test_instance();
+        cert_manager
+            .submit_revocations_for_revoked_certs(
+                &[crl::RevokedCertInfo { index: INTER1_INDEX, path_digest }],
+                &instance,
+            )
+            .await;
 
-            cert_manager
-                .submit_revocations_for_revoked_certs(&[revoked_cert(path_digest)], &instance)
-                .await;
-
-            assert_eq!(verifier.call_count(), 1, "{case}: should check onchain once");
-            assert_eq!(
-                cert_manager.tx_manager.send_count(),
-                expected_send_count,
-                "{case}: unexpected revokeCert send count",
-            );
-        }
+        assert_eq!(verifier.call_count(), 0);
+        assert_eq!(cert_manager.tx_manager.send_count(), 1);
     }
 }
