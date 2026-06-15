@@ -336,28 +336,10 @@ where
         }
 
         if self.config.crl.enabled {
-            // Skip the CRL check and any `revokeCert` submission on shutdown
-            // so we do not start new onchain work.
-            //
-            // Return `attestations: None` so the safety invariant —
-            // `Some(..)` ↔ "passed every eligibility + security gate,
-            // including CRL" — is enforced locally. Today the outer
-            // run loop re-checks `cancel.is_cancelled()` before
-            // calling `reconcile_proof_tasks`, so a `Some(..)` here
-            // would still be discarded; keeping it `None` removes the
-            // non-local dependence on that re-check and matches the
-            // CRL-revoked branch below.
+            // skip CRL work after cancellation
             if self.config.cancel.is_cancelled() {
                 return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
             }
-            // Use `.first()` rather than `[0]` so the non-empty
-            // invariant is locally visible: the `addresses.is_empty()`
-            // early-return and the
-            // `all_attestations.len() < addresses.len()` length check
-            // above already guarantee at least one element, but those
-            // sites are 65+ lines upstream. Surfacing the `Option`
-            // here keeps `resolve_instance` indexing-panic-free even
-            // if a future refactor relaxes either upstream guard.
             let first_attestation =
                 all_attestations.first().ok_or_else(|| RegistrarError::ProverClient {
                     instance: instance.endpoint.to_string(),
