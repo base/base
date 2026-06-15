@@ -396,20 +396,31 @@ where
     /// Per EIP-8130 a config change MAY authorize a non-canonical authenticator
     /// (for in-EVM use such as recovery keys); only the reserved window
     /// (`< ECRECOVER_AUTHENTICATOR`) and the `REVOKED_AUTHENTICATOR` sentinel are
-    /// rejected here, matching the bound applied to the other auth surfaces.
+    /// rejected here, matching the bound applied to the other auth surfaces. A
+    /// `Revoke` names no authenticator and MUST carry empty `data`; a non-empty
+    /// `data` is malformed and rejected at the gate.
     fn validate_actor_changes(changes: &[ActorChange]) -> Result<(), InvalidPoolTransactionError> {
         if changes.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let mut seen = BTreeSet::new();
         for change in changes {
-            if change.change_type == ActorChangeType::Authorize {
-                if change.data.len() < 32 {
-                    return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            match change.change_type {
+                ActorChangeType::Authorize => {
+                    // `data` = `abi.encode(ActorConfig, bytes)`; the new actor's
+                    // authenticator is the right-aligned address in the first word.
+                    if change.data.len() < 32 {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    let authenticator = Address::from_slice(&change.data[12..32]);
+                    if Self::authenticator_out_of_range(&authenticator) {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
                 }
-                let authenticator = Address::from_slice(&change.data[12..32]);
-                if Self::authenticator_out_of_range(&authenticator) {
-                    return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                ActorChangeType::Revoke => {
+                    if !change.data.is_empty() {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
                 }
             }
             if !seen.insert(change.actor_id) {
@@ -900,6 +911,12 @@ mod tests {
         ActorChange { change_type: ActorChangeType::Authorize, actor_id, data: Bytes::from(data) }
     }
 
+    /// Builds a `Revoke` actor-change. Per EIP-8130 a revoke names no
+    /// authenticator and carries empty `data`.
+    fn make_revoke_change(actor_id: B256) -> ActorChange {
+        ActorChange { change_type: ActorChangeType::Revoke, actor_id, data: Bytes::new() }
+    }
+
     fn make_valid_create_entry() -> CreateEntry {
         CreateEntry {
             user_salt: B256::ZERO,
@@ -1148,6 +1165,65 @@ mod tests {
             .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
             .collect();
         let cfg = ConfigChange { actor_changes, ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    // A `Revoke` carries empty `data` and names no authenticator, so it must
+    // pass `validate_actor_changes` (no authenticator bound is applied).
+    #[test]
+    fn accepts_eip8130_config_change_with_valid_revoke() {
+        let cfg = ConfigChange {
+            actor_changes: vec![make_revoke_change(B256::repeat_byte(0x01))],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
+    }
+
+    // A `Revoke` with non-empty `data` is malformed and rejected at the gate.
+    #[test]
+    fn rejects_eip8130_config_change_with_nonempty_revoke_data() {
+        let cfg = ConfigChange {
+            actor_changes: vec![ActorChange {
+                change_type: ActorChangeType::Revoke,
+                actor_id: B256::repeat_byte(0x01),
+                data: Bytes::from_static(&[0xaa]),
+            }],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    // Duplicate `actor_id` detection spans mixed `Authorize`/`Revoke` entries.
+    #[test]
+    fn rejects_eip8130_config_change_with_duplicate_actor_ids_mixed() {
+        let dup_id = B256::repeat_byte(0x07);
+        let cfg = ConfigChange {
+            actor_changes: vec![
+                make_authorize_change(dup_id, ok_authenticator()),
+                make_revoke_change(dup_id),
+            ],
+            ..make_valid_config_change()
+        };
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
