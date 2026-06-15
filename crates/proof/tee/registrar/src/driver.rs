@@ -237,30 +237,8 @@ where
         })
     }
 
-    /// Resolves the signer addresses for a single instance and decides
-    /// whether registration should be attempted this cycle.
-    ///
-    /// Always returns `addresses` so the caller can track the instance's
-    /// signers in the active set (protecting them from orphan
-    /// deregistration even when registration is skipped). The
-    /// `attestations` field is `Some` only when registration should be
-    /// attempted; it is `None` when:
-    ///
-    /// - the instance is not register-eligible (e.g. `Draining`, or
-    ///   `Unhealthy` outside the
-    ///   [`DriverConfig::unhealthy_registration_window`]);
-    /// - the CRL check confirmed revocation for the instance's chain.
-    ///
-    /// This is the shared resolution path used by `discover_and_resolve`.
-    /// It keeps discovery and eligibility checks separate from the
-    /// [`RegistrationManager`] registration path so long proof work can run in
-    /// spawned tasks instead of blocking the next discovery cycle.
-    ///
-    /// **Cancellation contract.** This future checks
-    /// `self.config.cancel.is_cancelled()` before starting new side effects.
-    /// `check_and_revoke_crls` awaits any `revokeCert` transaction
-    /// submissions it triggers, so revocation outcomes are logged before
-    /// the resolution future returns.
+    /// Returns addresses always for active signer tracking.
+    /// Returns attestations only when the instance is registerable.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
         if self.config.cancel.is_cancelled() {
             return Ok(ResolveOutcome {
