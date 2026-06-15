@@ -77,9 +77,6 @@ jobs:
             ${{ env.REGISTRY_IMAGE }}:${{ matrix.target }}-sha-${{ github.sha }}
 
   build-nitro-host-local:
-    if: >-
-      github.event_name != 'workflow_dispatch' ||
-      inputs.skip_rust_services != true
     runs-on: ubuntu-24.04
 
     permissions:
