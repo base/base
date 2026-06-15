@@ -126,12 +126,18 @@ struct ProverRuntimeArgs {
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Option<Address>,
 
-    /// Fetch genesis config from the L2 node via `optimism_rollupConfig` RPC at
-    /// startup. Overrides placeholder genesis anchors and contract addresses in
-    /// the hardcoded chain config. Use for devnet/ephemeral chains where genesis
-    /// changes on every deployment.
+    /// Fetch genesis config via `optimism_rollupConfig` RPC at startup,
+    /// overriding placeholder genesis anchors and contract addresses in the
+    /// hardcoded chain config. Requires `--l2-cl-url`. Use for
+    /// devnet/ephemeral chains where genesis changes on every deployment.
     #[arg(long, env = "FETCH_ROLLUP_CONFIG")]
     fetch_rollup_config: bool,
+
+    /// L2 consensus-layer (op-node) RPC URL. Required when
+    /// `--fetch-rollup-config` is set — `optimism_rollupConfig` is served by
+    /// op-node, not the execution-layer endpoint.
+    #[arg(long, env = "L2_CL_URL")]
+    l2_cl_url: Option<String>,
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -167,7 +173,10 @@ impl ProverRuntimeArgs {
             .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?;
 
         if self.fetch_rollup_config {
-            let rpc = fetch_rollup_config_from_rpc(&self.l2_eth_url).await?;
+            let cl_url = self.l2_cl_url.as_deref().ok_or_else(|| {
+                eyre!("--l2-cl-url is required when --fetch-rollup-config is set")
+            })?;
+            let rpc = fetch_rollup_config_from_rpc(cl_url).await?;
 
             if rpc.l2_chain_id != self.l2_chain_id {
                 return Err(eyre!(
@@ -631,6 +640,7 @@ mod tests {
             enable_experimental_witness_endpoint: false,
             tee_prover_registry_address: None,
             fetch_rollup_config: false,
+            l2_cl_url: None,
         }
     }
 
