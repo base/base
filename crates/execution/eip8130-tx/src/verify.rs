@@ -298,6 +298,76 @@ mod tests {
     }
 
     #[test]
+    fn eoa_sender_with_sponsored_payer_binds_recovered_address() {
+        // The sender is wire-invisible (tx.sender == None): it must be recovered
+        // before the payer digest can be computed, since `payer_signature_hash`
+        // binds to the recovered sender account.
+        let sk = key(0x44);
+        let sender_account = addr(&sk);
+        let pk = key(0x55);
+        let payer_account = address!("0x00000000000000000000000000000000000000cc");
+        let pid = actor_id(addr(&pk));
+
+        let tx = base_tx(None, Some(payer_account));
+        let sender_hash = tx.sender_signature_hash();
+        let payer_hash = tx.payer_signature_hash(sender_account);
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from(sig(&sk, sender_hash)),
+            auth_blob(ECRECOVER, &sig(&pk, payer_hash)),
+        );
+        with_storage(|acc| {
+            // Sender is an implicit-EOA owner (self-slot empty); only the payer
+            // actor needs seeding.
+            acc.actor_config
+                .at_mut(&pid)
+                .at_mut(&payer_account)
+                .write(pack(ECRECOVER, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .unwrap();
+            let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
+            assert_eq!(actors.sender.account, sender_account);
+            assert!(actors.sender.resolved.is_unrestricted());
+            let payer = actors.payer.expect("payer present");
+            assert_eq!(payer.account, payer_account);
+            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_PAYER);
+        });
+    }
+
+    #[test]
+    fn payer_signature_bound_to_wrong_sender_is_rejected() {
+        // Same as above, but the payer signs over a digest bound to a *different*
+        // sender than the one recovered from the wire. The payer signature must
+        // not authenticate, proving the binding is enforced.
+        let sk = key(0x44);
+        let pk = key(0x55);
+        let payer_account = address!("0x00000000000000000000000000000000000000cc");
+        let pid = actor_id(addr(&pk));
+        let wrong_sender = address!("0x00000000000000000000000000000000000000ee");
+
+        let tx = base_tx(None, Some(payer_account));
+        let sender_hash = tx.sender_signature_hash();
+        let wrong_payer_hash = tx.payer_signature_hash(wrong_sender);
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from(sig(&sk, sender_hash)),
+            auth_blob(ECRECOVER, &sig(&pk, wrong_payer_hash)),
+        );
+        with_storage(|acc| {
+            acc.actor_config
+                .at_mut(&pid)
+                .at_mut(&payer_account)
+                .write(pack(ECRECOVER, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .unwrap();
+            // The payer signs the wrong digest, so it recovers a different actor
+            // that is not bound on the payer account.
+            assert!(matches!(
+                ActorTxVerifier::verify(&signed, acc, NOW),
+                Err(TxAuthError::Authorize(AuthorizeError::NotBound { .. })),
+            ));
+        });
+    }
+
+    #[test]
     fn payer_without_payer_scope_is_rejected() {
         let sk = key(0x22);
         let sender_account = address!("0x00000000000000000000000000000000000000aa");
