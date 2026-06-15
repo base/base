@@ -23,6 +23,7 @@ base-proof-succinct-client-utils.workspace = true
 base-proof-succinct-ethereum-host-utils.workspace = true
 
 # network
+tonic.workspace = true
 alloy-primitives.workspace = true
 
 # sp1

@@ -170,12 +170,41 @@ impl ClusterZkProver {
         &self,
         proof_id: &str,
     ) -> Result<Option<ClusterProtoProofRequest>, ZkProverError> {
-        self.config
+        match self
+            .config
             .cluster
             .service_client
             .get_proof_request(ProofRequestGetRequest { proof_id: proof_id.to_owned() })
             .await
-            .map_err(|e| backend_error!("failed to get cluster proof: {e}"))
+        {
+            Ok(request) => Ok(request),
+            Err(e) => {
+                if e.downcast_ref::<tonic::Status>()
+                    .is_some_and(Self::is_missing_cluster_request_status)
+                {
+                    return Ok(None);
+                }
+
+                Err(backend_error!("failed to get cluster proof: {e}"))
+            }
+        }
+    }
+
+    /// Returns true if a cluster gRPC status represents a missing proof request.
+    pub fn is_missing_cluster_request_status(status: &tonic::Status) -> bool {
+        status.code() == tonic::Code::NotFound
+            || (status.code() == tonic::Code::Internal
+                && status.message().contains("Failed to get proof request")
+                && status.message().contains("no rows returned"))
+    }
+
+    /// Decode the cluster proof request status without mapping unknown values to unspecified.
+    pub fn cluster_proof_status(
+        req: &ClusterProtoProofRequest,
+    ) -> Result<ProofRequestStatus, ZkProverError> {
+        ProofRequestStatus::try_from(req.proof_status).map_err(|_| {
+            backend_error!("cluster proof {} has unknown proof status {}", req.id, req.proof_status)
+        })
     }
 
     /// Convert a cluster proof request into a persisted session id.
@@ -203,7 +232,7 @@ impl ClusterZkProver {
                 break;
             };
 
-            let proof_status = existing.proof_status();
+            let proof_status = Self::cluster_proof_status(&existing)?;
             match proof_status {
                 ProofRequestStatus::Failed | ProofRequestStatus::Cancelled => {
                     info!(
@@ -368,6 +397,23 @@ impl ClusterZkProver {
             Ok(()) => Ok(ClusterSessionId { proof_id, proof_output_id }),
             Err(e) => {
                 if let Some(existing) = self.get_cluster_request(&proof_id).await? {
+                    let proof_status = Self::cluster_proof_status(&existing)?;
+                    if matches!(
+                        proof_status,
+                        ProofRequestStatus::Failed | ProofRequestStatus::Cancelled
+                    ) {
+                        error!(
+                            proof_id = %proof_id,
+                            proof_status = %proof_status.as_str_name(),
+                            error = %e,
+                            "cluster proof create raced into terminal request"
+                        );
+                        return Err(backend_error!(
+                            "cluster proof {proof_id} created concurrently but already terminal: {}",
+                            proof_status.as_str_name()
+                        ));
+                    }
+
                     info!(
                         proof_id = %proof_id,
                         error = %e,
@@ -429,7 +475,8 @@ impl ZkProver for ClusterZkProver {
             return Ok(ZkSessionState::NotFound);
         };
 
-        match req.proof_status() {
+        let proof_status = Self::cluster_proof_status(&req)?;
+        match proof_status {
             ProofRequestStatus::Completed => Ok(ZkSessionState::Completed),
             ProofRequestStatus::Failed => {
                 Ok(ZkSessionState::Failed(Self::format_cluster_failure(&req)))
@@ -437,7 +484,19 @@ impl ZkProver for ClusterZkProver {
             ProofRequestStatus::Cancelled => {
                 Ok(ZkSessionState::Failed("proof generation cancelled".to_owned()))
             }
-            _ => Ok(ZkSessionState::Running),
+            ProofRequestStatus::Pending => Ok(ZkSessionState::Running),
+            ProofRequestStatus::Unspecified => {
+                error!(
+                    proof_id = %session.proof_id,
+                    proof_status = %proof_status.as_str_name(),
+                    "unexpected cluster proof status"
+                );
+                Err(backend_error!(
+                    "unexpected cluster proof status for {}: {}",
+                    session.proof_id,
+                    proof_status.as_str_name()
+                ))
+            }
         }
     }
 
