@@ -5,7 +5,7 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned onchain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, fmt, time::Duration};
+use std::{collections::HashSet, time::Duration};
 
 use alloy_primitives::{Address, hex};
 use base_tx_manager::TxManager;
@@ -126,12 +126,6 @@ pub struct RegistrationDriver<D, S, M, T> {
     cert_manager: CertManager<T>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
     signer_manager: M,
-}
-
-impl<D, S, M, T> fmt::Debug for RegistrationDriver<D, S, M, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RegistrationDriver").field("config", &self.config).finish_non_exhaustive()
-    }
 }
 
 impl<D, S, M, T> RegistrationDriver<D, S, M, T>
