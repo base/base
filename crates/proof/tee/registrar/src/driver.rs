@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
-    CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
+    CertManager, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
     ProverInstance, RegistrarMetrics, RegistryClient, Result, SignerClient, SignerManager,
 };
 
@@ -62,9 +62,6 @@ pub struct DriverConfig {
     /// while the application is still initializing. Set to zero to disable.
     /// Defaults to [`DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS`] seconds.
     pub unhealthy_registration_window: Duration,
-    /// CRL checking configuration. When enabled, intermediate certificates
-    /// are checked against CRL distribution points before registration.
-    pub crl: CrlConfig,
 }
 
 /// A signer and attestation ready to be spawned as a proof task.
@@ -100,8 +97,7 @@ pub struct RegistrationDriver<D, S, P, R, T> {
     discovery: D,
     signer_client: S,
     config: DriverConfig,
-    /// Certificate revocation manager. The driver only calls it when CRL
-    /// checking is enabled.
+    /// Certificate revocation manager.
     cert_manager: CertManager<T>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
     signer_manager: Arc<SignerManager<P, R, T>>,
@@ -282,28 +278,25 @@ where
             return Ok(outcome);
         }
 
-        if self.config.crl.enabled {
-            // skip CRL work after cancellation
-            if self.config.cancel.is_cancelled() {
+        if self.config.cancel.is_cancelled() {
+            return Ok(outcome);
+        }
+        let first_attestation = &all_attestations[0];
+        match self.cert_manager.check_and_revoke_crls(first_attestation, instance).await {
+            Ok(true) => {
+                warn!(
+                    instance = %instance.instance_id,
+                    "certificate revoked, skipping registration for this instance"
+                );
                 return Ok(outcome);
             }
-            let first_attestation = &all_attestations[0];
-            match self.cert_manager.check_and_revoke_crls(first_attestation, instance).await {
-                Ok(true) => {
-                    warn!(
-                        instance = %instance.instance_id,
-                        "certificate revoked, skipping registration for this instance"
-                    );
-                    return Ok(outcome);
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        instance = %instance.instance_id,
-                        "CRL check failed (fail-open, proceeding with registration)"
-                    );
-                }
+            Ok(false) => {}
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    instance = %instance.instance_id,
+                    "CRL check failed (fail-open, proceeding with registration)"
+                );
             }
         }
 
@@ -418,7 +411,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        InstanceHealthStatus, RegistrarError, RegistryClient, Result, SignerClient,
+        CrlConfig, InstanceHealthStatus, RegistrarError, RegistryClient, Result, SignerClient,
         SignerManagerConfig,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, HARDHAT_KEY_3,
@@ -586,12 +579,17 @@ mod tests {
         Url::parse(&format!("http://{host_port}")).unwrap()
     }
 
-    fn mock_cert_manager<T: TxManager + 'static>(
-        config: &DriverConfig,
-        tx_manager: T,
-    ) -> CertManager<T> {
-        CertManager::new(&config.crl, Arc::new(NoopNitroVerifier), tx_manager)
+    fn mock_cert_manager<T: TxManager + 'static>(tx_manager: T) -> CertManager<T> {
+        CertManager::new(&crl_config(false), Arc::new(NoopNitroVerifier), tx_manager)
             .expect("test cert manager builds")
+    }
+
+    fn crl_config(enabled: bool) -> CrlConfig {
+        CrlConfig {
+            enabled,
+            nitro_verifier_address: None,
+            fetch_timeout: Duration::from_secs(crate::DEFAULT_CRL_FETCH_TIMEOUT_SECS),
+        }
     }
 
     fn noop_signer_manager(
@@ -608,11 +606,6 @@ mod tests {
             unhealthy_registration_window: Duration::from_secs(
                 DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
             ),
-            crl: CrlConfig {
-                enabled: false,
-                nitro_verifier_address: None,
-                fetch_timeout: Duration::from_secs(crate::DEFAULT_CRL_FETCH_TIMEOUT_SECS),
-            },
         }
     }
 
@@ -634,7 +627,7 @@ mod tests {
         S: SignerClient + 'static,
     {
         let config = default_config(cancel);
-        let cert_manager = mock_cert_manager(&config, NoopTxManager);
+        let cert_manager = mock_cert_manager(NoopTxManager);
         let signer_manager = noop_signer_manager(signer_manager_config());
         RegistrationDriver::new(
             MockDiscovery { instances },
@@ -860,7 +853,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let mut config = default_config(cancel);
         config.max_concurrency = max_concurrency;
-        let cert_manager = mock_cert_manager(&config, NoopTxManager);
+        let cert_manager = mock_cert_manager(NoopTxManager);
         let signer_manager = noop_signer_manager(signer_manager_config());
 
         let driver = RegistrationDriver::new(

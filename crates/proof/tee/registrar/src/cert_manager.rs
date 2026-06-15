@@ -17,6 +17,7 @@ use crate::{
 
 /// Manages Nitro certificate revocation checks and revocation transaction submission.
 pub struct CertManager<T> {
+    enabled: bool,
     http_client: reqwest::Client,
     nitro_verifier: Arc<dyn NitroVerifierClient>,
     tx_manager: T,
@@ -51,7 +52,7 @@ where
                 "failed to build CRL HTTP client (Layer 2 / AWS CRL fetch): {e}"
             ))
         })?;
-        Ok(Self { http_client, nitro_verifier, tx_manager })
+        Ok(Self { enabled: config.enabled, http_client, nitro_verifier, tx_manager })
     }
 
     /// Checks an attestation's intermediate certificates and submits revocations.
@@ -69,6 +70,10 @@ where
         attestation_bytes: &[u8],
         instance: &ProverInstance,
     ) -> Result<bool> {
+        if !self.enabled {
+            return Ok(false);
+        }
+
         let cert_infos = {
             let report = AttestationReport::parse(attestation_bytes).map_err(|e| {
                 RegistrarError::ProverClient {
@@ -321,6 +326,7 @@ mod tests {
 
     fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager<MockTxManager> {
         CertManager {
+            enabled: true,
             http_client: reqwest::Client::new(),
             nitro_verifier: verifier,
             tx_manager: MockTxManager::default(),
@@ -349,6 +355,25 @@ mod tests {
         let verifier = Arc::new(MockNitroVerifier::default());
         let result = CertManager::new(&crl_config(), verifier, MockTxManager::default());
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn check_and_revoke_crls_noops_when_disabled() {
+        let mut config = crl_config();
+        config.enabled = false;
+        let verifier = Arc::new(MockNitroVerifier::default());
+        let cert_manager = CertManager::new(&config, verifier.clone(), MockTxManager::default())
+            .expect("disabled cert manager still builds");
+
+        let result =
+            cert_manager.check_and_revoke_crls(b"not-an-attestation", &test_instance()).await;
+
+        assert!(!result.expect("disabled CRL checks must no-op"));
+        assert_eq!(
+            verifier.call_count.load(Ordering::SeqCst),
+            0,
+            "disabled CRL checks must not query the verifier",
+        );
     }
 
     fn revoked_cert(path_digest: B256) -> crl::RevokedCertInfo {

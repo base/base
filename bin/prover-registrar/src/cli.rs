@@ -632,9 +632,9 @@ impl Cli {
             config.l1_rpc_url.clone(),
         );
 
-        // The driver always carries a certificate manager, but only calls it
-        // when CRL checking is enabled. When disabled and no verifier address
-        // is configured, bind the unused client to the zero address.
+        // The driver always carries a certificate manager. When CRL checking is
+        // disabled and no verifier address is configured, bind the unused
+        // client to the zero address.
         let nitro_verifier_address = config.crl.nitro_verifier_address.unwrap_or(Address::ZERO);
         let nitro_verifier: Arc<dyn NitroVerifierClient> = Arc::new(
             NitroVerifierContractClient::new(nitro_verifier_address, config.l1_rpc_url.clone()),
@@ -685,14 +685,14 @@ impl Cli {
         let driver_config = DriverConfig {
             poll_interval: config.poll_interval,
             cancel: cancel.clone(),
-            signer_manager: SignerManagerConfig {
-                registry_address: config.tee_prover_registry_address,
-                max_concurrency: config.max_concurrency,
-                max_tx_retries: config.max_tx_retries,
-                tx_retry_delay: config.tx_retry_delay,
-            },
+            max_concurrency: config.max_concurrency,
             unhealthy_registration_window: config.unhealthy_registration_window,
-            crl: config.crl,
+        };
+        let signer_manager_config = SignerManagerConfig {
+            registry_address: config.tee_prover_registry_address,
+            max_concurrency: config.max_concurrency,
+            max_tx_retries: config.max_tx_retries,
+            tx_retry_delay: config.tx_retry_delay,
         };
 
         // Mark the service as ready. This signals "initialised and running", not
@@ -705,9 +705,9 @@ impl Cli {
             proof_provider,
             registry,
             tx_manager.clone(),
-            driver_config.signer_manager.clone(),
+            signer_manager_config,
         ));
-        let cert_manager = CertManager::new(&driver_config.crl, nitro_verifier, tx_manager)?;
+        let cert_manager = CertManager::new(&config.crl, nitro_verifier, tx_manager)?;
         let cancel_guard = cancel.clone().drop_guard();
         let driver = RegistrationDriver::new(
             discovery,
