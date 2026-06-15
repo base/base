@@ -239,6 +239,13 @@ impl SnapshotGenerator {
         let state_files = state_source_files(source_datadir)?;
         let (state_size, state_output_files) =
             package_single_component(output_dir, "state.tar.zst", &state_files)?;
+        info!(
+            component = "state",
+            compressed_size = state_size,
+            decompressed_size = state_output_files.iter().map(|f| f.size).sum::<u64>(),
+            file_count = state_files.len(),
+            "packaged mdbx state database"
+        );
         components.insert(
             "state".to_string(),
             ComponentManifest::Single(SingleArchive {
@@ -254,6 +261,13 @@ impl SnapshotGenerator {
         if !rocksdb_files.is_empty() {
             let (rocksdb_size, rocksdb_output_files) =
                 package_single_component(output_dir, "rocksdb_indices.tar.zst", &rocksdb_files)?;
+            info!(
+                component = "rocksdb_indices",
+                compressed_size = rocksdb_size,
+                decompressed_size = rocksdb_output_files.iter().map(|f| f.size).sum::<u64>(),
+                file_count = rocksdb_files.len(),
+                "packaged rocksdb indices"
+            );
             components.insert(
                 "rocksdb_indices".to_string(),
                 ComponentManifest::Single(SingleArchive {
