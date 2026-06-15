@@ -4,12 +4,9 @@
 //! `WorkerSubmitProofRequest` from their own proof result type, then hand the
 //! request to this shared worker component for delivery.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 use backon::Retryable;
@@ -17,23 +14,9 @@ use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider}
 use base_prover_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
-use base_retry::{
-    DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, MIN_RETRY_DELAY, RetryConfig,
-};
+use base_retry::{DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use thiserror::Error;
 use tracing::{debug, info, warn};
-
-/// Minimum delay used to avoid tight retry loops.
-pub const MIN_PROOF_SUBMITTER_BACKOFF: Duration = MIN_RETRY_DELAY;
-
-/// Default initial retry delay for proof submission.
-pub const DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF: Duration = DEFAULT_UNBOUNDED_INITIAL_DELAY;
-
-/// Default maximum retry delay for proof submission.
-pub const DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF: Duration = DEFAULT_UNBOUNDED_MAX_DELAY;
-
-/// Retry configuration used for proof submission backoff.
-pub type ProofSubmitterBackoffConfig = RetryConfig;
 
 /// Errors raised while preparing or submitting a generated proof.
 #[derive(Debug, Error)]
@@ -61,7 +44,7 @@ impl ProofSubmitterError {
 #[derive(Clone, Debug)]
 pub struct ProofSubmitter<Client> {
     client: Client,
-    backoff: ProofSubmitterBackoffConfig,
+    backoff: RetryConfig,
 }
 
 impl<Client> ProofSubmitter<Client> {
@@ -69,21 +52,21 @@ impl<Client> ProofSubmitter<Client> {
     pub const fn new(client: Client) -> Self {
         Self {
             client,
-            backoff: ProofSubmitterBackoffConfig::unbounded(
-                DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF,
-                DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF,
+            backoff: RetryConfig::unbounded(
+                DEFAULT_UNBOUNDED_INITIAL_DELAY,
+                DEFAULT_UNBOUNDED_MAX_DELAY,
             ),
         }
     }
 
     /// Sets the retry backoff config.
-    pub const fn with_backoff_config(mut self, backoff: ProofSubmitterBackoffConfig) -> Self {
+    pub const fn with_backoff_config(mut self, backoff: RetryConfig) -> Self {
         self.backoff = backoff;
         self
     }
 
     /// Returns the configured retry backoff.
-    pub const fn backoff_config(&self) -> ProofSubmitterBackoffConfig {
+    pub const fn backoff_config(&self) -> RetryConfig {
         self.backoff
     }
 
@@ -244,7 +227,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use async_trait::async_trait;
     use base_prover_service_protocol::{
@@ -384,8 +370,8 @@ mod tests {
         assert_eq!(client.submission_count(), 1);
     }
 
-    fn fast_backoff() -> ProofSubmitterBackoffConfig {
-        ProofSubmitterBackoffConfig::unbounded(Duration::from_millis(1), Duration::from_millis(1))
+    fn fast_backoff() -> RetryConfig {
+        RetryConfig::unbounded(Duration::from_millis(1), Duration::from_millis(1))
     }
 
     #[tokio::test]

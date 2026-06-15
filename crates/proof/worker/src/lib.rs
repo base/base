@@ -20,7 +20,4 @@ pub use job_discovery::{
 };
 
 mod proof_submitter;
-pub use proof_submitter::{
-    DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF, DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF,
-    MIN_PROOF_SUBMITTER_BACKOFF, ProofSubmitter, ProofSubmitterBackoffConfig, ProofSubmitterError,
-};
+pub use proof_submitter::{ProofSubmitter, ProofSubmitterError};
