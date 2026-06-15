@@ -126,6 +126,9 @@ where
                 command.execute()?;
                 Ok(())
             }
+            Commands::Download(command) => {
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
+            }
         }
     }
 

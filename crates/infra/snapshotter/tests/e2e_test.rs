@@ -9,7 +9,8 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use base_snapshotter::{
-    ContainerManager, DockerContainerManager, SnapshotGenerator, SnapshotManifest, SnapshotUploader,
+    ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
+    OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotUploader,
 };
 use bollard::{
     Docker,
@@ -183,6 +184,8 @@ const fn empty_manifest(block: u64) -> SnapshotManifest {
         chain_id: 8453,
         storage_version: 2,
         timestamp: 0,
+        base_url: None,
+        reth_version: None,
         components: BTreeMap::new(),
     }
 }
@@ -198,39 +201,46 @@ fn manifest_with_seeded_hashes(
     hash_seed: &str,
 ) -> SnapshotManifest {
     let num_chunks = block.div_ceil(blocks_per_file);
-    let mut comps: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    let mut comps = BTreeMap::new();
     for &component in components {
-        let chunk_output_files: Vec<serde_json::Value> = (0..num_chunks)
+        let chunk_output_files: Vec<Vec<OutputFileChecksum>> = (0..num_chunks)
             .map(|i| {
                 let start = i * blocks_per_file;
                 let end = start + blocks_per_file - 1;
-                serde_json::json!([
-                    {
-                        "path": format!("static_files/static_file_{component}_{start}_{end}"),
-                        "size": 100,
-                        "blake3": format!("{hash_seed}-{component}-{i}-main")
+                vec![
+                    OutputFileChecksum {
+                        path: format!("static_files/static_file_{component}_{start}_{end}"),
+                        size: 100,
+                        blake3: format!("{hash_seed}-{component}-{i}-main"),
                     },
-                    {
-                        "path": format!("static_files/static_file_{component}_{start}_{end}.off"),
-                        "size": 100,
-                        "blake3": format!("{hash_seed}-{component}-{i}-off")
-                    }
-                ])
+                    OutputFileChecksum {
+                        path: format!("static_files/static_file_{component}_{start}_{end}.off"),
+                        size: 100,
+                        blake3: format!("{hash_seed}-{component}-{i}-off"),
+                    },
+                ]
             })
             .collect();
         comps.insert(
             component.to_string(),
-            serde_json::json!({
-                "blocks_per_file": blocks_per_file,
-                "total_blocks": block,
-                "chunk_sizes": vec![100u64; num_chunks as usize],
-                "chunk_decompressed_sizes": vec![200u64; num_chunks as usize],
-                "chunk_output_files": chunk_output_files,
-                "chunk_skipped": vec![false; num_chunks as usize],
+            ComponentManifest::Chunked(ChunkedArchive {
+                blocks_per_file,
+                total_blocks: block,
+                chunk_sizes: vec![100u64; num_chunks as usize],
+                chunk_decompressed_sizes: vec![200u64; num_chunks as usize],
+                chunk_output_files,
             }),
         );
     }
-    SnapshotManifest { block, chain_id: 8453, storage_version: 2, timestamp: 0, components: comps }
+    SnapshotManifest {
+        block,
+        chain_id: 8453,
+        storage_version: 2,
+        timestamp: 0,
+        base_url: None,
+        reth_version: None,
+        components: comps,
+    }
 }
 
 #[tokio::test]
@@ -241,6 +251,7 @@ async fn upload_artifacts_to_minio() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "mainnet".to_string(),
+        Some("https://snapshots.example.com".to_string()),
     );
 
     let tmp = tempfile::tempdir()?;
@@ -267,6 +278,14 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(manifest["block"], 1_000_000, "manifest block mismatch");
     assert_eq!(manifest["chain_id"], 8453, "manifest chain_id mismatch");
+    assert_eq!(
+        manifest["base_url"], "https://snapshots.example.com/mainnet/static_files",
+        "manifest should point chunk downloads at top-level static_files"
+    );
+    assert_eq!(
+        manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
+        "manifest should point state back to the dated run dir"
+    );
 
     let components = manifest["components"].as_object().expect("components should be an object");
     assert_eq!(components.len(), 8, "should have all 8 component types");
@@ -298,6 +317,7 @@ async fn upload_with_empty_prefix() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         String::new(),
+        Some("https://snapshots.example.com".to_string()),
     );
 
     let tmp = tempfile::tempdir()?;
@@ -321,6 +341,14 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let manifest_body = get_object_bytes(s3, bucket, "1700000000/manifest.json").await?;
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(manifest["block"], 100, "manifest should be in date dir");
+    assert_eq!(
+        manifest["base_url"], "https://snapshots.example.com/static_files",
+        "manifest should point chunk downloads at top-level static_files"
+    );
+    assert_eq!(
+        manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
+        "manifest should point state back to the dated run dir"
+    );
 
     let headers_body =
         get_object_bytes(s3, bucket, "static_files/headers-0-499999.tar.zst").await?;
@@ -387,6 +415,7 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "diff-match".to_string(),
+        None,
     );
 
     // Pre-seed static_files/ with the prior run's chunks and a previous manifest.json
@@ -443,6 +472,18 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         }
     }
 
+    let manifest_body = get_object_bytes(s3, bucket, "diff-match/1700000000/manifest.json").await?;
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
+    let chunk_output_files = manifest["components"]["headers"]["chunk_output_files"]
+        .as_array()
+        .expect("headers chunk_output_files should be an array");
+    assert!(
+        chunk_output_files
+            .iter()
+            .all(|entry| entry.as_array().is_some_and(|files| !files.is_empty())),
+        "download manifest should preserve output-file metadata for skipped chunks"
+    );
+
     Ok(())
 }
 
@@ -460,6 +501,7 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "diff-mismatch".to_string(),
+        None,
     );
 
     // Previous run published hashes with seed "v1".
@@ -539,6 +581,7 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "first-run".to_string(),
+        None,
     );
 
     let tmp = tempfile::tempdir()?;
@@ -655,6 +698,7 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "overwrite-test".to_string(),
+        None,
     );
 
     // Simulate a previous run's date dir with old state + rocksdb
@@ -741,6 +785,7 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "test".to_string(),
+        None,
     );
 
     let tmp = tempfile::tempdir()?;
@@ -761,6 +806,7 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
         s3_region: "us-east-1".to_string(),
         s3_access_key_id: None,
         s3_secret_access_key: None,
+        public_base_url: None,
     };
 
     let snapshotter =
@@ -819,6 +865,7 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "e2e-test".to_string(),
+        None,
     );
     let upload_prefix =
         uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;

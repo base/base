@@ -25,7 +25,7 @@ use aws_sdk_s3::{
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tracing::{debug, info, warn};
 
-use crate::snapshot::{ChunkFilename, SnapshotManifest};
+use crate::snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt};
 
 /// Maximum number of concurrent file uploads.
 const MAX_CONCURRENT_UPLOADS: usize = 10;
@@ -67,12 +67,18 @@ pub struct SnapshotUploader {
     client: S3Client,
     bucket: String,
     prefix: String,
+    public_base_url: Option<String>,
 }
 
 impl SnapshotUploader {
     /// Creates a new uploader.
-    pub const fn new(client: S3Client, bucket: String, prefix: String) -> Self {
-        Self { client, bucket, prefix }
+    pub const fn new(
+        client: S3Client,
+        bucket: String,
+        prefix: String,
+        public_base_url: Option<String>,
+    ) -> Self {
+        Self { client, bucket, prefix, public_base_url }
     }
 
     /// Lists remote static files with their sizes. Call once and pass the result
@@ -252,11 +258,27 @@ impl SnapshotUploader {
             .try_collect::<Vec<()>>()
             .await?;
 
-        if manifest_path.exists() {
-            self.upload_file(&manifest_path, &run_prefix).await?;
-        }
+        let published_manifest = build_published_manifest(
+            local_manifest,
+            self.public_static_files_base_url().as_deref(),
+            timestamp,
+        )?;
+        let manifest_key = format!("{run_prefix}/manifest.json");
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&manifest_key)
+            .body(ByteStream::from(published_manifest))
+            .send()
+            .await
+            .with_context(|| format!("failed to upload {manifest_key}"))?;
 
-        info!(run_prefix = %run_prefix, skipped, "upload complete");
+        info!(
+            run_prefix = %run_prefix,
+            manifest_key = %manifest_key,
+            skipped,
+            "upload complete"
+        );
         Ok(run_prefix)
     }
 
@@ -276,6 +298,16 @@ impl SnapshotUploader {
         } else {
             format!("{}/{timestamp}", self.prefix)
         }
+    }
+
+    /// Returns the public base URL for top-level static files, if configured.
+    fn public_static_files_base_url(&self) -> Option<String> {
+        let base = self.public_base_url.as_deref()?.trim_end_matches('/');
+        Some(if self.prefix.is_empty() {
+            format!("{base}/static_files")
+        } else {
+            format!("{base}/{}/static_files", self.prefix)
+        })
     }
 
     /// Lists all objects under a prefix in the bucket, returning filename → size.
@@ -472,6 +504,30 @@ impl SnapshotUploader {
 
         Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
     }
+}
+
+/// Builds the single published manifest for a run.
+///
+/// Chunked archives are served from top-level `static_files/` via `base_url`, while
+/// the always-changing `state` and `rocksdb_indices` archives stay in the timestamped
+/// run directory and are referenced through `../{timestamp}/...` file paths.
+fn build_published_manifest(
+    local_manifest: &SnapshotManifest,
+    public_static_files_base_url: Option<&str>,
+    timestamp: u64,
+) -> Result<Vec<u8>> {
+    let mut manifest = local_manifest.clone();
+    manifest.base_url = public_static_files_base_url.map(str::to_owned);
+
+    for (component_name, component) in &mut manifest.components {
+        if let reth_cli_commands::download::manifest::ComponentManifest::Single(single) = component
+            && matches!(component_name.as_str(), "state" | "rocksdb_indices")
+        {
+            single.file = format!("../{timestamp}/{}", single.file);
+        }
+    }
+
+    Ok(serde_json::to_vec_pretty(&manifest)?)
 }
 
 #[cfg(test)]
