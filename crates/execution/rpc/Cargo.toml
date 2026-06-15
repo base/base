@@ -82,6 +82,7 @@ eyre.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 derive_more = { workspace = true, features = ["constructor"] }
+pin-project-lite = "0.2.17"
 
 # metrics
 base-metrics.workspace = true
