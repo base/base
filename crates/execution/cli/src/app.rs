@@ -7,10 +7,10 @@ use base_node_core::BaseNode;
 use eyre::{Result, eyre};
 use reth_cli_commands::launcher::Launcher;
 use reth_cli_runner::CliRunner;
-use reth_node_core::args::{OtlpInitStatus, OtlpLogsStatus};
+use reth_node_core::args::{OtlpInitStatus, OtlpLogsStatus, PayloadBuilderArgs};
 use reth_node_metrics::recorder::install_prometheus_recorder;
 use reth_rpc_server_types::RpcModuleValidator;
-use reth_tracing::{FileWorkerGuard, Layers};
+use reth_tracing::{Layers, TracingGuards};
 use tracing::{info, warn};
 
 use crate::{Cli, Commands};
@@ -21,7 +21,7 @@ pub struct CliApp<Ext: clap::Args + fmt::Debug, Rpc: RpcModuleValidator> {
     cli: Cli<Ext, Rpc>,
     runner: Option<CliRunner>,
     layers: Option<Layers>,
-    guard: Option<FileWorkerGuard>,
+    guard: Option<TracingGuards>,
 }
 
 impl<Ext, Rpc> CliApp<Ext, Rpc>
@@ -53,8 +53,18 @@ where
     /// This accepts a closure that is used to launch the node via the
     /// [`NodeCommand`](reth_cli_commands::node::NodeCommand).
     pub fn run(
+        self,
+        launcher: impl Launcher<crate::chainspec::BaseChainSpecParser, Ext>,
+    ) -> Result<()> {
+        self.run_with_ext_config(launcher, |_, _| {})
+    }
+
+    /// Execute the configured node command after giving the caller a chance to copy parsed reth
+    /// node args into its extension args.
+    pub fn run_with_ext_config(
         mut self,
         launcher: impl Launcher<crate::chainspec::BaseChainSpecParser, Ext>,
+        configure_ext: impl FnOnce(&mut Ext, &PayloadBuilderArgs),
     ) -> Result<()> {
         let runner = match self.runner.take() {
             Some(runner) => runner,
@@ -81,7 +91,9 @@ where
         };
 
         match self.cli.command {
-            Commands::Node(command) => {
+            Commands::Node(mut command) => {
+                configure_ext(&mut command.ext, &command.builder);
+
                 // Validate RPC modules using the configured validator
                 if let Some(http_api) = &command.rpc.http_api {
                     Rpc::validate_selection(http_api, "http.api").map_err(|e| eyre!("{e}"))?;
@@ -141,7 +153,7 @@ where
             let otlp_logs_status = runner.block_on(self.cli.traces.init_otlp_logs(&mut layers))?;
 
             let enable_reload = self.cli.command.debug_namespace_enabled();
-            self.guard = self.cli.logs.init_tracing_with_layers(layers, enable_reload)?;
+            self.guard = Some(self.cli.logs.init_tracing_with_layers(layers, enable_reload)?);
             info!(target: "reth::cli", log_dir = %self.cli.logs.log_file_directory, "Initialized tracing");
 
             match otlp_status {

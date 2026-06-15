@@ -83,6 +83,7 @@ fetching `eth_getBlockReceipts` for each observed block, so `query_rpc` must sup
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
 | `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
+| `zeronet.yaml` | Base Zeronet | Requires `FUNDER_KEY` |
 
 ### Contract Addresses
 

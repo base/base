@@ -2,6 +2,7 @@
 
 mod block;
 mod cli;
+mod confirm;
 mod doctor;
 mod p2p;
 mod sync_status;

@@ -2,11 +2,12 @@
 
 use base_prover_service_db::{
     ClaimProofJob, CompleteClaimedProofJob, HeartbeatOutcome, HeartbeatProofJob,
-    SubmitProofOutcome, canonical_session_id,
+    RecordSessionOutcome, SubmitProofOutcome, WorkerSessionUpsert, canonical_session_id,
 };
 use base_prover_service_protocol::{
-    GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse,
-    ProofJob as ProtocolProofJob, ProverWorkerApiServer, WorkerSubmitProofRequest,
+    GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+    HeartbeatRequest, HeartbeatResponse, ProofJob as ProtocolProofJob, ProverWorkerApiServer,
+    RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
     WorkerSubmitProofResponse,
 };
 use jsonrpsee::{
@@ -39,6 +40,20 @@ impl ProverWorkerApiServer for ProverServiceServer {
         request: WorkerSubmitProofRequest,
     ) -> RpcResult<WorkerSubmitProofResponse> {
         self.submit_proof_impl(request).await
+    }
+
+    async fn get_proof_session(
+        &self,
+        request: GetProofSessionRequest,
+    ) -> RpcResult<GetProofSessionResponse> {
+        self.get_proof_session_impl(request).await
+    }
+
+    async fn record_proof_session(
+        &self,
+        request: RecordProofSessionRequest,
+    ) -> RpcResult<RecordProofSessionResponse> {
+        self.record_proof_session_impl(request).await
     }
 }
 
@@ -239,6 +254,118 @@ impl ProverServiceServer {
                 "submit_proof",
                 &request.session_id,
                 "lock is no longer valid",
+            )),
+        }
+    }
+
+    /// Returns the active backend session recorded for a claimed proof job.
+    pub async fn get_proof_session_impl(
+        &self,
+        request: GetProofSessionRequest,
+    ) -> RpcResult<GetProofSessionResponse> {
+        let start = std::time::Instant::now();
+        let result = self.get_proof_session_inner(request).await;
+        record_rpc_result("GetProofSession", start, &result);
+
+        result
+    }
+
+    async fn get_proof_session_inner(
+        &self,
+        request: GetProofSessionRequest,
+    ) -> RpcResult<GetProofSessionResponse> {
+        let session_id = canonical_session_id(&request.session_id)
+            .map_err(|e| invalid_argument(format!("{e}")))?;
+
+        let session = self
+            .repo
+            .get_active_session(&session_id, request.session_type.into())
+            .await
+            .map_err(|e| internal(format!("Database error: {e}")))?;
+
+        Ok(GetProofSessionResponse { session: session.map(Into::into) })
+    }
+
+    /// Records (inserts or updates) the backend session for a claimed proof job.
+    pub async fn record_proof_session_impl(
+        &self,
+        request: RecordProofSessionRequest,
+    ) -> RpcResult<RecordProofSessionResponse> {
+        let start = std::time::Instant::now();
+        let result = self.record_proof_session_inner(request).await;
+        record_rpc_result("RecordProofSession", start, &result);
+
+        result
+    }
+
+    async fn record_proof_session_inner(
+        &self,
+        request: RecordProofSessionRequest,
+    ) -> RpcResult<RecordProofSessionResponse> {
+        let session_id = canonical_session_id(&request.session_id)
+            .map_err(|e| invalid_argument(format!("{e}")))?;
+        let lock_id = parse_lock_id(&request.lock_id)?;
+
+        let outcome = self
+            .repo
+            .record_worker_proof_session(WorkerSessionUpsert {
+                session_id,
+                lock_id,
+                worker_id: request.worker_id.clone(),
+                session_type: request.session_type.into(),
+                backend_session_id: request.backend_session_id,
+                status: request.state.into(),
+                error_message: None,
+            })
+            .await
+            .map_err(|e| internal(format!("Database error: {e}")))?;
+
+        match outcome {
+            RecordSessionOutcome::Recorded(session) => {
+                info!(
+                    worker_id = %request.worker_id,
+                    session_id = %request.session_id,
+                    backend_session_id = %session.backend_session_id,
+                    "recorded backend session for worker"
+                );
+                Ok(RecordProofSessionResponse { session: session.into() })
+            }
+            RecordSessionOutcome::TerminalBackendSession(session) => {
+                info!(
+                    worker_id = %request.worker_id,
+                    session_id = %request.session_id,
+                    backend_session_id = %session.backend_session_id,
+                    "backend session was already terminal"
+                );
+                Ok(RecordProofSessionResponse { session: session.into() })
+            }
+            RecordSessionOutcome::NotFound => {
+                Err(not_found(format!("proof job not found for session_id {}", request.session_id)))
+            }
+            RecordSessionOutcome::NotClaimed => Err(reject_ownership(
+                "record_proof_session",
+                &request.session_id,
+                "job is not currently claimed",
+            )),
+            RecordSessionOutcome::StaleLock => Err(reject_ownership(
+                "record_proof_session",
+                &request.session_id,
+                "lock is held by another worker or has been rotated",
+            )),
+            RecordSessionOutcome::Expired => Err(reject_ownership(
+                "record_proof_session",
+                &request.session_id,
+                "lock has expired",
+            )),
+            RecordSessionOutcome::Terminal => Err(reject_ownership(
+                "record_proof_session",
+                &request.session_id,
+                "job has already reached a terminal state",
+            )),
+            RecordSessionOutcome::TerminalSessionStatus => Err(reject_ownership(
+                "record_proof_session",
+                &request.session_id,
+                "backend session status is terminal",
             )),
         }
     }

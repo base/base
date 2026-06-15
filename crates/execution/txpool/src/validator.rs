@@ -189,10 +189,10 @@ where
     /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
     /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
-    /// - for eip8130 (account abstraction): rejects local-origin submissions and enforces the
-    ///   structural admission gate from [`Self::validate_eip8130_structural`] before the inner
-    ///   Eth checks; authenticator dispatch, account state lookups, and fork gating are not yet
-    ///   performed
+    /// - for eip8130 (account abstraction): rejects submissions before the Cobalt upgrade is
+    ///   active, rejects local-origin submissions, and enforces the structural admission gate
+    ///   from [`Self::validate_eip8130_structural`] before the inner Eth checks; authenticator
+    ///   dispatch and account state lookups are not yet performed
     /// - ensures that the account has enough balance to cover the L1 gas cost
     pub async fn validate_one_with_state(
         &self,
@@ -217,9 +217,9 @@ where
     }
 
     /// Runs the mempool admission checks that apply to EIP-8130 (account
-    /// abstraction) transactions without requiring authenticator dispatch, account
-    /// state lookups, or fork activation. Mirrors the structural invariants
-    /// listed in EIP-8130 § Validation and § Nonce-Free Mode.
+    /// abstraction) transactions without requiring authenticator dispatch or account
+    /// state lookups. Enforces the Cobalt fork gate and the structural
+    /// invariants listed in EIP-8130 § Validation and § Nonce-Free Mode.
     fn validate_eip8130_structural(
         &self,
         origin: TransactionOrigin,
@@ -228,12 +228,17 @@ where
         if !origin.is_external() {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
+        // Single read of the head-block timestamp so the fork gate and the
+        // expiry check see the same value even when `on_new_head_block` updates
+        // the atomic concurrently.
+        let now = self.block_timestamp();
+        // Fork gate: EIP-8130 (account abstraction) transactions are only
+        // admissible to the pool once the Cobalt upgrade is active.
+        if !self.chain_spec().is_cobalt_active_at_timestamp(now) {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
-        // Single read of the head-block timestamp so both branches see the
-        // same value even when `on_new_head_block` updates the atomic
-        // concurrently.
-        let now = self.block_timestamp();
         signed.validate_timestamp(now).map_err(InvalidPoolTransactionError::from)?;
         Self::validate_sender_auth(signed)?;
         Self::validate_payer_auth(signed)?;
@@ -504,7 +509,7 @@ mod tests {
         BaseTxEnvelope, ConfigChange, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed,
         InitialActor, Scope, TxDeposit, TxEip8130,
     };
-    use base_execution_chainspec::BaseChainSpec;
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::Account;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -522,11 +527,9 @@ mod tests {
         BaseEvmConfig,
     >;
 
-    /// Builds a [`BaseTransactionValidator`] configured against the mainnet chain spec with
-    /// no accounts seeded. Suitable for tests that exercise the EIP-8130 structural-acceptance
-    /// gate, which rejects without touching account state.
-    fn build_test_validator() -> TestValidator {
-        let chain_spec = Arc::new(BaseChainSpec::mainnet());
+    /// Builds a [`BaseTransactionValidator`] configured against the given chain spec with
+    /// no accounts seeded.
+    fn build_test_validator_with_spec(chain_spec: Arc<BaseChainSpec>) -> TestValidator {
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -536,6 +539,14 @@ mod tests {
             .no_cancun()
             .build(InMemoryBlobStore::default());
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+    }
+
+    /// Builds a [`BaseTransactionValidator`] against a Cobalt-activated mainnet chain spec with
+    /// no accounts seeded. EIP-8130 admission is fork-gated on Cobalt, so the structural-gate
+    /// tests run with Cobalt active (at genesis) to exercise the checks past the fork gate.
+    fn build_test_validator() -> TestValidator {
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        build_test_validator_with_spec(chain_spec)
     }
 
     /// Returns the chain id the [`build_test_validator`] is configured against.
@@ -609,6 +620,17 @@ mod tests {
         let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
         assert!(
             validator.validate_eip8130_structural(TransactionOrigin::External, &signed).is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_before_cobalt_activation() {
+        // Mainnet leaves Cobalt unscheduled, so the fork gate rejects an otherwise
+        // structurally valid EIP-8130 transaction regardless of its contents.
+        let validator = build_test_validator_with_spec(Arc::new(BaseChainSpec::mainnet()));
+        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
+        assert_unsupported(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed),
         );
     }
 

@@ -35,6 +35,7 @@ use reth_payload_primitives::PayloadAttributes;
 use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
+use reth_trie_parallel::state_root_task::StateRootMessage;
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -547,6 +548,7 @@ impl BasePayloadBuilderCtx {
     pub(super) fn execute_sequencer_transactions(
         &self,
         db: &mut State<impl Database>,
+        state_root_updates: Option<&crossbeam_channel::Sender<StateRootMessage>>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
         let no_tx_pool = self.attributes().no_tx_pool;
@@ -627,6 +629,10 @@ impl BasePayloadBuilderCtx {
 
             info.receipts.push(self.build_receipt(ctx, depositor_nonce));
 
+            if let Some(sender) = state_root_updates {
+                let _ = sender.send(StateRootMessage::StateUpdate(state.clone()));
+            }
+
             // commit changes
             evm.db_mut().commit(state);
 
@@ -666,6 +672,7 @@ impl BasePayloadBuilderCtx {
         db: &mut State<impl Database>,
         best_txs: &mut impl PayloadTxsBounds,
         limits: &ResourceLimits,
+        state_root_updates: Option<&crossbeam_channel::Sender<StateRootMessage>>,
     ) -> Result<FlashblockDiagnostics, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -1034,6 +1041,10 @@ impl BasePayloadBuilderCtx {
             };
             info.receipts.push(self.build_receipt(ctx, None));
 
+            if let Some(sender) = state_root_updates {
+                let _ = sender.send(StateRootMessage::StateUpdate(state.clone()));
+            }
+
             // commit changes
             evm.db_mut().commit(state);
 
@@ -1385,7 +1396,7 @@ mod tests {
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let err = ctx
-            .execute_sequencer_transactions(&mut state)
+            .execute_sequencer_transactions(&mut state, None)
             .expect_err("invalid sequencer tx must fail when no_tx_pool=true");
         assert!(
             matches!(err, PayloadBuilderError::EvmExecutionError(_)),
@@ -1399,7 +1410,7 @@ mod tests {
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let info = ctx
-            .execute_sequencer_transactions(&mut state)
+            .execute_sequencer_transactions(&mut state, None)
             .expect("invalid pre-include is skipped when no_tx_pool=false");
         assert_eq!(info.cumulative_gas_used, 0, "skipped tx should not consume gas");
         assert!(info.receipts.is_empty(), "skipped tx should not produce a receipt");

@@ -14,7 +14,7 @@ use reth_chainspec::EthereumHardforks;
 use reth_node_api::{EngineApiValidator, EngineTypes};
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
-use reth_storage_api::{BlockReader, HeaderProvider, StateProviderFactory};
+use reth_storage_api::{BalProvider, BlockReader, HeaderProvider, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
 use tracing::{debug, instrument, trace};
 
@@ -264,7 +264,7 @@ where
 impl<Provider, EngineT, Pool, Validator, ChainSpec> BaseEngineApiServer<EngineT>
     for BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
 where
-    Provider: HeaderProvider + BlockReader + StateProviderFactory + 'static,
+    Provider: HeaderProvider + BlockReader + StateProviderFactory + BalProvider + 'static,
     EngineT: EngineTypes<ExecutionData = ExecutionData>,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator<EngineT>,

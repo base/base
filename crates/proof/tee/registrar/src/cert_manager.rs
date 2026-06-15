@@ -16,30 +16,42 @@ use crate::{
 };
 
 /// Manages Nitro certificate revocation checks and revocation transaction submission.
-pub struct CertManager {
+pub struct CertManager<T> {
     http_client: reqwest::Client,
     nitro_verifier: Arc<dyn NitroVerifierClient>,
+    tx_manager: T,
 }
 
-impl fmt::Debug for CertManager {
+impl<T> fmt::Debug for CertManager<T>
+where
+    T: fmt::Debug,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CertManager").finish_non_exhaustive()
     }
 }
 
-impl CertManager {
-    /// Creates a certificate manager from CRL configuration and a verifier client.
+impl<T> CertManager<T>
+where
+    T: TxManager,
+{
+    /// Creates a certificate manager from CRL configuration, verifier client,
+    /// and transaction manager.
     ///
     /// # Errors
     ///
     /// Returns [`RegistrarError::Config`] if the CRL HTTP client cannot be built.
-    pub fn new(config: &CrlConfig, nitro_verifier: Arc<dyn NitroVerifierClient>) -> Result<Self> {
+    pub fn new(
+        config: &CrlConfig,
+        nitro_verifier: Arc<dyn NitroVerifierClient>,
+        tx_manager: T,
+    ) -> Result<Self> {
         let http_client = crl::build_crl_http_client(config.fetch_timeout).map_err(|e| {
             RegistrarError::Config(format!(
                 "failed to build CRL HTTP client (Layer 2 / AWS CRL fetch): {e}"
             ))
         })?;
-        Ok(Self { http_client, nitro_verifier })
+        Ok(Self { http_client, nitro_verifier, tx_manager })
     }
 
     /// Checks an attestation's intermediate certificates and submits revocations.
@@ -52,15 +64,11 @@ impl CertManager {
     /// intermediates even if AWS later prunes its CRL. AWS CRLs are then
     /// checked for each intermediate, and every CRL hit is checked onchain
     /// before a `revokeCert` transaction is submitted.
-    pub async fn check_and_revoke_crls<T>(
+    pub async fn check_and_revoke_crls(
         &self,
         attestation_bytes: &[u8],
         instance: &ProverInstance,
-        tx_manager: &T,
-    ) -> Result<bool>
-    where
-        T: TxManager,
-    {
+    ) -> Result<bool> {
         let cert_infos = {
             let report = AttestationReport::parse(attestation_bytes).map_err(|e| {
                 RegistrarError::ProverClient {
@@ -95,7 +103,7 @@ impl CertManager {
         }
 
         RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
-        self.submit_revocations_for_revoked_certs(&revoked_certs, instance, tx_manager).await;
+        self.submit_revocations_for_revoked_certs(&revoked_certs, instance).await;
 
         Ok(true)
     }
@@ -134,16 +142,13 @@ impl CertManager {
     }
 
     /// Checks each CRL-hit against the onchain sentinel and submits needed revocations.
-    pub async fn submit_revocations_for_revoked_certs<T>(
+    pub async fn submit_revocations_for_revoked_certs(
         &self,
         revoked_certs: &[crl::RevokedCertInfo],
         instance: &ProverInstance,
-        tx_manager: &T,
-    ) where
-        T: TxManager,
-    {
+    ) {
         let verifier_address = self.nitro_verifier.address();
-        let cert_revoker = CertRevoker::new(verifier_address, tx_manager);
+        let cert_revoker = CertRevoker::new(verifier_address, &self.tx_manager);
 
         for revoked in revoked_certs {
             let cert = revoked.intermediate_label();
@@ -190,6 +195,7 @@ mod tests {
             Mutex,
             atomic::{AtomicU32, Ordering},
         },
+        time::Duration,
     };
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
@@ -313,8 +319,12 @@ mod tests {
         u32::try_from(full_chain_der().len().saturating_sub(2)).unwrap()
     }
 
-    fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager {
-        CertManager { http_client: reqwest::Client::new(), nitro_verifier: verifier }
+    fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager<MockTxManager> {
+        CertManager {
+            http_client: reqwest::Client::new(),
+            nitro_verifier: verifier,
+            tx_manager: MockTxManager::default(),
+        }
     }
 
     fn test_instance() -> ProverInstance {
@@ -324,6 +334,21 @@ mod tests {
             health_status: crate::InstanceHealthStatus::Healthy,
             launch_time: None,
         }
+    }
+
+    fn crl_config() -> CrlConfig {
+        CrlConfig {
+            enabled: true,
+            nitro_verifier_address: None,
+            fetch_timeout: Duration::from_secs(1),
+        }
+    }
+
+    #[test]
+    fn new_builds_crl_manager_with_verifier() {
+        let verifier = Arc::new(MockNitroVerifier::default());
+        let result = CertManager::new(&crl_config(), verifier, MockTxManager::default());
+        assert!(result.is_ok());
     }
 
     fn revoked_cert(path_digest: B256) -> crl::RevokedCertInfo {
@@ -500,15 +525,10 @@ mod tests {
             }
         };
         let cert_manager = test_cert_manager(Arc::clone(&verifier));
-        let tx_manager = MockTxManager::default();
         let instance = test_instance();
 
         cert_manager
-            .submit_revocations_for_revoked_certs(
-                &[revoked_cert(path_digest)],
-                &instance,
-                &tx_manager,
-            )
+            .submit_revocations_for_revoked_certs(&[revoked_cert(path_digest)], &instance)
             .await;
 
         assert_eq!(
@@ -516,7 +536,7 @@ mod tests {
             1,
             "CRL-hit cert should be checked onchain before deciding whether to submit revokeCert",
         );
-        let candidates = tx_manager.take_candidates();
+        let candidates = cert_manager.tx_manager.take_candidates();
         assert_eq!(
             candidates.len(),
             usize::from(expect_revoke_cert),

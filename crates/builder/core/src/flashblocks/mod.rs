@@ -20,6 +20,8 @@ pub use context::{
     BasePayloadBuilderCtx, FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExtraCtx,
 };
 
+mod block_builder;
+
 mod payload;
 
 mod service;

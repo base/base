@@ -152,6 +152,13 @@ impl BaseChainSpecBuilder {
         self
     }
 
+    /// Enable Cobalt at genesis.
+    pub fn cobalt_activated(mut self) -> Self {
+        self = self.beryl_activated();
+        self.inner = self.inner.with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(0));
+        self
+    }
+
     /// Tries to build the resulting [`BaseChainSpec`].
     ///
     /// # Panics

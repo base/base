@@ -389,8 +389,10 @@ mod tests {
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
-        GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse,
-        ProofJobStatus, ProofRequest, TeeKind, TeeProofRequest, WorkerSubmitProofRequest,
+        GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+        HeartbeatRequest, HeartbeatResponse, ProofJobStatus, ProofRequest,
+        RecordProofSessionRequest, RecordProofSessionResponse, TeeKind, TeeProofRequest,
+        WorkerSubmitProofRequest,
     };
     use chrono::Utc;
     use tokio::time::sleep;
@@ -499,6 +501,20 @@ mod tests {
                     PrimitiveRequestKind::Tee,
                 ),
             })
+        }
+
+        async fn get_proof_session(
+            &self,
+            _request: GetProofSessionRequest,
+        ) -> Result<GetProofSessionResponse, ProverServiceClientError> {
+            panic!("get_proof_session is not used by proof generator tests")
+        }
+
+        async fn record_proof_session(
+            &self,
+            _request: RecordProofSessionRequest,
+        ) -> Result<RecordProofSessionResponse, ProverServiceClientError> {
+            panic!("record_proof_session is not used by proof generator tests")
         }
     }
 

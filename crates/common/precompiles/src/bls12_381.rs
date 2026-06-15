@@ -1,7 +1,6 @@
-use alloc::string::ToString;
-
 use revm::precompile::{
-    self as precompile, Precompile, PrecompileError, PrecompileId, PrecompileResult,
+    self as precompile, Precompile, PrecompileHalt, PrecompileId, PrecompileOutput,
+    PrecompileResult,
     bls12_381_const::{G1_MSM_ADDRESS, G2_MSM_ADDRESS, PAIRING_ADDRESS},
     call_eth_precompile,
 };
@@ -28,10 +27,7 @@ pub const ISTHMUS_G1_MSM: Precompile =
 /// Run the BLS12-381 G1 MSM precompile with Isthmus input limits.
 pub fn run_isthmus_g1_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > ISTHMUS_G1_MSM_MAX_INPUT_SIZE {
-        return Err(PrecompileError::Fatal(
-            "G1MSM input length too long for Base input size limitation after the Isthmus Hardfork"
-                .to_string(),
-        ));
+        return Ok(PrecompileOutput::halt(PrecompileHalt::Bls12381G1MsmInputLength, reservoir));
     }
     Ok(call_eth_precompile(precompile::bls12_381::g1_msm::g1_msm, input, gas_limit, reservoir))
 }
@@ -43,9 +39,7 @@ pub const ISTHMUS_G2_MSM: Precompile =
 /// Run the BLS12-381 G2 MSM precompile with Isthmus input limits.
 pub fn run_isthmus_g2_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > ISTHMUS_G2_MSM_MAX_INPUT_SIZE {
-        return Err(PrecompileError::Fatal(
-            "G2MSM input length too long for Base input size limitation".to_string(),
-        ));
+        return Ok(PrecompileOutput::halt(PrecompileHalt::Bls12381G2MsmInputLength, reservoir));
     }
     Ok(call_eth_precompile(precompile::bls12_381::g2_msm::g2_msm, input, gas_limit, reservoir))
 }
@@ -57,9 +51,7 @@ pub const ISTHMUS_PAIRING: Precompile =
 /// Run the BLS12-381 pairing precompile with Isthmus input limits.
 pub fn run_isthmus_pairing(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > ISTHMUS_PAIRING_MAX_INPUT_SIZE {
-        return Err(PrecompileError::Fatal(
-            "Pairing input length too long for Base input size limitation".to_string(),
-        ));
+        return Ok(PrecompileOutput::halt(PrecompileHalt::Bls12381PairingInputLength, reservoir));
     }
     Ok(call_eth_precompile(precompile::bls12_381::pairing::pairing, input, gas_limit, reservoir))
 }
@@ -71,10 +63,7 @@ pub const JOVIAN_G1_MSM: Precompile =
 /// Run the BLS12-381 G1 MSM precompile with Jovian input limits.
 pub fn run_jovian_g1_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > JOVIAN_G1_MSM_MAX_INPUT_SIZE {
-        return Err(PrecompileError::Fatal(
-            "G1MSM input length too long for Base input size limitation after the Jovian Hardfork"
-                .to_string(),
-        ));
+        return Ok(PrecompileOutput::halt(PrecompileHalt::Bls12381G1MsmInputLength, reservoir));
     }
     Ok(call_eth_precompile(precompile::bls12_381::g1_msm::g1_msm, input, gas_limit, reservoir))
 }
@@ -86,10 +75,7 @@ pub const JOVIAN_G2_MSM: Precompile =
 /// Run the BLS12-381 G2 MSM precompile with Jovian input limits.
 pub fn run_jovian_g2_msm(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > JOVIAN_G2_MSM_MAX_INPUT_SIZE {
-        return Err(PrecompileError::Fatal(
-            "G2MSM input length too long for Base input size limitation after the Jovian Hardfork"
-                .to_string(),
-        ));
+        return Ok(PrecompileOutput::halt(PrecompileHalt::Bls12381G2MsmInputLength, reservoir));
     }
     Ok(call_eth_precompile(precompile::bls12_381::g2_msm::g2_msm, input, gas_limit, reservoir))
 }
@@ -101,20 +87,14 @@ pub const JOVIAN_PAIRING: Precompile =
 /// Run the BLS12-381 pairing precompile with Jovian input limits.
 pub fn run_jovian_pairing(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > JOVIAN_PAIRING_MAX_INPUT_SIZE {
-        return Err(PrecompileError::Fatal(
-            "Pairing input length too long for Base input size limitation after the Jovian Hardfork"
-                .to_string(),
-        ));
+        return Ok(PrecompileOutput::halt(PrecompileHalt::Bls12381PairingInputLength, reservoir));
     }
     Ok(call_eth_precompile(precompile::bls12_381::pairing::pairing, input, gas_limit, reservoir))
 }
 
 #[cfg(test)]
 mod tests {
-    use revm::{
-        precompile::{Precompile, PrecompileError},
-        primitives::Bytes,
-    };
+    use revm::{precompile::Precompile, primitives::Bytes};
     use rstest::rstest;
 
     use crate::{
@@ -139,8 +119,8 @@ mod tests {
         let input = Bytes::from(vec![0u8; max_input_size + 1]);
         let result = precompile.execute(&input, gas_limit, 0);
         assert!(
-            matches!(&result, Err(PrecompileError::Fatal(msg)) if msg.contains("input length too long")),
-            "expected Fatal error for oversized input, got {result:?}"
+            matches!(&result, Ok(o) if o.halt_reason().is_some()),
+            "expected halt for oversized input, got {result:?}"
         );
     }
 }

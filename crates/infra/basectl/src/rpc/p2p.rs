@@ -174,6 +174,54 @@ pub async fn fetch_info(rpc: &Url, cl_rpc: &Url) -> Result<(NodeInfoReport, Peer
     Ok((node_info, peer_stats))
 }
 
+/// Adds an execution-layer peer through `admin_addPeer`.
+pub async fn add_peer(rpc: &Url, enode: &str) -> Result<bool> {
+    let el_provider = connect_el(rpc).await?;
+    match el_provider.add_peer(enode).await {
+        Ok(accepted) => Ok(accepted),
+        Err(err) if is_method_not_found(&err) => {
+            Err(err).with_context(|| format!("`admin_addPeer` not exposed by {rpc}"))
+        }
+        Err(err) => Err(err).with_context(|| format!("calling admin_addPeer on {rpc}")),
+    }
+}
+
+/// Removes an execution-layer peer through `admin_removePeer`.
+pub async fn remove_peer(rpc: &Url, enode: &str) -> Result<bool> {
+    let el_provider = connect_el(rpc).await?;
+    match el_provider.remove_peer(enode).await {
+        Ok(accepted) => Ok(accepted),
+        Err(err) if is_method_not_found(&err) => {
+            Err(err).with_context(|| format!("`admin_removePeer` not exposed by {rpc}"))
+        }
+        Err(err) => Err(err).with_context(|| format!("calling admin_removePeer on {rpc}")),
+    }
+}
+
+/// Connects a consensus-layer peer through `opp2p_connectPeer`.
+pub async fn connect_peer(cl_rpc: &Url, multiaddr: &str) -> Result<()> {
+    let cl_client = connect_cl(cl_rpc)?;
+    match BaseP2PApiClient::opp2p_connect_peer(&cl_client, multiaddr.to_string()).await {
+        Ok(()) => Ok(()),
+        Err(err) if is_jsonrpc_method_not_found(&err) => {
+            Err(err).with_context(|| format!("`opp2p_connectPeer` not exposed by {cl_rpc}"))
+        }
+        Err(err) => Err(err).with_context(|| format!("calling opp2p_connectPeer on {cl_rpc}")),
+    }
+}
+
+/// Disconnects a consensus-layer peer through `opp2p_disconnectPeer`.
+pub async fn disconnect_peer(cl_rpc: &Url, peer_id: &str) -> Result<()> {
+    let cl_client = connect_cl(cl_rpc)?;
+    match BaseP2PApiClient::opp2p_disconnect_peer(&cl_client, peer_id.to_string()).await {
+        Ok(()) => Ok(()),
+        Err(err) if is_jsonrpc_method_not_found(&err) => {
+            Err(err).with_context(|| format!("`opp2p_disconnectPeer` not exposed by {cl_rpc}"))
+        }
+        Err(err) => Err(err).with_context(|| format!("calling opp2p_disconnectPeer on {cl_rpc}")),
+    }
+}
+
 /// Fetches execution-layer advertised endpoint and peer-count summary.
 pub async fn fetch_el_info(rpc: &Url) -> Result<ElInfoReport> {
     let el_provider = connect_el(rpc).await?;

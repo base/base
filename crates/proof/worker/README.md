@@ -1,6 +1,6 @@
-# base-prover-service-worker-host
+# base-proof-worker
 
-Shared prover-service worker host primitives.
+Shared proof worker primitives for prover-service hosts.
 
 This crate contains backend-neutral worker host contracts used by concrete proof
 hosts. Higher-level polling, heartbeat, and submission loops can build on these

@@ -25,6 +25,8 @@ eyre.workspace = true
 
 [dev-dependencies]
 # workspace
+base-cli-utils.workspace = true
+base-execution-cli.workspace = true
 base-bundles.workspace = true
 
 # misc

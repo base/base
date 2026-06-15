@@ -330,9 +330,10 @@ mod tests {
     use base_proof_host::ProverConfig;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use base_prover_service_protocol::{
-        GetNextProofResponse, HeartbeatRequest, HeartbeatResponse, ProofJob, ProofJobStatus,
-        ProofRequest, ProofRequestKind, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
-        ZkProofRequest, ZkVm,
+        GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
+        HeartbeatResponse, ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind,
+        RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
+        WorkerSubmitProofResponse, ZkProofRequest, ZkVm,
     };
     use chrono::Utc;
     use tokio::time::timeout;
@@ -398,6 +399,20 @@ mod tests {
             _request: WorkerSubmitProofRequest,
         ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError> {
             panic!("submit_proof is not used by job discovery tests")
+        }
+
+        async fn get_proof_session(
+            &self,
+            _request: GetProofSessionRequest,
+        ) -> Result<GetProofSessionResponse, ProverServiceClientError> {
+            panic!("get_proof_session is not used by job discovery tests")
+        }
+
+        async fn record_proof_session(
+            &self,
+            _request: RecordProofSessionRequest,
+        ) -> Result<RecordProofSessionResponse, ProverServiceClientError> {
+            panic!("record_proof_session is not used by job discovery tests")
         }
     }
 

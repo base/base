@@ -95,6 +95,7 @@ clap = { workspace = true, features = ["derive"] }
 # proof
 base-zk-client.workspace = true
 base-proof-rpc.workspace = true
+base-optimism-rpc.workspace = true
 
 # misc
 indicatif.workspace = true

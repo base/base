@@ -97,19 +97,38 @@ is one of `caught_up` (within ±N blocks of the reference, where N is the
 
 ### `basectl p2p`
 
-Read-only P2P inspection commands for execution and consensus layers.
+P2P inspection and single-peer management commands for execution and
+consensus layers.
 
 - `basectl p2p info` shows the advertised endpoint per layer plus peer counts.
 - `basectl p2p peers` shows the connected peer list per layer.
+- `basectl p2p add-peer <TARGET>` connects one peer. `enode://...` routes to
+  the execution layer; `enr:...` or `/.../p2p/<peer-id>` routes to the
+  consensus layer.
+- `basectl p2p remove-peer <TARGET>` disconnects one peer. `enode://...` routes
+  to the execution layer; any other non-empty target is treated as a bare
+  consensus libp2p peer ID. ENR records and multiaddrs are rejected for removal.
 
-Both commands support:
+All p2p commands support:
 
 | Flag | Description |
 |------|-------------|
 | `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field. |
 | `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
+
+Read-only p2p commands also support:
+
+| Flag | Description |
+|------|-------------|
 | `--json` | Emit humanized JSON instead of the pretty table output. |
 | `--raw` | With `--json`, emit raw nested RPC payloads instead of the humanized summary. Errors at parse time if used without `--json`. |
+
+Destructive p2p commands also support:
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip the interactive confirmation prompt. By default, add/remove prints the exact action and waits for `y` or `yes`; empty input and every other answer abort without error. |
+| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. |
 
 Important EL RPC note:
 
@@ -206,6 +225,18 @@ basectl -c sepolia p2p info --el-rpc https://your-el.example/ --cl-rpc https://y
 
 # P2P peers as JSON
 basectl -c sepolia p2p peers --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --json | jq '{el: .el | length, cl: .cl | length}'
+
+# Add an execution-layer peer after confirmation
+basectl -c sepolia p2p add-peer enode://<node-id>@203.0.113.10:30303 --el-rpc https://your-el.example/
+
+# Connect a consensus peer non-interactively and emit JSON
+basectl -c sepolia p2p add-peer enr:<record> --cl-rpc https://your-cl.example/ --yes --json | jq .
+
+# Connect a consensus peer by raw libp2p multiaddr
+basectl -c sepolia p2p add-peer /ip4/203.0.113.10/tcp/9000/p2p/16Uiu2HAm... --cl-rpc https://your-cl.example/ --yes
+
+# Remove a consensus peer by bare libp2p peer ID
+basectl -c sepolia p2p remove-peer 16Uiu2HAm... --cl-rpc https://your-cl.example/
 
 # If the EL RPC is restricted, EL peer count still works but EL admin-backed fields may be unavailable
 basectl -c sepolia p2p info --el-rpc https://your-public-el.example/ --cl-rpc https://your-cl.example/

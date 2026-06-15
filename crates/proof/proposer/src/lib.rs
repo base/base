@@ -15,7 +15,10 @@ mod config;
 pub use config::{ConfigError, ProposerConfig};
 
 mod constants;
-pub use constants::{MAX_PROOF_RETRIES, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY};
+pub use constants::{
+    MAX_PROOF_RETRIES, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY, SUBMIT_TIMEOUT,
+    SUBMIT_TIMEOUT_SLACK,
+};
 
 mod output_proposer;
 pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
@@ -23,8 +26,19 @@ pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
 mod proof_adapter;
 pub use proof_adapter::{DispatchedProof, ProofRequesterDispatcher, ProposerProofAdapter};
 
+mod proposal_intervals;
+pub use proposal_intervals::ProposalIntervals;
+
+mod proof_recovery;
+pub use proof_recovery::{
+    ProofCollectorRecoveryProvider, ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig,
+};
+
 mod proof_collector;
-pub use proof_collector::{CollectedProof, ProofCollector, TargetPoll};
+pub use proof_collector::{
+    CollectedProof, ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig,
+    ProofCollectorState, ProofCollectorTickResult, ProofSubmitEffect, TargetPoll,
+};
 
 mod proof_dispatcher;
 pub use proof_dispatcher::{

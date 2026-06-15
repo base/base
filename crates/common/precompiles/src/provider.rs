@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, string::String};
+use alloc::string::String;
 
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
@@ -9,7 +9,7 @@ use revm::{
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{self, Precompiles, bn254, modexp, secp256r1},
-    primitives::{OnceLock, hardfork::SpecId},
+    primitives::{AddressSet, OnceLock, hardfork::SpecId},
 };
 
 use crate::{
@@ -242,7 +242,7 @@ where
     }
 
     #[inline]
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
+    fn warm_addresses(&self) -> &AddressSet {
         self.inner.warm_addresses()
     }
 
@@ -345,25 +345,37 @@ mod tests {
         let mut bad_input_len = bn254_pair::JOVIAN_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bn254_pair::GRANITE_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(bn254_pair_precompile.execute(&input, u64::MAX, 0).is_err());
+        assert!(matches!(
+            bn254_pair_precompile.execute(&input, u64::MAX, 0),
+            Ok(output) if output.halt_reason().is_some()
+        ));
 
         let g1_msm = precompiles.precompiles().get(&bls12_381_const::G1_MSM_ADDRESS).unwrap();
         bad_input_len = bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bls12_381::ISTHMUS_G1_MSM_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(g1_msm.execute(&input, u64::MAX, 0).is_err());
+        assert!(matches!(
+            g1_msm.execute(&input, u64::MAX, 0),
+            Ok(output) if output.halt_reason().is_some()
+        ));
 
         let g2_msm = precompiles.precompiles().get(&bls12_381_const::G2_MSM_ADDRESS).unwrap();
         bad_input_len = bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bls12_381::ISTHMUS_G2_MSM_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(g2_msm.execute(&input, u64::MAX, 0).is_err());
+        assert!(matches!(
+            g2_msm.execute(&input, u64::MAX, 0),
+            Ok(output) if output.halt_reason().is_some()
+        ));
 
         let pairing = precompiles.precompiles().get(&bls12_381_const::PAIRING_ADDRESS).unwrap();
         bad_input_len = bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bls12_381::ISTHMUS_PAIRING_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(pairing.execute(&input, u64::MAX, 0).is_err());
+        assert!(matches!(
+            pairing.execute(&input, u64::MAX, 0),
+            Ok(output) if output.halt_reason().is_some()
+        ));
     }
 
     #[test]

@@ -29,7 +29,7 @@ use tracing::{info, warn};
 use crate::{
     Metrics,
     config::ProposerConfig,
-    constants::MAX_PROOF_RETRIES,
+    constants::{MAX_PROOF_RETRIES, SUBMIT_TIMEOUT, SUBMIT_TIMEOUT_SLACK},
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::ProposalSubmitter,
     pipeline::{PipelineConfig, ProvingPipeline},
@@ -143,6 +143,10 @@ impl ProposerService {
 
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
+        let submit_timeout = config.tx_manager.as_ref().map_or(Some(SUBMIT_TIMEOUT), |tx| {
+            (!tx.tx_send_timeout.is_zero())
+                .then(|| tx.tx_send_timeout.saturating_add(SUBMIT_TIMEOUT_SLACK))
+        });
 
         let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
             if config.dry_run {
@@ -204,6 +208,7 @@ impl ProposerService {
         let pipeline_config = PipelineConfig {
             max_retries: MAX_PROOF_RETRIES,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
+            submit_timeout,
             tee_prover_registry_address: config.tee_prover_registry_address,
             driver: DriverConfig {
                 poll_interval: config.poll_interval,

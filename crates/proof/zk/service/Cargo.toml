@@ -29,6 +29,7 @@ base-common-network.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types.workspace = true
 alloy-provider.workspace = true
+base-optimism-rpc.workspace = true
 base-proof-rpc.workspace = true
 
 async-trait.workspace = true

@@ -18,6 +18,7 @@ alloy-eips = { workspace = true }
 basectl-cli = { workspace = true }
 alloy-provider = { workspace = true }
 base-common-network = { workspace = true }
+base-consensus-peers = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }

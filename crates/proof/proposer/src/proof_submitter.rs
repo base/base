@@ -29,7 +29,10 @@ use base_proof_rpc::{L1Provider, RollupProvider};
 use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 
-use crate::{Metrics, error::ProposerError, output_proposer::OutputProposer};
+use crate::{
+    Metrics, error::ProposerError, output_proposer::OutputProposer,
+    proposal_intervals::ProposalIntervals,
+};
 
 /// Internal action returned to the pipeline after a single submission attempt.
 ///
@@ -371,35 +374,17 @@ where
     /// Returns intermediate block numbers between `starting_block_number` and
     /// the next proposal target, stepping by `intermediate_block_interval`.
     ///
-    /// Shared with [`crate::pipeline::ProvingPipeline`]'s recovery forward walk,
-    /// which calls through this method on the pipeline's owned submitter so the
-    /// stepping logic lives in exactly one place.
+    /// Used by submit validation to match the same checkpoint layout as
+    /// proposer recovery.
     pub fn intermediate_block_numbers(
         &self,
         starting_block_number: u64,
     ) -> Result<Vec<u64>, ProposerError> {
-        let interval = self.config.intermediate_block_interval;
-        if interval == 0 {
-            return Err(ProposerError::Config(
-                "intermediate_block_interval must not be zero".into(),
-            ));
-        }
-        let count = self.config.block_interval / interval;
-        (1..=count)
-            .map(|i| {
-                starting_block_number
-                    .checked_add(i.checked_mul(interval).ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })?)
-                    .ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })
-            })
-            .collect()
+        ProposalIntervals::intermediate_block_numbers(
+            self.config.block_interval,
+            self.config.intermediate_block_interval,
+            starting_block_number,
+        )
     }
 
     /// Extracts intermediate output roots from per-block proposals.

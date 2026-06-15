@@ -21,6 +21,9 @@ use tracing::info;
 
 use crate::{RpcStandardNodeArgs, StandardNodeArgs};
 
+const DEFAULT_BASE_MAX_INBOUND_EL_PEERS: usize = 80;
+const DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS: usize = 80;
+
 /// Chainless execution-node arguments shared by embedded Base commands.
 #[derive(Debug, Clone, Args)]
 pub struct ExecutionNodeConfigArgs {
@@ -116,7 +119,7 @@ impl ExecutionNodeConfigArgs {
             storage,
         } = self;
 
-        let node_config = NodeConfig {
+        let mut node_config = NodeConfig {
             datadir,
             config,
             chain,
@@ -135,6 +138,14 @@ impl ExecutionNodeConfigArgs {
             static_files,
             storage,
         };
+
+        if node_config.network.max_inbound_peers.is_none() {
+            node_config.network.max_inbound_peers = Some(DEFAULT_BASE_MAX_INBOUND_EL_PEERS);
+        }
+
+        if node_config.network.max_outbound_peers.is_none() {
+            node_config.network.max_outbound_peers = Some(DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS);
+        }
 
         ExecutionNodeRuntimeConfig { node_config, with_unused_ports }
     }
@@ -341,6 +352,33 @@ mod tests {
 
         assert!(runtime.node_config.rpc.auth_ipc);
         assert_eq!(runtime.auth_ipc_path(), "/tmp/engine.ipc");
+    }
+
+    #[test]
+    fn runtime_config_sets_base_default_el_peer_limits() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from(["reth"]).args;
+
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert_eq!(runtime.node_config.network.max_inbound_peers, Some(80));
+        assert_eq!(runtime.node_config.network.max_outbound_peers, Some(80));
+    }
+
+    #[test]
+    fn runtime_config_preserves_explicit_el_peer_limits() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
+            "reth",
+            "--max-inbound-peers",
+            "12",
+            "--max-outbound-peers",
+            "34",
+        ])
+        .args;
+
+        let runtime = args.into_runtime_config(Arc::new(BaseChainSpec::devnet()));
+
+        assert_eq!(runtime.node_config.network.max_inbound_peers, Some(12));
+        assert_eq!(runtime.node_config.network.max_outbound_peers, Some(34));
     }
 
     #[test]

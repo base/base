@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use alloy_eip7928::BlockAccessIndex;
+
 use super::{
     AccessListContract, AccountInfo, BaseTransaction, Bytecode, DEVNET_CHAIN_ID, IntoAddress,
     ONE_ETHER, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
@@ -112,7 +114,7 @@ fn test_update_one_value() {
 
     let slot_change = storage_change.unwrap();
     assert!(
-        slot_change.changes.iter().any(|c| c.block_access_index == 0),
+        slot_change.changes.iter().any(|c| c.block_access_index == BlockAccessIndex(0)),
         "Storage change should be at tx_index 0"
     );
     assert!(
@@ -302,16 +304,16 @@ fn test_reverted_tx_does_not_record_contract_storage_changes() {
         .map(|change| change.block_access_index)
         .collect::<BTreeSet<_>>();
     assert!(
-        block_access_indices.contains(&0),
+        block_access_indices.contains(&BlockAccessIndex(0)),
         "Expected successful tx (index 0) storage writes to be present"
     );
     assert!(
-        !block_access_indices.contains(&1),
+        !block_access_indices.contains(&BlockAccessIndex(1)),
         "Reverted tx (index 1) must not contribute contract storage writes"
     );
     assert_eq!(
         block_access_indices,
-        BTreeSet::from([0]),
+        BTreeSet::from([BlockAccessIndex(0)]),
         "Only successful tx writes should be recorded"
     );
 }

@@ -6,7 +6,7 @@ pub use deposit::{DepositTransaction, TxDeposit};
 mod eip8130;
 pub use eip8130::{
     AccountChange, ActorChange, ActorChangeType, Call, ConfigChange, CreateEntry, Delegation,
-    Eip8130Constants, Eip8130Signed, InitialActor, Scope, TxEip8130,
+    Eip8130Constants, Eip8130Contracts, Eip8130Signed, InitialActor, Scope, TxEip8130,
 };
 
 mod tx_type;

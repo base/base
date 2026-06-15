@@ -141,13 +141,17 @@ pub(crate) struct DoctorArgs {
     pub(crate) json: bool,
 }
 
-/// Read-only p2p inspection commands.
+/// P2P inspection and peer-management commands.
 #[derive(Debug, Subcommand)]
 pub(crate) enum P2pCommands {
     /// List connected peers per layer.
     Peers(P2pArgs),
     /// Show advertised endpoints and peer-count summary per layer.
     Info(P2pArgs),
+    /// Add a single execution or consensus peer.
+    AddPeer(DestructivePeerArgs),
+    /// Remove a single execution or consensus peer.
+    RemovePeer(DestructivePeerArgs),
 }
 
 /// Shared flags for the read-only `basectl p2p` subcommands.
@@ -173,6 +177,34 @@ pub(crate) struct P2pArgs {
     /// With `--json`, emit raw RPC wire shapes instead of the humanized summary.
     #[arg(long, requires = "json")]
     pub(crate) raw: bool,
+}
+
+/// Shared flags for destructive `basectl p2p` subcommands.
+#[derive(Debug, Args)]
+pub(crate) struct DestructivePeerArgs {
+    /// Peer target. `enode://...` routes to EL; CL uses ENR or multiaddr for add and peer ID for remove.
+    #[arg(value_name = "TARGET")]
+    pub(crate) target: String,
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field, which on the
+    /// `mainnet` and `sepolia` presets resolves to the public proxyd
+    /// fleet. Pass this flag to query a single node directly.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub(crate) el_rpc: Option<Url>,
+    /// Override the consensus-node RPC URL.
+    ///
+    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
+    /// so non-devnet users must pass this flag (or set the field in
+    /// their YAML config).
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub(crate) cl_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
 }
 
 /// TUI monitor views.
@@ -212,5 +244,30 @@ impl MonitorCommands {
             Self::Pods => ViewId::Pods,
             Self::Upgrades => ViewId::Upgrades,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Cli;
+
+    #[test]
+    fn destructive_p2p_json_requires_yes() {
+        assert!(
+            Cli::try_parse_from(["basectl", "p2p", "add-peer", "enr:example", "--json"]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "basectl",
+                "p2p",
+                "remove-peer",
+                "16Uiu2HAmExamplePeerId",
+                "--json",
+                "--yes",
+            ])
+            .is_ok()
+        );
     }
 }

@@ -277,6 +277,7 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,

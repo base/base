@@ -1,8 +1,4 @@
-//! Typed `Provider` extension traits for `optimism_*` and `debug_*` JSON-RPC methods.
-//!
-//! These wrap the namespaced rollup-node and execution-debug methods that are not part of the
-//! standard alloy `Provider` API. Using these traits replaces ad-hoc `raw_request` calls with
-//! compile-time-checked method names and typed parameters/responses at every call site.
+//! Typed provider extensions for Optimism rollup and debug JSON-RPC methods.
 
 use std::future::Future;
 
@@ -13,7 +9,7 @@ use alloy_provider::Provider;
 use alloy_transport::TransportResult;
 use serde_json::Value;
 
-use super::types::{OutputAtBlock, SyncStatus};
+use crate::{OutputAtBlock, SyncStatus};
 
 /// Extension trait exposing the `optimism_*` JSON-RPC methods served by op-node-compatible
 /// rollup nodes.
@@ -50,7 +46,7 @@ pub trait OptimismRollupProviderExt<N: Network>: Provider<N> {
 
 impl<N: Network, P: Provider<N> + ?Sized> OptimismRollupProviderExt<N> for P {}
 
-/// Extension trait exposing the `debug_*` JSON-RPC methods used by the proof clients.
+/// Extension trait exposing the `debug_*` JSON-RPC methods used by proof clients.
 ///
 /// Implemented for any `Provider<N>`. Methods are thin typed wrappers around the underlying
 /// JSON-RPC client; retry, backoff, caching, and error mapping remain the responsibility of

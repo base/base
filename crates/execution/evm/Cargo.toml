@@ -26,6 +26,7 @@ alloy-evm.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
+alloy-rpc-types-eth = { workspace = true, optional = true }
 base-common-chains.workspace = true
 base-common-evm = { workspace = true, features = ["std", "reth"] }
 base-common-consensus = { workspace = true, features = ["evm", "reth"] }
@@ -72,4 +73,4 @@ std = [
 	"thiserror/std",
 ]
 portable = [ "base-common-evm/portable", "reth-revm/portable", "revm/portable" ]
-rpc = [ "alloy-evm/rpc", "reth-rpc-eth-api" ]
+rpc = [ "alloy-evm/rpc", "alloy-rpc-types-eth", "reth-rpc-eth-api" ]
