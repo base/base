@@ -745,7 +745,7 @@ mod tests {
             self.state.call_count.fetch_add(1, Ordering::SeqCst);
             let _guard = InFlightGuard::new(Arc::clone(&self.state));
 
-            let result = tokio::select! {
+            tokio::select! {
                 biased;
                 () = cancel.cancelled() => {
                     Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
@@ -758,8 +758,7 @@ mod tests {
                         proof_bytes: Bytes::from_static(b"gated-proof"),
                     })
                 }
-            };
-            result
+            }
         }
 
         async fn generate_proof_for_signer(
