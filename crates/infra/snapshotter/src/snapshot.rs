@@ -12,7 +12,6 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     io::Read,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
@@ -21,6 +20,8 @@ pub use reth_cli_commands::download::manifest::{
     ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive, SnapshotManifest,
 };
 use tracing::info;
+
+use crate::progress::ArchiveProgress;
 
 /// Default blocks per static file segment.
 const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
@@ -31,9 +32,6 @@ const EXTRA_CHUNKS_BUFFER: u64 = 2;
 /// Maximum number of chunks allowed before bailing to prevent OOM.
 /// At 500k blocks per file, 100k chunks covers 50 billion blocks.
 const MAX_CHUNKS: u64 = 100_000;
-
-/// Interval between periodic progress logs during long-running archive compression.
-const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Static file component types that produce chunked archives.
 const CHUNKED_COMPONENTS: &[(&str, &str)] = &[
@@ -596,11 +594,12 @@ fn compute_output_files_and_archive(
     files: &[PlannedFile],
     mut archive: Option<(&mut tar::Builder<zstd::Encoder<'_, std::fs::File>>, &Path)>,
 ) -> Result<Vec<OutputFileChecksum>> {
-    let archive_name = archive.as_ref().and_then(|(_, path)| {
-        path.file_name().map(|n| n.to_string_lossy().to_string())
-    });
-    let total_bytes: u64 =
-        files.iter().filter_map(|f| std::fs::metadata(&f.source_path).ok().map(|m| m.len())).sum();
+    let archive_name = archive
+        .as_ref()
+        .and_then(|(_, path)| path.file_name().map(|n| n.to_string_lossy().to_string()));
+    let total_bytes: u64 = files
+        .iter()
+        .try_fold(0u64, |acc, f| std::fs::metadata(&f.source_path).map(|m| acc + m.len()))?;
     let mut progress = archive_name.map(|name| ArchiveProgress::new(name, total_bytes));
 
     let mut output_files = Vec::with_capacity(files.len());
@@ -644,38 +643,6 @@ fn compute_output_files_and_archive(
     }
 
     Ok(output_files)
-}
-
-/// Cumulative compression progress shared across every file in a single archive,
-/// emitting a throttled log so large single-file archives report progress mid-stream.
-struct ArchiveProgress {
-    archive_name: String,
-    total_bytes: u64,
-    started: Instant,
-    last_log: Instant,
-    bytes_done: u64,
-}
-
-impl ArchiveProgress {
-    fn new(archive_name: String, total_bytes: u64) -> Self {
-        let now = Instant::now();
-        Self { archive_name, total_bytes, started: now, last_log: now, bytes_done: 0 }
-    }
-
-    fn record(&mut self, n: u64) {
-        self.bytes_done += n;
-        if self.last_log.elapsed() >= PROGRESS_LOG_INTERVAL {
-            info!(
-                archive = %self.archive_name,
-                bytes_done = self.bytes_done,
-                total_bytes = self.total_bytes,
-                percent = progress_percent(self.bytes_done, self.total_bytes),
-                elapsed_secs = self.started.elapsed().as_secs(),
-                "compressing archive"
-            );
-            self.last_log = Instant::now();
-        }
-    }
 }
 
 struct HashingReader<'a, R> {
@@ -722,10 +689,6 @@ fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
     }
     files.sort_unstable();
     Ok(files)
-}
-
-const fn progress_percent(done: u64, total: u64) -> u64 {
-    if total == 0 { 100 } else { done.saturating_mul(100) / total }
 }
 
 #[cfg(test)]

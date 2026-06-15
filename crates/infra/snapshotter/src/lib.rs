@@ -10,6 +10,9 @@
 mod config;
 pub use config::{S3ConfigType, SnapshotterConfig};
 
+mod progress;
+pub use progress::{ArchiveProgress, UploadProgress};
+
 mod container;
 pub use container::{ContainerManager, DockerContainerManager};
 

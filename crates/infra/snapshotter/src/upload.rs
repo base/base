@@ -14,11 +14,6 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
@@ -30,7 +25,10 @@ use aws_sdk_s3::{
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tracing::{debug, info, warn};
 
-use crate::snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt};
+use crate::{
+    progress::UploadProgress,
+    snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt},
+};
 
 /// Maximum number of concurrent file uploads.
 const MAX_CONCURRENT_UPLOADS: usize = 10;
@@ -41,9 +39,6 @@ const MULTIPART_THRESHOLD: u64 = 100 * 1024 * 1024;
 
 /// Part size for multipart uploads (100 `MiB`).
 const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
-
-/// Interval between periodic progress logs while uploading snapshot artifacts.
-const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Determines whether a snapshot component is re-uploaded every run
 /// or can be skipped when the remote copy already matches.
@@ -252,17 +247,16 @@ impl SnapshotUploader {
             "diff analysis complete"
         );
 
-        let total_bytes = total_upload_bytes(&static_uploads, &run_uploads, &manifest_path).await;
-        let uploaded = Arc::new(AtomicU64::new(0));
-        let progress = spawn_upload_progress(Arc::clone(&uploaded), total_bytes);
+        let progress = UploadProgress::new(&static_uploads, &run_uploads, &manifest_path).await?;
+        let progress_logger = progress.spawn_logger();
 
         let manifest_key = format!("{run_prefix}/manifest.json");
         let upload_result = async {
             let static_prefix_ref = &static_prefix;
-            let uploaded_ref = &uploaded;
+            let progress_ref = &progress;
             stream::iter(static_uploads)
                 .map(|file| async move {
-                    self.upload_file(&file, static_prefix_ref, uploaded_ref).await
+                    self.upload_file(&file, static_prefix_ref, progress_ref).await
                 })
                 .buffer_unordered(MAX_CONCURRENT_UPLOADS)
                 .try_collect::<Vec<()>>()
@@ -271,7 +265,7 @@ impl SnapshotUploader {
             let run_prefix_ref = &run_prefix;
             stream::iter(run_uploads)
                 .map(|file| async move {
-                    self.upload_file(&file, run_prefix_ref, uploaded_ref).await
+                    self.upload_file(&file, run_prefix_ref, progress_ref).await
                 })
                 .buffer_unordered(MAX_CONCURRENT_UPLOADS)
                 .try_collect::<Vec<()>>()
@@ -294,7 +288,7 @@ impl SnapshotUploader {
         }
         .await;
 
-        progress.abort();
+        progress_logger.abort();
         upload_result?;
 
         info!(
@@ -373,12 +367,12 @@ impl SnapshotUploader {
     }
 
     /// Uploads a single file, using multipart upload for files above the threshold.
-    /// On success, adds the uploaded byte count to `uploaded` for progress tracking.
+    /// On success, adds the uploaded byte count to `progress` for progress tracking.
     async fn upload_file(
         &self,
         file_path: &Path,
         dest_prefix: &str,
-        uploaded: &AtomicU64,
+        progress: &UploadProgress,
     ) -> Result<()> {
         let file_name = file_path
             .file_name()
@@ -390,11 +384,11 @@ impl SnapshotUploader {
 
         if file_size > MULTIPART_THRESHOLD {
             debug!(key = %key, size = file_size, "uploading file (multipart)");
-            self.upload_multipart(file_path, &key, file_size, uploaded).await?;
+            self.upload_multipart(file_path, &key, file_size, progress).await?;
         } else {
             debug!(key = %key, size = file_size, "uploading file");
             self.upload_single(file_path, &key).await?;
-            uploaded.fetch_add(file_size, Ordering::Relaxed);
+            progress.add(file_size);
         }
 
         Ok(())
@@ -422,7 +416,7 @@ impl SnapshotUploader {
         file_path: &Path,
         key: &str,
         file_size: u64,
-        uploaded: &AtomicU64,
+        progress: &UploadProgress,
     ) -> Result<()> {
         let create_resp = self
             .client
@@ -438,7 +432,7 @@ impl SnapshotUploader {
             .ok_or_else(|| anyhow::anyhow!("no upload_id returned for {key}"))?
             .to_string();
 
-        let result = self.upload_parts(file_path, key, &upload_id, file_size, uploaded).await;
+        let result = self.upload_parts(file_path, key, &upload_id, file_size, progress).await;
 
         match result {
             Ok(parts) => {
@@ -477,7 +471,7 @@ impl SnapshotUploader {
         key: &str,
         upload_id: &str,
         file_size: u64,
-        uploaded: &AtomicU64,
+        progress: &UploadProgress,
     ) -> Result<Vec<CompletedPart>> {
         let planned: Vec<(u64, i32)> = std::iter::successors(Some(0u64), |&offset| {
             let next = offset + MULTIPART_PART_SIZE;
@@ -497,7 +491,7 @@ impl SnapshotUploader {
                     let part = self
                         .upload_single_part(file_path, key, upload_id, part_number, offset, length)
                         .await?;
-                    uploaded.fetch_add(length, Ordering::Relaxed);
+                    progress.add(length);
                     Ok::<CompletedPart, anyhow::Error>(part)
                 }
             })
@@ -571,49 +565,6 @@ fn build_published_manifest(
     }
 
     Ok(serde_json::to_vec_pretty(&manifest)?)
-}
-
-async fn total_upload_bytes(
-    static_uploads: &[PathBuf],
-    run_uploads: &[PathBuf],
-    manifest_path: &Path,
-) -> u64 {
-    let mut total = 0u64;
-    let files = static_uploads
-        .iter()
-        .map(PathBuf::as_path)
-        .chain(run_uploads.iter().map(PathBuf::as_path))
-        .chain(std::iter::once(manifest_path));
-    for file in files {
-        if let Ok(meta) = tokio::fs::metadata(file).await {
-            total += meta.len();
-        }
-    }
-    total
-}
-
-fn spawn_upload_progress(
-    uploaded: Arc<AtomicU64>,
-    total_bytes: u64,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let started = Instant::now();
-        let mut ticker = tokio::time::interval(PROGRESS_LOG_INTERVAL);
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            let done = uploaded.load(Ordering::Relaxed);
-            let percent =
-                if total_bytes == 0 { 100 } else { done.saturating_mul(100) / total_bytes };
-            info!(
-                bytes_uploaded = done,
-                total_bytes,
-                percent,
-                elapsed_secs = started.elapsed().as_secs(),
-                "uploading snapshot artifacts (progress)"
-            );
-        }
-    })
 }
 
 #[cfg(test)]
