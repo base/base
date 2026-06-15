@@ -11,6 +11,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_primitives::Address;
+#[cfg(any(target_os = "linux", feature = "local"))]
+use alloy_primitives::B256;
+#[cfg(any(target_os = "linux", feature = "local"))]
+use alloy_provider::{Provider, ProviderBuilder};
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_common_chains::rollup_config;
@@ -121,6 +125,13 @@ struct ProverRuntimeArgs {
     /// by on-chain signer validity and server `/healthz` is registration-gated.
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Option<Address>,
+
+    /// Fetch genesis config from the L2 node via `optimism_rollupConfig` RPC at
+    /// startup. Overrides placeholder genesis anchors and contract addresses in
+    /// the hardcoded chain config. Use for devnet/ephemeral chains where genesis
+    /// changes on every deployment.
+    #[arg(long, env = "FETCH_ROLLUP_CONFIG")]
+    fetch_rollup_config: bool,
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -150,10 +161,45 @@ impl ProverRuntimeArgs {
         })
     }
 
-    fn prover_config(self) -> eyre::Result<ProverConfig> {
+    async fn prover_config(self) -> eyre::Result<ProverConfig> {
         let l1_beacon_url = self.l1_beacon_url()?;
-        let rollup_config = rollup_config!(self.l2_chain_id)
+        let mut rollup_config = rollup_config!(self.l2_chain_id)
             .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?;
+
+        if self.fetch_rollup_config {
+            let rpc = fetch_rollup_config_from_rpc(&self.l2_eth_url).await?;
+
+            if rpc.l2_chain_id != self.l2_chain_id {
+                return Err(eyre!(
+                    "chain ID mismatch: --l2-chain-id is {} but the L2 node returned {}",
+                    self.l2_chain_id,
+                    rpc.l2_chain_id,
+                ));
+            }
+
+            info!(
+                genesis_l1_hash = %rpc.genesis.l1.hash,
+                genesis_l1_number = rpc.genesis.l1.number,
+                genesis_l2_hash = %rpc.genesis.l2.hash,
+                genesis_l2_time = rpc.genesis.l2_time,
+                deposit_contract = %rpc.deposit_contract_address,
+                system_config_address = %rpc.l1_system_config_address,
+                batcher_address = %rpc.genesis.system_config.batcher_addr,
+                "overriding genesis config from L2 node RPC"
+            );
+
+            rollup_config.genesis.l1.hash = rpc.genesis.l1.hash;
+            rollup_config.genesis.l1.number = rpc.genesis.l1.number;
+            rollup_config.genesis.l2.hash = rpc.genesis.l2.hash;
+            rollup_config.genesis.l2.number = rpc.genesis.l2.number;
+            rollup_config.genesis.l2_time = rpc.genesis.l2_time;
+            rollup_config.deposit_contract_address = rpc.deposit_contract_address;
+            rollup_config.l1_system_config_address = rpc.l1_system_config_address;
+
+            if let Some(ref mut sys) = rollup_config.genesis.system_config {
+                sys.batcher_address = rpc.genesis.system_config.batcher_addr;
+            }
+        }
 
         let l1_config = base_common_chains::L1_CONFIGS
             .get(&rollup_config.l1_chain_id)
@@ -300,7 +346,7 @@ impl ServerArgs {
     async fn run(self) -> eyre::Result<()> {
         let registration_health = self.runtime.registration_health_config();
         let registry_configured = registration_health.is_some();
-        let config = self.runtime.prover_config()?;
+        let config = self.runtime.prover_config().await?;
 
         if self.vsock_cid.is_empty() {
             return Err(eyre!("at least one --vsock-cid is required"));
@@ -358,7 +404,7 @@ impl LocalArgs {
     async fn run(self) -> eyre::Result<()> {
         let registration_health = self.runtime.registration_health_config();
         let registry_configured = registration_health.is_some();
-        let prover_config = self.runtime.prover_config()?;
+        let prover_config = self.runtime.prover_config().await?;
 
         if self.local_enclave_count == 0 {
             return Err(eyre!("--local-enclave-count must be at least 1"));
@@ -434,7 +480,7 @@ async fn run_worker(
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
     let registry_configured = registration_health.is_some();
-    let config = runtime.prover_config()?;
+    let config = runtime.prover_config().await?;
 
     if transports.is_empty() {
         return Err(eyre!("at least one enclave transport is required"));
@@ -524,6 +570,58 @@ impl WorkerTransportMode {
     }
 }
 
+#[cfg(any(target_os = "linux", feature = "local"))]
+#[derive(Debug, serde::Deserialize)]
+struct RollupConfigRpcResponse {
+    genesis: GenesisRpcResponse,
+    deposit_contract_address: Address,
+    l1_system_config_address: Address,
+    l2_chain_id: u64,
+}
+
+#[cfg(any(target_os = "linux", feature = "local"))]
+#[derive(Debug, serde::Deserialize)]
+struct GenesisRpcResponse {
+    l1: BlockRefRpcResponse,
+    l2: BlockRefRpcResponse,
+    l2_time: u64,
+    system_config: SystemConfigRpcResponse,
+}
+
+#[cfg(any(target_os = "linux", feature = "local"))]
+#[derive(Debug, serde::Deserialize)]
+struct BlockRefRpcResponse {
+    hash: B256,
+    number: u64,
+}
+
+#[cfg(any(target_os = "linux", feature = "local"))]
+#[derive(Debug, serde::Deserialize)]
+struct SystemConfigRpcResponse {
+    #[serde(alias = "batcherAddr")]
+    batcher_addr: Address,
+}
+
+#[cfg(any(target_os = "linux", feature = "local"))]
+async fn fetch_rollup_config_from_rpc(
+    l2_eth_url: &str,
+) -> eyre::Result<RollupConfigRpcResponse> {
+    let provider = ProviderBuilder::new()
+        .connect(l2_eth_url)
+        .await
+        .map_err(|e| eyre!("failed to connect to L2 node at {l2_eth_url}: {e}"))?;
+
+    provider
+        .raw_request("optimism_rollupConfig".into(), ())
+        .await
+        .map_err(|e| {
+            eyre!(
+                "optimism_rollupConfig RPC failed on {l2_eth_url}: {e}. \
+                 Ensure the L2 node supports this method"
+            )
+        })
+}
+
 #[cfg(all(test, feature = "local"))]
 mod tests {
     use super::ProverRuntimeArgs;
@@ -537,6 +635,7 @@ mod tests {
             l2_chain_id: 8453,
             enable_experimental_witness_endpoint: false,
             tee_prover_registry_address: None,
+            fetch_rollup_config: false,
         }
     }
 
