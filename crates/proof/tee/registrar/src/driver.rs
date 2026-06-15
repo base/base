@@ -16,8 +16,7 @@ use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
-    ProverInstance, RegistrarError, RegistrarMetrics, Result, SignerClient, SignerLifecycle,
-    SignerManagerConfig,
+    ProverInstance, RegistrarMetrics, Result, SignerClient, SignerLifecycle, SignerManagerConfig,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -319,11 +318,7 @@ where
             if self.config.cancel.is_cancelled() {
                 return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
             }
-            let first_attestation =
-                all_attestations.first().ok_or_else(|| RegistrarError::ProverClient {
-                    instance: instance.endpoint.to_string(),
-                    source: "no attestations available for CRL check".into(),
-                })?;
+            let first_attestation = &all_attestations[0];
             match self.cert_manager.check_and_revoke_crls(first_attestation, instance).await {
                 Ok(true) => {
                     warn!(
@@ -461,7 +456,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        InstanceHealthStatus, Result, SignerClient,
+        InstanceHealthStatus, RegistrarError, Result, SignerClient,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, HARDHAT_KEY_3,
             NoopNitroVerifier, NoopTxManager, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
