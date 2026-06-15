@@ -249,10 +249,11 @@ where
         }
 
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
-        let mut addresses = Vec::with_capacity(public_keys.len());
-        for public_key in &public_keys {
-            addresses.push(ProverClient::derive_address(public_key)?);
-        }
+        let addresses = public_keys
+            .iter()
+            .map(Vec::as_slice)
+            .map(ProverClient::derive_address)
+            .collect::<Result<Vec<_>>>()?;
 
         if addresses.is_empty() {
             return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
