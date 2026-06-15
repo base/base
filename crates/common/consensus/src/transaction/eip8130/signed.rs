@@ -21,6 +21,8 @@ use alloy_eips::{
 use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256, bytes::BufMut, keccak256};
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
 #[cfg(feature = "reth")]
+use reth_codecs::Compact;
+#[cfg(feature = "reth")]
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
 use crate::transaction::eip8130::{constants::Eip8130Constants, tx::TxEip8130};
@@ -347,6 +349,43 @@ impl Decodable for Eip8130Signed {
     }
 }
 
+#[cfg(feature = "reth")]
+impl Compact for Eip8130Signed {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        let start = buf.as_mut().len();
+        self.tx.to_compact(buf);
+
+        let auth_payload_length = self.sender_auth.length() + self.payer_auth.length();
+        Header { list: true, payload_length: auth_payload_length }.encode(buf);
+        self.sender_auth.encode(buf);
+        self.payer_auth.encode(buf);
+
+        buf.as_mut().len() - start
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        let (tx, buf) = TxEip8130::from_compact(buf, len);
+        let mut auth_buf = buf;
+        let header =
+            Header::decode(&mut auth_buf).expect("invalid compact-encoded EIP-8130 auth tail");
+        assert!(header.list, "compact-encoded EIP-8130 auth tail must be an RLP list");
+        let started = auth_buf.len();
+        let sender_auth =
+            Bytes::decode(&mut auth_buf).expect("invalid compact-encoded EIP-8130 sender auth");
+        let payer_auth =
+            Bytes::decode(&mut auth_buf).expect("invalid compact-encoded EIP-8130 payer auth");
+        let consumed = started - auth_buf.len();
+        assert_eq!(
+            consumed, header.payload_length,
+            "compact-encoded EIP-8130 auth tail length mismatch"
+        );
+        (Self::new(tx, sender_auth, payer_auth), auth_buf)
+    }
+}
+
 impl Typed2718 for Eip8130Signed {
     fn ty(&self) -> u8 {
         Eip8130Constants::EIP8130_TX_TYPE
@@ -470,6 +509,8 @@ impl Transaction for Eip8130Signed {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, bytes};
+    #[cfg(feature = "reth")]
+    use reth_codecs::Compact;
 
     use super::*;
     use crate::transaction::eip8130::{
@@ -534,6 +575,33 @@ mod tests {
         signed.encode(&mut buf);
         let decoded = Eip8130Signed::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(signed, decoded);
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_roundtrip() {
+        let signed = sample_signed(true);
+        let mut buf = Vec::new();
+        let len = signed.to_compact(&mut buf);
+        let (decoded, remaining) = Eip8130Signed::from_compact(&buf, len);
+
+        assert_eq!(decoded, signed);
+        assert!(remaining.is_empty());
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_decode_preserves_trailing_bytes() {
+        let signed = sample_signed(true);
+        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut buf = Vec::new();
+        let _ = signed.to_compact(&mut buf);
+        buf.extend_from_slice(&trailing);
+
+        let (decoded, remaining) = Eip8130Signed::from_compact(&buf, buf.len());
+
+        assert_eq!(decoded, signed);
+        assert_eq!(remaining, trailing);
     }
 
     #[test]

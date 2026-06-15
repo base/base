@@ -15,6 +15,8 @@ use alloy_primitives::{
     Address, B256, Bytes, ChainId, Signature, TxKind, U256, bytes::BufMut, keccak256,
 };
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
+#[cfg(feature = "reth")]
+use reth_codecs::Compact;
 
 use crate::transaction::eip8130::{
     account_changes::AccountChange, call::Call, constants::Eip8130Constants,
@@ -283,6 +285,136 @@ impl Decodable for TxEip8130 {
     }
 }
 
+#[cfg(feature = "reth")]
+#[derive(Debug, Clone, PartialEq, Eq, Compact)]
+#[reth_codecs(crate = "reth_codecs")]
+struct CompactTxEip8130Head {
+    chain_id: ChainId,
+    sender: Option<Address>,
+    nonce_key: U256,
+    nonce_sequence: u64,
+    expiry: u64,
+    max_priority_fee_per_gas: u128,
+    max_fee_per_gas: u128,
+    gas_limit: u64,
+    payer: Option<Address>,
+    tail_len: u64,
+}
+
+#[cfg(feature = "reth")]
+fn encode_compact_tail(tx: &TxEip8130) -> Vec<u8> {
+    let mut calls = Vec::with_capacity(TxEip8130::calls_encoded_length(&tx.calls));
+    TxEip8130::encode_calls(&tx.calls, &mut calls);
+
+    let account_changes = alloy_rlp::encode(&tx.account_changes);
+    let tail_payload_length =
+        Bytes::from(account_changes.clone()).length() + Bytes::from(calls.clone()).length();
+    let mut tail = Vec::with_capacity(length_of_length(tail_payload_length) + tail_payload_length);
+    Header { list: true, payload_length: tail_payload_length }.encode(&mut tail);
+    Bytes::from(account_changes).encode(&mut tail);
+    Bytes::from(calls).encode(&mut tail);
+    tail
+}
+
+#[cfg(feature = "reth")]
+fn decode_compact_tail(tail: &[u8]) -> (Vec<AccountChange>, Vec<Vec<Call>>) {
+    let mut tail = tail;
+    let header = Header::decode(&mut tail)
+        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 tail: {err}"));
+    assert!(header.list, "compact-encoded EIP-8130 tail must be an RLP list");
+    let started = tail.len();
+
+    let account_changes = Bytes::decode(&mut tail)
+        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 account changes: {err}"));
+    let calls = Bytes::decode(&mut tail)
+        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
+    let consumed = started - tail.len();
+    assert_eq!(consumed, header.payload_length, "compact-encoded EIP-8130 tail length mismatch");
+
+    let mut account_changes_buf = account_changes.as_ref();
+    let account_changes = Vec::<AccountChange>::decode(&mut account_changes_buf)
+        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 account changes: {err}"));
+    assert!(
+        account_changes_buf.is_empty(),
+        "compact-encoded EIP-8130 account changes left trailing bytes"
+    );
+
+    let mut calls_buf = calls.as_ref();
+    let calls = TxEip8130::decode_calls(&mut calls_buf)
+        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
+    assert!(calls_buf.is_empty(), "compact-encoded EIP-8130 calls left trailing bytes");
+
+    (account_changes, calls)
+}
+
+#[cfg(feature = "reth")]
+impl Compact for TxEip8130 {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        let tail = encode_compact_tail(self);
+        let head = CompactTxEip8130Head {
+            chain_id: self.chain_id,
+            sender: self.sender,
+            nonce_key: self.nonce_key,
+            nonce_sequence: self.nonce_sequence,
+            expiry: self.expiry,
+            max_priority_fee_per_gas: self.max_priority_fee_per_gas,
+            max_fee_per_gas: self.max_fee_per_gas,
+            gas_limit: self.gas_limit,
+            payer: self.payer,
+            tail_len: tail.len() as u64,
+        };
+
+        let start = buf.as_mut().len();
+        head.to_compact(buf);
+        buf.put_slice(&tail);
+        buf.as_mut().len() - start
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        let (head, buf) = CompactTxEip8130Head::from_compact(buf, len);
+        let CompactTxEip8130Head {
+            chain_id,
+            sender,
+            nonce_key,
+            nonce_sequence,
+            expiry,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas_limit,
+            payer,
+            tail_len,
+        } = head;
+
+        let tail_len: usize = tail_len.try_into().expect("EIP-8130 compact tail length overflow");
+        assert!(
+            buf.len() >= tail_len,
+            "compact-encoded EIP-8130 tail shorter than declared length"
+        );
+        let (tail, buf) = buf.split_at(tail_len);
+        let (account_changes, calls) = decode_compact_tail(tail);
+
+        (
+            Self {
+                chain_id,
+                sender,
+                nonce_key,
+                nonce_sequence,
+                expiry,
+                max_priority_fee_per_gas,
+                max_fee_per_gas,
+                gas_limit,
+                account_changes,
+                calls,
+                payer,
+            },
+            buf,
+        )
+    }
+}
+
 impl Typed2718 for TxEip8130 {
     fn ty(&self) -> u8 {
         Eip8130Constants::EIP8130_TX_TYPE
@@ -392,6 +524,8 @@ impl SignableTransaction<Signature> for TxEip8130 {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, bytes};
+    #[cfg(feature = "reth")]
+    use reth_codecs::Compact;
 
     use super::*;
     use crate::transaction::eip8130::account_changes::Delegation;
@@ -440,6 +574,33 @@ mod tests {
         tx.encode(&mut buf);
         let decoded = TxEip8130::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(tx, decoded);
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_roundtrip() {
+        let tx = sample_tx();
+        let mut buf = Vec::new();
+        let len = tx.to_compact(&mut buf);
+        let (decoded, remaining) = TxEip8130::from_compact(&buf, len);
+
+        assert_eq!(decoded, tx);
+        assert!(remaining.is_empty());
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_decode_preserves_trailing_bytes() {
+        let tx = sample_tx();
+        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut buf = Vec::new();
+        let _ = tx.to_compact(&mut buf);
+        buf.extend_from_slice(&trailing);
+
+        let (decoded, remaining) = TxEip8130::from_compact(&buf, buf.len());
+
+        assert_eq!(decoded, tx);
+        assert_eq!(remaining, trailing);
     }
 
     #[test]
