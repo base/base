@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
+use url::Url;
 
 /// How the S3/R2 client is configured.
 #[derive(Debug, Clone, ValueEnum)]
@@ -70,6 +71,29 @@ pub struct SnapshotterConfig {
     /// Docker socket path.
     #[arg(long, default_value = "/var/run/docker.sock")]
     pub docker_socket: String,
+
+    /// Execution-layer RPC URL of the local node being snapshotted.
+    ///
+    /// Used by the pre-snapshot tip check to read the local EL head. The check
+    /// runs before the EL container is stopped, so this RPC must be reachable
+    /// at that point.
+    #[arg(long, env = "SNAPSHOTTER_EL_RPC")]
+    pub el_rpc: Url,
+
+    /// Public reference RPC URL used to determine the current chain tip.
+    ///
+    /// The local EL head is compared against this reference; if the local node
+    /// is more than `tip_tolerance` blocks behind, the snapshot is aborted.
+    #[arg(long, env = "SNAPSHOTTER_TIP_REFERENCE_RPC")]
+    pub tip_reference_rpc: Url,
+
+    /// Maximum number of blocks the local EL may be behind the reference tip
+    /// before the snapshot is aborted.
+    ///
+    /// Default `5` ≈ ~10s at Base's 2s block time, matching `basectl
+    /// sync-status`'s default tip tolerance.
+    #[arg(long, default_value = "5")]
+    pub tip_tolerance: u64,
 
     /// S3 client configuration mode.
     #[arg(long, env = "SNAPSHOTTER_S3_CONFIG_TYPE", default_value = "aws")]

@@ -69,6 +69,30 @@ impl ContainerManager for MockContainerManager {
     }
 }
 
+/// Starts a mock JSON-RPC server that answers `eth_blockNumber` with the given
+/// block height. Returned `MockServer` must be kept alive for the duration of
+/// the test; dropping it tears down the server. Used to satisfy the
+/// pre-snapshot tip check without a real node.
+async fn mock_rpc_at_block(block: u64) -> wiremock::MockServer {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{body_partial_json, method},
+    };
+
+    let server = MockServer::start().await;
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 0,
+        "result": format!("0x{block:x}"),
+    });
+    Mock::given(method("POST"))
+        .and(body_partial_json(serde_json::json!({ "method": "eth_blockNumber" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .mount(&server)
+        .await;
+    server
+}
+
 /// Builds a realistic fake snapshot matching reth's `SnapshotManifest` format.
 ///
 /// Modeled after the real manifests served at `snapshots-r2.reth.rs`.
@@ -790,6 +814,11 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
 
     let tmp = tempfile::tempdir()?;
 
+    // Tip check must pass so execution reaches the stop/generate path: both
+    // local EL and reference report the same height (delta 0).
+    let rpc = mock_rpc_at_block(1_000).await;
+    let rpc_url = url::Url::parse(&rpc.uri())?;
+
     let config = base_snapshotter::SnapshotterConfig {
         container_name: "fake-el".to_string(),
         source_datadir: tmp.path().join("nonexistent-datadir"),
@@ -801,6 +830,9 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
         blocks_per_file: Some(500_000),
         snapshot_threads: None,
         docker_socket: "/var/run/docker.sock".to_string(),
+        el_rpc: rpc_url.clone(),
+        tip_reference_rpc: rpc_url,
+        tip_tolerance: 5,
         s3_config_type: base_snapshotter::S3ConfigType::Aws,
         s3_endpoint: None,
         s3_region: "us-east-1".to_string(),
@@ -816,6 +848,58 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
     assert!(result.is_err(), "should fail because source_datadir doesn't exist");
     assert!(manager.was_stopped(), "container should have been stopped");
     assert!(manager.was_started(), "container should always be restarted even on failure");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn tip_check_aborts_before_stopping_container() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let manager = std::sync::Arc::new(MockContainerManager::new());
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "test".to_string(),
+    );
+
+    let tmp = tempfile::tempdir()?;
+
+    // Local EL is 10 blocks behind the reference tip — past the tolerance of 5.
+    let local_rpc = mock_rpc_at_block(990).await;
+    let reference_rpc = mock_rpc_at_block(1_000).await;
+
+    let config = base_snapshotter::SnapshotterConfig {
+        container_name: "fake-el".to_string(),
+        source_datadir: tmp.path().join("datadir"),
+        output_dir: tmp.path().join("output"),
+        bucket: harness.bucket_name.clone(),
+        prefix: "test".to_string(),
+        chain_id: 8453,
+        block: Some(100),
+        blocks_per_file: Some(500_000),
+        snapshot_threads: None,
+        docker_socket: "/var/run/docker.sock".to_string(),
+        el_rpc: url::Url::parse(&local_rpc.uri())?,
+        tip_reference_rpc: url::Url::parse(&reference_rpc.uri())?,
+        tip_tolerance: 5,
+        s3_config_type: base_snapshotter::S3ConfigType::Aws,
+        s3_endpoint: None,
+        s3_region: "us-east-1".to_string(),
+        s3_access_key_id: None,
+        s3_secret_access_key: None,
+    };
+
+    let snapshotter =
+        base_snapshotter::Snapshotter::new(std::sync::Arc::clone(&manager), uploader, config);
+
+    let result = snapshotter.run().await;
+    assert!(result.is_err(), "run should error when EL is behind tip");
+    assert!(
+        !manager.was_stopped(),
+        "container must NOT be stopped when the tip check fails — the node stays online"
+    );
+    assert!(!manager.was_started(), "container must not be restarted since it was never stopped");
 
     Ok(())
 }

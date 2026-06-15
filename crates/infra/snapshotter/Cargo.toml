@@ -11,7 +11,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+basectl-cli = { workspace = true }
 tar = { workspace = true }
+url = { workspace = true }
 zstd = { workspace = true }
 anyhow = { workspace = true }
 blake3 = { workspace = true }
@@ -27,10 +29,12 @@ clap = { workspace = true, features = ["derive", "env"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
+url = { workspace = true }
 futures = { workspace = true }
-serde_json = { workspace = true }
+wiremock = { workspace = true }
 tempfile = { workspace = true }
 bollard = { workspace = true }
+serde_json = { workspace = true }
 serial_test = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }

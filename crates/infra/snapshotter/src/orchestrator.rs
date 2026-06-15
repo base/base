@@ -12,6 +12,7 @@ use crate::{
     SnapshotterConfig,
     container::ContainerManager,
     snapshot::{SnapshotGenerator, SnapshotManifest},
+    tip_check::TipCheck,
     upload::SnapshotUploader,
 };
 
@@ -43,6 +44,8 @@ impl<C: ContainerManager> Snapshotter<C> {
 
     /// Executes the full snapshot lifecycle.
     ///
+    /// 0. Verifies the local EL is at chain tip (aborts before touching the
+    ///    container if it is not)
     /// 1. Stops the EL container
     /// 2. Verifies the container is stopped
     /// 3. Generates snapshot archives
@@ -50,6 +53,16 @@ impl<C: ContainerManager> Snapshotter<C> {
     /// 5. Clears reth's persisted peer list (best effort)
     /// 6. Restarts the EL container (always, even on failure)
     pub async fn run(&self) -> Result<()> {
+        // Tip check runs before stop so a stale node is never taken offline and
+        // never produces a stale snapshot. On failure we return early, leaving
+        // the EL untouched and running.
+        TipCheck::ensure_at_tip(
+            &self.config.el_rpc,
+            &self.config.tip_reference_rpc,
+            self.config.tip_tolerance,
+        )
+        .await?;
+
         let stop_result = self.container_manager.stop(&self.config.container_name).await;
 
         let result = match stop_result {

@@ -22,6 +22,9 @@ pub use snapshot::{
     SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
 };
 
+mod tip_check;
+pub use tip_check::{TipCheck, TipStatus};
+
 mod upload;
 pub use upload::{SnapshotUploader, UploadStrategy};
 

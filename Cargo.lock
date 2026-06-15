@@ -6241,6 +6241,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
+ "basectl-cli",
  "blake3",
  "bollard",
  "clap",
@@ -6255,6 +6256,8 @@ dependencies = [
  "testcontainers-modules",
  "tokio",
  "tracing",
+ "url",
+ "wiremock",
  "zstd",
 ]
 
