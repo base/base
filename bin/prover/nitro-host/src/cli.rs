@@ -602,23 +602,18 @@ struct SystemConfigRpcResponse {
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
-async fn fetch_rollup_config_from_rpc(
-    l2_eth_url: &str,
-) -> eyre::Result<RollupConfigRpcResponse> {
+async fn fetch_rollup_config_from_rpc(l2_eth_url: &str) -> eyre::Result<RollupConfigRpcResponse> {
     let provider = ProviderBuilder::new()
         .connect(l2_eth_url)
         .await
         .map_err(|e| eyre!("failed to connect to L2 node at {l2_eth_url}: {e}"))?;
 
-    provider
-        .raw_request("optimism_rollupConfig".into(), ())
-        .await
-        .map_err(|e| {
-            eyre!(
-                "optimism_rollupConfig RPC failed on {l2_eth_url}: {e}. \
+    provider.raw_request("optimism_rollupConfig".into(), ()).await.map_err(|e| {
+        eyre!(
+            "optimism_rollupConfig RPC failed on {l2_eth_url}: {e}. \
                  Ensure the L2 node supports this method"
-            )
-        })
+        )
+    })
 }
 
 #[cfg(all(test, feature = "local"))]
