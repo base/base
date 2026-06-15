@@ -17,8 +17,7 @@ use futures::StreamExt;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::download::DownloadDefaults;
-use reth_node_core::args::DatadirArgs;
-use reth_node_core::dirs::DataDirPath;
+use reth_node_core::{args::DatadirArgs, dirs::DataDirPath};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
