@@ -42,6 +42,7 @@ base-execution-txpool.workspace = true
 base-execution-payload-builder.workspace = true
 
 # ethereum
+alloy-evm.workspace = true
 revm.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
