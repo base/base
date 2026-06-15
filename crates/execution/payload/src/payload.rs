@@ -289,6 +289,12 @@ impl<T> From<BasePayloadBuilderAttributes<T>> for TracedBasePayloadBuilderAttrib
     }
 }
 
+impl<T> From<EthPayloadAttributes> for TracedBasePayloadBuilderAttributes<T> {
+    fn from(value: EthPayloadAttributes) -> Self {
+        Self::new(BasePayloadBuilderAttributes::from(value))
+    }
+}
+
 impl<T> PayloadTraceContextExt for TracedBasePayloadBuilderAttributes<T>
 where
     T: Clone,
