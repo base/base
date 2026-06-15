@@ -28,6 +28,9 @@ pub struct BuilderConfig {
     /// Extra time allowed for payload building before garbage collection.
     pub block_time_leeway: Duration,
 
+    /// Maximum number of payload build tasks that may execute concurrently.
+    pub max_payload_tasks: usize,
+
     /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
     pub sampling_ratio: u64,
 
@@ -112,6 +115,7 @@ impl core::fmt::Debug for BuilderConfig {
         f.debug_struct("Config")
             .field("block_time", &self.block_time)
             .field("block_time_leeway", &self.block_time_leeway)
+            .field("max_payload_tasks", &self.max_payload_tasks)
             .field("da_config", &self.da_config)
             .field("gas_limit_config", &self.gas_limit_config)
             .field("sampling_ratio", &self.sampling_ratio)
@@ -141,6 +145,7 @@ impl Default for BuilderConfig {
         Self {
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
+            max_payload_tasks: 3,
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
