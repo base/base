@@ -419,16 +419,6 @@ where
                         unresolved_instance_ids.insert(instance.instance_id.clone());
                     }
                     if let Some(attestations) = outcome.attestations {
-                        // `resolve_instance` already enforced the pairing
-                        // invariants (non-empty addresses,
-                        // `attestations.len() >= addresses.len()`) with
-                        // richer per-instance errors. Flatten one entry
-                        // per (signer, attestation) so the spawn pass in
-                        // `reconcile_proof_tasks` becomes a flat
-                        // iteration. The `zip` truncates at the shorter
-                        // side, which mirrors the upstream invariant —
-                        // any extra trailing attestations are dropped on
-                        // the floor as before.
                         for (enclave_index, (signer, attestation)) in
                             outcome.addresses.into_iter().zip(attestations).enumerate()
                         {
