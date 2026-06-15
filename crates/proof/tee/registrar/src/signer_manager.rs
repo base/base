@@ -277,12 +277,12 @@ where
                 continue;
             }
 
-            if resolution.has_unresolved_instances {
+            if resolution.unresolved_instance_ids.contains(&task.instance_id) {
                 live_signers.insert(*signer);
                 debug!(
                     signer = %signer,
                     instance = %task.instance_id,
-                    "preserving proof task: discovery was inconclusive this cycle"
+                    "preserving proof task: source instance failed to resolve this cycle"
                 );
             } else {
                 info!(
@@ -473,7 +473,11 @@ mod tests {
                 enclave_index: 0,
             });
         }
-        DiscoveryResolution { registerable, active_signers, has_unresolved_instances: false }
+        DiscoveryResolution {
+            registerable,
+            active_signers,
+            unresolved_instance_ids: HashSet::new(),
+        }
     }
 
     fn spawn_pending_success_task(
@@ -611,7 +615,7 @@ mod tests {
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::new(),
-            has_unresolved_instances: true,
+            unresolved_instance_ids: HashSet::from([TEST_PENDING_INSTANCE_ID.to_string()]),
         };
 
         reconcile(&manager, &resolution, &mut proof_tasks);
@@ -625,7 +629,7 @@ mod tests {
         let resolution_conclusive = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::new(),
-            has_unresolved_instances: false,
+            unresolved_instance_ids: HashSet::new(),
         };
         reconcile(&manager, &resolution_conclusive, &mut proof_tasks);
         assert!(task_cancel.is_cancelled(), "conclusive absence must cancel the task");
@@ -653,7 +657,7 @@ mod tests {
                 },
             ],
             active_signers: HashSet::from([signer]),
-            has_unresolved_instances: false,
+            unresolved_instance_ids: HashSet::new(),
         };
         let mut proof_tasks = ProofTaskSet::new();
 
@@ -692,7 +696,7 @@ mod tests {
                 },
             ],
             active_signers: HashSet::from([signer_a, signer_b]),
-            has_unresolved_instances: false,
+            unresolved_instance_ids: HashSet::new(),
         };
         let mut proof_tasks = ProofTaskSet::new();
 
@@ -815,7 +819,7 @@ mod tests {
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::from([active_signer]),
-            has_unresolved_instances: true,
+            unresolved_instance_ids: HashSet::new(),
         };
         let protected = proof_tasks.protected_signers(&resolution);
         assert_eq!(protected, HashSet::from([active_signer, pending_signer]));

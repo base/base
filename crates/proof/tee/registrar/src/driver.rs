@@ -5,7 +5,7 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned onchain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, hex};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
@@ -17,7 +17,8 @@ use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     CertManager, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
-    ProverInstance, RegistrarMetrics, RegistryClient, Result, SignerClient, SignerManager,
+    ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result, SignerClient,
+    SignerManager,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -77,15 +78,14 @@ pub struct DiscoveryResolution {
     pub registerable: Vec<RegisterableSigner>,
     /// Signers contributed by reachable instances.
     pub active_signers: HashSet<Address>,
-    /// Whether any instance had inconclusive resolution this cycle.
-    pub has_unresolved_instances: bool,
+    /// Instance IDs whose resolution was inconclusive this cycle.
+    pub unresolved_instance_ids: HashSet<String>,
 }
 
 /// Core registration loop tying together discovery, attestation polling, signer
 /// lifecycle reconciliation, and orphan cleanup.
 ///
 /// Generic over discovery and RPC backends.
-#[derive(Debug)]
 pub struct RegistrationDriver<D, S, P, R, T> {
     discovery: D,
     signer_client: S,
@@ -94,6 +94,12 @@ pub struct RegistrationDriver<D, S, P, R, T> {
     cert_manager: CertManager<T>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
     signer_manager: Arc<SignerManager<P, R, T>>,
+}
+
+impl<D, S, P, R, T> fmt::Debug for RegistrationDriver<D, S, P, R, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegistrationDriver").field("config", &self.config).finish_non_exhaustive()
+    }
 }
 
 impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
@@ -249,7 +255,7 @@ where
                     "failed to fetch signer attestations after resolving signer addresses"
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
-                outcome.has_unresolved_instances = true;
+                outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
                 return Ok(outcome);
             }
         };
@@ -262,14 +268,19 @@ where
                 "signer attestation count was lower than signer public key count"
             );
             RegistrarMetrics::processing_errors_total().increment(1);
-            outcome.has_unresolved_instances = true;
+            outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
             return Ok(outcome);
         }
 
         if self.config.cancel.is_cancelled() {
             return Ok(outcome);
         }
-        match self.cert_manager.check_and_revoke_crls(&all_attestations[0], instance).await {
+        let first_attestation =
+            all_attestations.first().ok_or_else(|| RegistrarError::ProverClient {
+                instance: instance.endpoint.to_string(),
+                source: "no attestations available for CRL check".into(),
+            })?;
+        match self.cert_manager.check_and_revoke_crls(first_attestation, instance).await {
             Ok(true) => {
                 warn!(
                     instance = %instance.instance_id,
@@ -342,7 +353,7 @@ where
                     reachable_count += 1;
                     resolution.registerable.extend(outcome.registerable);
                     resolution.active_signers.extend(outcome.active_signers);
-                    resolution.has_unresolved_instances |= outcome.has_unresolved_instances;
+                    resolution.unresolved_instance_ids.extend(outcome.unresolved_instance_ids);
                 }
                 Err(e) => {
                     warn!(
@@ -352,13 +363,13 @@ where
                         "failed to resolve instance"
                     );
                     RegistrarMetrics::processing_errors_total().increment(1);
-                    resolution.has_unresolved_instances = true;
+                    resolution.unresolved_instance_ids.insert(instance.instance_id);
                 }
             }
         }
 
         let ok_to_dereg = !self.config.cancel.is_cancelled()
-            && !resolution.has_unresolved_instances
+            && resolution.unresolved_instance_ids.is_empty()
             && (total_count == 0 || reachable_count * 2 > total_count);
 
         if !ok_to_dereg {
@@ -633,7 +644,7 @@ mod tests {
 
         let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
         assert_eq!(resolution.registerable.len(), reachable.len());
-        assert!(resolution.has_unresolved_instances);
+        assert_eq!(resolution.unresolved_instance_ids, HashSet::from([unreachable.instance_id]));
         assert!(!ok_to_dereg);
     }
 
@@ -693,7 +704,10 @@ mod tests {
 
             assert!(resolution.active_signers.contains(&signer_addr));
             assert!(resolution.registerable.is_empty());
-            assert!(resolution.has_unresolved_instances);
+            assert_eq!(
+                resolution.unresolved_instance_ids,
+                HashSet::from([inst.instance_id.clone()])
+            );
             assert!(!ok_to_dereg);
         }
     }
