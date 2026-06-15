@@ -4647,6 +4647,7 @@ dependencies = [
  "metrics",
  "opentelemetry 0.31.0",
  "opentelemetry-http",
+ "pin-project-lite",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
