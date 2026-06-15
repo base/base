@@ -241,6 +241,8 @@ pub struct MockAggregateVerifier {
     pub intermediate_roots_map: HashMap<Address, Vec<B256>>,
     /// Map of game address to TEE prover returned by `tee_prover()`.
     pub tee_prover_map: HashMap<Address, Address>,
+    /// Map of game address to L1 head returned by `l1_head()`.
+    pub l1_head_map: HashMap<Address, B256>,
 }
 
 impl MockAggregateVerifier {
@@ -276,8 +278,8 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn starting_block_number(&self, _: Address) -> Result<u64, ContractError> {
         Ok(0)
     }
-    async fn l1_head(&self, _: Address) -> Result<B256, ContractError> {
-        Ok(B256::ZERO)
+    async fn l1_head(&self, addr: Address) -> Result<B256, ContractError> {
+        Ok(self.l1_head_map.get(&addr).copied().unwrap_or(B256::ZERO))
     }
     async fn read_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         Ok(512)

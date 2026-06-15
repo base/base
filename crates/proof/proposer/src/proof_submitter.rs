@@ -570,6 +570,7 @@ mod tests {
     struct RecordingOutputProposer {
         created: std::sync::Mutex<u32>,
         verified: std::sync::Mutex<Vec<Address>>,
+        verify_error: std::sync::Mutex<Option<ProposerError>>,
     }
 
     #[async_trait]
@@ -590,6 +591,9 @@ mod tests {
             _proposal: &Proposal,
         ) -> Result<(), ProposerError> {
             self.verified.lock().unwrap().push(game_address);
+            if let Some(error) = self.verify_error.lock().unwrap().take() {
+                return Err(error);
+            }
             Ok(())
         }
     }
@@ -672,6 +676,44 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(*output.created.lock().unwrap(), 0);
         assert!(output.verified.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_recovers_when_existing_game_l1_head_mismatches() {
+        let game_address = Address::repeat_byte(0xAA);
+        let mut verifier = MockAggregateVerifier::default();
+        verifier.l1_head_map.insert(game_address, B256::repeat_byte(0xCC));
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter =
+            submitter(Arc::clone(&output), existing_game_factory(game_address), verifier);
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));
+        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert!(output.verified.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_discards_when_attach_rejects_invalid_signer() {
+        let game_address = Address::repeat_byte(0xAA);
+        let output = Arc::new(RecordingOutputProposer::default());
+        *output.verify_error.lock().unwrap() = Some(ProposerError::InvalidSigner);
+        let submitter = submitter(
+            Arc::clone(&output),
+            existing_game_factory(game_address),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(matches!(result, Err(SubmitAction::Discard(ProposerError::InvalidSigner))));
+        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
     }
 
     #[tokio::test]

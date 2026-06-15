@@ -19,6 +19,9 @@ impl ProposalIntervals {
                 "intermediate_block_interval must not be zero".into(),
             ));
         }
+        if block_interval == 0 {
+            return Err(ProposerError::Config("block_interval must not be zero".into()));
+        }
 
         let count = block_interval / intermediate_block_interval;
         (1..=count)
@@ -36,5 +39,19 @@ impl ProposalIntervals {
                     })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intermediate_block_numbers_rejects_zero_block_interval() {
+        let result = ProposalIntervals::intermediate_block_numbers(0, 1, 0);
+
+        assert!(
+            matches!(result, Err(ProposerError::Config(message)) if message == "block_interval must not be zero")
+        );
     }
 }
