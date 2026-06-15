@@ -18,7 +18,6 @@ use tracing::{Instrument, debug, info, info_span, warn};
 use crate::{
     CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
     ProverInstance, RegistrarMetrics, RegistryClient, Result, SignerClient, SignerManager,
-    SignerManagerConfig,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -56,12 +55,8 @@ pub struct DriverConfig {
     pub poll_interval: Duration,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
-    /// Signer lifecycle settings.
-    ///
-    /// The registrar currently uses `signer_manager.max_concurrency` for both
-    /// per-cycle instance resolution and spawned proof task concurrency so one
-    /// CLI setting controls total signer lifecycle pressure.
-    pub signer_manager: SignerManagerConfig,
+    /// Maximum number of instances resolved concurrently per discovery cycle.
+    pub max_concurrency: usize,
     /// Duration after launch during which unhealthy instances are still
     /// eligible for registration. New instances may fail ALB health checks
     /// while the application is still initializing. Set to zero to disable.
@@ -149,7 +144,7 @@ where
     pub async fn run(&self) -> Result<()> {
         info!(
             poll_interval = ?self.config.poll_interval,
-            registry = %self.config.signer_manager.registry_address,
+            max_concurrency = self.config.max_concurrency,
             "starting registration driver"
         );
 
@@ -346,7 +341,7 @@ where
         let mut registerable: Vec<RegisterableSigner> = Vec::new();
         let mut unresolved_instance_ids: HashSet<String> = HashSet::new();
 
-        let concurrency = self.config.signer_manager.max_concurrency.max(1);
+        let concurrency = self.config.max_concurrency.max(1);
         let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
             let span = info_span!(
                 "resolve_instance",
@@ -446,6 +441,7 @@ mod tests {
     use super::*;
     use crate::{
         InstanceHealthStatus, RegistrarError, RegistryClient, Result, SignerClient,
+        SignerManagerConfig,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, HARDHAT_KEY_3,
             NoopNitroVerifier, NoopTxManager, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
@@ -621,26 +617,16 @@ mod tests {
     }
 
     fn noop_signer_manager(
-        config: &DriverConfig,
+        config: SignerManagerConfig,
     ) -> Arc<SignerManager<NoopProofProvider, NoopRegistry, NoopTxManager>> {
-        Arc::new(SignerManager::new(
-            NoopProofProvider,
-            NoopRegistry,
-            NoopTxManager,
-            config.signer_manager.clone(),
-        ))
+        Arc::new(SignerManager::new(NoopProofProvider, NoopRegistry, NoopTxManager, config))
     }
 
     fn default_config(cancel: CancellationToken) -> DriverConfig {
         DriverConfig {
             poll_interval: Duration::from_secs(1),
             cancel,
-            signer_manager: SignerManagerConfig {
-                registry_address: TEST_REGISTRY_ADDRESS,
-                max_concurrency: DEFAULT_MAX_CONCURRENCY,
-                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
-                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-            },
+            max_concurrency: DEFAULT_MAX_CONCURRENCY,
             unhealthy_registration_window: Duration::from_secs(
                 DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
             ),
@@ -649,6 +635,15 @@ mod tests {
                 nitro_verifier_address: None,
                 fetch_timeout: Duration::from_secs(crate::DEFAULT_CRL_FETCH_TIMEOUT_SECS),
             },
+        }
+    }
+
+    fn signer_manager_config() -> SignerManagerConfig {
+        SignerManagerConfig {
+            registry_address: TEST_REGISTRY_ADDRESS,
+            max_concurrency: DEFAULT_MAX_CONCURRENCY,
+            max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+            tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
         }
     }
 
@@ -662,7 +657,7 @@ mod tests {
     {
         let config = default_config(cancel);
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
-        let signer_manager = noop_signer_manager(&config);
+        let signer_manager = noop_signer_manager(signer_manager_config());
         RegistrationDriver::new(
             MockDiscovery { instances },
             signer_client,
@@ -886,9 +881,9 @@ mod tests {
 
         let cancel = CancellationToken::new();
         let mut config = default_config(cancel);
-        config.signer_manager.max_concurrency = max_concurrency;
+        config.max_concurrency = max_concurrency;
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
-        let signer_manager = noop_signer_manager(&config);
+        let signer_manager = noop_signer_manager(signer_manager_config());
 
         let driver = RegistrationDriver::new(
             MockDiscovery { instances },
