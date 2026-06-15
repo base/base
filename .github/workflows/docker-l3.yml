@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [client, base, builder, consensus, batcher, zk-prover]
+        target: [client, base, builder, consensus, proposer, batcher, zk-prover]
 
     runs-on: ubuntu-24.04
 
