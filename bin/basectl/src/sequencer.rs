@@ -24,7 +24,9 @@ use crate::{
     confirm::confirm_or_abort,
 };
 
-const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(6);
+// Allow two full `admin_sequencerActive` polls plus the stabilization sleep,
+// with a little slack for scheduling jitter and connection setup.
+const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(12);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REQUIRED_OBSERVATIONS: usize = 2;
 
@@ -81,7 +83,7 @@ async fn run_start(
         requested_unsafe_head = ?args.unsafe_head,
         "running sequencer start command"
     );
-    let snapshot = ConductorControl::snapshot(source.clone()).await?;
+    let snapshot = ConductorControl::snapshot(source).await?;
     let node = find_node(&snapshot.nodes, &args.node)?;
     let status = snapshot_node_status(&snapshot, &node.name);
     debug!(
@@ -100,6 +102,8 @@ async fn run_start(
         );
         return Err(error);
     }
+    // No node currently reports itself as leader, and the target is not known
+    // to be a follower, so defer the final leader check to the RPC.
     if snapshot.statuses.iter().all(|status| status.is_leader != Some(true))
         && status.and_then(|status| status.is_leader).is_none()
     {
@@ -429,30 +433,28 @@ where
                 if last_error.is_some() {
                     last_error = None;
                 }
+                let next_matching_observations =
+                    if is_active == expected_active { matching_observations + 1 } else { 0 };
                 debug!(
                     node = %node.name,
                     cl_rpc = %node.cl_rpc,
                     action = %action.infinitive(),
                     observed_active = is_active,
-                    matching_observations,
+                    matching_observations = next_matching_observations,
                     required_observations = REQUIRED_OBSERVATIONS,
                     "observed sequencer state"
                 );
-                if is_active == expected_active {
-                    matching_observations += 1;
-                    if matching_observations >= REQUIRED_OBSERVATIONS {
-                        info!(
-                            node = %node.name,
-                            cl_rpc = %node.cl_rpc,
-                            action = %action.infinitive(),
-                            expected_active,
-                            matching_observations,
-                            "sequencer state converged"
-                        );
-                        return Ok(());
-                    }
-                } else {
-                    matching_observations = 0;
+                matching_observations = next_matching_observations;
+                if matching_observations >= REQUIRED_OBSERVATIONS {
+                    info!(
+                        node = %node.name,
+                        cl_rpc = %node.cl_rpc,
+                        action = %action.infinitive(),
+                        expected_active,
+                        matching_observations,
+                        "sequencer state converged"
+                    );
+                    return Ok(());
                 }
             }
             Ok(Err(error)) => {
@@ -495,7 +497,13 @@ where
         last_error = ?last_error,
         "sequencer state did not converge after successful RPC"
     );
-    bail!(action.timeout_message(node, unsafe_head, last_observed, last_error.as_deref()))
+    bail!(action.timeout_message(
+        node,
+        unsafe_head,
+        observation_timeout,
+        last_observed,
+        last_error.as_deref(),
+    ))
 }
 
 fn print_status_pretty(status: &SequencerStatusJson) -> Result<()> {
@@ -558,6 +566,7 @@ impl SequencerAction {
         self,
         node: &ConductorNodeConfig,
         unsafe_head: Option<B256>,
+        observation_timeout: Duration,
         last_observed: Option<bool>,
         last_error: Option<&str>,
     ) -> String {
@@ -573,13 +582,13 @@ impl SequencerAction {
         };
 
         format!(
-            "{} RPC succeeded on {} ({}){}, but `sequencer_active={}` was not observed within {}s{}",
+            "{} RPC succeeded on {} ({}){}, but `sequencer_active={}` was not observed within {:?}{}",
             self.infinitive(),
             node.name,
             node.cl_rpc,
             unsafe_head_suffix,
             self.expected_active(),
-            OBSERVATION_TIMEOUT.as_secs(),
+            observation_timeout,
             observed_suffix,
         )
     }
@@ -819,15 +828,19 @@ fn fmt_u32(value: Option<u32>) -> String {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use basectl_cli::{ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus};
+    use basectl_cli::{
+        ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus,
+        SEQUENCER_ACTIVE_RPC_TIMEOUT,
+    };
     use serde_json::json;
     use tokio::time::{Duration, Instant};
     use url::Url;
 
     use super::{
-        SequencerAction, SequencerActionJson, SequencerStatusJson, UnsafeHeadSource,
-        ensure_leader_target, ensure_start_allowed, ensure_start_request_matches_observed_head,
-        ensure_stop_allowed, find_node, parse_unsafe_head, wait_for_expected_state_with_fetch,
+        OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS, SequencerAction,
+        SequencerActionJson, SequencerStatusJson, UnsafeHeadSource, ensure_leader_target,
+        ensure_start_allowed, ensure_start_request_matches_observed_head, ensure_stop_allowed,
+        find_node, parse_unsafe_head, wait_for_expected_state_with_fetch,
     };
 
     fn node(name: &str) -> ConductorNodeConfig {
@@ -1009,6 +1022,21 @@ mod tests {
 
         assert!(start.elapsed() < Duration::from_millis(120));
         assert!(err.to_string().contains("timed out waiting for admin_sequencerActive"));
+        assert!(err.to_string().contains("within 40ms"));
+    }
+
+    #[test]
+    fn observation_timeout_allows_two_full_status_polls() {
+        let minimum_timeout = SEQUENCER_ACTIVE_RPC_TIMEOUT
+            .checked_mul(REQUIRED_OBSERVATIONS as u32)
+            .and_then(|timeout| {
+                POLL_INTERVAL
+                    .checked_mul(REQUIRED_OBSERVATIONS.saturating_sub(1) as u32)
+                    .and_then(|poll_sleep| timeout.checked_add(poll_sleep))
+            })
+            .expect("valid timeout calculation");
+
+        assert!(OBSERVATION_TIMEOUT >= minimum_timeout);
     }
 
     #[test]

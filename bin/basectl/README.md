@@ -230,7 +230,7 @@ Safety notes:
 
 - `start` prompts with the exact node name, CL RPC URL, and unsafe head hash.
 - `stop` prompts with the exact node name and CL RPC URL.
-- After `start` / `stop`, basectl polls `admin_sequencerActive` for up to 6s
+- After `start` / `stop`, basectl polls `admin_sequencerActive` for up to 12s
   before reporting success so an acknowledged RPC is not confused with the node
   actually reaching the desired state.
 

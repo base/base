@@ -10,12 +10,13 @@ use url::Url;
 use super::PausedPeers;
 use crate::config::ConductorNodeConfig;
 
+/// Timeout used when polling `admin_sequencerActive` during convergence checks.
+pub const SEQUENCER_ACTIVE_RPC_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Returns whether the consensus node reports the sequencer as active.
 pub async fn fetch_sequencer_active(cl_rpc: &Url) -> Result<bool> {
-    const TIMEOUT: Duration = Duration::from_secs(5);
-
     let client = HttpClientBuilder::default()
-        .request_timeout(TIMEOUT)
+        .request_timeout(SEQUENCER_ACTIVE_RPC_TIMEOUT)
         .build(cl_rpc.as_str())
         .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
     AdminApiClient::admin_sequencer_active(&client)

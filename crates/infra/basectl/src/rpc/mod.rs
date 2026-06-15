@@ -2,8 +2,8 @@
 
 mod admin;
 pub use admin::{
-    fetch_sequencer_active, pause_sequencer_node, start_sequencer, start_sequencer_node,
-    stop_sequencer, stop_sequencer_node, unpause_sequencer_node,
+    SEQUENCER_ACTIVE_RPC_TIMEOUT, fetch_sequencer_active, pause_sequencer_node, start_sequencer,
+    start_sequencer_node, stop_sequencer, stop_sequencer_node, unpause_sequencer_node,
 };
 
 mod conductor;

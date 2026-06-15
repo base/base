@@ -68,14 +68,14 @@ fn sequencer_unavailable() -> ErrorObject<'static> {
     ErrorObject::owned(-32001, "sequencer not available on this node", None::<()>)
 }
 
-/// Preserves the sequencer admin failure message instead of collapsing it into
-/// a generic JSON-RPC internal error.
+/// Maps only safe sequencer admin failures to specific JSON-RPC errors.
 fn sequencer_admin_error(error: SequencerAdminAPIError) -> ErrorObject<'static> {
-    let (code, message) = match error {
-        SequencerAdminAPIError::NotLeader => (-32002, error.to_string()),
-        other => (ErrorCode::InternalError.code(), other.to_string()),
-    };
-    ErrorObject::owned(code, message, None::<()>)
+    match error {
+        SequencerAdminAPIError::NotLeader => {
+            ErrorObject::owned(-32002, "Node is not the conductor leader.", None::<()>)
+        }
+        _ => ErrorObject::from(ErrorCode::InternalError),
+    }
 }
 
 #[async_trait]
@@ -187,17 +187,15 @@ mod tests {
     use crate::SequencerAdminAPIError;
 
     #[test]
-    fn sequencer_admin_error_preserves_request_message() {
+    fn sequencer_admin_error_redacts_request_message() {
         let error = sequencer_admin_error(SequencerAdminAPIError::RequestError(
             "block hash mismatch: engine unsafe head is 0x1, caller requested 0x2".to_string(),
         ));
+        let internal_error =
+            jsonrpsee::types::ErrorObject::from(jsonrpsee::types::ErrorCode::InternalError);
 
-        assert_eq!(error.code(), jsonrpsee::types::ErrorCode::InternalError.code());
-        assert!(
-            error
-                .message()
-                .contains("block hash mismatch: engine unsafe head is 0x1, caller requested 0x2")
-        );
+        assert_eq!(error.code(), internal_error.code());
+        assert_eq!(error.message(), internal_error.message());
     }
 
     #[test]
