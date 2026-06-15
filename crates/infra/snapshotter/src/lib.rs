@@ -14,7 +14,10 @@ mod container;
 pub use container::{ContainerManager, DockerContainerManager};
 
 mod snapshot;
-pub use snapshot::{ChunkFilename, OutputFileChecksum, SnapshotGenerator, SnapshotManifest};
+pub use snapshot::{
+    ChunkFilename, ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive,
+    SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+};
 
 mod upload;
 pub use upload::{SnapshotUploader, UploadStrategy};
