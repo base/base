@@ -600,18 +600,21 @@ impl TransactionEventWriter {
         })?;
         line.push(b'\n');
 
+        let depth = self.inner.queued.fetch_add(1, Ordering::Relaxed) + 1;
+
         match tx.try_send(line) {
             Ok(()) => {
-                let depth = self.inner.queued.fetch_add(1, Ordering::Relaxed) + 1;
                 Metrics::emitted_events().increment(1);
                 Metrics::queue_depth().set(depth as f64);
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
+                decrement_queued(&self.inner.queued);
                 Metrics::dropped_events("backpressure").increment(1);
                 Err(WriteEventError::Backpressure)
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
+                decrement_queued(&self.inner.queued);
                 Metrics::dropped_events("closed").increment(1);
                 Err(WriteEventError::Closed)
             }
@@ -681,8 +684,8 @@ async fn run_writer<W>(
                     break;
                 };
 
-                queued.fetch_sub(1, Ordering::Relaxed);
-                Metrics::queue_depth().set(queued.load(Ordering::Relaxed) as f64);
+                let depth = decrement_queued(&queued);
+                Metrics::queue_depth().set(depth as f64);
 
                 let bytes = line.len();
                 match writer.write_all(&line).await {
@@ -701,6 +704,13 @@ async fn run_writer<W>(
             }
         }
     }
+}
+
+fn decrement_queued(queued: &AtomicUsize) -> usize {
+    queued
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_sub(1))
+        .map(|previous| previous - 1)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
