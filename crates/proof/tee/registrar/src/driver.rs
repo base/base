@@ -478,6 +478,8 @@ mod tests {
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
         cancel_after_public_key_success: Option<CancellationToken>,
+        in_flight: Option<Arc<AtomicUsize>>,
+        peak: Option<Arc<AtomicUsize>>,
     }
 
     impl MockSignerClient {
@@ -494,6 +496,8 @@ mod tests {
                 attestations: HashMap::new(),
                 fail_attestation: HashSet::new(),
                 cancel_after_public_key_success: None,
+                in_flight: None,
+                peak: None,
             }
         }
 
@@ -504,6 +508,8 @@ mod tests {
                 attestations: HashMap::new(),
                 fail_attestation: HashSet::new(),
                 cancel_after_public_key_success: None,
+                in_flight: None,
+                peak: None,
             }
         }
 
@@ -521,11 +527,15 @@ mod tests {
             self.cancel_after_public_key_success = Some(cancel);
             self
         }
-    }
 
-    #[async_trait]
-    impl SignerClient for MockSignerClient {
-        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+        fn with_concurrency_tracking(mut self) -> (Self, Arc<AtomicUsize>) {
+            let peak = Arc::new(AtomicUsize::new(0));
+            self.in_flight = Some(Arc::new(AtomicUsize::new(0)));
+            self.peak = Some(Arc::clone(&peak));
+            (self, peak)
+        }
+
+        fn signer_public_key_result(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
             let result =
                 self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
                     instance: endpoint.to_string(),
@@ -537,6 +547,24 @@ mod tests {
                 }
             }
             result
+        }
+    }
+
+    #[async_trait]
+    impl SignerClient for MockSignerClient {
+        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+            if let (Some(in_flight), Some(peak)) = (&self.in_flight, &self.peak) {
+                let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(current, Ordering::SeqCst);
+
+                tokio::task::yield_now().await;
+
+                let result = self.signer_public_key_result(endpoint);
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                return result;
+            }
+
+            self.signer_public_key_result(endpoint)
         }
 
         async fn signer_attestation(
@@ -904,45 +932,6 @@ mod tests {
         assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
     }
 
-    #[derive(Debug)]
-    struct ConcurrencyTrackingSignerClient {
-        inner: MockSignerClient,
-        in_flight: Arc<AtomicUsize>,
-        peak: Arc<AtomicUsize>,
-    }
-
-    impl ConcurrencyTrackingSignerClient {
-        fn new(inner: MockSignerClient) -> (Self, Arc<AtomicUsize>) {
-            let peak = Arc::new(AtomicUsize::new(0));
-            let client =
-                Self { inner, in_flight: Arc::new(AtomicUsize::new(0)), peak: Arc::clone(&peak) };
-            (client, peak)
-        }
-    }
-
-    #[async_trait]
-    impl SignerClient for ConcurrencyTrackingSignerClient {
-        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
-            let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
-            self.peak.fetch_max(current, Ordering::SeqCst);
-
-            tokio::task::yield_now().await;
-
-            let result = self.inner.signer_public_key(endpoint).await;
-            self.in_flight.fetch_sub(1, Ordering::SeqCst);
-            result
-        }
-
-        async fn signer_attestation(
-            &self,
-            endpoint: &Url,
-            user_data: Option<Vec<u8>>,
-            nonce: Option<Vec<u8>>,
-        ) -> Result<Vec<Vec<u8>>> {
-            self.inner.signer_attestation(endpoint, user_data, nonce).await
-        }
-    }
-
     #[tokio::test]
     async fn discover_and_resolve_respects_max_concurrency() {
         let max_concurrency = 2;
@@ -952,8 +941,7 @@ mod tests {
         let keys: Vec<(&str, &[u8; 32])> =
             endpoints.iter().copied().zip(private_keys.iter().copied()).collect();
         let instances: Vec<_> = endpoints.iter().map(|ep| healthy_prover_instance(ep)).collect();
-        let inner = MockSignerClient::from_keys(&keys);
-        let (signer_client, peak) = ConcurrencyTrackingSignerClient::new(inner);
+        let (signer_client, peak) = MockSignerClient::from_keys(&keys).with_concurrency_tracking();
 
         let cancel = CancellationToken::new();
         let mut config = default_config(cancel);
