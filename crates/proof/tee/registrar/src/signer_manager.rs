@@ -466,13 +466,9 @@ mod tests {
                 enclave_index: 0,
             });
         }
-        let total = kept.len();
         DiscoveryResolution {
             registerable,
             active_signers,
-            reachable_count: total,
-            total_count: total,
-            ok_to_dereg: true,
             unresolved_instance_ids: HashSet::new(),
         }
     }
@@ -612,9 +608,6 @@ mod tests {
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::new(),
-            reachable_count: 0,
-            total_count: 1,
-            ok_to_dereg: false,
             unresolved_instance_ids: HashSet::from([TEST_PENDING_INSTANCE_ID.to_string()]),
         };
 
@@ -629,9 +622,6 @@ mod tests {
         let resolution_conclusive = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::new(),
-            reachable_count: 1,
-            total_count: 1,
-            ok_to_dereg: true,
             unresolved_instance_ids: HashSet::new(),
         };
         reconcile(&manager, &resolution_conclusive, &mut proof_tasks);
@@ -660,9 +650,6 @@ mod tests {
                 },
             ],
             active_signers: HashSet::from([signer]),
-            reachable_count: 2,
-            total_count: 2,
-            ok_to_dereg: false,
             unresolved_instance_ids: HashSet::new(),
         };
         let mut proof_tasks = ProofTaskSet::new();
@@ -702,9 +689,6 @@ mod tests {
                 },
             ],
             active_signers: HashSet::from([signer_a, signer_b]),
-            reachable_count: 2,
-            total_count: 2,
-            ok_to_dereg: false,
             unresolved_instance_ids: HashSet::new(),
         };
         let mut proof_tasks = ProofTaskSet::new();
@@ -828,9 +812,6 @@ mod tests {
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::from([active_signer]),
-            reachable_count: 1,
-            total_count: 1,
-            ok_to_dereg: true,
             unresolved_instance_ids: HashSet::from([TEST_PENDING_INSTANCE_ID.to_string()]),
         };
         let protected = proof_tasks.protected_signers(&resolution);

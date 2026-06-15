@@ -92,12 +92,6 @@ pub struct DiscoveryResolution {
     pub registerable: Vec<RegisterableSigner>,
     /// Signers contributed by reachable instances.
     pub active_signers: HashSet<Address>,
-    /// Number of discovered instances that responded to discovery RPCs.
-    pub reachable_count: usize,
-    /// Total instances returned by discovery (reachable + unreachable).
-    pub total_count: usize,
-    /// Whether orphan deregistration is safe to run this cycle.
-    pub ok_to_dereg: bool,
     /// Instance IDs with inconclusive resolution this cycle.
     pub unresolved_instance_ids: HashSet<String>,
 }
@@ -166,7 +160,7 @@ where
             proof_tasks.reap_finished_tasks();
 
             match self.discover_and_resolve().await {
-                Ok(resolution) => {
+                Ok((resolution, ok_to_dereg)) => {
                     proof_tasks.reap_finished_tasks();
 
                     if !self.config.cancel.is_cancelled() {
@@ -177,7 +171,7 @@ where
                         );
                     }
 
-                    if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
+                    if ok_to_dereg && !self.config.cancel.is_cancelled() {
                         let protected = proof_tasks.protected_signers(&resolution);
                         if let Err(e) = self
                             .signer_manager
@@ -187,12 +181,6 @@ where
                             warn!(error = %e, "orphan deregistration pass failed");
                             RegistrarMetrics::processing_errors_total().increment(1);
                         }
-                    } else if !resolution.ok_to_dereg {
-                        debug!(
-                            reachable = resolution.reachable_count,
-                            total = resolution.total_count,
-                            "skipping orphan deregistration this cycle"
-                        );
                     }
                 }
                 Err(e) => {
@@ -338,7 +326,7 @@ where
     }
 
     /// Runs one discovery cycle and resolves every instance into a [`DiscoveryResolution`].
-    async fn discover_and_resolve(&self) -> Result<DiscoveryResolution> {
+    async fn discover_and_resolve(&self) -> Result<(DiscoveryResolution, bool)> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
 
@@ -422,14 +410,18 @@ where
             && unresolved_instance_ids.is_empty()
             && (total_count == 0 || reachable_count * 2 > total_count);
 
-        Ok(DiscoveryResolution {
-            registerable,
-            active_signers,
-            reachable_count,
-            total_count,
+        if !ok_to_dereg {
+            debug!(
+                reachable = reachable_count,
+                total = total_count,
+                "skipping orphan deregistration this cycle"
+            );
+        }
+
+        Ok((
+            DiscoveryResolution { registerable, active_signers, unresolved_instance_ids },
             ok_to_dereg,
-            unresolved_instance_ids,
-        })
+        ))
     }
 }
 
@@ -697,7 +689,7 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
         assert_eq!(
             resolution.registerable.len(),
             1,
@@ -708,7 +700,7 @@ mod tests {
             resolution.active_signers.contains(&addr),
             "recently-launched unhealthy signer should be in active_signers"
         );
-        assert!(resolution.ok_to_dereg, "resolved instance permits orphan cleanup");
+        assert!(ok_to_dereg, "resolved instance permits orphan cleanup");
     }
 
     #[tokio::test]
@@ -716,12 +708,9 @@ mod tests {
         let driver =
             cycle_driver(vec![], MockSignerClient::from_keys(&[]), CancellationToken::new());
 
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
         assert!(resolution.active_signers.is_empty(), "no instances → no active signers");
-        assert!(
-            resolution.ok_to_dereg,
-            "zero-instance fleet drain is a legitimate empty active set",
-        );
+        assert!(ok_to_dereg, "zero-instance fleet drain is a legitimate empty active set",);
     }
 
     #[tokio::test]
@@ -735,9 +724,9 @@ mod tests {
         let driver = cycle_driver(instances, signer_client, cancel.clone());
 
         cancel.cancel();
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (_, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
 
-        assert!(!resolution.ok_to_dereg, "cancellation must clear ok_to_dereg",);
+        assert!(!ok_to_dereg, "cancellation must clear ok_to_dereg",);
     }
 
     #[tokio::test]
@@ -747,12 +736,9 @@ mod tests {
             .with_cancel_after_public_key_success(cancel.clone());
         let driver = cycle_driver(vec![healthy_prover_instance(EP1)], signer_client, cancel);
 
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (_, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
 
-        assert!(
-            !resolution.ok_to_dereg,
-            "cancellation observed during resolution must clear ok_to_dereg",
-        );
+        assert!(!ok_to_dereg, "cancellation observed during resolution must clear ok_to_dereg",);
     }
 
     #[tokio::test]
@@ -765,11 +751,9 @@ mod tests {
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (_, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
 
-        assert_eq!(resolution.reachable_count, 1);
-        assert_eq!(resolution.total_count, 3);
-        assert!(!resolution.ok_to_dereg, "1/3 reachable must block orphan-deregistration",);
+        assert!(!ok_to_dereg, "1/3 reachable must block orphan-deregistration",);
     }
 
     #[tokio::test]
@@ -792,7 +776,7 @@ mod tests {
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
         assert_eq!(
             resolution.registerable.len(),
             reachable.len(),
@@ -802,7 +786,7 @@ mod tests {
             resolution.unresolved_instance_ids.contains(&unreachable.instance_id),
             "unreachable instance must be marked as unresolved so reconcile skips its cancel-pass",
         );
-        assert!(!resolution.ok_to_dereg, "unresolved instance must block orphan-dereg",);
+        assert!(!ok_to_dereg, "unresolved instance must block orphan-dereg",);
     }
 
     #[tokio::test]
@@ -816,14 +800,14 @@ mod tests {
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
         assert!(
             resolution.registerable.is_empty(),
             "draining instance must not appear in the registerable set",
         );
         assert!(resolution.active_signers.contains(&addr0));
         assert!(resolution.active_signers.contains(&addr1));
-        assert!(resolution.ok_to_dereg);
+        assert!(ok_to_dereg);
     }
 
     #[tokio::test]
@@ -841,7 +825,7 @@ mod tests {
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
         assert_eq!(
             resolution.registerable.len(),
             1,
@@ -852,7 +836,7 @@ mod tests {
             resolution.active_signers.contains(&addr_unhealthy),
             "unhealthy signer must remain in active_signers to block dereg",
         );
-        assert!(resolution.ok_to_dereg);
+        assert!(ok_to_dereg);
     }
 
     #[rstest]
@@ -872,7 +856,7 @@ mod tests {
 
         let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
 
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
 
         assert!(
             resolution.active_signers.contains(&signer_addr),
@@ -886,7 +870,7 @@ mod tests {
             resolution.unresolved_instance_ids.contains(&inst.instance_id),
             "partial resolution must preserve in-flight tasks for the instance",
         );
-        assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
+        assert!(!ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
     }
 
     #[tokio::test]
@@ -914,7 +898,7 @@ mod tests {
             signer_manager,
         );
 
-        let resolution = driver.discover_and_resolve().await.unwrap();
+        let (resolution, _) = driver.discover_and_resolve().await.unwrap();
 
         let observed_peak = peak.load(Ordering::SeqCst);
         assert!(
