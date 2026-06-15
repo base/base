@@ -655,7 +655,7 @@ mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{Address, B256, Bloom, Bytes};
     use alloy_rpc_types_eth::TransactionReceipt;
-    use alloy_sol_types::SolCall;
+    use alloy_sol_types::SolCall as _;
     use async_trait::async_trait;
     use base_proof_contracts::ITEEProverRegistry;
     use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
@@ -879,6 +879,23 @@ mod tests {
         }
     }
 
+    struct InFlightGuard {
+        state: Arc<GatedProofState>,
+    }
+
+    impl InFlightGuard {
+        fn new(state: Arc<GatedProofState>) -> Self {
+            state.in_flight.fetch_add(1, Ordering::SeqCst);
+            Self { state }
+        }
+    }
+
+    impl Drop for InFlightGuard {
+        fn drop(&mut self) {
+            self.state.in_flight.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
     #[derive(Debug, Clone)]
     struct GatedProofProvider {
         state: Arc<GatedProofState>,
@@ -899,7 +916,7 @@ mod tests {
             cancel: &CancellationToken,
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
             self.state.call_count.fetch_add(1, Ordering::SeqCst);
-            self.state.in_flight.fetch_add(1, Ordering::SeqCst);
+            let _guard = InFlightGuard::new(Arc::clone(&self.state));
 
             let result = tokio::select! {
                 biased;
@@ -915,7 +932,6 @@ mod tests {
                     })
                 }
             };
-            self.state.in_flight.fetch_sub(1, Ordering::SeqCst);
             result
         }
 
