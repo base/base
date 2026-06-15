@@ -804,3 +804,41 @@ Results:
 - interpretation: future hash-focused work should prioritize payload-size-sensitive hashing paths first, then separately evaluate access-list and EIP-7702 authorization handling; optimizing around typed-list serialization alone is unlikely to explain the full `rich` synthetic slowdown
 Next:
 - if this decode path is revisited again, add a mixed two-factor synthetic sweep (for example input+access-list for EIP-2930/EIP-1559 and input+authorization for EIP-7702) or profile upstream `signature_hash()` internals so the next experiment can test whether the near-additive slowdown comes from repeated RLP length calculation, list encoding, or keccak input materialization.
+
+## 2026-06-15 08:38 UTC
+Focus: `base-protocol` two-factor synthetic signature-hash sensitivity across input+access-list and input+authorization combinations.
+Hypothesis: the prior single-factor dimension benchmarks showed calldata expansion and typed-list hashing are individually expensive for `signature_hash()`; adding two-factor mixed shapes (large calldata + access lists for EIP-2930/EIP-1559, large calldata + authorization lists for EIP-7702) should show whether these costs combine additively (independent RLP encoding work) or interact (shared keccak/RLP length overhead).
+Commands:
+- added `InputPlusAccessList` and `InputPlusAuthorization` variants to `SyntheticSignatureHashShape` in the benchmark harness
+- updated `input_len()`, `access_list_entry_count()`, and `authorization_count()` matchers for the new shapes
+- extended `ACCESS_LIST_DIMENSION_SENSITIVITY_SHAPES` (EIP-2930/EIP-1559) and `EIP7702_DIMENSION_SENSITIVITY_SHAPES` with the two-factor combinations
+- `cargo bench -p base-protocol --bench batch_reader synthetic_signature_hash_dimension_sensitivity -- --warm-up-time 0.2 --measurement-time 0.5 --sample-size 10`
+- `cargo test -p base-protocol batch_reader -- --nocapture`
+- `cargo clippy -p base-protocol --tests --benches --no-deps -- -D warnings`
+- extracted median `point_estimate` values from `target/criterion/protocol_batch_reader_synthetic_signature_hash_dimension_sensitivity/*/*/new/estimates.json` and `protocol_batch_reader_synthetic_signature_hash_shape_sensitivity/*/*/new/estimates.json`
+Results:
+- benchmark-only change; production logic untouched
+- validation passed: `2 passed` and clippy clean
+- new two-factor median benchmark results (ns/tx for 1024 synthetic transactions):
+  **EIP-2930**
+  - `simple`: 267.8 ns/tx
+  - `input_heavy`: 1769.7 ns/tx (calldata alone adds ~1475 ns/tx)
+  - `access_list_heavy`: 1443.7 ns/tx (access list alone adds ~1145 ns/tx)
+  - **`input_plus_access_list`: 3009.4 ns/tx**
+  - predicted additive: simple + calldata_delta + alist_delta = 267.8 + 1475 + 1145 = 2887.8, versus measured 3009.4 (~4.2% above additive)
+  **EIP-1559**
+  - `simple`: 273.3 ns/tx
+  - `input_heavy`: 1776.6 ns/tx (calldata alone adds ~1483 ns/tx)
+  - `access_list_heavy`: 1456.0 ns/tx (access list alone adds ~1152 ns/tx)
+  - **`input_plus_access_list`: 2942.1 ns/tx**
+  - predicted additive: 273.3 + 1483 + 1152 = 2908.3, versus measured 2942.1 (~1.2% above additive)
+  **EIP-7702**
+  - `simple`: 518.4 ns/tx
+  - `input_heavy`: 2034.3 ns/tx (calldata alone adds ~1492 ns/tx)
+  - `authorization_heavy`: 1046.6 ns/tx (auth list alone adds ~517 ns/tx)
+  - **`input_plus_authorization`: 2536.5 ns/tx**
+  - predicted additive: 518.4 + 1492 + 517 = 2527.4, versus measured 2536.5 (~0.4% above additive)
+- interpretation: the two-factor combinations are nearly additive across all three paths, which confirms that calldata hashing and typed-list hashing (access lists, authorization lists) run as independent RLP encoding and keccak steps with no material cross-field optimization opportunity; the slight super-additivity (~0.4% to ~4.2%) is consistent with one extra RLP length prefix per combined encoding pass rather than synergistic savings; EIP-1559 and EIP-7702 two-factor results are nearly perfect additive, while EIP-2930 shows a small (~4%) premium on the combined shape; these results are consistent with the combined `rich` shape from the prior run (EIP-1559/2930: ~2940 ns/tx, EIP-7702: ~3724 ns/tx), confirming internal benchmark stability
+- PR hygiene: existing open PR remains `#2409`, no new PR needed
+Next:
+- the two-factor sweep closes the additivity question; the signature-hash path is now well-characterized at the component level and shows clear independent costs for calldata, access lists, and authorization lists; future production-optimization work would need to target upstream `signature_hash()` implementations inside the alloy crate (specifically typed-tx RLP encoding or keccak buffer handling), which is outside the scope of safe in-repo changes; if this path is revisited again, shift focus to a different service hotspot area (consensus derivation, batcher encoding, or zk polling) where local code changes can produce measurable gains
