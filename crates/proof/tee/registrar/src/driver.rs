@@ -5,9 +5,10 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned onchain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, hex};
+use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use rand::random;
@@ -16,7 +17,8 @@ use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
-    ProverInstance, RegistrarMetrics, Result, SignerClient, SignerLifecycle, SignerManagerConfig,
+    ProverInstance, RegistrarMetrics, RegistryClient, Result, SignerClient, SignerManager,
+    SignerManagerConfig,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -114,10 +116,9 @@ pub struct ResolveOutcome {
 /// Core registration loop tying together discovery, attestation polling, signer
 /// lifecycle reconciliation, and orphan cleanup.
 ///
-/// Generic over discovery, signer client, and signer lifecycle backends so each
-/// can be mocked independently in tests.
+/// Generic over discovery and RPC backends.
 #[derive(Debug)]
-pub struct RegistrationDriver<D, S, M, T> {
+pub struct RegistrationDriver<D, S, P, R, T> {
     discovery: D,
     signer_client: S,
     config: DriverConfig,
@@ -125,14 +126,15 @@ pub struct RegistrationDriver<D, S, M, T> {
     /// checking is enabled.
     cert_manager: CertManager<T>,
     /// Signer lifecycle manager for registration tasks and orphan cleanup.
-    signer_manager: M,
+    signer_manager: Arc<SignerManager<P, R, T>>,
 }
 
-impl<D, S, M, T> RegistrationDriver<D, S, M, T>
+impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
 where
     D: InstanceDiscovery + 'static,
     S: SignerClient + 'static,
-    M: SignerLifecycle + 'static,
+    P: AttestationProofProvider + 'static,
+    R: RegistryClient + 'static,
     T: TxManager + 'static,
 {
     /// Creates a new registration driver.
@@ -144,7 +146,7 @@ where
         signer_client: S,
         config: DriverConfig,
         cert_manager: CertManager<T>,
-        signer_manager: M,
+        signer_manager: Arc<SignerManager<P, R, T>>,
     ) -> Self {
         Self { discovery, signer_client, config, cert_manager, signer_manager }
     }
@@ -436,7 +438,7 @@ mod tests {
     use std::{
         collections::{HashMap, HashSet},
         sync::{
-            Arc, Mutex,
+            Arc,
             atomic::{AtomicUsize, Ordering},
         },
         time::SystemTime,
@@ -444,13 +446,14 @@ mod tests {
 
     use alloy_primitives::Address;
     use async_trait::async_trait;
+    use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
     use super::*;
     use crate::{
-        InstanceHealthStatus, RegistrarError, Result, SignerClient,
+        InstanceHealthStatus, RegistrarError, RegistryClient, Result, SignerClient,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, HARDHAT_KEY_3,
             NoopNitroVerifier, NoopTxManager, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
@@ -585,6 +588,34 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct NoopProofProvider;
+
+    #[async_trait]
+    impl AttestationProofProvider for NoopProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            unreachable!("driver discover_and_resolve tests do not spawn proof tasks")
+        }
+    }
+
+    #[derive(Debug)]
+    struct NoopRegistry;
+
+    #[async_trait]
+    impl RegistryClient for NoopRegistry {
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            unreachable!("driver discover_and_resolve tests do not query registration state")
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            unreachable!("driver discover_and_resolve tests do not run orphan deregistration")
+        }
+    }
+
     fn endpoint_url(host_port: &str) -> Url {
         Url::parse(&format!("http://{host_port}")).unwrap()
     }
@@ -597,43 +628,15 @@ mod tests {
             .expect("test cert manager builds")
     }
 
-    #[derive(Debug)]
-    struct MockSignerManager {
-        reconcile_calls: AtomicUsize,
-        orphan_calls: Mutex<Vec<HashSet<Address>>>,
-        cancel_after_orphan: CancellationToken,
-    }
-
-    impl MockSignerManager {
-        fn new(cancel_after_orphan: CancellationToken) -> Self {
-            Self {
-                reconcile_calls: AtomicUsize::new(0),
-                orphan_calls: Mutex::new(Vec::new()),
-                cancel_after_orphan,
-            }
-        }
-    }
-
-    #[async_trait]
-    impl SignerLifecycle for MockSignerManager {
-        fn reconcile_proof_tasks(
-            &self,
-            _resolution: &DiscoveryResolution,
-            _proof_tasks: &mut ProofTaskSet,
-            _cancel: &CancellationToken,
-        ) {
-            self.reconcile_calls.fetch_add(1, Ordering::SeqCst);
-        }
-
-        async fn run_orphan_dereg(
-            &self,
-            protected_signers: &HashSet<Address>,
-            _cancel: &CancellationToken,
-        ) -> Result<()> {
-            self.orphan_calls.lock().unwrap().push(protected_signers.clone());
-            self.cancel_after_orphan.cancel();
-            Ok(())
-        }
+    fn noop_signer_manager(
+        config: &DriverConfig,
+    ) -> Arc<SignerManager<NoopProofProvider, NoopRegistry, NoopTxManager>> {
+        Arc::new(SignerManager::new(
+            NoopProofProvider,
+            NoopRegistry,
+            NoopTxManager,
+            config.signer_manager.clone(),
+        ))
     }
 
     fn default_config(cancel: CancellationToken) -> DriverConfig {
@@ -661,13 +664,13 @@ mod tests {
         instances: Vec<ProverInstance>,
         signer_client: S,
         cancel: CancellationToken,
-    ) -> RegistrationDriver<MockDiscovery, S, MockSignerManager, NoopTxManager>
+    ) -> RegistrationDriver<MockDiscovery, S, NoopProofProvider, NoopRegistry, NoopTxManager>
     where
         S: SignerClient + 'static,
     {
         let config = default_config(cancel);
-        let signer_manager = MockSignerManager::new(CancellationToken::new());
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
+        let signer_manager = noop_signer_manager(&config);
         RegistrationDriver::new(
             MockDiscovery { instances },
             signer_client,
@@ -675,41 +678,6 @@ mod tests {
             cert_manager,
             signer_manager,
         )
-    }
-
-    const FAST_POLL_INTERVAL: Duration = Duration::from_millis(25);
-
-    #[tokio::test]
-    async fn run_uses_injected_signer_manager_boundary() {
-        let cancel = CancellationToken::new();
-        let mut config = default_config(cancel.clone());
-        config.poll_interval = FAST_POLL_INTERVAL;
-
-        let signer_manager = MockSignerManager::new(cancel.clone());
-        let signer = signer_from_private_key(&HARDHAT_KEY_0);
-        let cert_manager = mock_cert_manager(&config, NoopTxManager);
-
-        let driver = RegistrationDriver::new(
-            MockDiscovery { instances: vec![healthy_prover_instance(EP1)] },
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
-            config,
-            cert_manager,
-            signer_manager,
-        );
-
-        driver.run().await.expect("driver exits after mock orphan pass cancels");
-
-        assert_eq!(
-            driver.signer_manager.reconcile_calls.load(Ordering::SeqCst),
-            1,
-            "driver should delegate registerable reconciliation to signer manager",
-        );
-        let orphan_inputs = driver.signer_manager.orphan_calls.lock().unwrap();
-        assert_eq!(orphan_inputs.len(), 1, "driver should delegate one orphan pass");
-        assert!(
-            orphan_inputs[0].contains(&signer),
-            "driver passes active signer set into orphan protection",
-        );
     }
 
     #[tokio::test]
@@ -935,8 +903,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let mut config = default_config(cancel);
         config.signer_manager.max_concurrency = max_concurrency;
-        let signer_manager = MockSignerManager::new(CancellationToken::new());
         let cert_manager = mock_cert_manager(&config, NoopTxManager);
+        let signer_manager = noop_signer_manager(&config);
 
         let driver = RegistrationDriver::new(
             MockDiscovery { instances },
