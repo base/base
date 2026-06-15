@@ -71,94 +71,44 @@ pub struct DriverConfig {
     pub crl: CrlConfig,
 }
 
-/// A single (signer, attestation) pair from a prover instance that
-/// passed all per-cycle gates and is ready to be spawned as a proof task.
-///
-/// One [`RegisterableSigner`] corresponds to exactly one spawned proof
-/// task. Instances with multiple enclaves are flattened into one entry
-/// per enclave at construction time in `discover_and_resolve`, so the
-/// spawn pass in `reconcile_proof_tasks` is a flat iteration with no
-/// per-entry index correlation between parallel vectors.
-///
-/// Replaces the earlier 3-tuple `(ProverInstance, Vec<Address>,
-/// Vec<Vec<u8>>)` whose unnamed positional fields made the
-/// `attestations[idx]` indexing contract invisible at the call site.
+/// A signer and attestation ready to be spawned as a proof task.
 #[derive(Debug, Clone)]
 pub struct RegisterableSigner {
-    /// Source prover instance, retained so per-signer log lines and
-    /// `PendingRegistration::instance_id` can attribute the spawned
-    /// task. Cloned per enclave on the source instance (typically N=1)
-    /// at flatten time.
+    /// Source prover instance for attribution.
     pub instance: ProverInstance,
-    /// Signer address derived from one of the instance's enclave public
-    /// keys. Each address gets its own spawned proof task.
+    /// Signer address derived from an enclave public key.
     pub signer: Address,
-    /// Pre-fetched attestation blob paired with [`Self::signer`] at
-    /// flatten time.
+    /// Pre-fetched attestation blob for the signer.
     pub attestation: Vec<u8>,
-    /// Zero-based enclave index on the source instance, preserved from
-    /// the original `(addresses, attestations)` enumeration so per-task
-    /// log lines can attribute which enclave on a multi-enclave instance
-    /// the signer came from.
+    /// Zero-based enclave index on the source instance.
     pub enclave_index: usize,
 }
 
-/// Aggregate output of the driver's per-cycle `discover_and_resolve` pass —
-/// the snapshot consumed by the spawn-and-reap loop.
+/// Per-cycle discovery snapshot consumed by signer reconciliation.
 #[derive(Debug, Default)]
 pub struct DiscoveryResolution {
-    /// Instances eligible for registration this cycle, with their derived
-    /// signer addresses and the matching pre-fetched attestation blobs
-    /// (one per enclave on the instance). Instances whose certificates
-    /// were confirmed revoked by the CRL check are filtered out.
+    /// Signers eligible for registration this cycle.
     pub registerable: Vec<RegisterableSigner>,
-    /// All signers contributed by *reachable* instances, regardless of
-    /// register-eligibility. Used to protect draining/unhealthy
-    /// instances from premature orphan deregistration.
+    /// Signers contributed by reachable instances.
     pub active_signers: HashSet<Address>,
     /// Number of discovered instances that responded to discovery RPCs.
     pub reachable_count: usize,
     /// Total instances returned by discovery (reachable + unreachable).
     pub total_count: usize,
-    /// Whether orphan deregistration is safe to run this cycle. `true`
-    /// when the cancellation token has not fired, no discovered instance
-    /// had an inconclusive resolution, **and either** `total_count` is zero
-    /// (legitimate fleet drain) **or** a strict majority of discovered
-    /// instances were reachable (`reachable * 2 > total`). `false` during
-    /// shutdown (to avoid acquiring nonces we don't intend to broadcast),
-    /// when any instance resolution was inconclusive, or when too few
-    /// instances responded for the quorum guard to clear.
+    /// Whether orphan deregistration is safe to run this cycle.
     pub ok_to_dereg: bool,
-    /// Instance IDs whose resolution was inconclusive this cycle, either
-    /// because `resolve_instance` returned `Err` or because it returned
-    /// `Ok` with `unresolved: true`. In-flight proof tasks for these
-    /// instances must be preserved until a later cycle reaches a verdict.
+    /// Instance IDs with inconclusive resolution this cycle.
     pub unresolved_instance_ids: HashSet<String>,
 }
 
-/// Per-instance result of address resolution and registration-eligibility
-/// gating. `attestations` is `Some` only when the instance is registerable
-/// and its CRL check did not flag revocation; otherwise it is `None` and
-/// the caller skips registration but still uses `addresses` for the
-/// active-signer set. `unresolved` distinguishes intentional skips
-/// (draining, old unhealthy, revoked, shutdown) from partial failures after
-/// signer addresses were known (for example, attestation RPC failure).
+/// Per-instance result of address resolution and registration gating.
 #[derive(Debug)]
 pub struct ResolveOutcome {
     /// Signer addresses derived from the instance's enclave public keys.
     pub addresses: Vec<Address>,
-    /// Pre-fetched attestation blobs when the instance is register-eligible
-    /// this cycle; `None` when registration is being skipped (health
-    /// status, CRL revocation, shutdown).
+    /// Pre-fetched attestation blobs when the instance is register-eligible.
     pub attestations: Option<Vec<Vec<u8>>>,
-    /// Whether resolution reached an inconclusive state after signer
-    /// addresses were already known.
-    ///
-    /// The caller should still add [`Self::addresses`] to the active set,
-    /// because the instance proved it is reachable and advertising those
-    /// signers, but should also preserve any in-flight proof task tied to
-    /// the instance because registration eligibility could not be decided
-    /// this cycle.
+    /// Whether resolution ended inconclusively after addresses were known.
     pub unresolved: bool,
 }
 
