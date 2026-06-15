@@ -150,40 +150,6 @@ where
     }
 
     /// Runs the registration loop until cancelled.
-    ///
-    /// # Pipeline
-    ///
-    /// Each cycle is non-blocking with respect to in-flight proof
-    /// generation. Discovery, reconcile, and orphan cleanup all execute
-    /// in the foreground; proofs run in dedicated `JoinSet` tasks owned
-    /// by `pending`:
-    ///
-    /// 1. **Reap** — drain any task that finished since the previous
-    ///    cycle (`reap_finished_tasks`).
-    /// 2. **Discover & resolve** — produce a [`DiscoveryResolution`]
-    ///    snapshot (`discover_and_resolve`).
-    /// 3. **Reconcile** — cancel in-flight tasks for vanished /
-    ///    ineligible signers, spawn new tasks for registerable signers
-    ///    that are not already in-flight (`reconcile_proof_tasks`).
-    /// 4. **Orphan dereg** — when the snapshot's `ok_to_dereg` is set,
-    ///    run a single deregistration pass over signers no longer backed
-    ///    by an active instance (`run_orphan_dereg`). The protected set
-    ///    is the union of `resolution.active_signers` and the keys of
-    ///    `pending` (see [`ProofTaskSet::protected_signers`]) so a signer
-    ///    registered mid-cycle by a preserved task — whose source
-    ///    instance failed `resolve_instance` transiently — cannot be
-    ///    deregistered in the same pass.
-    /// 5. **Sleep** — wait `poll_interval` or until cancelled.
-    ///
-    /// # Cancellation
-    ///
-    /// On shutdown every `PendingRegistration::cancel` is fired cooperatively;
-    /// tasks are then awaited to natural completion via
-    /// `join_next_with_id` so each terminal outcome flows through
-    /// the signer manager join-outcome path, keeping the proof-task metrics
-    /// consistent. `JoinSet::abort_all` is deliberately **not** used — see
-    /// [`ProofTaskSet::drain_proof_tasks`] for the nonce-gap rationale.
-    ///
     pub async fn run(self) -> Result<()> {
         self.run_loop().await
     }
