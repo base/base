@@ -416,8 +416,8 @@ where
         cl_rpc = %node.cl_rpc,
         action = %action.infinitive(),
         expected_active,
-        observation_timeout_ms = observation_timeout.as_millis() as u64,
-        poll_interval_ms = poll_interval.as_millis() as u64,
+        observation_timeout_ms = observation_timeout.as_millis(),
+        poll_interval_ms = poll_interval.as_millis(),
         "waiting for sequencer state convergence"
     );
 

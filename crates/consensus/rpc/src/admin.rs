@@ -131,10 +131,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .start_sequencer(unsafe_head)
-            .await
-            .map_err(start_sequencer_error)
+        sequencer_client.start_sequencer(unsafe_head).await.map_err(start_sequencer_error)
     }
 
     async fn admin_stop_sequencer(&self) -> RpcResult<B256> {
@@ -212,9 +209,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use jsonrpsee::types::{ErrorCode, ErrorObject};
+
     use super::start_sequencer_error;
     use crate::SequencerAdminAPIError;
-    use jsonrpsee::types::{ErrorCode, ErrorObject};
 
     #[test]
     fn start_sequencer_error_redacts_internal_failure_details() {
