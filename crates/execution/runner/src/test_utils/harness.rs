@@ -197,7 +197,7 @@ impl TestHarness {
 
         let forkchoice_result = self
             .engine
-            .update_forkchoice(parent_hash, parent_hash, Some(payload_attributes))
+            .update_forkchoice(parent_hash, parent_hash, Some(payload_attributes.into()))
             .await?;
 
         let payload_id = forkchoice_result
