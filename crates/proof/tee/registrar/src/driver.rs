@@ -427,14 +427,9 @@ where
             }
         }
 
-        let ok_to_dereg =
-            if self.config.cancel.is_cancelled() || !unresolved_instance_ids.is_empty() {
-                false
-            } else if total_count == 0 {
-                true
-            } else {
-                reachable_count * 2 > total_count
-            };
+        let ok_to_dereg = !self.config.cancel.is_cancelled()
+            && unresolved_instance_ids.is_empty()
+            && (total_count == 0 || reachable_count * 2 > total_count);
 
         Ok(DiscoveryResolution {
             registerable,
