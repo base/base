@@ -153,12 +153,16 @@ where
     }
 
     /// Submits a generated proof through the worker API until delivered or permanently rejected.
+    ///
+    /// This adds a long-lived delivery loop around the worker client's per-call retry budget. Each
+    /// delivery attempt delegates to the client once; concrete clients may perform bounded RPC
+    /// retries internally before returning a retryable error to this loop.
     pub async fn submit_until_delivered(
         &self,
         request: WorkerSubmitProofRequest,
     ) -> Result<WorkerSubmitProofResponse, ProofSubmitterError> {
-        let attempts = Arc::new(AtomicU64::new(0));
-        let attempts_for_submit = Arc::clone(&attempts);
+        let delivery_attempts = Arc::new(AtomicU64::new(0));
+        let attempts_for_submit = Arc::clone(&delivery_attempts);
 
         let response = (|| {
             let request = request.clone();
@@ -166,24 +170,21 @@ where
 
             async move {
                 attempts.fetch_add(1, Ordering::Relaxed);
-                self.submit_once(request).await
+                self.client.submit_proof(request).await.map_err(ProofSubmitterError::Submit)
             }
         })
         .retry(self.backoff.to_backoff_builder())
-        .when(|error: &ProofSubmitterError| match error {
-            ProofSubmitterError::Submit(error) => error.is_retryable(),
-            ProofSubmitterError::UnsupportedProofResult => false,
-        })
+        .when(ProofSubmitterError::is_retryable)
         .notify(|error, delay| {
             if let ProofSubmitterError::Submit(error) = error {
                 warn!(
                     session_id = %request.session_id,
                     lock_id = %request.lock_id,
                     worker_id = %request.worker_id,
-                    attempts = attempts.load(Ordering::Relaxed),
+                    delivery_attempts = delivery_attempts.load(Ordering::Relaxed),
                     backoff_ms = delay.as_millis(),
                     error = %error,
-                    "proof submission failed; retrying"
+                    "proof submission retry window exhausted; retrying"
                 );
             }
         })
@@ -195,7 +196,7 @@ where
                     session_id = %request.session_id,
                     lock_id = %request.lock_id,
                     worker_id = %request.worker_id,
-                    attempts = attempts.load(Ordering::Relaxed),
+                    delivery_attempts = delivery_attempts.load(Ordering::Relaxed),
                     "proof submission delivered"
                 );
                 Ok(response)
@@ -205,7 +206,7 @@ where
                     session_id = %request.session_id,
                     lock_id = %request.lock_id,
                     worker_id = %request.worker_id,
-                    attempts = attempts.load(Ordering::Relaxed),
+                    delivery_attempts = delivery_attempts.load(Ordering::Relaxed),
                     error = %error,
                     "proof submission failed permanently"
                 );
@@ -216,7 +217,7 @@ where
                     session_id = %request.session_id,
                     lock_id = %request.lock_id,
                     worker_id = %request.worker_id,
-                    attempts = attempts.load(Ordering::Relaxed),
+                    delivery_attempts = delivery_attempts.load(Ordering::Relaxed),
                     "proof submission failed: unsupported proof result"
                 );
                 Err(ProofSubmitterError::UnsupportedProofResult)
