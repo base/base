@@ -164,24 +164,13 @@ where
         let mut proof_tasks = ProofTaskSet::new();
 
         loop {
-            // Reap before discovery so finished tasks don't linger in
-            // `pending` for an entire cycle and (incorrectly) cause
-            // reconcile to skip spawning a replacement on transient
-            // failure (audit finding #9).
+            // Keep task state current before reconcile decisions each cycle.
             proof_tasks.reap_finished_tasks();
 
             match self.discover_and_resolve().await {
                 Ok(resolution) => {
-                    // Reap again: a task that finished during the
-                    // (potentially slow) discovery RPCs would otherwise
-                    // look in-flight to reconcile and get spuriously
-                    // re-cancelled or have its respawn deferred a cycle.
                     proof_tasks.reap_finished_tasks();
 
-                    // Spawning new proof tasks during a shutdown would
-                    // acquire L1 nonces we have no intention of
-                    // broadcasting. Skip reconcile (and the orphan
-                    // dereg pass) entirely when cancellation is set.
                     if !self.config.cancel.is_cancelled() {
                         self.signer_manager.reconcile_proof_tasks(
                             &resolution,
@@ -191,8 +180,6 @@ where
                     }
 
                     if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
-                        // Pending proof tasks can register while orphan cleanup
-                        // is running, so protect those signers too.
                         let protected = proof_tasks.protected_signers(&resolution);
                         if let Err(e) = self
                             .signer_manager
@@ -216,8 +203,6 @@ where
                 }
             }
 
-            // Publish gauge once per cycle, after every path that could
-            // mutate `pending` (reconcile, reap) has run.
             RegistrarMetrics::proof_tasks_pending().set(proof_tasks.pending_len() as f64);
 
             tokio::select! {
