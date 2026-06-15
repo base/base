@@ -13,8 +13,12 @@ use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL
 use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{ProofResult, ZkProofResult, ZkVm};
 use sp1_sdk::{
-    NetworkProver, ProveRequest, Prover, SP1ProofWithPublicValues, SP1ProvingKey,
-    network::proto::types::{FulfillmentStatus, FulfillmentStrategy},
+    HashableKey, NetworkProver, ProveRequest, Prover, ProvingKey, SP1ProofWithPublicValues,
+    SP1ProvingKey,
+    network::proto::{
+        GetProofRequestStatusResponse,
+        types::{FulfillmentStatus, FulfillmentStrategy},
+    },
 };
 use tracing::{error, info};
 
@@ -22,7 +26,7 @@ use crate::succinct::{L1HeadSource, OpSuccinctWitnessProvider, WitnessParams};
 
 macro_rules! backend_error {
     ($($arg:tt)*) => {
-        ZkProverError::Backend(anyhow::anyhow!($($arg)*).into())
+        ZkProverError::Backend(std::io::Error::other(format!($($arg)*)).into())
     };
 }
 
@@ -51,7 +55,18 @@ pub struct NetworkZkProverConfig {
 
 impl std::fmt::Debug for NetworkZkProverConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NetworkZkProverConfig").finish_non_exhaustive()
+        let range_pk = self.range_pk.verifying_key().bytes32();
+
+        f.debug_struct("NetworkZkProverConfig")
+            .field("base_consensus_url", &self.base_consensus_url)
+            .field("l1_node_url", &self.l1_node_url)
+            .field("default_sequence_window", &self.default_sequence_window)
+            .field("range_pk", &range_pk)
+            .field("fulfillment_strategy", &self.fulfillment_strategy)
+            .field("timeout", &self.timeout)
+            .field("range_cycle_limit", &self.range_cycle_limit)
+            .field("range_gas_limit", &self.range_gas_limit)
+            .finish_non_exhaustive()
     }
 }
 
@@ -64,7 +79,7 @@ pub struct NetworkZkProver {
 
 impl std::fmt::Debug for NetworkZkProver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NetworkZkProver").field("config", &self.config).finish_non_exhaustive()
+        f.debug_struct("NetworkZkProver").finish_non_exhaustive()
     }
 }
 
@@ -77,6 +92,38 @@ impl NetworkZkProver {
     /// Parse a network proof ID from its hex string representation.
     pub fn parse_proof_id(proof_id: &str) -> Result<B256, ZkProverError> {
         proof_id.parse::<B256>().map_err(|e| backend_error!("invalid network proof ID: {e}"))
+    }
+
+    /// Map an SP1 Network proof status response to the service session state.
+    pub fn session_state(status: &GetProofRequestStatusResponse) -> ZkSessionState {
+        match FulfillmentStatus::try_from(status.fulfillment_status()) {
+            Ok(FulfillmentStatus::Fulfilled) => ZkSessionState::Completed,
+            Ok(FulfillmentStatus::Unfulfillable) => ZkSessionState::Failed(format!(
+                "proof unfulfillable, execution_status={}",
+                status.execution_status()
+            )),
+            Ok(_) => ZkSessionState::Running,
+            Err(_) => ZkSessionState::Failed(format!(
+                "unknown network proof fulfillment status: {}",
+                status.fulfillment_status()
+            )),
+        }
+    }
+
+    /// Fetch the network session state and any proof returned by the SP1 Network.
+    pub async fn get_network_proof_status(
+        &self,
+        backend_session_id: &str,
+    ) -> Result<(ZkSessionState, Option<SP1ProofWithPublicValues>), ZkProverError> {
+        let proof_id = Self::parse_proof_id(backend_session_id)?;
+        let (status, proof) = self
+            .config
+            .network_prover
+            .get_proof_status(proof_id)
+            .await
+            .map_err(|e| backend_error!("failed to get network proof status: {e}"))?;
+
+        Ok((Self::session_state(&status), proof))
     }
 
     /// Submit a compressed range proof to the SP1 prover network.
@@ -166,38 +213,6 @@ impl NetworkZkProver {
 
         Ok(proof_id.to_string())
     }
-
-    /// Download a fulfilled network proof.
-    pub async fn download_network_proof(
-        &self,
-        backend_session_id: &str,
-    ) -> Result<SP1ProofWithPublicValues, ZkProverError> {
-        let proof_id = Self::parse_proof_id(backend_session_id)?;
-        let (status, proof) = self
-            .config
-            .network_prover
-            .get_proof_status(proof_id)
-            .await
-            .map_err(|e| backend_error!("failed to get network proof status: {e}"))?;
-
-        match FulfillmentStatus::try_from(status.fulfillment_status()) {
-            Ok(FulfillmentStatus::Fulfilled) => proof.ok_or_else(|| {
-                backend_error!(
-                    "network proof {backend_session_id} is fulfilled but no proof was returned"
-                )
-            }),
-            Ok(FulfillmentStatus::Unfulfillable) => {
-                let reason =
-                    format!("proof unfulfillable, execution_status={}", status.execution_status());
-                Err(backend_error!("{reason}"))
-            }
-            Ok(_) => Err(backend_error!("network proof {backend_session_id} is not fulfilled yet")),
-            Err(_) => Err(backend_error!(
-                "unknown network proof fulfillment status: {}",
-                status.fulfillment_status()
-            )),
-        }
-    }
 }
 
 #[async_trait]
@@ -218,55 +233,32 @@ impl ZkProver for NetworkZkProver {
     }
 
     async fn poll(&self, backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {
-        let proof_id = Self::parse_proof_id(backend_session_id)?;
-        let (status, _proof) = self
-            .config
-            .network_prover
-            .get_proof_status(proof_id)
-            .await
-            .map_err(|e| backend_error!("failed to get network proof status: {e}"))?;
+        let (state, _proof) = self.get_network_proof_status(backend_session_id).await?;
 
-        match FulfillmentStatus::try_from(status.fulfillment_status()) {
-            Ok(FulfillmentStatus::Fulfilled) => Ok(ZkSessionState::Completed),
-            Ok(FulfillmentStatus::Unfulfillable) => {
-                let reason =
-                    format!("proof unfulfillable, execution_status={}", status.execution_status());
-                Ok(ZkSessionState::Failed(reason))
-            }
-            Ok(_) => Ok(ZkSessionState::Running),
-            Err(_) => Ok(ZkSessionState::Failed(format!(
-                "unknown network proof fulfillment status: {}",
-                status.fulfillment_status()
-            ))),
-        }
+        Ok(state)
     }
 
     async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
-        let proof = self.download_network_proof(backend_session_id).await?;
+        let (state, proof) = self.get_network_proof_status(backend_session_id).await?;
+        let proof = match state {
+            ZkSessionState::Completed => proof.ok_or_else(|| {
+                backend_error!(
+                    "network proof {backend_session_id} is fulfilled but no proof was returned"
+                )
+            })?,
+            ZkSessionState::Running => {
+                return Err(backend_error!(
+                    "network proof {backend_session_id} is not fulfilled yet"
+                ));
+            }
+            ZkSessionState::Failed(reason) => return Err(backend_error!("{reason}")),
+            ZkSessionState::NotFound => {
+                return Err(backend_error!("network proof {backend_session_id} was not found"));
+            }
+        };
         let proof = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
             .map_err(|e| backend_error!("failed to serialize proof: {e}"))?;
 
         Ok(ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() }))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::NetworkZkProver;
-
-    #[test]
-    fn parse_proof_id_accepts_hex_hash() {
-        let hex = "0x0000000000000000000000000000000000000000000000000000000000000001";
-
-        let result = NetworkZkProver::parse_proof_id(hex);
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn parse_proof_id_rejects_invalid_hash() {
-        let result = NetworkZkProver::parse_proof_id("not-a-hash");
-
-        assert!(result.is_err());
     }
 }

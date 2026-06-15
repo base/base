@@ -30,7 +30,6 @@ sp1-sdk = { workspace = true, features = ["network"] }
 async-trait.workspace = true
 
 # error handling
-anyhow.workspace = true
 thiserror.workspace = true
 
 # serialization
