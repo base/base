@@ -613,7 +613,7 @@ struct SystemConfigRpcResponse {
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
-async fn fetch_rollup_config_from_rpc(l2_eth_url: &str) -> eyre::Result<RollupConfigRpcResponse> {
+async fn fetch_rollup_config_from_rpc(cl_url: &str) -> eyre::Result<RollupConfigRpcResponse> {
     let provider = ProviderBuilder::new()
         .connect(l2_eth_url)
         .await
