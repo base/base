@@ -43,6 +43,32 @@ fn sign_tx_with_key_pair(key_pair: Keypair, tx: Transaction) -> TransactionSigne
     tx.into_signed(sig).into()
 }
 
+#[cfg(feature = "metrics")]
+fn clone_storage(
+    storage: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
+) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    storage.clone()
+}
+
+#[cfg(not(feature = "metrics"))]
+fn clone_storage(
+    storage: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
+) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    Arc::clone(storage)
+}
+
+#[cfg(feature = "metrics")]
+fn wrap_storage(storage: Arc<MdbxProofsStorage>) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    storage.into()
+}
+
+#[cfg(not(feature = "metrics"))]
+const fn wrap_storage(
+    storage: Arc<MdbxProofsStorage>,
+) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    storage
+}
+
 /// Specification for a transaction within a block
 #[derive(Debug, Clone)]
 struct TxSpec {
@@ -254,7 +280,7 @@ where
     {
         let provider = provider_factory.db_ref();
         let tx = provider.tx()?;
-        let initialization_job = InitializationJob::new(Arc::clone(&storage), tx);
+        let initialization_job = InitializationJob::new(clone_storage(&storage), tx);
         initialization_job.run(last_block_number, last_block_hash)?;
     }
 
@@ -325,14 +351,15 @@ fn test_execute_and_store_block_updates() {
         vec![BlockSpec::new(vec![TxSpec::transfer(recipient, U256::from(1))])],
     );
 
-    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, storage).unwrap();
+    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, wrap_storage(storage))
+        .unwrap();
 }
 
 #[test]
 fn test_execute_and_store_block_updates_missing_parent_block() {
     let dir = TempDir::new().unwrap();
     let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        wrap_storage(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -351,7 +378,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        Arc::clone(&storage),
+        clone_storage(&storage),
     )
     .unwrap();
 
@@ -386,7 +413,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
 fn test_execute_and_store_block_updates_state_root_mismatch() {
     let dir = TempDir::new().unwrap();
     let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+        wrap_storage(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -408,7 +435,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        Arc::clone(&storage),
+        clone_storage(&storage),
     )
     .unwrap();
 
@@ -480,7 +507,8 @@ fn test_multiple_blocks_before_and_after_initialization() {
         ],
     );
 
-    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, storage).unwrap();
+    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, wrap_storage(storage))
+        .unwrap();
 }
 
 /// Test with blocks containing multiple transactions
@@ -511,5 +539,6 @@ fn test_blocks_with_multiple_transactions() {
         ])],
     );
 
-    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, storage).unwrap();
+    run_test_scenario(scenario, provider_factory, chain_spec, key_pair, wrap_storage(storage))
+        .unwrap();
 }
