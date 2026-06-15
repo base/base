@@ -124,7 +124,7 @@ impl AccountConfigurationStorage<'_> {
 /// first, into a single 32-byte slot:
 ///
 /// ```text
-/// bytes (big-endian):  [0..4) policyType+expiry hi | [4] policyType | [5..11) expiry | [11] scope | [12..32) authenticator
+/// bytes (big-endian):  [0..4) unused | [4] policyType | [5..11) expiry | [11] scope | [12..32) authenticator
 /// bits  (LSB-first):   authenticator 0..160 | scope 160..168 | expiry 168..216 | policyType 216..224
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

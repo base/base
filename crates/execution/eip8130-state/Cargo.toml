@@ -32,6 +32,7 @@ base-precompile-storage = { workspace = true, features = ["test-utils"] }
 default = [ "std" ]
 std = [
 	"alloy-primitives/std",
+	"base-common-consensus/std",
 	"base-precompile-storage/std",
 	"revm/std",
 ]
