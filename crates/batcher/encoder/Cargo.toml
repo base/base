@@ -34,6 +34,10 @@ alloy-consensus = { workspace = true, features = ["std"] }
 name = "da_backlog"
 harness = false
 
+[[bench]]
+name = "step_throughput"
+harness = false
+
 [features]
 clap = [ "dep:clap" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

@@ -36,6 +36,11 @@ pub struct BatchEncoder {
     l1_head: u64,
     /// L2 blocks waiting to be encoded. Pruned when all their frames are confirmed.
     blocks: VecDeque<BaseBlock>,
+    /// Pre-computed DA backlog bytes for each block in `blocks`, in parallel order.
+    ///
+    /// Populated once in `add_block()` and consumed in `step()`, avoiding a second
+    /// per-block scan of `block_da_backlog_bytes` on the encoding hot path.
+    block_backlog_bytes: VecDeque<u64>,
     /// Cached byte size of the DA backlog represented by unencoded queued blocks.
     ///
     /// Updated eagerly when blocks are added, encoded, or discarded so
@@ -81,6 +86,7 @@ impl fmt::Debug for BatchEncoder {
         f.debug_struct("BatchEncoder")
             .field("l1_head", &self.l1_head)
             .field("blocks_len", &self.blocks.len())
+            .field("block_backlog_bytes_len", &self.block_backlog_bytes.len())
             .field("da_backlog_bytes", &self.da_backlog_bytes)
             .field("block_cursor", &self.block_cursor)
             .field("tip", &self.tip)
@@ -108,6 +114,7 @@ impl BatchEncoder {
             config,
             l1_head: 0,
             blocks: VecDeque::new(),
+            block_backlog_bytes: VecDeque::new(),
             da_backlog_bytes: 0,
             block_cursor: 0,
             tip: B256::ZERO,
@@ -382,6 +389,7 @@ impl BatchPipeline for BatchEncoder {
         self.tip = hash;
         self.da_backlog_bytes += backlog_bytes;
         self.blocks.push_back(block);
+        self.block_backlog_bytes.push_back(backlog_bytes);
         BatcherMetrics::pending_blocks().increment(1.0);
 
         debug!(block = %number, pending_blocks = %self.blocks.len(), "block added to encoder queue");
@@ -402,7 +410,7 @@ impl BatchPipeline for BatchEncoder {
 
         // Get the block at the cursor.
         let block = &self.blocks[self.block_cursor];
-        let block_da_backlog_bytes = Self::block_da_backlog_bytes(block);
+        let block_da_backlog_bytes = self.block_backlog_bytes[self.block_cursor];
 
         // Convert block to a SingleBatch. Failure here is fatal: skipping the block
         // would produce a gap in the L2 block sequence submitted to L1.
@@ -627,6 +635,7 @@ impl BatchPipeline for BatchEncoder {
             let prune_count = block_range.end;
             if prune_count > 0 {
                 self.blocks.drain(..prune_count);
+                self.block_backlog_bytes.drain(..prune_count);
                 self.block_cursor = self.block_cursor.saturating_sub(prune_count);
                 BatcherMetrics::pending_blocks().decrement(prune_count as f64);
 
@@ -699,6 +708,7 @@ impl BatchPipeline for BatchEncoder {
             "resetting encoder pipeline (reorg or explicit reset)"
         );
         self.blocks.clear();
+        self.block_backlog_bytes.clear();
         self.da_backlog_bytes = 0;
         self.block_cursor = 0;
         self.tip = B256::ZERO;
@@ -737,6 +747,7 @@ impl BatchPipeline for BatchEncoder {
         debug!(prune_count, safe_l2_number, "pruning safe blocks from input queue");
 
         self.blocks.drain(..prune_count);
+        self.block_backlog_bytes.drain(..prune_count);
         self.block_cursor -= prune_count;
         BatcherMetrics::pending_blocks().decrement(prune_count as f64);
 
