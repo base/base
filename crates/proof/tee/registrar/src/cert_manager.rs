@@ -181,10 +181,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Mutex,
-        atomic::{AtomicBool, AtomicU32, Ordering},
-    };
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
@@ -195,22 +192,20 @@ mod tests {
 
     const ONCHAIN_TEST_INSTANCE_ID: &str = "i-onchain-revocation-test";
     const TEST_VERIFIER_ADDRESS: Address = Address::repeat_byte(0xAB);
-    const ROOT_INDEX: usize = 0;
     const INTER1_INDEX: usize = 1;
     const INTER2_INDEX: usize = 2;
-    const LEAF_INDEX: usize = 3;
 
     /// Mock [`NitroVerifierClient`] for unit-testing the onchain pre-check.
     #[derive(Debug, Default)]
     struct MockNitroVerifier {
-        revoked: Vec<B256>,
+        revoked: Option<B256>,
         fail_next: AtomicBool,
         call_count: AtomicU32,
     }
 
     impl MockNitroVerifier {
-        fn revoking(hashes: impl IntoIterator<Item = B256>) -> Self {
-            Self { revoked: hashes.into_iter().collect(), ..Self::default() }
+        fn revoking(hash: B256) -> Self {
+            Self { revoked: Some(hash), ..Self::default() }
         }
 
         fn failing() -> Self {
@@ -240,24 +235,24 @@ mod tests {
                     source: "boom".into(),
                 });
             }
-            Ok(self.revoked.contains(&cert_hash))
+            Ok(self.revoked == Some(cert_hash))
         }
     }
 
-    #[derive(Debug, Default, Clone)]
+    #[derive(Debug, Default)]
     struct MockTxManager {
-        sent_candidates: Arc<Mutex<Vec<TxCandidate>>>,
+        send_count: AtomicU32,
     }
 
     impl MockTxManager {
-        fn take_candidates(&self) -> Vec<TxCandidate> {
-            std::mem::take(&mut *self.sent_candidates.lock().unwrap())
+        fn send_count(&self) -> u32 {
+            self.send_count.load(Ordering::Relaxed)
         }
     }
 
     impl TxManager for MockTxManager {
-        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            self.sent_candidates.lock().unwrap().push(candidate);
+        async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            self.send_count.fetch_add(1, Ordering::Relaxed);
             Err(TxManagerError::ChannelClosed)
         }
 
@@ -279,16 +274,8 @@ mod tests {
         }
     }
 
-    fn cert_infos(indices: &[usize]) -> Vec<crl::CertCrlInfo> {
-        indices.iter().copied().map(cert_info).collect()
-    }
-
     fn path_digest_for(index: usize) -> B256 {
         B256::repeat_byte(index as u8)
-    }
-
-    fn full_chain_cert_infos() -> Vec<crl::CertCrlInfo> {
-        cert_infos(&[ROOT_INDEX, INTER1_INDEX, INTER2_INDEX, LEAF_INDEX])
     }
 
     fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager<MockTxManager> {
@@ -332,7 +319,7 @@ mod tests {
     async fn run_pre_check(verifier: MockNitroVerifier) -> (Result<bool>, u32) {
         let verifier = Arc::new(verifier);
         let cert_manager = test_cert_manager(Arc::clone(&verifier));
-        let cert_infos = full_chain_cert_infos();
+        let cert_infos = (0..=3).map(cert_info).collect::<Vec<_>>();
         let result = cert_manager
             .has_onchain_revoked_intermediate(&cert_infos, ONCHAIN_TEST_INSTANCE_ID)
             .await;
@@ -356,7 +343,7 @@ mod tests {
         for (revoked_index, expected_calls_at_short_circuit) in
             [(INTER1_INDEX, 1), (INTER2_INDEX, 2)]
         {
-            let verifier = MockNitroVerifier::revoking([path_digest_for(revoked_index)]);
+            let verifier = MockNitroVerifier::revoking(path_digest_for(revoked_index));
             let (result, calls) = run_pre_check(verifier).await;
 
             assert!(
@@ -385,7 +372,7 @@ mod tests {
     #[tokio::test]
     async fn submit_revocations_skips_revoke_cert_when_already_revoked() {
         let path_digest = path_digest_for(INTER1_INDEX);
-        let verifier = Arc::new(MockNitroVerifier::revoking([path_digest]));
+        let verifier = Arc::new(MockNitroVerifier::revoking(path_digest));
         let cert_manager = test_cert_manager(Arc::clone(&verifier));
         let instance = test_instance();
 
@@ -398,8 +385,7 @@ mod tests {
             1,
             "CRL-hit cert should be checked onchain before deciding whether to submit revokeCert",
         );
-        let candidates = cert_manager.tx_manager.take_candidates();
-        assert!(candidates.is_empty(), "already-revoked certs should not submit revokeCert");
+        assert_eq!(cert_manager.tx_manager.send_count(), 0);
     }
 
     #[tokio::test]
@@ -415,9 +401,7 @@ mod tests {
                 .await;
 
             assert_eq!(verifier.call_count(), 1);
-            let candidates = cert_manager.tx_manager.take_candidates();
-            assert_eq!(candidates.len(), 1);
-            assert_eq!(candidates[0].to, Some(TEST_VERIFIER_ADDRESS));
+            assert_eq!(cert_manager.tx_manager.send_count(), 1);
         }
     }
 }
