@@ -206,7 +206,6 @@ where
         if !instance.health_status.should_register() {
             let recently_launched_unhealthy = instance.health_status
                 == InstanceHealthStatus::Unhealthy
-                && !self.config.unhealthy_registration_window.is_zero()
                 && instance.launch_time.is_some_and(|lt| {
                     lt.elapsed()
                         .is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
@@ -318,7 +317,6 @@ where
         let mut resolution = DiscoveryResolution::default();
         let mut reachable_count = 0usize;
 
-        let concurrency = self.config.max_concurrency.max(1);
         let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
             let span = info_span!(
                 "resolve_instance",
@@ -332,7 +330,7 @@ where
             }
             .instrument(span)
         }))
-        .buffer_unordered(concurrency);
+        .buffer_unordered(self.config.max_concurrency.max(1));
 
         // No cancel-select around `futs.next()`: each future checks
         // cancellation cooperatively between awaits, so new work is
