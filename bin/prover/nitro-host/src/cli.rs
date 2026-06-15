@@ -196,9 +196,8 @@ impl ProverRuntimeArgs {
             rollup_config.deposit_contract_address = rpc.deposit_contract_address;
             rollup_config.l1_system_config_address = rpc.l1_system_config_address;
 
-            if let Some(ref mut sys) = rollup_config.genesis.system_config {
-                sys.batcher_address = rpc.genesis.system_config.batcher_addr;
-            }
+            rollup_config.genesis.system_config.get_or_insert_default().batcher_address =
+                rpc.genesis.system_config.batcher_addr;
         }
 
         let l1_config = base_common_chains::L1_CONFIGS
