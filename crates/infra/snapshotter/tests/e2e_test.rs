@@ -22,6 +22,10 @@ use bollard::{
 };
 use futures::StreamExt;
 use serial_test::serial;
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{body_partial_json, method},
+};
 
 mod common;
 use common::TestHarness;
@@ -74,11 +78,6 @@ impl ContainerManager for MockContainerManager {
 /// the test; dropping it tears down the server. Used to satisfy the
 /// pre-snapshot tip check without a real node.
 async fn mock_rpc_at_block(block: u64) -> wiremock::MockServer {
-    use wiremock::{
-        Mock, MockServer, ResponseTemplate,
-        matchers::{body_partial_json, method},
-    };
-
     let server = MockServer::start().await;
     let response = serde_json::json!({
         "jsonrpc": "2.0",
@@ -861,6 +860,7 @@ async fn tip_check_aborts_before_stopping_container() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "test".to_string(),
+        None,
     );
 
     let tmp = tempfile::tempdir()?;
@@ -888,6 +888,7 @@ async fn tip_check_aborts_before_stopping_container() -> Result<()> {
         s3_region: "us-east-1".to_string(),
         s3_access_key_id: None,
         s3_secret_access_key: None,
+        public_base_url: None,
     };
 
     let snapshotter =

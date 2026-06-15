@@ -1,9 +1,17 @@
 //! Pre-snapshot guard that aborts when the local EL is not at chain tip.
 
-use anyhow::{Result, bail};
-use basectl_cli::fetch_l2_block_number;
+use std::time::Duration;
+
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rpc_client::RpcClient;
+use alloy_transport_http::Http;
+use anyhow::{Context, Result, bail};
 use tracing::info;
 use url::Url;
+
+/// Per-request timeout for the block-number RPC calls. Kept short so a wedged
+/// or unreachable RPC fails the pre-check fast rather than hanging the cron job.
+const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Outcome of comparing the local EL head against the reference tip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,8 +45,10 @@ impl TipCheck {
         tip_reference_rpc: &Url,
         tolerance: u64,
     ) -> Result<()> {
-        let (local_result, reference_result) =
-            tokio::join!(fetch_l2_block_number(el_rpc), fetch_l2_block_number(tip_reference_rpc),);
+        let (local_result, reference_result) = tokio::join!(
+            Self::fetch_block_number(el_rpc),
+            Self::fetch_block_number(tip_reference_rpc)
+        );
 
         let local = local_result?;
         let reference = reference_result?;
@@ -75,6 +85,28 @@ impl TipCheck {
         } else {
             TipStatus::AtTip { delta_blocks: delta }
         }
+    }
+
+    /// Reads the latest block height from an EL RPC via `eth_blockNumber`.
+    ///
+    /// Uses a stock alloy provider with no network-specific block typing: the
+    /// height is a plain scalar, so we avoid pulling in a chain-specific
+    /// network type just to read a number. The HTTP client carries
+    /// `RPC_TIMEOUT` so an unreachable endpoint fails fast.
+    /// TODO: refactor this into a shared common crate
+    async fn fetch_block_number(rpc: &Url) -> Result<u64> {
+        let http_client = reqwest::Client::builder()
+            .timeout(RPC_TIMEOUT)
+            .build()
+            .with_context(|| format!("building HTTP client for {rpc}"))?;
+        let transport = Http::with_client(http_client, rpc.clone());
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .connect_client(RpcClient::new(transport, false));
+        provider
+            .get_block_number()
+            .await
+            .with_context(|| format!("fetching eth_blockNumber from {rpc}"))
     }
 }
 

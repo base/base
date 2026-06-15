@@ -11,7 +11,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-basectl-cli = { workspace = true }
 tar = { workspace = true }
 url = { workspace = true }
 zstd = { workspace = true }
@@ -20,16 +19,19 @@ blake3 = { workspace = true }
 rayon = { workspace = true }
 bollard = { workspace = true }
 futures = { workspace = true }
-reth-cli-commands = { workspace = true }
+reqwest = { workspace = true }
 tracing = { workspace = true }
+reth-cli-commands = { workspace = true }
+alloy-provider = { workspace = true }
+alloy-rpc-client = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
+alloy-transport-http = { workspace = true }
 tokio = { workspace = true, features = ["rt", "fs"] }
 clap = { workspace = true, features = ["derive", "env"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
-url = { workspace = true }
 futures = { workspace = true }
 wiremock = { workspace = true }
 tempfile = { workspace = true }
