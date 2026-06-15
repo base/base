@@ -16,14 +16,16 @@ use tracing::{Instrument, Span, info_span, trace, warn};
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
+type BaseEthApiEvm<N, Rpc> = <BaseEthApi<N, Rpc> as RpcNodeCore>::Evm;
+
 impl<N, Rpc> EthCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm> + From<ProviderError>,
+    BaseEthApiError: FromEvmError<BaseEthApiEvm<N, Rpc>> + From<ProviderError>,
     Rpc: RpcConvert<
             Primitives = N::Primitives,
             Error = BaseEthApiError,
-            Evm = <BaseEthApi<N, Rpc> as RpcNodeCore>::Evm,
+            Evm = BaseEthApiEvm<N, Rpc>,
         >,
 {
     fn call(
@@ -39,11 +41,11 @@ where
 impl<N, Rpc> EstimateCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm> + From<ProviderError>,
+    BaseEthApiError: FromEvmError<BaseEthApiEvm<N, Rpc>> + From<ProviderError>,
     Rpc: RpcConvert<
             Primitives = N::Primitives,
             Error = BaseEthApiError,
-            Evm = <BaseEthApi<N, Rpc> as RpcNodeCore>::Evm,
+            Evm = BaseEthApiEvm<N, Rpc>,
         >,
 {
 }
@@ -51,11 +53,11 @@ where
 impl<N, Rpc> Call for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm> + From<ProviderError>,
+    BaseEthApiError: FromEvmError<BaseEthApiEvm<N, Rpc>> + From<ProviderError>,
     Rpc: RpcConvert<
             Primitives = N::Primitives,
             Error = BaseEthApiError,
-            Evm = <BaseEthApi<N, Rpc> as RpcNodeCore>::Evm,
+            Evm = BaseEthApiEvm<N, Rpc>,
         >,
 {
     #[inline]
@@ -82,11 +84,11 @@ where
 impl<N, Rpc> BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm> + From<ProviderError>,
+    BaseEthApiError: FromEvmError<BaseEthApiEvm<N, Rpc>> + From<ProviderError>,
     Rpc: RpcConvert<
             Primitives = N::Primitives,
             Error = BaseEthApiError,
-            Evm = <BaseEthApi<N, Rpc> as RpcNodeCore>::Evm,
+            Evm = BaseEthApiEvm<N, Rpc>,
         >,
     Self: reth_rpc_eth_api::EthApiTypes<Error = BaseEthApiError, RpcConvert = Rpc>,
     Self: LoadPendingBlock,
@@ -237,7 +239,9 @@ where
                     let res = info_span!(parent: &call_span, "execute_eth_call", block = ?at)
                         .in_scope(|| Call::transact(&this, &mut db, evm_env, tx_env))?;
 
-                    <BaseEthApiError as FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm>>::ensure_success(res.result)
+                    <BaseEthApiError as FromEvmError<BaseEthApiEvm<N, Rpc>>>::ensure_success(
+                        res.result,
+                    )
                 })
                 .await;
 
