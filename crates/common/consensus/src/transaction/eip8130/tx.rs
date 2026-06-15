@@ -210,6 +210,59 @@ impl TxEip8130 {
         self.rlp_header().length_with_payload()
     }
 
+    #[cfg(feature = "reth")]
+    fn compact_tail(&self) -> Vec<u8> {
+        let mut calls = Vec::with_capacity(Self::calls_encoded_length(&self.calls));
+        Self::encode_calls(&self.calls, &mut calls);
+
+        let account_changes = Bytes::from(alloy_rlp::encode(&self.account_changes));
+        let calls = Bytes::from(calls);
+        let tail_payload_length = account_changes.length() + calls.length();
+        let mut tail =
+            Vec::with_capacity(length_of_length(tail_payload_length) + tail_payload_length);
+        Header { list: true, payload_length: tail_payload_length }.encode(&mut tail);
+        account_changes.encode(&mut tail);
+        calls.encode(&mut tail);
+        tail
+    }
+
+    #[cfg(feature = "reth")]
+    fn decode_compact_tail(tail: &[u8]) -> (Vec<AccountChange>, Vec<Vec<Call>>) {
+        let mut tail = tail;
+        let header = Header::decode(&mut tail)
+            .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 tail: {err}"));
+        assert!(header.list, "compact-encoded EIP-8130 tail must be an RLP list");
+        let started = tail.len();
+
+        let account_changes = Bytes::decode(&mut tail).unwrap_or_else(|err| {
+            panic!("invalid compact-encoded EIP-8130 account changes: {err}")
+        });
+        let calls = Bytes::decode(&mut tail)
+            .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
+        let consumed = started - tail.len();
+        assert_eq!(
+            consumed, header.payload_length,
+            "compact-encoded EIP-8130 tail length mismatch"
+        );
+
+        let mut account_changes_buf = account_changes.as_ref();
+        let account_changes = Vec::<AccountChange>::decode(&mut account_changes_buf)
+            .unwrap_or_else(|err| {
+                panic!("invalid compact-encoded EIP-8130 account changes: {err}")
+            });
+        assert!(
+            account_changes_buf.is_empty(),
+            "compact-encoded EIP-8130 account changes left trailing bytes"
+        );
+
+        let mut calls_buf = calls.as_ref();
+        let calls = Self::decode_calls(&mut calls_buf)
+            .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
+        assert!(calls_buf.is_empty(), "compact-encoded EIP-8130 calls left trailing bytes");
+
+        (account_changes, calls)
+    }
+
     /// Signing-hash preimage for the sender, per [EIP-8130].
     ///
     /// `keccak256(EIP8130_TX_TYPE || rlp([...unsigned body fields...]))`.
@@ -302,58 +355,12 @@ struct CompactTxEip8130Head {
 }
 
 #[cfg(feature = "reth")]
-fn encode_compact_tail(tx: &TxEip8130) -> Vec<u8> {
-    let mut calls = Vec::with_capacity(TxEip8130::calls_encoded_length(&tx.calls));
-    TxEip8130::encode_calls(&tx.calls, &mut calls);
-
-    let account_changes = Bytes::from(alloy_rlp::encode(&tx.account_changes));
-    let calls = Bytes::from(calls);
-    let tail_payload_length = account_changes.length() + calls.length();
-    let mut tail = Vec::with_capacity(length_of_length(tail_payload_length) + tail_payload_length);
-    Header { list: true, payload_length: tail_payload_length }.encode(&mut tail);
-    account_changes.encode(&mut tail);
-    calls.encode(&mut tail);
-    tail
-}
-
-#[cfg(feature = "reth")]
-fn decode_compact_tail(tail: &[u8]) -> (Vec<AccountChange>, Vec<Vec<Call>>) {
-    let mut tail = tail;
-    let header = Header::decode(&mut tail)
-        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 tail: {err}"));
-    assert!(header.list, "compact-encoded EIP-8130 tail must be an RLP list");
-    let started = tail.len();
-
-    let account_changes = Bytes::decode(&mut tail)
-        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 account changes: {err}"));
-    let calls = Bytes::decode(&mut tail)
-        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
-    let consumed = started - tail.len();
-    assert_eq!(consumed, header.payload_length, "compact-encoded EIP-8130 tail length mismatch");
-
-    let mut account_changes_buf = account_changes.as_ref();
-    let account_changes = Vec::<AccountChange>::decode(&mut account_changes_buf)
-        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 account changes: {err}"));
-    assert!(
-        account_changes_buf.is_empty(),
-        "compact-encoded EIP-8130 account changes left trailing bytes"
-    );
-
-    let mut calls_buf = calls.as_ref();
-    let calls = TxEip8130::decode_calls(&mut calls_buf)
-        .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
-    assert!(calls_buf.is_empty(), "compact-encoded EIP-8130 calls left trailing bytes");
-
-    (account_changes, calls)
-}
-
-#[cfg(feature = "reth")]
 impl Compact for TxEip8130 {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: BufMut + AsMut<[u8]>,
     {
-        let tail = encode_compact_tail(self);
+        let tail = self.compact_tail();
         let head = CompactTxEip8130Head {
             chain_id: self.chain_id,
             sender: self.sender,
@@ -394,7 +401,7 @@ impl Compact for TxEip8130 {
             "compact-encoded EIP-8130 tail shorter than declared length"
         );
         let (tail, buf) = buf.split_at(tail_len);
-        let (account_changes, calls) = decode_compact_tail(tail);
+        let (account_changes, calls) = Self::decode_compact_tail(tail);
 
         (
             Self {
@@ -580,6 +587,22 @@ mod tests {
     #[test]
     fn compact_roundtrip() {
         let tx = sample_tx();
+        let mut buf = Vec::new();
+        let len = tx.to_compact(&mut buf);
+        let (decoded, remaining) = TxEip8130::from_compact(&buf, len);
+
+        assert_eq!(decoded, tx);
+        assert!(remaining.is_empty());
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_roundtrip_eoa_sender_with_explicit_payer() {
+        let tx = TxEip8130 {
+            sender: None,
+            payer: Some(address!("0x00000000000000000000000000000000000000dd")),
+            ..sample_tx()
+        };
         let mut buf = Vec::new();
         let len = tx.to_compact(&mut buf);
         let (decoded, remaining) = TxEip8130::from_compact(&buf, len);

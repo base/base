@@ -254,6 +254,9 @@ impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
             }
             OpTxType::Eip8130 => {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
+                // EIP-8130 carries sender_auth / payer_auth inside the signed
+                // payload itself, so the outer envelope signature is only a
+                // placeholder mandated by the trait contract.
                 let _ = signature;
                 (Self::Eip8130(tx), buf)
             }
