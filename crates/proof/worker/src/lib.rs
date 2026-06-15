@@ -18,3 +18,6 @@ pub use job_discovery::{
     DEFAULT_JOB_DISCOVERY_POLL_INTERVAL, JobClaimFilter, JobDiscovery, JobDiscoveryConfig,
     JobDiscoveryPollOutcome, JobDiscoveryTask, MIN_JOB_DISCOVERY_POLL_INTERVAL, ZkProofClaimType,
 };
+
+mod proof_submitter;
+pub use proof_submitter::{ProofSubmitter, ProofSubmitterError};

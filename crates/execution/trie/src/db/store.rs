@@ -674,9 +674,12 @@ impl BaseProofsStore for MdbxProofsStorage {
         = MdbxAccountCursor<Dup<'tx, HashedAccountHistory>>
     where
         Self: 'tx;
-    type Tx = <DatabaseEnv as Database>::TX;
+    type Tx<'tx>
+        = <DatabaseEnv as Database>::TX
+    where
+        Self: 'tx;
 
-    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
+    fn ro_tx<'tx>(&'tx self) -> BaseProofsStorageResult<Self::Tx<'tx>> {
         Ok(self.env.tx()?)
     }
 
@@ -689,7 +692,7 @@ impl BaseProofsStore for MdbxProofsStorage {
     }
 
     fn storage_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
@@ -700,7 +703,7 @@ impl BaseProofsStore for MdbxProofsStorage {
     }
 
     fn account_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
         let tx = self.env.tx()?;
@@ -710,7 +713,7 @@ impl BaseProofsStore for MdbxProofsStorage {
     }
 
     fn storage_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
@@ -721,7 +724,7 @@ impl BaseProofsStore for MdbxProofsStorage {
     }
 
     fn account_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let tx = self.env.tx()?;
@@ -730,54 +733,58 @@ impl BaseProofsStore for MdbxProofsStorage {
         Ok(MdbxAccountCursor::new(cursor, max_block_number))
     }
 
-    fn storage_trie_cursor_with_tx<'tx>(
+    fn storage_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         let cursor = tx.cursor_dup_read::<StorageTrieHistory>()?;
 
         Ok(MdbxTrieCursor::new(cursor, max_block_number, Some(hashed_address)))
     }
 
-    fn account_trie_cursor_with_tx<'tx>(
+    fn account_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         let cursor = tx.cursor_dup_read::<AccountTrieHistory>()?;
 
         Ok(MdbxTrieCursor::new(cursor, max_block_number, None))
     }
 
-    fn storage_hashed_cursor_with_tx<'tx>(
+    fn storage_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         let cursor = tx.cursor_dup_read::<HashedStorageHistory>()?;
 
         Ok(MdbxStorageCursor::new(cursor, max_block_number, hashed_address))
     }
 
-    fn account_hashed_cursor_with_tx<'tx>(
+    fn account_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         let cursor = tx.cursor_dup_read::<HashedAccountHistory>()?;
 
@@ -1112,7 +1119,7 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
         account_nodes.sort_by_key(|(key, _)| *key);
 
         self.env.update(|tx| {
-            self.persist_history_batch(tx, 0, account_nodes.into_iter(), true)?;
+            self.persist_history_batch(tx, 0, account_nodes, true)?;
             Ok(())
         })?
     }
@@ -1153,7 +1160,7 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
         accounts.sort_by_key(|(key, _)| *key);
 
         self.env.update(|tx| {
-            self.persist_history_batch(tx, 0, accounts.into_iter(), true)?;
+            self.persist_history_batch(tx, 0, accounts, true)?;
             Ok(())
         })?
     }

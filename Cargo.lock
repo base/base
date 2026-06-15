@@ -4495,6 +4495,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-eip8130"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-common-consensus",
+ "base64 0.22.1",
+ "k256",
+ "p256",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "base-execution-evm"
 version = "0.0.0"
 dependencies = [
@@ -5864,6 +5878,7 @@ dependencies = [
  "async-trait",
  "base-prover-service-client",
  "base-prover-service-protocol",
+ "base-retry",
  "chrono",
  "thiserror 2.0.18",
  "tokio",
@@ -5875,10 +5890,17 @@ dependencies = [
 name = "base-proof-zk-backend"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "async-trait",
+ "base-l1-head",
+ "base-proof-succinct-ethereum-host-utils",
+ "base-proof-succinct-host-utils",
  "base-proof-zk-host",
  "base-prover-service-protocol",
+ "sp1-sdk",
+ "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

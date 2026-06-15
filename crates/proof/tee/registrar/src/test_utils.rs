@@ -1,7 +1,112 @@
 //! Shared test fixtures for the registrar crate.
 //!
-//! Real AWS Nitro certificate DER hex strings, captured from a production
-//! attestation document and shared between `crl::tests` and `driver::tests`.
+//! Includes common registrar test keys, instances, addresses, and real AWS
+//! Nitro certificate DER hex strings captured from a production attestation
+//! document.
+
+use std::time::SystemTime;
+
+use alloy_primitives::{Address, B256};
+use async_trait::async_trait;
+use base_tx_manager::{SendHandle, TxCandidate, TxManager};
+use hex_literal::hex;
+use k256::ecdsa::SigningKey;
+
+use crate::{InstanceHealthStatus, NitroVerifierClient, ProverClient, ProverInstance, Result};
+
+/// Well-known Hardhat / Anvil account #0 private key.
+pub const HARDHAT_KEY_0: [u8; 32] =
+    hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+/// Hardhat / Anvil account #1 private key.
+pub const HARDHAT_KEY_1: [u8; 32] =
+    hex!("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+
+/// Hardhat / Anvil account #2 private key.
+pub const HARDHAT_KEY_2: [u8; 32] =
+    hex!("5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
+
+/// Hardhat / Anvil account #3 private key.
+pub const HARDHAT_KEY_3: [u8; 32] =
+    hex!("7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6");
+
+/// Prover instance endpoint #1 used in registrar tests.
+pub const EP1: &str = "10.0.0.1:8000";
+
+/// Prover instance endpoint #2 used in registrar tests.
+pub const EP2: &str = "10.0.0.2:8000";
+
+/// Prover instance endpoint #3 used in registrar tests.
+pub const EP3: &str = "10.0.0.3:8000";
+
+/// Prover instance endpoint #4 used in registrar tests.
+pub const EP4: &str = "10.0.0.4:8000";
+
+/// Placeholder registry contract address used in registrar test configs.
+pub const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
+
+/// Tx manager stub for tests that only need to satisfy generic bounds.
+#[derive(Debug, Clone, Copy)]
+pub struct NoopTxManager;
+
+impl TxManager for NoopTxManager {
+    async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
+        unreachable!("NoopTxManager does not submit transactions")
+    }
+
+    async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+        unreachable!("NoopTxManager does not submit async transactions")
+    }
+
+    fn sender_address(&self) -> Address {
+        Address::ZERO
+    }
+}
+
+/// Nitro verifier stub for tests that do not exercise revocation checks.
+#[derive(Debug)]
+pub struct NoopNitroVerifier;
+
+#[async_trait]
+impl NitroVerifierClient for NoopNitroVerifier {
+    fn address(&self) -> Address {
+        Address::ZERO
+    }
+
+    async fn is_revoked(&self, _cert_hash: B256) -> Result<bool> {
+        Ok(false)
+    }
+}
+
+/// Derives the uncompressed 65-byte public key from a private key.
+pub fn public_key_from_private(private_key: &[u8; 32]) -> Vec<u8> {
+    let signing_key = SigningKey::from_slice(private_key).unwrap();
+    signing_key.verifying_key().to_encoded_point(false).as_bytes().to_vec()
+}
+
+/// Derives the signer address for a private key.
+pub fn signer_from_private_key(private_key: &[u8; 32]) -> Address {
+    ProverClient::derive_address(&public_key_from_private(private_key)).unwrap()
+}
+
+/// Builds a test [`ProverInstance`] with a deterministic instance id.
+pub fn prover_instance(
+    host_port: &str,
+    health_status: InstanceHealthStatus,
+    launch_time: Option<SystemTime>,
+) -> ProverInstance {
+    ProverInstance {
+        instance_id: format!("i-{host_port}"),
+        endpoint: url::Url::parse(&format!("http://{host_port}")).unwrap(),
+        health_status,
+        launch_time,
+    }
+}
+
+/// Builds a healthy test [`ProverInstance`] with no launch time.
+pub fn healthy_prover_instance(host_port: &str) -> ProverInstance {
+    prover_instance(host_port, InstanceHealthStatus::Healthy, None)
+}
 
 /// Real AWS Nitro root CA (self-signed, P384). Validity: 2019-10-28 to
 /// 2049-10-28.

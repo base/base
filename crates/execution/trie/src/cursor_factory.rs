@@ -26,26 +26,27 @@ use crate::{
 /// Holds a borrow of the transaction so every cursor allocation reuses the same MDBX
 /// reader slot. See [`BaseProofsStore::Tx`] for the underlying contention story.
 #[derive(Debug, Clone)]
-pub struct BaseProofsTrieCursorFactory<'tx, S: BaseProofsStore> {
-    storage: &'tx BaseProofsStorage<S>,
-    tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx,
+pub struct BaseProofsTrieCursorFactory<'tx, 'db, S: BaseProofsStore> {
+    storage: &'db BaseProofsStorage<S>,
+    tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx<'db>,
     block_number: u64,
 }
 
-impl<'tx, S: BaseProofsStore> BaseProofsTrieCursorFactory<'tx, S> {
+impl<'tx, 'db, S: BaseProofsStore> BaseProofsTrieCursorFactory<'tx, 'db, S> {
     /// Initializes a request-scoped trie cursor factory bound to `tx`.
     pub const fn new(
-        storage: &'tx BaseProofsStorage<S>,
-        tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx,
+        storage: &'db BaseProofsStorage<S>,
+        tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx<'db>,
         block_number: u64,
     ) -> Self {
         Self { storage, tx, block_number }
     }
 }
 
-impl<'tx, S> TrieCursorFactory for BaseProofsTrieCursorFactory<'tx, S>
+impl<'tx, 'db, S> TrieCursorFactory for BaseProofsTrieCursorFactory<'tx, 'db, S>
 where
-    for<'a> S: BaseProofsStore + 'tx,
+    for<'a> S: BaseProofsStore + 'db,
+    'db: 'tx,
 {
     type AccountTrieCursor<'a>
         = BaseProofsTrieCursor<S::AccountTrieCursor<'a>>
@@ -80,26 +81,27 @@ where
 ///
 /// Mirror of [`BaseProofsTrieCursorFactory`] for the hashed account/storage tries.
 #[derive(Debug, Clone)]
-pub struct BaseProofsHashedAccountCursorFactory<'tx, S: BaseProofsStore> {
-    storage: &'tx BaseProofsStorage<S>,
-    tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx,
+pub struct BaseProofsHashedAccountCursorFactory<'tx, 'db, S: BaseProofsStore> {
+    storage: &'db BaseProofsStorage<S>,
+    tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx<'db>,
     block_number: u64,
 }
 
-impl<'tx, S: BaseProofsStore> BaseProofsHashedAccountCursorFactory<'tx, S> {
+impl<'tx, 'db, S: BaseProofsStore> BaseProofsHashedAccountCursorFactory<'tx, 'db, S> {
     /// Initializes a request-scoped hashed cursor factory bound to `tx`.
     pub const fn new(
-        storage: &'tx BaseProofsStorage<S>,
-        tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx,
+        storage: &'db BaseProofsStorage<S>,
+        tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx<'db>,
         block_number: u64,
     ) -> Self {
         Self { storage, tx, block_number }
     }
 }
 
-impl<'tx, S> HashedCursorFactory for BaseProofsHashedAccountCursorFactory<'tx, S>
+impl<'tx, 'db, S> HashedCursorFactory for BaseProofsHashedAccountCursorFactory<'tx, 'db, S>
 where
-    for<'a> S: BaseProofsStore + 'tx,
+    for<'a> S: BaseProofsStore + 'db,
+    'db: 'tx,
 {
     type AccountCursor<'a>
         = BaseProofsHashedAccountCursor<S::AccountHashedCursor<'a>>
