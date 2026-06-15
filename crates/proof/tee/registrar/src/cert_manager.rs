@@ -92,7 +92,18 @@ where
         }
 
         RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
-        self.submit_revocations_for_revoked_certs(&revoked_certs, instance).await;
+        let verifier_address = self.nitro_verifier.address();
+        let cert_revoker = CertRevoker::new(verifier_address, &self.tx_manager);
+
+        for revoked in &revoked_certs {
+            warn!(
+                cert_index = revoked.index,
+                path_digest = %revoked.path_digest,
+                instance = %instance.instance_id,
+                "submitting revokeCert transaction"
+            );
+            cert_revoker.revoke_cert(revoked.path_digest).await;
+        }
 
         Ok(true)
     }
@@ -128,38 +139,17 @@ where
         debug!(instance = %instance_id, "onchain revocation pre-check passed");
         Ok(false)
     }
-
-    /// Checks each CRL-hit against the onchain sentinel and submits needed revocations.
-    pub async fn submit_revocations_for_revoked_certs(
-        &self,
-        revoked_certs: &[crl::RevokedCertInfo],
-        instance: &ProverInstance,
-    ) {
-        let verifier_address = self.nitro_verifier.address();
-        let cert_revoker = CertRevoker::new(verifier_address, &self.tx_manager);
-
-        for revoked in revoked_certs {
-            warn!(
-                cert_index = revoked.index,
-                path_digest = %revoked.path_digest,
-                instance = %instance.instance_id,
-                "submitting revokeCert transaction"
-            );
-            cert_revoker.revoke_cert(revoked.path_digest).await;
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
-    use base_tx_manager::{TxCandidate, TxManagerError};
 
     use super::*;
-    use crate::test_utils::{NoopNitroVerifier, NoopTxManager};
+    use crate::test_utils::{NoopNitroVerifier, NoopTxManager, healthy_prover_instance};
 
     const ONCHAIN_TEST_INSTANCE_ID: &str = "i-onchain-revocation-test";
     const INTER1_INDEX: usize = 1;
@@ -169,7 +159,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockNitroVerifier {
         revoked: Option<B256>,
-        fail_next: AtomicBool,
+        fail: bool,
         call_count: AtomicU32,
     }
 
@@ -179,7 +169,7 @@ mod tests {
         }
 
         fn failing() -> Self {
-            Self { fail_next: AtomicBool::new(true), ..Self::default() }
+            Self { fail: true, ..Self::default() }
         }
 
         fn call_count(&self) -> u32 {
@@ -195,39 +185,13 @@ mod tests {
 
         async fn is_revoked(&self, cert_hash: B256) -> Result<bool> {
             self.call_count.fetch_add(1, Ordering::Relaxed);
-            if self.fail_next.swap(false, Ordering::Relaxed) {
+            if self.fail {
                 return Err(RegistrarError::NitroVerifierCall {
                     context: "revokedCerts(0xdeadbeef)".into(),
                     source: "boom".into(),
                 });
             }
             Ok(self.revoked == Some(cert_hash))
-        }
-    }
-
-    #[derive(Debug, Default)]
-    struct MockTxManager {
-        send_count: AtomicU32,
-    }
-
-    impl MockTxManager {
-        fn send_count(&self) -> u32 {
-            self.send_count.load(Ordering::Relaxed)
-        }
-    }
-
-    impl TxManager for MockTxManager {
-        async fn send(&self, _candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            self.send_count.fetch_add(1, Ordering::Relaxed);
-            Err(TxManagerError::ChannelClosed)
-        }
-
-        async fn send_async(&self, _candidate: TxCandidate) -> base_tx_manager::SendHandle {
-            unreachable!("submit_revocations_for_revoked_certs only uses send")
-        }
-
-        fn sender_address(&self) -> Address {
-            Address::ZERO
         }
     }
 
@@ -244,21 +208,12 @@ mod tests {
         B256::repeat_byte(index as u8)
     }
 
-    fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager<MockTxManager> {
+    fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager<NoopTxManager> {
         CertManager {
             enabled: true,
             http_client: reqwest::Client::new(),
             nitro_verifier: verifier,
-            tx_manager: MockTxManager::default(),
-        }
-    }
-
-    fn test_instance() -> ProverInstance {
-        ProverInstance {
-            instance_id: ONCHAIN_TEST_INSTANCE_ID.to_string(),
-            endpoint: "http://127.0.0.1:8000/".parse().unwrap(),
-            health_status: crate::InstanceHealthStatus::Healthy,
-            launch_time: None,
+            tx_manager: NoopTxManager,
         }
     }
 
@@ -272,8 +227,12 @@ mod tests {
         let cert_manager = CertManager::new(&config, Arc::new(NoopNitroVerifier), NoopTxManager)
             .expect("disabled cert manager still builds");
 
-        let result =
-            cert_manager.check_and_revoke_crls(b"not-an-attestation", &test_instance()).await;
+        let result = cert_manager
+            .check_and_revoke_crls(
+                b"not-an-attestation",
+                &healthy_prover_instance("127.0.0.1:8000"),
+            )
+            .await;
 
         assert!(!result.expect("disabled CRL checks must no-op"));
     }
@@ -329,23 +288,5 @@ mod tests {
             matches!(err, RegistrarError::NitroVerifierCall { .. }),
             "expected NitroVerifierCall, got: {err:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn submit_revocations_sends_crl_hits_without_rechecking_onchain() {
-        let path_digest = path_digest_for(INTER1_INDEX);
-        let verifier = Arc::new(MockNitroVerifier::default());
-        let cert_manager = test_cert_manager(Arc::clone(&verifier));
-        let instance = test_instance();
-
-        cert_manager
-            .submit_revocations_for_revoked_certs(
-                &[crl::RevokedCertInfo { index: INTER1_INDEX, path_digest }],
-                &instance,
-            )
-            .await;
-
-        assert_eq!(verifier.call_count(), 0);
-        assert_eq!(cert_manager.tx_manager.send_count(), 1);
     }
 }
