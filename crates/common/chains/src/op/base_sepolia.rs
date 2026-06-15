@@ -1,6 +1,6 @@
 //! Base Sepolia (chain ID 84532) as an OP-stack L1 parent.
 //!
-//! Privacy L3 devnet (84534) derives batches from Base Sepolia blocks, so the
+//! L3 Sepolia devnet (84534) derives batches from Base Sepolia blocks, so the
 //! nitro prover host needs an execution-layer chain config for 84532 — not
 //! Ethereum Sepolia (11155111).
 

@@ -151,8 +151,8 @@ impl ChainConfig {
     pub const ZERONET_NAME: &'static str = "base-zeronet";
     /// CLI chain name for the local Base devnet.
     pub const DEVNET_NAME: &'static str = "dev";
-    /// CLI chain name for the Base Privacy L3 devnet on Base Sepolia.
-    pub const PRIVACY_SEPOLIA_NAME: &'static str = "privacy-sepolia";
+    /// CLI chain name for the Base L3 Sepolia devnet on Base Sepolia.
+    pub const L3_SEPOLIA_NAME: &'static str = "l3-sepolia";
     /// All chain names accepted by Base chain parsers.
     pub const SUPPORTED_NAMES: &'static [&'static str] = &[
         Self::MAINNET_NAME,
@@ -160,7 +160,7 @@ impl ChainConfig {
         Self::SEPOLIA_NAME,
         Self::ZERONET_NAME,
         Self::DEVNET_NAME,
-        Self::PRIVACY_SEPOLIA_NAME,
+        Self::L3_SEPOLIA_NAME,
     ];
 
     /// Base Mainnet chain configuration.
@@ -171,8 +171,8 @@ impl ChainConfig {
     pub const DEVNET: &'static Self = Self::devnet();
     /// Base Zeronet chain configuration.
     pub const ZERONET: &'static Self = Self::zeronet();
-    /// Base Privacy L3 devnet chain configuration (parent: Base Sepolia).
-    pub const PRIVACY_SEPOLIA: &'static Self = Self::privacy_sepolia();
+    /// Base L3 Sepolia devnet chain configuration (parent: Base Sepolia).
+    pub const L3_SEPOLIA: &'static Self = Self::l3_sepolia();
 
     /// Base Mainnet chain configuration.
     pub const fn mainnet() -> &'static Self {
@@ -194,14 +194,14 @@ impl ChainConfig {
         &ZERONET
     }
 
-    /// Base Privacy L3 devnet chain configuration.
-    pub const fn privacy_sepolia() -> &'static Self {
-        &PRIVACY_SEPOLIA
+    /// Base L3 Sepolia devnet chain configuration.
+    pub const fn l3_sepolia() -> &'static Self {
+        &L3_SEPOLIA
     }
 
     /// Returns all known chain configurations, including devnet.
     pub const fn all() -> [&'static Self; 5] {
-        [&MAINNET, &SEPOLIA, &DEVNET, &ZERONET, &PRIVACY_SEPOLIA]
+        [&MAINNET, &SEPOLIA, &DEVNET, &ZERONET, &L3_SEPOLIA]
     }
 
     /// Looks up a chain config by CLI chain name.
@@ -211,7 +211,7 @@ impl ChainConfig {
             Self::SEPOLIA_NAME | Self::SEPOLIA_ALIAS => Some(Self::sepolia()),
             Self::ZERONET_NAME => Some(Self::zeronet()),
             Self::DEVNET_NAME => Some(Self::devnet()),
-            Self::PRIVACY_SEPOLIA_NAME => Some(Self::privacy_sepolia()),
+            Self::L3_SEPOLIA_NAME => Some(Self::l3_sepolia()),
             _ => None,
         }
     }
@@ -223,7 +223,7 @@ impl ChainConfig {
             84532 => Some(&SEPOLIA),
             1337 => Some(&DEVNET),
             763360 => Some(&ZERONET),
-            84534 => Some(&PRIVACY_SEPOLIA),
+            84534 => Some(&L3_SEPOLIA),
             _ => None,
         }
     }
@@ -595,13 +595,13 @@ const ZERONET: ChainConfig = ChainConfig {
     genesis_json: include_str!("../res/genesis/zeronet_base.json"),
 };
 
-/// Base Privacy L3 devnet on Base Sepolia (84532 parent).
+/// Base L3 Sepolia devnet on Base Sepolia (84532 parent).
 ///
-/// Genesis anchors and L1 contract addresses are placeholders until the privacy
-/// devnet pins a deploy-once genesis (see privacy-enclave `services.yml` TODO).
-/// Azul/beryl timestamps assume `genesis_l2_time = 0` and blocks 20/21 with
-/// 2s block time; update both when genesis is pinned.
-const PRIVACY_SEPOLIA: ChainConfig = ChainConfig {
+/// Genesis anchors and L1 contract addresses are placeholders until the L3
+/// devnet pins a deploy-once genesis. Azul/beryl timestamps assume
+/// `genesis_l2_time = 0` and blocks 20/21 with 2s block time; update both
+/// when genesis is pinned.
+const L3_SEPOLIA: ChainConfig = ChainConfig {
     chain_id: 84534,
     l1_chain_id: 84532,
 
@@ -652,7 +652,7 @@ const PRIVACY_SEPOLIA: ChainConfig = ChainConfig {
 
     bootnodes: Bootnodes::EMPTY,
 
-    genesis_json: include_str!("../res/genesis/privacy_sepolia.json"),
+    genesis_json: include_str!("../res/genesis/l3_sepolia.json"),
 };
 
 #[cfg(test)]
@@ -685,12 +685,12 @@ mod tests {
         assert_eq!(ChainConfig::SEPOLIA, ChainConfig::sepolia());
         assert_eq!(ChainConfig::DEVNET, ChainConfig::devnet());
         assert_eq!(ChainConfig::ZERONET, ChainConfig::zeronet());
-        assert_eq!(ChainConfig::PRIVACY_SEPOLIA, ChainConfig::privacy_sepolia());
+        assert_eq!(ChainConfig::L3_SEPOLIA, ChainConfig::l3_sepolia());
     }
 
     #[test]
-    fn privacy_sepolia_resolves_by_chain_id() {
-        let cfg = ChainConfig::by_chain_id(84534).expect("privacy-sepolia should resolve");
+    fn l3_sepolia_resolves_by_chain_id() {
+        let cfg = ChainConfig::by_chain_id(84534).expect("l3-sepolia should resolve");
         assert_eq!(cfg.l1_chain_id, 84532);
         assert_eq!(cfg.azul_timestamp, Some(40));
         assert_eq!(cfg.beryl_timestamp, Some(42));
