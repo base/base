@@ -130,7 +130,6 @@ struct ProverRuntimeArgs {
     /// overriding placeholder genesis anchors and contract addresses in the
     /// hardcoded chain config. Requires `--l2-cl-url`. Use for
     /// devnet/ephemeral chains where genesis changes on every deployment.
-    #[arg(long, env = "FETCH_ROLLUP_CONFIG")]
     #[arg(long, env = "FETCH_ROLLUP_CONFIG", requires = "l2_cl_url")]
     fetch_rollup_config: bool,
 
