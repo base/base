@@ -77,8 +77,8 @@ pub struct DiscoveryResolution {
     pub registerable: Vec<RegisterableSigner>,
     /// Signers contributed by reachable instances.
     pub active_signers: HashSet<Address>,
-    /// Instance IDs with inconclusive resolution this cycle.
-    pub unresolved_instance_ids: HashSet<String>,
+    /// Whether any instance had inconclusive resolution this cycle.
+    pub has_unresolved_instances: bool,
 }
 
 /// Core registration loop tying together discovery, attestation polling, signer
@@ -142,17 +142,17 @@ where
                             &mut proof_tasks,
                             &self.config.cancel,
                         );
-                    }
 
-                    if ok_to_dereg && !self.config.cancel.is_cancelled() {
-                        let protected = proof_tasks.protected_signers(&resolution);
-                        if let Err(e) = self
-                            .signer_manager
-                            .run_orphan_dereg(&protected, &self.config.cancel)
-                            .await
-                        {
-                            warn!(error = %e, "orphan deregistration pass failed");
-                            RegistrarMetrics::processing_errors_total().increment(1);
+                        if ok_to_dereg {
+                            let protected = proof_tasks.protected_signers(&resolution);
+                            if let Err(e) = self
+                                .signer_manager
+                                .run_orphan_dereg(&protected, &self.config.cancel)
+                                .await
+                            {
+                                warn!(error = %e, "orphan deregistration pass failed");
+                                RegistrarMetrics::processing_errors_total().increment(1);
+                            }
                         }
                     }
                 }
@@ -183,16 +183,6 @@ where
         Ok(())
     }
 
-    /// Recently launched unhealthy instances may still register.
-    fn is_recently_launched_unhealthy(&self, instance: &ProverInstance) -> bool {
-        instance.health_status == InstanceHealthStatus::Unhealthy
-            && !self.config.unhealthy_registration_window.is_zero()
-            && instance.launch_time.is_some_and(|lt| {
-                lt.elapsed()
-                    .is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
-            })
-    }
-
     /// Resolves one instance into active and registerable signers.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<DiscoveryResolution> {
         if self.config.cancel.is_cancelled() {
@@ -214,7 +204,14 @@ where
         }
 
         if !instance.health_status.should_register() {
-            if !self.is_recently_launched_unhealthy(instance) {
+            let recently_launched_unhealthy = instance.health_status
+                == InstanceHealthStatus::Unhealthy
+                && !self.config.unhealthy_registration_window.is_zero()
+                && instance.launch_time.is_some_and(|lt| {
+                    lt.elapsed()
+                        .is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
+                });
+            if !recently_launched_unhealthy {
                 debug!(
                     status = ?instance.health_status,
                     instance = %instance.instance_id,
@@ -253,7 +250,7 @@ where
                     "failed to fetch signer attestations after resolving signer addresses"
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
-                outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
+                outcome.has_unresolved_instances = true;
                 return Ok(outcome);
             }
         };
@@ -266,7 +263,7 @@ where
                 "signer attestation count was lower than signer public key count"
             );
             RegistrarMetrics::processing_errors_total().increment(1);
-            outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
+            outcome.has_unresolved_instances = true;
             return Ok(outcome);
         }
 
@@ -347,7 +344,7 @@ where
                     reachable_count += 1;
                     resolution.registerable.extend(outcome.registerable);
                     resolution.active_signers.extend(outcome.active_signers);
-                    resolution.unresolved_instance_ids.extend(outcome.unresolved_instance_ids);
+                    resolution.has_unresolved_instances |= outcome.has_unresolved_instances;
                 }
                 Err(e) => {
                     warn!(
@@ -357,17 +354,13 @@ where
                         "failed to resolve instance"
                     );
                     RegistrarMetrics::processing_errors_total().increment(1);
-                    // Mark this instance as inconclusive so reconcile
-                    // does NOT cancel in-flight proof tasks tied to it
-                    // (see `DiscoveryResolution::unresolved_instance_ids`
-                    // for the rationale).
-                    resolution.unresolved_instance_ids.insert(instance.instance_id.clone());
+                    resolution.has_unresolved_instances = true;
                 }
             }
         }
 
         let ok_to_dereg = !self.config.cancel.is_cancelled()
-            && resolution.unresolved_instance_ids.is_empty()
+            && !resolution.has_unresolved_instances
             && (total_count == 0 || reachable_count * 2 > total_count);
 
         if !ok_to_dereg {
@@ -414,7 +407,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Default)]
+    #[derive(Clone, Debug, Default)]
     struct MockSignerClient {
         keys: HashMap<Url, Vec<Vec<u8>>>,
         attestations: HashMap<Url, Vec<Vec<u8>>>,
@@ -491,11 +484,8 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
-    struct NoopProofProvider;
-
     #[async_trait]
-    impl AttestationProofProvider for NoopProofProvider {
+    impl AttestationProofProvider for MockSignerClient {
         async fn generate_proof(
             &self,
             _attestation_bytes: &[u8],
@@ -505,11 +495,8 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
-    struct NoopRegistry;
-
     #[async_trait]
-    impl RegistryClient for NoopRegistry {
+    impl RegistryClient for () {
         async fn is_registered(&self, _signer: Address) -> Result<bool> {
             unreachable!("driver discover_and_resolve tests do not query registration state")
         }
@@ -523,14 +510,17 @@ mod tests {
         Url::parse(&format!("http://{host_port}")).unwrap()
     }
 
-    fn cycle_driver<S>(
+    fn cycle_driver(
         instances: Vec<ProverInstance>,
-        signer_client: S,
+        signer_client: MockSignerClient,
         cancel: CancellationToken,
-    ) -> RegistrationDriver<Vec<ProverInstance>, S, NoopProofProvider, NoopRegistry, NoopTxManager>
-    where
-        S: SignerClient + 'static,
-    {
+    ) -> RegistrationDriver<
+        Vec<ProverInstance>,
+        MockSignerClient,
+        MockSignerClient,
+        (),
+        NoopTxManager,
+    > {
         let config = DriverConfig {
             poll_interval: Duration::from_secs(1),
             cancel,
@@ -548,8 +538,8 @@ mod tests {
             CertManager::new(&crl_config, Arc::new(NoopNitroVerifier), NoopTxManager)
                 .expect("test cert manager builds");
         let signer_manager = Arc::new(SignerManager::new(
-            NoopProofProvider,
-            NoopRegistry,
+            signer_client.clone(),
+            (),
             NoopTxManager,
             SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
@@ -645,7 +635,7 @@ mod tests {
 
         let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
         assert_eq!(resolution.registerable.len(), reachable.len());
-        assert!(resolution.unresolved_instance_ids.contains(&unreachable.instance_id));
+        assert!(resolution.has_unresolved_instances);
         assert!(!ok_to_dereg);
     }
 
@@ -705,7 +695,7 @@ mod tests {
 
             assert!(resolution.active_signers.contains(&signer_addr));
             assert!(resolution.registerable.is_empty());
-            assert!(resolution.unresolved_instance_ids.contains(&inst.instance_id));
+            assert!(resolution.has_unresolved_instances);
             assert!(!ok_to_dereg);
         }
     }
