@@ -5836,6 +5836,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-ec2",
  "aws-sdk-elasticloadbalancingv2",
+ "base-balance-monitor",
  "base-cli-utils",
  "base-health",
  "base-metrics",

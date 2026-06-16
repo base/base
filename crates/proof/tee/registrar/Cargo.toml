@@ -61,6 +61,7 @@ base-cli-utils.workspace = true
 
 # Metrics
 base-metrics.workspace = true
+base-balance-monitor.workspace = true
 metrics = { workspace = true, optional = true }
 
 # TLS

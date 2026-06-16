@@ -11,6 +11,7 @@ use std::{
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
+use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
@@ -91,22 +92,42 @@ impl RegistrarConfig {
             })
             .wrap_err("failed to install Prometheus recorder")?;
 
-        if self.metrics_config.enabled {
-            Self::spawn_balance_monitor(
-                self.l1_rpc_url.clone(),
-                self.signing.address(),
+        let provider = if self.metrics_config.enabled {
+            let account_address = self.signing.address();
+            let (layer, mut account_balance_rx) = BalanceMonitorLayer::new(
+                account_address,
                 cancel.clone(),
-                |balance| RegistrarMetrics::account_balance_wei().set(balance),
+                BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
-            Self::spawn_balance_monitor(
-                self.boundless_prover.rpc_url.clone(),
-                self.boundless_prover.signer.address(),
-                cancel.clone(),
-                |balance| RegistrarMetrics::boundless_balance_wei().set(balance),
-            );
-        }
+            tokio::spawn(async move {
+                while account_balance_rx.changed().await.is_ok() {
+                    RegistrarMetrics::account_balance_wei()
+                        .set(f64::from(*account_balance_rx.borrow_and_update()));
+                }
+            });
+            info!(address = %account_address, "balance monitor started");
 
-        let provider = ProviderBuilder::new().connect_http(self.l1_rpc_url.clone());
+            let boundless_address = self.boundless_prover.signer.address();
+            let (boundless_layer, mut boundless_balance_rx) = BalanceMonitorLayer::new(
+                boundless_address,
+                cancel.clone(),
+                BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+            );
+            ProviderBuilder::new()
+                .layer(boundless_layer)
+                .connect_http(self.boundless_prover.rpc_url.clone());
+            tokio::spawn(async move {
+                while boundless_balance_rx.changed().await.is_ok() {
+                    RegistrarMetrics::boundless_balance_wei()
+                        .set(f64::from(*boundless_balance_rx.borrow_and_update()));
+                }
+            });
+            info!(address = %boundless_address, "balance monitor started");
+
+            ProviderBuilder::new().layer(layer).connect_http(self.l1_rpc_url.clone())
+        } else {
+            ProviderBuilder::new().connect_http(self.l1_rpc_url.clone())
+        };
         let l1_chain_id = provider.get_chain_id().await.wrap_err("failed to fetch L1 chain ID")?;
         let tx_manager = SimpleTxManager::new(
             provider,
@@ -131,11 +152,9 @@ impl RegistrarConfig {
         let registry =
             RegistryContractClient::new(self.tee_prover_registry_address, self.l1_rpc_url.clone());
 
-        let ready = Arc::new(AtomicBool::new(false));
+        let ready = Arc::new(AtomicBool::new(true));
         let health_handle =
             tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
-
-        ready.store(true, Ordering::Relaxed);
 
         let signer_manager = Arc::new(SignerManager::new(
             self.boundless_prover,
@@ -190,29 +209,5 @@ impl RegistrarConfig {
 
         info!("Service stopped");
         driver_result.map_err(Into::into)
-    }
-
-    /// Starts a balance monitor for registrar account metrics.
-    pub fn spawn_balance_monitor(
-        rpc_url: Url,
-        address: Address,
-        cancel: CancellationToken,
-        set_metric: impl Fn(f64) + Send + 'static,
-    ) {
-        tokio::spawn(async move {
-            let provider = ProviderBuilder::new().connect_http(rpc_url);
-            let mut interval = tokio::time::interval(Duration::from_secs(12));
-            interval.tick().await;
-            loop {
-                tokio::select! {
-                    () = cancel.cancelled() => break,
-                    _ = interval.tick() => match provider.get_balance(address).await {
-                        Ok(balance) => set_metric(f64::from(balance)),
-                        Err(e) => warn!(error = %e, %address, "failed to fetch account balance"),
-                    },
-                }
-            }
-        });
-        info!(%address, "balance monitor started");
     }
 }
