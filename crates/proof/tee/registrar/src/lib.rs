@@ -47,7 +47,7 @@ pub use signer_manager::{
 };
 
 mod service;
-pub use service::{RegistrarConfig, RegistrarService};
+pub use service::RegistrarConfig;
 
 mod traits;
 pub use traits::{InstanceDiscovery, SignerClient};

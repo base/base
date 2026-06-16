@@ -42,9 +42,6 @@ base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove
 # Transaction management
 base-tx-manager.workspace = true
 
-# Balance Monitor
-base-balance-monitor.workspace = true
-
 # RPC
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }

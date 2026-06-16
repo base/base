@@ -1,7 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use base_proof_tee_registrar::RegistrarService;
 use clap::Parser as _;
 
 mod cli;
@@ -10,7 +9,7 @@ mod cli;
 async fn main() {
     let result: eyre::Result<()> = async {
         let config = cli::Cli::parse().config()?;
-        RegistrarService::run(config).await
+        config.run().await
     }
     .await;
 
