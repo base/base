@@ -226,6 +226,11 @@ impl RegistrarConfig {
         }
 
         signal_handle.abort();
+        match signal_handle.await {
+            Ok(()) => {}
+            Err(e) if e.is_cancelled() => {}
+            Err(e) => warn!(error = %e, "Signal handler task panicked"),
+        }
 
         info!("Service stopped");
         driver_result.map_err(Into::into)
