@@ -1,6 +1,7 @@
 //! Service lifecycle for the prover registrar.
 
 use std::{
+    fmt,
     net::SocketAddr,
     sync::{
         Arc,
@@ -28,7 +29,6 @@ use crate::{
 };
 
 /// Configuration needed to run the registrar service.
-#[derive(Debug)]
 pub struct RegistrarConfig {
     /// L1 Ethereum RPC endpoint.
     pub l1_rpc_url: Url,
@@ -66,6 +66,31 @@ pub struct RegistrarConfig {
     pub log_config: base_cli_utils::LogConfig,
     /// Metrics configuration.
     pub metrics_config: base_cli_utils::MetricsConfig,
+}
+
+impl fmt::Debug for RegistrarConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RegistrarConfig")
+            .field("l1_rpc_url", &self.l1_rpc_url.origin().unicode_serialization())
+            .field("tee_prover_registry_address", &self.tee_prover_registry_address)
+            .field("target_group_arn", &self.target_group_arn)
+            .field("aws_region", &self.aws_region)
+            .field("prover_port", &self.prover_port)
+            .field("signing", &self.signing)
+            .field("tx_manager_config", &self.tx_manager_config)
+            .field("boundless_prover", &self.boundless_prover)
+            .field("poll_interval", &self.poll_interval)
+            .field("prover_timeout", &self.prover_timeout)
+            .field("max_concurrency", &self.max_concurrency)
+            .field("max_tx_retries", &self.max_tx_retries)
+            .field("tx_retry_delay", &self.tx_retry_delay)
+            .field("unhealthy_registration_window", &self.unhealthy_registration_window)
+            .field("crl_nitro_verifier_address", &self.crl_nitro_verifier_address)
+            .field("health_addr", &self.health_addr)
+            .field("log_config", &self.log_config)
+            .field("metrics_config", &self.metrics_config)
+            .finish()
+    }
 }
 
 impl RegistrarConfig {
@@ -204,5 +229,66 @@ impl RegistrarConfig {
 
         info!("Service stopped");
         driver_result.map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use base_proof_tee_nitro_attestation_prover::BoundlessProverConfig;
+
+    use crate::test_utils::TEST_REGISTRY_ADDRESS;
+
+    #[test]
+    fn debug_redacts_l1_rpc_url_path() {
+        let api_key = "SECRET_KEY";
+        let config = RegistrarConfig {
+            l1_rpc_url: Url::parse(&format!("https://mainnet.infura.io/v3/{api_key}")).unwrap(),
+            tee_prover_registry_address: TEST_REGISTRY_ADDRESS,
+            target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/test/abc"
+                .to_string(),
+            aws_region: "us-east-1".to_string(),
+            prover_port: 8000,
+            signing: SignerConfig::local(
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                    .parse()
+                    .unwrap(),
+            ),
+            tx_manager_config: TxManagerConfig::default(),
+            boundless_prover: BoundlessProver::new(BoundlessProverConfig {
+                rpc_url: Url::parse("https://boundless.example/v3/BOUNDLESS_SECRET").unwrap(),
+                signer: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+                    .parse()
+                    .unwrap(),
+                verifier_program_url: Url::parse("https://program.example/ipfs/PROGRAM_SECRET")
+                    .unwrap(),
+                image_id: [0; 8],
+                poll_interval: Duration::from_secs(1),
+                timeout: Duration::from_secs(1),
+                max_recovery_attempts: 1,
+                max_attestation_age: Duration::from_secs(1),
+                offer_min_price: None,
+                offer_max_price: None,
+                offer_ramp_up_period_secs: None,
+                offer_lock_timeout_secs: None,
+                offer_bidding_start_delay_secs: 0,
+            }),
+            poll_interval: Duration::from_secs(1),
+            prover_timeout: Duration::from_secs(1),
+            max_concurrency: 1,
+            max_tx_retries: 1,
+            tx_retry_delay: Duration::from_secs(1),
+            unhealthy_registration_window: Duration::from_secs(1),
+            crl_nitro_verifier_address: None,
+            health_addr: "127.0.0.1:0".parse().unwrap(),
+            log_config: base_cli_utils::LogConfig::default(),
+            metrics_config: base_cli_utils::MetricsConfig::default(),
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(!debug.contains(api_key), "L1 RPC URL path must not appear in Debug output");
+        assert!(debug.contains("mainnet.infura.io"), "L1 RPC host should still be visible");
     }
 }
