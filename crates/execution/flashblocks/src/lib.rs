@@ -45,6 +45,13 @@ pub use state_builder::{ExecutedPendingTransaction, PendingStateBuilder};
 mod receipt_builder;
 pub use receipt_builder::{ReceiptBuildError, UnifiedReceiptBuilder};
 
+mod replay;
+pub use replay::{
+    CapturedBlock, CapturedCanonicalReceipt, DEFAULT_PROCESSOR_LIKE_MAX_DEPTH, ReplayComparison,
+    ReplayDivergence, ReplayError, ReplayEventScenario, ReplayMode, ReplayRequest, ReplaySummary,
+    TxOutcome, load_captured_block, replay_capture,
+};
+
 mod validation;
 pub use validation::{
     CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,

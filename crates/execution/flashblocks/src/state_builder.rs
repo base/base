@@ -109,6 +109,21 @@ where
         self.evm.db_mut()
     }
 
+    /// Returns a reference to the configured EVM inspector.
+    pub fn inspector(&self) -> &E::Inspector {
+        self.evm.inspector()
+    }
+
+    /// Enables the configured EVM inspector for subsequent transactions.
+    pub fn enable_inspector(&mut self) {
+        self.evm.enable_inspector()
+    }
+
+    /// Disables the configured EVM inspector for subsequent transactions.
+    pub fn disable_inspector(&mut self) {
+        self.evm.disable_inspector()
+    }
+
     /// Seeds block-level offsets when appending transactions to an already-executed pending block.
     pub const fn set_execution_offsets(&mut self, cumulative_gas_used: u64, next_log_index: usize) {
         self.cumulative_gas_used = cumulative_gas_used;

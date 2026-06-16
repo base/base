@@ -9,7 +9,7 @@ use base_common_consensus::BaseBlock;
 use base_common_flashblocks::Flashblock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives_traits::RecoveredBlock;
-use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use reth_provider::{BlockNumReader, HeaderProvider, StateProviderFactory};
 use tokio::sync::{
     Mutex,
     broadcast::{self, Sender},
@@ -61,7 +61,8 @@ impl FlashblocksState {
     where
         Client: StateProviderFactory
             + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + Upgrades>
-            + BlockReaderIdExt<Header = Header>
+            + HeaderProvider<Header = Header>
+            + BlockNumReader
             + Clone
             + 'static,
     {

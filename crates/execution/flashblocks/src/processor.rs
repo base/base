@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::RecoveredBlock;
-use reth_provider::{BlockReaderIdExt, StateProviderBox, StateProviderFactory};
+use reth_provider::{BlockNumReader, HeaderProvider, StateProviderBox, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
@@ -72,7 +72,8 @@ impl<Client> StateProcessor<Client>
 where
     Client: StateProviderFactory
         + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + Upgrades>
-        + BlockReaderIdExt<Header = Header>
+        + HeaderProvider<Header = Header>
+        + BlockNumReader
         + Clone
         + 'static,
 {
@@ -130,58 +131,78 @@ where
     /// Processes updates from the queue until the channel closes.
     pub async fn start(&self) {
         while let Some(update) = self.rx.lock().await.recv().await {
-            let prev_pending_blocks = self.pending_blocks.load_full();
-            match update {
-                StateUpdate::Canonical(block) => {
-                    debug!(message = "processing canonical block", block_number = block.number);
-                    match self.process_canonical_block(prev_pending_blocks, &block) {
-                        Ok(new_pending_blocks) => {
-                            self.pending_blocks.swap(new_pending_blocks);
+            let _ = self.process_update_for_replay(update).await;
+        }
+    }
 
-                            let mut cache = self.cache.lock().await;
-                            cache.update_canonical(block.number);
-                            let cached = cache.drain(block.number + 1);
-                            drop(cache);
-
-                            if !cached.is_empty() {
-                                debug!(
-                                    message = "replaying cached flashblocks after canonical block",
-                                    canonical_block = block.number,
-                                    cached_count = cached.len(),
-                                );
-                                for flashblock in cached {
-                                    let fb_prev = self.pending_blocks.load_full();
-                                    self.apply_flashblock(fb_prev, flashblock).await;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!(message = "could not process canonical block", error = %e);
-                        }
-                    }
-                }
-                StateUpdate::Flashblock(flashblock) => {
-                    debug!(
-                        message = "processing flashblock",
-                        block_number = flashblock.metadata.block_number,
-                        flashblock_index = flashblock.index
-                    );
-                    self.apply_flashblock(prev_pending_blocks, flashblock).await;
-                }
+    /// Processes a single update using the production state machine and returns any pending states
+    /// that would have been broadcast to subscribers.
+    pub(crate) async fn process_update_for_replay(
+        &self,
+        update: StateUpdate,
+    ) -> Vec<Arc<PendingBlocks>> {
+        let prev_pending_blocks = self.pending_blocks.load_full();
+        match update {
+            StateUpdate::Canonical(block) => {
+                self.apply_canonical_block(prev_pending_blocks, block).await
+            }
+            StateUpdate::Flashblock(flashblock) => {
+                self.apply_flashblock(prev_pending_blocks, flashblock).await
             }
         }
+    }
+
+    async fn apply_canonical_block(
+        &self,
+        prev_pending_blocks: Option<Arc<PendingBlocks>>,
+        block: RecoveredBlock<BaseBlock>,
+    ) -> Vec<Arc<PendingBlocks>> {
+        debug!(message = "processing canonical block", block_number = block.number);
+        let mut published = Vec::new();
+
+        match self.process_canonical_block(prev_pending_blocks, &block) {
+            Ok(new_pending_blocks) => {
+                self.pending_blocks.swap(new_pending_blocks);
+
+                let mut cache = self.cache.lock().await;
+                cache.update_canonical(block.number);
+                let cached = cache.drain(block.number + 1);
+                drop(cache);
+
+                if !cached.is_empty() {
+                    debug!(
+                        message = "replaying cached flashblocks after canonical block",
+                        canonical_block = block.number,
+                        cached_count = cached.len(),
+                    );
+                    for flashblock in cached {
+                        let fb_prev = self.pending_blocks.load_full();
+                        published.extend(self.apply_flashblock(fb_prev, flashblock).await);
+                    }
+                }
+            }
+            Err(e) => {
+                error!(message = "could not process canonical block", error = %e);
+            }
+        }
+
+        published
     }
 
     async fn apply_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: Flashblock,
-    ) {
+    ) -> Vec<Arc<PendingBlocks>> {
         let start_time = Instant::now();
         match self.process_flashblock(prev_pending_blocks, &flashblock) {
             Ok(new_pending_blocks) => {
                 if let Some(ref pb) = new_pending_blocks {
                     _ = self.sender.send(Arc::clone(pb));
+                    let published = vec![Arc::clone(pb)];
+                    self.pending_blocks.swap(new_pending_blocks);
+                    Metrics::block_processing_duration().record(start_time.elapsed());
+                    return published;
                 }
                 self.pending_blocks.swap(new_pending_blocks);
                 Metrics::block_processing_duration().record(start_time.elapsed());
@@ -193,7 +214,7 @@ where
                     }) => {
                         if self.cache.lock().await.insert(flashblock) {
                             debug!(message = "cached flashblock pending canonical block", error = %e);
-                            return;
+                            return Vec::new();
                         }
                     }
                     StateProcessorError::MissingFirstFlashblock => {
@@ -206,10 +227,10 @@ where
                             )
                             && cache.insert(flashblock)
                         {
-                            return;
+                            return Vec::new();
                         }
                         // we should ignore this error since it doesn't necessarily indicate a problem
-                        return;
+                        return Vec::new();
                     }
                     _ => {}
                 }
@@ -224,6 +245,8 @@ where
                 }
             }
         }
+
+        Vec::new()
     }
 
     #[instrument(level = "debug", skip_all, fields(block_number = block.number))]
@@ -616,10 +639,23 @@ where
             l1_block_info.clone(),
             state_overrides,
         );
-        pending_state_builder.apply_pre_execution_changes(
-            previous_header.hash_slow(),
-            Some(base.parent_beacon_block_root),
-        )?;
+        let reconstructed_parent_hash = previous_header.hash_slow();
+        if reconstructed_parent_hash != base.parent_hash {
+            debug!(
+                block_number = flashblock.metadata.block_number,
+                flashblock_index = flashblock.index,
+                reconstructed_parent_hash = %reconstructed_parent_hash,
+                flashblock_parent_hash = %base.parent_hash,
+                "reconstructed pending parent hash differs from flashblock parent hash"
+            );
+        }
+        pending_state_builder
+            .apply_pre_execution_changes(base.parent_hash, Some(base.parent_beacon_block_root))?;
+        // Old behavior for comparison runs:
+        // pending_state_builder.apply_pre_execution_changes(
+        //     reconstructed_parent_hash,
+        //     Some(base.parent_beacon_block_root),
+        // )?;
 
         for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
             let tx_hash = transaction.tx_hash();
@@ -757,7 +793,15 @@ where
             // Clone header before moving block to avoid cloning the entire block
             let block_header = assembled.block.header.clone();
 
-            let parent_hash = last_block_header.hash_slow();
+            let reconstructed_parent_hash = last_block_header.hash_slow();
+            if reconstructed_parent_hash != assembled.base.parent_hash {
+                debug!(
+                    block_number = assembled.base.block_number,
+                    reconstructed_parent_hash = %reconstructed_parent_hash,
+                    flashblock_parent_hash = %assembled.base.parent_hash,
+                    "reconstructed pending parent hash differs from flashblock parent hash"
+                );
+            }
             let parent_beacon_block_root = Some(assembled.base.parent_beacon_block_root);
 
             let mut pending_state_builder = PendingStateBuilder::new(
@@ -769,8 +813,13 @@ where
                 state_overrides,
             );
 
-            pending_state_builder
-                .apply_pre_execution_changes(parent_hash, parent_beacon_block_root)?;
+            pending_state_builder.apply_pre_execution_changes(
+                assembled.base.parent_hash,
+                parent_beacon_block_root,
+            )?;
+            // Old behavior for comparison runs:
+            // pending_state_builder
+            //     .apply_pre_execution_changes(reconstructed_parent_hash, parent_beacon_block_root)?;
 
             for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
                 let tx_hash = transaction.tx_hash();

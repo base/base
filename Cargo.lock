@@ -4785,6 +4785,7 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-rpc-eth-types",
  "reth-tasks",
+ "reth-trie-common",
  "revm",
  "revm-database",
  "rstest",
@@ -4852,6 +4853,17 @@ dependencies = [
  "tokio-tungstenite 0.28.0",
  "tracing",
  "tracing-subscriber 0.3.23",
+]
+
+[[package]]
+name = "base-flashblocks-replay"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-flashblocks",
+ "clap",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -18973,12 +18985,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a69c3ce73454a09ef89a66177239d7c4f5f697227ae27254c99451866603b19d"
 dependencies = [
  "alloy-eips 2.0.5",
+ "alloy-provider 2.0.5",
+ "alloy-transport 2.0.5",
  "derive_more 2.1.1",
  "revm-bytecode",
  "revm-database-interface",
  "revm-primitives",
  "revm-state",
  "serde",
+ "tokio",
 ]
 
 [[package]]
@@ -18993,6 +19008,7 @@ dependencies = [
  "revm-state",
  "serde",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
