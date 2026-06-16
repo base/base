@@ -2,7 +2,10 @@
 
 use std::{
     net::SocketAddr,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -147,11 +150,9 @@ impl RegistrarConfig {
         let registry =
             RegistryContractClient::new(self.tee_prover_registry_address, self.l1_rpc_url.clone());
 
-        let health_handle = tokio::spawn(HealthServer::serve(
-            self.health_addr,
-            Arc::new(AtomicBool::new(true)),
-            cancel.clone(),
-        ));
+        let ready = Arc::new(AtomicBool::new(false));
+        let health_handle =
+            tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
 
         let signer_manager = Arc::new(SignerManager::new(
             self.boundless_prover,
@@ -185,7 +186,9 @@ impl RegistrarConfig {
             cert_manager,
             signer_manager,
         );
+        ready.store(true, Ordering::SeqCst);
         let driver_result = driver.run().await;
+        ready.store(false, Ordering::SeqCst);
         cancel.cancel();
 
         info!("Driver stopped, shutting down...");
