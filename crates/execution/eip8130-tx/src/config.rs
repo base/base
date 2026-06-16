@@ -1,19 +1,26 @@
 //! Account-configuration change authorization — the `SCOPE_CONFIG` path of the
 //! EIP-8130 validation flow.
 
-use alloy_primitives::{Address, B256, Keccak256, keccak256};
+use alloy_primitives::{Address, B256, Keccak256, b256, keccak256};
 use base_common_consensus::ConfigChange;
 use base_execution_eip8130_authorize::{ActorAuthorizer, AuthorizeError, ResolvedActor};
 use base_execution_eip8130_state::AccountConfigurationStorage;
 
 use crate::{Operation, TxAuthError};
 
-/// `SignedActorChanges` EIP-712-style type string, identical to the one hashed
-/// by `AccountConfiguration` (the trailing `ActorChange(...)` is the referenced
-/// struct's type, per the EIP-712 encoding rules).
-const SIGNED_ACTOR_CHANGES_TYPE: &[u8] = b"SignedActorChanges(address account,uint64 chainId,uint64 sequence,ActorChange[] actorChanges)ActorChange(uint8 changeType,bytes32 actorId,bytes data)";
-/// `ActorChange` type string used for the per-change leaf hashes.
-const ACTOR_CHANGE_TYPE: &[u8] = b"ActorChange(uint8 changeType,bytes32 actorId,bytes data)";
+/// Precomputed `keccak256` typehash of the `SignedActorChanges` EIP-712-style
+/// struct, identical to the one hashed by `AccountConfiguration` (the trailing
+/// `ActorChange(...)` is the referenced struct's type, per the EIP-712 encoding
+/// rules):
+/// `keccak256("SignedActorChanges(address account,uint64 chainId,uint64 sequence,ActorChange[] actorChanges)ActorChange(uint8 changeType,bytes32 actorId,bytes data)")`.
+/// Pinned to its preimage by `typehashes_match_their_preimages`.
+const SIGNED_ACTOR_CHANGES_TYPEHASH: B256 =
+    b256!("3528344db25dddc3f16dbdc7302aacb555665c0af1beedc07d5fe28e8512bb3f");
+/// Precomputed `keccak256` typehash for the per-change `ActorChange` leaves:
+/// `keccak256("ActorChange(uint8 changeType,bytes32 actorId,bytes data)")`.
+/// Pinned to its preimage by `typehashes_match_their_preimages`.
+const ACTOR_CHANGE_TYPEHASH: B256 =
+    b256!("76ddc97127f9b5fc6a394060571bb32201243ae2344f1f09e6039df7fd19bbd7");
 
 /// Authorizes EIP-8130 account-configuration changes against an
 /// [`AccountConfigurationStorage`] view.
@@ -90,12 +97,11 @@ impl ConfigChangeAuthorizer {
     /// result is folded into the outer struct hash.
     #[must_use]
     pub fn signed_actor_changes_digest(account: Address, change: &ConfigChange) -> B256 {
-        let actor_change_typehash = keccak256(ACTOR_CHANGE_TYPE);
         let mut packed = Keccak256::new();
         for ac in &change.actor_changes {
             // abi.encode(bytes32, uint8, bytes32, bytes32): four right-aligned words.
             let mut leaf = [0u8; 128];
-            leaf[..32].copy_from_slice(actor_change_typehash.as_slice());
+            leaf[..32].copy_from_slice(ACTOR_CHANGE_TYPEHASH.as_slice());
             leaf[63] = ac.change_type.op_byte();
             leaf[64..96].copy_from_slice(ac.actor_id.as_slice());
             leaf[96..128].copy_from_slice(keccak256(&ac.data).as_slice());
@@ -105,7 +111,7 @@ impl ConfigChangeAuthorizer {
 
         // abi.encode(bytes32, address, uint64, uint64, bytes32): five right-aligned words.
         let mut outer = [0u8; 160];
-        outer[..32].copy_from_slice(keccak256(SIGNED_ACTOR_CHANGES_TYPE).as_slice());
+        outer[..32].copy_from_slice(SIGNED_ACTOR_CHANGES_TYPEHASH.as_slice());
         outer[44..64].copy_from_slice(account.as_slice());
         outer[88..96].copy_from_slice(&change.chain_id.to_be_bytes());
         outer[120..128].copy_from_slice(&change.sequence.to_be_bytes());
@@ -126,6 +132,20 @@ mod tests {
     const NOW: u64 = 1_000;
     const LOCAL: u64 = 8453;
     const ECRECOVER: Address = Eip8130Constants::ECRECOVER_AUTHENTICATOR;
+
+    #[test]
+    fn typehashes_match_their_preimages() {
+        assert_eq!(
+            SIGNED_ACTOR_CHANGES_TYPEHASH,
+            keccak256(
+                b"SignedActorChanges(address account,uint64 chainId,uint64 sequence,ActorChange[] actorChanges)ActorChange(uint8 changeType,bytes32 actorId,bytes data)"
+            )
+        );
+        assert_eq!(
+            ACTOR_CHANGE_TYPEHASH,
+            keccak256(b"ActorChange(uint8 changeType,bytes32 actorId,bytes data)")
+        );
+    }
 
     fn key(byte: u8) -> K256SigningKey {
         K256SigningKey::from_slice(&[byte; 32]).unwrap()
