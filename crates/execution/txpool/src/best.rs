@@ -227,6 +227,7 @@ mod tests {
             gas_limit: 50_000,
             account_changes: Vec::new(),
             calls: Vec::new(),
+            metadata: Bytes::new(),
             payer: None,
         };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();

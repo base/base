@@ -492,6 +492,7 @@ mod tests {
                 to: address!("0x00000000000000000000000000000000000000bb"),
                 data: bytes!("01020304"),
             }]],
+            metadata: Bytes::new(),
             payer: if payer_present {
                 Some(address!("0x00000000000000000000000000000000000000cc"))
             } else {

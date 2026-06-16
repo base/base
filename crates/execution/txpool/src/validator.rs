@@ -624,6 +624,7 @@ mod tests {
             gas_limit: 50_000,
             account_changes: Vec::new(),
             calls: Vec::new(),
+            metadata: Bytes::new(),
             payer: None,
         }
     }

@@ -383,6 +383,7 @@ mod tests {
             gas_limit: 1_000_000,
             account_changes: vec![],
             calls: vec![],
+            metadata: Bytes::new(),
             payer: None,
         };
         let sender_auth = Bytes::from_static(&[0xAB; 32]);

@@ -66,6 +66,10 @@ pub struct TxEip8130 {
     /// Calls dispatched by the protocol after account changes apply, grouped
     /// into phases (`Vec<Vec<Call>>`).
     pub calls: Vec<Vec<Call>>,
+    /// Opaque attribution/annotation bytes; empty when unused. Carried in the
+    /// wire body between `calls` and `payer` and committed to by both the
+    /// sender and payer signatures, but otherwise uninterpreted by the protocol.
+    pub metadata: Bytes,
     /// Optional explicit payer; `None` means the resolved sender pays gas.
     pub payer: Option<Address>,
 }
@@ -139,8 +143,10 @@ impl TxEip8130 {
         Ok(phases)
     }
 
-    /// Length of all RLP fields (no list header).
-    pub fn rlp_encoded_fields_length(&self) -> usize {
+    /// Length of the RLP body fields up to and including `metadata` — every
+    /// field except the trailing `payer`. This is exactly the payload covered
+    /// by the payer signature (see [`Self::payer_signature_hash`]).
+    fn fields_through_metadata_length(&self) -> usize {
         self.chain_id.length()
             + Self::address_opt_encoded_length(&self.sender)
             + self.nonce_key.length()
@@ -151,11 +157,12 @@ impl TxEip8130 {
             + self.gas_limit.length()
             + self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)
-            + Self::address_opt_encoded_length(&self.payer)
+            + self.metadata.length()
     }
 
-    /// Encodes the RLP fields (no list header) in canonical order.
-    pub fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
+    /// Encodes the RLP body fields up to and including `metadata` (no `payer`,
+    /// no list header), in canonical order.
+    fn rlp_encode_fields_through_metadata(&self, out: &mut dyn BufMut) {
         self.chain_id.encode(out);
         Self::encode_address_opt(&self.sender, out);
         self.nonce_key.encode(out);
@@ -166,6 +173,17 @@ impl TxEip8130 {
         self.gas_limit.encode(out);
         self.account_changes.encode(out);
         Self::encode_calls(&self.calls, out);
+        self.metadata.encode(out);
+    }
+
+    /// Length of all RLP fields (no list header).
+    pub fn rlp_encoded_fields_length(&self) -> usize {
+        self.fields_through_metadata_length() + Self::address_opt_encoded_length(&self.payer)
+    }
+
+    /// Encodes the RLP fields (no list header) in canonical order.
+    pub fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
+        self.rlp_encode_fields_through_metadata(out);
         Self::encode_address_opt(&self.payer, out);
     }
 
@@ -182,6 +200,7 @@ impl TxEip8130 {
             gas_limit: Decodable::decode(buf)?,
             account_changes: Decodable::decode(buf)?,
             calls: Self::decode_calls(buf)?,
+            metadata: Decodable::decode(buf)?,
             payer: Self::decode_address_opt(buf)?,
         })
     }
@@ -215,15 +234,21 @@ impl TxEip8130 {
 
     /// Signing-hash preimage for the payer, per [EIP-8130].
     ///
-    /// `keccak256(EIP8130_PAYER_TYPE || rlp(unsigned body fields with the
-    /// `sender` slot replaced by the recovered sender address))`.
+    /// `keccak256(EIP8130_PAYER_TYPE || rlp([body fields through `metadata`]))`
+    /// with the `sender` slot replaced by the recovered sender address. The
+    /// payer commits to the transaction body but deliberately *not* to the
+    /// trailing `payer` field itself (nor the `sender_auth` / `payer_auth`
+    /// slots, which live in the signed wrapper).
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     pub fn payer_signature_hash(&self, resolved_sender: Address) -> B256 {
         let with_resolved = Self { sender: Some(resolved_sender), ..self.clone() };
-        let mut buf = Vec::with_capacity(with_resolved.rlp_encoded_length() + 1);
+        let header =
+            Header { list: true, payload_length: with_resolved.fields_through_metadata_length() };
+        let mut buf = Vec::with_capacity(1 + header.length_with_payload());
         buf.put_u8(Eip8130Constants::EIP8130_PAYER_TYPE);
-        with_resolved.rlp_encode(&mut buf);
+        header.encode(&mut buf);
+        with_resolved.rlp_encode_fields_through_metadata(&mut buf);
         keccak256(&buf)
     }
 
@@ -239,6 +264,7 @@ impl TxEip8130 {
             + mem::size_of::<u64>()
             + self.account_changes.capacity() * mem::size_of::<AccountChange>()
             + self.calls.iter().map(|p| p.capacity() * mem::size_of::<Call>()).sum::<usize>()
+            + self.metadata.len()
             + mem::size_of::<Option<Address>>()
     }
 }
@@ -402,6 +428,7 @@ mod tests {
                 to: address!("0x00000000000000000000000000000000000000cc"),
                 data: bytes!("deadbeef"),
             }]],
+            metadata: bytes!("c0ffee"),
             payer: None,
         }
     }
@@ -533,12 +560,51 @@ mod tests {
         let resolved = address!("0x00000000000000000000000000000000000000dd");
         let payer_hash_v1 = tx.payer_signature_hash(resolved);
 
+        // Reconstruct the preimage: `PAYER_TYPE || rlp([fields through metadata])`
+        // with the resolved sender substituted and `payer` excluded.
         let tx2 = TxEip8130 { sender: Some(resolved), ..tx };
-        let mut buf = Vec::with_capacity(tx2.rlp_encoded_length() + 1);
+        let header = Header { list: true, payload_length: tx2.fields_through_metadata_length() };
+        let mut buf = Vec::with_capacity(1 + header.length_with_payload());
         buf.put_u8(Eip8130Constants::EIP8130_PAYER_TYPE);
-        tx2.rlp_encode(&mut buf);
+        header.encode(&mut buf);
+        tx2.rlp_encode_fields_through_metadata(&mut buf);
         let payer_hash_v2 = keccak256(&buf);
         assert_eq!(payer_hash_v1, payer_hash_v2);
+    }
+
+    // `metadata` is committed to by both signatures.
+    #[test]
+    fn metadata_is_covered_by_both_signature_hashes() {
+        let tx = sample_tx();
+        let resolved = address!("0x00000000000000000000000000000000000000dd");
+        let mut other = tx.clone();
+        other.metadata = bytes!("beef");
+
+        assert_ne!(tx.sender_signature_hash(), other.sender_signature_hash());
+        assert_ne!(
+            tx.payer_signature_hash(resolved),
+            other.payer_signature_hash(resolved)
+        );
+    }
+
+    // The payer signature commits to the body but not to the `payer` slot, so
+    // changing `payer` leaves the payer hash unchanged while the sender hash
+    // (which covers the full body) does change.
+    #[test]
+    fn payer_signature_hash_excludes_payer_field() {
+        let resolved = address!("0x00000000000000000000000000000000000000dd");
+        let mut self_pay = sample_tx();
+        self_pay.payer = None;
+        let sponsored = TxEip8130 {
+            payer: Some(address!("0x00000000000000000000000000000000000000ee")),
+            ..self_pay.clone()
+        };
+
+        assert_eq!(
+            self_pay.payer_signature_hash(resolved),
+            sponsored.payer_signature_hash(resolved)
+        );
+        assert_ne!(self_pay.sender_signature_hash(), sponsored.sender_signature_hash());
     }
 
     /// Proves that EIP-8130 transactions can be deserialized through the
@@ -569,6 +635,7 @@ mod tests {
                 "gasLimit": 21000,
                 "accountChanges": [],
                 "calls": [],
+                "metadata": "0x",
                 "payer": null
             },
             "senderAuth": "0x",
