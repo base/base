@@ -1,4 +1,4 @@
-//! Base-deployer container wrapper.
+//! base-deployer container wrapper.
 
 use std::path::{Path, PathBuf};
 
@@ -54,9 +54,6 @@ impl Default for RoleAddresses {
 }
 
 /// Container wrapper for L2 contract deployment via base-deployer.
-///
-/// Runs `setup-l2.sh` inside the `devnet-setup:local` Docker image to deploy
-/// L2 contracts using forge scripts and collect deployment artifacts.
 #[derive(Debug)]
 pub struct DeployerContainer {
     l1_rpc_url: Url,
@@ -105,16 +102,16 @@ impl DeployerContainer {
         &self.output_dir
     }
 
-    /// Runs `setup-l2.sh` against the configured L1 and returns deployment artifacts.
+    /// Runs base-deployer against the configured L1 and returns deployment artifacts.
     ///
-    /// This is a blocking call that waits for the deployment to finish. The deployment
-    /// will only succeed when the L1 node is running and producing blocks.
+    /// This is a blocking call that waits for base-deployer to finish. The deployment will
+    /// only succeed when the L1 node is running and producing blocks.
     pub fn deploy(&self) -> Result<DeploymentArtifacts> {
         if DeploymentArtifacts::exists_in(&self.output_dir) {
-            return self.artifacts().wrap_err("existing deployment artifacts failed to load");
+            return self.artifacts().wrap_err("Existing deployment artifacts failed to load");
         }
 
-        std::fs::create_dir_all(&self.output_dir).wrap_err("failed to create output directory")?;
+        std::fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output directory")?;
 
         let image = GenericImage::new("devnet-setup", "local")
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
@@ -139,9 +136,9 @@ impl DeployerContainer {
             request = request.with_network(network.clone());
         }
 
-        let _container = request.start().wrap_err("failed to run base-deployer container")?;
+        let _container = request.start().wrap_err("Failed to run base-deployer container")?;
 
-        self.artifacts().wrap_err("failed to load deployment artifacts")
+        self.artifacts().wrap_err("Failed to load deployment artifacts")
     }
 
     /// Loads deployment artifacts from the output directory.
@@ -151,7 +148,7 @@ impl DeployerContainer {
 
     fn deployer_address(&self) -> Result<Address> {
         let signer = PrivateKeySigner::from_bytes(&self.deployer_private_key)
-            .wrap_err("failed to derive deployer address from private key")?;
+            .wrap_err("Failed to derive deployer address from private key")?;
         Ok(signer.address())
     }
 
