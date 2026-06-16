@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use testcontainers::{
-    GenericImage, ImageExt,
+    ImageExt,
     core::{Mount, WaitFor, wait::ExitWaitStrategy},
     runners::SyncRunner,
 };
@@ -14,6 +14,7 @@ use url::Url;
 
 use super::artifacts::DeploymentArtifacts;
 use crate::config::{BATCHER, CHALLENGER, PROPOSER, SEQUENCER};
+use crate::setup::SetupImage;
 
 const OUTPUT_DIR: &str = "/output/l2";
 
@@ -113,7 +114,9 @@ impl DeployerContainer {
 
         std::fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output directory")?;
 
-        let image = GenericImage::new("devnet-setup", "local")
+        SetupImage::ensure_built()?;
+
+        let image = SetupImage::request()
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
             .with_startup_timeout(std::time::Duration::from_secs(600));
 
