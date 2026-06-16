@@ -1,11 +1,15 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::{num::NonZeroUsize, time::Duration};
+use std::{
+    num::{NonZeroU64, NonZeroUsize},
+    time::Duration,
+};
 
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_proof_tee_registrar::{
-    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, RegistrarConfig, RegistrarError,
+    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use boundless_market::{
@@ -66,29 +70,24 @@ pub(crate) struct Cli {
     boundless_fee_private_key: PrivateKeySigner,
 
     /// HTTP(S) URL of the Nitro attestation verifier ELF (e.g. Pinata IPFS gateway URL).
-    #[arg(
-        long,
-        env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL")
-    )]
+    #[arg(long, env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL"))]
     boundless_verifier_program_url: Url,
 
     /// Interval between Boundless fulfillment status checks, in seconds.
     #[arg(
         long = "boundless-poll-interval-secs",
         env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"),
-        default_value = "5",
-        value_parser = parse_duration
+        default_value_t = 5
     )]
-    boundless_fulfillment_poll_interval: Duration,
+    boundless_fulfillment_poll_interval: u64,
 
     /// Client-side fulfillment poll budget, in seconds.
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_TIMEOUT_SECS"),
-        default_value = "1260",
-        value_parser = parse_nonzero_duration
+        default_value_t = NonZeroU64::new(1260).expect("default boundless timeout is non-zero")
     )]
-    boundless_timeout: Duration,
+    boundless_timeout: NonZeroU64,
 
     /// Minimum Boundless offer price in ETH for each submitted proof request.
     #[arg(
@@ -107,17 +106,11 @@ pub(crate) struct Cli {
     boundless_max_price_eth: Option<Amount>,
 
     /// Optional duration in seconds for the Boundless offer price ramp.
-    #[arg(
-        long,
-        env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS")
-    )]
+    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
     boundless_offer_ramp_up_period_secs: Option<u32>,
 
     /// Maximum lock and delivery window for a Boundless proof request.
-    #[arg(
-        long,
-        env = cli_env!("BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS")
-    )]
+    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS"))]
     boundless_offer_lock_timeout_secs: Option<u32>,
 
     /// Delay before Boundless bidding starts.
@@ -143,28 +136,25 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
-        default_value = "3300",
-        value_parser = parse_duration
+        default_value_t = 3300
     )]
-    max_attestation_age: Duration,
+    max_attestation_age: u64,
 
     /// Interval between discovery and registration poll cycles, in seconds.
     #[arg(
         long,
         env = cli_env!("POLL_INTERVAL_SECS"),
-        default_value = "30",
-        value_parser = parse_nonzero_duration
+        default_value_t = NonZeroU64::new(30).expect("default poll interval is non-zero")
     )]
-    poll_interval: Duration,
+    poll_interval: NonZeroU64,
 
     /// Timeout for JSON-RPC calls to prover instances, in seconds.
     #[arg(
         long,
         env = cli_env!("PROVER_TIMEOUT_SECS"),
-        default_value = "30",
-        value_parser = parse_nonzero_duration
+        default_value_t = NonZeroU64::new(30).expect("default prover timeout is non-zero")
     )]
-    prover_timeout: Duration,
+    prover_timeout: NonZeroU64,
 
     /// Maximum number of instances to process concurrently within a single
     /// registration cycle. Each instance may trigger a ~20-minute proof
@@ -184,20 +174,19 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("TX_RETRY_DELAY_SECS"),
-        default_value = "5",
-        value_parser = parse_nonzero_duration
+        default_value_t = NonZeroU64::new(DEFAULT_TX_RETRY_DELAY_SECS)
+            .expect("default transaction retry delay is non-zero")
     )]
-    tx_retry_delay: Duration,
+    tx_retry_delay: NonZeroU64,
     /// Duration (seconds) after EC2 launch during which unhealthy instances
     /// are still eligible for registration. New instances may fail ALB health
     /// checks while the application initializes. Set to 0 to disable.
     #[arg(
         long,
         env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"),
-        default_value = "5100",
-        value_parser = parse_duration
+        default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS
     )]
-    unhealthy_registration_window: Duration,
+    unhealthy_registration_window: u64,
     /// `NitroEnclaveVerifier` contract address for CRL checks.
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
     crl_nitro_verifier_address: Option<Address>,
@@ -221,19 +210,6 @@ fn parse_image_id(s: &str) -> Result<[u32; 8], String> {
 fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
     Amount::parse_with_allowed(s, &[Asset::ETH], Some(Asset::ETH))
         .map_err(|e| format!("Boundless ETH amount: {e}"))
-}
-
-/// Parse a duration in seconds for existing `*_SECS` env vars.
-fn parse_duration(s: &str) -> Result<Duration, String> {
-    s.trim().parse::<u64>().map(Duration::from_secs).map_err(|e| e.to_string())
-}
-
-fn parse_nonzero_duration(s: &str) -> Result<Duration, String> {
-    let duration = parse_duration(s)?;
-    if duration.is_zero() {
-        return Err("duration must be greater than zero".into());
-    }
-    Ok(duration)
 }
 
 impl Cli {
@@ -263,22 +239,22 @@ impl Cli {
                 self.boundless_fee_private_key,
                 self.boundless_verifier_program_url,
                 self.image_id,
-                self.boundless_fulfillment_poll_interval,
-                self.boundless_timeout,
+                Duration::from_secs(self.boundless_fulfillment_poll_interval),
+                Duration::from_secs(self.boundless_timeout.get()),
                 self.boundless_max_recovery_attempts,
-                self.max_attestation_age,
+                Duration::from_secs(self.max_attestation_age),
                 self.boundless_min_price_eth,
                 self.boundless_max_price_eth,
                 self.boundless_offer_ramp_up_period_secs,
                 self.boundless_offer_lock_timeout_secs,
                 self.boundless_offer_bidding_start_delay_secs,
             ),
-            poll_interval: self.poll_interval,
-            prover_timeout: self.prover_timeout,
+            poll_interval: Duration::from_secs(self.poll_interval.get()),
+            prover_timeout: Duration::from_secs(self.prover_timeout.get()),
             max_concurrency: self.max_concurrency.get(),
             max_tx_retries: self.max_tx_retries,
-            tx_retry_delay: self.tx_retry_delay,
-            unhealthy_registration_window: self.unhealthy_registration_window,
+            tx_retry_delay: Duration::from_secs(self.tx_retry_delay.get()),
+            unhealthy_registration_window: Duration::from_secs(self.unhealthy_registration_window),
             crl_nitro_verifier_address: self.crl_nitro_verifier_address,
             health_addr: self.health.socket_addr(),
             log_config: self.log.into(),
@@ -289,8 +265,6 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::U256;
-
     use super::*;
 
     const TEST_IMAGE_ID: &str =
@@ -316,14 +290,6 @@ mod tests {
         "--boundless-verifier-program-url",
         "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
     ];
-
-    #[test]
-    fn boundless_offer_pricing_parses_eth_amounts() {
-        assert_eq!(
-            parse_boundless_eth_amount("0.01").unwrap(),
-            Amount::new(U256::from(10_000_000_000_000_000u64), Asset::ETH),
-        );
-    }
 
     #[test]
     fn boundless_offer_max_price_must_cover_min_price() {
