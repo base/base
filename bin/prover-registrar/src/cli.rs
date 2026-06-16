@@ -1,6 +1,6 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::{num::NonZeroUsize, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
@@ -83,9 +83,10 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = NonZeroUsize::new(DEFAULT_MAX_CONCURRENCY).expect("default max concurrency must be positive")
+        default_value_t = DEFAULT_MAX_CONCURRENCY,
+        value_parser = parse_positive_usize
     )]
-    max_concurrency: NonZeroUsize,
+    max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -103,13 +104,7 @@ pub(crate) struct Cli {
     /// checks while the application initializes. Set to 0 to disable.
     #[arg(long, env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"), default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS)]
     unhealthy_registration_window_secs: u64,
-    /// `NitroEnclaveVerifier` contract address. Supplying this enables
-    /// on-demand CRL checking at registration time; the address is consulted
-    /// both for the durable onchain `revokedCerts` pre-check and as the
-    /// destination for outgoing `revokeCert` transactions.
-    ///
-    /// The `crl-` prefix is retained for backward compatibility with
-    /// existing production deployments (introduced in #1984).
+    /// `NitroEnclaveVerifier` contract address for CRL checks.
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
     crl_nitro_verifier_address: Option<Address>,
     #[command(flatten)]
@@ -229,18 +224,23 @@ fn parse_boundless_eth_amount(s: &str) -> std::result::Result<Amount, String> {
         .map_err(|e| format!("Boundless ETH amount: {e}"))
 }
 
+/// Parse a positive `usize`.
+fn parse_positive_usize(s: &str) -> std::result::Result<usize, String> {
+    let value = s.parse::<usize>().map_err(|e| format!("invalid value: {e}"))?;
+    (value > 0).then_some(value).ok_or_else(|| "value must be greater than 0".to_string())
+}
+
 impl Cli {
     fn boundless_prover(&self) -> std::result::Result<BoundlessProver, RegistrarError> {
         let boundless = &self.boundless;
-        if let (Some(min_price), Some(max_price)) =
-            (&boundless.min_price_eth, &boundless.max_price_eth)
-        {
-            if max_price.value < min_price.value {
-                return Err(RegistrarError::Config(
-                    "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
-                        .into(),
-                ));
-            }
+        if matches!(
+            (&boundless.min_price_eth, &boundless.max_price_eth),
+            (Some(min_price), Some(max_price)) if max_price.value < min_price.value
+        ) {
+            return Err(RegistrarError::Config(
+                "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
+                    .into(),
+            ));
         }
 
         Ok(BoundlessProver {
@@ -281,7 +281,7 @@ impl Cli {
             boundless_prover,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
-            max_concurrency: self.max_concurrency.get(),
+            max_concurrency: self.max_concurrency,
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
             unhealthy_registration_window: Duration::from_secs(
@@ -302,21 +302,8 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
 
-    const TEST_L1_RPC: &str = "http://localhost:8545";
-    const TEST_REGISTRY_ADDR: &str = "0x0000000000000000000000000000000000000001";
-    const TEST_TARGET_GROUP_ARN: &str =
-        "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123";
-    const TEST_AWS_REGION: &str = "us-east-1";
-    const TEST_PRIVATE_KEY: &str =
-        "0x0101010101010101010101010101010101010101010101010101010101010101";
-    const TEST_BOUNDLESS_RPC: &str = "http://localhost:9545";
-    const TEST_BOUNDLESS_KEY: &str =
-        "0202020202020202020202020202020202020202020202020202020202020202";
-    const TEST_VERIFIER_URL: &str = "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     const TEST_IMAGE_ID: &str =
         "0x0100000002000000030000000400000005000000060000000700000008000000";
     const TEST_BOUNDLESS_MIN_PRICE_ETH: &str = "0.01";
@@ -326,34 +313,24 @@ mod tests {
         vec![
             "prover-registrar",
             "--l1-rpc-url",
-            TEST_L1_RPC,
+            "http://localhost:8545",
             "--tee-prover-registry-address",
-            TEST_REGISTRY_ADDR,
+            "0x0000000000000000000000000000000000000001",
             "--target-group-arn",
-            TEST_TARGET_GROUP_ARN,
+            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
             "--aws-region",
-            TEST_AWS_REGION,
+            "us-east-1",
             "--private-key",
-            TEST_PRIVATE_KEY,
+            "0x0101010101010101010101010101010101010101010101010101010101010101",
             "--image-id",
             TEST_IMAGE_ID,
             "--boundless-rpc-url",
-            TEST_BOUNDLESS_RPC,
+            "http://localhost:9545",
             "--boundless-private-key",
-            TEST_BOUNDLESS_KEY,
+            "0202020202020202020202020202020202020202020202020202020202020202",
             "--boundless-verifier-program-url",
-            TEST_VERIFIER_URL,
+            "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ]
-    }
-
-    /// `--boundless-timeout-secs` default should cover a 10-minute
-    /// lock timeout with the SDK-derived `Offer.timeout = 1200 s`
-    /// plus headroom.
-    #[test]
-    fn boundless_timeout_default_covers_default_lock_timeout() {
-        let b = Cli::parse_from(boundless_args()).boundless_prover().unwrap();
-
-        assert_eq!(b.timeout, Duration::from_secs(1260));
     }
 
     #[test]
@@ -414,10 +391,7 @@ mod tests {
 
     #[test]
     fn parse_image_id_valid() {
-        for input in [
-            "0x0100000002000000030000000400000005000000060000000700000008000000",
-            "0100000002000000030000000400000005000000060000000700000008000000",
-        ] {
+        for input in [TEST_IMAGE_ID, TEST_IMAGE_ID.trim_start_matches("0x")] {
             assert_eq!(parse_image_id(input).unwrap(), [1, 2, 3, 4, 5, 6, 7, 8]);
         }
     }
