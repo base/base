@@ -164,7 +164,7 @@ impl RegistrarService {
             tx_retry_delay: config.tx_retry_delay,
         };
 
-        ready.store(true, Ordering::SeqCst);
+        ready.store(true, Ordering::Relaxed);
 
         let signer_manager = Arc::new(SignerManager::new(
             config.boundless_prover,
@@ -173,19 +173,18 @@ impl RegistrarService {
             signer_manager_config,
         ));
         let cert_manager = if let Some(nitro_verifier_address) = config.crl_nitro_verifier_address {
-            let nitro_verifier = Box::new(NitroVerifierContractClient::new(
-                nitro_verifier_address,
-                config.l1_rpc_url,
-            ));
             Some(CertManager::new(
                 Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
-                nitro_verifier,
+                Box::new(NitroVerifierContractClient::new(
+                    nitro_verifier_address,
+                    config.l1_rpc_url,
+                )),
                 tx_manager,
             )?)
         } else {
             None
         };
-        let cancel_guard = cancel.clone().drop_guard();
+        let cancel_guard = cancel.drop_guard();
         let driver = RegistrationDriver::new(
             discovery,
             signer_client,
@@ -197,7 +196,7 @@ impl RegistrarService {
         drop(cancel_guard);
 
         info!("Driver stopped, shutting down...");
-        ready.store(false, Ordering::SeqCst);
+        ready.store(false, Ordering::Relaxed);
         RegistrarMetrics::up().set(0.0);
 
         match health_handle.await {
@@ -213,7 +212,7 @@ impl RegistrarService {
     }
 
     /// Creates a provider layer that reports account balance metrics.
-    pub fn balance_monitor_layer(
+    fn balance_monitor_layer(
         address: Address,
         cancel: CancellationToken,
         set_metric: impl Fn(f64) + Send + 'static,
