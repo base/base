@@ -70,9 +70,10 @@ where
         let cert_infos = crl::CertCrlInfo::from_chain(&report.cert_chain_der())?;
 
         RegistrarMetrics::onchain_revocation_checks_total().increment(1);
-        let onchain_revoked: Result<bool> = async {
-            for info in crl::CertCrlInfo::intermediates(&cert_infos) {
-                if self.nitro_verifier.is_revoked(info.path_digest).await? {
+        let mut onchain_check_failed = false;
+        for info in crl::CertCrlInfo::intermediates(&cert_infos) {
+            match self.nitro_verifier.is_revoked(info.path_digest).await {
+                Ok(true) => {
                     warn!(
                         cert_index = info.index,
                         path_digest = %info.path_digest,
@@ -82,23 +83,21 @@ where
                     RegistrarMetrics::onchain_revocations_detected().increment(1);
                     return Ok(true);
                 }
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        instance = %instance.instance_id,
+                        "onchain revocation pre-check failed; falling through to AWS CRL layer"
+                    );
+                    RegistrarMetrics::onchain_revocation_check_errors().increment(1);
+                    onchain_check_failed = true;
+                    break;
+                }
             }
-
-            debug!(instance = %instance.instance_id, "onchain revocation pre-check passed");
-            Ok(false)
         }
-        .await;
-        match onchain_revoked {
-            Ok(true) => return Ok(true),
-            Ok(false) => {}
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    instance = %instance.instance_id,
-                    "onchain revocation pre-check failed; falling through to AWS CRL layer"
-                );
-                RegistrarMetrics::onchain_revocation_check_errors().increment(1);
-            }
+        if !onchain_check_failed {
+            debug!(instance = %instance.instance_id, "onchain revocation pre-check passed");
         }
 
         RegistrarMetrics::crl_checks_total().increment(1);
@@ -112,13 +111,6 @@ where
         RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
 
         for revoked in &revoked_certs {
-            warn!(
-                cert_index = revoked.index,
-                path_digest = %revoked.path_digest,
-                instance = %instance.instance_id,
-                "submitting revokeCert transaction"
-            );
-
             self.submit_revoke_cert(revoked.path_digest).await;
         }
 
@@ -128,11 +120,13 @@ where
     /// Submits a `NitroEnclaveVerifier.revokeCert` transaction.
     pub async fn submit_revoke_cert(&self, path_digest: FixedBytes<32>) {
         let verifier_address = self.nitro_verifier.address();
-        let calldata = Bytes::from(
-            INitroEnclaveVerifier::revokeCertCall { certHash: path_digest }.abi_encode(),
-        );
-        let candidate =
-            TxCandidate { tx_data: calldata, to: Some(verifier_address), ..Default::default() };
+        let candidate = TxCandidate {
+            tx_data: Bytes::from(
+                INitroEnclaveVerifier::revokeCertCall { certHash: path_digest }.abi_encode(),
+            ),
+            to: Some(verifier_address),
+            ..Default::default()
+        };
 
         info!(
             path_digest = %path_digest,
@@ -203,19 +197,11 @@ mod tests {
     }
 
     #[derive(Debug, Default)]
-    struct CapturingTxManager {
-        sent_candidate: Mutex<Option<TxCandidate>>,
-    }
-
-    impl CapturingTxManager {
-        fn take_candidate(&self) -> TxCandidate {
-            self.sent_candidate.lock().unwrap().take().expect("candidate was sent")
-        }
-    }
+    struct CapturingTxManager(Mutex<Option<TxCandidate>>);
 
     impl TxManager for CapturingTxManager {
         async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
-            *self.sent_candidate.lock().unwrap() = Some(candidate);
+            *self.0.lock().unwrap() = Some(candidate);
             Err(TxManagerError::NonceTooLow)
         }
 
@@ -240,7 +226,7 @@ mod tests {
 
         cert_manager.submit_revoke_cert(path_digest).await;
 
-        let candidate = cert_manager.tx_manager.take_candidate();
+        let candidate = cert_manager.tx_manager.0.lock().unwrap().take().expect("candidate sent");
         assert_eq!(candidate.to, Some(Address::ZERO));
         assert_eq!(
             candidate.tx_data,
