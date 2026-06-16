@@ -74,7 +74,8 @@ pub(crate) struct Cli {
     #[arg(
         long = "boundless-poll-interval-secs",
         env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"),
-        default_value_t = 5
+        default_value_t = 5,
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     boundless_fulfillment_poll_interval: u64,
 
