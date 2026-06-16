@@ -29,18 +29,6 @@ impl ActiveUpgradeMetricsRecorder {
     pub const fn empty() -> Self {
         Self { shutdown: None, handle: None }
     }
-
-    /// Stops the background recorder and waits for it to exit.
-    pub fn stop(mut self) {
-        if let Some(shutdown) = self.shutdown.take() {
-            let _ = shutdown.send(());
-        }
-        if let Some(handle) = self.handle.take()
-            && handle.join().is_err()
-        {
-            warn!("active upgrade metrics recorder panicked");
-        }
-    }
 }
 
 impl Drop for ActiveUpgradeMetricsRecorder {
