@@ -179,9 +179,12 @@ impl ClusterZkProver {
         {
             Ok(request) => Ok(request),
             Err(e) => {
-                if e.downcast_ref::<tonic::Status>()
-                    .is_some_and(Self::is_missing_cluster_request_status)
-                {
+                if e.downcast_ref::<tonic::Status>().is_some_and(|status| {
+                    status.code() == tonic::Code::NotFound
+                        || (status.code() == tonic::Code::Internal
+                            && status.message().contains("Failed to get proof request")
+                            && status.message().contains("no rows returned"))
+                }) {
                     return Ok(None);
                 }
 
@@ -202,9 +205,8 @@ impl ClusterZkProver {
         {
             Ok(response) => Ok(response.into_inner().proof_request),
             Err(status) => {
-                let code = format!("{:?}", status.code());
-                if code == "NotFound"
-                    || (code == "Internal"
+                if status.code() == tonic_012::Code::NotFound
+                    || (status.code() == tonic_012::Code::Internal
                         && status.message().contains("Failed to get proof request")
                         && status.message().contains("no rows returned"))
                 {
@@ -214,14 +216,6 @@ impl ClusterZkProver {
                 Err(backend_error!("failed to get cluster proof: {status}"))
             }
         }
-    }
-
-    /// Returns true if a cluster gRPC status represents a missing proof request.
-    pub fn is_missing_cluster_request_status(status: &tonic::Status) -> bool {
-        status.code() == tonic::Code::NotFound
-            || (status.code() == tonic::Code::Internal
-                && status.message().contains("Failed to get proof request")
-                && status.message().contains("no rows returned"))
     }
 
     /// Decode the cluster proof request status without mapping unknown values to unspecified.
@@ -547,6 +541,19 @@ impl ZkProver for ClusterZkProver {
 
     async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
         let session = ClusterSessionId::parse(backend_session_id)?;
+        let req = self
+            .get_cluster_request(&session.proof_id)
+            .await?
+            .ok_or_else(|| backend_error!("cluster proof {} not found", session.proof_id))?;
+        let proof_status = Self::cluster_proof_status(&req)?;
+        if proof_status != ProofRequestStatus::Completed {
+            return Err(backend_error!(
+                "cluster proof {} is not completed (status: {})",
+                session.proof_id,
+                proof_status.as_str_name()
+            ));
+        }
+
         let proof = self.download_cluster_proof(&session).await?;
         let proof = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
             .map_err(|e| backend_error!("failed to serialize proof: {e}"))?;

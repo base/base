@@ -25,6 +25,7 @@ base-proof-succinct-ethereum-host-utils.workspace = true
 # network
 tonic.workspace = true
 alloy-primitives.workspace = true
+tonic_012 = { package = "tonic", version = "0.12" }
 
 # sp1
 sp1-prover-types.workspace = true
