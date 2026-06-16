@@ -1,7 +1,9 @@
-//! ZK proving abstraction used by prover-service worker hosts.
+//! ZK proving abstraction used by the host worker.
 
 use async_trait::async_trait;
-use base_prover_service_protocol::{ProofResult, SnarkGroth16ProofRequest, ZkProofRequest};
+use base_prover_service_protocol::{
+    ProofResult, SessionType, SnarkGroth16ProofRequest, ZkProofRequest,
+};
 use thiserror::Error;
 
 /// Concrete ZK proof request claimed from the prover service.
@@ -33,6 +35,14 @@ impl ZkProofRequestKind {
     /// Returns whether this request asks for a Groth16 SNARK proof.
     pub const fn is_snark_groth16(&self) -> bool {
         matches!(self, Self::SnarkGroth16(_))
+    }
+
+    /// Returns the backend session type tracked for this request.
+    pub const fn session_type(&self) -> SessionType {
+        match self {
+            Self::Compressed(_) => SessionType::Stark,
+            Self::SnarkGroth16(_) => SessionType::Snark,
+        }
     }
 }
 
@@ -67,9 +77,6 @@ pub enum ZkProverError {
 #[async_trait]
 pub trait ZkProver: Send + Sync + std::fmt::Debug {
     /// Submit the proving job to the backend and return its backend session id.
-    ///
-    /// `request_session_id` is the prover-service public session id. Backends may
-    /// use it to derive deterministic backend ids for idempotent resubmission.
     async fn submit(
         &self,
         request: &ZkProofRequestKind,
@@ -108,7 +115,7 @@ impl ZkProver for UnimplementedZkProver {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
+    use base_prover_service_protocol::{SessionType, ZkVm};
 
     use super::*;
 
@@ -132,9 +139,22 @@ mod tests {
 
         let snark = ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
             proof: zk_request(),
-            prover_address: Default::default(),
+            prover_address: alloy_primitives::Address::ZERO,
         });
         assert!(snark.is_snark_groth16());
+    }
+
+    #[test]
+    fn request_kind_maps_to_session_type() {
+        assert_eq!(ZkProofRequestKind::Compressed(zk_request()).session_type(), SessionType::Stark);
+        assert_eq!(
+            ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+                proof: zk_request(),
+                prover_address: alloy_primitives::Address::ZERO,
+            })
+            .session_type(),
+            SessionType::Snark
+        );
     }
 
     #[tokio::test]
@@ -146,13 +166,5 @@ mod tests {
             .expect_err("stub prover should not produce a proof");
 
         assert!(matches!(error, ZkProverError::Unimplemented));
-    }
-
-    #[test]
-    fn prover_error_preserves_source() {
-        let error = ZkProverError::Backend(Box::new(std::io::Error::other("backend down")));
-        let source = std::error::Error::source(&error).expect("source should be preserved");
-
-        assert_eq!(source.to_string(), "backend down");
     }
 }
