@@ -133,7 +133,6 @@ impl DeployerContainer {
             .with_env_var("PROPOSER_ADDR", format_address(self.roles.proposer))
             .with_env_var("CHALLENGER_ADDR", format_address(self.roles.challenger))
             .with_env_var("OUTPUT_DIR", OUTPUT_DIR)
-            .with_env_var("TEMPLATE_DIR", "/templates")
             .with_mount(Mount::bind_mount(output_dir, OUTPUT_DIR));
 
         if let Some(network) = &self.network {

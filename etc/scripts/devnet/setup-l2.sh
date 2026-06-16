@@ -6,7 +6,6 @@ OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 L2_CHAIN_ID="${L2_CHAIN_ID:-84538453}"
 L1_CHAIN_ID="${L1_CHAIN_ID:-1337}"
 L2_DATA_DIR="${L2_DATA_DIR:-/data}"
-TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 L2_BASE_AZUL_BLOCK="${L2_BASE_AZUL_BLOCK:-}"
 L2_BASE_BERYL_BLOCK="${L2_BASE_BERYL_BLOCK:-}"
 L2_ACTIVATION_ADMIN_ADDR="${L2_ACTIVATION_ADMIN_ADDR:-$SEQUENCER_ADDR}"
@@ -100,10 +99,35 @@ echo "=== Deploying via forge scripts (base/contracts) ==="
 WORKDIR=/contracts
 echo "Working directory: $WORKDIR"
 
-# Step 1: Generate deploy-config.json from template
+# Step 1: Generate deploy-config.json from contracts' local.json
+# Uses contracts' own config as the source of truth, overlaying only the
+# devnet-specific addresses and chain IDs.  This avoids maintaining a
+# separate template that can diverge from the contracts repo.
 echo ""
 echo "--- Step 1: Generating deploy-config.json ---"
-envsubst <"$TEMPLATE_DIR/deploy-config.json.template" >"$WORKDIR/deploy-config/devnet.json"
+jq \
+  --arg deployer "$DEPLOYER_ADDR" \
+  --arg batcher "$BATCHER_ADDR" \
+  --arg sequencer "$SEQUENCER_ADDR" \
+  --arg challenger "$CHALLENGER_ADDR" \
+  --argjson l1_chain_id "$L1_CHAIN_ID" \
+  --argjson l2_chain_id "$L2_CHAIN_ID" \
+  '
+  .baseFeeVaultRecipient = $deployer |
+  .batchSenderAddress = $batcher |
+  .finalSystemOwner = $deployer |
+  .l1FeeVaultRecipient = $deployer |
+  .l1ChainId = $l1_chain_id |
+  .l2ChainId = $l2_chain_id |
+  .l2GenesisBlockGasLimit = "0x3938700" |
+  .operatorFeeVaultRecipient = $deployer |
+  .p2pSequencerAddress = $sequencer |
+  .proxyAdminOwner = $deployer |
+  .sequencerFeeVaultRecipient = $deployer |
+  .superchainConfigGuardian = $deployer |
+  .teeChallenger = $challenger |
+  .teeProposer = $deployer
+  ' /contracts/deploy-config/local.json > "$WORKDIR/deploy-config/devnet.json"
 echo "Deploy config written to $WORKDIR/deploy-config/devnet.json"
 cat "$WORKDIR/deploy-config/devnet.json"
 
