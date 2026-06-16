@@ -69,19 +69,23 @@ impl ActorAuthorizer {
                 nested_authenticator,
                 nested_actor_id,
             } => {
-                // Discharge the nested actor against the delegated account's config
-                // (its surface is discarded), then authorize the outer delegate
-                // actor against the originating account. Mirrors
-                // `DelegateAuthenticator` calling `authenticateActor(delegate, ...)`
-                // followed by the outer `_actorConfig[bytes20(delegate)][account]`
-                // binding check.
-                Self::resolve_bound(
+                // Discharge the nested actor against the delegated account's
+                // config and require it to carry SIGNATURE scope, then authorize
+                // the outer delegate actor against the originating account.
+                // Mirrors `DelegateAuthenticator` calling
+                // `verifySignature(delegate, ...)` (which accepts only an
+                // unrestricted or `SCOPE_SIGNATURE` actor) followed by the outer
+                // `_actorConfig[bytes20(delegate)][account]` binding check.
+                let nested = Self::resolve_bound(
                     storage,
                     delegate_account,
                     nested_actor_id,
                     nested_authenticator,
                     now,
                 )?;
+                if nested.scope != 0 && nested.scope & Eip8130Constants::SCOPE_SIGNATURE == 0 {
+                    return Err(AuthorizeError::NestedSignatureScope { actor_id: nested_actor_id });
+                }
                 Self::resolve_bound(
                     storage,
                     account,
@@ -432,6 +436,79 @@ mod tests {
                     policy_target: Address::ZERO
                 }
             );
+        });
+    }
+
+    #[test]
+    fn delegate_rejects_nested_actor_without_signature_scope() {
+        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
+        let nested_key = k1_key(0x44);
+        let nested_id = actor_id(k1_address(&nested_key));
+        let outer_id = actor_id(delegate_account);
+        let auth = delegate_auth(delegate_account, &nested_key);
+        with_storage(|acc| {
+            // Nested actor is bound on B but scoped PAYER only (no SIGNATURE bit),
+            // so `verifySignature(delegate, ...)` would reject it on-chain.
+            acc.actor_config
+                .at_mut(&nested_id)
+                .at_mut(&delegate_account)
+                .write(pack(
+                    Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+                    Eip8130Constants::SCOPE_PAYER,
+                    0,
+                    0,
+                ))
+                .unwrap();
+            acc.actor_config
+                .at_mut(&outer_id)
+                .at_mut(&ACCOUNT)
+                .write(pack(
+                    Eip8130Contracts::DELEGATE_AUTHENTICATOR,
+                    Eip8130Constants::SCOPE_SENDER,
+                    0,
+                    0,
+                ))
+                .unwrap();
+            assert_eq!(
+                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
+                Err(AuthorizeError::NestedSignatureScope { actor_id: nested_id }),
+            );
+        });
+    }
+
+    #[test]
+    fn delegate_accepts_nested_actor_with_signature_scope() {
+        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
+        let nested_key = k1_key(0x44);
+        let nested_id = actor_id(k1_address(&nested_key));
+        let outer_id = actor_id(delegate_account);
+        let auth = delegate_auth(delegate_account, &nested_key);
+        with_storage(|acc| {
+            // Nested actor scoped exactly SIGNATURE satisfies the delegate gate.
+            acc.actor_config
+                .at_mut(&nested_id)
+                .at_mut(&delegate_account)
+                .write(pack(
+                    Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+                    Eip8130Constants::SCOPE_SIGNATURE,
+                    0,
+                    0,
+                ))
+                .unwrap();
+            acc.actor_config
+                .at_mut(&outer_id)
+                .at_mut(&ACCOUNT)
+                .write(pack(
+                    Eip8130Contracts::DELEGATE_AUTHENTICATOR,
+                    Eip8130Constants::SCOPE_SENDER,
+                    0,
+                    0,
+                ))
+                .unwrap();
+            let resolved =
+                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
+            assert_eq!(resolved.actor_id, outer_id);
+            assert_eq!(resolved.scope, Eip8130Constants::SCOPE_SENDER);
         });
     }
 

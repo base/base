@@ -45,6 +45,16 @@ pub enum AuthorizeError {
         expiry: u64,
     },
 
+    /// The nested actor in a delegate authentication lacks `SCOPE_SIGNATURE` on
+    /// the delegate account. Mirrors `DelegateAuthenticator` requiring
+    /// `verifySignature(delegate, ...)`, which accepts only an unrestricted
+    /// (`scope == 0`) or `SCOPE_SIGNATURE` actor.
+    #[error("delegate nested actor {actor_id} lacks SIGNATURE scope on the delegate account")]
+    NestedSignatureScope {
+        /// The nested actor id that failed the SIGNATURE-scope check.
+        actor_id: B256,
+    },
+
     /// The implicit-EOA self-actor slot is occupied by an explicit actor, so the
     /// implicit owner is shadowed and `address(0)` cannot authenticate. Mirrors
     /// `require(_actorConfig[self][account].authenticator == address(0))`.
