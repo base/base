@@ -58,6 +58,64 @@ type BoundlessClient = Client<
     PrivateKeySigner,
 >;
 
+/// Configuration for [`BoundlessProver`].
+pub struct BoundlessProverConfig {
+    /// Ethereum RPC URL for the Boundless settlement chain.
+    pub rpc_url: Url,
+    /// Signer for Boundless Network proving fees.
+    pub signer: PrivateKeySigner,
+    /// HTTP(S) URL where the guest ELF is hosted (e.g. a Pinata or Boundless IPFS gateway URL).
+    pub verifier_program_url: Url,
+    /// Expected image ID of the guest program.
+    pub image_id: [u32; 8],
+    /// Interval between fulfillment status checks.
+    pub poll_interval: Duration,
+    /// Maximum time to wait for proof fulfillment.
+    pub timeout: Duration,
+    /// Maximum number of deterministic request-ID slots to probe when
+    /// recovering in-flight proofs after an instance rotation.
+    pub max_recovery_attempts: u32,
+    /// Maximum age of an attestation timestamp for a recovered proof to
+    /// be considered fresh enough for on-chain submission.
+    pub max_attestation_age: Duration,
+    /// Optional minimum Boundless offer price for each submitted proof request.
+    pub offer_min_price: Option<Amount>,
+    /// Optional maximum Boundless offer price for each submitted proof request.
+    pub offer_max_price: Option<Amount>,
+    /// Optional duration in seconds for the Boundless offer price to
+    /// ramp from `offer_min_price` to `offer_max_price`.
+    pub offer_ramp_up_period_secs: Option<u32>,
+    /// Optional maximum time, in seconds, that a prover that locks a
+    /// request has to deliver the proof before forfeiting its stake bond.
+    pub offer_lock_timeout_secs: Option<u32>,
+    /// Delay, in seconds, between request submission and the moment
+    /// bidding is allowed to begin (`Offer.rampUpStart`).
+    pub offer_bidding_start_delay_secs: u64,
+}
+
+impl fmt::Debug for BoundlessProverConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoundlessProverConfig")
+            .field("rpc_url", &self.rpc_url.origin().unicode_serialization())
+            .field("signer", &self.signer.address())
+            .field(
+                "verifier_program_url",
+                &self.verifier_program_url.origin().unicode_serialization(),
+            )
+            .field("image_id", &self.image_id)
+            .field("poll_interval", &self.poll_interval)
+            .field("timeout", &self.timeout)
+            .field("max_recovery_attempts", &self.max_recovery_attempts)
+            .field("max_attestation_age", &self.max_attestation_age)
+            .field("offer_min_price", &self.offer_min_price)
+            .field("offer_max_price", &self.offer_max_price)
+            .field("offer_ramp_up_period_secs", &self.offer_ramp_up_period_secs)
+            .field("offer_lock_timeout_secs", &self.offer_lock_timeout_secs)
+            .field("offer_bidding_start_delay_secs", &self.offer_bidding_start_delay_secs)
+            .finish()
+    }
+}
+
 /// Attestation prover using the Boundless marketplace.
 ///
 /// Submits proof requests with a guest program URL (IPFS or HTTP) and
@@ -154,21 +212,23 @@ impl fmt::Debug for BoundlessProver {
 
 impl BoundlessProver {
     /// Creates a Boundless prover.
-    pub fn new(
-        rpc_url: Url,
-        signer: PrivateKeySigner,
-        verifier_program_url: Url,
-        image_id: [u32; 8],
-        poll_interval: Duration,
-        timeout: Duration,
-        max_recovery_attempts: u32,
-        max_attestation_age: Duration,
-        offer_min_price: Option<Amount>,
-        offer_max_price: Option<Amount>,
-        offer_ramp_up_period_secs: Option<u32>,
-        offer_lock_timeout_secs: Option<u32>,
-        offer_bidding_start_delay_secs: u64,
-    ) -> Self {
+    pub fn new(config: BoundlessProverConfig) -> Self {
+        let BoundlessProverConfig {
+            rpc_url,
+            signer,
+            verifier_program_url,
+            image_id,
+            poll_interval,
+            timeout,
+            max_recovery_attempts,
+            max_attestation_age,
+            offer_min_price,
+            offer_max_price,
+            offer_ramp_up_period_secs,
+            offer_lock_timeout_secs,
+            offer_bidding_start_delay_secs,
+        } = config;
+
         Self {
             rpc_url,
             signer,

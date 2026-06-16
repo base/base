@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, hex::FromHex};
-use base_proof_tee_nitro_attestation_prover::BoundlessProver;
+use base_proof_tee_nitro_attestation_prover::{BoundlessProver, BoundlessProverConfig};
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError,
@@ -221,21 +221,21 @@ impl Cli {
                 .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?,
             tx_manager_config: TxManagerConfig::try_from(self.tx_manager)
                 .map_err(|e| RegistrarError::Config(format!("tx-manager: {e}")))?,
-            boundless_prover: BoundlessProver::new(
-                self.boundless_rpc_url,
-                self.boundless_fee_private_key,
-                self.boundless_verifier_program_url,
-                self.image_id,
-                Duration::from_secs(self.boundless_fulfillment_poll_interval),
-                Duration::from_secs(self.boundless_timeout),
-                self.boundless_max_recovery_attempts,
-                Duration::from_secs(self.max_attestation_age),
-                self.boundless_min_price_eth,
-                self.boundless_max_price_eth,
-                self.boundless_offer_ramp_up_period_secs,
-                self.boundless_offer_lock_timeout_secs,
-                self.boundless_offer_bidding_start_delay_secs,
-            ),
+            boundless_prover: BoundlessProver::new(BoundlessProverConfig {
+                rpc_url: self.boundless_rpc_url,
+                signer: self.boundless_fee_private_key,
+                verifier_program_url: self.boundless_verifier_program_url,
+                image_id: self.image_id,
+                poll_interval: Duration::from_secs(self.boundless_fulfillment_poll_interval),
+                timeout: Duration::from_secs(self.boundless_timeout),
+                max_recovery_attempts: self.boundless_max_recovery_attempts,
+                max_attestation_age: Duration::from_secs(self.max_attestation_age),
+                offer_min_price: self.boundless_min_price_eth,
+                offer_max_price: self.boundless_max_price_eth,
+                offer_ramp_up_period_secs: self.boundless_offer_ramp_up_period_secs,
+                offer_lock_timeout_secs: self.boundless_offer_lock_timeout_secs,
+                offer_bidding_start_delay_secs: self.boundless_offer_bidding_start_delay_secs,
+            }),
             poll_interval: Duration::from_secs(self.poll_interval),
             prover_timeout: Duration::from_secs(self.prover_timeout),
             max_concurrency: self.max_concurrency,
