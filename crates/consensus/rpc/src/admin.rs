@@ -68,8 +68,8 @@ fn sequencer_unavailable() -> ErrorObject<'static> {
     ErrorObject::owned(-32001, "sequencer not available on this node", None::<()>)
 }
 
-/// Maps public `admin_startSequencer` failures without exposing internal details.
-fn start_sequencer_error(error: SequencerAdminAPIError) -> ErrorObject<'static> {
+/// Maps public sequencer admin failures without exposing internal details.
+fn sequencer_admin_error(error: SequencerAdminAPIError) -> ErrorObject<'static> {
     match error {
         SequencerAdminAPIError::NotLeader => {
             ErrorObject::owned(-32002, "Node is not the conductor leader.", None::<()>)
@@ -131,7 +131,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client.start_sequencer(unsafe_head).await.map_err(start_sequencer_error)
+        sequencer_client.start_sequencer(unsafe_head).await.map_err(sequencer_admin_error)
     }
 
     async fn admin_stop_sequencer(&self) -> RpcResult<B256> {
@@ -143,7 +143,7 @@ where
         sequencer_client
             .stop_sequencer()
             .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+            .map_err(sequencer_admin_error)
     }
 
     async fn admin_conductor_enabled(&self) -> RpcResult<bool> {
@@ -211,12 +211,12 @@ where
 mod tests {
     use jsonrpsee::types::{ErrorCode, ErrorObject};
 
-    use super::start_sequencer_error;
+    use super::sequencer_admin_error;
     use crate::SequencerAdminAPIError;
 
     #[test]
-    fn start_sequencer_error_redacts_internal_failure_details() {
-        let error = start_sequencer_error(SequencerAdminAPIError::RequestError(
+    fn sequencer_admin_error_redacts_internal_failure_details() {
+        let error = sequencer_admin_error(SequencerAdminAPIError::RequestError(
             "block hash mismatch: engine unsafe head is 0x1, caller requested 0x2".to_string(),
         ));
         let internal_error = ErrorObject::from(ErrorCode::InternalError);
@@ -226,8 +226,8 @@ mod tests {
     }
 
     #[test]
-    fn start_sequencer_error_uses_not_leader_error() {
-        let error = start_sequencer_error(SequencerAdminAPIError::NotLeader);
+    fn sequencer_admin_error_uses_not_leader_error() {
+        let error = sequencer_admin_error(SequencerAdminAPIError::NotLeader);
 
         assert_eq!(error.code(), -32002);
         assert_eq!(error.message(), "Node is not the conductor leader.");
