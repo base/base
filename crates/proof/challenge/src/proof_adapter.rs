@@ -1,7 +1,8 @@
 //! Adapters between challenger proof types and the shared prover-service protocol.
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_primitives::{PROOF_TYPE_ZK, ProofEncoder, ProofRequest as PrimitiveProofRequest};
+use base_proof_primitives::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
+use base_proof_submission::ProofBytes;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
     SnarkGroth16ProofRequest, TeeKind, TeeProofRequest,
@@ -88,10 +89,7 @@ impl ChallengerProofAdapter {
             }
         };
 
-        let mut raw = Vec::with_capacity(1 + proof.len());
-        raw.push(PROOF_TYPE_ZK);
-        raw.extend_from_slice(proof.as_ref());
-        Ok(Bytes::from(raw))
+        Ok(ProofBytes::zk(proof))
     }
 
     /// Converts a prover-service TEE result into bytes accepted by `submit_dispute`.

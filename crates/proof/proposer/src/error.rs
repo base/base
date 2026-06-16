@@ -1,6 +1,7 @@
 //! Error types for the proposer.
 
 use base_proof_rpc::RpcError;
+use base_proof_submission::ProofSubmissionError;
 use thiserror::Error;
 
 /// Main error type for the proposer.
@@ -53,6 +54,23 @@ pub enum ProposerError {
     /// Transaction manager error (nonce, fees, signing, etc.).
     #[error(transparent)]
     TxManager(#[from] base_tx_manager::TxManagerError),
+}
+
+impl From<ProofSubmissionError> for ProposerError {
+    fn from(err: ProofSubmissionError) -> Self {
+        match err {
+            ProofSubmissionError::GameAlreadyExists => Self::GameAlreadyExists,
+            ProofSubmissionError::ProofAlreadyVerified => Self::ProofAlreadyVerified,
+            ProofSubmissionError::L1OriginTooOld => Self::L1OriginTooOld,
+            ProofSubmissionError::InvalidParentGame => Self::InvalidParentGame,
+            ProofSubmissionError::InvalidSigner => Self::InvalidSigner,
+            ProofSubmissionError::TxReverted(tx_hash) => {
+                Self::TxReverted(format!("transaction {tx_hash} reverted"))
+            }
+            ProofSubmissionError::TxManager(err) => Self::TxManager(err),
+            ProofSubmissionError::Encode(err) => Self::Internal(err.to_string()),
+        }
+    }
 }
 
 impl ProposerError {
