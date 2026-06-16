@@ -58,20 +58,25 @@ async fn main() -> anyhow::Result<()> {
             p2p::run(MonitoringConfig::load(config).await?, command).await
         }
         Some(cli::Commands::Conductor { command }) => {
-            let has_failures =
-                conductor::run(MonitoringConfig::load(config).await?, conductor_rpc, command)
-                    .await?;
-            if has_failures {
+            if conductor::run(MonitoringConfig::load(config).await?, conductor_rpc, command)
+                .await?
+                .has_failures()
+            {
                 std::process::exit(1);
             }
             Ok(())
         }
         Some(cli::Commands::Sequencer { command }) => {
-            sequencer::run(MonitoringConfig::load(config).await?, conductor_rpc, command).await
+            if sequencer::run(MonitoringConfig::load(config).await?, conductor_rpc, command)
+                .await?
+                .has_failures()
+            {
+                std::process::exit(1);
+            }
+            Ok(())
         }
         Some(cli::Commands::Doctor(args)) => {
-            let has_failures = doctor::run(MonitoringConfig::load(config).await?, args).await?;
-            if has_failures {
+            if doctor::run(MonitoringConfig::load(config).await?, args).await?.has_failures() {
                 std::process::exit(1);
             }
             Ok(())

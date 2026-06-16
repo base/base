@@ -18,7 +18,7 @@ use crate::{
         ConductorNodeActionArgs, ConductorStatusArgs,
     },
     confirm::{confirm_or_abort, confirm_typed_or_abort},
-    helpers::{find_node, fmt_bool, fmt_u32, fmt_u64, resolve_source},
+    helpers::{CommandOutcome, find_node, fmt_bool, fmt_u32, fmt_u64, resolve_source},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -85,7 +85,7 @@ pub(crate) async fn run(
     config: MonitoringConfig,
     conductor_rpc: Option<Url>,
     command: ConductorCommands,
-) -> Result<bool> {
+) -> Result<CommandOutcome> {
     let source = resolve_source(&config, conductor_rpc, "conductor")?;
     match command {
         ConductorCommands::Status(args) => run_status(config, source, args).await,
@@ -109,7 +109,7 @@ async fn run_status(
     config: MonitoringConfig,
     source: ConductorSource,
     args: ConductorStatusArgs,
-) -> Result<bool> {
+) -> Result<CommandOutcome> {
     let snapshot = ConductorControl::snapshot(source).await?;
     let status = ConductorStatusJson::from_snapshot(&config.name, &snapshot);
     if args.json {
@@ -117,14 +117,14 @@ async fn run_status(
     } else {
         print_status_pretty(&status)?;
     }
-    Ok(false)
+    Ok(CommandOutcome::Success)
 }
 
 async fn run_transfer_leader(
     config: MonitoringConfig,
     source: ConductorSource,
     args: ConductorLeaderArgs,
-) -> Result<bool> {
+) -> Result<CommandOutcome> {
     let nodes = current_nodes_for_action(&source).await?;
     if let Some(target) = args.target.as_deref() {
         // Validate before prompting so a typo does not ask for confirmation and only
@@ -142,7 +142,7 @@ async fn run_transfer_leader(
         |target| format!("Transfer conductor leadership to {target} for {}? [y/N] ", config.name),
     );
     if !confirm_or_abort(&prompt, args.yes)? {
-        return Ok(false);
+        return Ok(CommandOutcome::Success);
     }
 
     let message = ConductorControl::transfer_leader(&nodes, args.target.as_deref()).await?;
@@ -155,7 +155,7 @@ async fn run_transfer_leader(
         ),
         args.json,
     )?;
-    Ok(false)
+    Ok(CommandOutcome::Success)
 }
 
 async fn run_node_action(
@@ -163,7 +163,7 @@ async fn run_node_action(
     source: ConductorSource,
     args: ConductorNodeActionArgs,
     action: NodeActionKind,
-) -> Result<bool> {
+) -> Result<CommandOutcome> {
     let nodes = current_nodes_for_action(&source).await?;
     let node = find_node(&nodes, &args.node, "conductor")?;
     let json_action = action.action();
@@ -174,7 +174,7 @@ async fn run_node_action(
         node.conductor_rpc
     );
     if !confirm_or_abort(&prompt, args.yes)? {
-        return Ok(false);
+        return Ok(CommandOutcome::Success);
     }
 
     let message = match action {
@@ -185,7 +185,7 @@ async fn run_node_action(
         &ConductorActionJson::single(&config.name, json_action, Some(node.name.clone()), message),
         args.json,
     )?;
-    Ok(false)
+    Ok(CommandOutcome::Success)
 }
 
 async fn run_cluster_action(
@@ -193,7 +193,7 @@ async fn run_cluster_action(
     source: ConductorSource,
     args: ConductorClusterActionArgs,
     action: ClusterActionKind,
-) -> Result<bool> {
+) -> Result<CommandOutcome> {
     let (nodes, node_scope) = current_nodes_for_cluster_action(&source).await?;
     let names = nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>().join(", ");
     let json_action = action.action();
@@ -206,7 +206,7 @@ async fn run_cluster_action(
         names
     );
     if !confirm_typed_or_abort(&prompt, &config.name, args.yes)? {
-        return Ok(false);
+        return Ok(CommandOutcome::Success);
     }
 
     let report = match action {
@@ -217,7 +217,7 @@ async fn run_cluster_action(
         &ConductorFanoutJson::from_report(&config.name, json_action, &report),
         args.json,
     )?;
-    Ok(fanout_requires_failure_exit(&report))
+    Ok(fanout_outcome(&report))
 }
 
 async fn current_nodes_for_action(source: &ConductorSource) -> Result<Vec<ConductorNodeConfig>> {
@@ -260,8 +260,12 @@ async fn current_nodes_for_cluster_action(
     }
 }
 
-const fn fanout_requires_failure_exit(report: &ConductorFanoutReport) -> bool {
-    !report.is_success()
+/// Maps a fanout report onto the process-exit outcome.
+///
+/// An empty fanout (no nodes targeted) is treated as a failure so operators
+/// notice when a bulk action silently matched nothing.
+const fn fanout_outcome(report: &ConductorFanoutReport) -> CommandOutcome {
+    CommandOutcome::from_failures(!report.is_success())
 }
 
 fn print_status_pretty(status: &ConductorStatusJson) -> Result<()> {
@@ -561,7 +565,7 @@ mod tests {
 
     use super::{
         ConductorAction, ConductorActionJson, ConductorFanoutJson, ConductorNodeJson,
-        ConductorStatusJson, fanout_requires_failure_exit, find_node,
+        ConductorStatusJson, fanout_outcome, find_node,
     };
 
     fn node(name: &str) -> ConductorNodeConfig {
@@ -676,9 +680,9 @@ mod tests {
             failures: Vec::new(),
         };
 
-        assert!(!fanout_requires_failure_exit(&success));
-        assert!(fanout_requires_failure_exit(&partial_failure));
-        assert!(fanout_requires_failure_exit(&empty));
+        assert!(!fanout_outcome(&success).has_failures());
+        assert!(fanout_outcome(&partial_failure).has_failures());
+        assert!(fanout_outcome(&empty).has_failures());
     }
 
     #[test]

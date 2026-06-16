@@ -22,7 +22,7 @@ use url::Url;
 use crate::{
     cli::{SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs, SequencerStatusArgs},
     confirm::confirm_or_abort,
-    helpers::{find_node, fmt_bool, fmt_u32, fmt_u64, resolve_source},
+    helpers::{CommandOutcome, find_node, fmt_bool, fmt_u32, fmt_u64, resolve_source},
 };
 
 // Allow two full `admin_sequencerActive` polls plus the stabilization sleep,
@@ -32,17 +32,23 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REQUIRED_OBSERVATIONS: usize = 2;
 
 /// Runs the `basectl sequencer` command group.
+///
+/// Mirrors [`crate::conductor::run`] by returning a [`CommandOutcome`] so `main`
+/// can treat sibling command groups uniformly. Sequencer actions target a single
+/// node and surface failures as `Err`, so the success paths always report
+/// [`CommandOutcome::Success`].
 pub(crate) async fn run(
     config: MonitoringConfig,
     conductor_rpc: Option<Url>,
     command: SequencerCommands,
-) -> Result<()> {
+) -> Result<CommandOutcome> {
     let source = resolve_source(&config, conductor_rpc, "sequencer")?;
     match command {
         SequencerCommands::Status(args) => run_status(config, source, args).await,
         SequencerCommands::Start(args) => run_start(config, source, args).await,
         SequencerCommands::Stop(args) => run_stop(config, source, args).await,
-    }
+    }?;
+    Ok(CommandOutcome::Success)
 }
 
 async fn run_status(
@@ -94,20 +100,21 @@ async fn run_start(
         sequencer_active = ?status.and_then(|status| status.sequencer_active),
         "resolved sequencer start target"
     );
-    if let Err(error) = ensure_start_allowed(&snapshot, node, status) {
-        warn!(
-            error = %error,
-            node = %node.name,
-            cl_rpc = %node.cl_rpc,
-            "sequencer start preflight failed"
-        );
-        return Err(error);
-    }
+    let leader_check = match ensure_start_allowed(&snapshot, node, status) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            warn!(
+                error = %error,
+                node = %node.name,
+                cl_rpc = %node.cl_rpc,
+                "sequencer start preflight failed"
+            );
+            return Err(error);
+        }
+    };
     // No node currently reports itself as leader, and the target is not known
     // to be a follower, so defer the final leader check to the RPC.
-    if snapshot.statuses.iter().all(|status| status.is_leader != Some(true))
-        && status.and_then(|status| status.is_leader).is_none()
-    {
+    if leader_check == LeaderCheckOutcome::LeadershipUnknown {
         warn!(
             node = %node.name,
             cl_rpc = %node.cl_rpc,
@@ -261,11 +268,25 @@ fn snapshot_node_status<'a>(
     snapshot.statuses.iter().find(|status| status.name == name)
 }
 
+/// Outcome of a successful conductor-leader preflight check.
+///
+/// Distinguishes a positively confirmed leader from the case where no node
+/// reports leadership yet, so callers can decide whether to warn about deferred
+/// validation without re-deriving leadership state from the snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeaderCheckOutcome {
+    /// A node reported `is_leader == Some(true)` and it matches the target.
+    ConfirmedLeader,
+    /// No node reports leadership and the target is not a known follower, so the
+    /// final leader check is deferred to the server-side RPC.
+    LeadershipUnknown,
+}
+
 fn ensure_start_allowed(
     snapshot: &ConductorClusterSnapshot,
     node: &ConductorNodeConfig,
     status: Option<&ConductorNodeStatus>,
-) -> Result<()> {
+) -> Result<LeaderCheckOutcome> {
     if status.and_then(|status| status.sequencer_active) == Some(true) {
         bail!("sequencer already active on {}; stop it before starting again", node.name,);
     }
@@ -287,7 +308,7 @@ fn ensure_leader_target(
     node: &ConductorNodeConfig,
     status: Option<&ConductorNodeStatus>,
     action: SequencerAction,
-) -> Result<()> {
+) -> Result<LeaderCheckOutcome> {
     let leader = snapshot
         .statuses
         .iter()
@@ -295,7 +316,7 @@ fn ensure_leader_target(
         .map(|status| status.name.as_str());
     if let Some(leader) = leader {
         if leader == node.name {
-            return Ok(());
+            return Ok(LeaderCheckOutcome::ConfirmedLeader);
         }
         bail!(
             "Node is not the conductor leader. Current leader: {leader}. `basectl sequencer {}` must target the leader instead of {}.",
@@ -310,7 +331,7 @@ fn ensure_leader_target(
             node.name,
         );
     }
-    Ok(())
+    Ok(LeaderCheckOutcome::LeadershipUnknown)
 }
 
 fn ensure_start_request_matches_observed_head(
@@ -342,15 +363,14 @@ fn parse_unsafe_head(raw: &str) -> Result<B256> {
         bail!("unsafe head hash cannot be empty");
     }
 
-    let normalized = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
-        trimmed.to_string()
+    let hash = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+        B256::from_str(trimmed)
     } else if trimmed.len() == 64 && trimmed.chars().all(|char| char.is_ascii_hexdigit()) {
-        format!("0x{trimmed}")
+        B256::from_str(&format!("0x{trimmed}"))
     } else {
-        trimmed.to_string()
-    };
-    let hash = B256::from_str(&normalized)
-        .with_context(|| format!("parsing unsafe head hash `{trimmed}`"))?;
+        B256::from_str(trimmed)
+    }
+    .with_context(|| format!("parsing unsafe head hash `{trimmed}`"))?;
     if hash == B256::ZERO {
         bail!("unsafe head hash must not be zero");
     }
@@ -410,9 +430,7 @@ where
         match timeout(remaining, fetch()).await {
             Ok(Ok(is_active)) => {
                 last_observed = Some(is_active);
-                if last_error.is_some() {
-                    last_error = None;
-                }
+                last_error.take();
                 let next_matching_observations =
                     if is_active == expected_active { matching_observations + 1 } else { 0 };
                 debug!(
@@ -801,10 +819,10 @@ mod tests {
     use url::Url;
 
     use super::{
-        OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS, SequencerAction,
-        SequencerActionJson, SequencerStatusJson, UnsafeHeadSource, ensure_leader_target,
-        ensure_start_allowed, ensure_start_request_matches_observed_head, ensure_stop_allowed,
-        find_node, parse_unsafe_head, wait_for_expected_state_with_fetch,
+        LeaderCheckOutcome, OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS,
+        SequencerAction, SequencerActionJson, SequencerStatusJson, UnsafeHeadSource,
+        ensure_leader_target, ensure_start_allowed, ensure_start_request_matches_observed_head,
+        ensure_stop_allowed, find_node, parse_unsafe_head, wait_for_expected_state_with_fetch,
     };
 
     fn node(name: &str) -> ConductorNodeConfig {
@@ -944,6 +962,39 @@ mod tests {
             err.to_string(),
             "Node is not the conductor leader. Current leader: op-conductor-0. `basectl sequencer start` must target the leader instead of op-conductor-1."
         );
+    }
+
+    #[test]
+    fn start_confirms_leader_when_target_reports_leadership() {
+        let snapshot = ConductorClusterSnapshot {
+            nodes: vec![node("op-conductor-0")],
+            statuses: vec![status("op-conductor-0", true, false)],
+            membership: None,
+            membership_error: None,
+            discovered: false,
+        };
+
+        let outcome =
+            ensure_start_allowed(&snapshot, &snapshot.nodes[0], Some(&snapshot.statuses[0]))
+                .expect("leader target should be allowed");
+
+        assert_eq!(outcome, LeaderCheckOutcome::ConfirmedLeader);
+    }
+
+    #[test]
+    fn start_reports_unknown_leadership_when_no_node_claims_leader() {
+        let snapshot = ConductorClusterSnapshot {
+            nodes: vec![node("op-conductor-0")],
+            statuses: Vec::new(),
+            membership: None,
+            membership_error: None,
+            discovered: false,
+        };
+
+        let outcome = ensure_start_allowed(&snapshot, &snapshot.nodes[0], None)
+            .expect("unknown leadership should defer to the server-side RPC");
+
+        assert_eq!(outcome, LeaderCheckOutcome::LeadershipUnknown);
     }
 
     #[test]

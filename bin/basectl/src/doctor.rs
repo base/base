@@ -8,7 +8,7 @@ use basectl_cli::{
     MonitoringConfig,
 };
 
-use crate::cli::DoctorArgs;
+use crate::{cli::DoctorArgs, helpers::CommandOutcome};
 
 const ANSI_RED: &str = "\x1b[31m";
 const ANSI_YELLOW: &str = "\x1b[33m";
@@ -18,7 +18,7 @@ const ANSI_DIM: &str = "\x1b[2m";
 const ANSI_RESET: &str = "\x1b[0m";
 
 /// Runs the `basectl doctor` subcommand.
-pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<bool> {
+pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<CommandOutcome> {
     validate_thresholds(&args)?;
     let options = DoctorOptions {
         el_rpc: args.el_rpc.unwrap_or_else(|| config.rpc.clone()),
@@ -39,7 +39,7 @@ pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<bo
     } else {
         print_pretty(&report)?;
     }
-    Ok(report.has_failures())
+    Ok(CommandOutcome::from_failures(report.has_failures()))
 }
 
 fn validate_thresholds(args: &DoctorArgs) -> Result<()> {
