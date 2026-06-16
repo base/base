@@ -6,7 +6,7 @@ use base_builder_cli::Args as BuilderArgs;
 use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
 use base_consensus_cli::{
-    ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedSequencerConsensusNodeConfigArgs,
+    CliMetrics, ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedSequencerConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeConfigArgs, chainspec::chain_value_parser};
@@ -76,6 +76,12 @@ impl SequencerCommand {
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
+
+            CliMetrics::init_rollup_config(&rollup_config);
+            CliMetrics::spawn_active_upgrade_recorder(
+                rollup_config.clone(),
+                CliMetrics::ACTIVE_UPGRADE_RECORDING_INTERVAL,
+            );
 
             let overrides = ConsensusNodeOverrides {
                 l2_engine_rpc: Some(l2_engine_rpc),

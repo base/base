@@ -1,6 +1,13 @@
 //! CLI Options Metrics
 
+use std::{
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use base_common_chains::BaseUpgrade;
 use base_common_genesis::RollupConfig;
+use tracing::warn;
 
 use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
 
@@ -9,6 +16,25 @@ use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
 pub struct CliMetrics;
 
 impl CliMetrics {
+    /// The default interval for refreshing active upgrade metrics.
+    pub const ACTIVE_UPGRADE_RECORDING_INTERVAL: Duration = Duration::from_secs(30);
+
+    /// Base upgrade labels emitted by [`CliMetrics::UPGRADE_ACTIVE`].
+    pub const BASE_UPGRADE_LABELS: [(BaseUpgrade, &'static str); 12] = [
+        (BaseUpgrade::Bedrock, "bedrock"),
+        (BaseUpgrade::Regolith, "regolith"),
+        (BaseUpgrade::Canyon, "canyon"),
+        (BaseUpgrade::Ecotone, "ecotone"),
+        (BaseUpgrade::Fjord, "fjord"),
+        (BaseUpgrade::Granite, "granite"),
+        (BaseUpgrade::Holocene, "holocene"),
+        (BaseUpgrade::Isthmus, "isthmus"),
+        (BaseUpgrade::Jovian, "jovian"),
+        (BaseUpgrade::Azul, "azul"),
+        (BaseUpgrade::Beryl, "beryl"),
+        (BaseUpgrade::Cobalt, "cobalt"),
+    ];
+
     /// The identifier for the cli metrics gauge.
     pub const IDENTIFIER: &'static str = "base_cli_opts";
 
@@ -68,6 +94,9 @@ impl CliMetrics {
 
     /// Hardfork activation times.
     pub const HARDFORK_ACTIVATION_TIMES: &'static str = "base_node_hardforks";
+
+    /// Whether each configured Base network upgrade is active.
+    pub const UPGRADE_ACTIVE: &'static str = "base_node_upgrade_active";
 
     /// Top-level rollup config settings.
     pub const ROLLUP_CONFIG: &'static str = "base_node_rollup_config";
@@ -144,6 +173,10 @@ impl CliMetrics {
             Self::HARDFORK_ACTIVATION_TIMES,
             "Activation times for hardforks in Base"
         );
+        metrics::describe_gauge!(
+            Self::UPGRADE_ACTIVE,
+            "Whether each Base network upgrade is active according to the node configuration"
+        );
 
         metrics::gauge!(
             Self::ROLLUP_CONFIG,
@@ -170,6 +203,114 @@ impl CliMetrics {
             // Use `-1` as a signal that the fork is not scheduled.
             let time: f64 = activation_time.map(|t| t as f64).unwrap_or(-1f64);
             metrics::gauge!(Self::HARDFORK_ACTIVATION_TIMES, "fork" => fork_name).set(time);
+        }
+    }
+
+    /// Records active upgrade gauges using the current wall-clock timestamp.
+    pub fn record_active_upgrades(config: &RollupConfig) {
+        Self::record_active_upgrades_at(config, Self::current_unix_timestamp());
+    }
+
+    /// Records active upgrade gauges at the given Unix timestamp.
+    pub fn record_active_upgrades_at(config: &RollupConfig, timestamp: u64) {
+        let active_upgrade = BaseUpgrade::from_timestamp(config, timestamp);
+        for (upgrade, label) in Self::BASE_UPGRADE_LABELS {
+            metrics::gauge!(Self::UPGRADE_ACTIVE, "upgrade" => label)
+                .set(Self::upgrade_active_value(upgrade, active_upgrade));
+        }
+    }
+
+    /// Starts a background recorder that refreshes active upgrade gauges.
+    pub fn spawn_active_upgrade_recorder(config: RollupConfig, interval: Duration) {
+        let interval =
+            if interval.is_zero() { Self::ACTIVE_UPGRADE_RECORDING_INTERVAL } else { interval };
+
+        Self::record_active_upgrades(&config);
+
+        if let Err(error) =
+            thread::Builder::new().name("active-upgrade-metrics".to_string()).spawn(move || {
+                loop {
+                    thread::sleep(interval);
+                    Self::record_active_upgrades(&config);
+                }
+            })
+        {
+            warn!(error = %error, "failed to spawn active upgrade metrics recorder");
+        }
+    }
+
+    /// Returns the gauge value for an upgrade relative to the currently active upgrade.
+    pub const fn upgrade_active_value(upgrade: BaseUpgrade, active_upgrade: BaseUpgrade) -> f64 {
+        if upgrade.idx() <= active_upgrade.idx() { 1.0 } else { 0.0 }
+    }
+
+    /// Returns the current Unix timestamp in seconds.
+    pub fn current_unix_timestamp() -> u64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |duration| duration.as_secs())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_common_chains::BaseUpgrade;
+    use base_common_genesis::{HardForkConfig, HardforkConfig, RollupConfig};
+
+    use super::CliMetrics;
+
+    fn rollup_config(azul: Option<u64>, beryl: Option<u64>, cobalt: Option<u64>) -> RollupConfig {
+        RollupConfig {
+            hardforks: HardForkConfig {
+                base: HardforkConfig { azul, beryl, cobalt },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn active_upgrade_values_mark_azul_active_at_activation() {
+        let config = rollup_config(Some(10), Some(20), Some(30));
+        let active_upgrade = BaseUpgrade::from_timestamp(&config, 10);
+
+        assert_eq!(active_upgrade, BaseUpgrade::Azul);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Jovian, active_upgrade), 1.0);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Azul, active_upgrade), 1.0);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Beryl, active_upgrade), 0.0);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Cobalt, active_upgrade), 0.0);
+    }
+
+    #[test]
+    fn active_upgrade_values_mark_prior_upgrades_active_after_beryl() {
+        let config = rollup_config(Some(10), Some(20), Some(30));
+        let active_upgrade = BaseUpgrade::from_timestamp(&config, 25);
+
+        assert_eq!(active_upgrade, BaseUpgrade::Beryl);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Azul, active_upgrade), 1.0);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Beryl, active_upgrade), 1.0);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Cobalt, active_upgrade), 0.0);
+    }
+
+    #[test]
+    fn active_upgrade_values_keep_unscheduled_base_upgrades_inactive() {
+        let config = rollup_config(None, None, None);
+        let active_upgrade = BaseUpgrade::from_timestamp(&config, u64::MAX);
+
+        assert_eq!(active_upgrade, BaseUpgrade::Bedrock);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Bedrock, active_upgrade), 1.0);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Azul, active_upgrade), 0.0);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Beryl, active_upgrade), 0.0);
+        assert_eq!(CliMetrics::upgrade_active_value(BaseUpgrade::Cobalt, active_upgrade), 0.0);
+    }
+
+    #[test]
+    fn upgrade_labels_are_lowercase_and_cover_every_upgrade() {
+        assert_eq!(CliMetrics::BASE_UPGRADE_LABELS.len(), 12);
+
+        for (expected_idx, (upgrade, label)) in
+            CliMetrics::BASE_UPGRADE_LABELS.into_iter().enumerate()
+        {
+            assert_eq!(upgrade.idx(), expected_idx);
+            assert!(label.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
         }
     }
 }

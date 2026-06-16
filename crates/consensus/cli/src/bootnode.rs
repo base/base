@@ -61,10 +61,12 @@ impl Bootnode {
         )?;
 
         let cfg = self.l2_config.load(&chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
+        let metrics_interval = Duration::from_secs(self.metrics.interval);
 
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
             CliMetrics::init_rollup_config(&cfg);
+            CliMetrics::spawn_active_upgrade_recorder(cfg.clone(), metrics_interval);
             CliMetrics::init_bootnode_p2p(&self.p2p);
         })?;
 
