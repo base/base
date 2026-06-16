@@ -1,14 +1,11 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::{
-    num::{NonZeroU64, NonZeroUsize},
-    time::Duration,
-};
+use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_proof_tee_registrar::{
-    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
@@ -73,7 +70,7 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL"))]
     boundless_verifier_program_url: Url,
 
-    /// Interval between Boundless fulfillment status checks, in seconds.
+    /// Boundless fulfillment poll interval in seconds.
     #[arg(
         long = "boundless-poll-interval-secs",
         env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"),
@@ -81,13 +78,14 @@ pub(crate) struct Cli {
     )]
     boundless_fulfillment_poll_interval: u64,
 
-    /// Client-side fulfillment poll budget, in seconds.
+    /// Boundless fulfillment timeout in seconds.
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_TIMEOUT_SECS"),
-        default_value_t = NonZeroU64::new(1260).expect("default boundless timeout is non-zero")
+        default_value = "1260",
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
-    boundless_timeout: NonZeroU64,
+    boundless_timeout: u64,
 
     /// Minimum Boundless offer price in ETH for each submitted proof request.
     #[arg(
@@ -105,11 +103,11 @@ pub(crate) struct Cli {
     )]
     boundless_max_price_eth: Option<Amount>,
 
-    /// Optional duration in seconds for the Boundless offer price ramp.
+    /// Boundless offer price ramp duration in seconds.
     #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
     boundless_offer_ramp_up_period_secs: Option<u32>,
 
-    /// Maximum lock and delivery window for a Boundless proof request.
+    /// Boundless request lock timeout in seconds.
     #[arg(long, env = cli_env!("BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS"))]
     boundless_offer_lock_timeout_secs: Option<u32>,
 
@@ -121,8 +119,7 @@ pub(crate) struct Cli {
     )]
     boundless_offer_bidding_start_delay_secs: u64,
 
-    /// Maximum number of deterministic request-ID slots to probe when
-    /// recovering in-flight proofs after an instance rotation.
+    /// Maximum request-ID slots to probe during proof recovery.
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MAX_RECOVERY_ATTEMPTS"),
@@ -130,9 +127,7 @@ pub(crate) struct Cli {
     )]
     boundless_max_recovery_attempts: u32,
 
-    /// Maximum age (in seconds) of a recovered proof's attestation timestamp
-    /// before it is considered stale. Should be slightly below the onchain
-    /// `MAX_AGE` to account for clock skew. Defaults to 3300 s (55 minutes).
+    /// Maximum recovered attestation age in seconds.
     #[arg(
         long,
         env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
@@ -140,47 +135,44 @@ pub(crate) struct Cli {
     )]
     max_attestation_age: u64,
 
-    /// Interval between discovery and registration poll cycles, in seconds.
+    /// Registration poll interval in seconds.
     #[arg(
         long,
         env = cli_env!("POLL_INTERVAL_SECS"),
-        default_value_t = NonZeroU64::new(30).expect("default poll interval is non-zero")
+        default_value = "30",
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
-    poll_interval: NonZeroU64,
+    poll_interval: u64,
 
-    /// Timeout for JSON-RPC calls to prover instances, in seconds.
+    /// Prover JSON-RPC timeout in seconds.
     #[arg(
         long,
         env = cli_env!("PROVER_TIMEOUT_SECS"),
-        default_value_t = NonZeroU64::new(30).expect("default prover timeout is non-zero")
+        default_value = "30",
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
-    prover_timeout: NonZeroU64,
+    prover_timeout: u64,
 
-    /// Maximum number of instances to process concurrently within a single
-    /// registration cycle. Each instance may trigger a ~20-minute proof
-    /// generation, so this limits concurrent proof work.
+    /// Maximum instances to process concurrently per registration cycle.
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = NonZeroUsize::new(DEFAULT_MAX_CONCURRENCY)
-            .expect("default max concurrency is non-zero")
+        default_value = "4"
     )]
     max_concurrency: NonZeroUsize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
 
-    /// Delay between transaction submission retries, in seconds.
+    /// Transaction submission retry delay in seconds.
     #[arg(
         long,
         env = cli_env!("TX_RETRY_DELAY_SECS"),
-        default_value_t = NonZeroU64::new(DEFAULT_TX_RETRY_DELAY_SECS)
-            .expect("default transaction retry delay is non-zero")
+        default_value_t = DEFAULT_TX_RETRY_DELAY_SECS,
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
-    tx_retry_delay: NonZeroU64,
-    /// Duration (seconds) after EC2 launch during which unhealthy instances
-    /// are still eligible for registration. New instances may fail ALB health
-    /// checks while the application initializes. Set to 0 to disable.
+    tx_retry_delay: u64,
+    /// Grace period for registering newly launched unhealthy instances.
     #[arg(
         long,
         env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"),
@@ -214,15 +206,10 @@ fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
 
 impl Cli {
     pub(crate) fn config(self) -> Result<RegistrarConfig, RegistrarError> {
-        if matches!(
-            (&self.boundless_min_price_eth, &self.boundless_max_price_eth),
-            (Some(min_price), Some(max_price)) if max_price.value < min_price.value
-        ) {
-            return Err(RegistrarError::Config(
-                "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
-                    .into(),
-            ));
-        }
+        validate_boundless_offer_prices(
+            &self.boundless_min_price_eth,
+            &self.boundless_max_price_eth,
+        )?;
 
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
@@ -240,7 +227,7 @@ impl Cli {
                 self.boundless_verifier_program_url,
                 self.image_id,
                 Duration::from_secs(self.boundless_fulfillment_poll_interval),
-                Duration::from_secs(self.boundless_timeout.get()),
+                Duration::from_secs(self.boundless_timeout),
                 self.boundless_max_recovery_attempts,
                 Duration::from_secs(self.max_attestation_age),
                 self.boundless_min_price_eth,
@@ -249,11 +236,11 @@ impl Cli {
                 self.boundless_offer_lock_timeout_secs,
                 self.boundless_offer_bidding_start_delay_secs,
             ),
-            poll_interval: Duration::from_secs(self.poll_interval.get()),
-            prover_timeout: Duration::from_secs(self.prover_timeout.get()),
+            poll_interval: Duration::from_secs(self.poll_interval),
+            prover_timeout: Duration::from_secs(self.prover_timeout),
             max_concurrency: self.max_concurrency.get(),
             max_tx_retries: self.max_tx_retries,
-            tx_retry_delay: Duration::from_secs(self.tx_retry_delay.get()),
+            tx_retry_delay: Duration::from_secs(self.tx_retry_delay),
             unhealthy_registration_window: Duration::from_secs(self.unhealthy_registration_window),
             crl_nitro_verifier_address: self.crl_nitro_verifier_address,
             health_addr: self.health.socket_addr(),
@@ -263,43 +250,35 @@ impl Cli {
     }
 }
 
+fn validate_boundless_offer_prices(
+    min_price: &Option<Amount>,
+    max_price: &Option<Amount>,
+) -> Result<(), RegistrarError> {
+    if matches!(
+        (min_price, max_price),
+        (Some(min_price), Some(max_price)) if max_price.value < min_price.value
+    ) {
+        return Err(RegistrarError::Config(
+            "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
+                .into(),
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const TEST_IMAGE_ID: &str =
         "0x0100000002000000030000000400000005000000060000000700000008000000";
-    const CONFIG_ARGS: &[&str] = &[
-        "prover-registrar",
-        "--l1-rpc-url",
-        "http://localhost:8545",
-        "--tee-prover-registry-address",
-        "0x0000000000000000000000000000000000000001",
-        "--target-group-arn",
-        "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
-        "--aws-region",
-        "us-east-1",
-        "--private-key",
-        "0x0101010101010101010101010101010101010101010101010101010101010101",
-        "--image-id",
-        TEST_IMAGE_ID,
-        "--boundless-rpc-url",
-        "http://localhost:9545",
-        "--boundless-private-key",
-        "0202020202020202020202020202020202020202020202020202020202020202",
-        "--boundless-verifier-program-url",
-        "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-    ];
-
     #[test]
     fn boundless_offer_max_price_must_cover_min_price() {
-        let result = Cli::parse_from(CONFIG_ARGS.iter().copied().chain([
-            "--boundless-min-price-eth",
-            "0.03",
-            "--boundless-max-price-eth",
-            "0.01",
-        ]))
-        .config();
+        let result = validate_boundless_offer_prices(
+            &Some(parse_boundless_eth_amount("0.03").unwrap()),
+            &Some(parse_boundless_eth_amount("0.01").unwrap()),
+        );
 
         assert!(result.is_err());
     }
