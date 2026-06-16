@@ -177,6 +177,25 @@ pub struct ProposerArgs {
     )]
     pub tee_prover_registry_address: Option<Address>,
 
+    /// Use `ProverClient::prove` (synchronous `prover_prove` JSON-RPC) directly
+    /// instead of the async dispatch+collect pattern via `ProofRequesterProver`.
+    /// Required when the prover endpoint is `nitro-local` rather than prover-service.
+    #[arg(
+        long = "direct-prover-rpc",
+        env = cli_env!("DIRECT_PROVER_RPC"),
+        default_value = "false"
+    )]
+    pub direct_prover_rpc: bool,
+
+    /// Automatically resolve dispute games immediately after creation.
+    /// Intended for use where finality delays are zero.
+    #[arg(
+        long = "auto-resolve",
+        env = cli_env!("AUTO_RESOLVE"),
+        default_value = "false"
+    )]
+    pub auto_resolve: bool,
+
     /// Transaction manager configuration.
     #[command(flatten)]
     pub tx_manager: TxManagerCli,

@@ -5,14 +5,16 @@
 //! to the shared [`TxManager`].
 
 use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolEvent;
 use async_trait::async_trait;
 use base_proof_contracts::{
-    encode_create_calldata, encode_extra_data, game_already_exists_selector,
-    invalid_parent_game_selector, invalid_signer_selector, l1_origin_too_old_selector,
+    IDisputeGameFactory, encode_create_calldata, encode_extra_data, encode_resolve_calldata,
+    game_already_exists_selector, invalid_parent_game_selector, invalid_signer_selector,
+    l1_origin_too_old_selector,
 };
 use base_proof_primitives::Proposal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::error::ProposerError;
 
@@ -125,6 +127,7 @@ pub struct ProposalSubmitter<T> {
     factory_address: Address,
     game_type: u32,
     init_bond: U256,
+    auto_resolve: bool,
 }
 
 impl<T: TxManager> ProposalSubmitter<T> {
@@ -134,8 +137,62 @@ impl<T: TxManager> ProposalSubmitter<T> {
         factory_address: Address,
         game_type: u32,
         init_bond: U256,
+        auto_resolve: bool,
     ) -> Self {
-        Self { tx_manager, factory_address, game_type, init_bond }
+        Self { tx_manager, factory_address, game_type, init_bond, auto_resolve }
+    }
+
+    /// Extracts the game proxy address from the receipt's `DisputeGameCreated`
+    /// event and submits a `resolve()` transaction. Errors are logged but not
+    /// propagated — a failed resolve does not invalidate the game creation.
+    async fn try_resolve_game(
+        &self,
+        receipt: &alloy_rpc_types_eth::TransactionReceipt,
+        l2_block_number: u64,
+    ) {
+        let game_address = receipt.inner.logs().iter().find_map(|log| {
+            IDisputeGameFactory::DisputeGameCreated::decode_log(&log.inner)
+                .ok()
+                .map(|decoded| decoded.data.disputeProxy)
+        });
+
+        let Some(game_address) = game_address else {
+            warn!(l2_block_number, "auto-resolve: DisputeGameCreated event not found in receipt");
+            return;
+        };
+
+        let resolve_calldata = encode_resolve_calldata();
+        let candidate =
+            TxCandidate { tx_data: resolve_calldata, to: Some(game_address), ..Default::default() };
+
+        info!(game = %game_address, l2_block_number, "auto-resolve: submitting resolve()");
+
+        match self.tx_manager.send(candidate).await {
+            Ok(resolve_receipt) if resolve_receipt.inner.status() => {
+                info!(
+                    game = %game_address,
+                    tx_hash = %resolve_receipt.transaction_hash,
+                    l2_block_number,
+                    "auto-resolve: game resolved successfully"
+                );
+            }
+            Ok(resolve_receipt) => {
+                warn!(
+                    game = %game_address,
+                    tx_hash = %resolve_receipt.transaction_hash,
+                    l2_block_number,
+                    "auto-resolve: resolve transaction reverted"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    game = %game_address,
+                    error = %e,
+                    l2_block_number,
+                    "auto-resolve: resolve transaction failed"
+                );
+            }
+        }
     }
 }
 
@@ -184,6 +241,11 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             block_number = receipt.block_number,
             "Proposal transaction confirmed"
         );
+
+        if self.auto_resolve {
+            self.try_resolve_game(&receipt, l2_block_number).await;
+        }
+
         Ok(())
     }
 }
@@ -271,6 +333,7 @@ mod tests {
             Address::repeat_byte(0x01),
             TEST_GAME_TYPE,
             U256::from(TEST_INIT_BOND),
+            false,
         )
     }
 

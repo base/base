@@ -179,8 +179,8 @@ where
 {
     config: PipelineConfig,
     prover: Arc<dyn ProverClient>,
-    proof_requester: Arc<dyn ProofRequesterProvider>,
-    proof_dispatcher: ProofRequesterDispatcher,
+    proof_requester: Option<Arc<dyn ProofRequesterProvider>>,
+    proof_dispatcher: Option<ProofRequesterDispatcher>,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
@@ -203,7 +203,7 @@ where
         Self {
             config: self.config.clone(),
             prover: Arc::clone(&self.prover),
-            proof_requester: Arc::clone(&self.proof_requester),
+            proof_requester: self.proof_requester.clone(),
             proof_dispatcher: self.proof_dispatcher.clone(),
             l1_client: Arc::clone(&self.l1_client),
             l2_client: Arc::clone(&self.l2_client),
@@ -243,7 +243,7 @@ where
     pub fn new(
         config: PipelineConfig,
         prover: Arc<dyn ProverClient>,
-        proof_requester: Arc<dyn ProofRequesterProvider>,
+        proof_requester: Option<Arc<dyn ProofRequesterProvider>>,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
@@ -253,11 +253,13 @@ where
         output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
     ) -> Self {
+        let proof_dispatcher =
+            proof_requester.as_ref().map(|r| ProofRequesterDispatcher::aws_nitro(Arc::clone(r)));
         Self {
             config,
             prover,
-            proof_requester: Arc::clone(&proof_requester),
-            proof_dispatcher: ProofRequesterDispatcher::aws_nitro(proof_requester),
+            proof_requester,
+            proof_dispatcher,
             l1_client,
             l2_client,
             rollup_client,
@@ -342,7 +344,9 @@ where
             Metrics::safe_head().set(safe_head as f64);
             Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
             state.prune_stale(recovered.l2_block_number);
-            self.collect_proofs(&recovered, safe_head, state).await;
+            if self.proof_requester.is_some() {
+                self.collect_proofs(&recovered, safe_head, state).await;
+            }
             self.dispatch_proofs(&recovered, safe_head, state).await?;
         }
         Ok(())
@@ -379,60 +383,94 @@ where
 
         for (plan, request) in requests {
             let retry_count = state.retry_counts.get(&plan.target_block).copied().unwrap_or(0);
-            let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
-            let dispatcher = self.proof_dispatcher.clone();
-            let cancel = self.cancel.child_token();
-
-            info!(
-                session_id = %session_id,
-                from_block = plan.start_block,
-                to_block = plan.target_block,
-                blocks = plan.target_block.saturating_sub(plan.start_block),
-                retry_count,
-                "Dispatching proof task"
-            );
             state.inflight.insert(plan.target_block);
-            state.dispatch_tasks.spawn(async move {
-                let inner = async move {
-                    tokio::select! {
-                        () = cancel.cancelled() => {
-                            ProofDispatchOutcome::Failed {
-                                plan,
-                                error: ProposerError::Internal("cancelled".into()),
-                            }
-                        }
-                        result = dispatcher.dispatch_tee(request) => {
-                            match result {
-                                Ok(dispatched) if dispatched.session_id == session_id => {
-                                    ProofDispatchOutcome::Accepted { plan, session_id }
-                                }
-                                Ok(dispatched) => ProofDispatchOutcome::Failed {
+
+            if let Some(ref dispatcher) = self.proof_dispatcher {
+                let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+                let dispatcher = dispatcher.clone();
+                let cancel = self.cancel.child_token();
+
+                info!(
+                    session_id = %session_id,
+                    from_block = plan.start_block,
+                    to_block = plan.target_block,
+                    blocks = plan.target_block.saturating_sub(plan.start_block),
+                    retry_count,
+                    "Dispatching proof task"
+                );
+                state.dispatch_tasks.spawn(async move {
+                    let inner = async move {
+                        tokio::select! {
+                            () = cancel.cancelled() => {
+                                ProofDispatchOutcome::Failed {
                                     plan,
-                                    error: ProposerError::Prover(format!(
-                                        "prover service returned mismatched session_id: expected {}, got {}",
-                                        session_id,
-                                        dispatched.session_id
-                                    )),
-                                },
-                                Err(error) => ProofDispatchOutcome::Failed { plan, error },
+                                    error: ProposerError::Internal("cancelled".into()),
+                                }
+                            }
+                            result = dispatcher.dispatch_tee(request) => {
+                                match result {
+                                    Ok(dispatched) if dispatched.session_id == session_id => {
+                                        ProofDispatchOutcome::Accepted { plan, session_id }
+                                    }
+                                    Ok(dispatched) => ProofDispatchOutcome::Failed {
+                                        plan,
+                                        error: ProposerError::Prover(format!(
+                                            "prover service returned mismatched session_id: expected {}, got {}",
+                                            session_id,
+                                            dispatched.session_id
+                                        )),
+                                    },
+                                    Err(error) => ProofDispatchOutcome::Failed { plan, error },
+                                }
                             }
                         }
+                    };
+                    match AssertUnwindSafe(inner).catch_unwind().await {
+                        Ok(outcome) => outcome,
+                        Err(panic) => ProofDispatchOutcome::Failed {
+                            plan,
+                            error: ProposerError::Internal(format!(
+                                "proof dispatch task panicked: {}",
+                                panic_message(&panic),
+                            )),
+                        },
                     }
-                };
-                // Catch panics inside the dispatch future so a single bad task
-                // never bubbles up as a tokio JoinError that the coordinator
-                // can't attribute to a specific target.
-                match AssertUnwindSafe(inner).catch_unwind().await {
-                    Ok(outcome) => outcome,
-                    Err(panic) => ProofDispatchOutcome::Failed {
-                        plan,
-                        error: ProposerError::Internal(format!(
-                            "proof dispatch task panicked: {}",
-                            panic_message(&panic),
-                        )),
-                    },
-                }
-            });
+                });
+            } else {
+                let prover = Arc::clone(&self.prover);
+                let cancel = self.cancel.child_token();
+                let target = plan.target_block;
+
+                info!(
+                    from_block = plan.start_block,
+                    to_block = plan.target_block,
+                    blocks = plan.target_block.saturating_sub(plan.start_block),
+                    retry_count,
+                    "Requesting proof directly from prover"
+                );
+                state.prove_tasks.spawn(async move {
+                    let inner = async {
+                        tokio::select! {
+                            () = cancel.cancelled() => {
+                                Err(ProposerError::Internal("cancelled".into()))
+                            }
+                            result = prover.prove(request) => {
+                                result.map_err(|e| ProposerError::Prover(e.to_string()))
+                            }
+                        }
+                    };
+                    match AssertUnwindSafe(inner).catch_unwind().await {
+                        Ok(result) => (target, result),
+                        Err(panic) => (
+                            target,
+                            Err(ProposerError::Internal(format!(
+                                "proof task panicked: {}",
+                                panic_message(&panic),
+                            ))),
+                        ),
+                    }
+                });
+            }
         }
 
         state.record_gauges();
@@ -567,6 +605,7 @@ where
         safe_head: u64,
         state: &mut PipelineState,
     ) {
+        let Some(ref proof_requester) = self.proof_requester else { return };
         let targets = self.collectable_targets(recovered, safe_head, state);
         let roots = self.fetch_canonical_root_results_with(targets.clone(), false).await;
 
@@ -575,8 +614,7 @@ where
             let session_id =
                 ProposerProofAdapter::tee_session_id_for_root(*root, TeeKind::AwsNitro);
 
-            let response = match self
-                .proof_requester
+            let response = match proof_requester
                 .get_proof(GetProofRequest { session_id: session_id.clone() })
                 .await
             {
@@ -2020,7 +2058,7 @@ mod tests {
         ProvingPipeline::new(
             pipeline_config,
             prover,
-            Arc::new(MockProofRequester::default()),
+            Some(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2140,7 +2178,7 @@ mod tests {
                 },
             },
             prover,
-            Arc::new(MockProofRequester::default()),
+            Some(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2316,7 +2354,7 @@ mod tests {
                 },
             },
             prover,
-            Arc::new(MockProofRequester::default()),
+            Some(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2441,7 +2479,7 @@ mod tests {
                 },
             },
             prover,
-            Arc::new(MockProofRequester::default()),
+            Some(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2727,7 +2765,7 @@ mod tests {
                 },
             },
             prover,
-            Arc::new(MockProofRequester::default()),
+            Some(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2802,7 +2840,7 @@ mod tests {
                 },
             },
             prover,
-            Arc::new(MockProofRequester::default()),
+            Some(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2862,7 +2900,7 @@ mod tests {
                 },
             },
             prover,
-            Arc::new(MockProofRequester::default()),
+            Some(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
