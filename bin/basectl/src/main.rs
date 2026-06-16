@@ -5,6 +5,7 @@ mod cli;
 mod conductor;
 mod confirm;
 mod doctor;
+mod helpers;
 mod p2p;
 mod sequencer;
 mod sync_status;

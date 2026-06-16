@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use basectl_cli::{
     ConductorClusterSnapshot, ConductorControl, ConductorFanoutReport, ConductorNodeConfig,
     ConductorNodeFailure, ConductorNodeStatus, ConductorSource, JsonOutput, KeyValueTable,
@@ -18,6 +18,7 @@ use crate::{
         ConductorNodeActionArgs, ConductorStatusArgs,
     },
     confirm::{confirm_or_abort, confirm_typed_or_abort},
+    helpers::{find_node, fmt_bool, fmt_u32, fmt_u64, resolve_source},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -85,7 +86,7 @@ pub(crate) async fn run(
     conductor_rpc: Option<Url>,
     command: ConductorCommands,
 ) -> Result<bool> {
-    let source = resolve_source(&config, conductor_rpc)?;
+    let source = resolve_source(&config, conductor_rpc, "conductor")?;
     match command {
         ConductorCommands::Status(args) => run_status(config, source, args).await,
         ConductorCommands::TransferLeader(args) => run_transfer_leader(config, source, args).await,
@@ -128,7 +129,7 @@ async fn run_transfer_leader(
     if let Some(target) = args.target.as_deref() {
         // Validate before prompting so a typo does not ask for confirmation and only
         // fail after the operator already answered yes.
-        find_node(&nodes, target)?;
+        find_node(&nodes, target, "conductor")?;
     }
 
     let prompt = args.target.as_deref().map_or_else(
@@ -164,7 +165,7 @@ async fn run_node_action(
     action: NodeActionKind,
 ) -> Result<bool> {
     let nodes = current_nodes_for_action(&source).await?;
-    let node = find_node(&nodes, &args.node)?;
+    let node = find_node(&nodes, &args.node, "conductor")?;
     let json_action = action.action();
     let prompt = format!(
         "{} conductor control loop on {} ({})? [y/N] ",
@@ -219,18 +220,6 @@ async fn run_cluster_action(
     Ok(fanout_requires_failure_exit(&report))
 }
 
-fn resolve_source(
-    config: &MonitoringConfig,
-    conductor_rpc: Option<Url>,
-) -> Result<ConductorSource> {
-    config.conductor_source(conductor_rpc).ok_or_else(|| {
-        anyhow!(
-            "conductor commands need conductor config or a bootstrap RPC URL for '{}'. Set `conductors` or `discovery.bootstrap_rpc` in config, or pass `--conductor-rpc <url>`.",
-            config.name
-        )
-    })
-}
-
 async fn current_nodes_for_action(source: &ConductorSource) -> Result<Vec<ConductorNodeConfig>> {
     match source {
         ConductorSource::Static(nodes) => Ok(nodes.clone()),
@@ -273,15 +262,6 @@ async fn current_nodes_for_cluster_action(
 
 const fn fanout_requires_failure_exit(report: &ConductorFanoutReport) -> bool {
     !report.is_success()
-}
-
-fn find_node<'a>(nodes: &'a [ConductorNodeConfig], name: &str) -> Result<&'a ConductorNodeConfig> {
-    nodes.iter().find(|node| node.name == name).ok_or_else(|| {
-        anyhow!(
-            "conductor node {name} not found. Available nodes: {}",
-            nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>().join(", ")
-        )
-    })
 }
 
 fn print_status_pretty(status: &ConductorStatusJson) -> Result<()> {
@@ -572,22 +552,6 @@ impl ConductorNodeJson {
     }
 }
 
-const fn fmt_bool(value: Option<bool>) -> &'static str {
-    match value {
-        Some(true) => "true",
-        Some(false) => "false",
-        None => "unknown",
-    }
-}
-
-fn fmt_u64(value: Option<u64>) -> String {
-    value.map_or_else(|| "unknown".to_string(), |value| value.to_string())
-}
-
-fn fmt_u32(value: Option<u32>) -> String {
-    value.map_or_else(|| "unknown".to_string(), |value| value.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
@@ -791,7 +755,8 @@ mod tests {
     fn find_node_reports_missing_name() {
         let nodes = vec![node("op-conductor-0")];
 
-        let err = find_node(&nodes, "op-conductor-1").expect_err("missing node should error");
+        let err = find_node(&nodes, "op-conductor-1", "conductor")
+            .expect_err("missing node should error");
 
         assert!(err.to_string().contains("op-conductor-1"));
         assert!(err.to_string().contains("op-conductor-0"));
