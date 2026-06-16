@@ -7,9 +7,6 @@ pub use config::{
     DEFAULT_MAX_RECOVERY_ATTEMPTS, ProvingConfig, RegistrarConfig,
 };
 
-mod cert_revoker;
-pub use cert_revoker::CertRevoker;
-
 mod cert_manager;
 pub use cert_manager::CertManager;
 

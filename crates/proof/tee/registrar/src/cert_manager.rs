@@ -4,13 +4,15 @@
 //! fetches AWS Nitro CRLs, and submits `revokeCert` transactions for
 //! certificates that are newly observed on a CRL.
 
+use alloy_primitives::{Bytes, FixedBytes};
+use alloy_sol_types::SolCall;
+use base_proof_contracts::INitroEnclaveVerifier;
 use base_proof_tee_nitro_verifier::AttestationReport;
-use base_tx_manager::TxManager;
-use tracing::{debug, warn};
+use base_tx_manager::{TxCandidate, TxManager};
+use tracing::{debug, info, warn};
 
 use crate::{
-    CertRevoker, CrlConfig, NitroVerifierClient, ProverInstance, RegistrarError, RegistrarMetrics,
-    Result, crl,
+    CrlConfig, NitroVerifierClient, ProverInstance, RegistrarError, RegistrarMetrics, Result, crl,
 };
 
 /// Manages Nitro certificate revocation checks and revocation transaction submission.
@@ -90,7 +92,6 @@ where
         }
 
         RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
-        let cert_revoker = CertRevoker::new(self.nitro_verifier.address(), &self.tx_manager);
 
         for revoked in &revoked_certs {
             warn!(
@@ -99,10 +100,56 @@ where
                 instance = %instance.instance_id,
                 "submitting revokeCert transaction"
             );
-            cert_revoker.revoke_cert(revoked.path_digest).await;
+
+            self.submit_revoke_cert(revoked.path_digest).await;
         }
 
         Ok(true)
+    }
+
+    /// Submits a `NitroEnclaveVerifier.revokeCert` transaction.
+    pub async fn submit_revoke_cert(&self, path_digest: FixedBytes<32>) {
+        let verifier_address = self.nitro_verifier.address();
+        let calldata = Bytes::from(
+            INitroEnclaveVerifier::revokeCertCall { certHash: path_digest }.abi_encode(),
+        );
+        let candidate =
+            TxCandidate { tx_data: calldata, to: Some(verifier_address), ..Default::default() };
+
+        info!(
+            path_digest = %path_digest,
+            verifier = %verifier_address,
+            calldata_len = candidate.tx_data.len(),
+            "sending revokeCert transaction"
+        );
+
+        match self.tx_manager.send(candidate).await {
+            Ok(receipt) => {
+                if !receipt.inner.status() {
+                    warn!(
+                        path_digest = %path_digest,
+                        tx_hash = %receipt.transaction_hash,
+                        "revokeCert transaction reverted (cert may already be revoked)"
+                    );
+                    RegistrarMetrics::revoke_cert_reverted_total().increment(1);
+                } else {
+                    info!(
+                        path_digest = %path_digest,
+                        tx_hash = %receipt.transaction_hash,
+                        "certificate revoked successfully"
+                    );
+                    RegistrarMetrics::revoke_cert_success_total().increment(1);
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    path_digest = %path_digest,
+                    "failed to submit revokeCert transaction"
+                );
+                RegistrarMetrics::revoke_cert_tx_failures().increment(1);
+            }
+        }
     }
 
     /// Checks whether any intermediate certificate has already been revoked onchain.
@@ -141,12 +188,15 @@ where
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU32, Ordering},
     };
 
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::{Address, B256, Bytes};
+    use alloy_sol_types::SolCall;
     use async_trait::async_trait;
+    use base_proof_contracts::INitroEnclaveVerifier;
+    use base_tx_manager::{SendHandle, TxCandidate, TxManager, TxManagerError};
 
     use super::*;
     use crate::test_utils::{NoopNitroVerifier, NoopTxManager, healthy_prover_instance};
@@ -219,6 +269,54 @@ mod tests {
             .has_onchain_revoked_intermediate(&cert_infos, "i-onchain-revocation-test")
             .await;
         (result, call_count.load(Ordering::Relaxed))
+    }
+
+    #[derive(Debug, Default)]
+    struct CapturingTxManager {
+        sent_candidate: Mutex<Option<TxCandidate>>,
+    }
+
+    impl CapturingTxManager {
+        fn take_candidate(&self) -> TxCandidate {
+            self.sent_candidate.lock().unwrap().take().expect("candidate was sent")
+        }
+    }
+
+    impl TxManager for CapturingTxManager {
+        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            *self.sent_candidate.lock().unwrap() = Some(candidate);
+            Err(TxManagerError::NonceTooLow)
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+            unreachable!("cert manager tests use synchronous send")
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    #[tokio::test]
+    async fn submit_revoke_cert_sends_revoke_cert_candidate() {
+        let cert_manager = CertManager {
+            enabled: true,
+            http_client: reqwest::Client::new(),
+            nitro_verifier: Box::new(NoopNitroVerifier),
+            tx_manager: CapturingTxManager::default(),
+        };
+        let path_digest = B256::repeat_byte(0x22);
+
+        cert_manager.submit_revoke_cert(path_digest).await;
+
+        let candidate = cert_manager.tx_manager.take_candidate();
+        assert_eq!(candidate.to, Some(Address::ZERO));
+        assert_eq!(
+            candidate.tx_data,
+            Bytes::from(
+                INitroEnclaveVerifier::revokeCertCall { certHash: path_digest }.abi_encode()
+            )
+        );
     }
 
     #[tokio::test]
