@@ -699,12 +699,10 @@ impl Cli {
             signer_manager_config,
         ));
         let cert_manager = if config.crl.enabled {
-            let nitro_verifier_address = config.crl.nitro_verifier_address.ok_or_else(|| {
-                RegistrarError::Config(
-                    "--crl-nitro-verifier-address is required when --crl-check-enabled is set"
-                        .into(),
-                )
-            })?;
+            let nitro_verifier_address = config
+                .crl
+                .nitro_verifier_address
+                .expect("--crl-nitro-verifier-address is validated by into_config()");
             let nitro_verifier = Box::new(NitroVerifierContractClient::new(
                 nitro_verifier_address,
                 config.l1_rpc_url.clone(),

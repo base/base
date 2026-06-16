@@ -95,6 +95,12 @@ where
         RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
 
         for revoked in &revoked_certs {
+            warn!(
+                cert_index = revoked.index,
+                path_digest = %revoked.path_digest,
+                instance = %instance.instance_id,
+                "submitting revokeCert transaction"
+            );
             match self
                 .tx_manager
                 .send(TxCandidate {
