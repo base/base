@@ -9,7 +9,7 @@ use alloy_sol_types::SolCall;
 use base_proof_contracts::INitroEnclaveVerifier;
 use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::{TxCandidate, TxManager};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::{
     CrlConfig, NitroVerifierClient, ProverInstance, RegistrarError, RegistrarMetrics, Result, crl,
@@ -95,30 +95,24 @@ where
         let revoked_certs = crl::check_chain_against_crls(&cert_infos, &self.http_client).await;
 
         if revoked_certs.is_empty() {
-            debug!(instance = %instance.instance_id, "CRL check passed, all certs clean");
             return Ok(false);
         }
 
         RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
 
-        let verifier_address = self.nitro_verifier.address();
         for revoked in &revoked_certs {
-            let candidate = TxCandidate {
-                tx_data: Bytes::from(
-                    INitroEnclaveVerifier::revokeCertCall { certHash: revoked.path_digest }
-                        .abi_encode(),
-                ),
-                to: Some(verifier_address),
-                ..Default::default()
-            };
-
-            info!(
-                path_digest = %revoked.path_digest,
-                verifier = %verifier_address,
-                "sending revokeCert transaction"
-            );
-
-            match self.tx_manager.send(candidate).await {
+            match self
+                .tx_manager
+                .send(TxCandidate {
+                    tx_data: Bytes::from(
+                        INitroEnclaveVerifier::revokeCertCall { certHash: revoked.path_digest }
+                            .abi_encode(),
+                    ),
+                    to: Some(self.nitro_verifier.address()),
+                    ..Default::default()
+                })
+                .await
+            {
                 Ok(receipt) if !receipt.inner.status() => {
                     warn!(
                         path_digest = %revoked.path_digest,
