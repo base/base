@@ -6,10 +6,14 @@
 //! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
+use base_common_network::Base;
 use base_consensus_node::NodeMode;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
@@ -125,12 +129,10 @@ impl L2Stack {
         let rollup_config = {
             let mut cfg = rollup_config;
             if cfg.genesis.l2.hash == B256::ZERO {
-                use alloy_provider::Provider;
-                let client = alloy_rpc_client::RpcClient::builder().http(builder.rpc_url()?);
-                let provider =
-                    alloy_provider::RootProvider::<base_common_network::Base>::new(client);
+                let client = RpcClient::builder().http(builder.rpc_url()?);
+                let provider = RootProvider::<Base>::new(client);
                 let block = provider
-                    .get_block_by_number(alloy_eips::BlockNumberOrTag::Earliest)
+                    .get_block_by_number(BlockNumberOrTag::Earliest)
                     .full()
                     .await
                     .wrap_err("Failed to fetch L2 genesis block")?

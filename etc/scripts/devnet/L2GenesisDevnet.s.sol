@@ -4,6 +4,7 @@ pragma solidity 0.8.15;
 import { Script } from "lib/forge-std/src/Script.sol";
 import { L2Genesis } from "scripts/L2Genesis.s.sol";
 import { DeployConfig } from "scripts/deploy/DeployConfig.s.sol";
+import { Fork } from "scripts/libraries/Config.sol";
 
 /// @title L2GenesisDevnet
 /// @notice Thin wrapper that reads deploy-config + deployed L1 addresses,
@@ -40,7 +41,7 @@ contract L2GenesisDevnet is Script {
             operatorFeeVaultRecipient: cfg.operatorFeeVaultRecipient(),
             operatorFeeVaultMinimumWithdrawalAmount: cfg.operatorFeeVaultMinimumWithdrawalAmount(),
             operatorFeeVaultWithdrawalNetwork: cfg.operatorFeeVaultWithdrawalNetwork(),
-            fork: 5, // JOVIAN — all forks active at genesis
+            fork: uint256(Fork.JOVIAN),
             fundDevAccounts: cfg.fundDevAccounts()
         });
 
