@@ -246,10 +246,9 @@ impl RegistrarConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use base_proof_tee_nitro_attestation_prover::BoundlessProverConfig;
 
+    use super::*;
     use crate::test_utils::TEST_REGISTRY_ADDRESS;
 
     #[test]
