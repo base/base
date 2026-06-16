@@ -215,10 +215,24 @@ impl ClusterZkProver {
 
     /// Returns true if a cluster gRPC status represents a missing proof request.
     pub fn is_missing_cluster_request_status(code: i32, message: &str) -> bool {
-        code == i32::from(tonic::Code::NotFound)
-            || (code == i32::from(tonic::Code::Internal)
-                && message.contains("Failed to get proof request")
-                && message.contains("no rows returned"))
+        if code == i32::from(tonic::Code::NotFound) {
+            return true;
+        }
+
+        // Self-hosted sp1-cluster v2.3.2 reports missing rows as Internal.
+        if code == i32::from(tonic::Code::Internal)
+            && message.contains("Failed to get proof request")
+            && message.contains("no rows returned")
+        {
+            warn!(
+                grpc_code = code,
+                error_message = %message,
+                "cluster proof request missing row returned as internal error"
+            );
+            return true;
+        }
+
+        false
     }
 
     /// Decode the cluster proof request status without mapping unknown values to unspecified.
@@ -263,6 +277,12 @@ impl ClusterZkProver {
                         proof_status = %proof_status.as_str_name(),
                         "existing cluster request is terminal, trying next proof id"
                     );
+                }
+                ProofRequestStatus::Unspecified => {
+                    return Err(backend_error!(
+                        "cluster proof {} has unspecified status",
+                        candidate
+                    ));
                 }
                 _ => {
                     info!(proof_id = %candidate, "cluster proof request already exists");
