@@ -57,6 +57,29 @@ fn test_cursor_single_entry<S: BaseProofsStore + BaseProofsInitialStateStore>(
     Ok(())
 }
 
+/// `seek_exact` on an absent key returns `None` and leaves `current()` unset.
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[serial]
+fn test_seek_exact_absent_key_returns_none<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let present = nibbles_from(vec![1, 2, 3]);
+    let absent = nibbles_from(vec![4, 5, 6]);
+
+    storage.store_account_branches(vec![(present, Some(create_test_branch()))])?;
+
+    let mut cursor = storage.account_trie_cursor(100)?;
+
+    assert!(cursor.seek_exact(absent)?.is_none());
+    assert!(cursor.current()?.is_none());
+
+    assert_eq!(cursor.seek_exact(present)?.map(|(k, _)| k), Some(present));
+
+    Ok(())
+}
+
 /// Test cursor operations with multiple entries
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]

@@ -2224,6 +2224,10 @@ impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {
 #[cfg(not(feature = "metrics"))]
 impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {}
 
+#[expect(
+    dead_code,
+    reason = "used by TrieCursor/HashedCursor read trait impls added in follow-up split"
+)]
 impl<'db, T, V> RocksdbVersionedCursor<'db, T>
 where
     T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
@@ -2232,119 +2236,203 @@ where
     T::Value: Decompress,
 {
     /// Creates a cursor over a `RocksDB` history column family.
-    pub fn new(_db: &'db RocksDb, _max_block_number: u64) -> Self {
-        unimplemented!("read path not yet implemented")
+    fn new(db: &'db RocksDb, max_block_number: u64) -> Self {
+        let snapshot = Arc::new(RocksdbReadSnapshot::new(db));
+        Self::new_with_snapshot(snapshot, max_block_number)
     }
 
-    /// Creates a versioned cursor that reads from a shared snapshot.
-    pub fn new_with_snapshot(
-        _snapshot: Arc<RocksdbReadSnapshot<'db>>,
-        _max_block_number: u64,
+    const fn new_with_snapshot(
+        snapshot: Arc<RocksdbReadSnapshot<'db>>,
+        max_block_number: u64,
     ) -> Self {
-        unimplemented!("read path not yet implemented")
+        Self { snapshot, max_block_number, current_key: None, _table: PhantomData }
     }
 
-    /// Returns the column family handle for this cursor's history table.
-    pub fn cf(&self) -> Result<Arc<BoundColumnFamily<'_>>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn cf(&self) -> Result<Arc<BoundColumnFamily<'_>>, DatabaseError> {
+        self.snapshot.cf(T::NAME)
     }
 
-    /// Returns encoded lower and upper bounds for an exact key lookup.
-    pub fn exact_lookup_bounds(&self, _key: &T::Key) -> Result<(Vec<u8>, Vec<u8>), DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn exact_lookup_bounds(&self, key: &T::Key) -> Result<(Vec<u8>, Vec<u8>), DatabaseError> {
+        let mut target = encode_history_key_prefix::<T>(key)?;
+        let prefix = target.clone();
+        // History keys are encoded with the block-number suffix complemented
+        // (`u64::MAX - block_number`), so larger block numbers produce SMALLER
+        // suffixes. The "target" is therefore the smallest encoded key that
+        // could match: a forward `seek(target)` lands on the first stored
+        // version V with `complement(V) >= complement(max_block_number)`, i.e.
+        // `V <= max_block_number` — the newest version at or below the bound.
+        target.extend_from_slice(&encode_history_block_suffix(self.max_block_number));
+        Ok((prefix, target))
     }
 
-    /// Returns the latest visible version for the provided logical key.
-    pub fn latest_version_for_key(&self, _key: T::Key) -> RocksDbLatestVersionResult<T> {
-        unimplemented!("read path not yet implemented")
+    fn latest_version_for_key(&self, key: &T::Key) -> RocksDbLatestVersionResult<T> {
+        let cf = self.cf()?;
+        let (prefix, target) = self.exact_lookup_bounds(key)?;
+        let read_options = exact_prefix_read_options(&prefix);
+        let mut iter = self.snapshot.snapshot().raw_iterator_cf_opt(&cf, read_options);
+        // Forward `seek` is the fast path: with reversed block-suffix encoding
+        // the newest version-at-or-below `max_block_number` sorts FIRST within
+        // the prefix box, so we land directly on it instead of paying the
+        // documented 7-8x penalty of `seek_for_prev` (RocksDB PR #5535).
+        iter.seek(&target);
+        if !iter.valid() {
+            iter.status().map_err(rocksdb_error)?;
+            return Ok(None);
+        }
+
+        let raw_key = iter.key().ok_or(DatabaseError::Decode)?;
+        if !raw_key.starts_with(&prefix) {
+            return Ok(None);
+        }
+
+        let (decoded_key, _) = decode_history_key::<T>(raw_key)?;
+        let raw_value = iter.value().ok_or(DatabaseError::Decode)?;
+        let value = T::Value::decompress(raw_value)?;
+        Ok(Some((decoded_key, value)))
     }
 
-    /// Seeks to an exact key and returns its decoded visible value.
-    pub fn seek_exact(&self, _key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn seek_exact(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        if let Some((latest_key, latest_value)) = self.latest_version_for_key(&key)?
+            && let MaybeDeleted(Some(value)) = latest_value.value
+        {
+            self.current_key = Some(latest_key.clone());
+            return Ok(Some((latest_key, value)));
+        }
+        // Key is absent or tombstoned — clear positioned state so is_positioned() is consistent.
+        self.current_key = None;
+        Ok(None)
     }
 
-    /// Seeks to the first key at or after the provided start key.
-    pub fn seek(&self, _start_key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn seek(&mut self, start_key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        self.next_live_from(start_key)
     }
 
-    /// Advances the cursor to the next decoded row.
-    pub fn next(&self) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn next(&mut self) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        if let Some(key) = self.current_key.clone() {
+            self.next_live_after(key)
+        } else {
+            self.next_live_from(T::Key::default())
+        }
     }
 
-    /// Returns the next live row at or after the given key.
-    pub fn next_live_from(&self, _key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn next_live_from(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        self.next_live_candidate(key, false, total_order_read_options())
     }
 
-    /// Returns the next live row strictly after the given key.
-    pub fn next_live_after(&self, _key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn next_live_after(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        self.next_live_candidate(key, true, total_order_read_options())
     }
 
-    /// Seeks using an explicit encoded prefix bound.
-    pub fn seek_with_prefix(
-        &self,
-        _key: T::Key,
-        _prefix: Vec<u8>,
+    fn seek_with_prefix(
+        &mut self,
+        key: T::Key,
+        prefix: Vec<u8>,
     ) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        self.next_live_candidate(key, false, prefix_read_options(&prefix))
     }
 
-    /// Advances to the next row constrained to the provided prefix.
-    pub fn next_with_prefix(&self, _prefix: Vec<u8>) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn next_with_prefix(&mut self, prefix: Vec<u8>) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        if let Some(key) = self.current_key.clone() {
+            self.next_live_candidate(key, true, prefix_read_options(&prefix))
+        } else {
+            self.next_live_candidate(T::Key::default(), false, prefix_read_options(&prefix))
+        }
     }
 
-    /// Returns the next candidate row while optionally skipping tombstoned values.
-    pub fn next_live_candidate(
-        &self,
-        _key: T::Key,
-        _exclusive: bool,
-        _read_options: ReadOptions,
+    fn next_live_candidate(
+        &mut self,
+        key: T::Key,
+        exclusive: bool,
+        read_options: ReadOptions,
     ) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        let found = {
+            let cf = self.cf()?;
+            // Under the reversed block-suffix encoding, within a given key's
+            // prefix the SMALLEST encoded suffix is `u64::MAX - u64::MAX = 0`
+            // (i.e. block `u64::MAX`) and the LARGEST is `u64::MAX - 0 =
+            // u64::MAX` (i.e. block `0`). So to start a forward scan at the
+            // first encoded row of `key`, use block `u64::MAX`; to start
+            // strictly after all of `key`'s rows, use block `0` (the
+            // `before_start` filter below then skips the equal-key row).
+            let start_block = if exclusive { 0 } else { u64::MAX };
+            let start_key = encode_history_key::<T>(&key, start_block)?;
+            let iter = self.snapshot.snapshot().iterator_cf_opt(
+                &cf,
+                read_options,
+                IteratorMode::From(&start_key, Direction::Forward),
+            );
+            let mut last_candidate = None;
+            let mut found = None;
+
+            for item in iter {
+                let (raw_key, _) = item.map_err(rocksdb_error)?;
+                let (candidate, _) = decode_history_key::<T>(&raw_key)?;
+                let before_start = if exclusive { candidate <= key } else { candidate < key };
+                if before_start || last_candidate.as_ref() == Some(&candidate) {
+                    continue;
+                }
+
+                last_candidate = Some(candidate.clone());
+                if let Some((live_key, latest_value)) = self.latest_version_for_key(&candidate)?
+                    && let MaybeDeleted(Some(value)) = latest_value.value
+                {
+                    found = Some((live_key, value));
+                    break;
+                }
+            }
+
+            found
+        };
+
+        if let Some((key, value)) = found {
+            self.current_key = Some(key.clone());
+            return Ok(Some((key, value)));
+        }
+
+        self.current_key = None;
+        Ok(None)
     }
 
-    /// Returns `true` when the cursor currently points at a key.
-    pub const fn is_positioned(&self) -> bool {
+    const fn is_positioned(&self) -> bool {
         self.current_key.is_some()
     }
 }
 
 impl<'db> RocksdbTrieCursor<'db, AccountTrieHistory> {
     /// Creates a `RocksDB` trie cursor.
-    pub fn new(_db: &'db RocksDb, _max_block_number: u64, _hashed_address: Option<B256>) -> Self {
-        unimplemented!("read path not yet implemented")
+    pub fn new(db: &'db RocksDb, max_block_number: u64, hashed_address: Option<B256>) -> Self {
+        Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
 
-    /// Creates a `RocksDB` trie cursor over a shared read snapshot.
-    /// Creates a `RocksDB` storage cursor over a shared read snapshot.
-    pub fn new_with_snapshot(
-        _snapshot: Arc<RocksdbReadSnapshot<'db>>,
-        _max_block_number: u64,
-        _hashed_address: Option<B256>,
+    #[expect(dead_code, reason = "used by RocksDB read cursor factories added in follow-up split")]
+    const fn new_with_snapshot(
+        snapshot: Arc<RocksdbReadSnapshot<'db>>,
+        max_block_number: u64,
+        hashed_address: Option<B256>,
     ) -> Self {
-        unimplemented!("read path not yet implemented")
+        Self {
+            inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number),
+            hashed_address,
+        }
     }
 }
 
 impl<'db> RocksdbTrieCursor<'db, StorageTrieHistory> {
     /// Creates a `RocksDB` trie cursor.
-    pub fn new(_db: &'db RocksDb, _max_block_number: u64, _hashed_address: Option<B256>) -> Self {
-        unimplemented!("read path not yet implemented")
+    pub fn new(db: &'db RocksDb, max_block_number: u64, hashed_address: Option<B256>) -> Self {
+        Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
 
-    /// Creates a `RocksDB` trie cursor over a shared read snapshot.
-    /// Creates a `RocksDB` account cursor over a shared read snapshot.
-    pub fn new_with_snapshot(
-        _snapshot: Arc<RocksdbReadSnapshot<'db>>,
-        _max_block_number: u64,
-        _hashed_address: Option<B256>,
+    #[expect(dead_code, reason = "used by RocksDB read cursor factories added in follow-up split")]
+    const fn new_with_snapshot(
+        snapshot: Arc<RocksdbReadSnapshot<'db>>,
+        max_block_number: u64,
+        hashed_address: Option<B256>,
     ) -> Self {
-        unimplemented!("read path not yet implemented")
+        Self {
+            inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number),
+            hashed_address,
+        }
     }
 }
 
@@ -2416,8 +2504,8 @@ impl<'db> RocksdbStorageCursor<'db> {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
 
-    /// Creates a `RocksDB` storage cursor over a shared read snapshot.
-    pub fn new_with_snapshot(
+    #[expect(dead_code, reason = "used by RocksDB read cursor factories added in follow-up split")]
+    const fn new_with_snapshot(
         snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
         hashed_address: B256,
@@ -2461,8 +2549,8 @@ impl<'db> RocksdbAccountCursor<'db> {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number) }
     }
 
-    /// Creates a `RocksDB` account cursor over a shared read snapshot.
-    pub fn new_with_snapshot(
+    #[expect(dead_code, reason = "used by RocksDB read cursor factories added in follow-up split")]
+    const fn new_with_snapshot(
         snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
     ) -> Self {
@@ -2532,7 +2620,7 @@ where
 }
 
 /// Reads one exact history value for a key at a specific block number.
-#[expect(dead_code, reason = "used by the RocksDB read/cursor path implemented in a later PR")]
+#[expect(dead_code, reason = "used by RocksDB read-store wiring added in follow-up split")]
 fn get_history_exact<T, V>(
     snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
     db: &Arc<RocksDb>,
@@ -2744,7 +2832,6 @@ fn exact_prefix_read_options(prefix: &[u8]) -> ReadOptions {
 }
 
 /// Builds read options with total-order seek enabled.
-#[expect(dead_code, reason = "used by the RocksDB read/cursor path implemented in a later PR")]
 fn total_order_read_options() -> ReadOptions {
     let mut read_options = ReadOptions::default();
     read_options.set_total_order_seek(true);
@@ -2752,7 +2839,7 @@ fn total_order_read_options() -> ReadOptions {
 }
 
 /// Returns the encoded key prefix for a hashed address.
-#[expect(dead_code, reason = "used by the RocksDB read/cursor path implemented in a later PR")]
+#[expect(dead_code, reason = "used by RocksDB read trait impls added in follow-up split")]
 fn hashed_address_prefix(hashed_address: B256) -> Vec<u8> {
     hashed_address.as_slice().to_vec()
 }
@@ -2769,4 +2856,267 @@ fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use reth_trie_common::{HashedPostState, updates::TrieUpdates};
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn max_total_wal_size_tracks_column_family_write_buffers() {
+        let options = RocksdbProofsStorageOptions::default();
+        assert_eq!(
+            RocksdbProofsStorage::max_total_wal_size(options),
+            RocksdbProofsStorage::column_families().len() as u64
+                * options.write_buffer_size as u64
+                * options.max_write_buffer_number as u64
+        );
+    }
+
+    #[test]
+    fn max_total_wal_size_uses_explicit_override() {
+        let options = RocksdbProofsStorageOptions {
+            max_total_wal_size: Some(512 * 1024 * 1024),
+            ..Default::default()
+        };
+        assert_eq!(RocksdbProofsStorage::max_total_wal_size(options), 512 * 1024 * 1024);
+    }
+
+    #[test]
+    fn default_options_use_sync_friendly_settings() {
+        let options = RocksdbProofsStorageOptions::default();
+        assert_eq!(options.block_cache_size, DEFAULT_BLOCK_CACHE_SIZE);
+        assert_eq!(options.bytes_per_sync, DEFAULT_BYTES_PER_SYNC);
+        assert_eq!(options.compaction_readahead_size, DEFAULT_COMPACTION_READAHEAD_SIZE);
+        assert_eq!(
+            options.level_zero_file_num_compaction_trigger,
+            DEFAULT_LEVEL_ZERO_FILE_NUM_COMPACTION_TRIGGER
+        );
+        assert_eq!(
+            options.level_zero_slowdown_writes_trigger,
+            DEFAULT_LEVEL_ZERO_SLOWDOWN_WRITES_TRIGGER
+        );
+        assert_eq!(options.level_zero_stop_writes_trigger, DEFAULT_LEVEL_ZERO_STOP_WRITES_TRIGGER);
+        assert_eq!(options.max_background_jobs, DEFAULT_MAX_BACKGROUND_JOBS);
+        assert_eq!(options.max_subcompactions, DEFAULT_MAX_SUBCOMPACTIONS);
+        assert_eq!(options.max_write_buffer_number, DEFAULT_MAX_WRITE_BUFFER_NUMBER);
+        assert_eq!(options.target_file_size_base, DEFAULT_TARGET_FILE_SIZE_BASE);
+        assert_eq!(options.write_buffer_size, DEFAULT_WRITE_BUFFER_SIZE);
+        assert!(options.use_direct_io_for_flush_and_compaction);
+    }
+
+    #[test]
+    fn history_prefix_lengths_match_encoded_key_prefixes() {
+        let account_path = StoredNibbles(Nibbles::from_nibbles_unchecked([1, 2, 3]));
+        let storage_path = StorageTrieKey::new(
+            B256::repeat_byte(0x01),
+            StoredNibbles(Nibbles::from_nibbles_unchecked([4, 5, 6])),
+        );
+        let hashed_account = B256::repeat_byte(0x02);
+        let hashed_storage =
+            HashedStorageKey::new(B256::repeat_byte(0x03), B256::repeat_byte(0x04));
+
+        assert_eq!(
+            RocksdbProofsStorage::history_prefix_len(<AccountTrieHistory as Table>::NAME),
+            Some(PACKED_NIBBLES_KEY_LEN)
+        );
+        assert_eq!(
+            RocksdbProofsStorage::history_prefix_len(<StorageTrieHistory as Table>::NAME),
+            Some(HASH_KEY_LEN + PACKED_NIBBLES_KEY_LEN)
+        );
+        assert_eq!(
+            RocksdbProofsStorage::history_prefix_len(<HashedAccountHistory as Table>::NAME),
+            Some(HASH_KEY_LEN)
+        );
+        assert_eq!(
+            RocksdbProofsStorage::history_prefix_len(<HashedStorageHistory as Table>::NAME),
+            Some(HASH_KEY_LEN * 2)
+        );
+        assert_eq!(RocksdbProofsStorage::history_prefix_len(<ProofWindow as Table>::NAME), None);
+
+        assert_eq!(
+            encode_history_key_prefix::<AccountTrieHistory>(&account_path).unwrap().len(),
+            RocksdbProofsStorage::history_prefix_len(<AccountTrieHistory as Table>::NAME).unwrap()
+        );
+        assert_eq!(
+            encode_history_key_prefix::<StorageTrieHistory>(&storage_path).unwrap().len(),
+            RocksdbProofsStorage::history_prefix_len(<StorageTrieHistory as Table>::NAME).unwrap()
+        );
+        assert_eq!(
+            encode_history_key_prefix::<HashedAccountHistory>(&hashed_account).unwrap().len(),
+            RocksdbProofsStorage::history_prefix_len(<HashedAccountHistory as Table>::NAME)
+                .unwrap()
+        );
+        assert_eq!(
+            encode_history_key_prefix::<HashedStorageHistory>(&hashed_storage).unwrap().len(),
+            RocksdbProofsStorage::history_prefix_len(<HashedStorageHistory as Table>::NAME)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn opens_with_history_prefix_filter_options() {
+        let dir = TempDir::new().unwrap();
+        let storage = RocksdbProofsStorage::new_with_options(
+            dir.path(),
+            RocksdbProofsStorageOptions::default(),
+        )
+        .unwrap();
+        let account = B256::repeat_byte(0x55);
+
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+        storage.store_trie_updates(block(1, B256::ZERO), account_update(account, 1)).unwrap();
+
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
+        let mut cursor =
+            RocksdbVersionedCursor::<HashedAccountHistory>::new(storage.db.as_ref(), 1);
+        let (key, acc) = cursor.seek_exact(account).unwrap().expect("account exists");
+        assert_eq!(key, account);
+        assert_eq!(acc.nonce, 1);
+    }
+
+    fn block(number: u64, parent: B256) -> BlockWithParent {
+        BlockWithParent {
+            parent,
+            block: BlockNumHash {
+                number,
+                hash: if number == 0 { B256::ZERO } else { B256::repeat_byte(number as u8) },
+            },
+        }
+    }
+
+    fn account_update(address: B256, nonce: u64) -> BlockStateDiff {
+        let mut post_state = HashedPostState::default();
+        post_state.accounts.insert(address, Some(Account { nonce, ..Default::default() }));
+
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdates::default().into_sorted(),
+            sorted_post_state: post_state.into_sorted(),
+        }
+    }
+
+    #[test]
+    fn packed_nibbles_round_trip() {
+        let nibbles = Nibbles::from_nibbles_unchecked([0, 1, 0, 2, 15, 0, 3]);
+        let encoded = encode_packed_nibbles(&nibbles).unwrap();
+
+        assert_eq!(encoded[HASH_KEY_LEN], 7);
+        assert_eq!(decode_packed_nibbles(&encoded).unwrap(), nibbles);
+    }
+
+    #[test]
+    fn packed_nibbles_preserve_lexicographic_order() {
+        let keys = [
+            vec![],
+            vec![0],
+            vec![0, 0],
+            vec![0, 1],
+            vec![1],
+            vec![1, 0],
+            vec![1, 1],
+            vec![2],
+            vec![15],
+            vec![15, 15],
+        ];
+
+        for left in &keys {
+            for right in &keys {
+                let left = Nibbles::from_nibbles_unchecked(left);
+                let right = Nibbles::from_nibbles_unchecked(right);
+                assert_eq!(
+                    left.cmp(&right),
+                    encode_packed_nibbles(&left)
+                        .unwrap()
+                        .cmp(&encode_packed_nibbles(&right).unwrap())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hashed_history_keys_preserve_full_byte_ordering() {
+        let keys = [B256::ZERO, B256::repeat_byte(2), B256::repeat_byte(255)];
+
+        for left in keys {
+            for right in keys {
+                assert_eq!(
+                    left.cmp(&right),
+                    encode_history_key_prefix::<HashedAccountHistory>(&left)
+                        .unwrap()
+                        .cmp(&encode_history_key_prefix::<HashedAccountHistory>(&right).unwrap())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn history_block_suffix_round_trip_covers_endpoints_and_interior() {
+        for block_number in [0u64, 1, 42, 1 << 20, u64::MAX / 2, u64::MAX - 1, u64::MAX] {
+            let encoded = encode_history_block_suffix(block_number);
+            let decoded = decode_history_block_suffix(&encoded).unwrap();
+            assert_eq!(decoded, block_number, "round-trip failed at block {block_number}");
+        }
+    }
+
+    #[test]
+    fn history_block_suffix_reverses_lexicographic_order() {
+        // Complement encoding: newer block must sort BEFORE older block under the default
+        // BytewiseComparator, so a forward seek(target) + next() finds "latest version <= N".
+        let blocks = [0u64, 1, 2, 100, 1_000_000, u64::MAX - 1, u64::MAX];
+        for left in blocks {
+            for right in blocks {
+                let encoded_cmp =
+                    encode_history_block_suffix(left).cmp(&encode_history_block_suffix(right));
+                assert_eq!(
+                    encoded_cmp,
+                    right.cmp(&left),
+                    "expected reversed ordering for ({left}, {right})",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn history_block_suffix_boundary_values_are_complementary() {
+        assert_eq!(encode_history_block_suffix(0), [0xFF; BLOCK_NUMBER_KEY_LEN]);
+        assert_eq!(encode_history_block_suffix(u64::MAX), [0x00; BLOCK_NUMBER_KEY_LEN]);
+        assert_eq!(decode_history_block_suffix(&[0xFF; BLOCK_NUMBER_KEY_LEN]).unwrap(), 0);
+        assert_eq!(decode_history_block_suffix(&[0x00; BLOCK_NUMBER_KEY_LEN]).unwrap(), u64::MAX);
+    }
+
+    #[test]
+    fn decode_history_block_suffix_rejects_wrong_length() {
+        assert!(decode_history_block_suffix(&[]).is_err());
+        assert!(decode_history_block_suffix(&[0u8; BLOCK_NUMBER_KEY_LEN - 1]).is_err());
+        assert!(decode_history_block_suffix(&[0u8; BLOCK_NUMBER_KEY_LEN + 1]).is_err());
+    }
+
+    #[test]
+    fn encoded_history_key_orders_newer_blocks_before_older_for_same_prefix() {
+        let prefix = B256::repeat_byte(0x7F);
+        let older = encode_history_key::<HashedAccountHistory>(&prefix, 10).unwrap();
+        let newer = encode_history_key::<HashedAccountHistory>(&prefix, 100).unwrap();
+        assert!(newer < older, "newer block must sort before older under complement encoding");
+
+        // Shared prefix preservation is what keeps RocksDB prefix bloom filters correct
+        // for forward seeks on history tables.
+        let prefix_bytes = encode_history_key_prefix::<HashedAccountHistory>(&prefix).unwrap();
+        assert!(older.starts_with(&prefix_bytes));
+        assert!(newer.starts_with(&prefix_bytes));
+    }
+
+    #[test]
+    fn packed_nibbles_reject_invalid_padding() {
+        let mut encoded =
+            encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1, 2, 3])).unwrap();
+        encoded[HASH_KEY_LEN - 1] = 1;
+        assert!(decode_packed_nibbles(&encoded).is_err());
+
+        let mut encoded = encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1])).unwrap();
+        encoded[0] |= 1;
+        assert!(decode_packed_nibbles(&encoded).is_err());
+    }
 }
