@@ -1,11 +1,11 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::{num::NonZeroUsize, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_proof_tee_registrar::{
-    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
@@ -82,7 +82,7 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_TIMEOUT_SECS"),
-        default_value = "1260",
+        default_value_t = 1260,
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     boundless_timeout: u64,
@@ -139,7 +139,7 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("POLL_INTERVAL_SECS"),
-        default_value = "30",
+        default_value_t = 30,
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     poll_interval: u64,
@@ -148,7 +148,7 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("PROVER_TIMEOUT_SECS"),
-        default_value = "30",
+        default_value_t = 30,
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     prover_timeout: u64,
@@ -157,9 +157,9 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value = "4"
+        default_value_t = DEFAULT_MAX_CONCURRENCY
     )]
-    max_concurrency: NonZeroUsize,
+    max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -238,7 +238,7 @@ impl Cli {
             ),
             poll_interval: Duration::from_secs(self.poll_interval),
             prover_timeout: Duration::from_secs(self.prover_timeout),
-            max_concurrency: self.max_concurrency.get(),
+            max_concurrency: self.max_concurrency,
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay),
             unhealthy_registration_window: Duration::from_secs(self.unhealthy_registration_window),
@@ -254,10 +254,9 @@ fn validate_boundless_offer_prices(
     min_price: &Option<Amount>,
     max_price: &Option<Amount>,
 ) -> Result<(), RegistrarError> {
-    if matches!(
-        (min_price, max_price),
-        (Some(min_price), Some(max_price)) if max_price.value < min_price.value
-    ) {
+    if let (Some(min_price), Some(max_price)) = (min_price, max_price)
+        && max_price.value < min_price.value
+    {
         return Err(RegistrarError::Config(
             "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
                 .into(),
