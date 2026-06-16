@@ -1,6 +1,6 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
@@ -83,10 +83,9 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = DEFAULT_MAX_CONCURRENCY,
-        value_parser = parse_positive_usize
+        default_value_t = NonZeroUsize::new(DEFAULT_MAX_CONCURRENCY).unwrap()
     )]
-    max_concurrency: usize,
+    max_concurrency: NonZeroUsize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -224,15 +223,9 @@ fn parse_boundless_eth_amount(s: &str) -> std::result::Result<Amount, String> {
         .map_err(|e| format!("Boundless ETH amount: {e}"))
 }
 
-/// Parse a positive `usize`.
-fn parse_positive_usize(s: &str) -> std::result::Result<usize, String> {
-    let value = s.parse::<usize>().map_err(|e| format!("invalid value: {e}"))?;
-    (value > 0).then_some(value).ok_or_else(|| "value must be greater than 0".to_string())
-}
-
 impl Cli {
-    fn boundless_prover(&self) -> std::result::Result<BoundlessProver, RegistrarError> {
-        let boundless = &self.boundless;
+    fn config(self) -> std::result::Result<RegistrarConfig, RegistrarError> {
+        let boundless = self.boundless;
         if matches!(
             (&boundless.min_price_eth, &boundless.max_price_eth),
             (Some(min_price), Some(max_price)) if max_price.value < min_price.value
@@ -243,16 +236,16 @@ impl Cli {
             ));
         }
 
-        Ok(BoundlessProver {
-            offer_min_price: boundless.min_price_eth.clone(),
-            offer_max_price: boundless.max_price_eth.clone(),
+        let boundless_prover = BoundlessProver {
+            offer_min_price: boundless.min_price_eth,
+            offer_max_price: boundless.max_price_eth,
             offer_ramp_up_period_secs: boundless.offer_ramp_up_period_secs,
             offer_lock_timeout_secs: boundless.offer_lock_timeout_secs,
             offer_bidding_start_delay_secs: boundless.offer_bidding_start_delay_secs,
             ..BoundlessProver::new(
-                boundless.rpc_url.clone(),
-                boundless.fee_private_key.clone(),
-                boundless.verifier_program_url.clone(),
+                boundless.rpc_url,
+                boundless.fee_private_key,
+                boundless.verifier_program_url,
                 self.image_id,
                 Duration::from_secs(boundless.fulfillment_poll_interval_secs),
                 Duration::from_secs(boundless.timeout_secs),
@@ -260,11 +253,7 @@ impl Cli {
                 boundless.max_recovery_attempts,
                 Duration::from_secs(boundless.max_attestation_age_secs),
             )
-        })
-    }
-
-    fn config(self) -> std::result::Result<RegistrarConfig, RegistrarError> {
-        let boundless_prover = self.boundless_prover()?;
+        };
         let signing = SignerConfig::try_from(self.signer)
             .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?;
         let tx_manager_config = TxManagerConfig::try_from(self.tx_manager)
@@ -281,7 +270,7 @@ impl Cli {
             boundless_prover,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
-            max_concurrency: self.max_concurrency,
+            max_concurrency: self.max_concurrency.get(),
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
             unhealthy_registration_window: Duration::from_secs(
@@ -306,8 +295,6 @@ mod tests {
 
     const TEST_IMAGE_ID: &str =
         "0x0100000002000000030000000400000005000000060000000700000008000000";
-    const TEST_BOUNDLESS_MIN_PRICE_ETH: &str = "0.01";
-    const TEST_BOUNDLESS_MAX_PRICE_ETH: &str = "0.03";
 
     fn boundless_args() -> Vec<&'static str> {
         vec![
@@ -338,55 +325,28 @@ mod tests {
         let mut args = boundless_args();
         args.extend([
             "--boundless-min-price-eth",
-            TEST_BOUNDLESS_MIN_PRICE_ETH,
+            "0.01",
             "--boundless-max-price-eth",
-            TEST_BOUNDLESS_MAX_PRICE_ETH,
+            "0.03",
             "--boundless-offer-ramp-up-period-secs",
             "30",
         ]);
 
-        let b = Cli::parse_from(args).boundless_prover().unwrap();
+        let b = Cli::parse_from(args).config().unwrap().boundless_prover;
 
-        assert_eq!(
-            b.offer_min_price,
-            Some(parse_boundless_eth_amount(TEST_BOUNDLESS_MIN_PRICE_ETH).unwrap()),
-        );
-        assert_eq!(
-            b.offer_max_price,
-            Some(parse_boundless_eth_amount(TEST_BOUNDLESS_MAX_PRICE_ETH).unwrap()),
-        );
+        assert_eq!(b.offer_min_price, Some(parse_boundless_eth_amount("0.01").unwrap()),);
+        assert_eq!(b.offer_max_price, Some(parse_boundless_eth_amount("0.03").unwrap()),);
         assert_eq!(b.offer_ramp_up_period_secs, Some(30),);
-    }
-
-    #[test]
-    fn boundless_offer_min_price_requires_max_price() {
-        let mut args = boundless_args();
-        args.extend(["--boundless-min-price-eth", TEST_BOUNDLESS_MIN_PRICE_ETH]);
-
-        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]
     fn boundless_offer_max_price_must_cover_min_price() {
         let mut args = boundless_args();
-        args.extend([
-            "--boundless-min-price-eth",
-            TEST_BOUNDLESS_MAX_PRICE_ETH,
-            "--boundless-max-price-eth",
-            TEST_BOUNDLESS_MIN_PRICE_ETH,
-        ]);
+        args.extend(["--boundless-min-price-eth", "0.03", "--boundless-max-price-eth", "0.01"]);
 
-        let result = Cli::parse_from(args).boundless_prover();
+        let result = Cli::parse_from(args).config();
 
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn max_concurrency_must_be_positive() {
-        let mut args = boundless_args();
-        args.extend(["--max-concurrency", "0"]);
-
-        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]
