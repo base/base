@@ -192,12 +192,13 @@ impl ProverRuntimeArgs {
                 genesis_l2_hash = %rpc.genesis.l2.hash,
                 genesis_l2_number = rpc.genesis.l2.number,
                 genesis_l2_time = rpc.genesis.l2_time,
+                block_time = rpc.block_time,
                 deposit_contract = %rpc.deposit_contract_address,
                 system_config_address = %rpc.l1_system_config_address,
                 batcher_address = %rpc.genesis.system_config.batcher_addr,
                 gas_limit = rpc.genesis.system_config.gas_limit,
                 scalar = %rpc.genesis.system_config.scalar,
-                "overriding genesis config from L2 node RPC"
+                "overriding rollup config from L2 node RPC"
             );
 
             rollup_config.genesis.l1.hash = rpc.genesis.l1.hash;
@@ -205,6 +206,7 @@ impl ProverRuntimeArgs {
             rollup_config.genesis.l2.hash = rpc.genesis.l2.hash;
             rollup_config.genesis.l2.number = rpc.genesis.l2.number;
             rollup_config.genesis.l2_time = rpc.genesis.l2_time;
+            rollup_config.block_time = rpc.block_time;
             rollup_config.deposit_contract_address = rpc.deposit_contract_address;
             rollup_config.l1_system_config_address = rpc.l1_system_config_address;
 
@@ -587,6 +589,7 @@ impl WorkerTransportMode {
 #[derive(Debug, serde::Deserialize)]
 struct RollupConfigRpcResponse {
     genesis: GenesisRpcResponse,
+    block_time: u64,
     deposit_contract_address: Address,
     l1_system_config_address: Address,
     l2_chain_id: u64,
