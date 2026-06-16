@@ -90,23 +90,18 @@ impl RegistrarConfig {
             .wrap_err("failed to install Prometheus recorder")?;
 
         let provider = if self.metrics_config.enabled {
-            macro_rules! spawn_balance_metric {
-                ($rx:ident, $metric:expr) => {
-                    tokio::spawn(async move {
-                        while $rx.changed().await.is_ok() {
-                            $metric.set(f64::from(*$rx.borrow_and_update()));
-                        }
-                    });
-                };
-            }
-
             let account_address = self.signing.address();
             let (layer, mut account_balance_rx) = BalanceMonitorLayer::new(
                 account_address,
                 cancel.clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
-            spawn_balance_metric!(account_balance_rx, RegistrarMetrics::account_balance_wei());
+            tokio::spawn(async move {
+                while account_balance_rx.changed().await.is_ok() {
+                    RegistrarMetrics::account_balance_wei()
+                        .set(f64::from(*account_balance_rx.borrow_and_update()));
+                }
+            });
 
             let boundless_address = self.boundless_prover.signer.address();
             let (boundless_layer, mut boundless_balance_rx) = BalanceMonitorLayer::new(
@@ -117,7 +112,12 @@ impl RegistrarConfig {
             ProviderBuilder::new()
                 .layer(boundless_layer)
                 .connect_http(self.boundless_prover.rpc_url.clone());
-            spawn_balance_metric!(boundless_balance_rx, RegistrarMetrics::boundless_balance_wei());
+            tokio::spawn(async move {
+                while boundless_balance_rx.changed().await.is_ok() {
+                    RegistrarMetrics::boundless_balance_wei()
+                        .set(f64::from(*boundless_balance_rx.borrow_and_update()));
+                }
+            });
 
             ProviderBuilder::new().layer(layer).connect_http(self.l1_rpc_url.clone())
         } else {
@@ -147,9 +147,11 @@ impl RegistrarConfig {
         let registry =
             RegistryContractClient::new(self.tee_prover_registry_address, self.l1_rpc_url.clone());
 
-        let ready = Arc::new(AtomicBool::new(true));
-        let health_handle =
-            tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
+        let health_handle = tokio::spawn(HealthServer::serve(
+            self.health_addr,
+            Arc::new(AtomicBool::new(true)),
+            cancel.clone(),
+        ));
 
         let signer_manager = Arc::new(SignerManager::new(
             self.boundless_prover,
@@ -162,19 +164,15 @@ impl RegistrarConfig {
                 tx_retry_delay: self.tx_retry_delay,
             },
         ));
-        let cert_manager = self
-            .crl_nitro_verifier_address
-            .map(|nitro_verifier_address| {
-                CertManager::new(
-                    Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
-                    Box::new(NitroVerifierContractClient::new(
-                        nitro_verifier_address,
-                        self.l1_rpc_url,
-                    )),
-                    tx_manager,
-                )
-            })
-            .transpose()?;
+        let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
+            Some(CertManager::new(
+                Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
+                Box::new(NitroVerifierContractClient::new(nitro_verifier_address, self.l1_rpc_url)),
+                tx_manager,
+            )?)
+        } else {
+            None
+        };
         let driver = RegistrationDriver::new(
             discovery,
             ProverClient::new(self.prover_timeout),
