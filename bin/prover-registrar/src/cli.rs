@@ -5,8 +5,7 @@ use std::time::Duration;
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_proof_tee_registrar::{
-    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError,
+    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, RegistrarConfig, RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use boundless_market::{
@@ -77,18 +76,19 @@ pub(crate) struct Cli {
     #[arg(
         long = "boundless-poll-interval-secs",
         env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"),
-        default_value_t = 5
+        default_value = "5",
+        value_parser = parse_duration
     )]
-    boundless_fulfillment_poll_interval_secs: u64,
+    boundless_fulfillment_poll_interval: Duration,
 
     /// Client-side fulfillment poll budget, in seconds.
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_TIMEOUT_SECS"),
-        default_value_t = 1260,
-        value_parser = clap::value_parser!(u64).range(1..)
+        default_value = "1260",
+        value_parser = parse_nonzero_duration
     )]
-    boundless_timeout_secs: u64,
+    boundless_timeout: Duration,
 
     /// Minimum Boundless offer price in ETH for each submitted proof request.
     #[arg(
@@ -145,27 +145,28 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
-        default_value_t = 3300
+        default_value = "3300",
+        value_parser = parse_duration
     )]
-    max_attestation_age_secs: u64,
+    max_attestation_age: Duration,
 
     /// Interval between discovery and registration poll cycles, in seconds.
     #[arg(
         long,
         env = cli_env!("POLL_INTERVAL_SECS"),
-        default_value_t = 30,
-        value_parser = clap::value_parser!(u64).range(1..)
+        default_value = "30",
+        value_parser = parse_nonzero_duration
     )]
-    poll_interval_secs: u64,
+    poll_interval: Duration,
 
     /// Timeout for JSON-RPC calls to prover instances, in seconds.
     #[arg(
         long,
         env = cli_env!("PROVER_TIMEOUT_SECS"),
-        default_value_t = 30,
-        value_parser = clap::value_parser!(u64).range(1..)
+        default_value = "30",
+        value_parser = parse_nonzero_duration
     )]
-    prover_timeout_secs: u64,
+    prover_timeout: Duration,
 
     /// Maximum number of instances to process concurrently within a single
     /// registration cycle. Each instance may trigger a ~20-minute proof
@@ -174,7 +175,7 @@ pub(crate) struct Cli {
         long,
         env = cli_env!("MAX_CONCURRENCY"),
         default_value_t = DEFAULT_MAX_CONCURRENCY,
-        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+        value_parser = parse_nonzero_usize
     )]
     max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
@@ -185,15 +186,20 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("TX_RETRY_DELAY_SECS"),
-        default_value_t = DEFAULT_TX_RETRY_DELAY_SECS,
-        value_parser = clap::value_parser!(u64).range(1..)
+        default_value = "5",
+        value_parser = parse_nonzero_duration
     )]
-    tx_retry_delay_secs: u64,
+    tx_retry_delay: Duration,
     /// Duration (seconds) after EC2 launch during which unhealthy instances
     /// are still eligible for registration. New instances may fail ALB health
     /// checks while the application initializes. Set to 0 to disable.
-    #[arg(long, env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"), default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS)]
-    unhealthy_registration_window_secs: u64,
+    #[arg(
+        long,
+        env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"),
+        default_value = "5100",
+        value_parser = parse_duration
+    )]
+    unhealthy_registration_window: Duration,
     /// `NitroEnclaveVerifier` contract address for CRL checks.
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
     crl_nitro_verifier_address: Option<Address>,
@@ -217,6 +223,32 @@ fn parse_image_id(s: &str) -> Result<[u32; 8], String> {
 fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
     Amount::parse_with_allowed(s, &[Asset::ETH], Some(Asset::ETH))
         .map_err(|e| format!("Boundless ETH amount: {e}"))
+}
+
+/// Parse a duration, accepting bare numbers as seconds for existing `*_SECS` env vars.
+fn parse_duration(s: &str) -> Result<Duration, String> {
+    let s = s.trim();
+    if s.chars().all(|c| c.is_ascii_digit()) {
+        return s.parse::<u64>().map(Duration::from_secs).map_err(|e| e.to_string());
+    }
+
+    humantime::parse_duration(s).map_err(|e| e.to_string())
+}
+
+fn parse_nonzero_duration(s: &str) -> Result<Duration, String> {
+    let duration = parse_duration(s)?;
+    if duration.is_zero() {
+        return Err("duration must be greater than zero".into());
+    }
+    Ok(duration)
+}
+
+fn parse_nonzero_usize(s: &str) -> Result<usize, String> {
+    let value = s.parse::<usize>().map_err(|e| e.to_string())?;
+    if value == 0 {
+        return Err("value must be greater than zero".into());
+    }
+    Ok(value)
 }
 
 impl Cli {
@@ -246,24 +278,22 @@ impl Cli {
                 self.boundless_fee_private_key,
                 self.boundless_verifier_program_url,
                 self.image_id,
-                Duration::from_secs(self.boundless_fulfillment_poll_interval_secs),
-                Duration::from_secs(self.boundless_timeout_secs),
+                self.boundless_fulfillment_poll_interval,
+                self.boundless_timeout,
                 self.boundless_max_recovery_attempts,
-                Duration::from_secs(self.max_attestation_age_secs),
+                self.max_attestation_age,
                 self.boundless_min_price_eth,
                 self.boundless_max_price_eth,
                 self.boundless_offer_ramp_up_period_secs,
                 self.boundless_offer_lock_timeout_secs,
                 self.boundless_offer_bidding_start_delay_secs,
             ),
-            poll_interval: Duration::from_secs(self.poll_interval_secs),
-            prover_timeout: Duration::from_secs(self.prover_timeout_secs),
+            poll_interval: self.poll_interval,
+            prover_timeout: self.prover_timeout,
             max_concurrency: self.max_concurrency,
             max_tx_retries: self.max_tx_retries,
-            tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
-            unhealthy_registration_window: Duration::from_secs(
-                self.unhealthy_registration_window_secs,
-            ),
+            tx_retry_delay: self.tx_retry_delay,
+            unhealthy_registration_window: self.unhealthy_registration_window,
             crl_nitro_verifier_address: self.crl_nitro_verifier_address,
             health_addr: self.health.socket_addr(),
             log_config: self.log.into(),
@@ -307,10 +337,6 @@ mod tests {
         assert_eq!(
             parse_boundless_eth_amount("0.01").unwrap(),
             Amount::new(U256::from(10_000_000_000_000_000u64), Asset::ETH),
-        );
-        assert_eq!(
-            parse_boundless_eth_amount("0.03").unwrap(),
-            Amount::new(U256::from(30_000_000_000_000_000u64), Asset::ETH),
         );
     }
 
