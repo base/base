@@ -13,7 +13,6 @@ mod proof_bytes;
 pub use proof_bytes::ProofBytes;
 
 mod classifier;
-pub use classifier::classify_tx_manager_error;
 
 mod submitter;
 pub use submitter::AggregateProofSubmitter;

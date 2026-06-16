@@ -14,79 +14,83 @@ const L1_ORIGIN_TOO_OLD: &str = "L1OriginTooOld";
 const INVALID_PARENT_GAME: &str = "InvalidParentGame";
 const INVALID_SIGNER: &str = "InvalidSigner";
 
-/// Classifies a transaction manager error into a proof submission error.
-///
-/// The classifier checks structured execution reverts first, matching both
-/// decoded custom-error names and raw selector data. It also preserves the
-/// previous fallback behavior of scanning non-revert transaction manager error
-/// display strings for known custom-error names and selectors.
-pub fn classify_tx_manager_error(err: TxManagerError) -> ProofSubmissionError {
-    let game_exists_selector = game_already_exists_selector();
-    let already_proven = already_proven_selector();
-    let l1_origin_selector = l1_origin_too_old_selector();
-    let invalid_parent_selector = invalid_parent_game_selector();
-    let invalid_signer = invalid_signer_selector();
+impl ProofSubmissionError {
+    /// Classifies a transaction manager error into a proof submission error.
+    ///
+    /// The classifier checks structured execution reverts first, matching both
+    /// decoded custom-error names and raw selector data. It also preserves the
+    /// previous fallback behavior of scanning non-revert transaction manager error
+    /// display strings for known custom-error names and selectors.
+    pub fn from_tx_manager_error(err: TxManagerError) -> Self {
+        let game_exists_selector = game_already_exists_selector();
+        let already_proven = already_proven_selector();
+        let l1_origin_selector = l1_origin_too_old_selector();
+        let invalid_parent_selector = invalid_parent_game_selector();
+        let invalid_signer = invalid_signer_selector();
 
-    if let TxManagerError::ExecutionReverted { ref reason, ref data } = err {
-        if reason.as_deref().is_some_and(|r| r.contains(GAME_ALREADY_EXISTS)) {
-            return ProofSubmissionError::GameAlreadyExists;
+        if let TxManagerError::ExecutionReverted { ref reason, ref data } = err {
+            if reason.as_deref().is_some_and(|r| r.contains(GAME_ALREADY_EXISTS)) {
+                return Self::GameAlreadyExists;
+            }
+            if data.as_ref().is_some_and(|d| d.starts_with(&game_exists_selector)) {
+                return Self::GameAlreadyExists;
+            }
+            if reason.as_deref().is_some_and(|r| r.contains(ALREADY_PROVEN)) {
+                return Self::ProofAlreadyVerified;
+            }
+            if data.as_ref().is_some_and(|d| d.starts_with(&already_proven)) {
+                return Self::ProofAlreadyVerified;
+            }
+            if reason.as_deref().is_some_and(|r| r.contains(L1_ORIGIN_TOO_OLD)) {
+                return Self::L1OriginTooOld;
+            }
+            if data.as_ref().is_some_and(|d| d.starts_with(&l1_origin_selector)) {
+                return Self::L1OriginTooOld;
+            }
+            if reason.as_deref().is_some_and(|r| r.contains(INVALID_PARENT_GAME)) {
+                return Self::InvalidParentGame;
+            }
+            if data.as_ref().is_some_and(|d| d.starts_with(&invalid_parent_selector)) {
+                return Self::InvalidParentGame;
+            }
+            if reason.as_deref().is_some_and(|r| r.contains(INVALID_SIGNER)) {
+                return Self::InvalidSigner;
+            }
+            if data.as_ref().is_some_and(|d| d.starts_with(&invalid_signer)) {
+                return Self::InvalidSigner;
+            }
+            return Self::TxManager(err);
         }
-        if data.as_ref().is_some_and(|d| d.starts_with(&game_exists_selector)) {
-            return ProofSubmissionError::GameAlreadyExists;
-        }
-        if reason.as_deref().is_some_and(|r| r.contains(ALREADY_PROVEN)) {
-            return ProofSubmissionError::ProofAlreadyVerified;
-        }
-        if data.as_ref().is_some_and(|d| d.starts_with(&already_proven)) {
-            return ProofSubmissionError::ProofAlreadyVerified;
-        }
-        if reason.as_deref().is_some_and(|r| r.contains(L1_ORIGIN_TOO_OLD)) {
-            return ProofSubmissionError::L1OriginTooOld;
-        }
-        if data.as_ref().is_some_and(|d| d.starts_with(&l1_origin_selector)) {
-            return ProofSubmissionError::L1OriginTooOld;
-        }
-        if reason.as_deref().is_some_and(|r| r.contains(INVALID_PARENT_GAME)) {
-            return ProofSubmissionError::InvalidParentGame;
-        }
-        if data.as_ref().is_some_and(|d| d.starts_with(&invalid_parent_selector)) {
-            return ProofSubmissionError::InvalidParentGame;
-        }
-        if reason.as_deref().is_some_and(|r| r.contains(INVALID_SIGNER)) {
-            return ProofSubmissionError::InvalidSigner;
-        }
-        if data.as_ref().is_some_and(|d| d.starts_with(&invalid_signer)) {
-            return ProofSubmissionError::InvalidSigner;
-        }
-        return ProofSubmissionError::TxManager(err);
-    }
 
-    let msg = err.to_string();
-    if msg.contains(&alloy_primitives::hex::encode(game_exists_selector))
-        || msg.contains(GAME_ALREADY_EXISTS)
-    {
-        return ProofSubmissionError::GameAlreadyExists;
-    }
-    if msg.contains(&alloy_primitives::hex::encode(already_proven)) || msg.contains(ALREADY_PROVEN)
-    {
-        return ProofSubmissionError::ProofAlreadyVerified;
-    }
-    if msg.contains(&alloy_primitives::hex::encode(l1_origin_selector))
-        || msg.contains(L1_ORIGIN_TOO_OLD)
-    {
-        return ProofSubmissionError::L1OriginTooOld;
-    }
-    if msg.contains(&alloy_primitives::hex::encode(invalid_parent_selector))
-        || msg.contains(INVALID_PARENT_GAME)
-    {
-        return ProofSubmissionError::InvalidParentGame;
-    }
-    if msg.contains(&alloy_primitives::hex::encode(invalid_signer)) || msg.contains(INVALID_SIGNER)
-    {
-        return ProofSubmissionError::InvalidSigner;
-    }
+        let msg = err.to_string();
+        if msg.contains(&alloy_primitives::hex::encode(game_exists_selector))
+            || msg.contains(GAME_ALREADY_EXISTS)
+        {
+            return Self::GameAlreadyExists;
+        }
+        if msg.contains(&alloy_primitives::hex::encode(already_proven))
+            || msg.contains(ALREADY_PROVEN)
+        {
+            return Self::ProofAlreadyVerified;
+        }
+        if msg.contains(&alloy_primitives::hex::encode(l1_origin_selector))
+            || msg.contains(L1_ORIGIN_TOO_OLD)
+        {
+            return Self::L1OriginTooOld;
+        }
+        if msg.contains(&alloy_primitives::hex::encode(invalid_parent_selector))
+            || msg.contains(INVALID_PARENT_GAME)
+        {
+            return Self::InvalidParentGame;
+        }
+        if msg.contains(&alloy_primitives::hex::encode(invalid_signer))
+            || msg.contains(INVALID_SIGNER)
+        {
+            return Self::InvalidSigner;
+        }
 
-    ProofSubmissionError::TxManager(err)
+        Self::TxManager(err)
+    }
 }
 
 #[cfg(test)]
@@ -264,7 +268,7 @@ mod tests {
         #[case] expected: ExpectedClassification,
         #[case] scenario: &str,
     ) {
-        let result = classify_tx_manager_error(err);
+        let result = ProofSubmissionError::from_tx_manager_error(err);
 
         match expected {
             ExpectedClassification::GameAlreadyExists => assert!(

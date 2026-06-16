@@ -5,27 +5,20 @@ use alloy_rpc_types_eth::TransactionReceipt;
 use base_proof_contracts::encode_verify_proposal_proof_calldata;
 use base_tx_manager::{TxCandidate, TxManager};
 
-use crate::{ProofSubmissionError, classify_tx_manager_error};
+use crate::ProofSubmissionError;
 
 /// Submits proof bytes to an existing aggregate verifier dispute game.
 #[derive(Debug)]
-pub struct AggregateProofSubmitter<T> {
-    tx_manager: T,
+pub struct AggregateProofSubmitter<'a, T> {
+    tx_manager: &'a T,
 }
 
-impl<T> AggregateProofSubmitter<T> {
+impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
     /// Creates a submitter backed by the given transaction manager.
-    pub const fn new(tx_manager: T) -> Self {
+    pub const fn new(tx_manager: &'a T) -> Self {
         Self { tx_manager }
     }
 
-    /// Returns the underlying transaction manager.
-    pub const fn tx_manager(&self) -> &T {
-        &self.tx_manager
-    }
-}
-
-impl<T: TxManager> AggregateProofSubmitter<T> {
     /// Returns the sender address used by the underlying transaction manager.
     pub fn sender_address(&self) -> Address {
         self.tx_manager.sender_address()
@@ -54,7 +47,11 @@ impl<T: TxManager> AggregateProofSubmitter<T> {
             ..Default::default()
         };
 
-        let receipt = self.tx_manager.send(candidate).await.map_err(classify_tx_manager_error)?;
+        let receipt = self
+            .tx_manager
+            .send(candidate)
+            .await
+            .map_err(ProofSubmissionError::from_tx_manager_error)?;
         let tx_hash = receipt.transaction_hash;
 
         if !receipt.inner.status() {
@@ -140,8 +137,8 @@ mod tests {
 
     #[tokio::test]
     async fn sender_address_returns_tx_manager_sender() {
-        let submitter =
-            AggregateProofSubmitter::new(MockTxManager::new(Err(TxManagerError::NonceTooLow)));
+        let tx_manager = MockTxManager::new(Err(TxManagerError::NonceTooLow));
+        let submitter = AggregateProofSubmitter::new(&tx_manager);
 
         assert_eq!(submitter.sender_address(), Address::repeat_byte(0x99));
     }
@@ -151,14 +148,13 @@ mod tests {
         let game_address = Address::repeat_byte(0x11);
         let proof_bytes = Bytes::from_static(&[0x00, 0xab, 0xcd]);
         let tx_hash = B256::repeat_byte(0xaa);
-        let submitter = AggregateProofSubmitter::new(MockTxManager::new(Ok(receipt_with_status(
-            true, tx_hash,
-        ))));
+        let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+        let submitter = AggregateProofSubmitter::new(&tx_manager);
 
         let receipt = submitter.verify_proposal_proof(game_address, proof_bytes.clone()).await;
 
         assert_eq!(receipt.unwrap().transaction_hash, tx_hash);
-        let candidate = submitter.tx_manager().take_candidate().unwrap();
+        let candidate = tx_manager.take_candidate().unwrap();
         assert_eq!(candidate.to, Some(game_address));
         assert_eq!(candidate.value, U256::ZERO);
         assert_eq!(
@@ -170,9 +166,8 @@ mod tests {
     #[tokio::test]
     async fn verify_proposal_proof_maps_reverted_receipt() {
         let tx_hash = B256::repeat_byte(0xbb);
-        let submitter = AggregateProofSubmitter::new(MockTxManager::new(Ok(receipt_with_status(
-            false, tx_hash,
-        ))));
+        let tx_manager = MockTxManager::new(Ok(receipt_with_status(false, tx_hash)));
+        let submitter = AggregateProofSubmitter::new(&tx_manager);
 
         let err = submitter
             .verify_proposal_proof(Address::ZERO, Bytes::from_static(&[0x00]))
@@ -184,12 +179,11 @@ mod tests {
 
     #[tokio::test]
     async fn verify_proposal_proof_classifies_tx_manager_errors() {
-        let submitter = AggregateProofSubmitter::new(MockTxManager::new(Err(
-            TxManagerError::ExecutionReverted {
-                reason: Some("AlreadyProven(0)".to_string()),
-                data: None,
-            },
-        )));
+        let tx_manager = MockTxManager::new(Err(TxManagerError::ExecutionReverted {
+            reason: Some("AlreadyProven(0)".to_string()),
+            data: None,
+        }));
+        let submitter = AggregateProofSubmitter::new(&tx_manager);
 
         let err = submitter
             .verify_proposal_proof(Address::ZERO, Bytes::from_static(&[0x00]))

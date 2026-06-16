@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{encode_create_calldata, encode_extra_data};
 use base_proof_primitives::Proposal;
-use base_proof_submission::{AggregateProofSubmitter, ProofBytes, classify_tx_manager_error};
+use base_proof_submission::{AggregateProofSubmitter, ProofBytes, ProofSubmissionError};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::info;
 
@@ -78,7 +78,7 @@ impl OutputProposer for DryRunProposer {
 /// Submits output proposals to L1 via the [`TxManager`].
 #[derive(Debug)]
 pub struct ProposalSubmitter<T> {
-    proof_submitter: AggregateProofSubmitter<T>,
+    tx_manager: T,
     factory_address: Address,
     game_type: u32,
     init_bond: U256,
@@ -92,12 +92,7 @@ impl<T: TxManager> ProposalSubmitter<T> {
         game_type: u32,
         init_bond: U256,
     ) -> Self {
-        Self {
-            proof_submitter: AggregateProofSubmitter::new(tx_manager),
-            factory_address,
-            game_type,
-            init_bond,
-        }
+        Self { tx_manager, factory_address, game_type, init_bond }
     }
 }
 
@@ -133,11 +128,10 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         );
 
         let receipt = self
-            .proof_submitter
-            .tx_manager()
+            .tx_manager
             .send(candidate)
             .await
-            .map_err(classify_tx_manager_error)?;
+            .map_err(ProofSubmissionError::from_tx_manager_error)?;
 
         let tx_hash = receipt.transaction_hash;
 
@@ -169,7 +163,9 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             "Attaching proof to existing dispute game"
         );
 
-        let receipt = self.proof_submitter.verify_proposal_proof(game_address, proof_bytes).await?;
+        let receipt = AggregateProofSubmitter::new(&self.tx_manager)
+            .verify_proposal_proof(game_address, proof_bytes)
+            .await?;
         let tx_hash = receipt.transaction_hash;
 
         info!(
