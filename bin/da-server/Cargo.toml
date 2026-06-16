@@ -1,0 +1,23 @@
+[package]
+name = "base-da-server-bin"
+description = "Alt-DA HTTP server binary for L3 batch data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-da-server"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+base-alt-da.workspace = true
+base-cli-utils.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+base-runtime = { workspace = true, features = ["tokio"] }

@@ -218,6 +218,7 @@ base-execution-payload-builder = { path = "crates/execution/payload" }
 base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 
 # Infra
+base-alt-da = { path = "crates/infra/alt-da" }
 basectl-cli = { path = "crates/infra/basectl" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-load-tests = { path = "crates/infra/load-tests" }
