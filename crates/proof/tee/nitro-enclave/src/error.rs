@@ -108,9 +108,6 @@ pub enum NitroError {
     /// Internal error.
     #[error("internal error: {0}")]
     Internal(String),
-    /// Unsupported chain ID.
-    #[error("unsupported chain ID: {0}")]
-    UnsupportedChain(u64),
     /// Rollup config is missing `genesis.system_config`.
     #[error("rollup config for chain {0} is missing genesis.system_config")]
     MissingSystemConfig(u64),

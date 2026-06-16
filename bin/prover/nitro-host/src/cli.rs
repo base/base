@@ -124,10 +124,10 @@ struct ProverRuntimeArgs {
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Option<Address>,
 
-    /// Fetch genesis config via `optimism_rollupConfig` RPC at startup,
-    /// overriding placeholder genesis anchors and contract addresses in the
-    /// hardcoded chain config. Requires `--l2-cl-url`. Use for
-    /// devnet/ephemeral chains where genesis changes on every deployment.
+    /// Fetch the full rollup config via `optimism_rollupConfig` RPC at startup.
+    /// Requires `--l2-cl-url`. Intended for devnet/ephemeral chains whose
+    /// chain ID is not in the built-in config table. For built-in chain IDs,
+    /// the enclave's `BootInfo::load` will use the hardcoded config regardless.
     #[arg(long, env = "FETCH_ROLLUP_CONFIG", requires = "l2_cl_url")]
     fetch_rollup_config: bool,
 
