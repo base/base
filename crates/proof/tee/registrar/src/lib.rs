@@ -1,12 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod config;
-pub use config::{
-    AwsDiscoveryConfig, BoundlessConfig, CrlConfig, DEFAULT_MAX_ATTESTATION_AGE_SECS,
-    DEFAULT_MAX_RECOVERY_ATTEMPTS, ProvingConfig, RegistrarConfig,
-};
-
 mod cert_manager;
 pub use cert_manager::CertManager;
 

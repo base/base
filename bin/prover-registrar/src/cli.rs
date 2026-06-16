@@ -1,6 +1,7 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
 use std::{
+    net::SocketAddr,
     path::PathBuf,
     sync::{
         Arc,
@@ -18,12 +19,11 @@ use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CertManager, CrlConfig,
-    DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY,
-    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    AwsTargetGroupDiscovery, CertManager, DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_CONCURRENCY,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierContractClient,
-    ProverClient, ProvingConfig, RegistrarConfig, RegistrarError, RegistrarMetrics,
-    RegistrationDriver, RegistryContractClient, SignerManager, SignerManagerConfig,
+    ProverClient, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
+    SignerManager, SignerManagerConfig,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use boundless_market::{
@@ -46,6 +46,8 @@ base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
 
 /// Default trusted certificate prefix length (root cert only).
 const DEFAULT_TRUSTED_CERTS_PREFIX: u8 = 1;
+const DEFAULT_MAX_RECOVERY_ATTEMPTS: u32 = 5;
+const DEFAULT_MAX_ATTESTATION_AGE_SECS: u64 = 3300;
 
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]
@@ -363,9 +365,60 @@ fn parse_boundless_eth_amount(field: &str, s: &str) -> std::result::Result<Amoun
     Ok(amount)
 }
 
+struct AwsDiscoveryConfig {
+    target_group_arn: String,
+    aws_region: String,
+    port: u16,
+}
+
+struct BoundlessConfig {
+    rpc_url: Url,
+    signer: PrivateKeySigner,
+    verifier_program_url: Url,
+    image_id: [u32; 8],
+    poll_interval: Duration,
+    timeout: Duration,
+    max_recovery_attempts: u32,
+    max_attestation_age: Duration,
+    offer_min_price: Option<Amount>,
+    offer_max_price: Option<Amount>,
+    offer_ramp_up_period_secs: Option<u32>,
+    offer_lock_timeout_secs: Option<u32>,
+    offer_bidding_start_delay_secs: u64,
+}
+
+enum ProvingConfig {
+    Boundless(Box<BoundlessConfig>),
+    Direct { elf_path: PathBuf },
+}
+
+struct CrlConfig {
+    enabled: bool,
+    nitro_verifier_address: Option<Address>,
+    fetch_timeout: Duration,
+}
+
+struct RegistrarConfig {
+    l1_rpc_url: Url,
+    tee_prover_registry_address: Address,
+    l1_chain_id: u64,
+    discovery: AwsDiscoveryConfig,
+    signing: SignerConfig,
+    tx_manager: TxManagerConfig,
+    proving: ProvingConfig,
+    poll_interval: Duration,
+    prover_timeout: Duration,
+    max_concurrency: usize,
+    max_tx_retries: u32,
+    tx_retry_delay: Duration,
+    unhealthy_registration_window: Duration,
+    health_addr: SocketAddr,
+    crl: CrlConfig,
+}
+
 impl Cli {
     /// Validate the CLI arguments for logical conflicts and parse into a [`RegistrarConfig`].
-    pub(crate) fn into_config(self) -> std::result::Result<RegistrarConfig, RegistrarError> {
+    fn into_config(self) -> std::result::Result<RegistrarConfig, RegistrarError> {
         let discovery = AwsDiscoveryConfig {
             target_group_arn: self.target_group_arn,
             aws_region: self.aws_region,
