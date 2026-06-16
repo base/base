@@ -13,7 +13,7 @@ use alloy_provider::ProviderBuilder;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
-use base_proof_tee_nitro_attestation_prover::{AttestationProofProvider, BoundlessProver};
+use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_proof_tee_registrar::{
     AwsTargetGroupDiscovery, CertManager, DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_CONCURRENCY,
     DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
@@ -79,8 +79,8 @@ pub(crate) struct Cli {
     tx_manager: TxManagerCli,
 
     /// Hex-encoded guest program image ID.
-    #[arg(long, env = cli_env!("IMAGE_ID"))]
-    image_id: String,
+    #[arg(long, env = cli_env!("IMAGE_ID"), value_parser = parse_image_id)]
+    image_id: [u32; 8],
     #[command(flatten)]
     boundless: BoundlessArgs,
     /// Interval between discovery and registration poll cycles, in seconds.
@@ -108,7 +108,7 @@ pub(crate) struct Cli {
         long,
         env = cli_env!("MAX_CONCURRENCY"),
         default_value_t = DEFAULT_MAX_CONCURRENCY,
-        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+        value_parser = parse_nonzero_usize
     )]
     max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
@@ -128,8 +128,26 @@ pub(crate) struct Cli {
     /// checks while the application initializes. Set to 0 to disable.
     #[arg(long, env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"), default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS)]
     unhealthy_registration_window_secs: u64,
-    #[command(flatten)]
-    crl: CrlArgs,
+    /// Enable on-demand CRL checking at registration time.
+    /// When enabled, intermediate certificates are checked against CRL
+    /// distribution points before signer registration. Revoked certificates
+    /// trigger a `revokeCert` transaction onchain.
+    #[arg(
+        long,
+        env = cli_env!("CRL_CHECK_ENABLED"),
+        requires = "crl_nitro_verifier_address"
+    )]
+    crl_check_enabled: bool,
+
+    /// `NitroEnclaveVerifier` contract address. Required when
+    /// `--crl-check-enabled` is set; consulted both for the durable onchain
+    /// `revokedCerts` pre-check and as the destination for outgoing
+    /// `revokeCert` transactions.
+    ///
+    /// The `crl-` prefix is retained for backward compatibility with
+    /// existing production deployments (introduced in #1984).
+    #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
+    crl_nitro_verifier_address: Option<Address>,
     #[command(flatten)]
     health: HealthArgs,
     #[command(flatten)]
@@ -146,8 +164,8 @@ struct BoundlessArgs {
     boundless_rpc_url: Url,
 
     /// Hex-encoded private key for Boundless Network proving fees.
-    #[arg(long, env = cli_env!("BOUNDLESS_PRIVATE_KEY"))]
-    boundless_private_key: String,
+    #[arg(long, env = cli_env!("BOUNDLESS_PRIVATE_KEY"), value_parser = parse_boundless_private_key)]
+    boundless_private_key: PrivateKeySigner,
 
     /// HTTP(S) URL of the Nitro attestation verifier ELF (e.g. Pinata IPFS gateway URL).
     #[arg(long, env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL"))]
@@ -170,17 +188,19 @@ struct BoundlessArgs {
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"),
-        requires = "boundless_max_price_eth"
+        requires = "boundless_max_price_eth",
+        value_parser = parse_boundless_eth_amount
     )]
-    boundless_min_price_eth: Option<String>,
+    boundless_min_price_eth: Option<Amount>,
 
     /// Maximum Boundless offer price in ETH for each submitted proof request.
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"),
-        requires = "boundless_min_price_eth"
+        requires = "boundless_min_price_eth",
+        value_parser = parse_boundless_eth_amount
     )]
-    boundless_max_price_eth: Option<String>,
+    boundless_max_price_eth: Option<Amount>,
 
     /// Optional duration in seconds for the Boundless offer price ramp.
     #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
@@ -218,44 +238,19 @@ struct BoundlessArgs {
     max_attestation_age_secs: u64,
 }
 
-/// CRL (Certificate Revocation List) checking CLI arguments.
-#[derive(Args)]
-struct CrlArgs {
-    /// Enable on-demand CRL checking at registration time.
-    /// When enabled, intermediate certificates are checked against CRL
-    /// distribution points before signer registration. Revoked certificates
-    /// trigger a `revokeCert` transaction onchain.
-    #[arg(
-        long,
-        env = cli_env!("CRL_CHECK_ENABLED"),
-        requires = "crl_nitro_verifier_address"
-    )]
-    crl_check_enabled: bool,
-
-    /// `NitroEnclaveVerifier` contract address. Required when
-    /// `--crl-check-enabled` is set; consulted both for the durable onchain
-    /// `revokedCerts` pre-check and as the destination for outgoing
-    /// `revokeCert` transactions.
-    ///
-    /// The `crl-` prefix is retained for backward compatibility with
-    /// existing production deployments (introduced in #1984).
-    #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
-    crl_nitro_verifier_address: Option<Address>,
-}
-
 /// Parse a hex-encoded Boundless private key string into a [`PrivateKeySigner`].
-fn parse_boundless_private_key(s: &str) -> std::result::Result<PrivateKeySigner, RegistrarError> {
+fn parse_boundless_private_key(s: &str) -> std::result::Result<PrivateKeySigner, String> {
     s.strip_prefix("0x")
         .unwrap_or(s)
         .parse::<PrivateKeySigner>()
-        .map_err(|e| RegistrarError::Config(format!("--boundless-private-key: {e}")))
+        .map_err(|e| format!("--boundless-private-key: {e}"))
 }
 
 /// Parse a hex-encoded image ID string into `[u32; 8]`.
-fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
+fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], String> {
     let mut bytes = [0u8; 32];
     hex::decode_to_slice(s.strip_prefix("0x").unwrap_or(s), &mut bytes)
-        .map_err(|e| RegistrarError::Config(format!("--image-id: {e}")))?;
+        .map_err(|e| format!("--image-id: {e}"))?;
 
     let mut id = [0u32; 8];
     for (i, chunk) in bytes.chunks_exact(4).enumerate() {
@@ -264,26 +259,21 @@ fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
     Ok(id)
 }
 
+fn parse_nonzero_usize(s: &str) -> std::result::Result<usize, String> {
+    let value = s.parse::<usize>().map_err(|e| e.to_string())?;
+    (value > 0).then_some(value).ok_or_else(|| "value must be at least 1".into())
+}
+
 /// Parse an ETH-denominated Boundless offer price.
-fn parse_boundless_eth_amount(field: &str, s: &str) -> std::result::Result<Amount, RegistrarError> {
+fn parse_boundless_eth_amount(s: &str) -> std::result::Result<Amount, String> {
     Amount::parse_with_allowed(s, &[Asset::ETH], Some(Asset::ETH))
-        .map_err(|e| RegistrarError::Config(format!("{field}: {e}")))
+        .map_err(|e| format!("Boundless ETH amount: {e}"))
 }
 
 impl Cli {
     fn boundless_prover(&self) -> std::result::Result<BoundlessProver, RegistrarError> {
-        let offer_min_price = self
-            .boundless
-            .boundless_min_price_eth
-            .as_deref()
-            .map(|s| parse_boundless_eth_amount("--boundless-min-price-eth", s))
-            .transpose()?;
-        let offer_max_price = self
-            .boundless
-            .boundless_max_price_eth
-            .as_deref()
-            .map(|s| parse_boundless_eth_amount("--boundless-max-price-eth", s))
-            .transpose()?;
+        let offer_min_price = self.boundless.boundless_min_price_eth.clone();
+        let offer_max_price = self.boundless.boundless_max_price_eth.clone();
 
         if let (Some(min_price), Some(max_price)) = (&offer_min_price, &offer_max_price) {
             if max_price.value < min_price.value {
@@ -296,9 +286,9 @@ impl Cli {
 
         let mut prover = BoundlessProver::new(
             self.boundless.boundless_rpc_url.clone(),
-            parse_boundless_private_key(&self.boundless.boundless_private_key)?,
+            self.boundless.boundless_private_key.clone(),
             self.boundless.boundless_verifier_program_url.clone(),
-            parse_image_id(&self.image_id)?,
+            self.image_id,
             Duration::from_secs(self.boundless.boundless_poll_interval_secs),
             Duration::from_secs(self.boundless.boundless_timeout_secs),
             DEFAULT_TRUSTED_CERTS_PREFIX,
@@ -412,8 +402,6 @@ impl Cli {
         let registry =
             RegistryContractClient::new(self.tee_prover_registry_address, self.l1_rpc_url.clone());
 
-        let proof_provider: Box<dyn AttestationProofProvider> = Box::new(boundless_prover);
-
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle = tokio::spawn(HealthServer::serve(
             self.health.socket_addr(),
@@ -444,14 +432,13 @@ impl Cli {
         ready.store(true, Ordering::SeqCst);
 
         let signer_manager = Arc::new(SignerManager::new(
-            proof_provider,
+            boundless_prover,
             registry,
             tx_manager.clone(),
             signer_manager_config,
         ));
-        let cert_manager = if self.crl.crl_check_enabled {
+        let cert_manager = if self.crl_check_enabled {
             let nitro_verifier_address = self
-                .crl
                 .crl_nitro_verifier_address
                 .expect("--crl-nitro-verifier-address is required by clap");
             let nitro_verifier = Box::new(NitroVerifierContractClient::new(
@@ -479,7 +466,7 @@ impl Cli {
 
         info!("Driver stopped, shutting down...");
         ready.store(false, Ordering::SeqCst);
-        RegistrarMetrics::record_shutdown();
+        RegistrarMetrics::up().set(0.0);
 
         match health_handle.await {
             Ok(Ok(())) => {}
@@ -488,11 +475,6 @@ impl Cli {
         }
 
         signal_handle.abort();
-        match signal_handle.await {
-            Ok(()) => {}
-            Err(e) if e.is_cancelled() => {}
-            Err(e) => warn!(error = %e, "Signal handler task panicked"),
-        }
 
         info!("Service stopped");
         driver_result?;
@@ -608,23 +590,11 @@ mod tests {
 
         assert_eq!(
             b.offer_min_price,
-            Some(
-                parse_boundless_eth_amount(
-                    "--boundless-min-price-eth",
-                    TEST_BOUNDLESS_MIN_PRICE_ETH,
-                )
-                .unwrap(),
-            ),
+            Some(parse_boundless_eth_amount(TEST_BOUNDLESS_MIN_PRICE_ETH).unwrap()),
         );
         assert_eq!(
             b.offer_max_price,
-            Some(
-                parse_boundless_eth_amount(
-                    "--boundless-max-price-eth",
-                    TEST_BOUNDLESS_MAX_PRICE_ETH,
-                )
-                .unwrap(),
-            ),
+            Some(parse_boundless_eth_amount(TEST_BOUNDLESS_MAX_PRICE_ETH).unwrap()),
         );
         assert_eq!(b.offer_ramp_up_period_secs, Some(TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS),);
     }

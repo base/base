@@ -61,10 +61,3 @@ base_metrics::define_metrics! {
     #[describe("Number of proof-generation tasks currently in-flight in the run() loop")]
     proof_tasks_pending: gauge,
 }
-
-impl RegistrarMetrics {
-    /// Records shutdown by setting the UP gauge to 0.
-    pub fn record_shutdown() {
-        Self::up().set(0.0);
-    }
-}
