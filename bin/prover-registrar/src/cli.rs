@@ -1,12 +1,12 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::{num::NonZeroUsize, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError, RegistrarService,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use boundless_market::{
@@ -83,9 +83,10 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = NonZeroUsize::new(DEFAULT_MAX_CONCURRENCY).unwrap()
+        default_value_t = DEFAULT_MAX_CONCURRENCY,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
     )]
-    max_concurrency: NonZeroUsize,
+    max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -210,7 +211,7 @@ struct BoundlessArgs {
 }
 
 /// Parse a hex-encoded image ID string into `[u32; 8]`.
-fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], String> {
+fn parse_image_id(s: &str) -> Result<[u32; 8], String> {
     let bytes = <[u8; 32]>::from_hex(s.strip_prefix("0x").unwrap_or(s))
         .map_err(|e| format!("--image-id: {e}"))?;
 
@@ -218,13 +219,13 @@ fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], String> {
 }
 
 /// Parse an ETH-denominated Boundless offer price.
-fn parse_boundless_eth_amount(s: &str) -> std::result::Result<Amount, String> {
+fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
     Amount::parse_with_allowed(s, &[Asset::ETH], Some(Asset::ETH))
         .map_err(|e| format!("Boundless ETH amount: {e}"))
 }
 
 impl Cli {
-    fn config(self) -> std::result::Result<RegistrarConfig, RegistrarError> {
+    pub(crate) fn config(self) -> Result<RegistrarConfig, RegistrarError> {
         let boundless = self.boundless;
         if matches!(
             (&boundless.min_price_eth, &boundless.max_price_eth),
@@ -270,7 +271,7 @@ impl Cli {
             boundless_prover,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
-            max_concurrency: self.max_concurrency.get(),
+            max_concurrency: self.max_concurrency,
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
             unhealthy_registration_window: Duration::from_secs(
@@ -281,11 +282,6 @@ impl Cli {
             log_config: self.log.into(),
             metrics_config: self.metrics.into(),
         })
-    }
-
-    /// Run the registrar service.
-    pub(crate) async fn run(self) -> eyre::Result<()> {
-        RegistrarService::run(self.config()?).await
     }
 }
 
