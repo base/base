@@ -269,7 +269,7 @@ where
         // flashblock publication cadence, websocket publishing, or fallback payload index 0.
         let mut block_builder = FlashblocksBlockBuilder::new(&mut state, trie_handle);
         if block_builder.has_sparse_state_root() {
-            debug!(
+            info!(
                 target: "payload_builder",
                 parent_hash = ?ctx.parent().hash(),
                 "Using engine sparse trie handle for payload state root"

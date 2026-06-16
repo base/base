@@ -11,6 +11,7 @@ use base_builder_metering::MeteringStoreExtension;
 use base_execution_cli::Cli;
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
+use reth_node_core::args::DefaultEngineValues;
 
 type BuilderCli = Cli<Args>;
 
@@ -18,6 +19,9 @@ type BuilderCli = Cli<Args>;
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
 
 fn main() {
+    let _ =
+        DefaultEngineValues::default().with_share_sparse_trie_with_payload_builder(true).try_init();
+
     base_cli_utils::init_common!();
     base_reth_cli::init_reth!();
 

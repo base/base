@@ -27,6 +27,7 @@ base-builder-metering.workspace = true
 # reth
 base-reth-cli.workspace = true
 reth-cli-util.workspace = true
+reth-node-core.workspace = true
 base-execution-cli = { workspace = true, features = ["otlp"] }
 
 # cli
