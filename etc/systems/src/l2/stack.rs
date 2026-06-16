@@ -97,7 +97,7 @@ impl L2Stack {
     /// # Errors
     ///
     /// Returns an error if any component fails to start.
-    pub async fn start(config: L2StackConfig) -> Result<Self> {
+    pub async fn start(mut config: L2StackConfig) -> Result<Self> {
         let container_config = config.container_config.as_ref();
 
         let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
@@ -143,6 +143,11 @@ impl L2Stack {
             }
             cfg
         };
+
+        // Re-serialize the patched rollup config so byte-level consumers see the real
+        // genesis hash instead of the zero placeholder.
+        config.rollup_config = serde_json::to_vec(&rollup_config)
+            .wrap_err("Failed to serialize patched rollup config")?;
 
         // 2. Start builder consensus (in-process CL, Sequencer mode).
         //    The sequencer starts in stopped mode so that blocks are not produced until the

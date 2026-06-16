@@ -91,6 +91,9 @@ mkdir -p "$OUTPUT_DIR"
 # =============================================================================
 # Deploy L1 contracts and generate L2 genesis using forge scripts
 # (Uses base/contracts forge scripts instead of op-deployer)
+#
+# NOTE: This forge-script deployment path is for LOCAL DEVNET ONLY.
+# Production and testnet deployments use op-deployer.
 # =============================================================================
 echo ""
 echo "=== Deploying via forge scripts (base/contracts) ==="

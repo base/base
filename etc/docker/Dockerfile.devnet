@@ -30,10 +30,6 @@ FROM ghcr.io/foundry-rs/foundry:v1.7.1 AS contracts-builder
 
 ARG CONTRACTS_COMMIT=
 
-# git is pre-installed in the foundry image (Ubuntu 22.04)
-RUN git config --global user.email "docker@build" && \
-    git config --global user.name "docker"
-
 WORKDIR /contracts
 RUN git clone https://github.com/base/contracts.git . && \
     if [ -n "${CONTRACTS_COMMIT}" ]; then \
@@ -43,13 +39,13 @@ RUN git clone https://github.com/base/contracts.git . && \
       echo "CONTRACTS_COMMIT not set — using latest main ($(git rev-parse --short HEAD))"; \
     fi
 
-RUN forge install \
-    github.com/foundry-rs/forge-std@6853b9ec7df5dc0c213b05ae67785ad4f4baa0ea \
-    github.com/OpenZeppelin/openzeppelin-contracts@ecd2ca2cd7cac116f7a37d0e474bbb3d7d5e1c4d \
-    github.com/OpenZeppelin/openzeppelin-contracts-upgradeable@0a2cb9a445c365870ed7a8ab461b12acf3e27d63 \
-    github.com/transmissions11/solmate@8f9b23f8838670afda0fd8983f2c41e8037ae6bc \
-    github.com/Vectorized/solady@502cc1ea718e6fa73b380635ee0868b0740595f0 \
-    github.com/risc0/risc0-ethereum@a78ac4a52fe9cfa14120c3b496430f0d42e1d8d3
+# Install deps from the contracts justfile (single source of truth for pins).
+# --no-git avoids submodule machinery and git user/email config requirement.
+RUN grep -A 20 '^deps:' justfile \
+    | grep 'github\.com/' \
+    | sed 's/\\$//' \
+    | tr -d ' ' \
+    | xargs forge install --no-git
 RUN forge build
 
 FROM ghcr.io/foundry-rs/foundry:v1.7.1

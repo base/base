@@ -49,6 +49,11 @@ contract L2GenesisDevnet is Script {
         L2Genesis genesis = new L2Genesis();
         genesis.run(input);
 
+        // Clear helper contracts so they don't leak into the genesis alloc.
+        // DeployConfig and L2Genesis are only needed during script execution.
+        vm.etch(address(cfg), "");
+        vm.etch(address(genesis), "");
+
         // Dump the resulting state
         vm.dumpState(vm.envOr("L2_GENESIS_STATE_DUMP", string("state-dump.json")));
     }

@@ -8,7 +8,7 @@ set -euo pipefail
 #   2. genesis.json — L2 genesis hash and timestamp
 #   3. l1-addresses.json — contract addresses (OptimismPortalProxy, SystemConfigProxy)
 #   4. SystemConfig on-chain state — batcher, overhead, scalar, gasLimit
-#   5. Derived — batch_inbox_address from l2ChainId
+#   5. SystemConfig on-chain state — batchInbox
 #
 # CRITICAL: RollupConfig uses #[serde(deny_unknown_fields)].
 # ANY extra field in rollup.json will cause a hard crash at deserialization.
@@ -131,16 +131,12 @@ echo "Scalar:           $SCALAR_RAW"
 echo "Gas limit:        $GAS_LIMIT"
 
 # ===========================================================================
-# 5. Compute batch_inbox_address from l2ChainId
+# 5. Read batch_inbox_address from SystemConfig
 # ===========================================================================
 echo ""
-echo "--- Computing batch_inbox_address ---"
+echo "--- Reading batch_inbox_address ---"
 
-# Solidity: address(uint160(uint256(keccak256(abi.encode("]]]]", _chainId)))))
-# Steps: ABI-encode string + uint256, keccak256, take last 20 bytes as address
-ENCODED=$(cast abi-encode "f(string,uint256)" "]]]]" "$L2_CHAIN_ID")
-INBOX_HASH=$(cast keccak "$ENCODED")
-BATCH_INBOX="0x${INBOX_HASH: -40}"
+BATCH_INBOX=$(cast call "$SYSTEM_CONFIG_PROXY" "batchInbox()(address)" --rpc-url "$L1_RPC_URL")
 
 echo "Batch inbox:      $BATCH_INBOX"
 

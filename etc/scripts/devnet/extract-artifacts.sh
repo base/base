@@ -199,7 +199,7 @@ jq -n \
   },
   nonce:         "0x0",
   timestamp:     $genesis_timestamp,
-  extraData:     "0x",
+  extraData:     "0x0100000000000000000000000000000000",
   gasLimit:      $gas_limit,
   difficulty:    "0x1",
   mixHash:       "0x0000000000000000000000000000000000000000000000000000000000000000",

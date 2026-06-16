@@ -114,7 +114,8 @@ impl DeployerContainer {
         std::fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output directory")?;
 
         let image = GenericImage::new("devnet-setup", "local")
-            .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
+            .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
+            .with_startup_timeout(std::time::Duration::from_secs(600));
 
         let output_dir = self.output_dir.to_string_lossy().to_string();
         let mut request = image
