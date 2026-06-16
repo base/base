@@ -338,20 +338,43 @@ mod tests {
     }
 
     /// Mock transaction manager for testing.
+    ///
+    /// Supports one or more canned responses via a FIFO queue. Each `send()`
+    /// pops the next response and records the candidate for later inspection.
     #[derive(Debug)]
     struct MockTxManager {
-        response: std::sync::Mutex<Option<SendResponse>>,
+        responses: std::sync::Mutex<std::collections::VecDeque<SendResponse>>,
+        sent: std::sync::Mutex<Vec<TxCandidate>>,
     }
 
     impl MockTxManager {
         fn new(response: SendResponse) -> Self {
-            Self { response: std::sync::Mutex::new(Some(response)) }
+            Self {
+                responses: std::sync::Mutex::new(std::collections::VecDeque::from([response])),
+                sent: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn with_responses(responses: Vec<SendResponse>) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(responses.into()),
+                sent: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn sent_candidates(&self) -> Vec<TxCandidate> {
+            self.sent.lock().unwrap().clone()
         }
     }
 
     impl TxManager for MockTxManager {
-        async fn send(&self, _candidate: TxCandidate) -> SendResponse {
-            self.response.lock().unwrap().take().expect("MockTxManager response already consumed")
+        async fn send(&self, candidate: TxCandidate) -> SendResponse {
+            self.sent.lock().unwrap().push(candidate);
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("MockTxManager: no more canned responses")
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
@@ -633,5 +656,150 @@ mod tests {
     #[case::other_error(ProposerError::Contract("other".into()), false)]
     fn test_is_invalid_signer(#[case] err: ProposerError, #[case] expected: bool) {
         assert_eq!(err.is_invalid_signer(), expected);
+    }
+
+    // ========================================================================
+    // Auto-resolve (try_resolve_game) tests
+    // ========================================================================
+
+    /// Builds a receipt whose inner logs contain a `DisputeGameCreated` event
+    /// pointing at `game_proxy`.
+    fn receipt_with_game_created(tx_hash: B256, game_proxy: Address) -> TransactionReceipt {
+        use alloy_primitives::LogData;
+        use alloy_sol_types::SolEvent;
+
+        let event = IDisputeGameFactory::DisputeGameCreated {
+            disputeProxy: game_proxy,
+            gameType: TEST_GAME_TYPE,
+            rootClaim: B256::repeat_byte(0x01),
+        };
+        let log_data = event.encode_log_data();
+        let primitive_log = alloy_primitives::Log::<LogData> {
+            address: Address::repeat_byte(0x01),
+            data: log_data,
+        };
+        let rpc_log = alloy_rpc_types_eth::Log {
+            inner: primitive_log,
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            block_timestamp: None,
+            transaction_hash: Some(tx_hash),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        };
+
+        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: Eip658Value::Eip658(true),
+                cumulative_gas_used: 21_000,
+                logs: vec![rpc_log],
+            },
+            logs_bloom: Bloom::ZERO,
+        });
+        TransactionReceipt {
+            inner,
+            transaction_hash: tx_hash,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        }
+    }
+
+    fn auto_resolve_submitter(
+        responses: Vec<SendResponse>,
+    ) -> ProposalSubmitter<MockTxManager> {
+        ProposalSubmitter::new(
+            MockTxManager::with_responses(responses),
+            Address::repeat_byte(0x01),
+            TEST_GAME_TYPE,
+            U256::from(TEST_INIT_BOND),
+            true,
+        )
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_decodes_event_and_resolves() {
+        let game_proxy = Address::repeat_byte(0xFA);
+        let create_hash = B256::repeat_byte(0xAA);
+        let resolve_hash = B256::repeat_byte(0xBB);
+
+        let submitter = auto_resolve_submitter(vec![
+            Ok(receipt_with_game_created(create_hash, game_proxy)),
+            Ok(receipt_with_status(true, resolve_hash)),
+        ]);
+
+        let result = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await;
+        assert!(result.is_ok(), "propose_output should succeed");
+
+        let candidates = submitter.tx_manager.sent_candidates();
+        assert_eq!(candidates.len(), 2, "expected create + resolve transactions");
+        assert_eq!(
+            candidates[1].to,
+            Some(game_proxy),
+            "resolve target must be the disputeProxy from the event"
+        );
+        assert_eq!(
+            &candidates[1].tx_data[..4],
+            &encode_resolve_calldata()[..4],
+            "resolve tx must carry resolve() selector"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_no_event_still_succeeds() {
+        let create_hash = B256::repeat_byte(0xCC);
+
+        let submitter = auto_resolve_submitter(vec![
+            Ok(receipt_with_status(true, create_hash)),
+        ]);
+
+        let result = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await;
+        assert!(result.is_ok(), "propose_output should succeed even without event");
+
+        let candidates = submitter.tx_manager.sent_candidates();
+        assert_eq!(candidates.len(), 1, "only create tx should be sent (no resolve)");
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_reverted_does_not_propagate() {
+        let game_proxy = Address::repeat_byte(0xDD);
+        let create_hash = B256::repeat_byte(0xAA);
+        let resolve_hash = B256::repeat_byte(0xBB);
+
+        let submitter = auto_resolve_submitter(vec![
+            Ok(receipt_with_game_created(create_hash, game_proxy)),
+            Ok(receipt_with_status(false, resolve_hash)),
+        ]);
+
+        let result = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await;
+        assert!(
+            result.is_ok(),
+            "propose_output must return Ok even when resolve reverts"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_tx_error_does_not_propagate() {
+        let game_proxy = Address::repeat_byte(0xEE);
+        let create_hash = B256::repeat_byte(0xAA);
+
+        let submitter = auto_resolve_submitter(vec![
+            Ok(receipt_with_game_created(create_hash, game_proxy)),
+            Err(TxManagerError::NonceTooLow),
+        ]);
+
+        let result = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await;
+        assert!(
+            result.is_ok(),
+            "propose_output must return Ok even when resolve tx fails"
+        );
     }
 }
