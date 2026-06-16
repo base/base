@@ -456,6 +456,17 @@ impl ClusterZkProver {
                             proof_status.as_str_name()
                         ));
                     }
+                    if proof_status == ProofRequestStatus::Unspecified {
+                        error!(
+                            proof_id = %proof_id,
+                            proof_status = %proof_status.as_str_name(),
+                            error = %e,
+                            "cluster proof create raced into unspecified request"
+                        );
+                        return Err(backend_error!(
+                            "cluster proof {proof_id} created concurrently but has unspecified status"
+                        ));
+                    }
 
                     info!(
                         proof_id = %proof_id,
