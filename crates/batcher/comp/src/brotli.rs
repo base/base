@@ -56,6 +56,12 @@ pub struct BrotliCompressor {
     /// The lazily-materialised compressed bytes.  Valid (non-dirty) only when
     /// `dirty` is `false`.
     compressed: RefCell<Vec<u8>>,
+    /// Raw byte offset within `compressed` for the next read.
+    ///
+    /// By keeping a cursor instead of calling `Vec::drain()` on every frame
+    /// we turn the per-frame drain step from O(n) into O(1), removing the
+    /// overall O(n²) behaviour when a channel produces many frames.
+    read_pos: Cell<usize>,
     /// The raw accumulated input bytes.
     raw: Vec<u8>,
     /// Marks that the compressor is closed.
@@ -73,6 +79,7 @@ impl BrotliCompressor {
         let level = level.into();
         Self {
             compressed: RefCell::new(Vec::new()),
+            read_pos: Cell::new(0),
             raw: Vec::new(),
             closed: false,
             dirty: Cell::new(false),
@@ -130,6 +137,7 @@ impl CompressorWriter for BrotliCompressor {
         // to the first call that actually needs the compressed output.
         self.raw.extend_from_slice(data);
         self.compressed.borrow_mut().clear();
+        self.read_pos.set(0);
         self.dirty.set(true);
         Ok(data.len())
     }
@@ -147,15 +155,18 @@ impl CompressorWriter for BrotliCompressor {
         self.closed = false;
         self.raw.clear();
         self.compressed.borrow_mut().clear();
+        self.read_pos.set(0);
         self.dirty.set(false);
     }
 
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
         self.ensure_compressed()?;
-        let mut compressed = self.compressed.borrow_mut();
-        let len = compressed.len().min(buf.len());
-        buf[..len].copy_from_slice(&compressed[..len]);
-        compressed.drain(..len);
+        let compressed = self.compressed.borrow();
+        let pos = self.read_pos.get();
+        let remaining = &compressed[pos..];
+        let len = remaining.len().min(buf.len());
+        buf[..len].copy_from_slice(&remaining[..len]);
+        self.read_pos.set(pos + len);
         Ok(len)
     }
 
@@ -163,14 +174,17 @@ impl CompressorWriter for BrotliCompressor {
         // Silently ignore compression errors; callers will encounter them on
         // the next read() or get_compressed() call.
         let _ = self.ensure_compressed();
-        self.compressed.borrow().len()
+        let compressed = self.compressed.borrow();
+        let pos = self.read_pos.get();
+        compressed.len().saturating_sub(pos)
     }
 }
 
 impl ChannelCompressor for BrotliCompressor {
     fn get_compressed(&self) -> Vec<u8> {
         let _ = self.ensure_compressed();
-        self.compressed.borrow().clone()
+        let pos = self.read_pos.get();
+        self.compressed.borrow()[pos..].to_vec()
     }
 
     fn channel_version_byte(&self) -> Option<u8> {

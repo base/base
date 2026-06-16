@@ -28,6 +28,12 @@ pub struct ZlibCompressor {
     /// The lazily-materialised compressed buffer.  Valid only when `dirty` is
     /// `false`.
     compressed: RefCell<Vec<u8>>,
+    /// Raw byte offset within `compressed` for the next read.
+    ///
+    /// By keeping a cursor instead of calling `Vec::drain()` on every frame
+    /// we turn the per-frame drain step from O(n) into O(1), removing the
+    /// overall O(n²) behaviour when a channel produces many frames.
+    read_pos: Cell<usize>,
     /// Set to `true` when `buffer` has been extended since the last
     /// compression run.
     dirty: Cell<bool>,
@@ -36,7 +42,12 @@ pub struct ZlibCompressor {
 impl ZlibCompressor {
     /// Create a new ZLIB compressor.
     pub const fn new() -> Self {
-        Self { buffer: Vec::new(), compressed: RefCell::new(Vec::new()), dirty: Cell::new(false) }
+        Self {
+            buffer: Vec::new(),
+            compressed: RefCell::new(Vec::new()),
+            read_pos: Cell::new(0),
+            dirty: Cell::new(false),
+        }
     }
 
     /// Compress `data` using ZLIB deflate.
@@ -65,6 +76,7 @@ impl CompressorWriter for ZlibCompressor {
         // to the first call that actually needs the compressed output.
         self.buffer.extend_from_slice(data);
         self.compressed.borrow_mut().clear();
+        self.read_pos.set(0);
         self.dirty.set(true);
         Ok(data.len())
     }
@@ -80,19 +92,25 @@ impl CompressorWriter for ZlibCompressor {
     fn reset(&mut self) {
         self.buffer.clear();
         self.compressed.borrow_mut().clear();
+        self.read_pos.set(0);
         self.dirty.set(false);
     }
 
     fn len(&self) -> usize {
         self.ensure_compressed();
-        self.compressed.borrow().len()
+        let compressed = self.compressed.borrow();
+        let pos = self.read_pos.get();
+        compressed.len().saturating_sub(pos)
     }
 
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
         self.ensure_compressed();
         let compressed = self.compressed.borrow();
-        let len = compressed.len().min(buf.len());
-        buf[..len].copy_from_slice(&compressed[..len]);
+        let pos = self.read_pos.get();
+        let remaining = &compressed[pos..];
+        let len = remaining.len().min(buf.len());
+        buf[..len].copy_from_slice(&remaining[..len]);
+        self.read_pos.set(pos + len);
         Ok(len)
     }
 }
@@ -100,6 +118,7 @@ impl CompressorWriter for ZlibCompressor {
 impl ChannelCompressor for ZlibCompressor {
     fn get_compressed(&self) -> Vec<u8> {
         self.ensure_compressed();
-        self.compressed.borrow().clone()
+        let pos = self.read_pos.get();
+        self.compressed.borrow()[pos..].to_vec()
     }
 }

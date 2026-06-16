@@ -73,7 +73,15 @@ where
 {
     /// Creates a new [`ChannelOut`] with the given [`ChannelId`].
     pub const fn new(id: ChannelId, config: Arc<RollupConfig>, compressor: C) -> Self {
-        Self { id, config, rlp_length: 0, frame_number: 0, closed: false, compressor, read_buf: Vec::new() }
+        Self {
+            id,
+            config,
+            rlp_length: 0,
+            frame_number: 0,
+            closed: false,
+            compressor,
+            read_buf: Vec::new(),
+        }
     }
 
     /// Resets the [`ChannelOut`] to its initial state.
@@ -167,7 +175,9 @@ where
         if self.read_buf.len() < max_size {
             self.read_buf.resize(max_size, 0);
         }
-        let n = self.compressor.read(&mut self.read_buf[..max_size])
+        let n = self
+            .compressor
+            .read(&mut self.read_buf[..max_size])
             .map_err(ChannelOutError::Compression)?;
 
         let mut data = Vec::with_capacity(prefix_len + n);
