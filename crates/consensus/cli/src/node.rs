@@ -60,12 +60,16 @@ impl ConsensusNodeCommand {
 
         let args = ConsensusNodeArgs::new(chain, self.args);
         let cfg = args.load_rollup_config()?;
-        if self.metrics.enabled {
+        let _active_upgrade_metrics = if self.metrics.enabled {
             CliMetrics::init_rollup_config(&cfg);
-            CliMetrics::spawn_active_upgrade_recorder(
+            Some(CliMetrics::spawn_active_upgrade_recorder(
                 cfg.clone(),
                 Duration::from_secs(self.metrics.interval),
-            );
+            ))
+        } else {
+            None
+        };
+        if self.metrics.enabled {
             CliMetrics::init_p2p(&args.config.p2p_flags);
         }
 

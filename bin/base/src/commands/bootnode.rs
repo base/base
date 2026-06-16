@@ -1,5 +1,8 @@
 //! Combined consensus and execution bootnode command.
 
+use std::time::Duration;
+
+use base_cli_utils::MetricsConfig;
 use base_consensus_cli::{BootnodeP2PArgs, CliMetrics, L2ConfigFile};
 use base_execution_cli::commands::p2p::bootnode::Command as ExecutionBootnodeCommand;
 use clap::Args;
@@ -28,12 +31,24 @@ pub(crate) struct BootnodeCommand {
 
 impl BootnodeCommand {
     /// Runs both discovery-only bootnodes.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
+    pub(crate) fn run(
+        self,
+        resolved_chain: ResolvedChainConfig,
+        metrics: &MetricsConfig,
+    ) -> eyre::Result<()> {
         let consensus_chain = resolved_chain.consensus_chain_args();
         let rollup_config = self.l2_config.load(&consensus_chain.l2_chain_id)?;
 
-        CliMetrics::init_rollup_config(&rollup_config);
-        CliMetrics::init_bootnode_p2p(&self.consensus);
+        let _active_upgrade_metrics = if metrics.enabled {
+            CliMetrics::init_rollup_config(&rollup_config);
+            CliMetrics::init_bootnode_p2p(&self.consensus);
+            Some(CliMetrics::spawn_active_upgrade_recorder(
+                rollup_config.clone(),
+                Duration::from_secs(metrics.interval),
+            ))
+        } else {
+            None
+        };
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|_| async move {
             let chain_id = rollup_config.l2_chain_id.id();

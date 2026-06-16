@@ -1,7 +1,9 @@
 //! CLI Options Metrics
 
 use std::{
+    sync::mpsc::{self, RecvTimeoutError, Sender},
     thread,
+    thread::JoinHandle,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -14,6 +16,45 @@ use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
 /// Metrics to record various CLI options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliMetrics;
+
+/// Background active-upgrade metrics recorder.
+#[derive(Debug)]
+pub struct ActiveUpgradeMetricsRecorder {
+    shutdown: Option<Sender<()>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl ActiveUpgradeMetricsRecorder {
+    /// Creates an empty recorder when the background thread could not be spawned.
+    pub const fn empty() -> Self {
+        Self { shutdown: None, handle: None }
+    }
+
+    /// Stops the background recorder and waits for it to exit.
+    pub fn stop(mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err()
+        {
+            warn!("active upgrade metrics recorder panicked");
+        }
+    }
+}
+
+impl Drop for ActiveUpgradeMetricsRecorder {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(handle) = self.handle.take()
+            && handle.join().is_err()
+        {
+            warn!("active upgrade metrics recorder panicked");
+        }
+    }
+}
 
 impl CliMetrics {
     /// The default interval for refreshing active upgrade metrics.
@@ -221,21 +262,31 @@ impl CliMetrics {
     }
 
     /// Starts a background recorder that refreshes active upgrade gauges.
-    pub fn spawn_active_upgrade_recorder(config: RollupConfig, interval: Duration) {
+    pub fn spawn_active_upgrade_recorder(
+        config: RollupConfig,
+        interval: Duration,
+    ) -> ActiveUpgradeMetricsRecorder {
         let interval =
             if interval.is_zero() { Self::ACTIVE_UPGRADE_RECORDING_INTERVAL } else { interval };
+        let (shutdown, shutdown_signal) = mpsc::channel();
 
         Self::record_active_upgrades(&config);
 
-        if let Err(error) =
-            thread::Builder::new().name("active-upgrade-metrics".to_string()).spawn(move || {
-                loop {
-                    thread::sleep(interval);
-                    Self::record_active_upgrades(&config);
+        match thread::Builder::new().name("active-upgrade-metrics".to_string()).spawn(move || {
+            loop {
+                match shutdown_signal.recv_timeout(interval) {
+                    Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+                    Err(RecvTimeoutError::Timeout) => Self::record_active_upgrades(&config),
                 }
-            })
-        {
-            warn!(error = %error, "failed to spawn active upgrade metrics recorder");
+            }
+        }) {
+            Ok(handle) => {
+                ActiveUpgradeMetricsRecorder { shutdown: Some(shutdown), handle: Some(handle) }
+            }
+            Err(error) => {
+                warn!(error = %error, "failed to spawn active upgrade metrics recorder");
+                ActiveUpgradeMetricsRecorder::empty()
+            }
         }
     }
 

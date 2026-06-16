@@ -2,6 +2,7 @@
 
 use std::{path::Path, sync::Arc};
 
+use base_cli_utils::MetricsConfig;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedConsensusNodeConfigArgs,
 };
@@ -43,7 +44,11 @@ pub(crate) struct RpcCommand {
 
 impl RpcCommand {
     /// Runs the `rpc` flavor.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
+    pub(crate) fn run(
+        self,
+        resolved_chain: ResolvedChainConfig,
+        metrics: &MetricsConfig,
+    ) -> eyre::Result<()> {
         let execution_chain = match self.execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
@@ -53,6 +58,9 @@ impl RpcCommand {
         let rollup_config = consensus_args.load_rollup_config()?;
 
         let execution = self.execution.into_launch_config(execution_chain).with_auth_ipc();
+        let upgrade_metrics_enabled =
+            metrics.enabled || execution.node_config.metrics.prometheus.is_some();
+        let upgrade_metrics_interval = std::time::Duration::from_secs(metrics.interval);
         let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
@@ -63,11 +71,15 @@ impl RpcCommand {
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
 
-            CliMetrics::init_rollup_config(&rollup_config);
-            CliMetrics::spawn_active_upgrade_recorder(
-                rollup_config.clone(),
-                CliMetrics::ACTIVE_UPGRADE_RECORDING_INTERVAL,
-            );
+            let _active_upgrade_metrics = if upgrade_metrics_enabled {
+                CliMetrics::init_rollup_config(&rollup_config);
+                Some(CliMetrics::spawn_active_upgrade_recorder(
+                    rollup_config.clone(),
+                    upgrade_metrics_interval,
+                ))
+            } else {
+                None
+            };
 
             let overrides = ConsensusNodeOverrides {
                 l2_engine_rpc: Some(l2_engine_rpc),

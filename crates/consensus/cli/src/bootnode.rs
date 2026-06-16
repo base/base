@@ -66,9 +66,13 @@ impl Bootnode {
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
             CliMetrics::init_rollup_config(&cfg);
-            CliMetrics::spawn_active_upgrade_recorder(cfg.clone(), metrics_interval);
             CliMetrics::init_bootnode_p2p(&self.p2p);
         })?;
+        let _active_upgrade_metrics = if self.metrics.enabled {
+            Some(CliMetrics::spawn_active_upgrade_recorder(cfg.clone(), metrics_interval))
+        } else {
+            None
+        };
 
         RuntimeManager::new().run_until_ctrl_c(self.exec(cfg))
     }

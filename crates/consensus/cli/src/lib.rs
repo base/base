@@ -31,7 +31,7 @@ mod l2;
 pub use l2::{EmbeddedL2ClientArgs, L2ClientArgs};
 
 mod metrics;
-pub use metrics::CliMetrics;
+pub use metrics::{ActiveUpgradeMetricsRecorder, CliMetrics};
 
 mod node;
 pub use node::{

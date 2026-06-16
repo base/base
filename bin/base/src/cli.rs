@@ -46,13 +46,15 @@ impl BaseCli {
             .init_tracing_subscriber()
             .wrap_err("failed to initialize tracing")?;
 
-        MetricsConfig::from(metrics)
+        let metrics = MetricsConfig::from(metrics);
+
+        metrics
             .init_with(|| {
                 base_cli_utils::register_version_metrics!();
             })
             .wrap_err("failed to install Prometheus recorder")?;
 
-        command.run(ChainResolver::new(chain))
+        command.run(ChainResolver::new(chain), &metrics)
     }
 }
 #[cfg(test)]

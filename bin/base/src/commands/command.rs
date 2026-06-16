@@ -1,5 +1,6 @@
 //! Top-level command dispatch for the unified Base binary.
 
+use base_cli_utils::MetricsConfig;
 use clap::Subcommand;
 
 use crate::{
@@ -30,11 +31,15 @@ pub(crate) enum BaseCommand {
 
 impl BaseCommand {
     /// Runs the selected top-level command.
-    pub(crate) fn run(self, chain_resolver: ChainResolver) -> eyre::Result<()> {
+    pub(crate) fn run(
+        self,
+        chain_resolver: ChainResolver,
+        metrics: &MetricsConfig,
+    ) -> eyre::Result<()> {
         match self {
-            Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?),
-            Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
-            Self::Sequencer(sequencer) => (*sequencer).run(chain_resolver.resolve()?),
+            Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics),
+            Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics),
+            Self::Sequencer(sequencer) => (*sequencer).run(chain_resolver.resolve()?, metrics),
             Self::Update(update) => (*update).run(),
         }
     }
