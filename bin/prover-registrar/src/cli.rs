@@ -1,6 +1,6 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
@@ -83,10 +83,9 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = DEFAULT_MAX_CONCURRENCY,
-        value_parser = parse_positive_usize
+        default_value_t = NonZeroUsize::new(DEFAULT_MAX_CONCURRENCY).expect("default max concurrency must be positive")
     )]
-    max_concurrency: usize,
+    max_concurrency: NonZeroUsize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -230,14 +229,6 @@ fn parse_boundless_eth_amount(s: &str) -> std::result::Result<Amount, String> {
         .map_err(|e| format!("Boundless ETH amount: {e}"))
 }
 
-fn parse_positive_usize(s: &str) -> std::result::Result<usize, String> {
-    match s.parse::<usize>() {
-        Ok(0) => Err("must be greater than zero".into()),
-        Ok(n) => Ok(n),
-        Err(e) => Err(format!("positive integer: {e}")),
-    }
-}
-
 impl Cli {
     fn boundless_prover(&self) -> std::result::Result<BoundlessProver, RegistrarError> {
         let boundless = &self.boundless;
@@ -290,7 +281,7 @@ impl Cli {
             boundless_prover,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
-            max_concurrency: self.max_concurrency,
+            max_concurrency: self.max_concurrency.get(),
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
             unhealthy_registration_window: Duration::from_secs(
