@@ -97,19 +97,21 @@ impl RegistrarService {
             })
             .wrap_err("failed to install Prometheus recorder")?;
 
-        let l1_addr = config.signing.address();
         let provider = if config.metrics_config.enabled {
             let provider = ProviderBuilder::new()
-                .layer(Self::balance_monitor_layer(l1_addr, cancel.clone(), |balance| {
-                    RegistrarMetrics::account_balance_wei().set(balance)
-                }))
+                .layer(Self::balance_monitor_layer(
+                    config.signing.address(),
+                    cancel.clone(),
+                    |balance| RegistrarMetrics::account_balance_wei().set(balance),
+                ))
                 .connect_http(config.l1_rpc_url.clone());
 
-            let boundless_addr = config.boundless_prover.signer.address();
             ProviderBuilder::new()
-                .layer(Self::balance_monitor_layer(boundless_addr, cancel.clone(), |balance| {
-                    RegistrarMetrics::boundless_balance_wei().set(balance)
-                }))
+                .layer(Self::balance_monitor_layer(
+                    config.boundless_prover.signer.address(),
+                    cancel.clone(),
+                    |balance| RegistrarMetrics::boundless_balance_wei().set(balance),
+                ))
                 .connect_http(config.boundless_prover.rpc_url.clone());
 
             provider
@@ -151,18 +153,6 @@ impl RegistrarService {
         ));
 
         let signer_client = ProverClient::new(config.prover_timeout);
-        let driver_config = DriverConfig {
-            poll_interval: config.poll_interval,
-            cancel: cancel.clone(),
-            max_concurrency: config.max_concurrency,
-            unhealthy_registration_window: config.unhealthy_registration_window,
-        };
-        let signer_manager_config = SignerManagerConfig {
-            registry_address: config.tee_prover_registry_address,
-            max_concurrency: config.max_concurrency,
-            max_tx_retries: config.max_tx_retries,
-            tx_retry_delay: config.tx_retry_delay,
-        };
 
         ready.store(true, Ordering::Relaxed);
 
@@ -170,7 +160,12 @@ impl RegistrarService {
             config.boundless_prover,
             registry,
             tx_manager.clone(),
-            signer_manager_config,
+            SignerManagerConfig {
+                registry_address: config.tee_prover_registry_address,
+                max_concurrency: config.max_concurrency,
+                max_tx_retries: config.max_tx_retries,
+                tx_retry_delay: config.tx_retry_delay,
+            },
         ));
         let cert_manager = if let Some(nitro_verifier_address) = config.crl_nitro_verifier_address {
             Some(CertManager::new(
@@ -184,16 +179,20 @@ impl RegistrarService {
         } else {
             None
         };
-        let cancel_guard = cancel.drop_guard();
         let driver = RegistrationDriver::new(
             discovery,
             signer_client,
-            driver_config,
+            DriverConfig {
+                poll_interval: config.poll_interval,
+                cancel: cancel.clone(),
+                max_concurrency: config.max_concurrency,
+                unhealthy_registration_window: config.unhealthy_registration_window,
+            },
             cert_manager,
             signer_manager,
         );
         let driver_result = driver.run().await;
-        drop(cancel_guard);
+        cancel.cancel();
 
         info!("Driver stopped, shutting down...");
         ready.store(false, Ordering::Relaxed);
@@ -208,7 +207,8 @@ impl RegistrarService {
         signal_handle.abort();
 
         info!("Service stopped");
-        driver_result.map_err(eyre::Report::from)
+        driver_result?;
+        Ok(())
     }
 
     /// Creates a provider layer that reports account balance metrics.
