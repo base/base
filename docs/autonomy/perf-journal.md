@@ -919,3 +919,28 @@ Results:
 - committed `d10da24a3`, pushed to `automation/perf-autopilot`, PR #3541 open
 Next:
 - the drain-loop budget is now clearly in compressor flush/compression finalisation rather than `output_frame` allocations; a next step would be a compression-only microbench isolating flush cost from frame output, or pivoting to another hotspot (zk polling, consensus derivation)
+
+## 2026-06-16 04:00 UTC
+Focus: `base-comp` `BrotliCompressor::read()` and `ZlibCompressor::read()` per-frame drain cost.
+Hypothesis: `BrotliCompressor::read()` calls `Vec::drain(..len)` on every frame output, which is O(n) per call and O(n²) across the multi-frame drain loop; `ZlibCompressor::read()` has a correctness bug — it never advances past consumed bytes so successive reads return the same data forever; replacing both with a read cursor should fix the Zlib bug and eliminate the Brotli O(n²) per-frame drain overhead.
+Commands:
+- added `read_pos: Cell<usize>` to `BrotliCompressor` and `ZlibCompressor`, zeroed on `write()` and `reset()`, advanced on `read()`, subtracted for `len()`/`get_compressed()`
+- replaced `Vec::drain(..len)` in `BrotliCompressor::read()` with cursor-based slicing
+- fixed `ZlibCompressor::read()` to advance the cursor so successive reads return distinct data
+- `cargo test -p base-comp --lib` — 19 passed
+- `cargo test -p base-batcher-encoder --lib` — 60 passed
+- `cargo fmt --all`
+- `cargo clippy -p base-comp -p base-batcher-encoder --tests --benches --no-deps -- -D warnings` — clean
+- `cargo bench -p base-batcher-encoder --bench close_channel -- --warm-up-time 1.0 --measurement-time 4.0 --sample-size 15`
+- `cargo bench -p base-batcher-encoder --bench step_throughput -- --quiet`
+- `cargo bench -p base-batcher-encoder --bench step_components -- --quiet`
+Results:
+- single drain: ~301-306 ms (same as prior runs, p = 0.73 on confirming run), compression flush dominates here
+- span drain: ~205-208 ms (same as prior runs, p = 0.08 on confirming run), effectively flat within noise
+- step_throughput consistent (single 4096: ~679 ms, span 4096: ~1533 ms)
+- step_components consistent (composition: ~9.5 ms, add_batch: ~10.7 ms, full single 4096: ~681-693 ms)
+- the Zlib fix corrects a latent bug where `read()` never advanced, meaning callers that used zlib in the encoder would have gotten repeatedly duplicated bytes on the second and subsequent `output_frame` calls; in practice the ShadowCompressor path uses Brotli for Fjord+ channels so this was not triggered in production Fjord+ flows, but the bug was real for pre-Fjord zlib paths
+- the Brotli cursor change avoids the O(n²) drain cost theoretically; in practice the per-frame savings are small because `read()` is called ~few-dozen times per channel and the compressed buffer per-call is ~120 KB, so the total saved shift-cost is in the low millisecond range, hidden by compression flush overhead
+- committed `a0ddbc2e9`, pushed to `automation/perf-autopilot`, PR #3541 updated
+Next:
+- pivot to a different hotspot area (zk service polling, consensus derivation, or a new encoder path) since the drain-loop budget is clearly in compression flush/compression-finalisation and further `output_frame` micro-optimisations are unlikely to move the dial measurably
