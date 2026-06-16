@@ -142,6 +142,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base-prover-service-bin --bin base-prover-service && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-service /app/base-prover-service
 
+FROM source AS da-server-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=da-server-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-da-server-bin --bin base-da-server && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-da-server /app/base-da-server
+
 FROM zk-builder-base AS zk-source
 COPY . .
 
@@ -227,3 +235,8 @@ ENTRYPOINT ["./base-prover-service"]
 FROM runtime-base AS zk-host
 COPY --from=zk-host-builder /app/base-prover-zk-host ./base-prover-zk-host
 ENTRYPOINT ["./base-prover-zk-host"]
+
+FROM runtime-base AS da-server
+COPY --from=da-server-builder /app/base-da-server ./base-da-server
+EXPOSE 2583
+ENTRYPOINT ["./base-da-server"]

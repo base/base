@@ -50,6 +50,7 @@ group "rust-services" {
     "sidecrush",
     "prover-service",
     "zk-host",
+    "da-server",
   ]
 }
 
@@ -150,6 +151,16 @@ target "batcher" {
   cache-from = [
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
     "type=registry,ref=${REGISTRY_IMAGE}:cache-batcher-${PLATFORM_PAIR}",
+  ]
+}
+
+target "da-server" {
+  inherits = ["_rust-service-common"]
+  target = "da-server"
+  tags = ["base-da-server:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-da-server-${PLATFORM_PAIR}",
   ]
 }
 
