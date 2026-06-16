@@ -21,10 +21,9 @@ use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CertManager, CrlConfig,
     DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY,
     DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierClient,
-    NitroVerifierContractClient, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError,
-    RegistrarMetrics, RegistrationDriver, RegistryContractClient, SignerManager,
-    SignerManagerConfig,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierContractClient,
+    ProverClient, ProvingConfig, RegistrarConfig, RegistrarError, RegistrarMetrics,
+    RegistrationDriver, RegistryContractClient, SignerManager, SignerManagerConfig,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use boundless_market::{
@@ -636,9 +635,10 @@ impl Cli {
         // disabled and no verifier address is configured, bind the unused
         // client to the zero address.
         let nitro_verifier_address = config.crl.nitro_verifier_address.unwrap_or(Address::ZERO);
-        let nitro_verifier: Arc<dyn NitroVerifierClient> = Arc::new(
-            NitroVerifierContractClient::new(nitro_verifier_address, config.l1_rpc_url.clone()),
-        );
+        let nitro_verifier = Box::new(NitroVerifierContractClient::new(
+            nitro_verifier_address,
+            config.l1_rpc_url.clone(),
+        ));
 
         // ── 6. Build proof provider ──────────────────────────────────────────
         let proof_provider: Box<dyn AttestationProofProvider> = match config.proving {

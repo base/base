@@ -544,7 +544,7 @@ mod tests {
             fetch_timeout: Duration::from_secs(crate::DEFAULT_CRL_FETCH_TIMEOUT_SECS),
         };
         let cert_manager =
-            CertManager::new(&crl_config, Arc::new(NoopNitroVerifier), NoopTxManager)
+            CertManager::new(&crl_config, Box::new(NoopNitroVerifier), NoopTxManager)
                 .expect("test cert manager builds");
         let signer_manager = Arc::new(SignerManager::new(
             signer_client.clone(),

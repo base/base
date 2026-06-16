@@ -4,8 +4,6 @@
 //! fetches AWS Nitro CRLs, and submits `revokeCert` transactions for
 //! certificates that are newly observed on a CRL.
 
-use std::sync::Arc;
-
 use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::TxManager;
 use tracing::{debug, warn};
@@ -20,7 +18,7 @@ use crate::{
 pub struct CertManager<T> {
     enabled: bool,
     http_client: reqwest::Client,
-    nitro_verifier: Arc<dyn NitroVerifierClient>,
+    nitro_verifier: Box<dyn NitroVerifierClient>,
     tx_manager: T,
 }
 
@@ -36,7 +34,7 @@ where
     /// Returns [`RegistrarError::Config`] if the CRL HTTP client cannot be built.
     pub fn new(
         config: &CrlConfig,
-        nitro_verifier: Arc<dyn NitroVerifierClient>,
+        nitro_verifier: Box<dyn NitroVerifierClient>,
         tx_manager: T,
     ) -> Result<Self> {
         let http_client = crl::build_crl_http_client(config.fetch_timeout).map_err(|e| {
@@ -142,7 +140,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    };
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
@@ -155,7 +156,7 @@ mod tests {
     struct MockNitroVerifier {
         revoked: Option<B256>,
         fail: bool,
-        call_count: AtomicU32,
+        call_count: Arc<AtomicU32>,
     }
 
     #[async_trait]
@@ -181,12 +182,8 @@ mod tests {
             index,
             serial_number: Vec::new(),
             crl_url: None,
-            path_digest: path_digest_for(index),
+            path_digest: B256::repeat_byte(index as u8),
         }
-    }
-
-    fn path_digest_for(index: usize) -> B256 {
-        B256::repeat_byte(index as u8)
     }
 
     #[tokio::test]
@@ -196,7 +193,7 @@ mod tests {
             nitro_verifier_address: None,
             fetch_timeout: std::time::Duration::from_secs(1),
         };
-        let cert_manager = CertManager::new(&config, Arc::new(NoopNitroVerifier), NoopTxManager)
+        let cert_manager = CertManager::new(&config, Box::new(NoopNitroVerifier), NoopTxManager)
             .expect("disabled cert manager still builds");
 
         let result = cert_manager
@@ -210,49 +207,33 @@ mod tests {
     }
 
     async fn run_pre_check(verifier: MockNitroVerifier) -> (Result<bool>, u32) {
-        let verifier = Arc::new(verifier);
+        let call_count = verifier.call_count.clone();
         let cert_manager = CertManager {
             enabled: true,
             http_client: reqwest::Client::new(),
-            nitro_verifier: verifier.clone(),
+            nitro_verifier: Box::new(verifier),
             tx_manager: NoopTxManager,
         };
         let cert_infos = (0..=3).map(cert_info).collect::<Vec<_>>();
         let result = cert_manager
             .has_onchain_revoked_intermediate(&cert_infos, "i-onchain-revocation-test")
             .await;
-        (result, verifier.call_count.load(Ordering::Relaxed))
+        (result, call_count.load(Ordering::Relaxed))
     }
 
     #[tokio::test]
-    async fn onchain_revocation_check_returns_false_when_no_intermediates_revoked() {
-        let verifier = MockNitroVerifier::default();
-        let (result, calls) = run_pre_check(verifier).await;
-
-        assert!(
-            !result.expect("clean chain must succeed"),
-            "no intermediates flagged as revoked; registration must proceed"
-        );
-        assert_eq!(calls, 2, "every intermediate must be queried when none are revoked");
-    }
-
-    #[tokio::test]
-    async fn onchain_revocation_check_blocks_when_any_intermediate_revoked() {
-        for (revoked_index, expected_calls_at_short_circuit) in [(1, 1), (2, 2)] {
+    async fn onchain_revocation_check_reports_intermediate_status() {
+        for (revoked_index, expected_result, expected_calls) in
+            [(None, false, 2), (Some(1), true, 1), (Some(2), true, 2)]
+        {
             let verifier = MockNitroVerifier {
-                revoked: Some(path_digest_for(revoked_index)),
+                revoked: revoked_index.map(|index| B256::repeat_byte(index as u8)),
                 ..MockNitroVerifier::default()
             };
             let (result, calls) = run_pre_check(verifier).await;
 
-            assert!(
-                result.expect("revoked-intermediate query must succeed"),
-                "revoked intermediate must block registration",
-            );
-            assert_eq!(
-                calls, expected_calls_at_short_circuit,
-                "pre-check must short-circuit at the first revoked intermediate",
-            );
+            assert_eq!(result.expect("revocation query succeeds"), expected_result);
+            assert_eq!(calls, expected_calls);
         }
     }
 
