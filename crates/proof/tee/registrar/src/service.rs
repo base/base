@@ -152,8 +152,6 @@ impl RegistrarService {
             cancel.clone(),
         ));
 
-        let signer_client = ProverClient::new(config.prover_timeout);
-
         ready.store(true, Ordering::Relaxed);
 
         let signer_manager = Arc::new(SignerManager::new(
@@ -181,7 +179,7 @@ impl RegistrarService {
         };
         let driver = RegistrationDriver::new(
             discovery,
-            signer_client,
+            ProverClient::new(config.prover_timeout),
             DriverConfig {
                 poll_interval: config.poll_interval,
                 cancel: cancel.clone(),
