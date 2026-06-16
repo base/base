@@ -158,7 +158,8 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = DEFAULT_MAX_CONCURRENCY
+        default_value_t = DEFAULT_MAX_CONCURRENCY,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
     )]
     max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
@@ -264,13 +265,20 @@ fn validate_boundless_offer_prices(
     min_price: &Option<Amount>,
     max_price: &Option<Amount>,
 ) -> Result<(), RegistrarError> {
-    if let (Some(min_price), Some(max_price)) = (min_price, max_price)
-        && max_price.value < min_price.value
-    {
-        return Err(RegistrarError::Config(
-            "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
-                .into(),
-        ));
+    match (min_price, max_price) {
+        (Some(min_price), Some(max_price)) if max_price.value < min_price.value => {
+            return Err(RegistrarError::Config(
+                "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
+                    .into(),
+            ));
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(RegistrarError::Config(
+                "--boundless-min-price-eth and --boundless-max-price-eth must be set together"
+                    .into(),
+            ));
+        }
+        _ => {}
     }
 
     Ok(())
@@ -291,6 +299,43 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn boundless_offer_prices_must_be_set_together() {
+        let price = Some(parse_boundless_eth_amount("0.01").unwrap());
+
+        assert!(validate_boundless_offer_prices(&price, &None).is_err());
+        assert!(validate_boundless_offer_prices(&None, &price).is_err());
+    }
+
+    #[test]
+    fn max_concurrency_zero_rejected() {
+        let args = [
+            "prover-registrar",
+            "--l1-rpc-url",
+            "http://localhost:8545",
+            "--tee-prover-registry-address",
+            "0x0000000000000000000000000000000000000001",
+            "--target-group-arn",
+            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
+            "--aws-region",
+            "us-east-1",
+            "--private-key",
+            "0x0101010101010101010101010101010101010101010101010101010101010101",
+            "--image-id",
+            TEST_IMAGE_ID,
+            "--boundless-rpc-url",
+            "http://localhost:9545",
+            "--boundless-private-key",
+            "0x0202020202020202020202020202020202020202020202020202020202020202",
+            "--boundless-verifier-program-url",
+            "https://gateway.pinata.cloud/ipfs/test",
+            "--max-concurrency",
+            "0",
+        ];
+
+        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]

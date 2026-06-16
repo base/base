@@ -17,15 +17,14 @@ use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
-use eyre::WrapErr;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
 use crate::{
     AwsTargetGroupDiscovery, CertManager, DEFAULT_CRL_FETCH_TIMEOUT_SECS, DriverConfig,
-    NitroVerifierContractClient, ProverClient, RegistrarMetrics, RegistrationDriver,
-    RegistryContractClient, SignerManager, SignerManagerConfig,
+    NitroVerifierContractClient, ProverClient, RegistrarError, RegistrarMetrics,
+    RegistrationDriver, RegistryContractClient, Result, SignerManager, SignerManagerConfig,
 };
 
 /// Configuration needed to run the registrar service.
@@ -100,8 +99,10 @@ impl RegistrarConfig {
     ///
     /// Returns an error if service initialization fails or the registration
     /// driver exits with an error.
-    pub async fn run(self) -> eyre::Result<()> {
-        self.log_config.init_tracing_subscriber()?;
+    pub async fn run(self) -> Result<()> {
+        self.log_config
+            .init_tracing_subscriber()
+            .map_err(|e| RegistrarError::Service(e.to_string()))?;
 
         let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -115,7 +116,9 @@ impl RegistrarConfig {
                 base_cli_utils::register_version_metrics!();
                 RegistrarMetrics::up().set(1.0);
             })
-            .wrap_err("failed to install Prometheus recorder")?;
+            .map_err(|e| {
+                RegistrarError::Service(format!("failed to install Prometheus recorder: {e}"))
+            })?;
 
         let provider = if self.metrics_config.enabled {
             let account_address = self.signing.address();
@@ -137,7 +140,8 @@ impl RegistrarConfig {
                 cancel.clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
-            ProviderBuilder::new()
+            // The balance monitor layer starts polling when it is applied.
+            let _boundless_provider = ProviderBuilder::new()
                 .layer(boundless_layer)
                 .connect_http(self.boundless_prover.rpc_url.clone());
             tokio::spawn(async move {
@@ -151,7 +155,10 @@ impl RegistrarConfig {
         } else {
             ProviderBuilder::new().connect_http(self.l1_rpc_url.clone())
         };
-        let l1_chain_id = provider.get_chain_id().await.wrap_err("failed to fetch L1 chain ID")?;
+        let l1_chain_id = provider
+            .get_chain_id()
+            .await
+            .map_err(|e| RegistrarError::Service(format!("failed to fetch L1 chain ID: {e}")))?;
         let tx_manager = SimpleTxManager::new(
             provider,
             self.signing,
@@ -233,7 +240,7 @@ impl RegistrarConfig {
         }
 
         info!("Service stopped");
-        driver_result.map_err(Into::into)
+        driver_result
     }
 }
 

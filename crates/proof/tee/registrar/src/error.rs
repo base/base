@@ -63,6 +63,10 @@ pub enum RegistrarError {
     #[error("config error: {0}")]
     Config(String),
 
+    /// Service lifecycle setup failed.
+    #[error("service error: {0}")]
+    Service(String),
+
     /// CRL (Certificate Revocation List) check failed.
     #[error("CRL error: {0}")]
     Crl(#[from] crate::crl::CrlError),

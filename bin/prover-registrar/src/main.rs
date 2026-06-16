@@ -9,7 +9,8 @@ mod cli;
 async fn main() {
     let result: eyre::Result<()> = async {
         let config = cli::Cli::parse().config()?;
-        config.run().await
+        config.run().await?;
+        Ok(())
     }
     .await;
 

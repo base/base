@@ -53,7 +53,6 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 
 # Error
-eyre.workspace = true
 thiserror.workspace = true
 
 # CLI
