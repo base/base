@@ -226,6 +226,7 @@ pub struct SetupContainer {
     chain_id: u64,
     l2_chain_id: u64,
     slot_duration: u64,
+    isthmus_activation_block: Option<u64>,
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
     network_name: Option<String>,
@@ -239,6 +240,7 @@ impl SetupContainer {
             chain_id: 1337,
             l2_chain_id: 84538453,
             slot_duration: 2,
+            isthmus_activation_block: None,
             base_azul_activation_block: None,
             base_beryl_activation_block: None,
             network_name: None,
@@ -260,6 +262,12 @@ impl SetupContainer {
     /// Sets the slot duration.
     pub const fn with_slot_duration(mut self, slot_duration: u64) -> Self {
         self.slot_duration = slot_duration;
+        self
+    }
+
+    /// Sets the L2 block number at which Isthmus activates.
+    pub const fn with_isthmus_activation_block(mut self, block: u64) -> Self {
+        self.isthmus_activation_block = Some(block);
         self
     }
 
@@ -359,6 +367,10 @@ impl SetupContainer {
             .with_env_var("L2_EL_BOOTNODE_ENODE", EL_BOOTNODE_ENODE)
             .with_env_var("L2_CL_BOOTNODE_P2P_KEY", CL_BOOTNODE_P2P_KEY)
             .with_env_var("L2_CL_BOOTNODE_ENR_PATH", CL_BOOTNODE_ENR_PATH);
+
+        if let Some(block) = self.isthmus_activation_block {
+            container = container.with_env_var("L2_ISTHMUS_BLOCK", block.to_string());
+        }
 
         if let Some(block) = self.base_azul_activation_block {
             container = container.with_env_var("L2_BASE_AZUL_BLOCK", block.to_string());
