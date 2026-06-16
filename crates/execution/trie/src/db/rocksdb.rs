@@ -2224,10 +2224,6 @@ impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {
 #[cfg(not(feature = "metrics"))]
 impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {}
 
-#[expect(
-    dead_code,
-    reason = "used by TrieCursor/HashedCursor read trait impls added in follow-up split"
-)]
 impl<'db, T, V> RocksdbVersionedCursor<'db, T>
 where
     T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
@@ -2326,16 +2322,16 @@ where
     fn seek_with_prefix(
         &mut self,
         key: T::Key,
-        prefix: Vec<u8>,
+        prefix: &[u8],
     ) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_candidate(key, false, prefix_read_options(&prefix))
+        self.next_live_candidate(key, false, prefix_read_options(prefix))
     }
 
-    fn next_with_prefix(&mut self, prefix: Vec<u8>) -> Result<Option<(T::Key, V)>, DatabaseError> {
+    fn next_with_prefix(&mut self, prefix: &[u8]) -> Result<Option<(T::Key, V)>, DatabaseError> {
         if let Some(key) = self.current_key.clone() {
-            self.next_live_candidate(key, true, prefix_read_options(&prefix))
+            self.next_live_candidate(key, true, prefix_read_options(prefix))
         } else {
-            self.next_live_candidate(T::Key::default(), false, prefix_read_options(&prefix))
+            self.next_live_candidate(T::Key::default(), false, prefix_read_options(prefix))
         }
     }
 
@@ -2439,62 +2435,99 @@ impl<'db> RocksdbTrieCursor<'db, StorageTrieHistory> {
 impl TrieCursor for RocksdbTrieCursor<'_, AccountTrieHistory> {
     fn seek_exact(
         &mut self,
-        _path: Nibbles,
+        path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        Ok(self
+            .inner
+            .seek_exact(StoredNibbles(path))?
+            .map(|(StoredNibbles(nibbles), node)| (nibbles, node)))
     }
 
     fn seek(
         &mut self,
-        _path: Nibbles,
+        path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        Ok(self
+            .inner
+            .seek(StoredNibbles(path))?
+            .map(|(StoredNibbles(nibbles), node)| (nibbles, node)))
     }
 
     fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        Ok(self.inner.next()?.map(|(StoredNibbles(nibbles), node)| (nibbles, node)))
     }
 
     fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        Ok(self.inner.current_key.clone().map(|StoredNibbles(nibbles)| nibbles))
     }
 
     fn reset(&mut self) {
-        unimplemented!("read path not yet implemented")
+        self.inner.current_key = None;
     }
 }
 
 impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
     fn seek_exact(
         &mut self,
-        _path: Nibbles,
+        path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        let Some(address) = self.hashed_address else {
+            return Ok(None);
+        };
+        let key = StorageTrieKey::new(address, StoredNibbles(path));
+        Ok(self
+            .inner
+            .seek_exact(key)?
+            .and_then(|(key, node)| (key.hashed_address == address).then_some((key.path.0, node))))
     }
 
     fn seek(
         &mut self,
-        _path: Nibbles,
+        path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        let Some(address) = self.hashed_address else {
+            return Ok(None);
+        };
+        let key = StorageTrieKey::new(address, StoredNibbles(path));
+        Ok(self
+            .inner
+            .seek_with_prefix(key, &hashed_address_prefix(address))?
+            .and_then(|(key, node)| (key.hashed_address == address).then_some((key.path.0, node))))
     }
 
     fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        let Some(address) = self.hashed_address else {
+            return Ok(None);
+        };
+        if !self.inner.is_positioned() {
+            return self.seek(Nibbles::default());
+        }
+        Ok(self
+            .inner
+            .next_with_prefix(&hashed_address_prefix(address))?
+            .and_then(|(key, node)| (key.hashed_address == address).then_some((key.path.0, node))))
     }
 
     fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        let Some(address) = self.hashed_address else {
+            return Ok(None);
+        };
+        Ok(self
+            .inner
+            .current_key
+            .clone()
+            .and_then(|key| (key.hashed_address == address).then_some(key.path.0)))
     }
 
     fn reset(&mut self) {
-        unimplemented!("read path not yet implemented")
+        self.inner.current_key = None;
     }
 }
 
 impl TrieStorageCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
-    fn set_hashed_address(&mut self, _hashed_address: B256) {
-        unimplemented!("read path not yet implemented")
+    fn set_hashed_address(&mut self, hashed_address: B256) {
+        self.hashed_address = Some(hashed_address);
+        self.inner.current_key = None;
     }
 }
 
@@ -2520,26 +2553,63 @@ impl<'db> RocksdbStorageCursor<'db> {
 impl HashedCursor for RocksdbStorageCursor<'_> {
     type Value = U256;
 
-    fn seek(&mut self, _key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        let storage_key = HashedStorageKey::new(self.hashed_address, key);
+        let result = self
+            .inner
+            .seek_with_prefix(storage_key, &hashed_address_prefix(self.hashed_address))?
+            .and_then(|(key, value)| {
+                (key.hashed_address == self.hashed_address)
+                    .then_some((key.hashed_storage_key, value.0))
+            });
+
+        if let Some((_, value)) = result
+            && value.is_zero()
+        {
+            return self.next();
+        }
+
+        Ok(result)
     }
 
     fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        if !self.inner.is_positioned() {
+            return self.seek(B256::ZERO);
+        }
+
+        let prefix = hashed_address_prefix(self.hashed_address);
+        loop {
+            let result = self.inner.next_with_prefix(&prefix)?.and_then(|(key, value)| {
+                (key.hashed_address == self.hashed_address)
+                    .then_some((key.hashed_storage_key, value.0))
+            });
+
+            let Some((key, value)) = result else {
+                return Ok(None);
+            };
+            if value.is_zero() {
+                continue;
+            }
+            return Ok(Some((key, value)));
+        }
     }
 
     fn reset(&mut self) {
-        unimplemented!("read path not yet implemented")
+        self.inner.current_key = None;
     }
 }
 
 impl HashedStorageCursor for RocksdbStorageCursor<'_> {
     fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        let current_key = self.inner.current_key.clone();
+        let result = self.seek(B256::ZERO);
+        self.inner.current_key = current_key;
+        Ok(result?.is_none())
     }
 
-    fn set_hashed_address(&mut self, _hashed_address: B256) {
-        unimplemented!("read path not yet implemented")
+    fn set_hashed_address(&mut self, hashed_address: B256) {
+        self.hashed_address = hashed_address;
+        self.inner.current_key = None;
     }
 }
 
@@ -2561,16 +2631,16 @@ impl<'db> RocksdbAccountCursor<'db> {
 impl HashedCursor for RocksdbAccountCursor<'_> {
     type Value = Account;
 
-    fn seek(&mut self, _key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+    fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        self.inner.seek(key)
     }
 
     fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        unimplemented!("read path not yet implemented")
+        self.inner.next()
     }
 
     fn reset(&mut self) {
-        unimplemented!("read path not yet implemented")
+        self.inner.current_key = None;
     }
 }
 
@@ -2839,7 +2909,6 @@ fn total_order_read_options() -> ReadOptions {
 }
 
 /// Returns the encoded key prefix for a hashed address.
-#[expect(dead_code, reason = "used by RocksDB read trait impls added in follow-up split")]
 fn hashed_address_prefix(hashed_address: B256) -> Vec<u8> {
     hashed_address.as_slice().to_vec()
 }
