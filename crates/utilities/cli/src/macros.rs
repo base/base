@@ -244,8 +244,7 @@ macro_rules! define_health_args {
                 id = "health_port",
                 long = "health.port",
                 default_value = stringify!($default_port),
-                env = concat!($prefix, "_HEALTH_PORT"),
-                value_parser = ::clap::value_parser!(u16).range(1..)
+                env = concat!($prefix, "_HEALTH_PORT")
             )]
             pub port: u16,
         }

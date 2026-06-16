@@ -207,6 +207,7 @@ fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
 
 impl Cli {
     pub(crate) fn config(self) -> Result<RegistrarConfig, RegistrarError> {
+        validate_health_port(self.health.port)?;
         validate_boundless_offer_prices(
             &self.boundless_min_price_eth,
             &self.boundless_max_price_eth,
@@ -251,6 +252,14 @@ impl Cli {
     }
 }
 
+fn validate_health_port(port: u16) -> Result<(), RegistrarError> {
+    if port == 0 {
+        return Err(RegistrarError::Config("health server port must be non-zero".into()));
+    }
+
+    Ok(())
+}
+
 fn validate_boundless_offer_prices(
     min_price: &Option<Amount>,
     max_price: &Option<Amount>,
@@ -282,6 +291,11 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn health_port_zero_rejected() {
+        assert!(validate_health_port(0).is_err());
     }
 
     #[test]
