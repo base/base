@@ -1,9 +1,6 @@
 /// Enclave server — manages keys, attestation, signing, and proof execution.
-use std::sync::LazyLock;
-
-use alloy_primitives::{Address, B256, Bytes, keccak256, map::HashMap};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_signer_local::PrivateKeySigner;
-use base_common_chains::ChainConfig;
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
 use base_proof::BootInfo;
@@ -23,25 +20,19 @@ const SIGNER_KEY_ENV_VAR: &str = "BASE_ENCLAVE_SIGNER_KEY";
 /// PCR0 is a SHA-384 hash (48 bytes) per the AWS Nitro Enclaves specification.
 const PCR0_LENGTH: usize = 48;
 
-/// Per-chain config hashes derived from [`ChainConfig::all`] at first access.
+/// Compute the config hash from a [`RollupConfig`].
 ///
-/// Each entry is `keccak256(PerChainConfig::marshal_binary())` with defaults applied.
-/// Chains that lack a `system_config` in their rollup config are skipped.
-static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
-    let mut map = HashMap::default();
-    for cfg in ChainConfig::all() {
-        let rollup = RollupConfig::from(cfg);
-        if let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) {
-            per_chain.force_defaults();
-            map.insert(cfg.chain_id, per_chain.hash());
-        }
-    }
-    map
-});
-
-/// Look up the config hash for a supported chain.
-fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
-    CONFIG_HASHES.get(&chain_id).copied().ok_or(NitroError::UnsupportedChain(chain_id))
+/// Builds a [`PerChainConfig`] from the rollup config, applies forced defaults,
+/// and returns the `keccak256` hash of its canonical binary encoding.
+///
+/// This replaces the previous hardcoded `CONFIG_HASHES` table so that chains
+/// not compiled into `ChainConfig::all()` (e.g. devnets) are supported.
+fn config_hash(rollup_config: &RollupConfig) -> Result<B256> {
+    let chain_id = rollup_config.l2_chain_id.id();
+    let mut per_chain = PerChainConfig::from_rollup_config(rollup_config)
+        .ok_or(NitroError::MissingSystemConfig(chain_id))?;
+    per_chain.force_defaults();
+    Ok(per_chain.hash())
 }
 
 /// The enclave server.
@@ -148,7 +139,7 @@ impl Server {
 
         let boot_info =
             BootInfo::load(&oracle).await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
-        let config_hash = config_hash_for_chain(boot_info.chain_id)?;
+        let config_hash = config_hash(&boot_info.rollup_config)?;
         let agreed_l2_output_root = boot_info.agreed_l2_output_root;
 
         let prologue = Prologue::new(oracle.clone(), oracle, BaseEvmFactory::default());
@@ -292,64 +283,53 @@ mod tests {
     }
 
     #[test]
-    fn config_hash_unknown_chain() {
-        assert!(config_hash_for_chain(999999).is_err());
+    fn config_hash_missing_system_config() {
+        let rollup = RollupConfig {
+            genesis: base_common_genesis::ChainGenesis {
+                system_config: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config_hash(&rollup).is_err());
     }
 
     #[test]
-    fn config_hashes_match_chain_configs() {
+    fn config_hash_matches_known_chains() {
+        use base_common_chains::ChainConfig;
+
         for cfg in ChainConfig::all() {
-            let chain_id = cfg.chain_id;
             let rollup = base_common_chains::rollup_config!(cfg);
             let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) else {
                 continue;
             };
             per_chain.force_defaults();
 
-            let cached = config_hash_for_chain(chain_id)
-                .unwrap_or_else(|_| panic!("missing config hash for chain {chain_id}"));
-            assert_eq!(per_chain.hash(), cached, "config hash mismatch for chain {chain_id}");
-        }
-    }
-
-    /// Print config hashes for supported chains so they can be hardcoded in the
-    /// enclave server. Run with:
-    /// `cargo test -p base-proof-tee-nitro-enclave print_real_config_hashes -- --nocapture --ignored`
-    #[test]
-    #[ignore]
-    fn print_real_config_hashes() {
-        for cfg in ChainConfig::all() {
-            let chain_id = cfg.chain_id;
-            let rollup = base_common_chains::rollup_config!(cfg);
-            let mut per_chain = match PerChainConfig::from_rollup_config(&rollup) {
-                Some(pc) => pc,
-                None => {
-                    println!("chain {chain_id}: skipped (no system_config)");
-                    continue;
-                }
-            };
-            per_chain.force_defaults();
-            println!("chain {chain_id}: {:?}", per_chain.hash());
+            let computed = config_hash(&rollup)
+                .unwrap_or_else(|_| panic!("config_hash failed for chain {}", cfg.chain_id));
+            assert_eq!(
+                per_chain.hash(),
+                computed,
+                "config hash mismatch for chain {}",
+                cfg.chain_id
+            );
         }
     }
 
     #[test]
     fn config_hash_known_values() {
-        assert_eq!(
-            config_hash_for_chain(8453).unwrap(),
-            b256!("1607709d90d40904f790574404e2ad614eac858f6162faa0ec34c6bf5e5f3c57"),
-        );
-        assert_eq!(
-            config_hash_for_chain(84532).unwrap(),
-            b256!("12e9c45f19f9817c6d4385fad29e7a70c355502cf0883e76a9a7e478a85d1360"),
-        );
-        assert_eq!(
-            config_hash_for_chain(84538453).unwrap(),
-            b256!("846b1fd10a5e22fb7572cc4ac794454d301b382c64ab934091e519486e5200be"),
-        );
-        assert_eq!(
-            config_hash_for_chain(763360).unwrap(),
-            b256!("d14ddabfc0ad1dd737d6e5917cf271fd479bd539c9b3d85a602589c679a9983a"),
-        );
+        use base_common_chains::ChainConfig;
+
+        let check = |chain_id: u64, expected: B256| {
+            let cfg = ChainConfig::by_chain_id(chain_id)
+                .unwrap_or_else(|| panic!("unknown chain {chain_id}"));
+            let rollup = cfg.rollup_config();
+            assert_eq!(config_hash(&rollup).unwrap(), expected, "chain {chain_id}");
+        };
+
+        check(8453, b256!("1607709d90d40904f790574404e2ad614eac858f6162faa0ec34c6bf5e5f3c57"));
+        check(84532, b256!("12e9c45f19f9817c6d4385fad29e7a70c355502cf0883e76a9a7e478a85d1360"));
+        check(84538453, b256!("846b1fd10a5e22fb7572cc4ac794454d301b382c64ab934091e519486e5200be"));
+        check(763360, b256!("d14ddabfc0ad1dd737d6e5917cf271fd479bd539c9b3d85a602589c679a9983a"));
     }
 }

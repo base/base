@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_primitives::Address;
+#[cfg(any(target_os = "linux", feature = "local"))]
+use alloy_provider::{Provider, ProviderBuilder};
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_common_chains::rollup_config;
@@ -108,6 +110,19 @@ struct ProverRuntimeArgs {
     /// by onchain signer validity and server `/healthz` is registration-gated.
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Option<Address>,
+
+    /// Fetch the full rollup config via `optimism_rollupConfig` RPC at startup.
+    /// Requires `--l2-cl-url`. Intended for devnet/ephemeral chains whose
+    /// chain ID is not in the built-in config table. For built-in chain IDs,
+    /// the enclave's `BootInfo::load` will use the hardcoded config regardless.
+    #[arg(long, env = "FETCH_ROLLUP_CONFIG", requires = "l2_cl_url")]
+    fetch_rollup_config: bool,
+
+    /// L2 consensus-layer (op-node) RPC URL. Required when
+    /// `--fetch-rollup-config` is set — `optimism_rollupConfig` is served by
+    /// op-node, not the execution-layer endpoint.
+    #[arg(long, env = "L2_CL_URL")]
+    l2_cl_url: Option<String>,
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -137,10 +152,45 @@ impl ProverRuntimeArgs {
         })
     }
 
-    fn prover_config(self) -> eyre::Result<ProverConfig> {
+    async fn prover_config(self) -> eyre::Result<ProverConfig> {
         let l1_beacon_url = self.l1_beacon_url()?;
-        let rollup_config = rollup_config!(self.l2_chain_id)
-            .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?;
+
+        let rollup_config = if self.fetch_rollup_config {
+            let cl_url = self
+                .l2_cl_url
+                .as_deref()
+                .expect("clap `requires` guarantees --l2-cl-url is present");
+            let rpc = fetch_rollup_config_from_rpc(cl_url).await?;
+
+            if rpc.l2_chain_id.id() != self.l2_chain_id {
+                return Err(eyre!(
+                    "chain ID mismatch: --l2-chain-id is {} but the L2 node returned {}",
+                    self.l2_chain_id,
+                    rpc.l2_chain_id.id(),
+                ));
+            }
+
+            let rpc_sc = rpc.genesis.system_config.as_ref();
+            info!(
+                genesis_l1_hash = %rpc.genesis.l1.hash,
+                genesis_l1_number = rpc.genesis.l1.number,
+                genesis_l2_hash = %rpc.genesis.l2.hash,
+                genesis_l2_number = rpc.genesis.l2.number,
+                genesis_l2_time = rpc.genesis.l2_time,
+                block_time = rpc.block_time,
+                deposit_contract = %rpc.deposit_contract_address,
+                system_config_address = %rpc.l1_system_config_address,
+                batcher_address = %rpc_sc.map(|sc| sc.batcher_address.to_string()).unwrap_or_default(),
+                gas_limit = rpc_sc.map(|sc| sc.gas_limit).unwrap_or_default(),
+                scalar = %rpc_sc.map(|sc| sc.scalar).unwrap_or_default(),
+                "using rollup config from L2 node RPC"
+            );
+
+            rpc
+        } else {
+            rollup_config!(self.l2_chain_id)
+                .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?
+        };
 
         let l1_config = base_common_chains::L1_CONFIGS
             .get(&rollup_config.l1_chain_id)
@@ -332,7 +382,7 @@ async fn run_worker(
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
     let registry_configured = registration_health.is_some();
-    let config = runtime.prover_config()?;
+    let config = runtime.prover_config().await?;
 
     if transports.is_empty() {
         return Err(eyre!("at least one enclave transport is required"));
@@ -436,6 +486,23 @@ enum WorkerTransportMode {
     Local,
 }
 
+#[cfg(any(target_os = "linux", feature = "local"))]
+async fn fetch_rollup_config_from_rpc(
+    cl_url: &str,
+) -> eyre::Result<base_common_genesis::RollupConfig> {
+    let provider = ProviderBuilder::new()
+        .connect(cl_url)
+        .await
+        .map_err(|e| eyre!("failed to connect to L2 CL node at {cl_url}: {e}"))?;
+
+    provider.raw_request("optimism_rollupConfig".into(), ()).await.map_err(|e| {
+        eyre!(
+            "optimism_rollupConfig RPC failed on {cl_url}: {e}. \
+                 Ensure the L2 node supports this method"
+        )
+    })
+}
+
 #[cfg(all(test, feature = "local"))]
 mod tests {
     use super::ProverRuntimeArgs;
@@ -450,6 +517,8 @@ mod tests {
             l2_chain_id: 8453,
             enable_experimental_witness_endpoint: false,
             tee_prover_registry_address: None,
+            fetch_rollup_config: false,
+            l2_cl_url: None,
         }
     }
 
