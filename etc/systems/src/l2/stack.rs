@@ -22,16 +22,19 @@ use super::{
     InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
     InProcessFollowConsensus, InProcessFollowConsensusConfig, L2ContainerConfig,
 };
-use crate::config::SEQUENCER;
+use crate::{FaultedRpcProxy, RpcFault, config::SEQUENCER};
 
 /// Consensus mode used by the L2 client node.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub enum L2ClientConsensusMode {
     /// Run the client consensus node as a normal validator.
     #[default]
     Validator,
     /// Run the client consensus node in follow mode against the builder RPC.
-    Follow,
+    Follow {
+        /// Faults to apply to the follow-mode source RPC.
+        source_rpc_faults: Vec<RpcFault>,
+    },
 }
 
 /// Configuration for the L2 stack.
@@ -106,6 +109,7 @@ pub struct L2Stack {
     batcher: InProcessBatcher,
     client: InProcessClient,
     client_consensus: L2ClientConsensus,
+    follow_source_rpc_proxy: Option<FaultedRpcProxy>,
 }
 
 impl std::fmt::Debug for L2Stack {
@@ -116,6 +120,7 @@ impl std::fmt::Debug for L2Stack {
             .field("batcher", &self.batcher)
             .field("client", &self.client)
             .field("client_consensus", &self.client_consensus)
+            .field("follow_source_rpc_proxy", &self.follow_source_rpc_proxy)
             .finish()
     }
 }
@@ -218,7 +223,7 @@ impl L2Stack {
             .wrap_err("Failed to start in-process client")?;
 
         // 5. Start client consensus.
-        let client_consensus = match config.client_consensus_mode {
+        let (client_consensus, follow_source_rpc_proxy) = match config.client_consensus_mode {
             L2ClientConsensusMode::Validator => {
                 let client_consensus_config = InProcessConsensusConfig {
                     rollup_config,
@@ -248,17 +253,27 @@ impl L2Stack {
                     .connect_peer(&builder_p2p_addr)
                     .await
                     .wrap_err("Failed to connect client consensus to builder consensus")?;
-                L2ClientConsensus::Validator(client_consensus)
+                (L2ClientConsensus::Validator(client_consensus), None)
             }
-            L2ClientConsensusMode::Follow => {
-                // Follow-mode consensus polls the builder RPC directly, so it does not need a P2P
-                // peer connection before the sequencer starts producing blocks.
+            L2ClientConsensusMode::Follow { source_rpc_faults } => {
+                let follow_source_rpc_proxy = if source_rpc_faults.is_empty() {
+                    None
+                } else {
+                    Some(
+                        FaultedRpcProxy::start(builder.rpc_url()?, source_rpc_faults)
+                            .await
+                            .wrap_err("Failed to start source RPC proxy")?,
+                    )
+                };
+                let source_l2_rpc_url = follow_source_rpc_proxy
+                    .as_ref()
+                    .map_or_else(|| builder.rpc_url(), |proxy| Ok(proxy.rpc_url()))?;
                 let client_consensus_config = InProcessFollowConsensusConfig {
                     rollup_config,
                     jwt_secret: config.jwt_secret,
                     l1_rpc_url,
                     local_l2_rpc_url: client.rpc_url()?,
-                    source_l2_rpc_url: builder.rpc_url()?,
+                    source_l2_rpc_url,
                     l2_engine_url: client.engine_url()?,
                     rpc_port: container_config.and_then(|c| c.client_consensus_rpc_port),
                     insert_delay: Duration::ZERO,
@@ -266,7 +281,7 @@ impl L2Stack {
                 let client_consensus = InProcessFollowConsensus::start(client_consensus_config)
                     .await
                     .wrap_err("Failed to start follow client consensus")?;
-                L2ClientConsensus::Follow(client_consensus)
+                (L2ClientConsensus::Follow(client_consensus), follow_source_rpc_proxy)
             }
         };
 
@@ -276,7 +291,14 @@ impl L2Stack {
             .await
             .wrap_err("Failed to start sequencer after peer connection")?;
 
-        Ok(Self { builder, builder_consensus, batcher, client, client_consensus })
+        Ok(Self {
+            builder,
+            builder_consensus,
+            batcher,
+            client,
+            client_consensus,
+            follow_source_rpc_proxy,
+        })
     }
 
     /// Returns a reference to the in-process builder.

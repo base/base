@@ -207,8 +207,28 @@ impl SystemTestStackBuilder {
     }
 
     /// Runs the L2 client consensus node in follow mode against the builder RPC.
-    pub const fn with_follow_mode_client_consensus(mut self) -> Self {
-        self.client_consensus_mode = L2ClientConsensusMode::Follow;
+    pub fn with_follow_mode_client_consensus(mut self) -> Self {
+        if matches!(self.client_consensus_mode, L2ClientConsensusMode::Validator) {
+            self.client_consensus_mode =
+                L2ClientConsensusMode::Follow { source_rpc_faults: vec![] };
+        }
+        self
+    }
+
+    /// Emulates a follow-mode source RPC that omits `requestsHash` from block responses.
+    pub fn with_follow_source_missing_requests_hash(mut self) -> Self {
+        match self.client_consensus_mode {
+            L2ClientConsensusMode::Validator => {
+                self.client_consensus_mode = L2ClientConsensusMode::Follow {
+                    source_rpc_faults: vec![crate::RpcFault::MissingRequestsHash],
+                };
+            }
+            L2ClientConsensusMode::Follow { ref mut source_rpc_faults } => {
+                if !source_rpc_faults.contains(&crate::RpcFault::MissingRequestsHash) {
+                    source_rpc_faults.push(crate::RpcFault::MissingRequestsHash);
+                }
+            }
+        }
         self
     }
 

@@ -33,6 +33,9 @@ pub use docker::{
     stop_system_test_containers,
 };
 
+mod faults;
+pub use faults::{FaultedRpcProxy, RpcFault};
+
 mod host;
 pub use host::{host_address, with_host_port_if_needed};
 
