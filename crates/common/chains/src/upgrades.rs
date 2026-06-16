@@ -142,7 +142,7 @@ mod tests {
     fn rollup_config_upgrade_activation_cascade() {
         const ACTIVATION: u64 = 10;
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.ecotone_time = Some(ACTIVATION);
+        cfg.hardforks.ecotone_time = Some(ACTIVATION);
 
         // Cascading: Regolith and Canyon should fall through to Ecotone.
         assert_eq!(
