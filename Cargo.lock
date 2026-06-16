@@ -3211,6 +3211,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-alt-da"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
+ "axum 0.8.9",
+ "base-protocol",
+ "base64 0.22.1",
+ "hex",
+ "rand 0.9.4",
+ "reqwest 0.13.3",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-balance-monitor"
 version = "0.0.0"
 dependencies = [
@@ -4296,6 +4317,17 @@ dependencies = [
  "base-common-evm",
  "revm",
  "rstest",
+]
+
+[[package]]
+name = "base-da-server-bin"
+version = "0.0.0"
+dependencies = [
+ "base-alt-da",
+ "base-cli-utils",
+ "base-runtime",
+ "clap",
+ "eyre",
 ]
 
 [[package]]
@@ -23022,6 +23054,7 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "slab",
  "tokio",
