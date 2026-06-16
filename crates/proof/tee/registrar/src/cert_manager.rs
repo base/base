@@ -207,7 +207,7 @@ mod tests {
     }
 
     async fn run_pre_check(verifier: MockNitroVerifier) -> (Result<bool>, u32) {
-        let call_count = verifier.call_count.clone();
+        let call_count = Arc::clone(&verifier.call_count);
         let cert_manager = CertManager {
             enabled: true,
             http_client: reqwest::Client::new(),
