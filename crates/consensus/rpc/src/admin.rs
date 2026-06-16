@@ -140,10 +140,7 @@ where
             return Err(sequencer_unavailable());
         };
 
-        sequencer_client
-            .stop_sequencer()
-            .await
-            .map_err(sequencer_admin_error)
+        sequencer_client.stop_sequencer().await.map_err(sequencer_admin_error)
     }
 
     async fn admin_conductor_enabled(&self) -> RpcResult<bool> {
