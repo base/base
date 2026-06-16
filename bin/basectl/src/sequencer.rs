@@ -226,17 +226,23 @@ async fn run_stop(
     let unsafe_head = stop_sequencer(&node.cl_rpc)
         .await
         .with_context(|| format!("stopping sequencer on {} via {}", node.name, node.cl_rpc))?;
-    wait_for_expected_state(node, SequencerAction::Stop, Some(unsafe_head)).await?;
+    // A zero head means the sequencer stopped but the captured head is
+    // unavailable; treat it as absent rather than a valid restart point.
+    let captured_head = (unsafe_head != B256::ZERO).then_some(unsafe_head);
+    wait_for_expected_state(node, SequencerAction::Stop, captured_head).await?;
     info!(
         network = %config.name,
         node = %node.name,
         cl_rpc = %node.cl_rpc,
-        unsafe_head = %unsafe_head,
+        unsafe_head = ?captured_head,
         "sequencer stop completed"
     );
 
-    let message = format!("sequencer stopped on {} at {}", node.name, unsafe_head);
-    print_action(&SequencerActionJson::stop(&config.name, node, unsafe_head, message), args.json)
+    let message = captured_head.map_or_else(
+        || format!("sequencer stopped on {} (unsafe head unavailable)", node.name),
+        |unsafe_head| format!("sequencer stopped on {} at {unsafe_head}", node.name),
+    );
+    print_action(&SequencerActionJson::stop(&config.name, node, captured_head, message), args.json)
 }
 
 fn resolve_start_hash(
@@ -641,13 +647,18 @@ impl SequencerActionJson {
         }
     }
 
-    fn stop(network: &str, node: &ConductorNodeConfig, unsafe_head: B256, message: String) -> Self {
+    fn stop(
+        network: &str,
+        node: &ConductorNodeConfig,
+        unsafe_head: Option<B256>,
+        message: String,
+    ) -> Self {
         Self {
             network: network.to_string(),
             action: SequencerAction::Stop,
             node: node.name.clone(),
             cl_rpc: node.cl_rpc.to_string(),
-            unsafe_head: Some(unsafe_head.to_string()),
+            unsafe_head: unsafe_head.map(|unsafe_head| unsafe_head.to_string()),
             unsafe_head_source: None,
             message,
         }

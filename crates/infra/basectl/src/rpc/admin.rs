@@ -5,6 +5,7 @@ use anyhow::{Context, Result, ensure};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient};
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
+use tracing::warn;
 use url::Url;
 
 use super::PausedPeers;
@@ -41,6 +42,11 @@ pub async fn start_sequencer(cl_rpc: &Url, unsafe_head: B256) -> Result<()> {
 /// Stops the sequencer via the consensus node's `admin_stopSequencer` RPC.
 ///
 /// Returns the unsafe head hash captured at the moment the sequencer stopped.
+/// A returned [`B256::ZERO`] means the sequencer was stopped but the captured
+/// head is unavailable; it is not a valid restart point and must not be reused.
+/// Because the RPC has already taken effect by the time this returns, an
+/// unexpected zero head is surfaced as a warning rather than an error so callers
+/// do not treat a successful stop as a failure and retry it.
 pub async fn stop_sequencer(cl_rpc: &Url) -> Result<B256> {
     // `admin_stopSequencer` may defer its response until the seal pipeline
     // finishes and the final unsafe head is known.
@@ -53,7 +59,12 @@ pub async fn stop_sequencer(cl_rpc: &Url) -> Result<B256> {
     let unsafe_head = AdminApiClient::admin_stop_sequencer(&client)
         .await
         .with_context(|| format!("calling admin_stopSequencer on {cl_rpc}"))?;
-    ensure!(unsafe_head != B256::ZERO, "admin_stopSequencer on {cl_rpc} returned zero unsafe head");
+    if unsafe_head == B256::ZERO {
+        warn!(
+            cl_rpc = %cl_rpc,
+            "admin_stopSequencer returned a zero unsafe head; sequencer stopped but the captured head is unavailable"
+        );
+    }
     Ok(unsafe_head)
 }
 
@@ -86,7 +97,13 @@ pub async fn stop_sequencer_node(
     let outcome = stop_sequencer(&node.cl_rpc)
         .await
         .with_context(|| format!("stopping sequencer on {} via {}", node.name, node.cl_rpc))
-        .map(|head| format!("sequencer stopped on {} at {head}", node.name));
+        .map(|head| {
+            if head == B256::ZERO {
+                format!("sequencer stopped on {} (unsafe head unavailable)", node.name)
+            } else {
+                format!("sequencer stopped on {} at {head}", node.name)
+            }
+        });
 
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }

@@ -91,14 +91,17 @@ pub struct ConductorClusterSnapshot {
     /// Effective node configs used for this snapshot.
     ///
     /// For static sources, this is filtered to the live raft membership when
-    /// that membership can be fetched; otherwise it falls back to the full
-    /// configured node list.
+    /// that membership can be both fetched and reconciled with the configured
+    /// nodes; otherwise it falls back to the full configured node list.
     pub nodes: Vec<ConductorNodeConfig>,
     /// Per-node status rows fetched from the cluster.
     pub statuses: Vec<ConductorNodeStatus>,
     /// Raft membership observed while fetching the snapshot.
     pub membership: Option<ClusterMembership>,
-    /// Error returned by the best-effort membership lookup for static snapshots.
+    /// Error from the best-effort membership lookup or reconciliation for static
+    /// snapshots. Set when membership could not be fetched, or when a fetched
+    /// membership referenced servers missing from the configured node list and
+    /// the snapshot fell back to the configured nodes.
     pub membership_error: Option<String>,
     /// Whether this snapshot was built from discovered raft membership.
     pub discovered: bool,
@@ -173,15 +176,27 @@ impl ConductorControl {
         const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 
         match &source {
-            ConductorSource::Static(_) => {
-                let (membership, membership_error) = match Self::current_membership(&source).await {
+            ConductorSource::Static(static_nodes) => {
+                let membership_result = Self::current_membership(&source).await;
+                let (membership, mut membership_error) = match membership_result {
                     Ok(membership) => (Some(membership), None),
                     Err(error) => {
                         warn!(error = %error, "failed to fetch conductor cluster membership for static snapshot");
                         (None, Some(error.to_string()))
                     }
                 };
-                let nodes = Self::snapshot_nodes(&source, membership.as_ref())?;
+                // A fetched membership that references servers missing from the
+                // static config cannot be reconciled, but the configured node
+                // list is still usable, so degrade to it instead of failing the
+                // whole snapshot.
+                let nodes = match Self::snapshot_nodes(&source, membership.as_ref()) {
+                    Ok(nodes) => nodes,
+                    Err(error) => {
+                        warn!(error = %error, "failed to resolve conductor nodes from membership for static snapshot; falling back to configured node list");
+                        membership_error.get_or_insert_with(|| error.to_string());
+                        static_nodes.clone()
+                    }
+                };
                 let clients = build_conductor_clients(&nodes, RPC_TIMEOUT);
                 let statuses = fetch_conductor_statuses(&clients, membership.as_ref(), false).await;
                 Ok(ConductorClusterSnapshot {
@@ -570,6 +585,17 @@ async fn wait_for_stable_leader(
     anyhow::bail!(goal.timeout_message(OBSERVATION_TIMEOUT, last, &probe_suffix))
 }
 
+/// Returns whether `error` means the targeted conductor is no longer the raft
+/// leader, used to drive bounded leadership-transfer retries.
+///
+/// Classification is by message content rather than JSON-RPC error code on
+/// purpose. This runs against op-conductor's leader-transfer RPCs, which surface
+/// the not-leader condition under several codes (e.g. `-32000` directly and the
+/// generic `-32603` "internal error" when wrapped), so the code is not a
+/// reliable signal and gating on it would miss legitimate stale-leader errors.
+/// [`is_stale_leader_message`] instead keeps false positives in check with a
+/// strict filler-word allowlist (so e.g. "not authorized as cluster leader" does
+/// not match), and the call site only retries a bounded number of times.
 fn is_stale_leader_error(error: &JsonRpcClientError) -> bool {
     match error {
         JsonRpcClientError::Call(payload) => is_stale_leader_message(payload.message()),
@@ -1270,11 +1296,19 @@ mod tests {
             "leader could not be contacted",
             None::<()>,
         ));
+        // Even under the canonical stale-leader code, an unrelated "not ... leader"
+        // phrase is rejected by the filler-word allowlist (no code-based fallback).
+        let unrelated_role = JsonRpcClientError::Call(ErrorObjectOwned::owned(
+            -32000,
+            "not authorized as cluster leader",
+            None::<()>,
+        ));
 
         assert!(is_stale_leader_error(&stale));
         assert!(is_stale_leader_error(&capitalized));
         assert!(is_stale_leader_error(&wrapped));
         assert!(is_stale_leader_error(&stale_phrase));
         assert!(!is_stale_leader_error(&unrelated));
+        assert!(!is_stale_leader_error(&unrelated_role));
     }
 }
