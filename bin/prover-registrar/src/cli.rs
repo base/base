@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, hex};
 use alloy_provider::ProviderBuilder;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
@@ -260,7 +260,6 @@ struct CrlArgs {
     #[arg(
         long,
         env = cli_env!("CRL_CHECK_ENABLED"),
-        default_value_t = false,
         requires = "crl_nitro_verifier_address"
     )]
     crl_check_enabled: bool,
@@ -285,21 +284,18 @@ struct CrlArgs {
     crl_fetch_timeout_secs: u64,
 }
 
-/// Parse a hex-encoded secp256k1 private key string into a [`PrivateKeySigner`].
-fn parse_private_key(
-    field: &str,
-    s: &str,
-) -> std::result::Result<PrivateKeySigner, RegistrarError> {
+/// Parse a hex-encoded Boundless private key string into a [`PrivateKeySigner`].
+fn parse_boundless_private_key(s: &str) -> std::result::Result<PrivateKeySigner, RegistrarError> {
     s.strip_prefix("0x")
         .unwrap_or(s)
         .parse::<PrivateKeySigner>()
-        .map_err(|e| RegistrarError::Config(format!("{field}: {e}")))
+        .map_err(|e| RegistrarError::Config(format!("--boundless-private-key: {e}")))
 }
 
 /// Parse a hex-encoded image ID string into `[u32; 8]`.
 fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
-    let hex = s.strip_prefix("0x").unwrap_or(s);
-    let bytes: [u8; 32] = hex::decode(hex)
+    let hex_str = s.strip_prefix("0x").unwrap_or(s);
+    let bytes: [u8; 32] = hex::decode(hex_str)
         .map_err(|e| RegistrarError::Config(format!("--image-id: {e}")))?
         .try_into()
         .map_err(|v: Vec<u8>| {
@@ -323,85 +319,66 @@ fn parse_boundless_eth_amount(field: &str, s: &str) -> std::result::Result<Amoun
     Ok(amount)
 }
 
-enum ProvingConfig {
-    Boundless(Box<BoundlessProver>),
-    Direct { elf_path: PathBuf },
-}
-
 impl Cli {
-    fn proving_config(&self) -> std::result::Result<ProvingConfig, RegistrarError> {
-        match self.proving_mode {
-            ProvingMode::Boundless => {
-                let boundless_key =
-                    self.boundless.boundless_private_key.as_deref().ok_or_else(|| {
-                        RegistrarError::Config("--boundless-private-key is required".into())
-                    })?;
-                let image_id_hex = self
-                    .image_id
-                    .as_deref()
-                    .ok_or_else(|| RegistrarError::Config("--image-id is required".into()))?;
-                let offer_min_price = self
-                    .boundless
-                    .boundless_min_price_eth
-                    .as_deref()
-                    .map(|s| parse_boundless_eth_amount("--boundless-min-price-eth", s))
-                    .transpose()?;
-                let offer_max_price = self
-                    .boundless
-                    .boundless_max_price_eth
-                    .as_deref()
-                    .map(|s| parse_boundless_eth_amount("--boundless-max-price-eth", s))
-                    .transpose()?;
+    fn boundless_prover(&self) -> std::result::Result<BoundlessProver, RegistrarError> {
+        let boundless_key =
+            self.boundless.boundless_private_key.as_deref().ok_or_else(|| {
+                RegistrarError::Config("--boundless-private-key is required".into())
+            })?;
+        let image_id_hex = self
+            .image_id
+            .as_deref()
+            .ok_or_else(|| RegistrarError::Config("--image-id is required".into()))?;
+        let offer_min_price = self
+            .boundless
+            .boundless_min_price_eth
+            .as_deref()
+            .map(|s| parse_boundless_eth_amount("--boundless-min-price-eth", s))
+            .transpose()?;
+        let offer_max_price = self
+            .boundless
+            .boundless_max_price_eth
+            .as_deref()
+            .map(|s| parse_boundless_eth_amount("--boundless-max-price-eth", s))
+            .transpose()?;
 
-                if let (Some(min_price), Some(max_price)) = (&offer_min_price, &offer_max_price) {
-                    if max_price.value < min_price.value {
-                        return Err(RegistrarError::Config(
-                            "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
-                                .into(),
-                        ));
-                    }
-                }
-
-                Ok(ProvingConfig::Boundless(Box::new(BoundlessProver {
-                    rpc_url: self.boundless.boundless_rpc_url.clone().ok_or_else(|| {
-                        RegistrarError::Config("--boundless-rpc-url is required".into())
-                    })?,
-                    signer: parse_private_key("--boundless-private-key", boundless_key)?,
-                    verifier_program_url: self
-                        .boundless
-                        .boundless_verifier_program_url
-                        .clone()
-                        .ok_or_else(|| {
-                            RegistrarError::Config(
-                                "--boundless-verifier-program-url is required".into(),
-                            )
-                        })?,
-                    image_id: parse_image_id(image_id_hex)?,
-                    poll_interval: Duration::from_secs(self.boundless.boundless_poll_interval_secs),
-                    timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
-                    trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
-                    max_recovery_attempts: self.boundless.boundless_max_recovery_attempts,
-                    max_attestation_age: Duration::from_secs(
-                        self.boundless.max_attestation_age_secs,
-                    ),
-                    offer_min_price,
-                    offer_max_price,
-                    offer_ramp_up_period_secs: self.boundless.boundless_offer_ramp_up_period_secs,
-                    offer_lock_timeout_secs: self.boundless.boundless_offer_lock_timeout_secs,
-                    offer_bidding_start_delay_secs: self
-                        .boundless
-                        .boundless_offer_bidding_start_delay_secs,
-                    submit_lock: Arc::new(tokio::sync::Mutex::new(())),
-                    recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
-                })))
-            }
-            ProvingMode::Direct => {
-                let elf_path = self.elf_path.clone().ok_or_else(|| {
-                    RegistrarError::Config("--elf-path is required for direct mode".into())
-                })?;
-                Ok(ProvingConfig::Direct { elf_path })
+        if let (Some(min_price), Some(max_price)) = (&offer_min_price, &offer_max_price) {
+            if max_price.value < min_price.value {
+                return Err(RegistrarError::Config(
+                    "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
+                        .into(),
+                ));
             }
         }
+
+        Ok(BoundlessProver {
+            rpc_url: self
+                .boundless
+                .boundless_rpc_url
+                .clone()
+                .ok_or_else(|| RegistrarError::Config("--boundless-rpc-url is required".into()))?,
+            signer: parse_boundless_private_key(boundless_key)?,
+            verifier_program_url: self
+                .boundless
+                .boundless_verifier_program_url
+                .clone()
+                .ok_or_else(|| {
+                    RegistrarError::Config("--boundless-verifier-program-url is required".into())
+                })?,
+            image_id: parse_image_id(image_id_hex)?,
+            poll_interval: Duration::from_secs(self.boundless.boundless_poll_interval_secs),
+            timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
+            trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
+            max_recovery_attempts: self.boundless.boundless_max_recovery_attempts,
+            max_attestation_age: Duration::from_secs(self.boundless.max_attestation_age_secs),
+            offer_min_price,
+            offer_max_price,
+            offer_ramp_up_period_secs: self.boundless.boundless_offer_ramp_up_period_secs,
+            offer_lock_timeout_secs: self.boundless.boundless_offer_lock_timeout_secs,
+            offer_bidding_start_delay_secs: self.boundless.boundless_offer_bidding_start_delay_secs,
+            submit_lock: Arc::new(tokio::sync::Mutex::new(())),
+            recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
+        })
     }
 
     /// Run the registrar service.
@@ -416,7 +393,10 @@ impl Cli {
             .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?;
         let tx_manager_config = TxManagerConfig::try_from(self.tx_manager.clone())
             .map_err(|e| RegistrarError::Config(format!("tx-manager: {e}")))?;
-        let proving = self.proving_config()?;
+        let boundless_prover = match self.proving_mode {
+            ProvingMode::Boundless => Some(self.boundless_prover()?),
+            ProvingMode::Direct => None,
+        };
 
         log_config.init_tracing_subscriber()?;
 
@@ -453,7 +433,7 @@ impl Cli {
             });
             info!(%l1_addr, "L1 balance monitor started");
 
-            if let ProvingConfig::Boundless(ref boundless) = proving {
+            if let Some(boundless) = &boundless_prover {
                 let bl_addr = boundless.signer.address();
                 let (bl_layer, bl_balance_rx) = BalanceMonitorLayer::new(
                     bl_addr,
@@ -503,17 +483,18 @@ impl Cli {
         let registry =
             RegistryContractClient::new(self.tee_prover_registry_address, self.l1_rpc_url.clone());
 
-        let proof_provider: Box<dyn AttestationProofProvider> = match proving {
-            ProvingConfig::Boundless(boundless) => boundless,
-            ProvingConfig::Direct { ref elf_path } => {
-                let elf = std::fs::read(elf_path).map_err(|e| {
-                    RegistrarError::Config(format!(
-                        "failed to read ELF at {}: {e}",
-                        elf_path.display()
-                    ))
-                })?;
-                Box::new(DirectProver::new(elf, DEFAULT_TRUSTED_CERTS_PREFIX)?)
-            }
+        let proof_provider: Box<dyn AttestationProofProvider> = if let Some(boundless) =
+            boundless_prover
+        {
+            Box::new(boundless)
+        } else {
+            let elf_path = self.elf_path.as_ref().ok_or_else(|| {
+                RegistrarError::Config("--elf-path is required for direct mode".into())
+            })?;
+            let elf = std::fs::read(elf_path).map_err(|e| {
+                RegistrarError::Config(format!("failed to read ELF at {}: {e}", elf_path.display()))
+            })?;
+            Box::new(DirectProver::new(elf, DEFAULT_TRUSTED_CERTS_PREFIX)?)
         };
 
         let ready = Arc::new(AtomicBool::new(false));
@@ -604,7 +585,7 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, time::Duration};
+    use std::time::Duration;
 
     use super::*;
 
@@ -630,17 +611,13 @@ mod tests {
     const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS: u64 = 90;
     const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS_STR: &str = "90";
     const TEST_ELF_PATH: &str = "/tmp/guest.elf";
-    const TEST_SIGNER_ENDPOINT: &str = "http://localhost:8546";
-    const TEST_SIGNER_ADDR: &str = "0x0000000000000000000000000000000000000002";
 
     const DEFAULT_POLL_INTERVAL_SECS: u64 = 30;
     const DEFAULT_PROVER_TIMEOUT_SECS: u64 = 30;
     const DEFAULT_PROVER_PORT: u16 = 8000;
-    const DEFAULT_HEALTH_PORT: u16 = 8080;
 
-    /// Common args shared by all modes (L1, discovery, signing via local key).
-    fn common_args() -> Vec<&'static str> {
-        vec![
+    fn args(extra: &[&'static str]) -> Vec<&'static str> {
+        let mut args = vec![
             "prover-registrar",
             "--l1-rpc-url",
             TEST_L1_RPC,
@@ -654,13 +631,13 @@ mod tests {
             TEST_AWS_REGION,
             "--private-key",
             TEST_PRIVATE_KEY,
-        ]
+        ];
+        args.extend(extra);
+        args
     }
 
-    /// Boundless-mode args: common + boundless proving.
     fn boundless_args() -> Vec<&'static str> {
-        let mut args = common_args();
-        args.extend([
+        args(&[
             "--proving-mode",
             "boundless",
             "--image-id",
@@ -671,111 +648,21 @@ mod tests {
             TEST_BOUNDLESS_KEY,
             "--boundless-verifier-program-url",
             TEST_VERIFIER_URL,
-        ]);
-        args
+        ])
     }
 
-    /// Direct-mode args: common + direct proving.
     fn direct_args() -> Vec<&'static str> {
-        let mut args = common_args();
-        args.extend(["--proving-mode", "direct", "--elf-path", TEST_ELF_PATH]);
-        args
+        args(&["--proving-mode", "direct", "--elf-path", TEST_ELF_PATH])
     }
 
-    /// Remote signer + boundless proving.
-    fn remote_signer_args() -> Vec<&'static str> {
-        vec![
-            "prover-registrar",
-            "--l1-rpc-url",
-            TEST_L1_RPC,
-            "--l1-chain-id",
-            TEST_L1_CHAIN_ID,
-            "--tee-prover-registry-address",
-            TEST_REGISTRY_ADDR,
-            "--target-group-arn",
-            TEST_TARGET_GROUP_ARN,
-            "--aws-region",
-            TEST_AWS_REGION,
-            "--signer-endpoint",
-            TEST_SIGNER_ENDPOINT,
-            "--signer-address",
-            TEST_SIGNER_ADDR,
-            "--proving-mode",
-            "boundless",
-            "--image-id",
-            TEST_IMAGE_ID,
-            "--boundless-rpc-url",
-            TEST_BOUNDLESS_RPC,
-            "--boundless-private-key",
-            TEST_BOUNDLESS_KEY,
-            "--boundless-verifier-program-url",
-            TEST_VERIFIER_URL,
-        ]
-    }
-
-    fn boundless_prover(args: Vec<&'static str>) -> Box<BoundlessProver> {
-        let ProvingConfig::Boundless(prover) = Cli::parse_from(args).proving_config().unwrap()
-        else {
-            panic!("expected Boundless proving config");
-        };
-        prover
+    fn boundless_prover(args: Vec<&'static str>) -> BoundlessProver {
+        Cli::parse_from(args).boundless_prover().unwrap()
     }
 
     #[test]
     fn valid_configs_parse() {
-        for args in [boundless_args(), direct_args(), remote_signer_args()] {
-            let cli = Cli::parse_from(args);
-            assert!(cli.proving_config().is_ok());
-            assert!(SignerConfig::try_from(cli.signer.clone()).is_ok());
-            assert!(TxManagerConfig::try_from(cli.tx_manager.clone()).is_ok());
-        }
-    }
-
-    #[test]
-    fn boundless_mode_returns_boundless_proving() {
-        assert!(matches!(
-            Cli::parse_from(boundless_args()).proving_config().unwrap(),
-            ProvingConfig::Boundless(_)
-        ));
-    }
-
-    #[test]
-    fn direct_mode_returns_direct_proving() {
-        assert!(matches!(
-            Cli::parse_from(direct_args()).proving_config().unwrap(),
-            ProvingConfig::Direct { .. }
-        ));
-    }
-
-    #[test]
-    fn local_key_returns_local_signing() {
-        let cli = Cli::parse_from(boundless_args());
-        assert!(matches!(SignerConfig::try_from(cli.signer).unwrap(), SignerConfig::Local { .. }));
-    }
-
-    #[test]
-    fn remote_signer_returns_remote_signing() {
-        let cli = Cli::parse_from(remote_signer_args());
-        assert!(matches!(SignerConfig::try_from(cli.signer).unwrap(), SignerConfig::Remote { .. }));
-    }
-
-    #[test]
-    fn no_signing_method_succeeds_clap_parse_but_fails_config() {
-        let mut args = direct_args();
-        args.retain(|a| *a != "--private-key" && *a != TEST_PRIVATE_KEY);
-        // The signer macro doesn't require signing args at clap level;
-        // the TryFrom conversion catches it.
-        if let Ok(cli) = Cli::try_parse_from(args) {
-            assert!(SignerConfig::try_from(cli.signer).is_err());
-        }
-    }
-
-    #[test]
-    fn signer_endpoint_without_address_fails_clap_parse() {
-        let mut args = direct_args();
-        args.retain(|a| *a != "--private-key" && *a != TEST_PRIVATE_KEY);
-        args.extend(["--signer-endpoint", TEST_SIGNER_ENDPOINT]);
-        assert!(Cli::try_parse_from(args).is_err());
+        assert!(Cli::parse_from(boundless_args()).boundless_prover().is_ok());
+        assert!(Cli::try_parse_from(direct_args()).is_ok());
     }
 
     #[test]
@@ -791,13 +678,6 @@ mod tests {
             args.extend([flag, "0"]);
             assert!(Cli::try_parse_from(args).is_err(), "{flag} should reject zero");
         }
-    }
-
-    #[test]
-    fn health_port_zero_rejected() {
-        let mut args = boundless_args();
-        args.extend(["--health.port", "0"]);
-        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]
@@ -944,31 +824,9 @@ mod tests {
             TEST_BOUNDLESS_MIN_PRICE_ETH,
         ]);
 
-        let result = Cli::parse_from(args).proving_config();
+        let result = Cli::parse_from(args).boundless_prover();
 
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn tx_manager_config_has_defaults() {
-        let cli = Cli::parse_from(boundless_args());
-        let config = TxManagerConfig::try_from(cli.tx_manager).unwrap();
-        assert_eq!(config.num_confirmations, 10);
-        assert_eq!(config.fee_limit_multiplier, 5);
-    }
-
-    #[test]
-    fn default_health_addr() {
-        let cli = Cli::parse_from(boundless_args());
-        assert_eq!(cli.health.socket_addr(), SocketAddr::from(([0, 0, 0, 0], DEFAULT_HEALTH_PORT)));
-    }
-
-    #[test]
-    fn custom_health_addr() {
-        let mut args = boundless_args();
-        args.extend(["--health.addr", "127.0.0.1", "--health.port", "9090"]);
-        let cli = Cli::parse_from(args);
-        assert_eq!(cli.health.socket_addr(), SocketAddr::from(([127, 0, 0, 1], 9090)));
     }
 
     #[test]

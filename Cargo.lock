@@ -5877,7 +5877,6 @@ dependencies = [
  "boundless-market",
  "clap",
  "eyre",
- "hex",
  "humantime",
  "rustls 0.23.40",
  "serde",

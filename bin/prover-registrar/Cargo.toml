@@ -36,7 +36,6 @@ aws-sdk-elasticloadbalancingv2.workspace = true
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 
 # CLI / runtime
-hex.workspace = true
 url.workspace = true
 eyre.workspace = true
 serde.workspace = true
