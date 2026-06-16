@@ -151,6 +151,38 @@ impl fmt::Debug for BoundlessProver {
 }
 
 impl BoundlessProver {
+    /// Creates a Boundless prover with SDK-derived offer settings.
+    pub fn new(
+        rpc_url: Url,
+        signer: PrivateKeySigner,
+        verifier_program_url: Url,
+        image_id: [u32; 8],
+        poll_interval: Duration,
+        timeout: Duration,
+        trusted_certs_prefix_len: u8,
+        max_recovery_attempts: u32,
+        max_attestation_age: Duration,
+    ) -> Self {
+        Self {
+            rpc_url,
+            signer,
+            verifier_program_url,
+            image_id,
+            poll_interval,
+            timeout,
+            trusted_certs_prefix_len,
+            max_recovery_attempts,
+            max_attestation_age,
+            offer_min_price: None,
+            offer_max_price: None,
+            offer_ramp_up_period_secs: None,
+            offer_lock_timeout_secs: None,
+            offer_bidding_start_delay_secs: 0,
+            submit_lock: Arc::new(Mutex::new(())),
+            recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
+        }
+    }
+
     /// Derives a deterministic `u32` index for a Boundless request ID
     /// from the target signer address and an attempt counter.
     ///
