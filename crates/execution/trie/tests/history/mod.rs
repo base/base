@@ -7,7 +7,7 @@ use super::*;
 
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_fetch_trie_updates_basic<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -56,7 +56,7 @@ fn test_fetch_trie_updates_basic<S: BaseProofsStore + BaseProofsInitialStateStor
 }
 
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_trie_updates_out_of_order_rejects<
     S: BaseProofsStore + BaseProofsInitialStateStore,
@@ -74,7 +74,7 @@ fn test_store_trie_updates_out_of_order_rejects<
 }
 
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_prune_earliest_state_comprehensive<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -131,7 +131,7 @@ fn test_prune_earliest_state_comprehensive<S: BaseProofsStore + BaseProofsInitia
 }
 
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_prune_earliest_state_returns_correct_counts<
     S: BaseProofsStore + BaseProofsInitialStateStore,
@@ -170,7 +170,7 @@ fn test_prune_earliest_state_returns_correct_counts<
 }
 
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_unwind_history_with_trie_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -200,7 +200,7 @@ fn test_unwind_history_with_trie_nodes<S: BaseProofsStore + BaseProofsInitialSta
 }
 
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_unwind_history_comprehensive<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -260,7 +260,7 @@ fn test_unwind_history_comprehensive<S: BaseProofsStore + BaseProofsInitialState
 }
 
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_unwind_history_idempotent<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,

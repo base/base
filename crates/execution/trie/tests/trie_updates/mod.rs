@@ -8,7 +8,7 @@ use super::*;
 /// Test storing and retrieving trie updates
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_trie_updates_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -38,7 +38,7 @@ fn test_trie_updates_operations<S: BaseProofsStore + BaseProofsInitialStateStore
 /// it should iterate all existing values for that address and create deletion entries for them.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_trie_updates_with_wiped_storage<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -128,7 +128,7 @@ fn test_store_trie_updates_with_wiped_storage<S: BaseProofsStore + BaseProofsIni
 /// downstream of `LiveTrieCollector`.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_trie_updates_with_wiped_storage_and_new_slots<
     S: BaseProofsStore + BaseProofsInitialStateStore,
@@ -212,7 +212,7 @@ fn test_store_trie_updates_with_wiped_storage_and_new_slots<
 /// through the cursor APIs.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_trie_updates_comprehensive<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -385,7 +385,7 @@ fn test_store_trie_updates_comprehensive<S: BaseProofsStore + BaseProofsInitialS
 /// (`hashed_accounts`, `hashed_storages`, `account_branches`, `storage_branches`).
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_replace_updates_applies_all_updates<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -649,7 +649,7 @@ fn test_replace_updates_applies_all_updates<S: BaseProofsStore + BaseProofsIniti
 /// replacement chain.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_replace_updates_wipes_storage_added_by_prior_replacement_block<
     S: BaseProofsStore + BaseProofsInitialStateStore,
@@ -721,7 +721,7 @@ fn test_replace_updates_wipes_storage_added_by_prior_replacement_block<
 /// it is properly stored as a deletion and subsequent queries return None for that path.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_pure_deletions_stored_correctly<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -854,7 +854,7 @@ fn test_pure_deletions_stored_correctly<S: BaseProofsStore + BaseProofsInitialSt
 /// when processing trie updates that both remove and update the same node.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_updates_take_precedence_over_removals<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,

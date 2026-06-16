@@ -24,7 +24,9 @@ use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
-use reth_trie_common::{BranchNodeCompact, Nibbles, StoredNibbles};
+use reth_trie_common::{
+    BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles, updates::TrieUpdates,
+};
 use rocksdb::{
     BlockBasedIndexType, BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor,
     CompactionPri, DBCompressionType, DBWithThreadMode, Direction, IteratorMode, MultiThreaded,
@@ -1690,7 +1692,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
         Self: 'tx;
 
     fn ro_tx<'tx>(&'tx self) -> BaseProofsStorageResult<Self::Tx<'tx>> {
-        unimplemented!("read path not yet implemented")
+        Ok(Arc::new(RocksdbReadSnapshot::new(self.db.as_ref())))
     }
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -1703,82 +1705,100 @@ impl BaseProofsStore for RocksdbProofsStorage {
 
     fn storage_trie_cursor<'tx>(
         &'tx self,
-        _hashed_address: B256,
-        _max_block_number: u64,
+        hashed_address: B256,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
-        unimplemented!("read path not yet implemented")
+        // Standalone cursor factories intentionally create independent snapshots. Use `ro_tx` and
+        // the `*_with_tx` factories when multiple cursors need one consistent view.
+        Ok(RocksdbTrieCursor::<StorageTrieHistory>::new(
+            self.db.as_ref(),
+            max_block_number,
+            Some(hashed_address),
+        ))
     }
 
     fn account_trie_cursor<'tx>(
         &'tx self,
-        _max_block_number: u64,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
-        unimplemented!("read path not yet implemented")
+        Ok(RocksdbTrieCursor::<AccountTrieHistory>::new(self.db.as_ref(), max_block_number, None))
     }
 
     fn storage_hashed_cursor<'tx>(
         &'tx self,
-        _hashed_address: B256,
-        _max_block_number: u64,
+        hashed_address: B256,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
-        unimplemented!("read path not yet implemented")
+        Ok(RocksdbStorageCursor::new(self.db.as_ref(), max_block_number, hashed_address))
     }
 
     fn account_hashed_cursor<'tx>(
         &'tx self,
-        _max_block_number: u64,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
-        unimplemented!("read path not yet implemented")
+        Ok(RocksdbAccountCursor::new(self.db.as_ref(), max_block_number))
     }
 
     fn storage_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        _tx: &'tx Self::Tx<'db>,
-        _hashed_address: B256,
-        _max_block_number: u64,
+        tx: &'tx Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
     where
         Self: 'db,
         'db: 'tx,
     {
-        unimplemented!("read path not yet implemented")
+        Ok(RocksdbTrieCursor::<StorageTrieHistory>::new_with_snapshot(
+            Arc::clone(tx),
+            max_block_number,
+            Some(hashed_address),
+        ))
     }
 
     fn account_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        _tx: &'tx Self::Tx<'db>,
-        _max_block_number: u64,
+        tx: &'tx Self::Tx<'db>,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
     where
         Self: 'db,
         'db: 'tx,
     {
-        unimplemented!("read path not yet implemented")
+        Ok(RocksdbTrieCursor::<AccountTrieHistory>::new_with_snapshot(
+            Arc::clone(tx),
+            max_block_number,
+            None,
+        ))
     }
 
     fn storage_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        _tx: &'tx Self::Tx<'db>,
-        _hashed_address: B256,
-        _max_block_number: u64,
+        tx: &'tx Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
     where
         Self: 'db,
         'db: 'tx,
     {
-        unimplemented!("read path not yet implemented")
+        Ok(RocksdbStorageCursor::new_with_snapshot(
+            Arc::clone(tx),
+            max_block_number,
+            hashed_address,
+        ))
     }
 
     fn account_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        _tx: &'tx Self::Tx<'db>,
-        _max_block_number: u64,
+        tx: &'tx Self::Tx<'db>,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
     where
         Self: 'db,
         'db: 'tx,
     {
-        unimplemented!("read path not yet implemented")
+        Ok(RocksdbAccountCursor::new_with_snapshot(Arc::clone(tx), max_block_number))
     }
 
     fn store_trie_updates(
@@ -1795,8 +1815,111 @@ impl BaseProofsStore for RocksdbProofsStorage {
         Ok(counts)
     }
 
-    fn fetch_trie_updates(&self, _block_number: u64) -> BaseProofsStorageResult<BlockStateDiff> {
-        unimplemented!("read path not yet implemented")
+    fn fetch_trie_updates(&self, block_number: u64) -> BaseProofsStorageResult<BlockStateDiff> {
+        let snapshot = self.db.snapshot();
+        let change_set = self
+            .get_table_from_snapshot::<BlockChangeSet>(&snapshot, block_number)?
+            .ok_or(BaseProofsStorageError::NoChangeSetForBlock(block_number))?;
+
+        let mut trie_updates = TrieUpdates::default();
+        for key in change_set.account_trie_keys {
+            let entry = match get_history_exact::<AccountTrieHistory, _>(
+                &snapshot,
+                &self.db,
+                key.clone(),
+                block_number,
+            )? {
+                Some(value) if value.block_number == block_number => value.value.0,
+                _ => {
+                    return Err(BaseProofsStorageError::MissingAccountTrieHistory(
+                        key.0,
+                        block_number,
+                    ));
+                }
+            };
+
+            if let Some(value) = entry {
+                trie_updates.account_nodes.insert(key.0, value);
+            } else {
+                trie_updates.removed_nodes.insert(key.0);
+            }
+        }
+
+        for key in change_set.storage_trie_keys {
+            let entry = match get_history_exact::<StorageTrieHistory, _>(
+                &snapshot,
+                &self.db,
+                key.clone(),
+                block_number,
+            )? {
+                Some(value) if value.block_number == block_number => value.value.0,
+                _ => {
+                    return Err(BaseProofsStorageError::MissingStorageTrieHistory(
+                        key.hashed_address,
+                        key.path.0,
+                        block_number,
+                    ));
+                }
+            };
+
+            let storage_updates = trie_updates.storage_tries.entry(key.hashed_address).or_default();
+            if let Some(value) = entry {
+                storage_updates.storage_nodes.insert(key.path.0, value);
+            } else {
+                storage_updates.removed_nodes.insert(key.path.0);
+            }
+        }
+
+        let mut post_state = HashedPostState::with_capacity(change_set.hashed_account_keys.len());
+        for key in change_set.hashed_account_keys {
+            let entry = match get_history_exact::<HashedAccountHistory, _>(
+                &snapshot,
+                &self.db,
+                key,
+                block_number,
+            )? {
+                Some(value) if value.block_number == block_number => value.value.0,
+                _ => {
+                    return Err(BaseProofsStorageError::MissingHashedAccountHistory(
+                        key,
+                        block_number,
+                    ));
+                }
+            };
+            post_state.accounts.insert(key, entry);
+        }
+
+        for key in change_set.hashed_storage_keys {
+            let entry = match get_history_exact::<HashedStorageHistory, _>(
+                &snapshot,
+                &self.db,
+                key.clone(),
+                block_number,
+            )? {
+                Some(value) if value.block_number == block_number => value.value.0,
+                _ => {
+                    return Err(BaseProofsStorageError::MissingHashedStorageHistory {
+                        hashed_address: key.hashed_address,
+                        hashed_storage_key: key.hashed_storage_key,
+                        block_number,
+                    });
+                }
+            };
+
+            let storage = post_state.storages.entry(key.hashed_address).or_default();
+            if let Some(value) = entry {
+                storage.storage.insert(key.hashed_storage_key, value.0);
+            } else {
+                // handle wiped storage scenario
+                // Issue: https://github.com/op-rs/op-reth/issues/323
+                storage.storage.insert(key.hashed_storage_key, U256::ZERO);
+            }
+        }
+
+        Ok(BlockStateDiff {
+            sorted_trie_updates: trie_updates.into_sorted(),
+            sorted_post_state: post_state.into_sorted(),
+        })
     }
 
     fn prune_earliest_state(
@@ -1872,10 +1995,54 @@ impl BaseProofsStore for RocksdbProofsStorage {
 
     fn replace_updates(
         &self,
-        _latest_common_block: BlockNumHash,
-        _blocks_to_add: Vec<(BlockWithParent, BlockStateDiff)>,
+        latest_common_block: BlockNumHash,
+        mut blocks_to_add: Vec<(BlockWithParent, BlockStateDiff)>,
     ) -> BaseProofsStorageResult<()> {
-        unimplemented!("read path not yet implemented")
+        blocks_to_add.sort_unstable_by_key(|(block, _)| block.block.number);
+
+        let _guard = self.history_gate.write();
+
+        let mut latest_block_hash = latest_common_block.hash;
+        for (block_with_parent, _) in &blocks_to_add {
+            let block_number = block_with_parent.block.number;
+            if latest_block_hash != block_with_parent.parent {
+                return Err(BaseProofsStorageError::OutOfOrder {
+                    block_number,
+                    parent_block_hash: block_with_parent.parent,
+                    latest_block_hash,
+                });
+            }
+            latest_block_hash = block_with_parent.block.hash;
+        }
+
+        let history_to_delete = if let Some(start_block) = latest_common_block.number.checked_add(1)
+        {
+            self.collect_history_ranged(start_block..)?
+        } else {
+            RocksdbHistoryDeleteBatch::default()
+        };
+        let mut batch = WriteBatch::default();
+        self.delete_history_ranged(&mut batch, history_to_delete)?;
+        self.put_proof_window(
+            &mut batch,
+            ProofWindowKey::LatestBlock,
+            latest_common_block.number,
+            latest_common_block.hash,
+        )?;
+
+        let mut replacement_state = RocksdbReplacementState::default();
+        for (block_with_parent, diff) in blocks_to_add {
+            self.store_replacement_trie_updates_append_only(
+                &mut batch,
+                latest_common_block.number,
+                &mut replacement_state,
+                block_with_parent,
+                diff,
+            )?;
+        }
+
+        self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
+        Ok(())
     }
 
     fn set_earliest_block_number(
@@ -2087,32 +2254,32 @@ impl BaseProofsBatchSession for RocksdbBatchSession<'_> {
 
     fn storage_trie_cursor(
         &self,
-        _hashed_address: B256,
-        _max_block_number: u64,
+        hashed_address: B256,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'_>> {
-        unimplemented!("read path not yet implemented")
+        self.storage.storage_trie_cursor_with_tx(&self.snapshot, hashed_address, max_block_number)
     }
 
     fn account_trie_cursor(
         &self,
-        _max_block_number: u64,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'_>> {
-        unimplemented!("read path not yet implemented")
+        self.storage.account_trie_cursor_with_tx(&self.snapshot, max_block_number)
     }
 
     fn storage_hashed_cursor(
         &self,
-        _hashed_address: B256,
-        _max_block_number: u64,
+        hashed_address: B256,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'_>> {
-        unimplemented!("read path not yet implemented")
+        self.storage.storage_hashed_cursor_with_tx(&self.snapshot, hashed_address, max_block_number)
     }
 
     fn account_hashed_cursor(
         &self,
-        _max_block_number: u64,
+        max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>> {
-        unimplemented!("read path not yet implemented")
+        self.storage.account_hashed_cursor_with_tx(&self.snapshot, max_block_number)
     }
 
     fn store_trie_updates(
@@ -2400,7 +2567,6 @@ impl<'db> RocksdbTrieCursor<'db, AccountTrieHistory> {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
 
-    #[expect(dead_code, reason = "used by RocksDB read cursor factories added in follow-up split")]
     const fn new_with_snapshot(
         snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
@@ -2419,7 +2585,6 @@ impl<'db> RocksdbTrieCursor<'db, StorageTrieHistory> {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
 
-    #[expect(dead_code, reason = "used by RocksDB read cursor factories added in follow-up split")]
     const fn new_with_snapshot(
         snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
@@ -2537,7 +2702,6 @@ impl<'db> RocksdbStorageCursor<'db> {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
 
-    #[expect(dead_code, reason = "used by RocksDB read cursor factories added in follow-up split")]
     const fn new_with_snapshot(
         snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
@@ -2619,7 +2783,6 @@ impl<'db> RocksdbAccountCursor<'db> {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number) }
     }
 
-    #[expect(dead_code, reason = "used by RocksDB read cursor factories added in follow-up split")]
     const fn new_with_snapshot(
         snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
@@ -2690,7 +2853,6 @@ where
 }
 
 /// Reads one exact history value for a key at a specific block number.
-#[expect(dead_code, reason = "used by RocksDB read-store wiring added in follow-up split")]
 fn get_history_exact<T, V>(
     snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
     db: &Arc<RocksDb>,
@@ -2929,10 +3091,21 @@ fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use reth_trie_common::{HashedPostState, updates::TrieUpdates};
+    use std::{
+        sync::{Arc, mpsc},
+        thread,
+        time::Duration,
+    };
+
     use tempfile::TempDir;
 
     use super::*;
+
+    fn temp_storage() -> (Arc<RocksdbProofsStorage>, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let storage = Arc::new(RocksdbProofsStorage::new(dir.path()).unwrap());
+        (storage, dir)
+    }
 
     #[test]
     fn max_total_wal_size_tracks_column_family_write_buffers() {
@@ -3040,9 +3213,12 @@ mod tests {
         storage.store_trie_updates(block(1, B256::ZERO), account_update(account, 1)).unwrap();
 
         assert_eq!(storage.get_latest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
-        let mut cursor =
-            RocksdbVersionedCursor::<HashedAccountHistory>::new(storage.db.as_ref(), 1);
-        let (key, acc) = cursor.seek_exact(account).unwrap().expect("account exists");
+        let (key, acc) = storage
+            .account_hashed_cursor(1)
+            .unwrap()
+            .seek(account)
+            .unwrap()
+            .expect("account exists");
         assert_eq!(key, account);
         assert_eq!(acc.nonce, 1);
     }
@@ -3065,6 +3241,12 @@ mod tests {
             sorted_trie_updates: TrieUpdates::default().into_sorted(),
             sorted_post_state: post_state.into_sorted(),
         }
+    }
+
+    fn assert_completes(rx: mpsc::Receiver<BaseProofsStorageResult<()>>) {
+        rx.recv_timeout(Duration::from_secs(2))
+            .expect("operation should complete")
+            .expect("operation should succeed");
     }
 
     #[test]
@@ -3187,5 +3369,231 @@ mod tests {
         let mut encoded = encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1])).unwrap();
         encoded[0] |= 1;
         assert!(decode_packed_nibbles(&encoded).is_err());
+    }
+
+    #[test]
+    fn append_can_run_while_prune_holds_history_read_gate() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let _prune_guard = storage.prune_lock.lock();
+        let _history_guard = storage.history_gate.read();
+        let (tx, rx) = mpsc::channel();
+        let task_storage = Arc::clone(&storage);
+
+        thread::spawn(move || {
+            let result = task_storage
+                .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
+                .map(|_| ());
+            tx.send(result).unwrap();
+        });
+
+        assert_completes(rx);
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
+    }
+
+    #[test]
+    fn exclusive_history_gate_blocks_append() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let history_guard = storage.history_gate.write();
+        let (tx, rx) = mpsc::channel();
+        let task_storage = Arc::clone(&storage);
+
+        thread::spawn(move || {
+            let result = task_storage
+                .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
+                .map(|_| ());
+            tx.send(result).unwrap();
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(history_guard);
+        assert_completes(rx);
+    }
+
+    #[test]
+    fn append_lock_serializes_append_writers() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let append_guard = storage.append_lock.lock();
+        let (tx, rx) = mpsc::channel();
+        let task_storage = Arc::clone(&storage);
+
+        thread::spawn(move || {
+            let result = task_storage
+                .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
+                .map(|_| ());
+            tx.send(result).unwrap();
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(append_guard);
+        assert_completes(rx);
+    }
+
+    #[test]
+    fn prune_history_read_gate_blocks_history_rewrite() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let _prune_guard = storage.prune_lock.lock();
+        let history_guard = storage.history_gate.read();
+        let (tx, rx) = mpsc::channel();
+        let task_storage = Arc::clone(&storage);
+
+        thread::spawn(move || {
+            let result = task_storage.replace_updates(BlockNumHash::new(0, B256::ZERO), vec![]);
+            tx.send(result).unwrap();
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(history_guard);
+        assert_completes(rx);
+    }
+
+    #[test]
+    fn append_during_prepared_prune_preserves_latest_block() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+        storage.store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default()).unwrap();
+        storage
+            .store_trie_updates(block(2, B256::repeat_byte(1)), BlockStateDiff::default())
+            .unwrap();
+
+        let _prune_guard = storage.prune_lock.lock();
+        let _history_guard = storage.history_gate.read();
+        let prepared =
+            storage.prepare_prune(block(1, B256::ZERO)).unwrap().expect("prepared prune");
+
+        storage
+            .store_trie_updates(block(3, B256::repeat_byte(2)), BlockStateDiff::default())
+            .unwrap();
+        storage.commit_prepared_prune(prepared).unwrap();
+
+        assert_eq!(storage.get_earliest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((3, B256::repeat_byte(3))));
+        let latest_diff = storage.fetch_trie_updates(3).unwrap();
+        assert!(latest_diff.sorted_trie_updates.account_nodes_ref().is_empty());
+        assert!(latest_diff.sorted_trie_updates.storage_tries_ref().is_empty());
+        assert!(latest_diff.sorted_post_state.accounts.is_empty());
+        assert!(latest_diff.sorted_post_state.storages.is_empty());
+    }
+
+    #[test]
+    fn append_inside_requested_prune_range_survives() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let address = B256::repeat_byte(0xAA);
+        storage.store_trie_updates(block(1, B256::ZERO), account_update(address, 1)).unwrap();
+        storage
+            .store_trie_updates(block(2, B256::repeat_byte(1)), account_update(address, 2))
+            .unwrap();
+
+        let _prune_guard = storage.prune_lock.lock();
+        let _history_guard = storage.history_gate.read();
+        let prepared = storage
+            .prepare_prune(block(10, B256::repeat_byte(2)))
+            .unwrap()
+            .expect("prepared prune");
+
+        storage
+            .store_trie_updates(block(3, B256::repeat_byte(2)), account_update(address, 3))
+            .unwrap();
+        let counts = storage.commit_prepared_prune(prepared).unwrap();
+
+        assert_eq!(counts.hashed_accounts_written_total, 1);
+        assert_eq!(counts.account_trie_updates_written_total, 0);
+        assert_eq!(counts.storage_trie_updates_written_total, 0);
+        assert_eq!(counts.hashed_storages_written_total, 0);
+        assert_eq!(storage.get_earliest_block_number().unwrap(), Some((2, B256::repeat_byte(2))));
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((3, B256::repeat_byte(3))));
+
+        let latest_diff = storage.fetch_trie_updates(3).unwrap();
+        assert_eq!(
+            &latest_diff.sorted_post_state.accounts[..],
+            &[(address, Some(Account { nonce: 3, ..Default::default() }))]
+        );
+
+        let mut cursor = storage.account_hashed_cursor(3).unwrap();
+        assert_eq!(
+            cursor.seek(address).unwrap(),
+            Some((address, Account { nonce: 3, ..Default::default() }))
+        );
+    }
+
+    #[test]
+    fn storage_trie_cursor_finds_all_nibble_paths_after_flush() {
+        let (storage, _dir) = temp_storage();
+        let address = B256::repeat_byte(0xAA);
+
+        let nibble_paths = [
+            Nibbles::from_nibbles_unchecked(vec![0, 1]),
+            Nibbles::from_nibbles_unchecked(vec![1, 0]),
+            Nibbles::from_nibbles_unchecked(vec![2, 3, 4]),
+            Nibbles::from_nibbles_unchecked(vec![15, 0, 1]),
+        ];
+
+        let branch = BranchNodeCompact::new(
+            reth_trie_common::TrieMask::new(0b11),
+            reth_trie_common::TrieMask::default(),
+            reth_trie_common::TrieMask::default(),
+            vec![],
+            None,
+        );
+
+        let mut parent_hash = B256::ZERO;
+        for (i, path) in nibble_paths.iter().enumerate() {
+            let block_number = (i + 1) as u64;
+            let parent = block(block_number.saturating_sub(1), parent_hash);
+
+            let mut trie_updates = TrieUpdates::default();
+            let mut storage_updates = reth_trie_common::updates::StorageTrieUpdates::default();
+            storage_updates.storage_nodes.insert(*path, branch.clone());
+            trie_updates.storage_tries.insert(address, storage_updates);
+
+            let diff = BlockStateDiff {
+                sorted_trie_updates: trie_updates.into_sorted(),
+                sorted_post_state: HashedPostState::default().into_sorted(),
+            };
+
+            parent_hash = parent.block.hash;
+            storage.store_trie_updates(parent, diff).expect("store should succeed");
+
+            storage.flush_and_compact().expect("flush should succeed");
+        }
+
+        // seek_exact uses exact_prefix_read_options (with prefix_same_as_start)
+        // and should find each entry individually.
+        for path in &nibble_paths {
+            let mut cursor =
+                storage.storage_trie_cursor(address, u64::MAX).expect("cursor should open");
+            let result = cursor.seek_exact(*path).expect("seek_exact should succeed");
+            assert!(result.is_some(), "seek_exact should find entry for path {path:?}");
+        }
+
+        // seek/next use prefix_read_options with a 32-byte address prefix
+        // on a CF with a 65-byte prefix extractor. After flush, the bloom
+        // filter can cause the iterator to skip SST blocks whose 65-byte
+        // prefix doesn't match the one extracted from the seek key.
+        let mut cursor =
+            storage.storage_trie_cursor(address, u64::MAX).expect("cursor should open");
+
+        let first = cursor.seek(Nibbles::default()).expect("seek should succeed");
+        assert!(first.is_some(), "seek should find at least one entry");
+
+        let mut found = vec![first.unwrap().0];
+        while let Some((path, _)) = cursor.next().expect("next should succeed") {
+            found.push(path);
+        }
+
+        let expected: Vec<Nibbles> = nibble_paths.to_vec();
+        assert_eq!(
+            found, expected,
+            "cursor should find all nibble paths for the address after flush"
+        );
     }
 }
