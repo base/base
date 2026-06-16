@@ -1,6 +1,6 @@
 //! Contains the `ChannelOut` primitive for Base.
 
-use alloc::{sync::Arc, vec};
+use alloc::{sync::Arc, vec, vec::Vec};
 
 use alloy_rlp::Encodable;
 use base_common_genesis::RollupConfig;
@@ -56,6 +56,15 @@ where
     /// The compressor.
     #[debug(skip)]
     pub compressor: C,
+    /// Reusable scratch buffer for `output_frame`.
+    ///
+    /// Each `output_frame` call reads up to ~`max_frame_size` bytes from the
+    /// compressor.  By persisting the scratch buffer across calls we avoid a
+    /// ~128 KB zeroing allocation per frame — the allocator only grows the
+    /// buffer when the compressor actually needs more than the previous
+    /// high-water mark.
+    #[debug(skip)]
+    read_buf: Vec<u8>,
 }
 
 impl<C> ChannelOut<C>
@@ -64,7 +73,7 @@ where
 {
     /// Creates a new [`ChannelOut`] with the given [`ChannelId`].
     pub const fn new(id: ChannelId, config: Arc<RollupConfig>, compressor: C) -> Self {
-        Self { id, config, rlp_length: 0, frame_number: 0, closed: false, compressor }
+        Self { id, config, rlp_length: 0, frame_number: 0, closed: false, compressor, read_buf: Vec::new() }
     }
 
     /// Resets the [`ChannelOut`] to its initial state.
@@ -73,6 +82,7 @@ where
         self.frame_number = 0;
         self.closed = false;
         self.compressor.reset();
+        self.read_buf.clear();
         // `getrandom` isn't available for wasm and risc targets
         // Thread-based RNGs are not available for no_std
         // So we must use a seeded RNG.
@@ -151,15 +161,20 @@ where
 
         let max_size = (max_size - FRAME_V0_OVERHEAD - prefix_len).min(self.ready_bytes());
 
-        let mut data = Vec::with_capacity(prefix_len + max_size);
+        // Reuse the scratch buffer across `output_frame` calls so we do not
+        // zero-allocate ~128 KB for every frame.  Only grow when the
+        // compressor returns more than our current capacity.
+        if self.read_buf.len() < max_size {
+            self.read_buf.resize(max_size, 0);
+        }
+        let n = self.compressor.read(&mut self.read_buf[..max_size])
+            .map_err(ChannelOutError::Compression)?;
+
+        let mut data = Vec::with_capacity(prefix_len + n);
         if let Some(v) = version_byte {
             data.push(v);
         }
-
-        // Read `max_size` bytes from the compressed data.
-        let mut buf = vec![0u8; max_size];
-        self.compressor.read(&mut buf).map_err(ChannelOutError::Compression)?;
-        data.extend_from_slice(&buf);
+        data.extend_from_slice(&self.read_buf[..n]);
 
         // `is_last` is only true when the channel is closed AND all
         // compressed data has been consumed (ready_bytes == 0 after read).
@@ -224,6 +239,7 @@ mod tests {
             closed: true,
             frame_number: 11,
             compressor: MockCompressor::default(),
+            read_buf: Vec::new(),
         };
         channel.reset();
         assert_eq!(channel.rlp_length, 0);
