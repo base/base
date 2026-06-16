@@ -25,7 +25,10 @@ use aws_sdk_s3::{
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tracing::{debug, info, warn};
 
-use crate::snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt};
+use crate::{
+    progress::UploadProgress,
+    snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt},
+};
 
 /// Maximum number of concurrent file uploads.
 const MAX_CONCURRENT_UPLOADS: usize = 10;
@@ -244,34 +247,49 @@ impl SnapshotUploader {
             "diff analysis complete"
         );
 
-        let static_prefix_ref = &static_prefix;
-        stream::iter(static_uploads)
-            .map(|file| async move { self.upload_file(&file, static_prefix_ref).await })
-            .buffer_unordered(MAX_CONCURRENT_UPLOADS)
-            .try_collect::<Vec<()>>()
-            .await?;
+        let progress = UploadProgress::new(&static_uploads, &run_uploads, &manifest_path).await?;
+        let progress_logger = progress.spawn_logger();
 
-        let run_prefix_ref = &run_prefix;
-        stream::iter(run_uploads)
-            .map(|file| async move { self.upload_file(&file, run_prefix_ref).await })
-            .buffer_unordered(MAX_CONCURRENT_UPLOADS)
-            .try_collect::<Vec<()>>()
-            .await?;
-
-        let published_manifest = build_published_manifest(
-            local_manifest,
-            self.public_static_files_base_url().as_deref(),
-            timestamp,
-        )?;
         let manifest_key = format!("{run_prefix}/manifest.json");
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(&manifest_key)
-            .body(ByteStream::from(published_manifest))
-            .send()
-            .await
-            .with_context(|| format!("failed to upload {manifest_key}"))?;
+        let upload_result = async {
+            let static_prefix_ref = &static_prefix;
+            let progress_ref = &progress;
+            stream::iter(static_uploads)
+                .map(|file| async move {
+                    self.upload_file(&file, static_prefix_ref, progress_ref).await
+                })
+                .buffer_unordered(MAX_CONCURRENT_UPLOADS)
+                .try_collect::<Vec<()>>()
+                .await?;
+
+            let run_prefix_ref = &run_prefix;
+            stream::iter(run_uploads)
+                .map(|file| async move {
+                    self.upload_file(&file, run_prefix_ref, progress_ref).await
+                })
+                .buffer_unordered(MAX_CONCURRENT_UPLOADS)
+                .try_collect::<Vec<()>>()
+                .await?;
+
+            let published_manifest = build_published_manifest(
+                local_manifest,
+                self.public_static_files_base_url().as_deref(),
+                timestamp,
+            )?;
+            self.client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(&manifest_key)
+                .body(ByteStream::from(published_manifest))
+                .send()
+                .await
+                .with_context(|| format!("failed to upload {manifest_key}"))?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        progress_logger.abort();
+        upload_result?;
 
         info!(
             run_prefix = %run_prefix,
@@ -349,7 +367,13 @@ impl SnapshotUploader {
     }
 
     /// Uploads a single file, using multipart upload for files above the threshold.
-    async fn upload_file(&self, file_path: &Path, dest_prefix: &str) -> Result<()> {
+    /// On success, adds the uploaded byte count to `progress` for progress tracking.
+    async fn upload_file(
+        &self,
+        file_path: &Path,
+        dest_prefix: &str,
+        progress: &UploadProgress,
+    ) -> Result<()> {
         let file_name = file_path
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file_path.display()))?
@@ -360,11 +384,14 @@ impl SnapshotUploader {
 
         if file_size > MULTIPART_THRESHOLD {
             debug!(key = %key, size = file_size, "uploading file (multipart)");
-            self.upload_multipart(file_path, &key, file_size).await
+            self.upload_multipart(file_path, &key, file_size, progress).await?;
         } else {
             debug!(key = %key, size = file_size, "uploading file");
-            self.upload_single(file_path, &key).await
+            self.upload_single(file_path, &key).await?;
+            progress.add(file_size);
         }
+
+        Ok(())
     }
 
     async fn upload_single(&self, file_path: &Path, key: &str) -> Result<()> {
@@ -384,7 +411,13 @@ impl SnapshotUploader {
         Ok(())
     }
 
-    async fn upload_multipart(&self, file_path: &Path, key: &str, file_size: u64) -> Result<()> {
+    async fn upload_multipart(
+        &self,
+        file_path: &Path,
+        key: &str,
+        file_size: u64,
+        progress: &UploadProgress,
+    ) -> Result<()> {
         let create_resp = self
             .client
             .create_multipart_upload()
@@ -399,7 +432,7 @@ impl SnapshotUploader {
             .ok_or_else(|| anyhow::anyhow!("no upload_id returned for {key}"))?
             .to_string();
 
-        let result = self.upload_parts(file_path, key, &upload_id, file_size).await;
+        let result = self.upload_parts(file_path, key, &upload_id, file_size, progress).await;
 
         match result {
             Ok(parts) => {
@@ -438,6 +471,7 @@ impl SnapshotUploader {
         key: &str,
         upload_id: &str,
         file_size: u64,
+        progress: &UploadProgress,
     ) -> Result<Vec<CompletedPart>> {
         let planned: Vec<(u64, i32)> = std::iter::successors(Some(0u64), |&offset| {
             let next = offset + MULTIPART_PART_SIZE;
@@ -454,8 +488,11 @@ impl SnapshotUploader {
             .map(|(offset, part_number)| {
                 let length = std::cmp::min(MULTIPART_PART_SIZE, file_size - offset);
                 async move {
-                    self.upload_single_part(file_path, key, upload_id, part_number, offset, length)
-                        .await
+                    let part = self
+                        .upload_single_part(file_path, key, upload_id, part_number, offset, length)
+                        .await?;
+                    progress.add(length);
+                    Ok::<CompletedPart, anyhow::Error>(part)
                 }
             })
             .buffer_unordered(MAX_CONCURRENT_UPLOADS)

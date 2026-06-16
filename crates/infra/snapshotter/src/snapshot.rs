@@ -21,6 +21,8 @@ pub use reth_cli_commands::download::manifest::{
 };
 use tracing::info;
 
+use crate::progress::ArchiveProgress;
+
 /// Default blocks per static file segment.
 const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
 
@@ -239,12 +241,20 @@ impl SnapshotGenerator {
         let state_files = state_source_files(source_datadir)?;
         let (state_size, state_output_files) =
             package_single_component(output_dir, "state.tar.zst", &state_files)?;
+        let state_decompressed_size: u64 = state_output_files.iter().map(|f| f.size).sum();
+        info!(
+            component = "state",
+            compressed_size = state_size,
+            decompressed_size = state_decompressed_size,
+            file_count = state_files.len(),
+            "packaged mdbx state database"
+        );
         components.insert(
             "state".to_string(),
             ComponentManifest::Single(SingleArchive {
                 file: "state.tar.zst".to_string(),
                 size: state_size,
-                decompressed_size: state_output_files.iter().map(|f| f.size).sum::<u64>(),
+                decompressed_size: state_decompressed_size,
                 blake3: None,
                 output_files: state_output_files,
             }),
@@ -254,12 +264,20 @@ impl SnapshotGenerator {
         if !rocksdb_files.is_empty() {
             let (rocksdb_size, rocksdb_output_files) =
                 package_single_component(output_dir, "rocksdb_indices.tar.zst", &rocksdb_files)?;
+            let rocksdb_decompressed_size: u64 = rocksdb_output_files.iter().map(|f| f.size).sum();
+            info!(
+                component = "rocksdb_indices",
+                compressed_size = rocksdb_size,
+                decompressed_size = rocksdb_decompressed_size,
+                file_count = rocksdb_files.len(),
+                "packaged rocksdb indices"
+            );
             components.insert(
                 "rocksdb_indices".to_string(),
                 ComponentManifest::Single(SingleArchive {
                     file: "rocksdb_indices.tar.zst".to_string(),
                     size: rocksdb_size,
-                    decompressed_size: rocksdb_output_files.iter().map(|f| f.size).sum::<u64>(),
+                    decompressed_size: rocksdb_decompressed_size,
                     blake3: None,
                     output_files: rocksdb_output_files,
                 }),
@@ -576,12 +594,20 @@ fn compute_output_files_and_archive(
     files: &[PlannedFile],
     mut archive: Option<(&mut tar::Builder<zstd::Encoder<'_, std::fs::File>>, &Path)>,
 ) -> Result<Vec<OutputFileChecksum>> {
+    let archive_name = archive
+        .as_ref()
+        .and_then(|(_, path)| path.file_name().map(|n| n.to_string_lossy().to_string()));
+    let total_bytes: u64 = files
+        .iter()
+        .try_fold(0u64, |acc, f| std::fs::metadata(&f.source_path).map(|m| acc + m.len()))?;
+    let mut progress = archive_name.map(|name| ArchiveProgress::new(name, total_bytes));
+
     let mut output_files = Vec::with_capacity(files.len());
     for planned in files {
         let expected_size = std::fs::metadata(&planned.source_path)?.len();
 
         let source_file = std::fs::File::open(&planned.source_path)?;
-        let mut reader = HashingReader::new(source_file);
+        let mut reader = HashingReader::new(source_file, progress.as_mut());
 
         if let Some((builder, archive_path)) = archive.as_mut() {
             let mut header = tar::Header::new_gnu();
@@ -619,15 +645,16 @@ fn compute_output_files_and_archive(
     Ok(output_files)
 }
 
-struct HashingReader<R> {
+struct HashingReader<'a, R> {
     inner: R,
     hasher: blake3::Hasher,
     bytes_read: u64,
+    progress: Option<&'a mut ArchiveProgress>,
 }
 
-impl<R: Read> HashingReader<R> {
-    fn new(inner: R) -> Self {
-        Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0 }
+impl<'a, R: Read> HashingReader<'a, R> {
+    fn new(inner: R, progress: Option<&'a mut ArchiveProgress>) -> Self {
+        Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0, progress }
     }
 
     fn finalize(self) -> String {
@@ -635,12 +662,15 @@ impl<R: Read> HashingReader<R> {
     }
 }
 
-impl<R: Read> Read for HashingReader<R> {
+impl<R: Read> Read for HashingReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let n = self.inner.read(buf)?;
         if n > 0 {
             self.bytes_read += n as u64;
             self.hasher.update(&buf[..n]);
+            if let Some(progress) = self.progress.as_mut() {
+                progress.record(n as u64);
+            }
         }
         Ok(n)
     }

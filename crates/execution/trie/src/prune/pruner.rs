@@ -3,7 +3,7 @@ use std::cmp;
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use reth_provider::BlockHashReader;
 use tokio::time::Instant;
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 
 use crate::{
     BaseProofsStorage, BaseProofsStore,
@@ -59,6 +59,15 @@ where
         };
 
         let target_earliest_block = self.target_earliest_block(latest_block);
+        info!(
+            target: "trie::pruner",
+            earliest_block,
+            latest_block,
+            target_earliest_block,
+            retention_blocks = self.retention_blocks,
+            prune_batch_size = self.prune_batch_size,
+            "Calculated proof storage pruning target",
+        );
         if earliest_block >= target_earliest_block {
             trace!(target: "trie::pruner", "Nothing to prune");
             return Ok(PrunerOutput::default());
@@ -110,7 +119,7 @@ where
     /// Prunes a single batch of blocks.
     fn prune_batch(&self, start_block: u64, end_block: u64) -> Result<PrunerOutput, PrunerError> {
         let batch_start_time = Instant::now();
-        debug!(
+        info!(
             target: "trie::pruner",
             start_block,
             end_block,
@@ -154,7 +163,7 @@ where
             block: BlockNumHash { number: end_block, hash: new_earliest_block_hash },
         };
 
-        debug!(
+        info!(
             target: "trie::pruner",
             start_block,
             end_block,
@@ -162,7 +171,7 @@ where
             "Resolved proof storage prune batch block hashes",
         );
 
-        debug!(
+        info!(
             target: "trie::pruner",
             start_block,
             end_block,

@@ -6,6 +6,9 @@
 mod provider;
 pub use provider::{L1HeadSource, OpSuccinctWitnessProvider, WitnessError, WitnessParams};
 
+mod network;
+pub use network::{NetworkZkProver, NetworkZkProverConfig};
+
 mod dry_run;
 pub use dry_run::{DRY_RUN_SNARK_PREFIX, DryRunZkProver};
 

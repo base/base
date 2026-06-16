@@ -1,0 +1,39 @@
+[package]
+name = "base-execution-eip8130-state"
+description = "EIP-8130 AccountConfiguration system-contract storage reader (native)"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-primitives.workspace = true
+
+# base
+base-precompile-macros.workspace = true
+base-precompile-storage.workspace = true
+base-common-consensus = { workspace = true, default-features = false }
+
+# revm
+revm.workspace = true
+
+[dev-dependencies]
+base-precompile-storage = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = [ "std" ]
+std = [
+	"alloy-primitives/std",
+	"base-common-consensus/std",
+	"base-precompile-storage/std",
+	"revm/std",
+]
+test-utils = [ "base-precompile-storage/test-utils" ]

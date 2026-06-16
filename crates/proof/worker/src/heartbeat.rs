@@ -5,9 +5,9 @@ use std::time::Duration;
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::HeartbeatRequest;
 use tokio::time::sleep;
-use tracing::{debug, warn};
+use tracing::warn;
 
-use crate::ClaimedProofJobMetadata;
+use crate::{ClaimedProofJobMetadata, ProofSubmitter};
 
 /// Minimum proof-generation heartbeat interval.
 pub const MIN_WORKER_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(1);
@@ -76,10 +76,8 @@ pub struct WorkerHeartbeat;
 
 impl WorkerHeartbeat {
     /// Sends heartbeats until a non-recoverable heartbeat failure occurs.
-    ///
-    /// Retryable errors may already have exhausted the client's per-call retry budget.
     pub async fn until_failure<Client>(
-        client: &Client,
+        submitter: &ProofSubmitter<Client>,
         claim: &ClaimedProofJobMetadata,
         config: WorkerHeartbeatConfig,
     ) -> ProverServiceClientError
@@ -88,27 +86,20 @@ impl WorkerHeartbeat {
     {
         let max_consecutive_failures = config.normalized_max_consecutive_failures();
         let mut consecutive_failures = 0;
-        let heartbeat = HeartbeatRequest {
-            session_id: claim.session_id.clone(),
-            lock_id: claim.lock_id.clone(),
-            worker_id: claim.worker_id.clone(),
-            lock_duration_seconds: config.lock_duration_seconds,
-        };
 
         loop {
             sleep(config.normalized_interval()).await;
 
-            match client.heartbeat(heartbeat.clone()).await {
-                Ok(response) => {
-                    consecutive_failures = 0;
+            let heartbeat = HeartbeatRequest {
+                session_id: claim.session_id.clone(),
+                lock_id: claim.lock_id.clone(),
+                worker_id: claim.worker_id.clone(),
+                lock_duration_seconds: config.lock_duration_seconds,
+            };
 
-                    debug!(
-                        session_id = %claim.session_id,
-                        lock_id = %claim.lock_id,
-                        worker_id = %claim.worker_id,
-                        lock_expires_at = ?response.job.lock_expires_at,
-                        "proof job heartbeat accepted"
-                    );
+            match submitter.heartbeat(heartbeat).await {
+                Ok(_) => {
+                    consecutive_failures = 0;
                 }
                 Err(error) if error.is_retryable() => {
                     consecutive_failures += 1;
@@ -125,27 +116,8 @@ impl WorkerHeartbeat {
                         );
                         return error;
                     }
-
-                    warn!(
-                        session_id = %claim.session_id,
-                        lock_id = %claim.lock_id,
-                        worker_id = %claim.worker_id,
-                        consecutive_failures,
-                        max_consecutive_failures,
-                        error = %error,
-                        "proof job heartbeat failed; retrying on next interval"
-                    );
                 }
-                Err(error) => {
-                    warn!(
-                        session_id = %claim.session_id,
-                        lock_id = %claim.lock_id,
-                        worker_id = %claim.worker_id,
-                        error = %error,
-                        "proof job heartbeat failed permanently"
-                    );
-                    return error;
-                }
+                Err(error) => return error,
             }
         }
     }

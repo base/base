@@ -12,7 +12,6 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use async_trait::async_trait;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use tokio::{
@@ -26,6 +25,13 @@ use crate::{
     DeregistrationManager, DiscoveryResolution, ProofHandlerConfig, ProverInstance,
     RegistrarMetrics, RegistrationManager, RegistryClient, Result,
 };
+
+/// Default maximum number of transaction submission retries for transient
+/// errors before giving up.
+pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
+
+/// Default delay between transaction submission retries.
+pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 
 /// Runtime settings for signer lifecycle management.
 #[derive(Debug, Clone)]
@@ -86,117 +92,6 @@ impl<P, R, T> SignerManager<P, R, T> {
     pub fn new(proof_provider: P, registry: R, tx_manager: T, config: SignerManagerConfig) -> Self {
         let proof_semaphore = Semaphore::new(config.max_concurrency.max(1));
         Self { proof_provider, registry, tx_manager, proof_semaphore, config }
-    }
-}
-
-/// Driver-facing signer lifecycle boundary.
-///
-/// The production implementation is [`SignerManager`], but the driver only
-/// needs to reconcile proof tasks and run orphan cleanup. Keeping this as a
-/// trait lets driver tests mock signer lifecycle behavior without standing up
-/// proof tasks or registry state.
-#[async_trait]
-pub trait SignerLifecycle: Send + Sync + fmt::Debug {
-    /// Reconciles in-flight registration tasks against fetched prover signers.
-    ///
-    /// New proof-task child tokens are derived from `cancel`, which is owned
-    /// by the driver so every signer lifecycle operation shares one shutdown
-    /// source of truth.
-    fn reconcile_proof_tasks(
-        &self,
-        resolution: &DiscoveryResolution,
-        proof_tasks: &mut ProofTaskSet,
-        cancel: &CancellationToken,
-    );
-
-    /// Queries onchain signers and deregisters orphans.
-    ///
-    /// The caller-provided cancellation token controls every registry read and
-    /// transaction submission attempted by the deregistration pass.
-    async fn run_orphan_dereg(
-        &self,
-        protected_signers: &HashSet<Address>,
-        cancel: &CancellationToken,
-    ) -> Result<()>;
-}
-
-#[async_trait]
-impl<P, R, T> SignerLifecycle for Arc<SignerManager<P, R, T>>
-where
-    P: AttestationProofProvider + 'static,
-    R: RegistryClient + 'static,
-    T: TxManager + 'static,
-{
-    fn reconcile_proof_tasks(
-        &self,
-        resolution: &DiscoveryResolution,
-        proof_tasks: &mut ProofTaskSet,
-        cancel: &CancellationToken,
-    ) {
-        if cancel.is_cancelled() {
-            return;
-        }
-
-        let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
-        let mut live_signers = HashSet::new();
-
-        for (signer, task) in &mut proof_tasks.pending {
-            if task.cancel.is_cancelled() {
-                continue;
-            }
-
-            if wanted.contains(signer) {
-                live_signers.insert(*signer);
-                continue;
-            }
-
-            if resolution.unresolved_instance_ids.contains(&task.instance_id) {
-                live_signers.insert(*signer);
-                debug!(
-                    signer = %signer,
-                    instance = %task.instance_id,
-                    "preserving proof task: source instance failed to resolve this cycle (inconclusive)"
-                );
-            } else {
-                info!(
-                    signer = %signer,
-                    instance = %task.instance_id,
-                    "cancelling proof task: signer no longer registerable"
-                );
-                task.cancel.cancel();
-                task.cancelled_by_reconcile = true;
-                RegistrarMetrics::proof_tasks_cancelled().increment(1);
-            }
-        }
-
-        for entry in &resolution.registerable {
-            if !live_signers.insert(entry.signer) {
-                continue;
-            }
-            let signer_cancel = cancel.child_token();
-            let manager = Self::clone(self);
-            let instance_owned = entry.instance.clone();
-            let instance_id = instance_owned.instance_id.clone();
-            let attestation = entry.attestation.clone();
-            let task_cancel = signer_cancel.clone();
-            let signer = entry.signer;
-            let enclave_index = entry.enclave_index;
-
-            proof_tasks.spawn_task(signer, instance_id, signer_cancel, async move {
-                let result = manager
-                    .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
-                    .await;
-                ProofTaskOutcome { signer, result }
-            });
-        }
-    }
-
-    async fn run_orphan_dereg(
-        &self,
-        protected_signers: &HashSet<Address>,
-        cancel: &CancellationToken,
-    ) -> Result<()> {
-        self.as_ref().run_orphan_dereg(protected_signers, cancel).await
     }
 }
 
@@ -354,6 +249,75 @@ where
     R: RegistryClient + 'static,
     T: TxManager + 'static,
 {
+    /// Reconciles in-flight registration tasks against fetched prover signers.
+    ///
+    /// New proof-task child tokens are derived from `cancel`, which is owned
+    /// by the driver so every signer lifecycle operation shares one shutdown
+    /// source of truth.
+    pub fn reconcile_proof_tasks(
+        self: &Arc<Self>,
+        resolution: &DiscoveryResolution,
+        proof_tasks: &mut ProofTaskSet,
+        cancel: &CancellationToken,
+    ) {
+        if cancel.is_cancelled() {
+            return;
+        }
+
+        let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
+        let mut live_signers = HashSet::new();
+
+        for (signer, task) in &mut proof_tasks.pending {
+            if task.cancel.is_cancelled() {
+                continue;
+            }
+
+            if wanted.contains(signer) {
+                live_signers.insert(*signer);
+                continue;
+            }
+
+            if resolution.unresolved_instance_ids.contains(&task.instance_id) {
+                live_signers.insert(*signer);
+                debug!(
+                    signer = %signer,
+                    instance = %task.instance_id,
+                    "preserving proof task: source instance failed to resolve this cycle"
+                );
+            } else {
+                info!(
+                    signer = %signer,
+                    instance = %task.instance_id,
+                    "cancelling proof task: signer no longer registerable"
+                );
+                task.cancel.cancel();
+                task.cancelled_by_reconcile = true;
+                RegistrarMetrics::proof_tasks_cancelled().increment(1);
+            }
+        }
+
+        for entry in &resolution.registerable {
+            if !live_signers.insert(entry.signer) {
+                continue;
+            }
+            let signer_cancel = cancel.child_token();
+            let manager = Arc::clone(self);
+            let instance_owned = entry.instance.clone();
+            let instance_id = instance_owned.instance_id.clone();
+            let attestation = entry.attestation.clone();
+            let task_cancel = signer_cancel.clone();
+            let signer = entry.signer;
+            let enclave_index = entry.enclave_index;
+
+            proof_tasks.spawn_task(signer, instance_id, signer_cancel, async move {
+                let result = manager
+                    .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
+                    .await;
+                ProofTaskOutcome { signer, result }
+            });
+        }
+    }
+
     /// Runs a signer registration through [`RegistrationManager`].
     pub async fn run_proof_task(
         self: Arc<Self>,
@@ -509,13 +473,9 @@ mod tests {
                 enclave_index: 0,
             });
         }
-        let total = kept.len();
         DiscoveryResolution {
             registerable,
             active_signers,
-            reachable_count: total,
-            total_count: total,
-            ok_to_dereg: true,
             unresolved_instance_ids: HashSet::new(),
         }
     }
@@ -655,9 +615,6 @@ mod tests {
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::new(),
-            reachable_count: 0,
-            total_count: 1,
-            ok_to_dereg: false,
             unresolved_instance_ids: HashSet::from([TEST_PENDING_INSTANCE_ID.to_string()]),
         };
 
@@ -672,9 +629,6 @@ mod tests {
         let resolution_conclusive = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::new(),
-            reachable_count: 1,
-            total_count: 1,
-            ok_to_dereg: true,
             unresolved_instance_ids: HashSet::new(),
         };
         reconcile(&manager, &resolution_conclusive, &mut proof_tasks);
@@ -703,9 +657,6 @@ mod tests {
                 },
             ],
             active_signers: HashSet::from([signer]),
-            reachable_count: 2,
-            total_count: 2,
-            ok_to_dereg: false,
             unresolved_instance_ids: HashSet::new(),
         };
         let mut proof_tasks = ProofTaskSet::new();
@@ -745,9 +696,6 @@ mod tests {
                 },
             ],
             active_signers: HashSet::from([signer_a, signer_b]),
-            reachable_count: 2,
-            total_count: 2,
-            ok_to_dereg: false,
             unresolved_instance_ids: HashSet::new(),
         };
         let mut proof_tasks = ProofTaskSet::new();
@@ -871,10 +819,7 @@ mod tests {
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
             active_signers: HashSet::from([active_signer]),
-            reachable_count: 1,
-            total_count: 1,
-            ok_to_dereg: true,
-            unresolved_instance_ids: HashSet::from([TEST_PENDING_INSTANCE_ID.to_string()]),
+            unresolved_instance_ids: HashSet::new(),
         };
         let protected = proof_tasks.protected_signers(&resolution);
         assert_eq!(protected, HashSet::from([active_signer, pending_signer]));

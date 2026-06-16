@@ -27,9 +27,8 @@ pub use discovery::AwsTargetGroupDiscovery;
 
 mod driver;
 pub use driver::{
-    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DiscoveryResolution, DriverConfig,
-    RegisterableSigner, RegistrationDriver, ResolveOutcome,
+    DEFAULT_MAX_CONCURRENCY, DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DiscoveryResolution,
+    DriverConfig, RegisterableSigner, RegistrationDriver,
 };
 
 mod error;
@@ -52,8 +51,8 @@ pub use registry::{RegistryClient, RegistryContractClient};
 
 mod signer_manager;
 pub use signer_manager::{
-    PendingRegistration, ProofTaskOutcome, ProofTaskSet, SignerLifecycle, SignerManager,
-    SignerManagerConfig,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration, ProofTaskOutcome,
+    ProofTaskSet, SignerManager, SignerManagerConfig,
 };
 
 mod traits;

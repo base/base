@@ -20,6 +20,9 @@ use crate::{
     db::{HashedStorageKey, StorageTrieKey},
 };
 
+/// Type alias for bulk storage branch entries: a list of (hashed address, storage nodes) pairs.
+pub type StorageBranchEntries = Vec<(B256, Vec<(Nibbles, Option<BranchNodeCompact>)>)>;
+
 /// Diff of trie updates and post state for a block.
 #[derive(Debug, Clone, Default)]
 pub struct BlockStateDiff {
@@ -213,14 +216,14 @@ pub trait BaseProofsStore: Send + Sync + Debug {
     ) -> BaseProofsStorageResult<()>;
 }
 
-/// Session-scoped store of trie updates that share a single underlying transaction.
+/// Session-scoped store of trie updates that amortizes write overhead across multiple
+/// block writes within a single batch.
 ///
-/// A session opened via [`BaseProofsBatchStore::with_batch_session`] amortizes MDBX commit
-/// cost across multiple block writes: reads through the session observe uncommitted writes
-/// from earlier `store_trie_updates` calls in the same session, enabling cold catch-up of
-/// `block N+1` against `block N` written but not yet committed.
+/// Reads through the session observe writes from earlier [`BaseProofsBatchSession::store_trie_updates`]
+/// calls in the same session, enabling cold catch-up where `block N+1` is computed against
+/// `block N` written earlier in the same session.
 ///
-/// All cursor methods mirror [`BaseProofsStore`] but read from the active transaction.
+/// All cursor methods mirror [`BaseProofsStore`] but read through the session's active view.
 #[auto_impl(&mut)]
 pub trait BaseProofsBatchSession: Send + Sync + Debug {
     /// Cursor for iterating over storage trie branches in the active session.
@@ -246,8 +249,8 @@ pub trait BaseProofsBatchSession: Send + Sync + Debug {
     /// Earliest stored block number/hash visible to the active transaction.
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>>;
 
-    /// Latest stored block number/hash visible to the active transaction (including
-    /// uncommitted writes from earlier calls in this session).
+    /// Latest stored block number/hash visible to this session (including writes from
+    /// earlier [`store_trie_updates`] calls in this session).
     fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>>;
 
     /// Storage trie cursor reading through the active transaction.
@@ -276,9 +279,9 @@ pub trait BaseProofsBatchSession: Send + Sync + Debug {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>>;
 
-    /// Append-only write of `block_state_diff` for `block_ref` to the active transaction.
-    /// Subsequent reads through this session observe the new state immediately, but the
-    /// changes are not durable until the enclosing session commits.
+    /// Append-only write of `block_state_diff` for `block_ref` to the active session.
+    /// Subsequent reads through this session observe the new state immediately.
+    /// Durability semantics are backend-dependent; see [`BaseProofsBatchStore`].
     fn store_trie_updates(
         &mut self,
         block_ref: BlockWithParent,
@@ -286,20 +289,25 @@ pub trait BaseProofsBatchSession: Send + Sync + Debug {
     ) -> BaseProofsStorageResult<WriteCounts>;
 }
 
-/// Storage that can open a [`BaseProofsBatchSession`] holding a single underlying
-/// transaction across multiple block writes.
+/// Storage that can open a [`BaseProofsBatchSession`] for amortized multi-block writes.
 ///
-/// The MDBX implementation commits atomically on `Ok` and aborts on `Err`, leaving no
-/// writes visible to subsequent reads. The in-memory implementation is a test double
-/// that lacks transactional rollback — partial writes from a failing batch remain
-/// visible. Production code must rely on MDBX semantics.
+/// **Atomicity is backend-dependent.** Callers must not rely on rollback:
+/// - `MDBX`: commits atomically on `Ok`, rolls back on `Err`.
+/// - `RocksDB`: each [`BaseProofsBatchSession::store_trie_updates`] call commits immediately;
+///   if the closure returns `Err` after writing N blocks, those N blocks remain durable.
+/// - In-memory (test double): no transactional rollback; partial writes remain visible.
+///
+/// The invariant all backends guarantee is **write ordering**: blocks are stored in strictly
+/// ascending order of block number. Callers that need crash recovery must unwind to the last
+/// consistent block rather than relying on atomic rollback.
 pub trait BaseProofsBatchStore: BaseProofsStore {
-    /// Session type bound to the active transaction.
+    /// Session type for this backend.
     type BatchSession<'a>: BaseProofsBatchSession + 'a
     where
         Self: 'a;
 
-    /// Run `f` inside one batch session. Commits if `f` returns `Ok`, aborts on `Err`.
+    /// Run `f` inside one batch session. Atomicity and error-recovery semantics are
+    /// backend-dependent; see the trait-level documentation.
     fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
     where
         F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>;
@@ -373,6 +381,21 @@ pub trait BaseProofsInitialStateStore: Send + Sync + Debug {
         storage_nodes: Vec<(Nibbles, Option<BranchNodeCompact>)>,
     ) -> BaseProofsStorageResult<()>;
 
+    /// Store storage trie branches for multiple addresses in a single batch operation.
+    ///
+    /// The default implementation loops and calls [`Self::store_storage_branches`] per address.
+    /// Override this method on backends that can merge all writes into one durable commit (e.g.
+    /// a single `RocksDB` `WriteBatch`) to avoid the per-address fsync cost during initialization.
+    fn store_storage_branches_bulk(
+        &self,
+        entries: StorageBranchEntries,
+    ) -> BaseProofsStorageResult<()> {
+        for (hashed_address, nodes) in entries {
+            self.store_storage_branches(hashed_address, nodes)?;
+        }
+        Ok(())
+    }
+
     /// Store a batch of account trie leaf nodes. Used for saving existing state.
     fn store_hashed_accounts(
         &self,
@@ -385,6 +408,21 @@ pub trait BaseProofsInitialStateStore: Send + Sync + Debug {
         hashed_address: B256,
         storages: Vec<(B256, U256)>,
     ) -> BaseProofsStorageResult<()>;
+
+    /// Store hashed storage slots for multiple addresses in a single batch operation.
+    ///
+    /// The default implementation loops and calls [`Self::store_hashed_storages`] per address.
+    /// Override this method on backends that can merge all writes into one durable commit (e.g.
+    /// a single `RocksDB` `WriteBatch`) to avoid the per-address fsync cost during initialization.
+    fn store_hashed_storages_bulk(
+        &self,
+        entries: Vec<(B256, Vec<(B256, U256)>)>,
+    ) -> BaseProofsStorageResult<()> {
+        for (hashed_address, storages) in entries {
+            self.store_hashed_storages(hashed_address, storages)?;
+        }
+        Ok(())
+    }
 
     /// Commit the initial state - mark the anchor as completed and also set the earliest block
     /// number to anchor.

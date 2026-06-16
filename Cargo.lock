@@ -4514,6 +4514,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-eip8130-state"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-common-consensus",
+ "base-precompile-macros",
+ "base-precompile-storage",
+ "revm",
+]
+
+[[package]]
 name = "base-execution-evm"
 version = "0.0.0"
 dependencies = [
@@ -4705,9 +4716,11 @@ dependencies = [
  "reth-tasks",
  "reth-trie",
  "reth-trie-common",
+ "rocksdb",
  "secp256k1 0.30.0",
  "serde",
  "serial_test",
+ "static_assertions",
  "strum 0.27.2",
  "tempfile",
  "test-case",
@@ -5899,10 +5912,12 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-l1-head",
+ "base-proof-succinct-client-utils",
  "base-proof-succinct-ethereum-host-utils",
  "base-proof-succinct-host-utils",
  "base-proof-zk-host",
  "base-prover-service-protocol",
+ "bincode 2.0.1",
  "sp1-sdk",
  "thiserror 2.0.18",
  "tokio",

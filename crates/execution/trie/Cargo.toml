@@ -20,7 +20,7 @@ reth-execution-errors.workspace = true
 reth-primitives-traits.workspace = true
 reth-db = { workspace = true, features = ["mdbx"] }
 reth-codecs.workspace = true
-reth-revm.workspace = true
+reth-revm = { workspace = true, features = ["witness"] }
 reth-trie = { workspace = true, features = ["serde"] }
 reth-trie-common = { workspace = true, features = ["serde"] }
 
@@ -53,6 +53,9 @@ parking_lot.workspace = true
 derive_more.workspace = true
 eyre = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
+rocksdb = { workspace = true, features = ["lz4", "zstd"] }
+static_assertions.workspace = true
+
 [dev-dependencies]
 eyre.workspace = true
 mockall.workspace = true
