@@ -1,6 +1,7 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
 use std::{
+    num::NonZeroUsize,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -107,10 +108,10 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = DEFAULT_MAX_CONCURRENCY,
-        value_parser = parse_nonzero_usize
+        default_value_t = NonZeroUsize::new(DEFAULT_MAX_CONCURRENCY)
+            .expect("default max concurrency is nonzero")
     )]
-    max_concurrency: usize,
+    max_concurrency: NonZeroUsize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -164,7 +165,7 @@ struct BoundlessArgs {
     boundless_rpc_url: Url,
 
     /// Hex-encoded private key for Boundless Network proving fees.
-    #[arg(long, env = cli_env!("BOUNDLESS_PRIVATE_KEY"), value_parser = parse_boundless_private_key)]
+    #[arg(long, env = cli_env!("BOUNDLESS_PRIVATE_KEY"))]
     boundless_private_key: PrivateKeySigner,
 
     /// HTTP(S) URL of the Nitro attestation verifier ELF (e.g. Pinata IPFS gateway URL).
@@ -238,14 +239,6 @@ struct BoundlessArgs {
     max_attestation_age_secs: u64,
 }
 
-/// Parse a hex-encoded Boundless private key string into a [`PrivateKeySigner`].
-fn parse_boundless_private_key(s: &str) -> std::result::Result<PrivateKeySigner, String> {
-    s.strip_prefix("0x")
-        .unwrap_or(s)
-        .parse::<PrivateKeySigner>()
-        .map_err(|e| format!("--boundless-private-key: {e}"))
-}
-
 /// Parse a hex-encoded image ID string into `[u32; 8]`.
 fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], String> {
     let mut bytes = [0u8; 32];
@@ -257,11 +250,6 @@ fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], String> {
         id[i] = u32::from_le_bytes(chunk.try_into().unwrap());
     }
     Ok(id)
-}
-
-fn parse_nonzero_usize(s: &str) -> std::result::Result<usize, String> {
-    let value = s.parse::<usize>().map_err(|e| e.to_string())?;
-    (value > 0).then_some(value).ok_or_else(|| "value must be at least 1".into())
 }
 
 /// Parse an ETH-denominated Boundless offer price.
@@ -328,7 +316,6 @@ impl Cli {
         let cancel = CancellationToken::new();
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
-        let metrics_enabled = metrics_config.enabled;
         metrics_config
             .init_with(|| {
                 base_cli_utils::register_version_metrics!();
@@ -337,7 +324,7 @@ impl Cli {
             .wrap_err("failed to install Prometheus recorder")?;
 
         let l1_addr = signing.address();
-        let provider = if metrics_enabled {
+        let provider = if metrics_config.enabled {
             let (layer, balance_rx) = BalanceMonitorLayer::new(
                 l1_addr,
                 cancel.clone(),
@@ -413,14 +400,14 @@ impl Cli {
         let driver_config = DriverConfig {
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             cancel: cancel.clone(),
-            max_concurrency: self.max_concurrency,
+            max_concurrency: self.max_concurrency.get(),
             unhealthy_registration_window: Duration::from_secs(
                 self.unhealthy_registration_window_secs,
             ),
         };
         let signer_manager_config = SignerManagerConfig {
             registry_address: self.tee_prover_registry_address,
-            max_concurrency: self.max_concurrency,
+            max_concurrency: self.max_concurrency.get(),
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
         };
@@ -504,7 +491,6 @@ mod tests {
         "0x0100000002000000030000000400000005000000060000000700000008000000";
     const TEST_BOUNDLESS_MIN_PRICE_ETH: &str = "0.01";
     const TEST_BOUNDLESS_MAX_PRICE_ETH: &str = "0.03";
-    const TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS: u32 = 30;
 
     fn args(extra: &[&'static str]) -> Vec<&'static str> {
         let mut args = vec![
@@ -596,7 +582,7 @@ mod tests {
             b.offer_max_price,
             Some(parse_boundless_eth_amount(TEST_BOUNDLESS_MAX_PRICE_ETH).unwrap()),
         );
-        assert_eq!(b.offer_ramp_up_period_secs, Some(TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS),);
+        assert_eq!(b.offer_ramp_up_period_secs, Some(30),);
     }
 
     #[test]
