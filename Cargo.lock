@@ -5893,8 +5893,8 @@ name = "base-proof-zk-backend"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "anyhow",
  "async-trait",
+ "backoff",
  "base-l1-head",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",
@@ -5911,7 +5911,6 @@ dependencies = [
  "sp1-sdk",
  "thiserror 2.0.18",
  "tokio",
- "tonic 0.12.3",
  "tonic 0.14.6",
  "tracing",
 ]

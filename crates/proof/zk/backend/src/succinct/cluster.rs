@@ -27,7 +27,7 @@ use crate::succinct::{L1HeadSource, OpSuccinctWitnessProvider, WitnessParams};
 
 macro_rules! backend_error {
     ($($arg:tt)*) => {
-        ZkProverError::Backend(anyhow::anyhow!($($arg)*).into())
+        ZkProverError::Backend(std::io::Error::other(format!($($arg)*)).into())
     };
 }
 
@@ -170,27 +170,25 @@ impl ClusterZkProver {
         &self,
         proof_id: &str,
     ) -> Result<Option<ClusterProtoProofRequest>, ZkProverError> {
-        match self
-            .config
-            .cluster
-            .service_client
-            .get_proof_request(ProofRequestGetRequest { proof_id: proof_id.to_owned() })
-            .await
-        {
-            Ok(request) => Ok(request),
-            Err(e) => {
-                if e.downcast_ref::<tonic::Status>().is_some_and(|status| {
-                    status.code() == tonic::Code::NotFound
-                        || (status.code() == tonic::Code::Internal
-                            && status.message().contains("Failed to get proof request")
-                            && status.message().contains("no rows returned"))
-                }) {
-                    return Ok(None);
-                }
+        let request = ProofRequestGetRequest { proof_id: proof_id.to_owned() };
+        backoff::future::retry(self.config.cluster.service_client.backoff.clone(), || async {
+            let mut client = self.config.cluster.service_client.rpc.clone();
+            match client.proof_request_get(request.clone()).await {
+                Ok(response) => Ok(response.into_inner().proof_request),
+                Err(status) => {
+                    if Self::is_missing_cluster_request_status(
+                        i32::from(status.code()),
+                        status.message(),
+                    ) {
+                        return Ok(None);
+                    }
 
-                Err(backend_error!("failed to get cluster proof: {e}"))
+                    Err(sp1_cluster_common::util::status_to_backoff_error(status))
+                }
             }
-        }
+        })
+        .await
+        .map_err(|e| backend_error!("failed to get cluster proof: {e}"))
     }
 
     /// Fetch a cluster proof request by id without the cluster client's retry policy.
@@ -198,24 +196,29 @@ impl ClusterZkProver {
         &self,
         proof_id: &str,
     ) -> Result<Option<ClusterProtoProofRequest>, ZkProverError> {
+        let request = ProofRequestGetRequest { proof_id: proof_id.to_owned() };
         let mut client = self.config.cluster.service_client.rpc.clone();
-        match client
-            .proof_request_get(ProofRequestGetRequest { proof_id: proof_id.to_owned() })
-            .await
-        {
+        match client.proof_request_get(request).await {
             Ok(response) => Ok(response.into_inner().proof_request),
             Err(status) => {
-                if status.code() == tonic_012::Code::NotFound
-                    || (status.code() == tonic_012::Code::Internal
-                        && status.message().contains("Failed to get proof request")
-                        && status.message().contains("no rows returned"))
-                {
+                if Self::is_missing_cluster_request_status(
+                    i32::from(status.code()),
+                    status.message(),
+                ) {
                     return Ok(None);
                 }
 
                 Err(backend_error!("failed to get cluster proof: {status}"))
             }
         }
+    }
+
+    /// Returns true if a cluster gRPC status represents a missing proof request.
+    pub fn is_missing_cluster_request_status(code: i32, message: &str) -> bool {
+        code == i32::from(tonic::Code::NotFound)
+            || (code == i32::from(tonic::Code::Internal)
+                && message.contains("Failed to get proof request")
+                && message.contains("no rows returned"))
     }
 
     /// Decode the cluster proof request status without mapping unknown values to unspecified.
