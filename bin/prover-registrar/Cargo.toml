@@ -42,6 +42,6 @@ serde.workspace = true
 tracing.workspace = true
 humantime.workspace = true
 tokio-util.workspace = true
-tokio = { workspace = true, features = ["full"] }
 rustls = { workspace = true, features = ["ring"] }
 clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

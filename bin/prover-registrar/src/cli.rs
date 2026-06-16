@@ -41,11 +41,6 @@ base_cli_utils::define_health_args!("BASE_REGISTRAR", 8080);
 base_tx_manager::define_signer_cli!("BASE_REGISTRAR");
 base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
 
-/// Default trusted certificate prefix length (root cert only).
-const DEFAULT_TRUSTED_CERTS_PREFIX: u8 = 1;
-const DEFAULT_MAX_RECOVERY_ATTEMPTS: u32 = 5;
-const DEFAULT_MAX_ATTESTATION_AGE_SECS: u64 = 3300;
-
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]
 #[command(name = "prover-registrar", version, about)]
@@ -129,21 +124,10 @@ pub(crate) struct Cli {
     /// checks while the application initializes. Set to 0 to disable.
     #[arg(long, env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"), default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS)]
     unhealthy_registration_window_secs: u64,
-    /// Enable on-demand CRL checking at registration time.
-    /// When enabled, intermediate certificates are checked against CRL
-    /// distribution points before signer registration. Revoked certificates
-    /// trigger a `revokeCert` transaction onchain.
-    #[arg(
-        long,
-        env = cli_env!("CRL_CHECK_ENABLED"),
-        requires = "crl_nitro_verifier_address"
-    )]
-    crl_check_enabled: bool,
-
-    /// `NitroEnclaveVerifier` contract address. Required when
-    /// `--crl-check-enabled` is set; consulted both for the durable onchain
-    /// `revokedCerts` pre-check and as the destination for outgoing
-    /// `revokeCert` transactions.
+    /// `NitroEnclaveVerifier` contract address. Supplying this enables
+    /// on-demand CRL checking at registration time; the address is consulted
+    /// both for the durable onchain `revokedCerts` pre-check and as the
+    /// destination for outgoing `revokeCert` transactions.
     ///
     /// The `crl-` prefix is retained for backward compatibility with
     /// existing production deployments (introduced in #1984).
@@ -224,7 +208,7 @@ struct BoundlessArgs {
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MAX_RECOVERY_ATTEMPTS"),
-        default_value_t = DEFAULT_MAX_RECOVERY_ATTEMPTS
+        default_value_t = 5
     )]
     boundless_max_recovery_attempts: u32,
 
@@ -234,7 +218,7 @@ struct BoundlessArgs {
     #[arg(
         long,
         env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
-        default_value_t = DEFAULT_MAX_ATTESTATION_AGE_SECS
+        default_value_t = 3300
     )]
     max_attestation_age_secs: u64,
 }
@@ -258,12 +242,29 @@ fn parse_boundless_eth_amount(s: &str) -> std::result::Result<Amount, String> {
         .map_err(|e| format!("Boundless ETH amount: {e}"))
 }
 
+fn balance_monitor_layer(
+    address: Address,
+    cancel: CancellationToken,
+    set_metric: impl Fn(f64) + Send + 'static,
+    account: &'static str,
+) -> BalanceMonitorLayer {
+    let (layer, mut balance_rx) =
+        BalanceMonitorLayer::new(address, cancel, BalanceMonitorLayer::DEFAULT_POLL_INTERVAL);
+    tokio::spawn(async move {
+        while balance_rx.changed().await.is_ok() {
+            set_metric(f64::from(*balance_rx.borrow_and_update()));
+        }
+    });
+    info!(%address, account, "balance monitor started");
+    layer
+}
+
 impl Cli {
     fn boundless_prover(&self) -> std::result::Result<BoundlessProver, RegistrarError> {
-        let offer_min_price = self.boundless.boundless_min_price_eth.clone();
-        let offer_max_price = self.boundless.boundless_max_price_eth.clone();
-
-        if let (Some(min_price), Some(max_price)) = (&offer_min_price, &offer_max_price) {
+        let boundless = &self.boundless;
+        if let (Some(min_price), Some(max_price)) =
+            (&boundless.boundless_min_price_eth, &boundless.boundless_max_price_eth)
+        {
             if max_price.value < min_price.value {
                 return Err(RegistrarError::Config(
                     "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
@@ -273,22 +274,21 @@ impl Cli {
         }
 
         let mut prover = BoundlessProver::new(
-            self.boundless.boundless_rpc_url.clone(),
-            self.boundless.boundless_private_key.clone(),
-            self.boundless.boundless_verifier_program_url.clone(),
+            boundless.boundless_rpc_url.clone(),
+            boundless.boundless_private_key.clone(),
+            boundless.boundless_verifier_program_url.clone(),
             self.image_id,
-            Duration::from_secs(self.boundless.boundless_poll_interval_secs),
-            Duration::from_secs(self.boundless.boundless_timeout_secs),
-            DEFAULT_TRUSTED_CERTS_PREFIX,
-            self.boundless.boundless_max_recovery_attempts,
-            Duration::from_secs(self.boundless.max_attestation_age_secs),
+            Duration::from_secs(boundless.boundless_poll_interval_secs),
+            Duration::from_secs(boundless.boundless_timeout_secs),
+            1,
+            boundless.boundless_max_recovery_attempts,
+            Duration::from_secs(boundless.max_attestation_age_secs),
         );
-        prover.offer_min_price = offer_min_price;
-        prover.offer_max_price = offer_max_price;
-        prover.offer_ramp_up_period_secs = self.boundless.boundless_offer_ramp_up_period_secs;
-        prover.offer_lock_timeout_secs = self.boundless.boundless_offer_lock_timeout_secs;
-        prover.offer_bidding_start_delay_secs =
-            self.boundless.boundless_offer_bidding_start_delay_secs;
+        prover.offer_min_price = boundless.boundless_min_price_eth.clone();
+        prover.offer_max_price = boundless.boundless_max_price_eth.clone();
+        prover.offer_ramp_up_period_secs = boundless.boundless_offer_ramp_up_period_secs;
+        prover.offer_lock_timeout_secs = boundless.boundless_offer_lock_timeout_secs;
+        prover.offer_bidding_start_delay_secs = boundless.boundless_offer_bidding_start_delay_secs;
         Ok(prover)
     }
 
@@ -325,38 +325,24 @@ impl Cli {
 
         let l1_addr = signing.address();
         let provider = if metrics_config.enabled {
-            let (layer, balance_rx) = BalanceMonitorLayer::new(
-                l1_addr,
-                cancel.clone(),
-                BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
-            );
-            let provider =
-                ProviderBuilder::new().layer(layer).connect_http(self.l1_rpc_url.clone());
-            tokio::spawn(async move {
-                let mut rx = balance_rx;
-                while rx.changed().await.is_ok() {
-                    RegistrarMetrics::account_balance_wei().set(f64::from(*rx.borrow_and_update()));
-                }
-            });
-            info!(%l1_addr, "L1 balance monitor started");
+            let provider = ProviderBuilder::new()
+                .layer(balance_monitor_layer(
+                    l1_addr,
+                    cancel.clone(),
+                    |balance| RegistrarMetrics::account_balance_wei().set(balance),
+                    "l1",
+                ))
+                .connect_http(self.l1_rpc_url.clone());
 
             let bl_addr = boundless_prover.signer.address();
-            let (bl_layer, bl_balance_rx) = BalanceMonitorLayer::new(
-                bl_addr,
-                cancel.clone(),
-                BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
-            );
             let _bl_provider = ProviderBuilder::new()
-                .layer(bl_layer)
+                .layer(balance_monitor_layer(
+                    bl_addr,
+                    cancel.clone(),
+                    |balance| RegistrarMetrics::boundless_balance_wei().set(balance),
+                    "boundless",
+                ))
                 .connect_http(boundless_prover.rpc_url.clone());
-            tokio::spawn(async move {
-                let mut rx = bl_balance_rx;
-                while rx.changed().await.is_ok() {
-                    RegistrarMetrics::boundless_balance_wei()
-                        .set(f64::from(*rx.borrow_and_update()));
-                }
-            });
-            info!(%bl_addr, "Boundless balance monitor started");
 
             provider
         } else {
@@ -424,10 +410,7 @@ impl Cli {
             tx_manager.clone(),
             signer_manager_config,
         ));
-        let cert_manager = if self.crl_check_enabled {
-            let nitro_verifier_address = self
-                .crl_nitro_verifier_address
-                .expect("--crl-nitro-verifier-address is required by clap");
+        let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             let nitro_verifier = Box::new(NitroVerifierContractClient::new(
                 nitro_verifier_address,
                 self.l1_rpc_url.clone(),
@@ -626,9 +609,9 @@ mod tests {
     }
 
     #[test]
-    fn crl_enabled_without_verifier_address_fails() {
+    fn crl_verifier_address_parses() {
         let mut args = boundless_args();
-        args.extend(["--crl-check-enabled"]);
-        assert!(Cli::try_parse_from(args).is_err());
+        args.extend(["--crl-nitro-verifier-address", TEST_REGISTRY_ADDR]);
+        assert!(Cli::try_parse_from(args).is_ok());
     }
 }
