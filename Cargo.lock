@@ -3411,7 +3411,6 @@ dependencies = [
  "base-txpool-rpc",
  "clap",
  "reth-cli-util",
- "reth-node-core",
 ]
 
 [[package]]
