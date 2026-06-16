@@ -1,9 +1,8 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use clap::Parser as _;
-
 use base_proof_tee_registrar::RegistrarService;
+use clap::Parser as _;
 
 mod cli;
 

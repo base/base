@@ -272,6 +272,7 @@ mod tests {
 
     const TEST_IMAGE_ID: &str =
         "0x0100000002000000030000000400000005000000060000000700000008000000";
+
     #[test]
     fn boundless_offer_max_price_must_cover_min_price() {
         let result = validate_boundless_offer_prices(
