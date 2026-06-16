@@ -92,8 +92,7 @@ where
         }
 
         RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
-        let verifier_address = self.nitro_verifier.address();
-        let cert_revoker = CertRevoker::new(verifier_address, &self.tx_manager);
+        let cert_revoker = CertRevoker::new(self.nitro_verifier.address(), &self.tx_manager);
 
         for revoked in &revoked_certs {
             warn!(
@@ -151,30 +150,12 @@ mod tests {
     use super::*;
     use crate::test_utils::{NoopNitroVerifier, NoopTxManager, healthy_prover_instance};
 
-    const ONCHAIN_TEST_INSTANCE_ID: &str = "i-onchain-revocation-test";
-    const INTER1_INDEX: usize = 1;
-    const INTER2_INDEX: usize = 2;
-
     /// Mock [`NitroVerifierClient`] for unit-testing the onchain pre-check.
     #[derive(Debug, Default)]
     struct MockNitroVerifier {
         revoked: Option<B256>,
         fail: bool,
         call_count: AtomicU32,
-    }
-
-    impl MockNitroVerifier {
-        fn revoking(hash: B256) -> Self {
-            Self { revoked: Some(hash), ..Self::default() }
-        }
-
-        fn failing() -> Self {
-            Self { fail: true, ..Self::default() }
-        }
-
-        fn call_count(&self) -> u32 {
-            self.call_count.load(Ordering::Relaxed)
-        }
     }
 
     #[async_trait]
@@ -208,15 +189,6 @@ mod tests {
         B256::repeat_byte(index as u8)
     }
 
-    fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager<NoopTxManager> {
-        CertManager {
-            enabled: true,
-            http_client: reqwest::Client::new(),
-            nitro_verifier: verifier,
-            tx_manager: NoopTxManager,
-        }
-    }
-
     #[tokio::test]
     async fn check_and_revoke_crls_noops_when_disabled() {
         let config = CrlConfig {
@@ -239,12 +211,17 @@ mod tests {
 
     async fn run_pre_check(verifier: MockNitroVerifier) -> (Result<bool>, u32) {
         let verifier = Arc::new(verifier);
-        let cert_manager = test_cert_manager(Arc::clone(&verifier));
+        let cert_manager = CertManager {
+            enabled: true,
+            http_client: reqwest::Client::new(),
+            nitro_verifier: verifier.clone(),
+            tx_manager: NoopTxManager,
+        };
         let cert_infos = (0..=3).map(cert_info).collect::<Vec<_>>();
         let result = cert_manager
-            .has_onchain_revoked_intermediate(&cert_infos, ONCHAIN_TEST_INSTANCE_ID)
+            .has_onchain_revoked_intermediate(&cert_infos, "i-onchain-revocation-test")
             .await;
-        (result, verifier.call_count())
+        (result, verifier.call_count.load(Ordering::Relaxed))
     }
 
     #[tokio::test]
@@ -261,10 +238,11 @@ mod tests {
 
     #[tokio::test]
     async fn onchain_revocation_check_blocks_when_any_intermediate_revoked() {
-        for (revoked_index, expected_calls_at_short_circuit) in
-            [(INTER1_INDEX, 1), (INTER2_INDEX, 2)]
-        {
-            let verifier = MockNitroVerifier::revoking(path_digest_for(revoked_index));
+        for (revoked_index, expected_calls_at_short_circuit) in [(1, 1), (2, 2)] {
+            let verifier = MockNitroVerifier {
+                revoked: Some(path_digest_for(revoked_index)),
+                ..MockNitroVerifier::default()
+            };
             let (result, calls) = run_pre_check(verifier).await;
 
             assert!(
@@ -280,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn onchain_revocation_check_propagates_rpc_errors() {
-        let verifier = MockNitroVerifier::failing();
+        let verifier = MockNitroVerifier { fail: true, ..MockNitroVerifier::default() };
         let (result, _calls) = run_pre_check(verifier).await;
 
         let err = result.expect_err("RPC errors must surface to the caller");
