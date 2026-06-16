@@ -217,17 +217,19 @@ impl TxEip8130 {
 
         let account_changes = Bytes::from(alloy_rlp::encode(&self.account_changes));
         let calls = Bytes::from(calls);
-        let tail_payload_length = account_changes.length() + calls.length();
+        let tail_payload_length =
+            account_changes.length() + calls.length() + self.metadata.length();
         let mut tail =
             Vec::with_capacity(length_of_length(tail_payload_length) + tail_payload_length);
         Header { list: true, payload_length: tail_payload_length }.encode(&mut tail);
         account_changes.encode(&mut tail);
         calls.encode(&mut tail);
+        self.metadata.encode(&mut tail);
         tail
     }
 
     #[cfg(feature = "reth")]
-    fn decode_compact_tail(tail: &[u8]) -> (Vec<AccountChange>, Vec<Vec<Call>>) {
+    fn decode_compact_tail(tail: &[u8]) -> (Vec<AccountChange>, Vec<Vec<Call>>, Bytes) {
         let mut tail = tail;
         let header = Header::decode(&mut tail)
             .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 tail: {err}"));
@@ -239,6 +241,8 @@ impl TxEip8130 {
         });
         let calls = Bytes::decode(&mut tail)
             .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
+        let metadata = Bytes::decode(&mut tail)
+            .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 metadata: {err}"));
         let consumed = started - tail.len();
         assert_eq!(
             consumed, header.payload_length,
@@ -260,7 +264,7 @@ impl TxEip8130 {
             .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
         assert!(calls_buf.is_empty(), "compact-encoded EIP-8130 calls left trailing bytes");
 
-        (account_changes, calls)
+        (account_changes, calls, metadata)
     }
 
     /// Signing-hash preimage for the sender, per [EIP-8130].
@@ -374,10 +378,9 @@ impl Compact for TxEip8130 {
             tail_len: tail.len() as u64,
         };
 
-        let start = buf.as_mut().len();
-        head.to_compact(buf);
+        let identifier = head.to_compact(buf);
         buf.put_slice(&tail);
-        buf.as_mut().len() - start
+        identifier
     }
 
     fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
@@ -401,7 +404,7 @@ impl Compact for TxEip8130 {
             "compact-encoded EIP-8130 tail shorter than declared length"
         );
         let (tail, buf) = buf.split_at(tail_len);
-        let (account_changes, calls) = Self::decode_compact_tail(tail);
+        let (account_changes, calls, metadata) = Self::decode_compact_tail(tail);
 
         (
             Self {
@@ -415,6 +418,7 @@ impl Compact for TxEip8130 {
                 gas_limit,
                 account_changes,
                 calls,
+                metadata,
                 payer,
             },
             buf,
