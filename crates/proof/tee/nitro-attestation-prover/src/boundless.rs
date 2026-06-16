@@ -40,6 +40,8 @@ use url::Url;
 
 use crate::{AttestationProof, AttestationProofProvider, ProverError, Result};
 
+const DEFAULT_TRUSTED_CERTS_PREFIX_LEN: u8 = 1;
+
 /// Concrete [`Client`] type produced by the builder chain used in
 /// [`BoundlessProver`]. The uploader is [`NotProvided`] because we
 /// use inline inputs (stdin) rather than uploading to external storage.
@@ -159,7 +161,6 @@ impl BoundlessProver {
         image_id: [u32; 8],
         poll_interval: Duration,
         timeout: Duration,
-        trusted_certs_prefix_len: u8,
         max_recovery_attempts: u32,
         max_attestation_age: Duration,
         offer_min_price: Option<Amount>,
@@ -175,7 +176,7 @@ impl BoundlessProver {
             image_id,
             poll_interval,
             timeout,
-            trusted_certs_prefix_len,
+            trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX_LEN,
             max_recovery_attempts,
             max_attestation_age,
             offer_min_price,
@@ -1052,7 +1053,6 @@ mod tests {
     const TEST_IMAGE_ID: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
     const TEST_POLL_INTERVAL: Duration = Duration::from_secs(5);
     const TEST_TIMEOUT: Duration = Duration::from_secs(300);
-    const DEFAULT_TRUSTED_PREFIX: u8 = 1;
     const TEST_MAX_RECOVERY_ATTEMPTS: u32 = 5;
     const TEST_MIN_PRICE_ETH: &str = "0.01";
     const TEST_MAX_PRICE_ETH: &str = "0.03";
@@ -1075,7 +1075,7 @@ mod tests {
             image_id: TEST_IMAGE_ID,
             poll_interval: TEST_POLL_INTERVAL,
             timeout: TEST_TIMEOUT,
-            trusted_certs_prefix_len: DEFAULT_TRUSTED_PREFIX,
+            trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX_LEN,
             max_recovery_attempts: TEST_MAX_RECOVERY_ATTEMPTS,
             max_attestation_age: TEST_MAX_ATTESTATION_AGE,
             offer_min_price: None,
@@ -1109,7 +1109,7 @@ mod tests {
         assert_eq!(prover.image_id, TEST_IMAGE_ID);
         assert_eq!(prover.poll_interval, TEST_POLL_INTERVAL);
         assert_eq!(prover.timeout, TEST_TIMEOUT);
-        assert_eq!(prover.trusted_certs_prefix_len, DEFAULT_TRUSTED_PREFIX);
+        assert_eq!(prover.trusted_certs_prefix_len, DEFAULT_TRUSTED_CERTS_PREFIX_LEN);
         assert_eq!(prover.max_recovery_attempts, TEST_MAX_RECOVERY_ATTEMPTS);
         assert!(prover.offer_min_price.is_none());
         assert!(prover.offer_max_price.is_none());
