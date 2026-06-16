@@ -146,7 +146,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
+    use std::sync::{Arc, Mutex};
+
+    use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
 
     use super::*;
@@ -154,8 +156,9 @@ mod tests {
 
     #[derive(Debug)]
     struct TestNitroVerifier {
-        revoked: bool,
+        revoked: Option<B256>,
         fails: bool,
+        calls: Arc<Mutex<Vec<B256>>>,
     }
 
     #[async_trait]
@@ -164,11 +167,12 @@ mod tests {
             Address::repeat_byte(0x42)
         }
 
-        async fn is_revoked(&self, _cert_hash: alloy_primitives::B256) -> Result<bool> {
+        async fn is_revoked(&self, cert_hash: B256) -> Result<bool> {
+            self.calls.lock().unwrap().push(cert_hash);
             if self.fails {
                 return Err(RegistrarError::Config("rpc unavailable".into()));
             }
-            Ok(self.revoked)
+            Ok(self.revoked == Some(cert_hash))
         }
     }
 
@@ -178,6 +182,12 @@ mod tests {
 
     fn attestation() -> Vec<u8> {
         hex::decode(include_str!("testdata/minimal_attestation.hex").trim()).unwrap()
+    }
+
+    fn intermediate_digests(attestation: &[u8]) -> Vec<B256> {
+        let report = AttestationReport::parse(attestation).unwrap();
+        let cert_infos = crl::CertCrlInfo::from_chain(&report.cert_chain_der()).unwrap();
+        crl::CertCrlInfo::intermediates(&cert_infos).map(|info| info.path_digest).collect()
     }
 
     #[tokio::test]
@@ -198,8 +208,14 @@ mod tests {
 
     #[tokio::test]
     async fn onchain_revocation_short_circuits_before_crl_and_tx() {
-        let manager = manager(Box::new(TestNitroVerifier { revoked: true, fails: false }));
         let attestation = attestation();
+        let digests = intermediate_digests(&attestation);
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let manager = manager(Box::new(TestNitroVerifier {
+            revoked: Some(digests[0]),
+            fails: false,
+            calls: Arc::clone(&calls),
+        }));
 
         let revoked = manager
             .check_and_revoke_crls(&attestation, &healthy_prover_instance(EP1))
@@ -207,11 +223,17 @@ mod tests {
             .unwrap();
 
         assert!(revoked);
+        assert_eq!(*calls.lock().unwrap(), vec![digests[0]]);
     }
 
     #[tokio::test]
     async fn onchain_error_falls_through_to_crl_layer_fail_open() {
-        let manager = manager(Box::new(TestNitroVerifier { revoked: false, fails: true }));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let manager = manager(Box::new(TestNitroVerifier {
+            revoked: None,
+            fails: true,
+            calls: Arc::clone(&calls),
+        }));
         let attestation = attestation();
 
         let revoked = manager
