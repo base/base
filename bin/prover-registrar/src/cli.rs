@@ -709,7 +709,7 @@ impl Cli {
                 nitro_verifier_address,
                 config.l1_rpc_url.clone(),
             ));
-            Some(CertManager::new(&config.crl, nitro_verifier, tx_manager)?)
+            Some(CertManager::new(config.crl.fetch_timeout, nitro_verifier, tx_manager)?)
         } else {
             None
         };

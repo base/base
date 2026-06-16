@@ -4,6 +4,8 @@
 //! fetches AWS Nitro CRLs, and submits `revokeCert` transactions for
 //! certificates that are newly observed on a CRL.
 
+use std::time::Duration;
+
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
 use base_proof_contracts::INitroEnclaveVerifier;
@@ -11,9 +13,7 @@ use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::{info, warn};
 
-use crate::{
-    CrlConfig, NitroVerifierClient, ProverInstance, RegistrarError, RegistrarMetrics, Result, crl,
-};
+use crate::{NitroVerifierClient, ProverInstance, RegistrarError, RegistrarMetrics, Result, crl};
 
 /// Manages Nitro certificate revocation checks and revocation transaction submission.
 #[derive(Debug)]
@@ -27,18 +27,17 @@ impl<T> CertManager<T>
 where
     T: TxManager,
 {
-    /// Creates a certificate manager from CRL configuration, verifier client,
-    /// and transaction manager.
+    /// Creates a certificate manager from CRL fetch timeout, verifier client, and transaction manager.
     ///
     /// # Errors
     ///
     /// Returns an error if the CRL HTTP client cannot be built.
     pub fn new(
-        config: &CrlConfig,
+        fetch_timeout: Duration,
         nitro_verifier: Box<dyn NitroVerifierClient>,
         tx_manager: T,
     ) -> Result<Self> {
-        let http_client = crl::build_crl_http_client(config.fetch_timeout)?;
+        let http_client = crl::build_crl_http_client(fetch_timeout)?;
         Ok(Self { http_client, nitro_verifier, tx_manager })
     }
 
@@ -141,8 +140,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use alloy_primitives::Address;
     use async_trait::async_trait;
 
@@ -150,39 +147,27 @@ mod tests {
     use crate::test_utils::{EP1, NoopNitroVerifier, NoopTxManager, healthy_prover_instance};
 
     #[derive(Debug)]
-    struct RevokedNitroVerifier;
+    struct TestNitroVerifier {
+        revoked: bool,
+        fails: bool,
+    }
 
     #[async_trait]
-    impl NitroVerifierClient for RevokedNitroVerifier {
+    impl NitroVerifierClient for TestNitroVerifier {
         fn address(&self) -> Address {
             Address::repeat_byte(0x42)
         }
 
         async fn is_revoked(&self, _cert_hash: alloy_primitives::B256) -> Result<bool> {
-            Ok(true)
+            if self.fails {
+                return Err(RegistrarError::Config("rpc unavailable".into()));
+            }
+            Ok(self.revoked)
         }
     }
 
-    #[derive(Debug)]
-    struct FailingNitroVerifier;
-
-    #[async_trait]
-    impl NitroVerifierClient for FailingNitroVerifier {
-        fn address(&self) -> Address {
-            Address::repeat_byte(0x42)
-        }
-
-        async fn is_revoked(&self, _cert_hash: alloy_primitives::B256) -> Result<bool> {
-            Err(RegistrarError::Config("rpc unavailable".into()))
-        }
-    }
-
-    fn config() -> CrlConfig {
-        CrlConfig {
-            enabled: true,
-            nitro_verifier_address: Some(Address::repeat_byte(0x42)),
-            fetch_timeout: Duration::from_millis(10),
-        }
+    fn manager(nitro_verifier: Box<dyn NitroVerifierClient>) -> CertManager<NoopTxManager> {
+        CertManager::new(Duration::from_millis(10), nitro_verifier, NoopTxManager).unwrap()
     }
 
     fn attestation() -> Vec<u8> {
@@ -191,8 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn parse_failure_includes_instance_endpoint() {
-        let manager =
-            CertManager::new(&config(), Box::new(NoopNitroVerifier), NoopTxManager).unwrap();
+        let manager = manager(Box::new(NoopNitroVerifier));
 
         let err = manager
             .check_and_revoke_crls(b"not a cose attestation", &healthy_prover_instance(EP1))
@@ -208,8 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn onchain_revocation_short_circuits_before_crl_and_tx() {
-        let manager =
-            CertManager::new(&config(), Box::new(RevokedNitroVerifier), NoopTxManager).unwrap();
+        let manager = manager(Box::new(TestNitroVerifier { revoked: true, fails: false }));
         let attestation = attestation();
 
         let revoked = manager
@@ -222,8 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn onchain_error_falls_through_to_crl_layer_fail_open() {
-        let manager =
-            CertManager::new(&config(), Box::new(FailingNitroVerifier), NoopTxManager).unwrap();
+        let manager = manager(Box::new(TestNitroVerifier { revoked: false, fails: true }));
         let attestation = attestation();
 
         let revoked = manager
