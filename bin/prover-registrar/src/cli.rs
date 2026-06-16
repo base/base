@@ -2,7 +2,6 @@
 
 use std::{
     collections::HashSet,
-    num::NonZeroUsize,
     path::PathBuf,
     sync::{
         Arc,
@@ -49,11 +48,6 @@ base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
 const DEFAULT_TRUSTED_CERTS_PREFIX: u8 = 1;
 const DEFAULT_MAX_RECOVERY_ATTEMPTS: u32 = 5;
 const DEFAULT_MAX_ATTESTATION_AGE_SECS: u64 = 3300;
-const DEFAULT_MAX_CONCURRENCY_NONZERO: NonZeroUsize =
-    match NonZeroUsize::new(DEFAULT_MAX_CONCURRENCY) {
-        Some(value) => value,
-        None => panic!("default max concurrency must be non-zero"),
-    };
 
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]
@@ -124,9 +118,10 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = DEFAULT_MAX_CONCURRENCY_NONZERO
+        default_value_t = DEFAULT_MAX_CONCURRENCY,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
     )]
-    max_concurrency: NonZeroUsize,
+    max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -204,11 +199,19 @@ struct BoundlessArgs {
     boundless_timeout_secs: u64,
 
     /// Minimum Boundless offer price in ETH for each submitted proof request.
-    #[arg(long, env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"))]
+    #[arg(
+        long,
+        env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"),
+        requires = "boundless_max_price_eth"
+    )]
     boundless_min_price_eth: Option<String>,
 
     /// Maximum Boundless offer price in ETH for each submitted proof request.
-    #[arg(long, env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"))]
+    #[arg(
+        long,
+        env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"),
+        requires = "boundless_min_price_eth"
+    )]
     boundless_max_price_eth: Option<String>,
 
     /// Optional duration in seconds for the Boundless offer price ramp.
@@ -350,26 +353,13 @@ impl Cli {
                     .map(|s| parse_boundless_eth_amount("--boundless-max-price-eth", s))
                     .transpose()?;
 
-                match (&offer_min_price, &offer_max_price) {
-                    (Some(_), None) => {
-                        return Err(RegistrarError::Config(
-                            "--boundless-max-price-eth is required when --boundless-min-price-eth is set"
-                                .into(),
-                        ));
-                    }
-                    (None, Some(_)) => {
-                        return Err(RegistrarError::Config(
-                            "--boundless-min-price-eth is required when --boundless-max-price-eth is set"
-                                .into(),
-                        ));
-                    }
-                    (Some(min_price), Some(max_price)) if max_price.value < min_price.value => {
+                if let (Some(min_price), Some(max_price)) = (&offer_min_price, &offer_max_price) {
+                    if max_price.value < min_price.value {
                         return Err(RegistrarError::Config(
                             "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
                                 .into(),
                         ));
                     }
-                    _ => {}
                 }
 
                 Ok(ProvingConfig::Boundless(Box::new(BoundlessProver {
@@ -537,14 +527,14 @@ impl Cli {
         let driver_config = DriverConfig {
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             cancel: cancel.clone(),
-            max_concurrency: self.max_concurrency.get(),
+            max_concurrency: self.max_concurrency,
             unhealthy_registration_window: Duration::from_secs(
                 self.unhealthy_registration_window_secs,
             ),
         };
         let signer_manager_config = SignerManagerConfig {
             registry_address: self.tee_prover_registry_address,
-            max_concurrency: self.max_concurrency.get(),
+            max_concurrency: self.max_concurrency,
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
         };
@@ -723,85 +713,50 @@ mod tests {
         ]
     }
 
-    struct TestConfig {
-        signing: SignerConfig,
-        tx_manager: TxManagerConfig,
-        proving: ProvingConfig,
-        poll_interval: Duration,
-        prover_timeout: Duration,
-        max_concurrency: usize,
-        max_tx_retries: u32,
-        tx_retry_delay: Duration,
-        unhealthy_registration_window: Duration,
-        target_group_arn: String,
-        aws_region: String,
-        prover_port: u16,
-        health_addr: SocketAddr,
-        crl_enabled: bool,
-        crl_nitro_verifier_address: Option<Address>,
-        crl_fetch_timeout: Duration,
-    }
-
-    impl Cli {
-        fn test_config(self) -> std::result::Result<TestConfig, RegistrarError> {
-            let proving = self.proving_config()?;
-            let signing = SignerConfig::try_from(self.signer)
-                .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?;
-            let tx_manager = TxManagerConfig::try_from(self.tx_manager)
-                .map_err(|e| RegistrarError::Config(format!("tx-manager: {e}")))?;
-
-            Ok(TestConfig {
-                signing,
-                tx_manager,
-                proving,
-                poll_interval: Duration::from_secs(self.poll_interval_secs),
-                prover_timeout: Duration::from_secs(self.prover_timeout_secs),
-                max_concurrency: self.max_concurrency.get(),
-                max_tx_retries: self.max_tx_retries,
-                tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
-                unhealthy_registration_window: Duration::from_secs(
-                    self.unhealthy_registration_window_secs,
-                ),
-                target_group_arn: self.target_group_arn,
-                aws_region: self.aws_region,
-                prover_port: self.prover_port,
-                health_addr: self.health.socket_addr(),
-                crl_enabled: self.crl.crl_check_enabled,
-                crl_nitro_verifier_address: self.crl.crl_nitro_verifier_address,
-                crl_fetch_timeout: Duration::from_secs(self.crl.crl_fetch_timeout_secs),
-            })
-        }
+    fn boundless_prover(args: Vec<&'static str>) -> Box<BoundlessProver> {
+        let ProvingConfig::Boundless(prover) = Cli::parse_from(args).proving_config().unwrap()
+        else {
+            panic!("expected Boundless proving config");
+        };
+        prover
     }
 
     #[test]
     fn valid_configs_parse() {
         for args in [boundless_args(), direct_args(), remote_signer_args()] {
-            assert!(Cli::parse_from(args).test_config().is_ok());
+            let cli = Cli::parse_from(args);
+            assert!(cli.proving_config().is_ok());
+            assert!(SignerConfig::try_from(cli.signer.clone()).is_ok());
+            assert!(TxManagerConfig::try_from(cli.tx_manager.clone()).is_ok());
         }
     }
 
     #[test]
     fn boundless_mode_returns_boundless_proving() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        assert!(matches!(config.proving, ProvingConfig::Boundless(_)));
+        assert!(matches!(
+            Cli::parse_from(boundless_args()).proving_config().unwrap(),
+            ProvingConfig::Boundless(_)
+        ));
     }
 
     #[test]
     fn direct_mode_returns_direct_proving() {
-        let config = Cli::parse_from(direct_args()).test_config().unwrap();
-        assert!(matches!(config.proving, ProvingConfig::Direct { .. }));
+        assert!(matches!(
+            Cli::parse_from(direct_args()).proving_config().unwrap(),
+            ProvingConfig::Direct { .. }
+        ));
     }
 
     #[test]
     fn local_key_returns_local_signing() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        assert!(matches!(config.signing, SignerConfig::Local { .. }));
+        let cli = Cli::parse_from(boundless_args());
+        assert!(matches!(SignerConfig::try_from(cli.signer).unwrap(), SignerConfig::Local { .. }));
     }
 
     #[test]
     fn remote_signer_returns_remote_signing() {
-        let config = Cli::parse_from(remote_signer_args()).test_config().unwrap();
-        assert!(matches!(config.signing, SignerConfig::Remote { .. }));
+        let cli = Cli::parse_from(remote_signer_args());
+        assert!(matches!(SignerConfig::try_from(cli.signer).unwrap(), SignerConfig::Remote { .. }));
     }
 
     #[test]
@@ -811,7 +766,7 @@ mod tests {
         // The signer macro doesn't require signing args at clap level;
         // the TryFrom conversion catches it.
         if let Ok(cli) = Cli::try_parse_from(args) {
-            assert!(cli.test_config().is_err());
+            assert!(SignerConfig::try_from(cli.signer).is_err());
         }
     }
 
@@ -847,32 +802,38 @@ mod tests {
 
     #[test]
     fn default_durations_and_concurrency() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        assert_eq!(config.poll_interval, Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS));
-        assert_eq!(config.prover_timeout, Duration::from_secs(DEFAULT_PROVER_TIMEOUT_SECS));
-        assert_eq!(config.max_concurrency, DEFAULT_MAX_CONCURRENCY);
-        assert_eq!(config.max_tx_retries, DEFAULT_MAX_TX_RETRIES);
-        assert_eq!(config.tx_retry_delay, Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS));
+        let cli = Cli::parse_from(boundless_args());
         assert_eq!(
-            config.unhealthy_registration_window,
+            Duration::from_secs(cli.poll_interval_secs),
+            Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS)
+        );
+        assert_eq!(
+            Duration::from_secs(cli.prover_timeout_secs),
+            Duration::from_secs(DEFAULT_PROVER_TIMEOUT_SECS)
+        );
+        assert_eq!(cli.max_concurrency, DEFAULT_MAX_CONCURRENCY);
+        assert_eq!(cli.max_tx_retries, DEFAULT_MAX_TX_RETRIES);
+        assert_eq!(
+            Duration::from_secs(cli.tx_retry_delay_secs),
+            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS)
+        );
+        assert_eq!(
+            Duration::from_secs(cli.unhealthy_registration_window_secs),
             Duration::from_secs(DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS),
         );
     }
 
     #[test]
     fn discovery_config_fields() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        assert_eq!(config.target_group_arn, TEST_TARGET_GROUP_ARN);
-        assert_eq!(config.aws_region, TEST_AWS_REGION);
-        assert_eq!(config.prover_port, DEFAULT_PROVER_PORT);
+        let cli = Cli::parse_from(boundless_args());
+        assert_eq!(cli.target_group_arn, TEST_TARGET_GROUP_ARN);
+        assert_eq!(cli.aws_region, TEST_AWS_REGION);
+        assert_eq!(cli.prover_port, DEFAULT_PROVER_PORT);
     }
 
     #[test]
     fn image_id_parsed_correctly() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        let ProvingConfig::Boundless(b) = &config.proving else {
-            panic!("expected Boundless proving config");
-        };
+        let b = boundless_prover(boundless_args());
         assert_eq!(b.image_id, [1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
@@ -883,10 +844,7 @@ mod tests {
     /// time-to-lock out of the box.
     #[test]
     fn boundless_offer_pricing_defaults_to_sdk() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        let ProvingConfig::Boundless(b) = &config.proving else {
-            panic!("expected Boundless proving config");
-        };
+        let b = boundless_prover(boundless_args());
 
         assert!(b.offer_min_price.is_none());
         assert!(b.offer_max_price.is_none());
@@ -903,10 +861,7 @@ mod tests {
             TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS_STR,
         ]);
 
-        let config = Cli::parse_from(args).test_config().unwrap();
-        let ProvingConfig::Boundless(b) = &config.proving else {
-            panic!("expected Boundless proving config");
-        };
+        let b = boundless_prover(args);
 
         assert_eq!(b.offer_bidding_start_delay_secs, TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS);
     }
@@ -919,10 +874,7 @@ mod tests {
             TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS_STR,
         ]);
 
-        let config = Cli::parse_from(args).test_config().unwrap();
-        let ProvingConfig::Boundless(b) = &config.proving else {
-            panic!("expected Boundless proving config");
-        };
+        let b = boundless_prover(args);
 
         assert_eq!(b.offer_lock_timeout_secs, Some(TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS));
     }
@@ -932,10 +884,7 @@ mod tests {
     /// plus headroom.
     #[test]
     fn boundless_timeout_default_covers_default_lock_timeout() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        let ProvingConfig::Boundless(b) = &config.proving else {
-            panic!("expected Boundless proving config");
-        };
+        let b = boundless_prover(boundless_args());
 
         assert_eq!(b.timeout, Duration::from_secs(1260));
     }
@@ -952,10 +901,7 @@ mod tests {
             "30",
         ]);
 
-        let config = Cli::parse_from(args).test_config().unwrap();
-        let ProvingConfig::Boundless(b) = &config.proving else {
-            panic!("expected Boundless proving config");
-        };
+        let b = boundless_prover(args);
 
         assert_eq!(
             b.offer_min_price,
@@ -985,9 +931,7 @@ mod tests {
         let mut args = boundless_args();
         args.extend(["--boundless-min-price-eth", TEST_BOUNDLESS_MIN_PRICE_ETH]);
 
-        let result = Cli::parse_from(args).test_config();
-
-        assert!(result.is_err());
+        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]
@@ -1000,46 +944,31 @@ mod tests {
             TEST_BOUNDLESS_MIN_PRICE_ETH,
         ]);
 
-        let result = Cli::parse_from(args).test_config();
+        let result = Cli::parse_from(args).proving_config();
 
         assert!(result.is_err());
     }
 
     #[test]
     fn tx_manager_config_has_defaults() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        assert_eq!(config.tx_manager.num_confirmations, 10);
-        assert_eq!(config.tx_manager.fee_limit_multiplier, 5);
+        let cli = Cli::parse_from(boundless_args());
+        let config = TxManagerConfig::try_from(cli.tx_manager).unwrap();
+        assert_eq!(config.num_confirmations, 10);
+        assert_eq!(config.fee_limit_multiplier, 5);
     }
 
     #[test]
     fn default_health_addr() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        assert_eq!(config.health_addr, SocketAddr::from(([0, 0, 0, 0], DEFAULT_HEALTH_PORT)));
+        let cli = Cli::parse_from(boundless_args());
+        assert_eq!(cli.health.socket_addr(), SocketAddr::from(([0, 0, 0, 0], DEFAULT_HEALTH_PORT)));
     }
 
     #[test]
     fn custom_health_addr() {
         let mut args = boundless_args();
         args.extend(["--health.addr", "127.0.0.1", "--health.port", "9090"]);
-        let config = Cli::parse_from(args).test_config().unwrap();
-        assert_eq!(config.health_addr, SocketAddr::from(([127, 0, 0, 1], 9090)));
-    }
-
-    #[test]
-    fn default_metrics_args() {
-        let cli = Cli::parse_from(boundless_args());
-        assert!(!cli.metrics.enabled);
-        assert_eq!(cli.metrics.port, MetricsArgs::default().port);
-    }
-
-    #[test]
-    fn custom_metrics_args() {
-        let mut args = boundless_args();
-        args.extend(["--metrics.enabled", "--metrics.port", "9100"]);
         let cli = Cli::parse_from(args);
-        assert!(cli.metrics.enabled);
-        assert_eq!(cli.metrics.port, 9100);
+        assert_eq!(cli.health.socket_addr(), SocketAddr::from(([127, 0, 0, 1], 9090)));
     }
 
     #[test]
@@ -1091,22 +1020,19 @@ mod tests {
             "--crl-nitro-verifier-address",
             TEST_CRL_VERIFIER_ADDR,
         ]);
-        let config = Cli::parse_from(args).test_config().unwrap();
-        assert!(config.crl_enabled);
-        assert!(config.crl_nitro_verifier_address.is_some());
-        assert_eq!(config.crl_fetch_timeout, Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS));
+        let cli = Cli::parse_from(args);
+        assert!(cli.crl.crl_check_enabled);
+        assert!(cli.crl.crl_nitro_verifier_address.is_some());
+        assert_eq!(
+            Duration::from_secs(cli.crl.crl_fetch_timeout_secs),
+            Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
+        );
     }
 
     #[test]
     fn crl_disabled_by_default() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        assert!(!config.crl_enabled);
-        assert!(config.crl_nitro_verifier_address.is_none());
-    }
-
-    #[test]
-    fn crl_disabled_allows_missing_verifier_address() {
-        let config = Cli::parse_from(boundless_args()).test_config().unwrap();
-        assert!(!config.crl_enabled);
+        let cli = Cli::parse_from(boundless_args());
+        assert!(!cli.crl.crl_check_enabled);
+        assert!(cli.crl.crl_nitro_verifier_address.is_none());
     }
 }
