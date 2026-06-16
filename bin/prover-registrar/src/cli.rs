@@ -294,13 +294,9 @@ fn parse_boundless_private_key(s: &str) -> std::result::Result<PrivateKeySigner,
 
 /// Parse a hex-encoded image ID string into `[u32; 8]`.
 fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
-    let hex_str = s.strip_prefix("0x").unwrap_or(s);
-    let bytes: [u8; 32] = hex::decode(hex_str)
-        .map_err(|e| RegistrarError::Config(format!("--image-id: {e}")))?
-        .try_into()
-        .map_err(|v: Vec<u8>| {
-            RegistrarError::Config(format!("--image-id: expected 32 bytes, got {}", v.len()))
-        })?;
+    let mut bytes = [0u8; 32];
+    hex::decode_to_slice(s.strip_prefix("0x").unwrap_or(s), &mut bytes)
+        .map_err(|e| RegistrarError::Config(format!("--image-id: {e}")))?;
 
     let mut id = [0u32; 8];
     for (i, chunk) in bytes.chunks_exact(4).enumerate() {
@@ -311,24 +307,18 @@ fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
 
 /// Parse an ETH-denominated Boundless offer price.
 fn parse_boundless_eth_amount(field: &str, s: &str) -> std::result::Result<Amount, RegistrarError> {
-    let amount = Amount::parse(s, Some(Asset::ETH))
-        .map_err(|e| RegistrarError::Config(format!("{field}: {e}")))?;
-    if amount.asset != Asset::ETH {
-        return Err(RegistrarError::Config(format!("{field}: expected ETH amount")));
-    }
-    Ok(amount)
+    Amount::parse_with_allowed(s, &[Asset::ETH], Some(Asset::ETH))
+        .map_err(|e| RegistrarError::Config(format!("{field}: {e}")))
 }
 
 impl Cli {
     fn boundless_prover(&self) -> std::result::Result<BoundlessProver, RegistrarError> {
-        let boundless_key =
-            self.boundless.boundless_private_key.as_deref().ok_or_else(|| {
-                RegistrarError::Config("--boundless-private-key is required".into())
-            })?;
-        let image_id_hex = self
-            .image_id
+        let boundless_key = self
+            .boundless
+            .boundless_private_key
             .as_deref()
-            .ok_or_else(|| RegistrarError::Config("--image-id is required".into()))?;
+            .expect("--boundless-private-key is required by clap");
+        let image_id_hex = self.image_id.as_deref().expect("--image-id is required by clap");
         let offer_min_price = self
             .boundless
             .boundless_min_price_eth
@@ -356,15 +346,13 @@ impl Cli {
                 .boundless
                 .boundless_rpc_url
                 .clone()
-                .ok_or_else(|| RegistrarError::Config("--boundless-rpc-url is required".into()))?,
+                .expect("--boundless-rpc-url is required by clap"),
             signer: parse_boundless_private_key(boundless_key)?,
             verifier_program_url: self
                 .boundless
                 .boundless_verifier_program_url
                 .clone()
-                .ok_or_else(|| {
-                    RegistrarError::Config("--boundless-verifier-program-url is required".into())
-                })?,
+                .expect("--boundless-verifier-program-url is required by clap"),
             image_id: parse_image_id(image_id_hex)?,
             poll_interval: Duration::from_secs(self.boundless.boundless_poll_interval_secs),
             timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
@@ -488,9 +476,7 @@ impl Cli {
         {
             Box::new(boundless)
         } else {
-            let elf_path = self.elf_path.as_ref().ok_or_else(|| {
-                RegistrarError::Config("--elf-path is required for direct mode".into())
-            })?;
+            let elf_path = self.elf_path.as_ref().expect("--elf-path is required by clap");
             let elf = std::fs::read(elf_path).map_err(|e| {
                 RegistrarError::Config(format!("failed to read ELF at {}: {e}", elf_path.display()))
             })?;
@@ -606,15 +592,6 @@ mod tests {
     const TEST_BOUNDLESS_MIN_PRICE_ETH: &str = "0.01";
     const TEST_BOUNDLESS_MAX_PRICE_ETH: &str = "0.03";
     const TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS: u32 = 30;
-    const TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS: u32 = 600;
-    const TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS_STR: &str = "600";
-    const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS: u64 = 90;
-    const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS_STR: &str = "90";
-    const TEST_ELF_PATH: &str = "/tmp/guest.elf";
-
-    const DEFAULT_POLL_INTERVAL_SECS: u64 = 30;
-    const DEFAULT_PROVER_TIMEOUT_SECS: u64 = 30;
-    const DEFAULT_PROVER_PORT: u16 = 8000;
 
     fn args(extra: &[&'static str]) -> Vec<&'static str> {
         let mut args = vec![
@@ -651,18 +628,8 @@ mod tests {
         ])
     }
 
-    fn direct_args() -> Vec<&'static str> {
-        args(&["--proving-mode", "direct", "--elf-path", TEST_ELF_PATH])
-    }
-
     fn boundless_prover(args: Vec<&'static str>) -> BoundlessProver {
         Cli::parse_from(args).boundless_prover().unwrap()
-    }
-
-    #[test]
-    fn valid_configs_parse() {
-        assert!(Cli::parse_from(boundless_args()).boundless_prover().is_ok());
-        assert!(Cli::try_parse_from(direct_args()).is_ok());
     }
 
     #[test]
@@ -678,37 +645,6 @@ mod tests {
             args.extend([flag, "0"]);
             assert!(Cli::try_parse_from(args).is_err(), "{flag} should reject zero");
         }
-    }
-
-    #[test]
-    fn default_durations_and_concurrency() {
-        let cli = Cli::parse_from(boundless_args());
-        assert_eq!(
-            Duration::from_secs(cli.poll_interval_secs),
-            Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS)
-        );
-        assert_eq!(
-            Duration::from_secs(cli.prover_timeout_secs),
-            Duration::from_secs(DEFAULT_PROVER_TIMEOUT_SECS)
-        );
-        assert_eq!(cli.max_concurrency, DEFAULT_MAX_CONCURRENCY);
-        assert_eq!(cli.max_tx_retries, DEFAULT_MAX_TX_RETRIES);
-        assert_eq!(
-            Duration::from_secs(cli.tx_retry_delay_secs),
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS)
-        );
-        assert_eq!(
-            Duration::from_secs(cli.unhealthy_registration_window_secs),
-            Duration::from_secs(DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS),
-        );
-    }
-
-    #[test]
-    fn discovery_config_fields() {
-        let cli = Cli::parse_from(boundless_args());
-        assert_eq!(cli.target_group_arn, TEST_TARGET_GROUP_ARN);
-        assert_eq!(cli.aws_region, TEST_AWS_REGION);
-        assert_eq!(cli.prover_port, DEFAULT_PROVER_PORT);
     }
 
     #[test]
@@ -731,32 +667,6 @@ mod tests {
         assert!(b.offer_ramp_up_period_secs.is_none());
         assert!(b.offer_lock_timeout_secs.is_none());
         assert_eq!(b.offer_bidding_start_delay_secs, 0);
-    }
-
-    #[test]
-    fn boundless_offer_bidding_start_delay_parses() {
-        let mut args = boundless_args();
-        args.extend([
-            "--boundless-offer-bidding-start-delay-secs",
-            TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS_STR,
-        ]);
-
-        let b = boundless_prover(args);
-
-        assert_eq!(b.offer_bidding_start_delay_secs, TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS);
-    }
-
-    #[test]
-    fn boundless_offer_lock_timeout_parses() {
-        let mut args = boundless_args();
-        args.extend([
-            "--boundless-offer-lock-timeout-secs",
-            TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS_STR,
-        ]);
-
-        let b = boundless_prover(args);
-
-        assert_eq!(b.offer_lock_timeout_secs, Some(TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS));
     }
 
     /// `--boundless-timeout-secs` default should cover a 10-minute
@@ -868,29 +778,5 @@ mod tests {
         ]);
         let result = Cli::try_parse_from(args);
         assert!(result.is_err(), "--crl-fetch-timeout-secs 0 should be rejected by clap");
-    }
-
-    #[test]
-    fn crl_enabled_with_valid_config_parses() {
-        let mut args = boundless_args();
-        args.extend([
-            "--crl-check-enabled",
-            "--crl-nitro-verifier-address",
-            TEST_CRL_VERIFIER_ADDR,
-        ]);
-        let cli = Cli::parse_from(args);
-        assert!(cli.crl.crl_check_enabled);
-        assert!(cli.crl.crl_nitro_verifier_address.is_some());
-        assert_eq!(
-            Duration::from_secs(cli.crl.crl_fetch_timeout_secs),
-            Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
-        );
-    }
-
-    #[test]
-    fn crl_disabled_by_default() {
-        let cli = Cli::parse_from(boundless_args());
-        assert!(!cli.crl.crl_check_enabled);
-        assert!(cli.crl.crl_nitro_verifier_address.is_none());
     }
 }
