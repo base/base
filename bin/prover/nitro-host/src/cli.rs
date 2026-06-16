@@ -12,8 +12,6 @@ use std::time::Duration;
 
 use alloy_primitives::Address;
 #[cfg(any(target_os = "linux", feature = "local"))]
-use alloy_primitives::{B256, U256};
-#[cfg(any(target_os = "linux", feature = "local"))]
 use alloy_provider::{Provider, ProviderBuilder};
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -173,19 +171,21 @@ impl ProverRuntimeArgs {
             .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?;
 
         if self.fetch_rollup_config {
-            let cl_url = self.l2_cl_url.as_deref().ok_or_else(|| {
-                eyre!("--l2-cl-url is required when --fetch-rollup-config is set")
-            })?;
+            let cl_url = self
+                .l2_cl_url
+                .as_deref()
+                .expect("clap `requires` guarantees --l2-cl-url is present");
             let rpc = fetch_rollup_config_from_rpc(cl_url).await?;
 
-            if rpc.l2_chain_id != self.l2_chain_id {
+            if rpc.l2_chain_id.id() != self.l2_chain_id {
                 return Err(eyre!(
                     "chain ID mismatch: --l2-chain-id is {} but the L2 node returned {}",
                     self.l2_chain_id,
-                    rpc.l2_chain_id,
+                    rpc.l2_chain_id.id(),
                 ));
             }
 
+            let rpc_sc = rpc.genesis.system_config.as_ref();
             info!(
                 genesis_l1_hash = %rpc.genesis.l1.hash,
                 genesis_l1_number = rpc.genesis.l1.number,
@@ -195,25 +195,16 @@ impl ProverRuntimeArgs {
                 block_time = rpc.block_time,
                 deposit_contract = %rpc.deposit_contract_address,
                 system_config_address = %rpc.l1_system_config_address,
-                batcher_address = %rpc.genesis.system_config.batcher_addr,
-                gas_limit = rpc.genesis.system_config.gas_limit,
-                scalar = %rpc.genesis.system_config.scalar,
+                batcher_address = %rpc_sc.map(|sc| sc.batcher_address.to_string()).unwrap_or_default(),
+                gas_limit = rpc_sc.map(|sc| sc.gas_limit).unwrap_or_default(),
+                scalar = %rpc_sc.map(|sc| sc.scalar).unwrap_or_default(),
                 "overriding rollup config from L2 node RPC"
             );
 
-            rollup_config.genesis.l1.hash = rpc.genesis.l1.hash;
-            rollup_config.genesis.l1.number = rpc.genesis.l1.number;
-            rollup_config.genesis.l2.hash = rpc.genesis.l2.hash;
-            rollup_config.genesis.l2.number = rpc.genesis.l2.number;
-            rollup_config.genesis.l2_time = rpc.genesis.l2_time;
+            rollup_config.genesis = rpc.genesis;
             rollup_config.block_time = rpc.block_time;
             rollup_config.deposit_contract_address = rpc.deposit_contract_address;
             rollup_config.l1_system_config_address = rpc.l1_system_config_address;
-
-            let sc = rollup_config.genesis.system_config.get_or_insert_default();
-            sc.batcher_address = rpc.genesis.system_config.batcher_addr;
-            sc.gas_limit = rpc.genesis.system_config.gas_limit;
-            sc.scalar = rpc.genesis.system_config.scalar;
         }
 
         let l1_config = base_common_chains::L1_CONFIGS
@@ -586,43 +577,9 @@ impl WorkerTransportMode {
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
-#[derive(Debug, serde::Deserialize)]
-struct RollupConfigRpcResponse {
-    genesis: GenesisRpcResponse,
-    block_time: u64,
-    deposit_contract_address: Address,
-    l1_system_config_address: Address,
-    l2_chain_id: u64,
-}
-
-#[cfg(any(target_os = "linux", feature = "local"))]
-#[derive(Debug, serde::Deserialize)]
-struct GenesisRpcResponse {
-    l1: BlockRefRpcResponse,
-    l2: BlockRefRpcResponse,
-    l2_time: u64,
-    system_config: SystemConfigRpcResponse,
-}
-
-#[cfg(any(target_os = "linux", feature = "local"))]
-#[derive(Debug, serde::Deserialize)]
-struct BlockRefRpcResponse {
-    hash: B256,
-    number: u64,
-}
-
-#[cfg(any(target_os = "linux", feature = "local"))]
-#[derive(Debug, serde::Deserialize)]
-struct SystemConfigRpcResponse {
-    #[serde(alias = "batcherAddr")]
-    batcher_addr: Address,
-    #[serde(alias = "gasLimit")]
-    gas_limit: u64,
-    scalar: U256,
-}
-
-#[cfg(any(target_os = "linux", feature = "local"))]
-async fn fetch_rollup_config_from_rpc(cl_url: &str) -> eyre::Result<RollupConfigRpcResponse> {
+async fn fetch_rollup_config_from_rpc(
+    cl_url: &str,
+) -> eyre::Result<base_common_genesis::RollupConfig> {
     let provider = ProviderBuilder::new()
         .connect(cl_url)
         .await

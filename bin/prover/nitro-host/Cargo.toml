@@ -21,6 +21,7 @@ tracing.workspace = true
 base-cli-utils.workspace = true
 alloy-primitives.workspace = true
 base-common-chains.workspace = true
+base-common-genesis.workspace = true
 base-proof-tee-nitro-host.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, optional = true }

@@ -5953,6 +5953,7 @@ dependencies = [
  "alloy-provider 2.0.5",
  "base-cli-utils",
  "base-common-chains",
+ "base-common-genesis",
  "base-proof-host",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
