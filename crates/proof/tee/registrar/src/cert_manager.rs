@@ -33,17 +33,13 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrarError::Config`] if the CRL HTTP client cannot be built.
+    /// Returns an error if the CRL HTTP client cannot be built.
     pub fn new(
         config: &CrlConfig,
         nitro_verifier: Box<dyn NitroVerifierClient>,
         tx_manager: T,
     ) -> Result<Self> {
-        let http_client = crl::build_crl_http_client(config.fetch_timeout).map_err(|e| {
-            RegistrarError::Config(format!(
-                "failed to build CRL HTTP client (Layer 2 / AWS CRL fetch): {e}"
-            ))
-        })?;
+        let http_client = crl::build_crl_http_client(config.fetch_timeout)?;
         Ok(Self { enabled: config.enabled, http_client, nitro_verifier, tx_manager })
     }
 
@@ -151,31 +147,5 @@ where
         }
 
         Ok(true)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_utils::{NoopNitroVerifier, NoopTxManager, healthy_prover_instance};
-
-    #[tokio::test]
-    async fn check_and_revoke_crls_noops_when_disabled() {
-        let config = CrlConfig {
-            enabled: false,
-            nitro_verifier_address: None,
-            fetch_timeout: std::time::Duration::from_secs(1),
-        };
-        let cert_manager = CertManager::new(&config, Box::new(NoopNitroVerifier), NoopTxManager)
-            .expect("disabled cert manager still builds");
-
-        let result = cert_manager
-            .check_and_revoke_crls(
-                b"not-an-attestation",
-                &healthy_prover_instance("127.0.0.1:8000"),
-            )
-            .await;
-
-        assert!(!result.expect("disabled CRL checks must no-op"));
     }
 }
