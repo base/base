@@ -13,7 +13,7 @@ use boundless_market::{
     alloy::signers::local::PrivateKeySigner,
     price_oracle::{Amount, Asset},
 };
-use clap::{Args, Parser};
+use clap::Parser;
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
@@ -57,8 +57,98 @@ pub(crate) struct Cli {
     /// Hex-encoded guest program image ID.
     #[arg(long, env = cli_env!("IMAGE_ID"), value_parser = parse_image_id)]
     image_id: [u32; 8],
-    #[command(flatten)]
-    boundless: BoundlessArgs,
+
+    /// Boundless Network RPC URL.
+    #[arg(long = "boundless-rpc-url", env = cli_env!("BOUNDLESS_RPC_URL"))]
+    boundless_rpc_url: Url,
+
+    /// Hex-encoded private key for Boundless Network proving fees.
+    #[arg(long = "boundless-private-key", env = cli_env!("BOUNDLESS_PRIVATE_KEY"))]
+    boundless_fee_private_key: PrivateKeySigner,
+
+    /// HTTP(S) URL of the Nitro attestation verifier ELF (e.g. Pinata IPFS gateway URL).
+    #[arg(
+        long = "boundless-verifier-program-url",
+        env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL")
+    )]
+    boundless_verifier_program_url: Url,
+
+    /// Interval between Boundless fulfillment status checks, in seconds.
+    #[arg(
+        long = "boundless-poll-interval-secs",
+        env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"),
+        default_value_t = 5
+    )]
+    boundless_fulfillment_poll_interval_secs: u64,
+
+    /// Client-side fulfillment poll budget, in seconds.
+    #[arg(
+        long = "boundless-timeout-secs",
+        env = cli_env!("BOUNDLESS_TIMEOUT_SECS"),
+        default_value_t = 1260,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    boundless_timeout_secs: u64,
+
+    /// Minimum Boundless offer price in ETH for each submitted proof request.
+    #[arg(
+        long = "boundless-min-price-eth",
+        env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"),
+        requires = "boundless_max_price_eth",
+        value_parser = parse_boundless_eth_amount
+    )]
+    boundless_min_price_eth: Option<Amount>,
+
+    /// Maximum Boundless offer price in ETH for each submitted proof request.
+    #[arg(
+        long = "boundless-max-price-eth",
+        env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"),
+        requires = "boundless_min_price_eth",
+        value_parser = parse_boundless_eth_amount
+    )]
+    boundless_max_price_eth: Option<Amount>,
+
+    /// Optional duration in seconds for the Boundless offer price ramp.
+    #[arg(
+        long = "boundless-offer-ramp-up-period-secs",
+        env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS")
+    )]
+    boundless_offer_ramp_up_period_secs: Option<u32>,
+
+    /// Maximum lock and delivery window for a Boundless proof request.
+    #[arg(
+        long = "boundless-offer-lock-timeout-secs",
+        env = cli_env!("BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS")
+    )]
+    boundless_offer_lock_timeout_secs: Option<u32>,
+
+    /// Delay before Boundless bidding starts.
+    #[arg(
+        long = "boundless-offer-bidding-start-delay-secs",
+        env = cli_env!("BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS"),
+        default_value_t = 0
+    )]
+    boundless_offer_bidding_start_delay_secs: u64,
+
+    /// Maximum number of deterministic request-ID slots to probe when
+    /// recovering in-flight proofs after an instance rotation.
+    #[arg(
+        long = "boundless-max-recovery-attempts",
+        env = cli_env!("BOUNDLESS_MAX_RECOVERY_ATTEMPTS"),
+        default_value_t = 5
+    )]
+    boundless_max_recovery_attempts: u32,
+
+    /// Maximum age (in seconds) of a recovered proof's attestation timestamp
+    /// before it is considered stale. Should be slightly below the onchain
+    /// `MAX_AGE` to account for clock skew. Defaults to 3300 s (55 minutes).
+    #[arg(
+        long = "max-attestation-age-secs",
+        env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
+        default_value_t = 3300
+    )]
+    max_attestation_age_secs: u64,
+
     /// Interval between discovery and registration poll cycles, in seconds.
     #[arg(
         long,
@@ -115,101 +205,6 @@ pub(crate) struct Cli {
     metrics: MetricsArgs,
 }
 
-/// Boundless Network CLI arguments.
-#[derive(Args)]
-struct BoundlessArgs {
-    /// Boundless Network RPC URL.
-    #[arg(long = "boundless-rpc-url", env = cli_env!("BOUNDLESS_RPC_URL"))]
-    rpc_url: Url,
-
-    /// Hex-encoded private key for Boundless Network proving fees.
-    #[arg(long = "boundless-private-key", env = cli_env!("BOUNDLESS_PRIVATE_KEY"))]
-    fee_private_key: PrivateKeySigner,
-
-    /// HTTP(S) URL of the Nitro attestation verifier ELF (e.g. Pinata IPFS gateway URL).
-    #[arg(
-        long = "boundless-verifier-program-url",
-        env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL")
-    )]
-    verifier_program_url: Url,
-
-    /// Interval between Boundless fulfillment status checks, in seconds.
-    #[arg(
-        long = "boundless-poll-interval-secs",
-        env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"),
-        default_value_t = 5
-    )]
-    fulfillment_poll_interval_secs: u64,
-
-    /// Client-side fulfillment poll budget, in seconds.
-    #[arg(
-        long = "boundless-timeout-secs",
-        env = cli_env!("BOUNDLESS_TIMEOUT_SECS"),
-        default_value_t = 1260,
-        value_parser = clap::value_parser!(u64).range(1..)
-    )]
-    timeout_secs: u64,
-
-    /// Minimum Boundless offer price in ETH for each submitted proof request.
-    #[arg(
-        long = "boundless-min-price-eth",
-        env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"),
-        requires = "max_price_eth",
-        value_parser = parse_boundless_eth_amount
-    )]
-    min_price_eth: Option<Amount>,
-
-    /// Maximum Boundless offer price in ETH for each submitted proof request.
-    #[arg(
-        long = "boundless-max-price-eth",
-        env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"),
-        requires = "min_price_eth",
-        value_parser = parse_boundless_eth_amount
-    )]
-    max_price_eth: Option<Amount>,
-
-    /// Optional duration in seconds for the Boundless offer price ramp.
-    #[arg(
-        long = "boundless-offer-ramp-up-period-secs",
-        env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS")
-    )]
-    offer_ramp_up_period_secs: Option<u32>,
-
-    /// Maximum lock and delivery window for a Boundless proof request.
-    #[arg(
-        long = "boundless-offer-lock-timeout-secs",
-        env = cli_env!("BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS")
-    )]
-    offer_lock_timeout_secs: Option<u32>,
-
-    /// Delay before Boundless bidding starts.
-    #[arg(
-        long = "boundless-offer-bidding-start-delay-secs",
-        env = cli_env!("BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS"),
-        default_value_t = 0
-    )]
-    offer_bidding_start_delay_secs: u64,
-
-    /// Maximum number of deterministic request-ID slots to probe when
-    /// recovering in-flight proofs after an instance rotation.
-    #[arg(
-        long = "boundless-max-recovery-attempts",
-        env = cli_env!("BOUNDLESS_MAX_RECOVERY_ATTEMPTS"),
-        default_value_t = 5
-    )]
-    max_recovery_attempts: u32,
-
-    /// Maximum age (in seconds) of a recovered proof's attestation timestamp
-    /// before it is considered stale. Should be slightly below the onchain
-    /// `MAX_AGE` to account for clock skew. Defaults to 3300 s (55 minutes).
-    #[arg(
-        long = "max-attestation-age-secs",
-        env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
-        default_value_t = 3300
-    )]
-    max_attestation_age_secs: u64,
-}
-
 /// Parse a hex-encoded image ID string into `[u32; 8]`.
 fn parse_image_id(s: &str) -> Result<[u32; 8], String> {
     let bytes = <[u8; 32]>::from_hex(s.strip_prefix("0x").unwrap_or(s))
@@ -226,9 +221,8 @@ fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
 
 impl Cli {
     pub(crate) fn config(self) -> Result<RegistrarConfig, RegistrarError> {
-        let boundless = self.boundless;
         if matches!(
-            (&boundless.min_price_eth, &boundless.max_price_eth),
+            (&self.boundless_min_price_eth, &self.boundless_max_price_eth),
             (Some(min_price), Some(max_price)) if max_price.value < min_price.value
         ) {
             return Err(RegistrarError::Config(
@@ -237,24 +231,22 @@ impl Cli {
             ));
         }
 
-        let boundless_prover = BoundlessProver {
-            offer_min_price: boundless.min_price_eth,
-            offer_max_price: boundless.max_price_eth,
-            offer_ramp_up_period_secs: boundless.offer_ramp_up_period_secs,
-            offer_lock_timeout_secs: boundless.offer_lock_timeout_secs,
-            offer_bidding_start_delay_secs: boundless.offer_bidding_start_delay_secs,
-            ..BoundlessProver::new(
-                boundless.rpc_url,
-                boundless.fee_private_key,
-                boundless.verifier_program_url,
-                self.image_id,
-                Duration::from_secs(boundless.fulfillment_poll_interval_secs),
-                Duration::from_secs(boundless.timeout_secs),
-                1,
-                boundless.max_recovery_attempts,
-                Duration::from_secs(boundless.max_attestation_age_secs),
-            )
-        };
+        let boundless_prover = BoundlessProver::new(
+            self.boundless_rpc_url,
+            self.boundless_fee_private_key,
+            self.boundless_verifier_program_url,
+            self.image_id,
+            Duration::from_secs(self.boundless_fulfillment_poll_interval_secs),
+            Duration::from_secs(self.boundless_timeout_secs),
+            1,
+            self.boundless_max_recovery_attempts,
+            Duration::from_secs(self.max_attestation_age_secs),
+            self.boundless_min_price_eth,
+            self.boundless_max_price_eth,
+            self.boundless_offer_ramp_up_period_secs,
+            self.boundless_offer_lock_timeout_secs,
+            self.boundless_offer_bidding_start_delay_secs,
+        );
         let signing = SignerConfig::try_from(self.signer)
             .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?;
         let tx_manager_config = TxManagerConfig::try_from(self.tx_manager)
@@ -287,60 +279,68 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::U256;
+
     use super::*;
 
     const TEST_IMAGE_ID: &str =
         "0x0100000002000000030000000400000005000000060000000700000008000000";
-
-    fn boundless_args() -> Vec<&'static str> {
-        vec![
-            "prover-registrar",
-            "--l1-rpc-url",
-            "http://localhost:8545",
-            "--tee-prover-registry-address",
-            "0x0000000000000000000000000000000000000001",
-            "--target-group-arn",
-            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
-            "--aws-region",
-            "us-east-1",
-            "--private-key",
-            "0x0101010101010101010101010101010101010101010101010101010101010101",
-            "--image-id",
-            TEST_IMAGE_ID,
-            "--boundless-rpc-url",
-            "http://localhost:9545",
-            "--boundless-private-key",
-            "0202020202020202020202020202020202020202020202020202020202020202",
-            "--boundless-verifier-program-url",
-            "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ]
-    }
+    const BOUNDLESS_ARGS: &[&str] = &[
+        "prover-registrar",
+        "--l1-rpc-url",
+        "http://localhost:8545",
+        "--tee-prover-registry-address",
+        "0x0000000000000000000000000000000000000001",
+        "--target-group-arn",
+        "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
+        "--aws-region",
+        "us-east-1",
+        "--private-key",
+        "0x0101010101010101010101010101010101010101010101010101010101010101",
+        "--image-id",
+        TEST_IMAGE_ID,
+        "--boundless-rpc-url",
+        "http://localhost:9545",
+        "--boundless-private-key",
+        "0202020202020202020202020202020202020202020202020202020202020202",
+        "--boundless-verifier-program-url",
+        "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+    ];
 
     #[test]
     fn boundless_offer_pricing_parses_eth_amounts() {
-        let mut args = boundless_args();
-        args.extend([
+        let b = Cli::parse_from(BOUNDLESS_ARGS.iter().copied().chain([
             "--boundless-min-price-eth",
             "0.01",
             "--boundless-max-price-eth",
             "0.03",
             "--boundless-offer-ramp-up-period-secs",
             "30",
-        ]);
+        ]))
+        .config()
+        .unwrap()
+        .boundless_prover;
 
-        let b = Cli::parse_from(args).config().unwrap().boundless_prover;
-
-        assert_eq!(b.offer_min_price, Some(parse_boundless_eth_amount("0.01").unwrap()),);
-        assert_eq!(b.offer_max_price, Some(parse_boundless_eth_amount("0.03").unwrap()),);
+        assert_eq!(
+            b.offer_min_price,
+            Some(Amount::new(U256::from(10_000_000_000_000_000u64), Asset::ETH)),
+        );
+        assert_eq!(
+            b.offer_max_price,
+            Some(Amount::new(U256::from(30_000_000_000_000_000u64), Asset::ETH)),
+        );
         assert_eq!(b.offer_ramp_up_period_secs, Some(30),);
     }
 
     #[test]
     fn boundless_offer_max_price_must_cover_min_price() {
-        let mut args = boundless_args();
-        args.extend(["--boundless-min-price-eth", "0.03", "--boundless-max-price-eth", "0.01"]);
-
-        let result = Cli::parse_from(args).config();
+        let result = Cli::parse_from(BOUNDLESS_ARGS.iter().copied().chain([
+            "--boundless-min-price-eth",
+            "0.03",
+            "--boundless-max-price-eth",
+            "0.01",
+        ]))
+        .config();
 
         assert!(result.is_err());
     }

@@ -151,7 +151,7 @@ impl fmt::Debug for BoundlessProver {
 }
 
 impl BoundlessProver {
-    /// Creates a Boundless prover with SDK-derived offer settings.
+    /// Creates a Boundless prover.
     pub fn new(
         rpc_url: Url,
         signer: PrivateKeySigner,
@@ -162,6 +162,11 @@ impl BoundlessProver {
         trusted_certs_prefix_len: u8,
         max_recovery_attempts: u32,
         max_attestation_age: Duration,
+        offer_min_price: Option<Amount>,
+        offer_max_price: Option<Amount>,
+        offer_ramp_up_period_secs: Option<u32>,
+        offer_lock_timeout_secs: Option<u32>,
+        offer_bidding_start_delay_secs: u64,
     ) -> Self {
         Self {
             rpc_url,
@@ -173,11 +178,11 @@ impl BoundlessProver {
             trusted_certs_prefix_len,
             max_recovery_attempts,
             max_attestation_age,
-            offer_min_price: None,
-            offer_max_price: None,
-            offer_ramp_up_period_secs: None,
-            offer_lock_timeout_secs: None,
-            offer_bidding_start_delay_secs: 0,
+            offer_min_price,
+            offer_max_price,
+            offer_ramp_up_period_secs,
+            offer_lock_timeout_secs,
+            offer_bidding_start_delay_secs,
             submit_lock: Arc::new(Mutex::new(())),
             recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
