@@ -899,4 +899,23 @@ Results:
 - step_throughput single 4096 blocks: 688.08 ms; span 4096 blocks: 1577.60 ms (consistent)
 - interpretation: the drain loop alone for just 1024 blocks (~301 ms single, ~210 ms span) already dominates composition + add_batch (~20 ms for 4096 blocks). Scaling to 4096 blocks, the drain loop accounts for the expected ~97.5 % share. The span-mode drain is ~30 % faster per-block than single-mode because one large SpanBatch produces fewer frames than 1024 individual SingleBatches, meaning fewer `output_frame` + Arc allocations. The next meaningful optimisation target sits in `ChannelOut::output_frame` internals — specifically per-frame buffer allocation (`Vec::with_capacity` + `vec![0u8; max_size]` scratch) and compressor read buffering inside `ShadowCompressor`.
 Next:
-- add a fine-grained output_frame microbench that isolates per-frame buffer allocation from compresssor read I/O inside the drain loop, using a mocked or pre-filled compressor so that the scratch-buffer pattern (`vec![0u8; max_size]` + `extend_from_slice`) can be measured directly
+- optimise the per-frame zero-allocated scratch buffer in `ChannelOut::output_frame` by persisting it across calls; alternatively add the fine-grained microbench first
+
+## 2026-06-16 00:25 UTC
+Focus: `base-comp` `ChannelOut::output_frame` per-frame scratch buffer zero-allocation.
+Hypothesis: each `output_frame` call allocates `vec![0u8; max_size]` — a ~120 KB zeroed buffer — even though the compressor's `read()` returns the exact byte count; persisting the buffer across calls should reduce the last-frame zero-alloc and shrink per-frame `data` capacity to the actual read count.
+Commands:
+- added `read_buf: Vec<u8>` field to `ChannelOut`, cleared in `reset()`, grown with `resize()` only when compressor needs more than current capacity
+- switched from `vec![0u8; max_size]` zero-alloc + ignore return-value to honouring `read()` return count and extending `data` only from the bytes actually read
+- `cargo test -p base-comp --lib` — 19 passed
+- `cargo test -p base-batcher-encoder --lib` — 60 passed
+- `cargo clippy -p base-comp --tests --benches --no-deps -- -D warnings` — clean
+- `cargo bench -p base-batcher-encoder --bench close_channel -- --warm-up-time 0.5 --measurement-time 4.0 --sample-size 15`
+- `cargo bench -p base-batcher-encoder --bench step_throughput -- --quiet` (sanity)
+Results:
+- span drain: ~3.8 % faster (206–209 ms → 197–202 ms, p = 0.00), fewer frames means more passes through `output_frame` so the persistent buffer pays off
+- single drain: flat (302–309 ms → 312–318 ms, p = 0.13), compression flush dominates the budget here so the buffer change does not move the dial
+- step_throughput consistent with prior runs (single 4096: ~695–702 ms, span 4096: ~1593–1629 ms)
+- committed `d10da24a3`, pushed to `automation/perf-autopilot`, PR #3541 open
+Next:
+- the drain-loop budget is now clearly in compressor flush/compression finalisation rather than `output_frame` allocations; a next step would be a compression-only microbench isolating flush cost from frame output, or pivoting to another hotspot (zk polling, consensus derivation)
