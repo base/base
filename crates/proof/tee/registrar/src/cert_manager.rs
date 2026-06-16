@@ -143,3 +143,100 @@ where
         Ok(true)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use alloy_primitives::Address;
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::test_utils::{EP1, NoopNitroVerifier, NoopTxManager, healthy_prover_instance};
+
+    #[derive(Debug)]
+    struct StaticNitroVerifier(std::result::Result<bool, &'static str>);
+
+    #[async_trait]
+    impl NitroVerifierClient for StaticNitroVerifier {
+        fn address(&self) -> Address {
+            Address::repeat_byte(0x42)
+        }
+
+        async fn is_revoked(&self, _cert_hash: alloy_primitives::B256) -> Result<bool> {
+            match self.0 {
+                Ok(result) => Ok(result),
+                Err(e) => Err(RegistrarError::Config(e.into())),
+            }
+        }
+    }
+
+    fn config(enabled: bool) -> CrlConfig {
+        CrlConfig {
+            enabled,
+            nitro_verifier_address: Some(Address::repeat_byte(0x42)),
+            fetch_timeout: Duration::from_millis(10),
+        }
+    }
+
+    fn attestation() -> Vec<u8> {
+        hex::decode(include_str!("testdata/minimal_attestation.hex").trim()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn disabled_returns_false_without_parsing_or_side_effects() {
+        let manager =
+            CertManager::new(&config(false), Box::new(NoopNitroVerifier), NoopTxManager).unwrap();
+
+        let revoked = manager
+            .check_and_revoke_crls(b"not a cose attestation", &healthy_prover_instance(EP1))
+            .await;
+
+        assert!(!revoked.unwrap());
+    }
+
+    #[tokio::test]
+    async fn parse_failure_includes_instance_endpoint() {
+        let manager =
+            CertManager::new(&config(true), Box::new(NoopNitroVerifier), NoopTxManager).unwrap();
+
+        let err = manager
+            .check_and_revoke_crls(b"not a cose attestation", &healthy_prover_instance(EP1))
+            .await
+            .unwrap_err();
+
+        let RegistrarError::ProverClient { instance, source } = err else {
+            panic!("expected ProverClient parse error, got {err:?}");
+        };
+        assert_eq!(instance, "http://10.0.0.1:8000/");
+        assert!(source.to_string().contains("failed to parse attestation for CRL check"));
+    }
+
+    #[tokio::test]
+    async fn onchain_revocation_short_circuits_before_crl_and_tx() {
+        let verifier = StaticNitroVerifier(Ok(true));
+        let manager = CertManager::new(&config(true), Box::new(verifier), NoopTxManager).unwrap();
+        let attestation = attestation();
+
+        let revoked = manager
+            .check_and_revoke_crls(&attestation, &healthy_prover_instance(EP1))
+            .await
+            .unwrap();
+
+        assert!(revoked);
+    }
+
+    #[tokio::test]
+    async fn onchain_error_falls_through_to_crl_layer_fail_open() {
+        let verifier = StaticNitroVerifier(Err("rpc unavailable"));
+        let manager = CertManager::new(&config(true), Box::new(verifier), NoopTxManager).unwrap();
+        let attestation = attestation();
+
+        let revoked = manager
+            .check_and_revoke_crls(&attestation, &healthy_prover_instance(EP1))
+            .await
+            .unwrap();
+
+        assert!(!revoked);
+    }
+}
