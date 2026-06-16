@@ -5,7 +5,7 @@ use std::{future::Future, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use base_proof_worker::{
     ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError,
-    ProofSubmissionTask, ProofTaskController, WorkerHeartbeat,
+    ProofSubmissionTask, ProofSubmitter, ProofSubmitterError, ProofTaskController, WorkerHeartbeat,
 };
 pub use base_proof_worker::{
     DEFAULT_WORKER_HEARTBEAT_INTERVAL as DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
@@ -24,8 +24,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    ProofSessionHandle, ProofSubmitter, ProofSubmitterError, ProofSubmitterRequest,
-    ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState,
+    ProofSessionHandle, ProofSubmitterRequest, ZkProofRequestKind, ZkProver, ZkProverError,
+    ZkSessionState,
 };
 
 /// Minimum delay between backend session polls.

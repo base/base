@@ -1,10 +1,5 @@
 #![doc = include_str!("../README.md")]
 
-pub use base_proof_worker::{
-    DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
-    JobDiscovery, JobDiscoveryConfig, ProofSubmitter, ProofSubmitterError, ZkProofClaimType,
-};
-
 mod prover;
 pub use prover::{
     UnimplementedZkProver, ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState,
