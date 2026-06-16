@@ -1230,10 +1230,7 @@ mod tests {
         let mut data = change.data.to_vec();
         data[0] = 0x01;
         change.data = Bytes::from(data);
-        let cfg = ConfigChange {
-            actor_changes: vec![change],
-            ..make_valid_config_change()
-        };
+        let cfg = ConfigChange { actor_changes: vec![change], ..make_valid_config_change() };
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()

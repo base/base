@@ -562,10 +562,7 @@ mod tests {
         other.metadata = bytes!("beef");
 
         assert_ne!(tx.sender_signature_hash(), other.sender_signature_hash());
-        assert_ne!(
-            tx.payer_signature_hash(resolved),
-            other.payer_signature_hash(resolved)
-        );
+        assert_ne!(tx.payer_signature_hash(resolved), other.payer_signature_hash(resolved));
     }
 
     // Both signatures commit to the full body through `payer`, so changing the
