@@ -1,6 +1,6 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
@@ -94,7 +94,6 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"),
-        requires = "boundless_max_price_eth",
         value_parser = parse_boundless_eth_amount
     )]
     boundless_min_price_eth: Option<Amount>,
@@ -103,7 +102,6 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"),
-        requires = "boundless_min_price_eth",
         value_parser = parse_boundless_eth_amount
     )]
     boundless_max_price_eth: Option<Amount>,
@@ -174,10 +172,10 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = DEFAULT_MAX_CONCURRENCY,
-        value_parser = parse_nonzero_usize
+        default_value_t = NonZeroUsize::new(DEFAULT_MAX_CONCURRENCY)
+            .expect("default max concurrency is non-zero")
     )]
-    max_concurrency: usize,
+    max_concurrency: NonZeroUsize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -225,14 +223,9 @@ fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
         .map_err(|e| format!("Boundless ETH amount: {e}"))
 }
 
-/// Parse a duration, accepting bare numbers as seconds for existing `*_SECS` env vars.
+/// Parse a duration in seconds for existing `*_SECS` env vars.
 fn parse_duration(s: &str) -> Result<Duration, String> {
-    let s = s.trim();
-    if s.chars().all(|c| c.is_ascii_digit()) {
-        return s.parse::<u64>().map(Duration::from_secs).map_err(|e| e.to_string());
-    }
-
-    humantime::parse_duration(s).map_err(|e| e.to_string())
+    s.trim().parse::<u64>().map(Duration::from_secs).map_err(|e| e.to_string())
 }
 
 fn parse_nonzero_duration(s: &str) -> Result<Duration, String> {
@@ -241,14 +234,6 @@ fn parse_nonzero_duration(s: &str) -> Result<Duration, String> {
         return Err("duration must be greater than zero".into());
     }
     Ok(duration)
-}
-
-fn parse_nonzero_usize(s: &str) -> Result<usize, String> {
-    let value = s.parse::<usize>().map_err(|e| e.to_string())?;
-    if value == 0 {
-        return Err("value must be greater than zero".into());
-    }
-    Ok(value)
 }
 
 impl Cli {
@@ -290,7 +275,7 @@ impl Cli {
             ),
             poll_interval: self.poll_interval,
             prover_timeout: self.prover_timeout,
-            max_concurrency: self.max_concurrency,
+            max_concurrency: self.max_concurrency.get(),
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: self.tx_retry_delay,
             unhealthy_registration_window: self.unhealthy_registration_window,
