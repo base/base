@@ -232,6 +232,10 @@ where
         // Fall back to flashblocks for pending transactions
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
         if let Some(fb_receipt) = pending_blocks.get_transaction_receipt(tx_hash) {
+            debug!(
+                message = "rpc::get_transaction_receipt_pending_hit",
+                tx_hash = %tx_hash
+            );
             Metrics::rpc_get_transaction_receipt().increment(1);
             return Ok(Some(fb_receipt));
         }

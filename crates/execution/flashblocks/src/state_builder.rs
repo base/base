@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::{Arc, OnceLock},
+    time::Instant,
+};
 
 use alloy_consensus::{
     Block, Header, TxReceipt,
@@ -149,6 +152,9 @@ where
         transaction: Recovered<BaseTxEnvelope>,
     ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let tx_hash = transaction.tx_hash();
+        static DISABLE_TX_CACHE: OnceLock<bool> = OnceLock::new();
+        let disable_tx_cache = *DISABLE_TX_CACHE
+            .get_or_init(|| std::env::var_os("BASE_FLASHBLOCKS_DISABLE_TX_CACHE").is_some());
 
         let effective_gas_price = if transaction.is_deposit() {
             0
@@ -163,14 +169,25 @@ where
         };
 
         // Check if we have all the data we need to reuse the previous execution.
-        let cached_execution = self.prev_pending_blocks.as_ref().and_then(|p| {
-            Some(CachedTransactionExecution {
-                receipt: p.get_receipt(tx_hash)?.clone(),
-                state: p.get_transaction_state(&tx_hash)?,
-                result: p.get_transaction_result(&tx_hash)?.clone(),
-                execution_time_us: p.get_execution_time(&tx_hash),
-            })
-        });
+        let cached_execution = if disable_tx_cache {
+            debug!(tx_hash = %tx_hash, idx, "skipping cached pending transaction execution");
+            None
+        } else {
+            let cached_execution = self.prev_pending_blocks.as_ref().and_then(|p| {
+                Some(CachedTransactionExecution {
+                    receipt: p.get_receipt(tx_hash)?.clone(),
+                    state: p.get_transaction_state(&tx_hash)?,
+                    result: p.get_transaction_result(&tx_hash)?.clone(),
+                    execution_time_us: p.get_execution_time(&tx_hash),
+                })
+            });
+
+            if cached_execution.is_some() {
+                debug!(tx_hash = %tx_hash, idx, "reusing cached pending transaction execution");
+            }
+
+            cached_execution
+        };
 
         // If cached, we can fill out pending block data using previous execution results
         // If not cached, we need to execute the transaction and build pending block data from scratch
