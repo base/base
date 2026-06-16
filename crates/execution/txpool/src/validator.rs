@@ -298,10 +298,11 @@ where
     }
 
     /// Returns `true` when `authenticator` falls outside the live mempool policy
-    /// range. Mirrors the check in [`Self::validate_actor_iter`] so all three
-    /// auth surfaces (`sender_auth`, `payer_auth`, `cfg.auth`, and per-actor
-    /// authenticators) reject the reserved `< ECRECOVER_AUTHENTICATOR` window and the
-    /// `REVOKED_AUTHENTICATOR` sentinel identically.
+    /// range. Mirrors the check in [`Self::validate_initial_actors`] and
+    /// [`Self::validate_actor_changes`] so all auth surfaces (`sender_auth`,
+    /// `payer_auth`, `cfg.auth`, and per-actor authenticators) reject the reserved
+    /// `< ECRECOVER_AUTHENTICATOR` window and the `REVOKED_AUTHENTICATOR` sentinel
+    /// identically.
     fn authenticator_out_of_range(authenticator: &Address) -> bool {
         *authenticator < Eip8130Constants::ECRECOVER_AUTHENTICATOR
             || *authenticator == Eip8130Constants::REVOKED_AUTHENTICATOR
@@ -313,8 +314,8 @@ where
     /// [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`], chain-binding on
     /// config changes, and per-entry well-formedness. Authenticator-address bounds
     /// and actor-id uniqueness are enforced on both `Create.initial_actors`
-    /// and `ConfigChange.actor_changes` via
-    /// [`Self::validate_actor_iter`].
+    /// and `ConfigChange.actor_changes` via [`Self::validate_initial_actors`]
+    /// and [`Self::validate_actor_changes`] respectively.
     fn validate_account_changes(
         signed: &Eip8130Signed,
         local_chain_id: u64,
@@ -389,8 +390,9 @@ where
     /// `Authorize`. The authenticator lives in the ABI-encoded `data`
     /// (`abi.encode(ActorConfig, bytes)`), where `ActorConfig.authenticator` is
     /// the right-aligned address in the first 32-byte word, so it is read from
-    /// `data[12..32]` without a full decode; the remaining structure is validated
-    /// where the change is applied. A `Revoke` carries empty `data` and names no
+    /// `data[12..32]` without a full decode (the leading 12 padding bytes must be
+    /// zero, matching ABI encoding); the remaining structure is validated where
+    /// the change is applied. A `Revoke` carries empty `data` and names no
     /// authenticator, so only the cap and uniqueness apply.
     ///
     /// Per EIP-8130 a config change MAY authorize a non-canonical authenticator
@@ -410,6 +412,12 @@ where
                     // `data` = `abi.encode(ActorConfig, bytes)`; the new actor's
                     // authenticator is the right-aligned address in the first word.
                     if change.data.len() < 32 {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    // The first word is an ABI-encoded `address`: the leading 12
+                    // bytes are zero padding. Reject dirty upper bits so the gate
+                    // and a strict ABI decoder downstream agree on validity.
+                    if change.data[..12].iter().any(|&b| b != 0) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                     let authenticator = Address::from_slice(&change.data[12..32]);
@@ -835,7 +843,7 @@ mod tests {
     }
 
     // Regression: configured-actor path must reject the reserved authenticator
-    // range below `ECRECOVER_AUTHENTICATOR`, matching `validate_actor_iter`.
+    // range below `ECRECOVER_AUTHENTICATOR`, matching `validate_actor_changes`.
     // `address(0)` is the canonical reserved value.
     #[test]
     fn rejects_eip8130_configured_actor_with_reserved_authenticator() {
@@ -1201,6 +1209,28 @@ mod tests {
                 actor_id: B256::repeat_byte(0x01),
                 data: Bytes::from_static(&[0xaa]),
             }],
+            ..make_valid_config_change()
+        };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    // The first `data` word is an ABI-encoded `address`; non-zero padding in the
+    // leading 12 bytes is malformed and rejected at the gate.
+    #[test]
+    fn rejects_eip8130_config_change_with_dirty_authenticator_padding() {
+        let mut change = make_authorize_change(B256::repeat_byte(0x01), ok_authenticator());
+        let mut data = change.data.to_vec();
+        data[0] = 0x01;
+        change.data = Bytes::from(data);
+        let cfg = ConfigChange {
+            actor_changes: vec![change],
             ..make_valid_config_change()
         };
         let tx = TxEip8130 {
