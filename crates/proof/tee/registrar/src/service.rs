@@ -2,10 +2,7 @@
 
 use std::{
     net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 
@@ -93,19 +90,23 @@ impl RegistrarConfig {
             .wrap_err("failed to install Prometheus recorder")?;
 
         let provider = if self.metrics_config.enabled {
+            macro_rules! spawn_balance_metric {
+                ($rx:ident, $metric:expr) => {
+                    tokio::spawn(async move {
+                        while $rx.changed().await.is_ok() {
+                            $metric.set(f64::from(*$rx.borrow_and_update()));
+                        }
+                    });
+                };
+            }
+
             let account_address = self.signing.address();
             let (layer, mut account_balance_rx) = BalanceMonitorLayer::new(
                 account_address,
                 cancel.clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
-            tokio::spawn(async move {
-                while account_balance_rx.changed().await.is_ok() {
-                    RegistrarMetrics::account_balance_wei()
-                        .set(f64::from(*account_balance_rx.borrow_and_update()));
-                }
-            });
-            info!(address = %account_address, "balance monitor started");
+            spawn_balance_metric!(account_balance_rx, RegistrarMetrics::account_balance_wei());
 
             let boundless_address = self.boundless_prover.signer.address();
             let (boundless_layer, mut boundless_balance_rx) = BalanceMonitorLayer::new(
@@ -116,13 +117,7 @@ impl RegistrarConfig {
             ProviderBuilder::new()
                 .layer(boundless_layer)
                 .connect_http(self.boundless_prover.rpc_url.clone());
-            tokio::spawn(async move {
-                while boundless_balance_rx.changed().await.is_ok() {
-                    RegistrarMetrics::boundless_balance_wei()
-                        .set(f64::from(*boundless_balance_rx.borrow_and_update()));
-                }
-            });
-            info!(address = %boundless_address, "balance monitor started");
+            spawn_balance_metric!(boundless_balance_rx, RegistrarMetrics::boundless_balance_wei());
 
             ProviderBuilder::new().layer(layer).connect_http(self.l1_rpc_url.clone())
         } else {
@@ -196,7 +191,6 @@ impl RegistrarConfig {
         cancel.cancel();
 
         info!("Driver stopped, shutting down...");
-        ready.store(false, Ordering::Relaxed);
         RegistrarMetrics::up().set(0.0);
 
         match health_handle.await {
