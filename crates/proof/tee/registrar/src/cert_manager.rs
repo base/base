@@ -18,7 +18,6 @@ use crate::{
 /// Manages Nitro certificate revocation checks and revocation transaction submission.
 #[derive(Debug)]
 pub struct CertManager<T> {
-    enabled: bool,
     http_client: reqwest::Client,
     nitro_verifier: Box<dyn NitroVerifierClient>,
     tx_manager: T,
@@ -40,7 +39,7 @@ where
         tx_manager: T,
     ) -> Result<Self> {
         let http_client = crl::build_crl_http_client(config.fetch_timeout)?;
-        Ok(Self { enabled: config.enabled, http_client, nitro_verifier, tx_manager })
+        Ok(Self { http_client, nitro_verifier, tx_manager })
     }
 
     /// Checks an attestation's intermediate certificates and submits revocations.
@@ -53,10 +52,6 @@ where
         attestation_bytes: &[u8],
         instance: &ProverInstance,
     ) -> Result<bool> {
-        if !self.enabled {
-            return Ok(false);
-        }
-
         let report = AttestationReport::parse(attestation_bytes).map_err(|e| {
             RegistrarError::ProverClient {
                 instance: instance.endpoint.to_string(),
@@ -155,25 +150,36 @@ mod tests {
     use crate::test_utils::{EP1, NoopNitroVerifier, NoopTxManager, healthy_prover_instance};
 
     #[derive(Debug)]
-    struct StaticNitroVerifier(std::result::Result<bool, &'static str>);
+    struct RevokedNitroVerifier;
 
     #[async_trait]
-    impl NitroVerifierClient for StaticNitroVerifier {
+    impl NitroVerifierClient for RevokedNitroVerifier {
         fn address(&self) -> Address {
             Address::repeat_byte(0x42)
         }
 
         async fn is_revoked(&self, _cert_hash: alloy_primitives::B256) -> Result<bool> {
-            match self.0 {
-                Ok(result) => Ok(result),
-                Err(e) => Err(RegistrarError::Config(e.into())),
-            }
+            Ok(true)
         }
     }
 
-    fn config(enabled: bool) -> CrlConfig {
+    #[derive(Debug)]
+    struct FailingNitroVerifier;
+
+    #[async_trait]
+    impl NitroVerifierClient for FailingNitroVerifier {
+        fn address(&self) -> Address {
+            Address::repeat_byte(0x42)
+        }
+
+        async fn is_revoked(&self, _cert_hash: alloy_primitives::B256) -> Result<bool> {
+            Err(RegistrarError::Config("rpc unavailable".into()))
+        }
+    }
+
+    fn config() -> CrlConfig {
         CrlConfig {
-            enabled,
+            enabled: true,
             nitro_verifier_address: Some(Address::repeat_byte(0x42)),
             fetch_timeout: Duration::from_millis(10),
         }
@@ -184,21 +190,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_returns_false_without_parsing_or_side_effects() {
-        let manager =
-            CertManager::new(&config(false), Box::new(NoopNitroVerifier), NoopTxManager).unwrap();
-
-        let revoked = manager
-            .check_and_revoke_crls(b"not a cose attestation", &healthy_prover_instance(EP1))
-            .await;
-
-        assert!(!revoked.unwrap());
-    }
-
-    #[tokio::test]
     async fn parse_failure_includes_instance_endpoint() {
         let manager =
-            CertManager::new(&config(true), Box::new(NoopNitroVerifier), NoopTxManager).unwrap();
+            CertManager::new(&config(), Box::new(NoopNitroVerifier), NoopTxManager).unwrap();
 
         let err = manager
             .check_and_revoke_crls(b"not a cose attestation", &healthy_prover_instance(EP1))
@@ -214,8 +208,8 @@ mod tests {
 
     #[tokio::test]
     async fn onchain_revocation_short_circuits_before_crl_and_tx() {
-        let verifier = StaticNitroVerifier(Ok(true));
-        let manager = CertManager::new(&config(true), Box::new(verifier), NoopTxManager).unwrap();
+        let manager =
+            CertManager::new(&config(), Box::new(RevokedNitroVerifier), NoopTxManager).unwrap();
         let attestation = attestation();
 
         let revoked = manager
@@ -228,8 +222,8 @@ mod tests {
 
     #[tokio::test]
     async fn onchain_error_falls_through_to_crl_layer_fail_open() {
-        let verifier = StaticNitroVerifier(Err("rpc unavailable"));
-        let manager = CertManager::new(&config(true), Box::new(verifier), NoopTxManager).unwrap();
+        let manager =
+            CertManager::new(&config(), Box::new(FailingNitroVerifier), NoopTxManager).unwrap();
         let attestation = attestation();
 
         let revoked = manager
