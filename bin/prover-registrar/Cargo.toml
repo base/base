@@ -46,6 +46,3 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["full"] }
 rustls = { workspace = true, features = ["ring"] }
 clap = { workspace = true, features = ["derive", "env"] }
-
-[dev-dependencies]
-rstest.workspace = true
