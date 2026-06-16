@@ -100,22 +100,16 @@ impl RegistrarService {
         let l1_addr = config.signing.address();
         let provider = if config.metrics_config.enabled {
             let provider = ProviderBuilder::new()
-                .layer(Self::balance_monitor_layer(
-                    l1_addr,
-                    cancel.clone(),
-                    |balance| RegistrarMetrics::account_balance_wei().set(balance),
-                    "l1",
-                ))
+                .layer(Self::balance_monitor_layer(l1_addr, cancel.clone(), |balance| {
+                    RegistrarMetrics::account_balance_wei().set(balance)
+                }))
                 .connect_http(config.l1_rpc_url.clone());
 
             let boundless_addr = config.boundless_prover.signer.address();
-            let _boundless_provider = ProviderBuilder::new()
-                .layer(Self::balance_monitor_layer(
-                    boundless_addr,
-                    cancel.clone(),
-                    |balance| RegistrarMetrics::boundless_balance_wei().set(balance),
-                    "boundless",
-                ))
+            ProviderBuilder::new()
+                .layer(Self::balance_monitor_layer(boundless_addr, cancel.clone(), |balance| {
+                    RegistrarMetrics::boundless_balance_wei().set(balance)
+                }))
                 .connect_http(config.boundless_prover.rpc_url.clone());
 
             provider
@@ -215,8 +209,7 @@ impl RegistrarService {
         signal_handle.abort();
 
         info!("Service stopped");
-        driver_result?;
-        Ok(())
+        driver_result.map_err(eyre::Report::from)
     }
 
     /// Creates a provider layer that reports account balance metrics.
@@ -224,7 +217,6 @@ impl RegistrarService {
         address: Address,
         cancel: CancellationToken,
         set_metric: impl Fn(f64) + Send + 'static,
-        account: &'static str,
     ) -> BalanceMonitorLayer {
         let (layer, mut balance_rx) =
             BalanceMonitorLayer::new(address, cancel, BalanceMonitorLayer::DEFAULT_POLL_INTERVAL);
@@ -233,7 +225,7 @@ impl RegistrarService {
                 set_metric(f64::from(*balance_rx.borrow_and_update()));
             }
         });
-        info!(%address, account, "balance monitor started");
+        info!(%address, "balance monitor started");
         layer
     }
 }
