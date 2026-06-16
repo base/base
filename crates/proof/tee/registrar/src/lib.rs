@@ -46,6 +46,9 @@ pub use signer_manager::{
     ProofTaskSet, SignerManager, SignerManagerConfig,
 };
 
+mod service;
+pub use service::{RegistrarConfig, RegistrarService};
+
 mod traits;
 pub use traits::{InstanceDiscovery, SignerClient};
 

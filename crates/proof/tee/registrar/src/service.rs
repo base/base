@@ -1,0 +1,239 @@
+//! Service lifecycle for the prover registrar.
+
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
+
+use alloy_primitives::Address;
+use alloy_provider::{Provider, ProviderBuilder};
+use base_balance_monitor::BalanceMonitorLayer;
+use base_cli_utils::RuntimeManager;
+use base_health::HealthServer;
+use base_proof_tee_nitro_attestation_prover::BoundlessProver;
+use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use eyre::WrapErr;
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
+use url::Url;
+
+use crate::{
+    AwsTargetGroupDiscovery, CertManager, DEFAULT_CRL_FETCH_TIMEOUT_SECS, DriverConfig,
+    NitroVerifierContractClient, ProverClient, RegistrarMetrics, RegistrationDriver,
+    RegistryContractClient, SignerManager, SignerManagerConfig,
+};
+
+/// Configuration needed to run the registrar service.
+#[derive(Debug)]
+pub struct RegistrarConfig {
+    /// L1 Ethereum RPC endpoint.
+    pub l1_rpc_url: Url,
+    /// `TEEProverRegistry` contract address on L1.
+    pub tee_prover_registry_address: Address,
+    /// AWS ALB target group ARN for prover instance discovery.
+    pub target_group_arn: String,
+    /// AWS region.
+    pub aws_region: String,
+    /// JSON-RPC port to poll on each prover instance.
+    pub prover_port: u16,
+    /// L1 transaction signer.
+    pub signing: SignerConfig,
+    /// Transaction manager configuration.
+    pub tx_manager_config: TxManagerConfig,
+    /// Boundless prover client configuration.
+    pub boundless_prover: BoundlessProver,
+    /// Interval between discovery and registration poll cycles.
+    pub poll_interval: Duration,
+    /// Timeout for JSON-RPC calls to prover instances.
+    pub prover_timeout: Duration,
+    /// Maximum number of instances to process concurrently.
+    pub max_concurrency: usize,
+    /// Maximum number of transaction submission retries for transient errors.
+    pub max_tx_retries: u32,
+    /// Delay between transaction submission retries.
+    pub tx_retry_delay: Duration,
+    /// Grace window for registering recently launched unhealthy instances.
+    pub unhealthy_registration_window: Duration,
+    /// Optional Nitro verifier address for CRL checks.
+    pub crl_nitro_verifier_address: Option<Address>,
+    /// Health server bind address.
+    pub health_addr: SocketAddr,
+    /// Logging configuration.
+    pub log_config: base_cli_utils::LogConfig,
+    /// Metrics configuration.
+    pub metrics_config: base_cli_utils::MetricsConfig,
+}
+
+/// Top-level registrar service.
+#[derive(Debug)]
+pub struct RegistrarService;
+
+impl RegistrarService {
+    /// Runs the full registrar service lifecycle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if service initialization fails or the registration
+    /// driver exits with an error.
+    pub async fn run(config: RegistrarConfig) -> eyre::Result<()> {
+        config.log_config.init_tracing_subscriber()?;
+
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        info!(version = env!("CARGO_PKG_VERSION"), "Registrar starting");
+
+        let cancel = CancellationToken::new();
+        let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
+
+        config
+            .metrics_config
+            .init_with(|| {
+                base_cli_utils::register_version_metrics!();
+                RegistrarMetrics::up().set(1.0);
+            })
+            .wrap_err("failed to install Prometheus recorder")?;
+
+        let l1_addr = config.signing.address();
+        let provider = if config.metrics_config.enabled {
+            let provider = ProviderBuilder::new()
+                .layer(Self::balance_monitor_layer(
+                    l1_addr,
+                    cancel.clone(),
+                    |balance| RegistrarMetrics::account_balance_wei().set(balance),
+                    "l1",
+                ))
+                .connect_http(config.l1_rpc_url.clone());
+
+            let boundless_addr = config.boundless_prover.signer.address();
+            let _boundless_provider = ProviderBuilder::new()
+                .layer(Self::balance_monitor_layer(
+                    boundless_addr,
+                    cancel.clone(),
+                    |balance| RegistrarMetrics::boundless_balance_wei().set(balance),
+                    "boundless",
+                ))
+                .connect_http(config.boundless_prover.rpc_url.clone());
+
+            provider
+        } else {
+            ProviderBuilder::new().connect_http(config.l1_rpc_url.clone())
+        };
+
+        let l1_chain_id = provider.get_chain_id().await.wrap_err("failed to fetch L1 chain ID")?;
+        let tx_manager = SimpleTxManager::new(
+            provider,
+            config.signing,
+            config.tx_manager_config,
+            l1_chain_id,
+            Arc::new(BaseTxMetrics::new("registrar")),
+        )
+        .await?;
+
+        let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .region(aws_config::Region::new(config.aws_region))
+            .load()
+            .await;
+        let discovery = AwsTargetGroupDiscovery::new(
+            aws_sdk_elasticloadbalancingv2::Client::new(&aws_config),
+            aws_sdk_ec2::Client::new(&aws_config),
+            config.target_group_arn,
+            config.prover_port,
+        );
+
+        let registry = RegistryContractClient::new(
+            config.tee_prover_registry_address,
+            config.l1_rpc_url.clone(),
+        );
+
+        let ready = Arc::new(AtomicBool::new(false));
+        let health_handle = tokio::spawn(HealthServer::serve(
+            config.health_addr,
+            Arc::clone(&ready),
+            cancel.clone(),
+        ));
+
+        let signer_client = ProverClient::new(config.prover_timeout);
+        let driver_config = DriverConfig {
+            poll_interval: config.poll_interval,
+            cancel: cancel.clone(),
+            max_concurrency: config.max_concurrency,
+            unhealthy_registration_window: config.unhealthy_registration_window,
+        };
+        let signer_manager_config = SignerManagerConfig {
+            registry_address: config.tee_prover_registry_address,
+            max_concurrency: config.max_concurrency,
+            max_tx_retries: config.max_tx_retries,
+            tx_retry_delay: config.tx_retry_delay,
+        };
+
+        ready.store(true, Ordering::SeqCst);
+
+        let signer_manager = Arc::new(SignerManager::new(
+            config.boundless_prover,
+            registry,
+            tx_manager.clone(),
+            signer_manager_config,
+        ));
+        let cert_manager = if let Some(nitro_verifier_address) = config.crl_nitro_verifier_address {
+            let nitro_verifier = Box::new(NitroVerifierContractClient::new(
+                nitro_verifier_address,
+                config.l1_rpc_url,
+            ));
+            Some(CertManager::new(
+                Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
+                nitro_verifier,
+                tx_manager,
+            )?)
+        } else {
+            None
+        };
+        let cancel_guard = cancel.clone().drop_guard();
+        let driver = RegistrationDriver::new(
+            discovery,
+            signer_client,
+            driver_config,
+            cert_manager,
+            signer_manager,
+        );
+        let driver_result = driver.run().await;
+        drop(cancel_guard);
+
+        info!("Driver stopped, shutting down...");
+        ready.store(false, Ordering::SeqCst);
+        RegistrarMetrics::up().set(0.0);
+
+        match health_handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => warn!(error = %e, "Health server error during shutdown"),
+            Err(e) => warn!(error = %e, "Health server task panicked"),
+        }
+
+        signal_handle.abort();
+
+        info!("Service stopped");
+        driver_result?;
+        Ok(())
+    }
+
+    /// Creates a provider layer that reports account balance metrics.
+    pub fn balance_monitor_layer(
+        address: Address,
+        cancel: CancellationToken,
+        set_metric: impl Fn(f64) + Send + 'static,
+        account: &'static str,
+    ) -> BalanceMonitorLayer {
+        let (layer, mut balance_rx) =
+            BalanceMonitorLayer::new(address, cancel, BalanceMonitorLayer::DEFAULT_POLL_INTERVAL);
+        tokio::spawn(async move {
+            while balance_rx.changed().await.is_ok() {
+                set_metric(f64::from(*balance_rx.borrow_and_update()));
+            }
+        });
+        info!(%address, account, "balance monitor started");
+        layer
+    }
+}

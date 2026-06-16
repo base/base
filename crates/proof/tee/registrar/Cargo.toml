@@ -12,11 +12,13 @@ workspace = true
 
 [dependencies]
 # Alloy
+alloy-provider.workspace = true
 alloy-signer.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
 # AWS
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 aws-sdk-ec2.workspace = true
 aws-sdk-elasticloadbalancingv2.workspace = true
 
@@ -35,10 +37,13 @@ base-proof-contracts.workspace = true
 
 # Proving
 base-proof-tee-nitro-verifier.workspace = true
-base-proof-tee-nitro-attestation-prover.workspace = true
+base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove"] }
 
 # Transaction management
 base-tx-manager.workspace = true
+
+# Balance Monitor
+base-balance-monitor.workspace = true
 
 # RPC
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
@@ -51,11 +56,21 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 
 # Error
+eyre.workspace = true
 thiserror.workspace = true
+
+# CLI
+base-cli-utils.workspace = true
 
 # Metrics
 base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
+
+# TLS
+rustls = { workspace = true, features = ["ring"] }
+
+# Health
+base-health = { workspace = true, features = ["axum-server"] }
 
 # Tracing
 tracing.workspace = true

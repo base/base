@@ -1,35 +1,19 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::time::Duration;
 
-use alloy_primitives::{Address, hex};
-use alloy_provider::ProviderBuilder;
-use base_balance_monitor::BalanceMonitorLayer;
-use base_cli_utils::RuntimeManager;
-use base_health::HealthServer;
+use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_proof_tee_registrar::{
-    AwsTargetGroupDiscovery, CertManager, DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_CONCURRENCY,
-    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierContractClient,
-    ProverClient, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
-    SignerManager, SignerManagerConfig,
+    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError, RegistrarService,
 };
-use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{SignerConfig, TxManagerConfig};
 use boundless_market::{
     alloy::signers::local::PrivateKeySigner,
     price_oracle::{Amount, Asset},
 };
 use clap::{Args, Parser};
-use eyre::WrapErr;
-use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
@@ -52,9 +36,6 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("TEE_PROVER_REGISTRY_ADDRESS"))]
     tee_prover_registry_address: Address,
 
-    /// L1 chain ID (used to validate the RPC connection).
-    #[arg(long, env = cli_env!("L1_CHAIN_ID"))]
-    l1_chain_id: u64,
     /// AWS ALB target group ARN for prover instance discovery.
     #[arg(long, env = cli_env!("TARGET_GROUP_ARN"))]
     target_group_arn: String,
@@ -102,10 +83,10 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = cli_env!("MAX_CONCURRENCY"),
-        default_value_t = DEFAULT_MAX_CONCURRENCY as u16,
-        value_parser = clap::value_parser!(u16).range(1..)
+        default_value_t = DEFAULT_MAX_CONCURRENCY,
+        value_parser = parse_positive_usize
     )]
-    max_concurrency: u16,
+    max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -237,15 +218,10 @@ struct BoundlessArgs {
 
 /// Parse a hex-encoded image ID string into `[u32; 8]`.
 fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], String> {
-    let mut bytes = [0u8; 32];
-    hex::decode_to_slice(s.strip_prefix("0x").unwrap_or(s), &mut bytes)
+    let bytes = <[u8; 32]>::from_hex(s.strip_prefix("0x").unwrap_or(s))
         .map_err(|e| format!("--image-id: {e}"))?;
 
-    let mut id = [0u32; 8];
-    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
-        id[i] = u32::from_le_bytes(chunk.try_into().unwrap());
-    }
-    Ok(id)
+    Ok(std::array::from_fn(|i| u32::from_le_bytes(bytes[i * 4..][..4].try_into().unwrap())))
 }
 
 /// Parse an ETH-denominated Boundless offer price.
@@ -254,21 +230,12 @@ fn parse_boundless_eth_amount(s: &str) -> std::result::Result<Amount, String> {
         .map_err(|e| format!("Boundless ETH amount: {e}"))
 }
 
-fn balance_monitor_layer(
-    address: Address,
-    cancel: CancellationToken,
-    set_metric: impl Fn(f64) + Send + 'static,
-    account: &'static str,
-) -> BalanceMonitorLayer {
-    let (layer, mut balance_rx) =
-        BalanceMonitorLayer::new(address, cancel, BalanceMonitorLayer::DEFAULT_POLL_INTERVAL);
-    tokio::spawn(async move {
-        while balance_rx.changed().await.is_ok() {
-            set_metric(f64::from(*balance_rx.borrow_and_update()));
-        }
-    });
-    info!(%address, account, "balance monitor started");
-    layer
+fn parse_positive_usize(s: &str) -> std::result::Result<usize, String> {
+    match s.parse::<usize>() {
+        Ok(0) => Err("must be greater than zero".into()),
+        Ok(n) => Ok(n),
+        Err(e) => Err(format!("positive integer: {e}")),
+    }
 }
 
 impl Cli {
@@ -305,163 +272,40 @@ impl Cli {
         })
     }
 
-    /// Run the registrar service.
-    pub(crate) async fn run(mut self) -> eyre::Result<()> {
-        // Extract observability args before config parsing consumes self.
-        // LogArgs/MetricsArgs are binary-layer concerns.
-        let log_config: base_cli_utils::LogConfig = std::mem::take(&mut self.log).into();
-        let metrics_config: base_cli_utils::MetricsConfig =
-            std::mem::take(&mut self.metrics).into();
-
-        let signing = SignerConfig::try_from(self.signer.clone())
-            .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?;
-        let tx_manager_config = TxManagerConfig::try_from(self.tx_manager.clone())
-            .map_err(|e| RegistrarError::Config(format!("tx-manager: {e}")))?;
+    fn config(self) -> std::result::Result<RegistrarConfig, RegistrarError> {
         let boundless_prover = self.boundless_prover()?;
+        let signing = SignerConfig::try_from(self.signer)
+            .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?;
+        let tx_manager_config = TxManagerConfig::try_from(self.tx_manager)
+            .map_err(|e| RegistrarError::Config(format!("tx-manager: {e}")))?;
 
-        log_config.init_tracing_subscriber()?;
-
-        // Install the default rustls CryptoProvider before any TLS connections are created.
-        let _ = rustls::crypto::ring::default_provider().install_default();
-
-        info!(version = env!("CARGO_PKG_VERSION"), "Registrar starting");
-
-        let cancel = CancellationToken::new();
-        let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
-
-        metrics_config
-            .init_with(|| {
-                base_cli_utils::register_version_metrics!();
-                RegistrarMetrics::up().set(1.0);
-            })
-            .wrap_err("failed to install Prometheus recorder")?;
-
-        let l1_addr = signing.address();
-        let provider = if metrics_config.enabled {
-            let provider = ProviderBuilder::new()
-                .layer(balance_monitor_layer(
-                    l1_addr,
-                    cancel.clone(),
-                    |balance| RegistrarMetrics::account_balance_wei().set(balance),
-                    "l1",
-                ))
-                .connect_http(self.l1_rpc_url.clone());
-
-            let bl_addr = boundless_prover.signer.address();
-            let _bl_provider = ProviderBuilder::new()
-                .layer(balance_monitor_layer(
-                    bl_addr,
-                    cancel.clone(),
-                    |balance| RegistrarMetrics::boundless_balance_wei().set(balance),
-                    "boundless",
-                ))
-                .connect_http(boundless_prover.rpc_url.clone());
-
-            provider
-        } else {
-            ProviderBuilder::new().connect_http(self.l1_rpc_url.clone())
-        };
-
-        let tx_manager = SimpleTxManager::new(
-            provider,
+        Ok(RegistrarConfig {
+            l1_rpc_url: self.l1_rpc_url,
+            tee_prover_registry_address: self.tee_prover_registry_address,
+            target_group_arn: self.target_group_arn,
+            aws_region: self.aws_region,
+            prover_port: self.prover_port,
             signing,
             tx_manager_config,
-            self.l1_chain_id,
-            Arc::new(BaseTxMetrics::new("registrar")),
-        )
-        .await?;
-
-        let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .region(aws_config::Region::new(self.aws_region.clone()))
-            .load()
-            .await;
-        let elb_client = aws_sdk_elasticloadbalancingv2::Client::new(&aws_config);
-        let ec2_client = aws_sdk_ec2::Client::new(&aws_config);
-
-        let discovery = AwsTargetGroupDiscovery::new(
-            elb_client,
-            ec2_client,
-            self.target_group_arn.clone(),
-            self.prover_port,
-        );
-
-        let registry =
-            RegistryContractClient::new(self.tee_prover_registry_address, self.l1_rpc_url.clone());
-
-        let ready = Arc::new(AtomicBool::new(false));
-        let health_handle = tokio::spawn(HealthServer::serve(
-            self.health.socket_addr(),
-            Arc::clone(&ready),
-            cancel.clone(),
-        ));
-
-        let signer_client = ProverClient::new(Duration::from_secs(self.prover_timeout_secs));
-        let driver_config = DriverConfig {
+            boundless_prover,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
-            cancel: cancel.clone(),
-            max_concurrency: usize::from(self.max_concurrency),
+            prover_timeout: Duration::from_secs(self.prover_timeout_secs),
+            max_concurrency: self.max_concurrency,
+            max_tx_retries: self.max_tx_retries,
+            tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
             unhealthy_registration_window: Duration::from_secs(
                 self.unhealthy_registration_window_secs,
             ),
-        };
-        let signer_manager_config = SignerManagerConfig {
-            registry_address: self.tee_prover_registry_address,
-            max_concurrency: usize::from(self.max_concurrency),
-            max_tx_retries: self.max_tx_retries,
-            tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
-        };
+            crl_nitro_verifier_address: self.crl_nitro_verifier_address,
+            health_addr: self.health.socket_addr(),
+            log_config: self.log.into(),
+            metrics_config: self.metrics.into(),
+        })
+    }
 
-        // Mark the service as ready. This signals "initialised and running", not
-        // "connectivity verified" — the registrar is an outbound-only service that
-        // does not receive traffic, so readiness gating on L1/AWS connectivity
-        // would add complexity without benefit.
-        ready.store(true, Ordering::SeqCst);
-
-        let signer_manager = Arc::new(SignerManager::new(
-            boundless_prover,
-            registry,
-            tx_manager.clone(),
-            signer_manager_config,
-        ));
-        let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
-            let nitro_verifier = Box::new(NitroVerifierContractClient::new(
-                nitro_verifier_address,
-                self.l1_rpc_url.clone(),
-            ));
-            Some(CertManager::new(
-                Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
-                nitro_verifier,
-                tx_manager,
-            )?)
-        } else {
-            None
-        };
-        let cancel_guard = cancel.clone().drop_guard();
-        let driver = RegistrationDriver::new(
-            discovery,
-            signer_client,
-            driver_config,
-            cert_manager,
-            signer_manager,
-        );
-        let driver_result = driver.run().await;
-        drop(cancel_guard);
-
-        info!("Driver stopped, shutting down...");
-        ready.store(false, Ordering::SeqCst);
-        RegistrarMetrics::up().set(0.0);
-
-        match health_handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => warn!(error = %e, "Health server error during shutdown"),
-            Err(e) => warn!(error = %e, "Health server task panicked"),
-        }
-
-        signal_handle.abort();
-
-        info!("Service stopped");
-        driver_result?;
-        Ok(())
+    /// Run the registrar service.
+    pub(crate) async fn run(self) -> eyre::Result<()> {
+        RegistrarService::run(self.config()?).await
     }
 }
 
@@ -472,7 +316,6 @@ mod tests {
     use super::*;
 
     const TEST_L1_RPC: &str = "http://localhost:8545";
-    const TEST_L1_CHAIN_ID: &str = "1";
     const TEST_REGISTRY_ADDR: &str = "0x0000000000000000000000000000000000000001";
     const TEST_TARGET_GROUP_ARN: &str =
         "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123";
@@ -493,8 +336,6 @@ mod tests {
             "prover-registrar",
             "--l1-rpc-url",
             TEST_L1_RPC,
-            "--l1-chain-id",
-            TEST_L1_CHAIN_ID,
             "--tee-prover-registry-address",
             TEST_REGISTRY_ADDR,
             "--target-group-arn",
@@ -514,16 +355,12 @@ mod tests {
         ]
     }
 
-    fn boundless_prover(args: Vec<&'static str>) -> BoundlessProver {
-        Cli::parse_from(args).boundless_prover().unwrap()
-    }
-
     /// `--boundless-timeout-secs` default should cover a 10-minute
     /// lock timeout with the SDK-derived `Offer.timeout = 1200 s`
     /// plus headroom.
     #[test]
     fn boundless_timeout_default_covers_default_lock_timeout() {
-        let b = boundless_prover(boundless_args());
+        let b = Cli::parse_from(boundless_args()).boundless_prover().unwrap();
 
         assert_eq!(b.timeout, Duration::from_secs(1260));
     }
@@ -540,7 +377,7 @@ mod tests {
             "30",
         ]);
 
-        let b = boundless_prover(args);
+        let b = Cli::parse_from(args).boundless_prover().unwrap();
 
         assert_eq!(
             b.offer_min_price,
@@ -574,6 +411,14 @@ mod tests {
         let result = Cli::parse_from(args).boundless_prover();
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn max_concurrency_must_be_positive() {
+        let mut args = boundless_args();
+        args.extend(["--max-concurrency", "0"]);
+
+        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]
