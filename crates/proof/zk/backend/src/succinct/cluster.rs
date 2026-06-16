@@ -21,7 +21,7 @@ use sp1_cluster_common::proto::{
 };
 use sp1_prover_types::{Artifact, ArtifactClient as _, ArtifactType};
 use sp1_sdk::{ProofFromNetwork, SP1ProofWithPublicValues, SP1Stdin};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::succinct::{L1HeadSource, OpSuccinctWitnessProvider, WitnessParams};
 
@@ -190,6 +190,32 @@ impl ClusterZkProver {
         }
     }
 
+    /// Fetch a cluster proof request by id without the cluster client's retry policy.
+    pub async fn get_cluster_request_once(
+        &self,
+        proof_id: &str,
+    ) -> Result<Option<ClusterProtoProofRequest>, ZkProverError> {
+        let mut client = self.config.cluster.service_client.rpc.clone();
+        match client
+            .proof_request_get(ProofRequestGetRequest { proof_id: proof_id.to_owned() })
+            .await
+        {
+            Ok(response) => Ok(response.into_inner().proof_request),
+            Err(status) => {
+                let code = format!("{:?}", status.code());
+                if code == "NotFound"
+                    || (code == "Internal"
+                        && status.message().contains("Failed to get proof request")
+                        && status.message().contains("no rows returned"))
+                {
+                    return Ok(None);
+                }
+
+                Err(backend_error!("failed to get cluster proof: {status}"))
+            }
+        }
+    }
+
     /// Returns true if a cluster gRPC status represents a missing proof request.
     pub fn is_missing_cluster_request_status(status: &tonic::Status) -> bool {
         status.code() == tonic::Code::NotFound
@@ -227,7 +253,7 @@ impl ClusterZkProver {
         let mut proof_id = None;
         for attempt in 0..Self::MAX_SUBMIT_ATTEMPTS {
             let candidate = Self::proof_id_for_attempt(request_session_id, attempt);
-            let Some(existing) = self.get_cluster_request(&candidate).await? else {
+            let Some(existing) = self.get_cluster_request_once(&candidate).await? else {
                 proof_id = Some(candidate);
                 break;
             };
@@ -484,7 +510,26 @@ impl ZkProver for ClusterZkProver {
             ProofRequestStatus::Cancelled => {
                 Ok(ZkSessionState::Failed("proof generation cancelled".to_owned()))
             }
-            ProofRequestStatus::Pending => Ok(ZkSessionState::Running),
+            ProofRequestStatus::Pending => {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| backend_error!("invalid unix timestamp: {e}"))?
+                    .as_secs();
+                if req.deadline <= now {
+                    warn!(
+                        proof_id = %session.proof_id,
+                        deadline = req.deadline,
+                        now = now,
+                        "cluster proof request deadline elapsed"
+                    );
+                    return Ok(ZkSessionState::Failed(format!(
+                        "cluster proof {} deadline elapsed before being picked up",
+                        session.proof_id
+                    )));
+                }
+
+                Ok(ZkSessionState::Running)
+            }
             ProofRequestStatus::Unspecified => {
                 error!(
                     proof_id = %session.proof_id,
