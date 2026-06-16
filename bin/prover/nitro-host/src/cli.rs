@@ -167,10 +167,8 @@ impl ProverRuntimeArgs {
 
     async fn prover_config(self) -> eyre::Result<ProverConfig> {
         let l1_beacon_url = self.l1_beacon_url()?;
-        let mut rollup_config = rollup_config!(self.l2_chain_id)
-            .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?;
 
-        if self.fetch_rollup_config {
+        let rollup_config = if self.fetch_rollup_config {
             let cl_url = self
                 .l2_cl_url
                 .as_deref()
@@ -198,14 +196,14 @@ impl ProverRuntimeArgs {
                 batcher_address = %rpc_sc.map(|sc| sc.batcher_address.to_string()).unwrap_or_default(),
                 gas_limit = rpc_sc.map(|sc| sc.gas_limit).unwrap_or_default(),
                 scalar = %rpc_sc.map(|sc| sc.scalar).unwrap_or_default(),
-                "overriding rollup config from L2 node RPC"
+                "using rollup config from L2 node RPC"
             );
 
-            rollup_config.genesis = rpc.genesis;
-            rollup_config.block_time = rpc.block_time;
-            rollup_config.deposit_contract_address = rpc.deposit_contract_address;
-            rollup_config.l1_system_config_address = rpc.l1_system_config_address;
-        }
+            rpc
+        } else {
+            rollup_config!(self.l2_chain_id)
+                .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?
+        };
 
         let l1_config = base_common_chains::L1_CONFIGS
             .get(&rollup_config.l1_chain_id)
