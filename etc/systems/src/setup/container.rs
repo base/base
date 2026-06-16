@@ -100,11 +100,21 @@ impl SetupImage {
 
             ensure!(dockerfile_path.exists(), "{SETUP_DOCKERFILE_PATH} not found");
 
-            let status = Command::new("docker")
-                .args(["build", "-t", SETUP_IMAGE_REFERENCE, "-f", SETUP_DOCKERFILE_PATH, "."])
-                .current_dir(&repo_root)
-                .status()
-                .wrap_err("Failed to run docker build")?;
+            let mut cmd = Command::new("docker");
+            cmd.args(["build", "-t", SETUP_IMAGE_REFERENCE, "-f", SETUP_DOCKERFILE_PATH]);
+
+            // Forward CONTRACTS_COMMIT so the image builds against the requested
+            // contracts revision instead of silently defaulting to latest main.
+            if let Ok(commit) = std::env::var("CONTRACTS_COMMIT") {
+                if !commit.is_empty() {
+                    cmd.args(["--build-arg", &format!("CONTRACTS_COMMIT={commit}")]);
+                }
+            }
+
+            cmd.arg(".");
+            cmd.current_dir(&repo_root);
+
+            let status = cmd.status().wrap_err("Failed to run docker build")?;
 
             ensure!(status.success(), "docker build failed");
 
