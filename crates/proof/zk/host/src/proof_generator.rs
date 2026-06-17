@@ -320,13 +320,17 @@ where
                 ZkSessionState::Failed(reason) => {
                     self.record_backend_failure(request, handle, session_type, backend_session_id)
                         .await;
-                    return Err(ZkProverError::Backend(std::io::Error::other(reason).into()));
+                    return Err(ZkProverError::BackendSessionFailed {
+                        backend_session_id: backend_session_id.to_owned(),
+                        reason,
+                    });
                 }
                 ZkSessionState::NotFound => {
-                    let reason = format!("backend session {backend_session_id} not found");
                     self.record_backend_failure(request, handle, session_type, backend_session_id)
                         .await;
-                    return Err(ZkProverError::Backend(std::io::Error::other(reason).into()));
+                    return Err(ZkProverError::BackendSessionNotFound {
+                        backend_session_id: backend_session_id.to_owned(),
+                    });
                 }
             }
         }

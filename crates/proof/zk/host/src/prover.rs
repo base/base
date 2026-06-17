@@ -65,6 +65,20 @@ pub enum ZkProverError {
     /// ZK proving is not yet implemented for this prover.
     #[error("zk proving is not yet implemented")]
     Unimplemented,
+    /// The backend session failed before proof download.
+    #[error("backend session {backend_session_id} failed: {reason}")]
+    BackendSessionFailed {
+        /// Backend proving session identifier.
+        backend_session_id: String,
+        /// Backend-provided failure reason.
+        reason: String,
+    },
+    /// The backend has no record of the expected session.
+    #[error("backend session {backend_session_id} not found")]
+    BackendSessionNotFound {
+        /// Backend proving session identifier.
+        backend_session_id: String,
+    },
     /// The proving backend failed to produce a proof.
     #[error("zk proving backend failed")]
     Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
