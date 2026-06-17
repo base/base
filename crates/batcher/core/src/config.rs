@@ -21,6 +21,6 @@ pub struct BatchDriverConfig {
     /// No-op when the encoder is already configured for blob DA.
     /// Default: `true`.
     pub force_blobs_when_throttling: bool,
-    /// Optional alt-DA HTTP client for dual-write (calldata + commitment txs).
-    pub alt_da: Option<std::sync::Arc<base_alt_da::Client>>,
+    /// Optional alt-DA client for dual-write (calldata + commitment txs).
+    pub alt_da: Option<crate::DynAltDaClient>,
 }

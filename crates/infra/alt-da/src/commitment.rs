@@ -1,8 +1,7 @@
-use base64::Engine;
-use rand::RngCore;
-
 use alloy_primitives::Bytes;
 use base_protocol::DERIVATION_VERSION_1;
+use base64::Engine;
+use rand::RngCore;
 
 use crate::error::Error;
 
@@ -15,13 +14,16 @@ pub const GENERIC_COMMITMENT_LEN: usize = 34;
 /// Max decoded commitment bytes (generic format is always 34).
 const MAX_COMMITMENT_LEN: usize = GENERIC_COMMITMENT_LEN;
 
+/// Fixed-size generic commitment: `0x01` type byte, `0xff` sentinel, then 32 random bytes.
+pub type GenericCommitment = [u8; GENERIC_COMMITMENT_LEN];
+
 /// Server-generated generic commitment (`0x01` type byte + `0xff` sentinel + random suffix).
-pub fn generate_generic_commitment() -> Vec<u8> {
-    let mut commitment = [0u8; 34];
+pub fn generate_generic_commitment() -> GenericCommitment {
+    let mut commitment = [0u8; GENERIC_COMMITMENT_LEN];
     commitment[0] = GENERIC_COMMITMENT_TYPE;
-    commitment[1] = 0xff;
+    commitment[1] = GENERIC_COMMITMENT_SENTINEL;
     rand::rng().fill_bytes(&mut commitment[2..]);
-    commitment.to_vec()
+    commitment
 }
 
 /// Validate a server-returned generic commitment.
@@ -39,12 +41,15 @@ pub fn validate_generic_commitment(commitment: &[u8]) -> Result<(), Error> {
 }
 
 /// Encode alt-DA commitment L1 calldata (`DERIVATION_VERSION_1` ++ commitment).
-pub fn encode_commitment_tx_data(commitment: &[u8]) -> Result<Bytes, Error> {
-    validate_generic_commitment(commitment)?;
+///
+/// Infallible: a [`GenericCommitment`] is fixed-size and its prefix is set at
+/// construction (`generate_generic_commitment`) or validated at the client boundary
+/// (`Client::put`), so there is nothing left to reject here.
+pub fn encode_commitment_tx_data(commitment: GenericCommitment) -> Bytes {
     let mut data = Vec::with_capacity(1 + commitment.len());
     data.push(DERIVATION_VERSION_1);
-    data.extend_from_slice(commitment);
-    Ok(Bytes::from(data))
+    data.extend_from_slice(&commitment);
+    Bytes::from(data)
 }
 
 /// Decode a `0x`-prefixed hex commitment from an HTTP path segment.
@@ -91,8 +96,8 @@ mod tests {
     #[test]
     fn roundtrip_hex_commitment() {
         let comm = generate_generic_commitment();
-        let hex = format!("0x{}", hex::encode(&comm));
-        assert_eq!(decode_hex_commitment(&hex).unwrap(), comm);
+        let hex = format!("0x{}", hex::encode(comm));
+        assert_eq!(decode_hex_commitment(&hex).unwrap().as_slice(), comm.as_slice());
     }
 
     #[test]
@@ -107,7 +112,7 @@ mod tests {
         use base_protocol::DERIVATION_VERSION_1;
 
         let comm = generate_generic_commitment();
-        let tx_data = encode_commitment_tx_data(&comm).unwrap();
+        let tx_data = encode_commitment_tx_data(comm);
         assert_eq!(tx_data[0], DERIVATION_VERSION_1);
         assert_eq!(&tx_data[1..], comm.as_slice());
     }

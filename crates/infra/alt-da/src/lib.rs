@@ -16,8 +16,8 @@ pub const MAX_OBJECT_BYTES: usize = 8 * BLOB_MAX_DATA_SIZE;
 mod commitment;
 pub use commitment::{
     GENERIC_COMMITMENT_LEN, GENERIC_COMMITMENT_SENTINEL, GENERIC_COMMITMENT_TYPE,
-    decode_hex_commitment, encode_commitment_tx_data, generate_generic_commitment, object_key,
-    object_name, validate_generic_commitment,
+    GenericCommitment, decode_hex_commitment, encode_commitment_tx_data,
+    generate_generic_commitment, object_key, object_name, validate_generic_commitment,
 };
 
 mod client;

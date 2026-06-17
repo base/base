@@ -4,8 +4,10 @@ use std::time::Duration;
 
 use url::Url;
 
-use crate::commitment::GENERIC_COMMITMENT_LEN;
-use crate::error::ClientError;
+use crate::{
+    commitment::{GENERIC_COMMITMENT_LEN, GenericCommitment, validate_generic_commitment},
+    error::ClientError,
+};
 
 /// Max PUT response bytes read before rejecting the body.
 const MAX_PUT_RESPONSE_BYTES: usize = GENERIC_COMMITMENT_LEN + 1;
@@ -29,7 +31,7 @@ impl Client {
     }
 
     /// Upload batch bytes; returns the server-generated generic commitment.
-    pub async fn put(&self, body: &[u8]) -> Result<Vec<u8>, ClientError> {
+    pub async fn put(&self, body: &[u8]) -> Result<GenericCommitment, ClientError> {
         if body.is_empty() {
             return Err(ClientError::EmptyBody);
         }
@@ -62,10 +64,14 @@ impl Client {
             bytes.extend_from_slice(&chunk);
         }
 
-        if bytes.len() != GENERIC_COMMITMENT_LEN {
-            return Err(ClientError::InvalidCommitmentLen { len: bytes.len() });
-        }
-        Ok(bytes)
+        // Validate the server response at the boundary so downstream code can treat a
+        // GenericCommitment as always-valid (lets encode_commitment_tx_data be infallible).
+        validate_generic_commitment(&bytes).map_err(|_| ClientError::InvalidCommitment)?;
+        let commitment: GenericCommitment = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| ClientError::InvalidCommitmentLen { len: bytes.len() })?;
+        Ok(commitment)
     }
 }
 

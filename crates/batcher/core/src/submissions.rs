@@ -3,15 +3,14 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
-use base_alt_da::encode_commitment_tx_data;
 use base_batcher_encoder::{BatchPipeline, BatcherMetrics, DaType, FrameEncoder, SubmissionId};
 use base_blobs::BlobEncoder;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::{FuturesUnordered, StreamExt};
-use tokio::sync::Semaphore;
+use tokio::{sync::Semaphore, task::JoinSet};
 use tracing::{info, warn};
 
-use crate::TxOutcome;
+use crate::{DynAltDaClient, TxOutcome, encode_commitment_tx_data};
 
 /// Type alias for the in-flight receipt future collection.
 type InFlight =
@@ -29,7 +28,9 @@ pub struct SubmissionQueue<TM: TxManager + 'static> {
     semaphore: Arc<Semaphore>,
     inbox: Address,
     txpool_blocked: bool,
-    alt_da: Option<Arc<base_alt_da::Client>>,
+    alt_da: Option<DynAltDaClient>,
+    /// Detached alt-DA shadow-write tasks, tracked so a reorg can cancel them.
+    alt_da_tasks: JoinSet<()>,
 }
 
 impl<TM: TxManager + 'static> SubmissionQueue<TM> {
@@ -38,7 +39,7 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
         tx_manager: TM,
         inbox: Address,
         max_pending: usize,
-        alt_da: Option<Arc<base_alt_da::Client>>,
+        alt_da: Option<DynAltDaClient>,
     ) -> Self {
         Self {
             tx_manager: Arc::new(tx_manager),
@@ -47,6 +48,7 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
             inbox,
             txpool_blocked: false,
             alt_da,
+            alt_da_tasks: JoinSet::new(),
         }
     }
 
@@ -189,23 +191,25 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
             if let (Some(alt_da), Some(body)) = (self.alt_da.clone(), alt_da_body) {
                 let tx_manager = Arc::clone(&self.tx_manager);
                 let inbox = self.inbox;
-                tokio::spawn(async move {
-                    let commitment = match alt_da.put(&body).await {
+                // Reap finished shadow tasks so the JoinSet stays bounded.
+                while self.alt_da_tasks.try_join_next().is_some() {}
+                self.alt_da_tasks.spawn(async move {
+                    let commitment = match alt_da.put(body.to_vec()).await {
                         Ok(commitment) => commitment,
                         Err(error) => {
+                            // A failed PUT leaves this batch absent from S3. Harmless while
+                            // calldata is primary, but it is a gap that would block the S3-only
+                            // cutover, so surface it as a metric, not just a log line.
                             warn!(%error, "alt-da put failed; calldata submission unchanged");
+                            BatcherMetrics::alt_da_commitment_total(
+                                BatcherMetrics::OUTCOME_PUT_FAILED,
+                            )
+                            .increment(1);
                             return;
                         }
                     };
 
-                    let tx_data = match encode_commitment_tx_data(&commitment) {
-                        Ok(tx_data) => tx_data,
-                        Err(error) => {
-                            warn!(%error, "alt-da commitment encoding failed");
-                            return;
-                        }
-                    };
-
+                    let tx_data = encode_commitment_tx_data(&commitment);
                     info!(commitment_bytes = %tx_data.len(), "submitting alt-da commitment to L1");
                     let candidate = TxCandidate {
                         to: Some(inbox),
@@ -219,9 +223,15 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                         Ok(receipt) => {
                             let l1_block = receipt.block_number.unwrap_or(0);
                             info!(l1_block = %l1_block, "alt-da commitment confirmed on L1");
+                            BatcherMetrics::alt_da_commitment_total(
+                                BatcherMetrics::OUTCOME_CONFIRMED,
+                            )
+                            .increment(1);
                         }
                         Err(error) => {
                             warn!(%error, "alt-da commitment submission failed");
+                            BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_FAILED)
+                                .increment(1);
                         }
                     }
                 });
@@ -347,6 +357,8 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
             BatcherMetrics::in_flight_submissions().set(0.0);
         }
         self.in_flight = FuturesUnordered::new();
+        // Cancel pending shadow commitments so a reorged batch can't still land on L1.
+        self.alt_da_tasks.abort_all();
     }
 
     /// Returns a future for the next settled `(ids, outcome)` pair.

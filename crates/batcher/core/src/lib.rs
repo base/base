@@ -21,6 +21,9 @@ pub use throttle::{
 mod throttle_client;
 pub use throttle_client::{NoopThrottleClient, ThrottleClient};
 
+mod alt_da;
+pub use alt_da::{AltDaClient, AltDaError, DynAltDaClient, encode_commitment_tx_data};
+
 mod submissions;
 pub use submissions::SubmissionQueue;
 

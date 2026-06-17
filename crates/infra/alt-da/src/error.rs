@@ -96,6 +96,9 @@ pub enum ClientError {
         /// Response body length in bytes.
         len: usize,
     },
+    /// PUT response had a malformed generic commitment prefix.
+    #[error("alt-da put returned malformed commitment prefix")]
+    InvalidCommitment,
 }
 
 impl From<StoreError> for Error {

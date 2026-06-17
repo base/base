@@ -335,7 +335,10 @@ impl BatcherArgs {
                 let server_url = self
                     .altda_da_server
                     .ok_or_else(|| eyre::eyre!("--altda-enabled requires --altda-da-server"))?;
-                Some(base_batcher_service::AltDaConfig { server_url })
+                let client = base_alt_da::Client::new(server_url)
+                    .map_err(|e| eyre::eyre!("failed to create alt-da client: {e}"))?;
+                Some(std::sync::Arc::new(AltDaClientAdapter(client))
+                    as base_batcher_core::DynAltDaClient)
             } else {
                 None
             },
@@ -378,6 +381,23 @@ impl From<BatchTypeArg> for base_protocol::BatchType {
         }
     }
 }
+
+/// Adapts the infra `base-alt-da` HTTP client to the batcher's [`AltDaClient`]
+/// trait so the batcher crates need no dependency on the DA server crate.
+#[derive(Debug)]
+struct AltDaClientAdapter(base_alt_da::Client);
+
+#[async_trait::async_trait]
+impl base_batcher_core::AltDaClient for AltDaClientAdapter {
+    async fn put(&self, body: Vec<u8>) -> Result<Vec<u8>, base_batcher_core::AltDaError> {
+        self.0
+            .put(&body)
+            .await
+            .map(|commitment| commitment.to_vec())
+            .map_err(|e| base_batcher_core::AltDaError(e.to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -589,8 +609,7 @@ mod tests {
             "http://base-da-server:2583",
         ]);
         let config = cli.args.into_config().expect("config should build");
-        let alt_da = config.alt_da.expect("alt-da config");
-        assert_eq!(alt_da.server_url.as_str(), "http://base-da-server:2583/");
+        assert!(config.alt_da.is_some());
     }
 
     #[test]

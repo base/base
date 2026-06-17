@@ -3,17 +3,10 @@
 use std::{net::SocketAddr, time::Duration};
 
 use alloy_signer_local::PrivateKeySigner;
-use base_batcher_core::ThrottleConfig;
+use base_batcher_core::{DynAltDaClient, ThrottleConfig};
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::L1TxFormat;
 use url::Url;
-
-/// Alt-DA dual-write settings for the batcher.
-#[derive(Debug, Clone)]
-pub struct AltDaConfig {
-    /// Base URL of the alt-DA HTTP server (e.g. `http://base-da-server:2583`).
-    pub server_url: Url,
-}
 
 /// Full batcher configuration combining RPC endpoints, identity, encoding
 /// parameters, submission limits, and optional throttling.
@@ -115,8 +108,9 @@ pub struct BatcherConfig {
     ///
     /// Requires [`EncoderConfig::da_type`](base_batcher_encoder::EncoderConfig::da_type) ==
     /// [`DaType::Calldata`](base_batcher_encoder::DaType::Calldata). Calldata remains the
-    /// primary derivation path; alt-DA is a shadow path for validation.
-    pub alt_da: Option<AltDaConfig>,
+    /// primary derivation path; alt-DA is a shadow path for validation. The concrete
+    /// client is constructed by the binary and injected here.
+    pub alt_da: Option<DynAltDaClient>,
 }
 
 impl Default for BatcherConfig {
