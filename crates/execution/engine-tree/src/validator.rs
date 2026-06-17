@@ -17,20 +17,13 @@ use alloy_consensus::{
     Header,
     transaction::{Either, TxHashRef},
 };
-use alloy_eips::eip2718::Decodable2718;
 use alloy_evm::Evm;
 use alloy_primitives::B256;
-use base_common_consensus::{
-    BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, OpTxType,
-};
-use base_common_evm::{
-    BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseHaltReason,
-    BaseTxResult,
-};
+use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned};
+use base_common_evm::{BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory};
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseRethReceiptBuilder;
-use base_flashblocks::FlashblocksState;
 use base_node_core::{BaseEngineTypes, engine::BasePostExecutionValidator};
 use reth_chain_state::{DeferredTrieData, ExecutedBlock, StateTrieOverlayManager};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
@@ -85,10 +78,6 @@ use reth_trie_parallel::{
 use revm_primitives::Address;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 
-use crate::cached_execution::{
-    CachedExecutionProvider, CachedExecutor, FlashblocksCachedExecutionProvider,
-};
-
 /// A helper type that provides reusable payload validation logic for network-specific validators.
 ///
 /// This type satisfies [`EngineValidator`] and is responsible for executing blocks/payloads.
@@ -97,7 +86,7 @@ use crate::cached_execution::{
 /// used by network-specific payload validators. It is not meant to be
 /// used as a standalone component, but rather as a building block for concrete implementations.
 #[derive(derive_more::Debug)]
-pub struct BaseEngineValidator<P, Evm, V, C>
+pub struct BaseEngineValidator<P, Evm, V>
 where
     Evm: ConfigureEvm,
 {
@@ -122,15 +111,13 @@ where
     metrics: EngineApiMetrics,
     /// Validator for the payload.
     validator: V,
-    /// Cached execution provider.
-    cached_execution_provider: C,
     /// Changeset cache for in-memory trie changesets
     changeset_cache: ChangesetCache,
     /// Task runtime for spawning parallel work.
     runtime: reth_tasks::Runtime,
 }
 
-impl<P, Evm, V, C> BaseEngineValidator<P, Evm, V, C>
+impl<P, Evm, V> BaseEngineValidator<P, Evm, V>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -157,7 +144,6 @@ where
                 BaseEvmFactory,
             >,
         > + 'static,
-    C: CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>> + Clone,
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
@@ -168,7 +154,6 @@ where
         validator: V,
         config: TreeConfig,
         invalid_block_hook: Box<dyn InvalidBlockHook<BasePrimitives>>,
-        cached_execution_provider: C,
         changeset_cache: ChangesetCache,
         runtime: reth_tasks::Runtime,
     ) -> Self {
@@ -191,7 +176,6 @@ where
             metrics: EngineApiMetrics::default(),
             validator,
             changeset_cache,
-            cached_execution_provider,
             runtime,
         }
     }
@@ -786,25 +770,6 @@ where
             );
         }
 
-        let txs = match &input {
-            BlockOrPayload::Payload(payload) => payload
-                .payload
-                .transactions()
-                .iter()
-                .map(|tx| BaseTransactionSigned::decode_2718(&mut &tx[..]).map(|tx| tx.tx_hash()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|err| InsertBlockErrorKind::Other(Box::new(err)))?,
-            BlockOrPayload::Block(block) => {
-                block.body().transactions().map(|tx| tx.tx_hash()).collect::<Vec<_>>()
-            }
-        };
-        let mut executor = CachedExecutor::new(
-            executor,
-            self.cached_execution_provider.clone(),
-            txs,
-            input.parent_hash(),
-        );
-
         // Spawn background task to compute receipt root and logs bloom incrementally.
         // Unbounded channel is used since tx count bounds capacity anyway (max ~30k txs per block).
         let receipts_len = input.transaction_count();
@@ -1198,8 +1163,8 @@ where
         parallel_bal_execution: bool,
     ) -> Result<
         PayloadHandle<
-            impl ExecutableTxFor<Evm> + use<P, Evm, V, T, C>,
-            impl core::error::Error + Send + Sync + 'static + use<P, Evm, V, T, C>,
+            impl ExecutableTxFor<Evm> + use<P, Evm, V, T>,
+            impl core::error::Error + Send + Sync + 'static + use<P, Evm, V, T>,
             BaseReceipt,
         >,
         InsertBlockErrorKind,
@@ -1435,7 +1400,7 @@ enum StateRootStrategy {
     Synchronous,
 }
 
-impl<Types, P, Evm, V, C> EngineValidator<Types> for BaseEngineValidator<P, Evm, V, C>
+impl<Types, P, Evm, V> EngineValidator<Types> for BaseEngineValidator<P, Evm, V>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -1467,11 +1432,6 @@ where
             BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
             ExecutionData = ExecutionData,
         >,
-    C: CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
 {
     fn validate_payload_attributes_against_header(
         &self,
@@ -1561,7 +1521,7 @@ where
     }
 }
 
-impl<P, Evm, V, C> WaitForCaches for BaseEngineValidator<P, Evm, V, C>
+impl<P, Evm, V> WaitForCaches for BaseEngineValidator<P, Evm, V>
 where
     Evm: ConfigureEvm,
 {
@@ -1577,21 +1537,12 @@ where
 pub struct BaseEngineValidatorBuilder<EV> {
     /// The payload validator builder used to create the engine validator.
     payload_validator_builder: EV,
-
-    /// The flashblocks state used to create the engine validator.
-    flashblocks_state: Option<Arc<FlashblocksState>>,
 }
 
 impl<EV> BaseEngineValidatorBuilder<EV> {
     /// Creates a new instance with the given payload validator builder.
     pub const fn new(payload_validator_builder: EV) -> Self {
-        Self { payload_validator_builder, flashblocks_state: None }
-    }
-
-    /// Sets the flashblocks state used to create the engine validator.
-    pub fn with_flashblocks_state(mut self, flashblocks_state: Arc<FlashblocksState>) -> Self {
-        self.flashblocks_state = Some(flashblocks_state);
-        self
+        Self { payload_validator_builder }
     }
 }
 
@@ -1625,12 +1576,7 @@ where
     EV: PayloadValidatorBuilder<Node>,
     EV::Validator: BasePostExecutionValidator<<Node::Types as NodeTypes>::Payload>,
 {
-    type EngineValidator = BaseEngineValidator<
-        Node::Provider,
-        Node::Evm,
-        EV::Validator,
-        FlashblocksCachedExecutionProvider,
-    >;
+    type EngineValidator = BaseEngineValidator<Node::Provider, Node::Evm, EV::Validator>;
 
     async fn build_tree_validator(
         self,
@@ -1648,7 +1594,6 @@ where
             validator,
             tree_config,
             invalid_block_hook,
-            FlashblocksCachedExecutionProvider::new(self.flashblocks_state.clone()),
             changeset_cache,
             ctx.node.task_executor().clone(),
         ))

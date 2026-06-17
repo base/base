@@ -284,7 +284,6 @@ mod tests {
     };
     use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, Transaction};
     use base_flashblocks::PendingBlocksBuilder;
-    use revm::context_interface::result::ExecutionResult;
 
     use super::*;
     use crate::{PendingStateRootTimes, cache::MeteringCache};
@@ -410,19 +409,6 @@ mod tests {
             builder.with_transaction(tx);
             builder.with_receipt(entry.tx_hash, receipt);
             builder.with_transaction_sender(entry.tx_hash, test_sender());
-            builder.with_transaction_state(entry.tx_hash, Default::default());
-            builder.with_transaction_result(
-                entry.tx_hash,
-                ExecutionResult::Success {
-                    reason: revm::context::result::SuccessReason::Stop,
-                    gas: revm::context::result::ResultGas::default()
-                        .with_total_gas_spent(21_000)
-                        .with_refunded(0)
-                        .with_floor_gas(0),
-                    logs: vec![],
-                    output: revm::context::result::Output::Call(Bytes::new()),
-                },
-            );
 
             if let Some(time_us) = entry.execution_time_us {
                 builder.with_execution_time(entry.tx_hash, time_us);

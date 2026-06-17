@@ -481,7 +481,6 @@ where
             self.client.chain_spec(),
             evm,
             pending_block,
-            None,
             latest_block_l1_block_info.clone(),
             state_overrides,
         );
@@ -513,8 +512,6 @@ where
 
             pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
             pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
-            pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
-            pending_blocks_builder.with_transaction_result(tx_hash, executed_transaction.result);
         }
 
         let latest_block_cumulative_gas_used = pending_state_builder.cumulative_gas_used();
@@ -612,7 +609,6 @@ where
             self.client.chain_spec(),
             evm,
             pending_block,
-            None,
             l1_block_info.clone(),
             state_overrides,
         );
@@ -643,8 +639,6 @@ where
 
             pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
             pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
-            pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
-            pending_blocks_builder.with_transaction_result(tx_hash, executed_transaction.result);
         }
 
         let latest_block_cumulative_gas_used = pending_state_builder.cumulative_gas_used();
@@ -764,7 +758,6 @@ where
                 self.client.chain_spec(),
                 evm,
                 assembled.block,
-                prev_pending_blocks.clone(),
                 l1_block_info,
                 state_overrides,
             );
@@ -795,9 +788,6 @@ where
 
                 pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
                 pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
-                pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
-                pending_blocks_builder
-                    .with_transaction_result(tx_hash, executed_transaction.result);
             }
 
             let latest_flashblock_tx_start = total_transaction_count

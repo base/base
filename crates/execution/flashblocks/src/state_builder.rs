@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 
 use alloy_consensus::{
     Block, Header, TxReceipt,
@@ -22,16 +22,13 @@ use reth_evm::{Evm, FromRecoveredTx};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use revm::{
     Database, DatabaseCommit,
-    context::{
-        Block as _,
-        result::{ExecutionResult, ResultAndState},
-    },
+    context::{Block as _, result::ResultAndState},
     state::EvmState,
 };
 
-use crate::{ExecutionError, PendingBlocks, StateProcessorError, UnifiedReceiptBuilder};
+use crate::{ExecutionError, StateProcessorError, UnifiedReceiptBuilder};
 
-/// Represents the result of executing or fetching a cached pending transaction.
+/// Represents the result of executing a pending transaction.
 #[derive(Debug, Clone)]
 pub struct ExecutedPendingTransaction {
     /// The RPC transaction.
@@ -40,21 +37,11 @@ pub struct ExecutedPendingTransaction {
     pub receipt: BaseTransactionReceipt,
     /// The updated EVM state.
     pub state: EvmState,
-    /// The execution result of the transaction.
-    pub result: ExecutionResult<BaseHaltReason>,
     /// Per-transaction EVM execution time, if known.
     pub execution_time_us: Option<u128>,
 }
 
-#[derive(Debug)]
-struct CachedTransactionExecution {
-    receipt: BaseTransactionReceipt,
-    state: EvmState,
-    result: ExecutionResult<BaseHaltReason>,
-    execution_time_us: Option<u128>,
-}
-
-/// Executes or fetches cached values for transactions in a flashblock.
+/// Executes transactions in a flashblock.
 #[derive(Debug)]
 pub struct PendingStateBuilder<E, ChainSpec> {
     cumulative_gas_used: u64,
@@ -66,7 +53,6 @@ pub struct PendingStateBuilder<E, ChainSpec> {
     receipt_builder: UnifiedReceiptBuilder<ChainSpec>,
     chain_spec: ChainSpec,
 
-    prev_pending_blocks: Option<Arc<PendingBlocks>>,
     state_overrides: StateOverride,
 }
 
@@ -82,7 +68,6 @@ where
         chain_spec: ChainSpec,
         evm: E,
         pending_block: Block<BaseTxEnvelope, Header>,
-        prev_pending_blocks: Option<Arc<PendingBlocks>>,
         l1_block_info: L1BlockInfo,
         state_overrides: StateOverride,
     ) -> Self {
@@ -91,7 +76,6 @@ where
             evm,
             cumulative_gas_used: 0,
             next_log_index: 0,
-            prev_pending_blocks,
             l1_block_info,
             state_overrides,
             chain_spec: chain_spec.clone(),
@@ -133,8 +117,6 @@ where
         idx: usize,
         transaction: Recovered<BaseTxEnvelope>,
     ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
-        let tx_hash = transaction.tx_hash();
-
         let effective_gas_price = if transaction.is_deposit() {
             0
         } else {
@@ -147,30 +129,14 @@ where
                 .unwrap_or_else(|| transaction.max_fee_per_gas())
         };
 
-        // Check if we have all the data we need to reuse the previous execution.
-        let cached_execution = self.prev_pending_blocks.as_ref().and_then(|p| {
-            Some(CachedTransactionExecution {
-                receipt: p.get_receipt(tx_hash)?.clone(),
-                state: p.get_transaction_state(&tx_hash)?,
-                result: p.get_transaction_result(&tx_hash)?.clone(),
-                execution_time_us: p.get_execution_time(&tx_hash),
-            })
-        });
-
-        // If cached, we can fill out pending block data using previous execution results
-        // If not cached, we need to execute the transaction and build pending block data from scratch
-        if let Some(cached_execution) = cached_execution {
-            self.execute_with_cached_data(transaction, cached_execution, idx, effective_gas_price)
-        } else {
-            self.execute_with_evm(transaction, idx, effective_gas_price)
-        }
+        self.execute_with_evm(transaction, idx, effective_gas_price)
     }
 
     /// Applies EIP-4788, EIP-2935, and Canyon create2 deployer pre-execution changes to the EVM.
     ///
     /// Must be called once per block, before executing any transactions. This mirrors the
-    /// `apply_pre_execution_changes` behavior of [`base_common_evm::BaseBlockExecutor`] to ensure
-    /// that the cached execution results match what the validator computes.
+    /// `apply_pre_execution_changes` behavior of [`base_common_evm::BaseBlockExecutor`] so pending
+    /// state construction starts from the same pre-transaction state as block validation.
     pub fn apply_pre_execution_changes(
         &mut self,
         parent_hash: B256,
@@ -193,62 +159,6 @@ where
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         Ok(())
-    }
-
-    /// Builds transaction result from cached receipt and state data.
-    fn execute_with_cached_data(
-        &mut self,
-        transaction: Recovered<BaseTxEnvelope>,
-        cached_execution: CachedTransactionExecution,
-        idx: usize,
-        effective_gas_price: u128,
-    ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
-        let CachedTransactionExecution { receipt, state, result, execution_time_us } =
-            cached_execution;
-
-        let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-            let BaseReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
-                return Err(ExecutionError::DepositReceiptMismatch.into());
-            };
-
-            (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
-        } else {
-            (None, None)
-        };
-
-        let rpc_transaction = Transaction {
-            inner: alloy_rpc_types_eth::Transaction {
-                inner: transaction,
-                block_hash: None,
-                block_number: Some(self.pending_block.number),
-                block_timestamp: Some(self.pending_block.timestamp),
-                transaction_index: Some(idx as u64),
-                effective_gas_price: Some(effective_gas_price),
-            },
-            deposit_nonce,
-            deposit_receipt_version,
-        };
-
-        self.cumulative_gas_used = self
-            .cumulative_gas_used
-            .checked_add(receipt.inner.gas_used)
-            .ok_or(ExecutionError::GasOverflow)?;
-        self.next_log_index += receipt.inner.logs().len();
-
-        for address in state.keys() {
-            self.evm.db_mut().basic(*address).map_err(|err| {
-                StateProcessorError::Execution(ExecutionError::EvmEnv(err.to_string()))
-            })?;
-        }
-        self.evm.db_mut().commit(state.clone());
-
-        Ok(ExecutedPendingTransaction {
-            rpc_transaction,
-            receipt,
-            state,
-            result,
-            execution_time_us,
-        })
     }
 
     fn jovian_da_footprint_estimation(
@@ -394,7 +304,6 @@ where
                     rpc_transaction,
                     receipt: base_receipt,
                     state,
-                    result,
                     execution_time_us: Some(elapsed_us),
                 })
             }
@@ -415,12 +324,8 @@ mod tests {
     use alloy_consensus::{Block, BlockBody, Header, Signed};
     use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_CODE};
     use alloy_primitives::{Address, B256, TxKind, U256, address, uint};
-    use alloy_rpc_types_engine::PayloadId;
     use base_common_consensus::BaseTxEnvelope;
     use base_common_evm::L1BlockInfo;
-    use base_common_flashblocks::{
-        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
-    };
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
     use reth_evm::ConfigureEvm;
@@ -467,7 +372,6 @@ mod tests {
             chain_spec,
             evm,
             pending_block,
-            None,
             L1BlockInfo::default(),
             Default::default(),
         );
@@ -523,7 +427,6 @@ mod tests {
             chain_spec,
             evm,
             pending_block,
-            None,
             L1BlockInfo::default(),
             Default::default(),
         );
@@ -570,102 +473,6 @@ mod tests {
     }
 
     #[test]
-    fn cached_execute_transaction_preserves_timing_from_prev_pending_blocks() {
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
-
-        let header = Header {
-            number: 1,
-            timestamp: 100,
-            gas_limit: 30_000_000,
-            base_fee_per_gas: Some(1_000_000_000),
-            ..Default::default()
-        };
-
-        let mut db = InMemoryDB::default();
-        db.insert_account_info(
-            Address::ZERO,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
-                ..Default::default()
-            },
-        );
-
-        let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
-        let evm = evm_config.evm_with_env(db, evm_env);
-        let pending_block = Block { header: header.clone(), body: Default::default() };
-        let mut first_builder = PendingStateBuilder::new(
-            (*chain_spec).clone(),
-            evm,
-            pending_block,
-            None,
-            L1BlockInfo::default(),
-            StateOverride::default(),
-        );
-
-        let tx = create_legacy_tx();
-        let tx_hash = tx.tx_hash();
-        let first_result =
-            first_builder.execute_transaction(0, tx).expect("transaction execution failed");
-
-        let mut pending_blocks_builder = crate::PendingBlocksBuilder::new();
-        pending_blocks_builder
-            .with_header(alloy_consensus::Sealed::new_unchecked(header.clone(), B256::ZERO));
-        pending_blocks_builder.with_flashblocks([Flashblock {
-            payload_id: PayloadId::default(),
-            index: 0,
-            base: Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: B256::ZERO,
-                parent_hash: B256::ZERO,
-                fee_recipient: Address::ZERO,
-                prev_randao: B256::ZERO,
-                block_number: header.number,
-                gas_limit: header.gas_limit,
-                timestamp: header.timestamp,
-                extra_data: Default::default(),
-                base_fee_per_gas: U256::from(header.base_fee_per_gas.unwrap_or_default()),
-            }),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                state_root: B256::ZERO,
-                receipts_root: B256::ZERO,
-                logs_bloom: Default::default(),
-                gas_used: first_result.receipt.inner.gas_used,
-                block_hash: B256::ZERO,
-                transactions: vec![],
-                withdrawals: vec![],
-                withdrawals_root: B256::ZERO,
-                blob_gas_used: None,
-            },
-            metadata: Metadata { block_number: header.number },
-        }]);
-        pending_blocks_builder.with_receipt(tx_hash, first_result.receipt.clone());
-        pending_blocks_builder.with_transaction_state(tx_hash, first_result.state.clone());
-        pending_blocks_builder.with_transaction_result(tx_hash, first_result.result);
-        pending_blocks_builder.with_execution_time(tx_hash, 1_234);
-
-        let prev_pending_blocks =
-            Arc::new(pending_blocks_builder.build().expect("should build cached pending blocks"));
-
-        let second_evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
-        let second_evm = evm_config.evm_with_env(InMemoryDB::default(), second_evm_env);
-        let second_pending_block = Block { header, body: Default::default() };
-        let mut second_builder = PendingStateBuilder::new(
-            (*chain_spec).clone(),
-            second_evm,
-            second_pending_block,
-            Some(prev_pending_blocks),
-            L1BlockInfo::default(),
-            StateOverride::default(),
-        );
-
-        let cached_result = second_builder
-            .execute_transaction(0, create_legacy_tx())
-            .expect("cached transaction execution failed");
-
-        assert_eq!(cached_result.execution_time_us, Some(1_234));
-    }
-
-    #[test]
     fn flashblock_tx_has_nonzero_blob_gas_used_when_jovian_active() {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().jovian_activated().build());
         let mut db = InMemoryDB::default();
@@ -704,7 +511,6 @@ mod tests {
             (*chain_spec).clone(),
             evm,
             pending_block,
-            None,
             L1BlockInfo::default(),
             StateOverride::default(),
         );
@@ -747,7 +553,6 @@ mod tests {
             (*chain_spec).clone(),
             evm,
             pending_block,
-            None,
             L1BlockInfo::default(),
             StateOverride::default(),
         );
@@ -803,7 +608,6 @@ mod tests {
             (*chain_spec).clone(),
             evm,
             pending_block,
-            None,
             L1BlockInfo::default(),
             StateOverride::default(),
         );
@@ -830,157 +634,6 @@ mod tests {
         assert_eq!(
             blob_gas_used, 0,
             "blob_gas_used should be 0 for deposit tx even when Jovian is active"
-        );
-    }
-
-    /// Regression test: `execute_with_cached_data` must commit the cached `EvmState` to the EVM
-    /// database so that subsequent transactions see the correct post-tx state.
-    ///
-    /// Without the commit, a fresh tx executed after a cached one runs against stale state
-    /// (e.g. missing nonce increment, stale storage), producing logs that differ from what
-    /// the final block-building executor produces. This causes a receipt root mismatch
-    /// during block validation because the sequencer re-executes everything from scratch.
-    #[test]
-    fn cached_execute_commits_state_so_subsequent_fresh_txs_see_updated_nonce() {
-        // Phase 1: execute tx A freshly to obtain the real EvmState and receipt
-        // that would be stored in PendingBlocks after the first flashblock round.
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
-        let sender = Address::ZERO;
-
-        let header = Header {
-            number: 1,
-            timestamp: 100,
-            gas_limit: 30_000_000,
-            base_fee_per_gas: Some(1_000_000_000),
-            ..Default::default()
-        };
-
-        let mut inner_db = InMemoryDB::default();
-        inner_db.insert_account_info(
-            sender,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
-                nonce: 0,
-                ..Default::default()
-            },
-        );
-        let db = State::builder().with_database(inner_db).build();
-
-        let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
-        let evm = evm_config.evm_with_env(db, evm_env);
-        let pending_block = Block { header: header.clone(), body: Default::default() };
-        let mut first_builder = PendingStateBuilder::new(
-            (*chain_spec).clone(),
-            evm,
-            pending_block,
-            None,
-            L1BlockInfo::default(),
-            StateOverride::default(),
-        );
-
-        let tx_a = create_legacy_tx();
-        let tx_a_hash = tx_a.tx_hash();
-        let first_result =
-            first_builder.execute_transaction(0, tx_a).expect("first execution failed");
-
-        // Sanity-check: fresh execution increments the sender nonce from 0 to 1.
-        let (first_db, _) = first_builder.into_db_and_state_overrides();
-        let sender_nonce_after_tx_a = first_db
-            .cache
-            .accounts
-            .get(&sender)
-            .and_then(|a| a.account_info())
-            .map(|info| info.nonce)
-            .expect("sender should be in cache after tx A");
-
-        assert_eq!(sender_nonce_after_tx_a, 1, "tx A should increment nonce to 1");
-
-        // Phase 2: store the result of tx A in PendingBlocks, simulating what the
-        // processor does after the first flashblock is built.
-        let mut pending_blocks_builder = crate::PendingBlocksBuilder::new();
-        pending_blocks_builder
-            .with_header(alloy_consensus::Sealed::new_unchecked(header.clone(), B256::ZERO));
-        pending_blocks_builder.with_flashblocks([Flashblock {
-            payload_id: PayloadId::default(),
-            index: 0,
-            base: Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: B256::ZERO,
-                parent_hash: B256::ZERO,
-                fee_recipient: Address::ZERO,
-                prev_randao: B256::ZERO,
-                block_number: header.number,
-                gas_limit: header.gas_limit,
-                timestamp: header.timestamp,
-                extra_data: Default::default(),
-                base_fee_per_gas: U256::from(header.base_fee_per_gas.unwrap_or_default()),
-            }),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                state_root: B256::ZERO,
-                receipts_root: B256::ZERO,
-                logs_bloom: Default::default(),
-                gas_used: first_result.receipt.inner.gas_used,
-                block_hash: B256::ZERO,
-                transactions: vec![],
-                withdrawals: vec![],
-                withdrawals_root: B256::ZERO,
-                blob_gas_used: None,
-            },
-            metadata: Metadata { block_number: header.number },
-        }]);
-        pending_blocks_builder.with_transaction_sender(tx_a_hash, sender);
-        pending_blocks_builder.with_receipt(tx_a_hash, first_result.receipt.clone());
-        pending_blocks_builder.with_transaction_state(tx_a_hash, first_result.state.clone());
-        pending_blocks_builder.with_transaction_result(tx_a_hash, first_result.result);
-
-        let prev_pending_blocks =
-            Arc::new(pending_blocks_builder.build().expect("should build pending blocks"));
-
-        // Phase 3: build a second flashblock whose EVM starts from scratch (nonce 0).
-        // tx A is now in prev_pending_blocks so execute_transaction will take the cached
-        // path (execute_with_cached_data). After that call the EVM database must reflect
-        // the committed state of tx A (nonce 1) so any subsequent fresh tx executes
-        // against the correct state.
-        let mut inner_db2 = InMemoryDB::default();
-        inner_db2.insert_account_info(
-            sender,
-            AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
-                nonce: 0,
-                ..Default::default()
-            },
-        );
-        let db2 = State::builder().with_database(inner_db2).build();
-        let second_evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
-        let second_evm = evm_config.evm_with_env(db2, second_evm_env);
-        let second_pending_block = Block { header, body: Default::default() };
-        let mut second_builder = PendingStateBuilder::new(
-            (*chain_spec).clone(),
-            second_evm,
-            second_pending_block,
-            Some(prev_pending_blocks),
-            L1BlockInfo::default(),
-            StateOverride::default(),
-        );
-
-        second_builder
-            .execute_transaction(0, create_legacy_tx())
-            .expect("cached tx A execution failed");
-
-        // The EVM database must now show nonce 1 for the sender, proving that
-        // execute_with_cached_data committed the state before returning.
-        let (second_db_after, _) = second_builder.into_db_and_state_overrides();
-        let sender_nonce_after_cached_tx_a = second_db_after
-            .cache
-            .accounts
-            .get(&sender)
-            .and_then(|a| a.account_info())
-            .map(|info| info.nonce)
-            .expect("sender should be in cache after cached tx A");
-
-        assert_eq!(
-            sender_nonce_after_cached_tx_a, 1,
-            "cached tx A must commit state so the sender nonce is 1 (not 0)"
         );
     }
 }

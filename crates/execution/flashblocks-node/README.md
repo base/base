@@ -37,7 +37,6 @@ When running the node binary, Flashblocks can be configured with the following C
 
 - `--flashblocks-url <WEBSOCKET_URL>`: The WebSocket URL to stream flashblock updates from (required to enable Flashblocks; `--websocket-url` is accepted as an alias)
 - `--max-pending-blocks-depth <MAX_PENDING_BLOCKS_DEPTH>`: Maximum number of pending flashblocks to retain in memory (default: 3)
-- `--flashblocks.cached-execution`: Enable cached execution through the flashblocks-aware engine validator
 
 ### Example
 
