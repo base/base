@@ -43,8 +43,6 @@ use crate::{
 pub struct DriverConfig {
     /// How often the driver polls for new games.
     pub poll_interval: Duration,
-    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
-    pub max_proof_duration: Duration,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
 }
@@ -56,6 +54,32 @@ pub struct TeeConfig {
     pub l1_head_provider: Arc<dyn L1HeadProvider>,
 }
 
+/// Dependencies for the scan → validate → prove → dispute path. The [`Driver`]
+/// holds them as `Option<DisputeComponents>`: `Some` when disputing, `None` in
+/// no-dispute mode. The single `Option` records the mode and keeps the proving
+/// deps all-present-or-all-absent — they cannot disagree.
+pub struct DisputeComponents<L2: L2Provider, P: ProofRequesterProvider> {
+    /// Scans for new dispute games on L1.
+    pub scanner: GameScanner,
+    /// Validates L2 output roots against the local node.
+    pub validator: OutputValidator<L2>,
+    /// Prover-service requester used to generate and poll fault proofs (TEE and ZK).
+    pub proof_requester: Arc<P>,
+    /// Optional TEE proof configuration (provider + L1 RPC client).
+    pub tee: Option<TeeConfig>,
+    /// Maximum wall-clock time to wait for a proof session before treating it as failed.
+    pub max_proof_duration: Duration,
+}
+
+impl<L2: L2Provider, P: ProofRequesterProvider> std::fmt::Debug for DisputeComponents<L2, P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DisputeComponents")
+            .field("tee", &self.tee.as_ref().map(|_| ".."))
+            .field("max_proof_duration", &self.max_proof_duration)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Service-layer dependencies injected into the [`Driver`].
 pub struct DriverComponents<
     L2: L2Provider,
@@ -63,16 +87,10 @@ pub struct DriverComponents<
     T: TxManager,
     C: Clock = TokioRuntime,
 > {
-    /// Scans for new dispute games on L1.
-    pub scanner: GameScanner,
-    /// Validates L2 output roots against the local node.
-    pub validator: OutputValidator<L2>,
-    /// Prover-service requester used to generate and poll ZK fault proofs.
-    pub proof_requester: Arc<P>,
+    /// Dispute-pipeline dependencies. `None` in no-dispute mode.
+    pub dispute: Option<DisputeComponents<L2, P>>,
     /// Submits challenge transactions to L1.
     pub submitter: ChallengeSubmitter<T>,
-    /// Optional TEE proof configuration (provider + L1 RPC client).
-    pub tee: Option<TeeConfig>,
     /// Client for the aggregate verifier contract.
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
@@ -84,40 +102,36 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DriverComponents")
-            .field("scanner", &self.scanner)
-            .field("tee", &self.tee.as_ref().map(|_| ".."))
+            .field("dispute", &self.dispute.as_ref().map(|_| ".."))
             .field("bond_manager", &self.bond_manager)
             .finish_non_exhaustive()
     }
 }
 
-/// Orchestrates the challenger pipeline: scan, validate, prove, submit.
-pub struct Driver<L2, P, T, C: Clock = TokioRuntime>
+/// Orchestrates the challenger: the bond/anchor lifecycle always, plus the
+/// dispute pipeline (scan → validate → prove → dispute) when `dispute`
+/// is `Some`. In no-dispute mode `dispute` is `None` and the pipeline is
+/// skipped entirely.
+pub struct Driver<L2, P, T, C = TokioRuntime>
 where
     L2: L2Provider,
     P: ProofRequesterProvider,
     T: TxManager,
+    C: Clock,
 {
-    /// Scans for new dispute games on L1.
-    pub scanner: GameScanner,
-    /// Validates L2 output roots against the local node.
-    pub validator: OutputValidator<L2>,
-    /// Prover-service requester used to generate and poll ZK fault proofs.
-    pub proof_requester: Arc<P>,
-    /// Submits challenge transactions to L1.
-    pub submitter: ChallengeSubmitter<T>,
-    /// Optional TEE proof configuration (provider + L1 RPC client).
-    pub tee: Option<TeeConfig>,
-    /// Client for the aggregate verifier contract.
-    pub verifier_client: Arc<dyn AggregateVerifierClient>,
+    /// Dispute-pipeline dependencies. `None` in no-dispute mode; when `None`,
+    /// the driver runs only the bond/anchor lifecycle.
+    pub dispute: Option<DisputeComponents<L2, P>>,
     /// In-flight proof sessions keyed by game address.
     pub pending_proofs: PendingProofs,
+    /// Submits challenge transactions to L1.
+    pub submitter: ChallengeSubmitter<T>,
+    /// Client for the aggregate verifier contract.
+    pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
-    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
-    pub max_proof_duration: Duration,
     /// Token used to signal graceful shutdown.
     pub cancel: CancellationToken,
 }
@@ -127,6 +141,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Driver")
+            .field("dispute", &self.dispute.as_ref().map(|_| ".."))
             .field("pending_proofs", &self.pending_proofs.len())
             .field("poll_interval", &self.poll_interval)
             .finish_non_exhaustive()
@@ -140,23 +155,19 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     /// Creates a new driver with the given components.
     pub fn new(config: DriverConfig, components: DriverComponents<L2, P, T, C>) -> Self {
         Self {
-            scanner: components.scanner,
-            validator: components.validator,
-            proof_requester: components.proof_requester,
-            submitter: components.submitter,
-            tee: components.tee,
-            verifier_client: components.verifier_client,
+            dispute: components.dispute,
             pending_proofs: PendingProofs::new(),
+            submitter: components.submitter,
+            verifier_client: components.verifier_client,
             bond_manager: components.bond_manager,
             poll_interval: config.poll_interval,
-            max_proof_duration: config.max_proof_duration,
             cancel: config.cancel,
         }
     }
 
     /// Runs the main driver loop until the cancellation token is fired.
     pub async fn run(mut self) {
-        info!("challenger driver starting");
+        info!(no_dispute = self.dispute.is_none(), "challenger driver starting");
         loop {
             if self.cancel.is_cancelled() {
                 info!("challenger driver shutting down");
@@ -180,17 +191,23 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         }
     }
 
-    /// Executes a single scan-validate-prove-submit cycle.
+    /// Executes a single cycle: advance in-flight proofs, run the bond/anchor
+    /// lifecycle, then (when disputing) scan for and process candidates.
     ///
-    /// First polls any in-flight proof sessions that are not in the current
-    /// scan batch, then discovers claimable bonds, advances bond lifecycle
-    /// claims, and finally scans for new candidates and processes them.
+    /// In no-dispute mode (`dispute` is `None`) only the bond/anchor lifecycle
+    /// runs — no scanning, validation, proving, or dispute submission.
     pub async fn step(&mut self) -> eyre::Result<()> {
-        self.poll_pending_proofs().await;
+        if self.dispute.is_some() {
+            self.poll_pending_proofs().await;
+        }
+
         self.discover_claimable_bonds().await;
         self.poll_bond_claims().await;
 
-        let candidates = self.scanner.scan().await?;
+        let candidates = match self.dispute.as_ref() {
+            Some(dispute) => dispute.scanner.scan().await?,
+            None => return Ok(()),
+        };
 
         for candidate in candidates {
             let index = candidate.index;
@@ -203,9 +220,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     }
 
     /// Discovers new claimable games via incremental and periodic full
-    /// rescanning. Runs before [`poll_bond_claims`](Self::poll_bond_claims)
-    /// so that newly discovered games are immediately eligible for
-    /// advancement in the same tick.
+    /// rescanning. Runs before [`poll_bond_claims`](Self::poll_bond_claims) so
+    /// newly discovered games are eligible for advancement in the same tick.
     async fn discover_claimable_bonds(&mut self) {
         if let Some(ref mut bond_manager) = self.bond_manager
             && let Err(e) = bond_manager.discover_claimable_games(&*self.verifier_client).await
@@ -215,7 +231,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     }
 
     /// Polls the bond manager to advance tracked games through the bond
-    /// lifecycle (resolve → unlock → delay → withdraw).
+    /// lifecycle (resolve → unlock → delay → withdraw, plus anchor updates).
     async fn poll_bond_claims(&mut self) {
         if let Some(ref mut bond_manager) = self.bond_manager {
             bond_manager.poll(&*self.verifier_client, &self.submitter).await;
@@ -285,7 +301,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             intermediate_roots: &intermediate_roots,
         };
 
-        match self.validator.validate_intermediate_roots(params).await {
+        match self
+            .dispute
+            .as_ref()
+            .expect("dispute components must be set unless --no-dispute is set")
+            .validator
+            .validate_intermediate_roots(params)
+            .await
+        {
             Ok(result) => Ok(Some((result, intermediate_roots))),
             Err(e) => {
                 match &e {
@@ -420,7 +443,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         //   starting_block + interval * (i + 1)
         let checkpoint_block = candidate.checkpoint_start_block(challenged_index + 1)?;
 
-        let expected_root = match self.validator.compute_output_root(checkpoint_block).await {
+        let expected_root = match self
+            .dispute
+            .as_ref()
+            .expect("dispute components must be set unless --no-dispute is set")
+            .validator
+            .compute_output_root(checkpoint_block)
+            .await
+        {
             Ok(root) => root,
             Err(ValidatorError::BlockNotAvailable { .. }) => {
                 debug!(
@@ -493,7 +523,12 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         // (InvalidDualProposal) set `try_tee_first = true`.
         if candidate.tee_prover != Address::ZERO
             && try_tee_first
-            && let Some(tee) = &self.tee
+            && let Some(tee) = self
+                .dispute
+                .as_ref()
+                .expect("dispute components must be set unless --no-dispute is set")
+                .tee
+                .as_ref()
         {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
             match self.build_tee_request(&candidate, invalid_index, expected_root, tee).await {
@@ -518,7 +553,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                         tee_request,
                         TeeKind::AwsNitro,
                     );
-                    match self.proof_requester.prove_block_range(request).await {
+                    match self
+                        .dispute
+                        .as_ref()
+                        .expect("dispute components must be set unless --no-dispute is set")
+                        .proof_requester
+                        .prove_block_range(request)
+                        .await
+                    {
                         Ok(response) => {
                             info!(
                                 game = %game_address,
@@ -583,7 +625,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         let l1_head = candidate.l1_head;
         let (l1_head_number_result, output_root_result) = tokio::join!(
             tee.l1_head_provider.block_number_by_hash(l1_head),
-            self.validator.compute_output_root_with_hash(start_block_number),
+            self.dispute
+                .as_ref()
+                .expect("dispute components must be set unless --no-dispute is set")
+                .validator
+                .compute_output_root_with_hash(start_block_number),
         );
         let l1_head_number = l1_head_number_result?;
         let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
@@ -643,7 +689,13 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             proof_request.clone(),
         );
 
-        let prove_response = self.proof_requester.prove_block_range(request).await?;
+        let prove_response = self
+            .dispute
+            .as_ref()
+            .expect("dispute components must be set unless --no-dispute is set")
+            .proof_requester
+            .prove_block_range(request)
+            .await?;
 
         info!(
             game = %game_address,
@@ -697,9 +749,13 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         // Poll proof status first — if still pending, skip the contract
         // calls that check game liveness. This avoids 3 RPC round-trips
         // per tick for proofs that are not yet ready.
+        let dispute = self
+            .dispute
+            .as_ref()
+            .expect("dispute components must be set unless --no-dispute is set");
         let proof_update = self
             .pending_proofs
-            .poll(game_address, &*self.proof_requester, self.max_proof_duration)
+            .poll(game_address, &*dispute.proof_requester, dispute.max_proof_duration)
             .await?;
         match &proof_update {
             Some(ProofUpdate::Pending) => {
@@ -883,7 +939,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             request,
         );
 
-        match self.proof_requester.prove_block_range(prove_request).await {
+        match self
+            .dispute
+            .as_ref()
+            .expect("dispute components must be set unless --no-dispute is set")
+            .proof_requester
+            .prove_block_range(prove_request)
+            .await
+        {
             Ok(response) => {
                 info!(
                     game = %game_address,

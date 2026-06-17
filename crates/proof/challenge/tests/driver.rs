@@ -8,9 +8,9 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
-    BondManager, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, Driver,
-    DriverComponents, DriverConfig, GameScanner, L1HeadProvider, OutputValidator, PendingProof,
-    PendingProofs, ProofPhase, ProofUpdate, TeeConfig,
+    BondManager, ChallengeSubmitter, ChallengerProofAdapter, DisputeComponents, DisputeIntent,
+    Driver, DriverComponents, DriverConfig, GameScanner, L1HeadProvider, OutputValidator,
+    PendingProof, PendingProofs, ProofPhase, ProofUpdate, TeeConfig,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockBondTransactionSubmitter,
         MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider, MockTxManager,
@@ -84,20 +84,20 @@ fn test_driver_with_tee(
     let validator = OutputValidator::new(l2_provider);
     let submitter = ChallengeSubmitter::new(tx_manager);
 
-    let config = DriverConfig {
-        poll_interval: Duration::from_millis(10),
-        max_proof_duration: Duration::from_secs(4 * 60 * 60),
-        cancel: CancellationToken::new(),
-    };
+    let config =
+        DriverConfig { poll_interval: Duration::from_millis(10), cancel: CancellationToken::new() };
 
     Driver::new(
         config,
         DriverComponents {
-            scanner,
-            validator,
-            proof_requester: zk_prover,
+            dispute: Some(DisputeComponents {
+                scanner,
+                validator,
+                proof_requester: zk_prover,
+                tee,
+                max_proof_duration: Duration::from_secs(4 * 60 * 60),
+            }),
             submitter,
-            tee,
             verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
             bond_manager: None,
         },
@@ -386,20 +386,20 @@ async fn test_step_scan_error_propagated() {
     let validator = OutputValidator::new(l2);
     let submitter = ChallengeSubmitter::new(default_tx_manager());
 
-    let config = DriverConfig {
-        poll_interval: Duration::from_millis(10),
-        max_proof_duration: Duration::from_secs(4 * 60 * 60),
-        cancel: CancellationToken::new(),
-    };
+    let config =
+        DriverConfig { poll_interval: Duration::from_millis(10), cancel: CancellationToken::new() };
 
     let mut driver = Driver::new(
         config,
         DriverComponents {
-            scanner,
-            validator,
-            proof_requester: default_zk_prover(),
+            dispute: Some(DisputeComponents {
+                scanner,
+                validator,
+                proof_requester: default_zk_prover(),
+                tee: None,
+                max_proof_duration: Duration::from_secs(4 * 60 * 60),
+            }),
             submitter,
-            tee: None,
             verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
             bond_manager: None::<BondManager<TokioRuntime>>,
         },
@@ -935,7 +935,7 @@ async fn test_step_tee_submission_failure_falls_back_to_zk() {
     );
 
     {
-        let mut state = driver.proof_requester.state.lock().unwrap();
+        let mut state = driver.dispute.as_ref().unwrap().proof_requester.state.lock().unwrap();
         state.result = None;
         state.proof = vec![0xDE, 0xAD];
         state.proof_status = ProofStatus::Succeeded;
@@ -1802,4 +1802,28 @@ async fn test_poll_running_timeout_triggers_retry() {
     let entry = proofs.get(&addr(0)).unwrap();
     assert_eq!(entry.retry_count, 1);
     assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
+}
+
+/// With `dispute` = `None`, `step()` must skip the scan/validate/prove path —
+/// reaching it would panic on the absent components. A passing `step()` proves
+/// the gate holds; the dispute pipeline was never entered.
+#[tokio::test]
+async fn test_step_no_dispute_skips_proving() {
+    let verifier = empty_verifier();
+    let submitter = ChallengeSubmitter::new(default_tx_manager());
+
+    let config =
+        DriverConfig { poll_interval: Duration::from_millis(10), cancel: CancellationToken::new() };
+
+    let mut driver: Driver<MockL2Provider, MockZkProofProvider, MockTxManager> = Driver::new(
+        config,
+        DriverComponents {
+            dispute: None,
+            submitter,
+            verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
+            bond_manager: None,
+        },
+    );
+
+    driver.step().await.expect("no-dispute step must not touch the absent dispute components");
 }

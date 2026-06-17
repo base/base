@@ -69,6 +69,18 @@ pub enum ConfigError {
         /// The actual value.
         value: &'static str,
     },
+    /// `--zk-rpc-url` was provided in `--no-dispute` mode.
+    #[error("--zk-rpc-url must not be set in --no-dispute mode")]
+    ZkRpcUrlNotAllowedInNoDisputeMode,
+    /// `--tee-rpc-url` was provided in `--no-dispute` mode.
+    #[error("--tee-rpc-url must not be set in --no-dispute mode")]
+    TeeRpcUrlNotAllowedInNoDisputeMode,
+    /// `--zk-rpc-url` is required when not in `--no-dispute` mode.
+    #[error("--zk-rpc-url is required unless --no-dispute is set")]
+    MissingZkRpcUrl,
+    /// `--bond-claim-addresses` is required in `--no-dispute` mode.
+    #[error("--bond-claim-addresses is required in --no-dispute mode")]
+    MissingBondClaimAddressesInNoDisputeMode,
     /// Invalid metrics configuration.
     #[error("invalid metrics config: {0}")]
     Metrics(&'static str),
@@ -93,8 +105,11 @@ pub struct ChallengerConfig {
     pub anchor_state_registry_addr: Address,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
-    /// URL of the ZK RPC endpoint.
-    pub zk_rpc_url: Validated<Url>,
+    /// Run in no-dispute mode: skip all ZK/proof-dispute paths and run only the
+    /// bond/anchor lifecycle.
+    pub no_dispute: bool,
+    /// URL of the ZK RPC endpoint. `None` in `--no-dispute` mode.
+    pub zk_rpc_url: Option<Validated<Url>>,
     /// Timeout for establishing the initial gRPC connection to the ZK proof service.
     pub zk_connect_timeout: Duration,
     /// Timeout for individual gRPC requests to the ZK proof service.
@@ -171,9 +186,30 @@ impl ChallengerConfig {
 
         let l1_eth_rpc = validate_url(cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
         let l2_eth_rpc = validate_url(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
-        let zk_rpc_url = validate_url(cli.challenger.zk_rpc_url, "zk-rpc-url")?;
+        let no_dispute = cli.challenger.no_dispute;
+        let zk_rpc_url =
+            cli.challenger.zk_rpc_url.map(|url| validate_url(url, "zk-rpc-url")).transpose()?;
         let tee_rpc_url =
             cli.challenger.tee_rpc_url.map(|url| validate_url(url, "tee-rpc-url")).transpose()?;
+
+        // Mode gating: `--no-dispute` strips the proving path, so it forbids
+        // both proof endpoints (`--zk-rpc-url`, `--tee-rpc-url`) and requires
+        // `--bond-claim-addresses` (otherwise the driver would be a silent
+        // no-op). When disputing, `--zk-rpc-url` is mandatory because the
+        // prover-service is the only proof backend.
+        if no_dispute {
+            if zk_rpc_url.is_some() {
+                return Err(ConfigError::ZkRpcUrlNotAllowedInNoDisputeMode);
+            }
+            if tee_rpc_url.is_some() {
+                return Err(ConfigError::TeeRpcUrlNotAllowedInNoDisputeMode);
+            }
+            if cli.challenger.bond_claim_addresses.is_empty() {
+                return Err(ConfigError::MissingBondClaimAddressesInNoDisputeMode);
+            }
+        } else if zk_rpc_url.is_none() {
+            return Err(ConfigError::MissingZkRpcUrl);
+        }
 
         if cli.challenger.anchor_state_registry_addr == Address::ZERO {
             return Err(ConfigError::OutOfRange {
@@ -230,6 +266,7 @@ impl ChallengerConfig {
             dispute_game_factory_addr: cli.challenger.dispute_game_factory_addr,
             anchor_state_registry_addr: cli.challenger.anchor_state_registry_addr,
             poll_interval: cli.challenger.poll_interval,
+            no_dispute,
             zk_rpc_url,
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
@@ -546,5 +583,60 @@ mod tests {
         let cli = cli_from_args(&args);
         let config = ChallengerConfig::from_cli(cli).unwrap();
         assert_eq!(config.health_addr, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
+    }
+
+    /// Like `cli_from_args` but omits the `--zk-rpc-url` default.
+    fn cli_without_zk(extra_args: &[&str]) -> Cli {
+        let base: &[(&str, &str)] = &[
+            ("--l1-eth-rpc", "http://localhost:8545"),
+            ("--l2-eth-rpc", "http://localhost:9545"),
+            ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
+            ("--anchor-state-registry-addr", "0x2234567890123456789012345678901234567890"),
+        ];
+
+        let mut args = vec!["challenger"];
+        for (key, value) in base {
+            if !extra_args.contains(key) {
+                args.push(key);
+                args.push(value);
+            }
+        }
+        args.extend_from_slice(extra_args);
+        Cli::try_parse_from(args).unwrap()
+    }
+
+    const BOND_ADDR: &str = "0x1234567890123456789012345678901234567890";
+
+    #[test]
+    fn test_no_dispute_with_zk_rpc_url_rejected() {
+        // `cli_from_args` includes `--zk-rpc-url` by default.
+        let args = [&LOCAL_SIGNER_ARGS[..], &["--no-dispute", "--bond-claim-addresses", BOND_ADDR]]
+            .concat();
+        let result = ChallengerConfig::from_cli(cli_from_args(&args));
+        assert!(matches!(result, Err(ConfigError::ZkRpcUrlNotAllowedInNoDisputeMode)));
+    }
+
+    #[test]
+    fn test_no_dispute_with_tee_rpc_url_rejected() {
+        let args = [
+            &LOCAL_SIGNER_ARGS[..],
+            &["--no-dispute", "--bond-claim-addresses", BOND_ADDR, "--tee-rpc-url", "http://t:1"],
+        ]
+        .concat();
+        let result = ChallengerConfig::from_cli(cli_without_zk(&args));
+        assert!(matches!(result, Err(ConfigError::TeeRpcUrlNotAllowedInNoDisputeMode)));
+    }
+
+    #[test]
+    fn test_no_dispute_without_bond_addresses_rejected() {
+        let args = [&LOCAL_SIGNER_ARGS[..], &["--no-dispute"]].concat();
+        let result = ChallengerConfig::from_cli(cli_without_zk(&args));
+        assert!(matches!(result, Err(ConfigError::MissingBondClaimAddressesInNoDisputeMode)));
+    }
+
+    #[test]
+    fn test_missing_zk_rpc_url_rejected_when_disputing() {
+        let result = ChallengerConfig::from_cli(cli_without_zk(&LOCAL_SIGNER_ARGS));
+        assert!(matches!(result, Err(ConfigError::MissingZkRpcUrl)));
     }
 }
