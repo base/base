@@ -250,8 +250,10 @@ where
 
     /// Checks the `sender_auth` field carries enough bytes for either the EOA
     /// recovery path (65-byte signature) or the configured-actor auth path
-    /// (`authenticator_address || authenticator_payload`) and that the authenticator address
-    /// is not the sentinel revoked marker.
+    /// (`authenticator_address || authenticator_payload`) and that the
+    /// authenticator address is not the revoked sentinel. `address(0)` is
+    /// admitted on the configured path as the implicit-EOA sentinel (see
+    /// [`Self::authorizing_authenticator_rejected`]).
     fn validate_sender_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
         let auth = signed.sender_auth();
         if auth.is_empty() {
@@ -268,7 +270,7 @@ where
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
             let authenticator = Address::from_slice(&auth[..20]);
-            if Self::authenticator_out_of_range(&authenticator) {
+            if Self::authorizing_authenticator_rejected(&authenticator) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
         }
@@ -276,8 +278,8 @@ where
     }
 
     /// Ensures `payer_auth` is present iff a `payer` is set, and that its
-    /// authenticator prefix sits in the live policy range (above the reserved
-    /// floor, below the revoked sentinel).
+    /// authenticator prefix is not the revoked sentinel. As with `sender_auth`,
+    /// `address(0)` is admitted as the implicit-EOA payer sentinel.
     fn validate_payer_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
         let payer_present = signed.tx().payer.is_some();
         let auth = signed.payer_auth();
@@ -290,20 +292,38 @@ where
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
             let authenticator = Address::from_slice(&auth[..20]);
-            if Self::authenticator_out_of_range(&authenticator) {
+            if Self::authorizing_authenticator_rejected(&authenticator) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
         }
         Ok(())
     }
 
-    /// Returns `true` when `authenticator` falls outside the live mempool policy
-    /// range. Mirrors the check in [`Self::validate_initial_actors`] and
-    /// [`Self::validate_actor_changes`] so all auth surfaces (`sender_auth`,
-    /// `payer_auth`, `cfg.auth`, and per-actor authenticators) reject the reserved
-    /// `< ECRECOVER_AUTHENTICATOR` window and the `REVOKED_AUTHENTICATOR` sentinel
-    /// identically.
-    fn authenticator_out_of_range(authenticator: &Address) -> bool {
+    /// Returns `true` when an *authorizing* auth blob (`sender_auth`,
+    /// `payer_auth`, or a `ConfigChange.auth`) names a structurally invalid
+    /// authenticator.
+    ///
+    /// These surfaces identify the actor *proving authority* and are handed
+    /// straight to `authenticate_actor` downstream, where `address(0)` is the
+    /// implicit-EOA sentinel: a bare 65-byte ECDSA signature whose recovered
+    /// address is checked against the account itself. It is therefore admitted
+    /// here (it is never a registrable authenticator — `sender_auth =
+    /// address(0) || <sig>` resolves the EOA, it is not stored as an actor).
+    /// Only the `REVOKED_AUTHENTICATOR` sentinel is structurally rejected so the
+    /// mempool never propagates a transaction authorized by a revoked authority;
+    /// canonical-set membership and signature validity are enforced downstream.
+    fn authorizing_authenticator_rejected(authenticator: &Address) -> bool {
+        *authenticator == Eip8130Constants::REVOKED_AUTHENTICATOR
+    }
+
+    /// Returns `true` when a *configured* per-actor authenticator (the new actor
+    /// of a `Create.initial_actors` or `ConfigChange.actor_changes` `Authorize`
+    /// entry) falls outside the live mempool policy range. Unlike the authorizing
+    /// surfaces, these register a new actor, so the reserved
+    /// `< ECRECOVER_AUTHENTICATOR` window — including `address(0)`, which is the
+    /// implicit-EOA sentinel and can never be stored as an actor — and the
+    /// `REVOKED_AUTHENTICATOR` sentinel are both rejected.
+    fn configured_authenticator_out_of_range(authenticator: &Address) -> bool {
         *authenticator < Eip8130Constants::ECRECOVER_AUTHENTICATOR
             || *authenticator == Eip8130Constants::REVOKED_AUTHENTICATOR
     }
@@ -347,7 +367,7 @@ where
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                     let cfg_authenticator = Address::from_slice(&cfg.auth[..20]);
-                    if Self::authenticator_out_of_range(&cfg_authenticator) {
+                    if Self::authorizing_authenticator_rejected(&cfg_authenticator) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                     Self::validate_actor_changes(&cfg.actor_changes)?;
@@ -374,7 +394,7 @@ where
         }
         let mut seen = BTreeSet::new();
         for actor in actors {
-            if Self::authenticator_out_of_range(&actor.authenticator) {
+            if Self::configured_authenticator_out_of_range(&actor.authenticator) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
             if !seen.insert(actor.actor_id) {
@@ -396,11 +416,15 @@ where
     /// authenticator, so only the cap and uniqueness apply.
     ///
     /// Per EIP-8130 a config change MAY authorize a non-canonical authenticator
-    /// (for in-EVM use such as recovery keys); only the reserved window
-    /// (`< ECRECOVER_AUTHENTICATOR`) and the `REVOKED_AUTHENTICATOR` sentinel are
-    /// rejected here, matching the bound applied to the other auth surfaces. A
-    /// `Revoke` names no authenticator and MUST carry empty `data`; a non-empty
-    /// `data` is malformed and rejected at the gate.
+    /// (for in-EVM use such as recovery keys); the new actor is nonetheless
+    /// registrable, so the reserved window (`< ECRECOVER_AUTHENTICATOR`,
+    /// including the `address(0)` implicit-EOA sentinel) and the
+    /// `REVOKED_AUTHENTICATOR` sentinel are rejected via
+    /// [`Self::configured_authenticator_out_of_range`]. This is *stricter* than
+    /// the authorizing surfaces ([`Self::authorizing_authenticator_rejected`]),
+    /// which admit `address(0)`. A `Revoke` names no authenticator and MUST
+    /// carry empty `data`; a non-empty `data` is malformed and rejected at the
+    /// gate.
     fn validate_actor_changes(changes: &[ActorChange]) -> Result<(), InvalidPoolTransactionError> {
         if changes.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
@@ -421,7 +445,7 @@ where
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                     let authenticator = Address::from_slice(&change.data[12..32]);
-                    if Self::authenticator_out_of_range(&authenticator) {
+                    if Self::configured_authenticator_out_of_range(&authenticator) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                 }
@@ -843,15 +867,17 @@ mod tests {
         assert_unsupported(TestValidator::validate_sender_auth(&signed));
     }
 
-    // Regression: configured-actor path must reject the reserved authenticator
-    // range below `ECRECOVER_AUTHENTICATOR`, matching `validate_actor_changes`.
-    // `address(0)` is the canonical reserved value.
+    // The configured-actor `sender_auth` path admits `address(0)` as the
+    // implicit-EOA sentinel: an explicit sender authorized by its EOA owner
+    // (`address(0) || <65-byte sig>`). The recovered-address binding is enforced
+    // downstream in `authenticate_actor`, not structurally here.
     #[test]
-    fn rejects_eip8130_configured_actor_with_reserved_authenticator() {
+    fn accepts_eip8130_configured_actor_with_implicit_eoa_authenticator() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
-        let auth = Bytes::from(Address::ZERO.to_vec());
-        let signed = Eip8130Signed::new(tx, auth, Bytes::new());
-        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+        let mut auth = Address::ZERO.to_vec();
+        auth.extend_from_slice(&[0u8; 65]);
+        let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
+        assert!(TestValidator::validate_sender_auth(&signed).is_ok());
     }
 
     #[test]
@@ -876,15 +902,17 @@ mod tests {
         assert_unsupported(TestValidator::validate_payer_auth(&signed));
     }
 
+    // A `payer_auth` may name the implicit-EOA sentinel (`address(0)`) for an
+    // EOA sponsoring the transaction; the recovered-address binding is enforced
+    // downstream, so structural validation admits it.
     #[test]
-    fn rejects_eip8130_payer_authenticator_reserved() {
+    fn accepts_eip8130_payer_implicit_eoa_authenticator() {
         let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
-        let signed = Eip8130Signed::new(
-            tx,
-            Bytes::from_static(&[0u8; 65]),
-            Bytes::from(Address::ZERO.to_vec()),
-        );
-        assert_unsupported(TestValidator::validate_payer_auth(&signed));
+        let mut payer_auth = Address::ZERO.to_vec();
+        payer_auth.extend_from_slice(&[0u8; 65]);
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::from(payer_auth));
+        assert!(TestValidator::validate_payer_auth(&signed).is_ok());
     }
 
     #[test]
@@ -1124,6 +1152,25 @@ mod tests {
             &sign_eoa_eip8130(tx),
             test_chain_id(),
         ));
+    }
+
+    // A `ConfigChange.auth` blob authorizes the change; like `sender_auth` and
+    // `payer_auth` it admits `address(0)` as the implicit-EOA sentinel (the
+    // account's EOA owner signing the config change). Structural validation
+    // accepts it; `authenticate_actor` enforces the recovered-address binding
+    // downstream.
+    #[test]
+    fn accepts_eip8130_config_change_with_implicit_eoa_auth() {
+        let mut auth = Address::ZERO.to_vec();
+        auth.extend_from_slice(&[0u8; 65]);
+        let cfg = ConfigChange { auth: Bytes::from(auth), ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
     }
 
     // An `Authorize` change must not register a new actor against the
