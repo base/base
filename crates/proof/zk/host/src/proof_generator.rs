@@ -80,7 +80,6 @@ pub struct ProofGenerator<Client> {
 struct ResolvedBackendSession {
     backend_session_id: String,
     needs_polling: bool,
-    needs_completion_record: bool,
 }
 
 impl<Client> ProofGenerator<Client> {
@@ -247,23 +246,6 @@ where
 
         let proof = self.prover.download(&resolved.backend_session_id).await?;
 
-        if resolved.needs_completion_record
-            && let Err(error) = handle
-                .record(
-                    session_type,
-                    resolved.backend_session_id.clone(),
-                    BackendSessionState::Completed,
-                )
-                .await
-        {
-            warn!(
-                session_id = %request.claim.session_id,
-                backend_session_id = %resolved.backend_session_id,
-                error = %error,
-                "failed to record backend session completion"
-            );
-        }
-
         Ok(proof)
     }
 
@@ -281,11 +263,7 @@ where
                     backend_session_id = %backend_session_id,
                     "resuming in-flight backend session"
                 );
-                Ok(ResolvedBackendSession {
-                    backend_session_id,
-                    needs_polling: true,
-                    needs_completion_record: true,
-                })
+                Ok(ResolvedBackendSession { backend_session_id, needs_polling: true })
             }
             Some(BackendSession { backend_session_id, state: BackendSessionState::Completed }) => {
                 info!(
@@ -293,11 +271,7 @@ where
                     backend_session_id = %backend_session_id,
                     "backend session already completed, skipping to download"
                 );
-                Ok(ResolvedBackendSession {
-                    backend_session_id,
-                    needs_polling: false,
-                    needs_completion_record: false,
-                })
+                Ok(ResolvedBackendSession { backend_session_id, needs_polling: false })
             }
             None
             | Some(BackendSession {
@@ -317,11 +291,7 @@ where
                     backend_session_id = %backend_session_id,
                     "submitted backend session and recorded it"
                 );
-                Ok(ResolvedBackendSession {
-                    backend_session_id,
-                    needs_polling: true,
-                    needs_completion_record: true,
-                })
+                Ok(ResolvedBackendSession { backend_session_id, needs_polling: true })
             }
         }
     }
