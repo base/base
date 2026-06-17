@@ -1,0 +1,29 @@
+[package]
+name = "base-execution-eip8130-nonce"
+description = "EIP-8130 2D nonce validation (protocol, channel, and nonce-free modes)"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-primitives.workspace = true
+
+# base
+base-common-precompiles.workspace = true
+base-precompile-storage.workspace = true
+base-common-consensus = { workspace = true, default-features = false }
+
+# misc
+thiserror.workspace = true
+
+[dev-dependencies]
+base-precompile-storage = { workspace = true, features = ["test-utils"] }
