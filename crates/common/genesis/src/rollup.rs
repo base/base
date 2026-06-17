@@ -224,10 +224,7 @@ impl RollupConfig {
     }
 
     /// Clears a timestamp-based upgrade activation time by contract upgrade ID.
-    pub const fn clear_upgrade_activation_timestamp(
-        &mut self,
-        upgrade_id: ContractUpgrade,
-    ) -> bool {
+    pub const fn clear_upgrade_activation_timestamp(&mut self, upgrade_id: ContractUpgrade) {
         self.upgrades.clear_activation_timestamp(upgrade_id)
     }
 
@@ -236,16 +233,16 @@ impl RollupConfig {
         &mut self,
         upgrade_id: ContractUpgrade,
         timestamp: u64,
-    ) -> bool {
+    ) {
         self.upgrades.set_activation_timestamp(upgrade_id, timestamp)
     }
 
-    /// Applies a upgrade activation by contract upgrade ID.
+    /// Applies an upgrade activation by contract upgrade ID.
     pub const fn apply_upgrade_activation(
         &mut self,
         upgrade_id: ContractUpgrade,
         activation: UpgradeActivation,
-    ) -> bool {
+    ) {
         match activation {
             UpgradeActivation::Timestamp(timestamp) => {
                 self.set_upgrade_activation_timestamp(upgrade_id, timestamp)
@@ -445,7 +442,8 @@ impl UpgradeActivationSink for RollupConfig {
         upgrade_id: ContractUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
-        Ok(self.apply_upgrade_activation(upgrade_id, activation))
+        self.apply_upgrade_activation(upgrade_id, activation);
+        Ok(true)
     }
 }
 
@@ -872,7 +870,7 @@ mod tests {
     fn set_upgrade_activation_timestamp_updates_osaka_activation() {
         let mut cfg = RollupConfig::default();
 
-        assert!(cfg.set_upgrade_activation_timestamp(ContractUpgrade::Azul, 700));
+        cfg.set_upgrade_activation_timestamp(ContractUpgrade::Azul, 700);
 
         assert_eq!(cfg.upgrades.base.azul, Some(700));
         assert!(cfg.is_base_azul_active(700));

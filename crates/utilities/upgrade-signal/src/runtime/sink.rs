@@ -30,7 +30,8 @@ impl UpgradeActivationSink for RuntimeRegistrySink {
         hardfork_id: ContractUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
-        Ok(self.updates.set_activation(hardfork_id, activation))
+        self.updates.set_activation(hardfork_id, activation);
+        Ok(true)
     }
 
     fn finalize(&mut self) -> Result<(), Self::Error> {
