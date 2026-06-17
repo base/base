@@ -110,6 +110,7 @@ impl RegistrarConfig {
 
         let cancel = CancellationToken::new();
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
+        let mut balance_monitor_handles = Vec::new();
 
         self.metrics_config
             .init_with(|| {
@@ -127,12 +128,12 @@ impl RegistrarConfig {
                 cancel.clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
-            tokio::spawn(async move {
+            balance_monitor_handles.push(tokio::spawn(async move {
                 while account_balance_rx.changed().await.is_ok() {
                     RegistrarMetrics::account_balance_wei()
                         .set(f64::from(*account_balance_rx.borrow_and_update()));
                 }
-            });
+            }));
 
             let boundless_address = self.boundless_prover.signer.address();
             let (boundless_layer, mut boundless_balance_rx) = BalanceMonitorLayer::new(
@@ -144,12 +145,12 @@ impl RegistrarConfig {
             let _boundless_provider = ProviderBuilder::new()
                 .layer(boundless_layer)
                 .connect_http(self.boundless_prover.rpc_url.clone());
-            tokio::spawn(async move {
+            balance_monitor_handles.push(tokio::spawn(async move {
                 while boundless_balance_rx.changed().await.is_ok() {
                     RegistrarMetrics::boundless_balance_wei()
                         .set(f64::from(*boundless_balance_rx.borrow_and_update()));
                 }
-            });
+            }));
 
             ProviderBuilder::new().layer(layer).connect_http(self.l1_rpc_url.clone())
         } else {
@@ -159,6 +160,7 @@ impl RegistrarConfig {
             .get_chain_id()
             .await
             .map_err(|e| RegistrarError::Service(format!("failed to fetch L1 chain ID: {e}")))?;
+        info!(chain_id = l1_chain_id, "discovered L1 chain ID from provider");
         let tx_manager = SimpleTxManager::new(
             provider,
             self.signing,
@@ -230,6 +232,14 @@ impl RegistrarConfig {
             Ok(Ok(())) => {}
             Ok(Err(e)) => warn!(error = %e, "Health server error during shutdown"),
             Err(e) => warn!(error = %e, "Health server task panicked"),
+        }
+
+        for handle in balance_monitor_handles {
+            match handle.await {
+                Ok(()) => {}
+                Err(e) if e.is_cancelled() => {}
+                Err(e) => warn!(error = %e, "Balance monitor metrics task panicked"),
+            }
         }
 
         signal_handle.abort();
