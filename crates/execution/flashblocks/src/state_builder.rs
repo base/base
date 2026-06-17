@@ -141,6 +141,7 @@ where
             log.enabled = true;
             log.storage.clear();
             log.accounts.clear();
+            log.blockhashes.clear();
         }
     }
 
@@ -152,6 +153,7 @@ where
                 CapturedReads {
                     storage: std::mem::take(&mut log.storage),
                     accounts: std::mem::take(&mut log.accounts),
+                    blockhashes: std::mem::take(&mut log.blockhashes),
                 }
             })
         })
@@ -630,6 +632,78 @@ where
             }
         }
 
+        // `BLOCKHASH` reads: not part of account/storage state, but a non-deterministic-looking
+        // input if the two executions resolve the same block number to different hashes.
+        for (number, cached_hash) in &cached.blockhashes {
+            if let Some((_, fresh_hash)) =
+                fresh.blockhashes.iter().find(|(fresh_number, _)| fresh_number == number)
+                && fresh_hash != cached_hash
+            {
+                warn!(
+                    tx_hash = %tx_hash,
+                    idx,
+                    block_number,
+                    queried_block = number,
+                    cached_hash = %cached_hash,
+                    fresh_hash = %fresh_hash,
+                    "tx cache divergence: blockhash read flipped between cached and rebuild execution"
+                );
+            }
+        }
+
+        // Ordered storage-read diff: the value-flip pass above only compares the *first* read of
+        // each slot on the intersection, so it misses (a) a slot whose *later* read differs after
+        // an intervening write (read-after-write within the tx) and (b) a path split where the two
+        // executions start reading *different* slots. Walking both ordered sequences in lockstep
+        // pinpoints the exact first divergence: a same-slot value difference is a read-after-write
+        // divergence; a different-slot entry means the paths split just before it (the preceding
+        // read is the last common point), implicating a non-storage branch input (gas, returndata,
+        // call success, etc.).
+        let first_divergence =
+            cached.storage.iter().zip(fresh.storage.iter()).position(|(a, b)| a != b);
+        match first_divergence {
+            Some(pos) => {
+                let (caddr, cslot, cval) = cached.storage[pos];
+                let (faddr, fslot, fval) = fresh.storage[pos];
+                let same_slot = caddr == faddr && cslot == fslot;
+                let prev = pos.checked_sub(1).map(|p| cached.storage[p]);
+                warn!(
+                    tx_hash = %tx_hash,
+                    idx,
+                    block_number,
+                    seq_index = pos,
+                    same_slot,
+                    cached_address = %caddr,
+                    cached_slot = %cslot,
+                    cached_value = %cval,
+                    fresh_address = %faddr,
+                    fresh_slot = %fslot,
+                    fresh_value = %fval,
+                    prev_common_address = ?prev.map(|p| p.0),
+                    prev_common_slot = ?prev.map(|p| p.1),
+                    "tx cache divergence: first storage read sequence divergence"
+                );
+            }
+            None if cached.storage.len() != fresh.storage.len() => {
+                // Sequences agree on the common prefix but one execution read further: the path
+                // split at the end of the shorter sequence (e.g. one side reverted earlier).
+                let common = cached.storage.len().min(fresh.storage.len());
+                let extra = cached.storage.get(common).or_else(|| fresh.storage.get(common));
+                warn!(
+                    tx_hash = %tx_hash,
+                    idx,
+                    block_number,
+                    common_prefix_len = common,
+                    cached_len = cached.storage.len(),
+                    fresh_len = fresh.storage.len(),
+                    next_address = ?extra.map(|e| e.0),
+                    next_slot = ?extra.map(|e| e.1),
+                    "tx cache divergence: storage read sequences diverge in length only"
+                );
+            }
+            None => {}
+        }
+
         warn!(
             tx_hash = %tx_hash,
             idx,
@@ -638,6 +712,8 @@ where
             account_flips,
             cached_storage_reads = cached.storage.len(),
             fresh_storage_reads = fresh.storage.len(),
+            cached_blockhash_reads = cached.blockhashes.len(),
+            fresh_blockhash_reads = fresh.blockhashes.len(),
             "tx cache divergence: read-set diff complete"
         );
     }

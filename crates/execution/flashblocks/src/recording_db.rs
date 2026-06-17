@@ -30,15 +30,19 @@ pub struct ReadLog {
     pub storage: Vec<(Address, U256, U256)>,
     /// Recorded account reads as `(address, balance, nonce)`.
     pub accounts: Vec<(Address, U256, u64)>,
+    /// Recorded `BLOCKHASH` reads as `(block_number, hash)`.
+    pub blockhashes: Vec<(u64, B256)>,
 }
 
 /// A snapshot of reads captured during a single re-execution.
 #[derive(Debug, Default, Clone)]
 pub struct CapturedReads {
-    /// Storage reads as `(address, slot, value)`.
+    /// Storage reads in execution order as `(address, slot, value)`.
     pub storage: Vec<(Address, U256, U256)>,
-    /// Account reads as `(address, balance, nonce)`.
+    /// Account reads in execution order as `(address, balance, nonce)`.
     pub accounts: Vec<(Address, U256, u64)>,
+    /// `BLOCKHASH` reads in execution order as `(block_number, hash)`.
+    pub blockhashes: Vec<(u64, B256)>,
 }
 
 /// A [`Database`] decorator that records storage and account reads into a shared [`ReadLog`].
@@ -102,7 +106,13 @@ impl<D: Database> Database for RecordingDb<D> {
     }
 
     fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
-        self.inner.block_hash(number)
+        let hash = self.inner.block_hash(number)?;
+        if let Ok(mut log) = self.log.lock()
+            && log.enabled
+        {
+            log.blockhashes.push((number, hash));
+        }
+        Ok(hash)
     }
 }
 
