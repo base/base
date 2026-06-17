@@ -29,3 +29,16 @@ BATCHER_MAX_PENDING_TRANSACTIONS=4
 # No L1_BEACON_ADDRESS: leaving it unset makes the ZK prover build a disabled blob provider, but
 # the prover (like the consensus node) requires calldata-only mode to be opted into explicitly.
 L1_CALLDATA_ONLY=true
+
+# Multiproof / TEE configuration
+# Non-zero placeholder that enables dev multiproof at deploy time. The real config hash is
+# deployment-specific (depends on genesis block hashes and contract addresses) and is not
+# known at config-render time; the correct value is computed from the live chain and set on
+# the AggregateVerifier by the runtime-registration step added in a later PR. Nothing
+# consumes the placeholder-hash verifier in this PR.
+MULTIPROOF_CONFIG_HASH=0x0000000000000000000000000000000000000000000000000000000000000001
+# Dev TEE signer address — registered in DevTEEProverRegistry during SystemDeploy.
+# The corresponding private key lives in devnet-tee.env (gitignored).
+DEV_TEE_SIGNER=0x6cebCF805c5191BCf26602E43DECa89AEe092b5d
+# Zero image hash — matches nitro-local's B256::ZERO (no real PCR0 measurement in dev).
+TEE_IMAGE_HASH=0x0000000000000000000000000000000000000000000000000000000000000000
