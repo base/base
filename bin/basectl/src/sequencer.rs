@@ -33,6 +33,12 @@ const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(12);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REQUIRED_OBSERVATIONS: usize = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeadershipStatus {
+    ConfirmedLeader,
+    Unknown,
+}
+
 /// Runs the `basectl sequencer` command group.
 pub(crate) async fn run(
     config: MonitoringConfig,
@@ -103,20 +109,19 @@ async fn run_start(
         sequencer_active = ?status.and_then(|status| status.sequencer_active),
         "resolved sequencer start target"
     );
-    if let Err(error) = ensure_start_allowed(&snapshot, node, status) {
-        warn!(
-            error = %error,
-            node = %node.name,
-            cl_rpc = %node.cl_rpc,
-            "sequencer start preflight failed"
-        );
-        return Err(error.into());
-    }
-    // No node currently reports itself as leader, and the target is not known
-    // to be a follower, so defer the final leader check to the RPC.
-    if snapshot.statuses.iter().all(|status| status.is_leader != Some(true))
-        && status.and_then(|status| status.is_leader).is_none()
-    {
+    let leadership_status = match ensure_start_allowed(&snapshot, node, status) {
+        Ok(leadership_status) => leadership_status,
+        Err(error) => {
+            warn!(
+                error = %error,
+                node = %node.name,
+                cl_rpc = %node.cl_rpc,
+                "sequencer start preflight failed"
+            );
+            return Err(error.into());
+        }
+    };
+    if matches!(leadership_status, LeadershipStatus::Unknown) {
         warn!(
             node = %node.name,
             cl_rpc = %node.cl_rpc,
@@ -282,7 +287,7 @@ fn ensure_start_allowed(
     snapshot: &ConductorClusterSnapshot,
     node: &ConductorNodeConfig,
     status: Option<&ConductorNodeStatus>,
-) -> Result<(), SequencerCommandError> {
+) -> Result<LeadershipStatus, SequencerCommandError> {
     if status.and_then(|status| status.sequencer_active) == Some(true) {
         return Err(SequencerCommandError::AlreadyActive { node: node.name.clone() });
     }
@@ -304,7 +309,7 @@ fn ensure_leader_target(
     node: &ConductorNodeConfig,
     status: Option<&ConductorNodeStatus>,
     action: SequencerAction,
-) -> Result<(), SequencerCommandError> {
+) -> Result<LeadershipStatus, SequencerCommandError> {
     let leader = snapshot
         .statuses
         .iter()
@@ -312,7 +317,7 @@ fn ensure_leader_target(
         .map(|status| status.name.as_str());
     if let Some(leader) = leader {
         if leader == node.name {
-            return Ok(());
+            return Ok(LeadershipStatus::ConfirmedLeader);
         }
         return Err(SequencerCommandError::NotCurrentLeader {
             requested_node: node.name.clone(),
@@ -326,7 +331,7 @@ fn ensure_leader_target(
             action: action.infinitive().to_string(),
         });
     }
-    Ok(())
+    Ok(LeadershipStatus::Unknown)
 }
 
 fn ensure_start_request_matches_observed_head(
@@ -808,10 +813,11 @@ mod tests {
     use url::Url;
 
     use super::{
-        OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS, SequencerAction,
-        SequencerActionJson, SequencerStatusJson, UnsafeHeadSource, ensure_leader_target,
-        ensure_start_allowed, ensure_start_request_matches_observed_head, ensure_stop_allowed,
-        parse_unsafe_head, resolve_start_hash, wait_for_expected_state_with_fetch,
+        LeadershipStatus, OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS,
+        SequencerAction, SequencerActionJson, SequencerStatusJson, UnsafeHeadSource,
+        ensure_leader_target, ensure_start_allowed, ensure_start_request_matches_observed_head,
+        ensure_stop_allowed, parse_unsafe_head, resolve_start_hash,
+        wait_for_expected_state_with_fetch,
     };
     use crate::helpers::find_conductor_node;
 
@@ -1009,6 +1015,25 @@ mod tests {
                 && current_leader == "op-conductor-0"
                 && action == "start"
         ));
+    }
+
+    #[test]
+    fn start_allows_unknown_leadership_with_status_signal() {
+        let snapshot = ConductorClusterSnapshot {
+            nodes: vec![node("op-conductor-0")],
+            statuses: vec![status("op-conductor-0", false, false)],
+            membership: None,
+            membership_error: None,
+            discovered: false,
+        };
+        let mut unknown_status = snapshot.statuses[0].clone();
+        unknown_status.is_leader = None;
+
+        let leadership_status =
+            ensure_start_allowed(&snapshot, &snapshot.nodes[0], Some(&unknown_status))
+                .expect("unknown leadership should defer to server-side RPC");
+
+        assert_eq!(leadership_status, LeadershipStatus::Unknown);
     }
 
     #[test]
