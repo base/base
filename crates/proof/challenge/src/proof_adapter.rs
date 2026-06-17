@@ -2,7 +2,6 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
-use base_proof_submission::ProofBytes;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
     SnarkGroth16ProofRequest, TeeKind, TeeProofRequest,
@@ -89,7 +88,7 @@ impl ChallengerProofAdapter {
             }
         };
 
-        Ok(ProofBytes::zk(proof))
+        Ok(ProofEncoder::encode_zk_dispute_proof_bytes(proof))
     }
 
     /// Converts a prover-service TEE result into bytes accepted by `submit_dispute`.

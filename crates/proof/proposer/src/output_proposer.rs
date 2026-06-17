@@ -7,8 +7,8 @@
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{encode_create_calldata, encode_extra_data};
-use base_proof_primitives::Proposal;
-use base_proof_submission::{AggregateProofSubmitter, ProofBytes, ProofSubmissionError};
+use base_proof_primitives::{ProofEncoder, Proposal};
+use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::info;
 
@@ -154,7 +154,8 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         proposal: &Proposal,
     ) -> Result<(), ProposerError> {
         let l2_block_number = proposal.l2_block_number;
-        let proof_bytes = ProofBytes::tee_signature(&proposal.signature)?;
+        let proof_bytes = ProofEncoder::encode_dispute_proof_bytes(&proposal.signature)
+            .map_err(|e| ProposerError::Internal(e.to_string()))?;
 
         info!(
             l2_block_number,

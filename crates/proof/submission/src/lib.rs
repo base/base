@@ -9,9 +9,6 @@
 mod error;
 pub use error::ProofSubmissionError;
 
-mod proof_bytes;
-pub use proof_bytes::ProofBytes;
-
 mod classifier;
 
 mod submitter;

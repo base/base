@@ -95,206 +95,103 @@ impl ProofSubmissionError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bytes};
+    use alloy_primitives::Bytes;
     use base_tx_manager::TxManagerError;
-    use rstest::rstest;
 
     use super::*;
 
     #[derive(Debug)]
-    enum ExpectedClassification {
-        GameAlreadyExists,
-        ProofAlreadyVerified,
-        L1OriginTooOld,
-        InvalidParentGame,
-        InvalidSigner,
-        TxManager,
+    struct KnownRevertCase {
+        name: &'static str,
+        selector: [u8; 4],
+        expected: ProofSubmissionError,
     }
 
-    #[rstest]
-    #[case::rpc_with_game_already_exists_selector_hex(
-        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::game_already_exists_selector()))),
-        ExpectedClassification::GameAlreadyExists,
-        "GameAlreadyExists selector hex in Rpc message"
-    )]
-    #[case::rpc_with_game_already_exists_name(
-        TxManagerError::Rpc(format!("{GAME_ALREADY_EXISTS}()")),
-        ExpectedClassification::GameAlreadyExists,
-        "GameAlreadyExists name in Rpc message"
-    )]
-    #[case::reverted_with_game_already_exists_reason(
-        TxManagerError::ExecutionReverted {
-            reason: Some(format!("{GAME_ALREADY_EXISTS}()")),
-            data: None,
-        },
-        ExpectedClassification::GameAlreadyExists,
-        "GameAlreadyExists reason string contains name"
-    )]
-    #[case::reverted_with_game_already_exists_selector_data(
-        {
-            let mut data = base_proof_contracts::game_already_exists_selector().to_vec();
-            data.extend_from_slice(&[0u8; 32]);
-            TxManagerError::ExecutionReverted {
-                reason: None,
-                data: Some(Bytes::from(data)),
-            }
-        },
-        ExpectedClassification::GameAlreadyExists,
-        "GameAlreadyExists raw data contains selector"
-    )]
-    #[case::rpc_with_already_proven_selector_hex(
-        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::already_proven_selector()))),
-        ExpectedClassification::ProofAlreadyVerified,
-        "AlreadyProven selector hex in Rpc message"
-    )]
-    #[case::rpc_with_already_proven_name(
-        TxManagerError::Rpc(format!("{ALREADY_PROVEN}()")),
-        ExpectedClassification::ProofAlreadyVerified,
-        "AlreadyProven name in Rpc message"
-    )]
-    #[case::reverted_with_already_proven_reason(
-        TxManagerError::ExecutionReverted {
-            reason: Some(format!("{ALREADY_PROVEN}()")),
-            data: None,
-        },
-        ExpectedClassification::ProofAlreadyVerified,
-        "AlreadyProven reason string contains name"
-    )]
-    #[case::reverted_with_already_proven_selector_data(
-        TxManagerError::ExecutionReverted {
-            reason: None,
-            data: Some(Bytes::from(base_proof_contracts::already_proven_selector().to_vec())),
-        },
-        ExpectedClassification::ProofAlreadyVerified,
-        "AlreadyProven raw data contains selector"
-    )]
-    #[case::rpc_with_l1_origin_selector_hex(
-        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::l1_origin_too_old_selector()))),
-        ExpectedClassification::L1OriginTooOld,
-        "L1OriginTooOld selector hex in Rpc message"
-    )]
-    #[case::rpc_with_l1_origin_name(
-        TxManagerError::Rpc(format!("{L1_ORIGIN_TOO_OLD}()")),
-        ExpectedClassification::L1OriginTooOld,
-        "L1OriginTooOld name in Rpc message"
-    )]
-    #[case::reverted_with_l1_origin_reason(
-        TxManagerError::ExecutionReverted {
-            reason: Some(format!("{L1_ORIGIN_TOO_OLD}()")),
-            data: None,
-        },
-        ExpectedClassification::L1OriginTooOld,
-        "L1OriginTooOld reason string contains name"
-    )]
-    #[case::reverted_with_l1_origin_selector_data(
-        TxManagerError::ExecutionReverted {
-            reason: None,
-            data: Some(Bytes::from(base_proof_contracts::l1_origin_too_old_selector().to_vec())),
-        },
-        ExpectedClassification::L1OriginTooOld,
-        "L1OriginTooOld raw data contains selector"
-    )]
-    #[case::rpc_with_invalid_parent_selector_hex(
-        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::invalid_parent_game_selector()))),
-        ExpectedClassification::InvalidParentGame,
-        "InvalidParentGame selector hex in Rpc message"
-    )]
-    #[case::rpc_with_invalid_parent_name(
-        TxManagerError::Rpc(format!("{INVALID_PARENT_GAME}()")),
-        ExpectedClassification::InvalidParentGame,
-        "InvalidParentGame name in Rpc message"
-    )]
-    #[case::reverted_with_invalid_parent_reason(
-        TxManagerError::ExecutionReverted {
-            reason: Some(format!("{INVALID_PARENT_GAME}()")),
-            data: None,
-        },
-        ExpectedClassification::InvalidParentGame,
-        "InvalidParentGame reason string contains name"
-    )]
-    #[case::reverted_with_invalid_parent_selector_data(
-        TxManagerError::ExecutionReverted {
-            reason: None,
-            data: Some(Bytes::from(base_proof_contracts::invalid_parent_game_selector().to_vec())),
-        },
-        ExpectedClassification::InvalidParentGame,
-        "InvalidParentGame raw data contains selector"
-    )]
-    #[case::rpc_with_invalid_signer_selector_hex(
-        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::invalid_signer_selector()))),
-        ExpectedClassification::InvalidSigner,
-        "InvalidSigner selector hex in Rpc message"
-    )]
-    #[case::rpc_with_invalid_signer_name(
-        TxManagerError::Rpc(format!("{INVALID_SIGNER}(0x0000000000000000000000000000000000000000)")),
-        ExpectedClassification::InvalidSigner,
-        "InvalidSigner name in Rpc message"
-    )]
-    #[case::reverted_with_invalid_signer_reason(
-        TxManagerError::ExecutionReverted {
-            reason: Some(format!("{INVALID_SIGNER}(0x0000000000000000000000000000000000000000)")),
-            data: None,
-        },
-        ExpectedClassification::InvalidSigner,
-        "InvalidSigner reason string contains name"
-    )]
-    #[case::reverted_with_invalid_signer_selector_data(
-        {
-            let mut data = base_proof_contracts::invalid_signer_selector().to_vec();
-            data.extend_from_slice(Address::ZERO.as_slice());
-            TxManagerError::ExecutionReverted {
-                reason: None,
-                data: Some(Bytes::from(data)),
-            }
-        },
-        ExpectedClassification::InvalidSigner,
-        "InvalidSigner raw data contains selector"
-    )]
-    #[case::reverted_other_error(
-        TxManagerError::ExecutionReverted {
-            reason: Some("SomeOtherError()".to_string()),
-            data: Some(Bytes::from(vec![0xde, 0xad, 0xbe, 0xef])),
-        },
-        ExpectedClassification::TxManager,
-        "unrelated revert"
-    )]
-    #[case::nonce_too_low(
-        TxManagerError::NonceTooLow,
-        ExpectedClassification::TxManager,
-        "non-revert error"
-    )]
-    fn classify_tx_manager_error_maps_known_reverts(
-        #[case] err: TxManagerError,
-        #[case] expected: ExpectedClassification,
-        #[case] scenario: &str,
-    ) {
-        let result = ProofSubmissionError::from_tx_manager_error(err);
+    fn known_revert_cases() -> [KnownRevertCase; 5] {
+        [
+            KnownRevertCase {
+                name: GAME_ALREADY_EXISTS,
+                selector: game_already_exists_selector(),
+                expected: ProofSubmissionError::GameAlreadyExists,
+            },
+            KnownRevertCase {
+                name: ALREADY_PROVEN,
+                selector: already_proven_selector(),
+                expected: ProofSubmissionError::ProofAlreadyVerified,
+            },
+            KnownRevertCase {
+                name: L1_ORIGIN_TOO_OLD,
+                selector: l1_origin_too_old_selector(),
+                expected: ProofSubmissionError::L1OriginTooOld,
+            },
+            KnownRevertCase {
+                name: INVALID_PARENT_GAME,
+                selector: invalid_parent_game_selector(),
+                expected: ProofSubmissionError::InvalidParentGame,
+            },
+            KnownRevertCase {
+                name: INVALID_SIGNER,
+                selector: invalid_signer_selector(),
+                expected: ProofSubmissionError::InvalidSigner,
+            },
+        ]
+    }
 
-        match expected {
-            ExpectedClassification::GameAlreadyExists => assert!(
-                matches!(result, ProofSubmissionError::GameAlreadyExists),
-                "{scenario}: expected GameAlreadyExists, got {result:?}"
-            ),
-            ExpectedClassification::ProofAlreadyVerified => assert!(
-                matches!(result, ProofSubmissionError::ProofAlreadyVerified),
-                "{scenario}: expected ProofAlreadyVerified, got {result:?}"
-            ),
-            ExpectedClassification::L1OriginTooOld => assert!(
-                matches!(result, ProofSubmissionError::L1OriginTooOld),
-                "{scenario}: expected L1OriginTooOld, got {result:?}"
-            ),
-            ExpectedClassification::InvalidParentGame => assert!(
-                matches!(result, ProofSubmissionError::InvalidParentGame),
-                "{scenario}: expected InvalidParentGame, got {result:?}"
-            ),
-            ExpectedClassification::InvalidSigner => assert!(
-                matches!(result, ProofSubmissionError::InvalidSigner),
-                "{scenario}: expected InvalidSigner, got {result:?}"
-            ),
-            ExpectedClassification::TxManager => assert!(
-                matches!(result, ProofSubmissionError::TxManager(_)),
-                "{scenario}: expected TxManager, got {result:?}"
-            ),
+    fn assert_classifies(err: TxManagerError, expected: &ProofSubmissionError, scenario: &str) {
+        let result = ProofSubmissionError::from_tx_manager_error(err);
+        assert_eq!(&result, expected, "{scenario}: got {result:?}");
+    }
+
+    #[test]
+    fn classify_tx_manager_error_maps_known_reverts() {
+        for case in known_revert_cases() {
+            assert_classifies(
+                TxManagerError::Rpc(format!(
+                    "execution reverted: 0x{}",
+                    alloy_primitives::hex::encode(case.selector)
+                )),
+                &case.expected,
+                "selector hex in Rpc message",
+            );
+            assert_classifies(
+                TxManagerError::Rpc(format!("{}()", case.name)),
+                &case.expected,
+                "error name in Rpc message",
+            );
+            assert_classifies(
+                TxManagerError::ExecutionReverted {
+                    reason: Some(format!("{}()", case.name)),
+                    data: None,
+                },
+                &case.expected,
+                "reason string contains name",
+            );
+            assert_classifies(
+                TxManagerError::ExecutionReverted {
+                    reason: None,
+                    data: Some(Bytes::from(case.selector.to_vec())),
+                },
+                &case.expected,
+                "raw data contains selector",
+            );
         }
+    }
+
+    #[test]
+    fn classify_tx_manager_error_leaves_unrelated_reverts_as_tx_manager_errors() {
+        let result =
+            ProofSubmissionError::from_tx_manager_error(TxManagerError::ExecutionReverted {
+                reason: Some("SomeOtherError()".to_string()),
+                data: Some(Bytes::from(vec![0xde, 0xad, 0xbe, 0xef])),
+            });
+
+        assert!(matches!(result, ProofSubmissionError::TxManager(_)));
+    }
+
+    #[test]
+    fn classify_tx_manager_error_leaves_non_reverts_as_tx_manager_errors() {
+        let result = ProofSubmissionError::from_tx_manager_error(TxManagerError::NonceTooLow);
+
+        assert!(matches!(result, ProofSubmissionError::TxManager(TxManagerError::NonceTooLow)));
     }
 }

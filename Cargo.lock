@@ -3640,7 +3640,6 @@ dependencies = [
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
- "base-proof-submission",
  "base-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",
@@ -5484,9 +5483,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth 2.0.5",
  "base-proof-contracts",
- "base-proof-primitives",
  "base-tx-manager",
- "rstest",
  "thiserror 2.0.18",
  "tokio",
 ]

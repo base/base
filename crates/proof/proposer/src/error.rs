@@ -68,7 +68,6 @@ impl From<ProofSubmissionError> for ProposerError {
                 Self::TxReverted(format!("transaction {tx_hash} reverted"))
             }
             ProofSubmissionError::TxManager(err) => Self::TxManager(err),
-            ProofSubmissionError::Encode(err) => Self::Internal(err.to_string()),
         }
     }
 }

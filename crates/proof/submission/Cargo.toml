@@ -21,12 +21,10 @@ base-tx-manager.workspace = true
 
 # Proof
 base-proof-contracts.workspace = true
-base-proof-primitives.workspace = true
 
 # Error handling
 thiserror.workspace = true
 
 [dev-dependencies]
-rstest.workspace = true
 alloy-consensus.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

@@ -19,11 +19,6 @@ impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
         Self { tx_manager }
     }
 
-    /// Returns the sender address used by the underlying transaction manager.
-    pub fn sender_address(&self) -> Address {
-        self.tx_manager.sender_address()
-    }
-
     /// Submits `AggregateVerifier.verifyProposalProof(bytes)` to an existing game.
     ///
     /// The caller provides already-encoded proof bytes so TEE and ZK attachment
@@ -103,16 +98,11 @@ mod tests {
     struct MockTxManager {
         response: Mutex<Option<SendResponse>>,
         candidate: Mutex<Option<TxCandidate>>,
-        sender: Address,
     }
 
     impl MockTxManager {
         fn new(response: SendResponse) -> Self {
-            Self {
-                response: Mutex::new(Some(response)),
-                candidate: Mutex::new(None),
-                sender: Address::repeat_byte(0x99),
-            }
+            Self { response: Mutex::new(Some(response)), candidate: Mutex::new(None) }
         }
 
         fn take_candidate(&self) -> Option<TxCandidate> {
@@ -131,16 +121,8 @@ mod tests {
         }
 
         fn sender_address(&self) -> Address {
-            self.sender
+            Address::ZERO
         }
-    }
-
-    #[tokio::test]
-    async fn sender_address_returns_tx_manager_sender() {
-        let tx_manager = MockTxManager::new(Err(TxManagerError::NonceTooLow));
-        let submitter = AggregateProofSubmitter::new(&tx_manager);
-
-        assert_eq!(submitter.sender_address(), Address::repeat_byte(0x99));
     }
 
     #[tokio::test]
