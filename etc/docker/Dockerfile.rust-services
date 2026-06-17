@@ -94,6 +94,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base-proposer-bin --bin base-proposer && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-proposer /app/base-proposer
 
+FROM source AS challenger-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=challenger-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-challenger-bin --bin base-challenger && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-challenger /app/base-challenger
+
 FROM source AS websocket-proxy-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -206,6 +214,10 @@ FROM runtime-base AS proposer
 COPY --from=proposer-builder /app/base-proposer ./base-proposer
 EXPOSE 9090
 ENTRYPOINT ["./base-proposer"]
+
+FROM runtime-base AS challenger
+COPY --from=challenger-builder /app/base-challenger ./base-challenger
+ENTRYPOINT ["./base-challenger"]
 
 FROM runtime-base AS websocket-proxy
 COPY --from=websocket-proxy-builder /app/websocket-proxy ./websocket-proxy
