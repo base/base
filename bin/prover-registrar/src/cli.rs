@@ -83,7 +83,7 @@ pub(crate) struct Cli {
 
     /// Boundless fulfillment timeout in seconds.
     #[arg(
-        long,
+        long = "boundless-timeout-secs",
         env = cli_env!("BOUNDLESS_TIMEOUT_SECS"),
         default_value_t = 1260,
         value_parser = clap::value_parser!(u64).range(1..)
@@ -132,7 +132,7 @@ pub(crate) struct Cli {
 
     /// Maximum recovered attestation age in seconds.
     #[arg(
-        long,
+        long = "max-attestation-age-secs",
         env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
         default_value_t = 3300
     )]
@@ -140,7 +140,7 @@ pub(crate) struct Cli {
 
     /// Registration poll interval in seconds.
     #[arg(
-        long,
+        long = "poll-interval-secs",
         env = cli_env!("POLL_INTERVAL_SECS"),
         default_value_t = 30,
         value_parser = clap::value_parser!(u64).range(1..)
@@ -149,7 +149,7 @@ pub(crate) struct Cli {
 
     /// Prover JSON-RPC timeout in seconds.
     #[arg(
-        long,
+        long = "prover-timeout-secs",
         env = cli_env!("PROVER_TIMEOUT_SECS"),
         default_value_t = 30,
         value_parser = clap::value_parser!(u64).range(1..)
@@ -171,7 +171,7 @@ pub(crate) struct Cli {
 
     /// Transaction submission retry delay in seconds.
     #[arg(
-        long,
+        long = "tx-retry-delay-secs",
         env = cli_env!("TX_RETRY_DELAY_SECS"),
         default_value_t = DEFAULT_TX_RETRY_DELAY_SECS,
         value_parser = clap::value_parser!(u64).range(1..)
@@ -180,22 +180,13 @@ pub(crate) struct Cli {
 
     /// Grace period for registering newly launched unhealthy instances.
     #[arg(
-        long,
+        long = "unhealthy-registration-window-secs",
         env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"),
         default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS
     )]
     unhealthy_registration_window: u64,
 
-    /// Enable on-demand CRL checking at registration time.
-    #[arg(
-        long,
-        env = cli_env!("CRL_CHECK_ENABLED"),
-        default_value_t = false,
-        requires_if("true", "crl_nitro_verifier_address")
-    )]
-    crl_check_enabled: bool,
-
-    /// `NitroEnclaveVerifier` contract address for CRL checks.
+    /// `NitroEnclaveVerifier` contract address for CRL checks. Providing this enables CRL checks.
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
     crl_nitro_verifier_address: Option<Address>,
 
@@ -262,7 +253,6 @@ impl Cli {
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay),
             unhealthy_registration_window: Duration::from_secs(self.unhealthy_registration_window),
-            crl_check_enabled: self.crl_check_enabled,
             crl_nitro_verifier_address: self.crl_nitro_verifier_address,
             health_addr: self.health.socket_addr(),
             log_config: self.log.into(),
@@ -360,22 +350,41 @@ mod tests {
     }
 
     #[test]
-    fn crl_address_does_not_enable_crl_without_flag() {
+    fn documented_secs_flag_names_parse() {
+        let mut args = required_args();
+        args.extend([
+            "--boundless-timeout-secs",
+            "1260",
+            "--max-attestation-age-secs",
+            "3300",
+            "--poll-interval-secs",
+            "30",
+            "--prover-timeout-secs",
+            "30",
+            "--tx-retry-delay-secs",
+            "2",
+            "--unhealthy-registration-window-secs",
+            "600",
+        ]);
+
+        assert!(Cli::try_parse_from(args).is_ok());
+    }
+
+    #[test]
+    fn crl_address_enables_crl() {
         let mut args = required_args();
         args.extend(["--crl-nitro-verifier-address", "0x0000000000000000000000000000000000000099"]);
 
         let config = Cli::parse_from(args).config().unwrap();
 
-        assert!(!config.crl_check_enabled);
         assert!(config.crl_nitro_verifier_address.is_some());
     }
 
     #[test]
-    fn crl_enabled_requires_verifier_address() {
-        let mut args = required_args();
-        args.push("--crl-check-enabled");
+    fn crl_omitted_disables_crl() {
+        let config = Cli::parse_from(required_args()).config().unwrap();
 
-        assert!(Cli::try_parse_from(args).is_err());
+        assert!(config.crl_nitro_verifier_address.is_none());
     }
 
     #[test]

@@ -57,9 +57,7 @@ pub struct RegistrarConfig {
     pub tx_retry_delay: Duration,
     /// Grace window for registering recently launched unhealthy instances.
     pub unhealthy_registration_window: Duration,
-    /// Whether CRL checking is enabled.
-    pub crl_check_enabled: bool,
-    /// Optional Nitro verifier address for CRL checks.
+    /// Optional Nitro verifier address for CRL checks. Providing this enables CRL checks.
     pub crl_nitro_verifier_address: Option<Address>,
     /// Health server bind address.
     pub health_addr: SocketAddr,
@@ -86,7 +84,6 @@ impl fmt::Debug for RegistrarConfig {
             .field("max_tx_retries", &self.max_tx_retries)
             .field("tx_retry_delay", &self.tx_retry_delay)
             .field("unhealthy_registration_window", &self.unhealthy_registration_window)
-            .field("crl_check_enabled", &self.crl_check_enabled)
             .field("crl_nitro_verifier_address", &self.crl_nitro_verifier_address)
             .field("health_addr", &self.health_addr)
             .field("log_config", &self.log_config)
@@ -131,10 +128,19 @@ impl RegistrarConfig {
                 cancel.clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
+            let account_balance_cancel = cancel.clone();
             balance_monitor_handles.push(tokio::spawn(async move {
-                while account_balance_rx.changed().await.is_ok() {
-                    RegistrarMetrics::account_balance_wei()
-                        .set(f64::from(*account_balance_rx.borrow_and_update()));
+                loop {
+                    tokio::select! {
+                        () = account_balance_cancel.cancelled() => break,
+                        changed = account_balance_rx.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                            RegistrarMetrics::account_balance_wei()
+                                .set(f64::from(*account_balance_rx.borrow_and_update()));
+                        }
+                    }
                 }
             }));
 
@@ -148,10 +154,19 @@ impl RegistrarConfig {
             let _boundless_provider = ProviderBuilder::new()
                 .layer(boundless_layer)
                 .connect_http(self.boundless_prover.rpc_url.clone());
+            let boundless_balance_cancel = cancel.clone();
             balance_monitor_handles.push(tokio::spawn(async move {
-                while boundless_balance_rx.changed().await.is_ok() {
-                    RegistrarMetrics::boundless_balance_wei()
-                        .set(f64::from(*boundless_balance_rx.borrow_and_update()));
+                loop {
+                    tokio::select! {
+                        () = boundless_balance_cancel.cancelled() => break,
+                        changed = boundless_balance_rx.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                            RegistrarMetrics::boundless_balance_wei()
+                                .set(f64::from(*boundless_balance_rx.borrow_and_update()));
+                        }
+                    }
                 }
             }));
 
@@ -159,10 +174,15 @@ impl RegistrarConfig {
         } else {
             ProviderBuilder::new().connect_http(self.l1_rpc_url.clone())
         };
-        let l1_chain_id = provider
-            .get_chain_id()
-            .await
-            .map_err(|e| RegistrarError::Service(format!("failed to fetch L1 chain ID: {e}")))?;
+        let l1_chain_id =
+            tokio::time::timeout(self.tx_manager_config.network_timeout, provider.get_chain_id())
+                .await
+                .map_err(|_| {
+                    RegistrarError::Service("failed to fetch L1 chain ID: timed out".into())
+                })?
+                .map_err(|e| {
+                    RegistrarError::Service(format!("failed to fetch L1 chain ID: {e}"))
+                })?;
         info!(chain_id = l1_chain_id, "discovered L1 chain ID from provider");
         let tx_manager = SimpleTxManager::new(
             provider,
@@ -202,12 +222,7 @@ impl RegistrarConfig {
                 tx_retry_delay: self.tx_retry_delay,
             },
         ));
-        let cert_manager = if self.crl_check_enabled {
-            let Some(nitro_verifier_address) = self.crl_nitro_verifier_address else {
-                return Err(RegistrarError::Config(
-                    "--crl-nitro-verifier-address is required when CRL checking is enabled".into(),
-                ));
-            };
+        let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             Some(CertManager::new(
                 Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
                 Box::new(NitroVerifierContractClient::new(nitro_verifier_address, self.l1_rpc_url)),
@@ -309,7 +324,6 @@ mod tests {
             max_tx_retries: 1,
             tx_retry_delay: Duration::from_secs(1),
             unhealthy_registration_window: Duration::from_secs(1),
-            crl_check_enabled: false,
             crl_nitro_verifier_address: None,
             health_addr: "127.0.0.1:0".parse().unwrap(),
             log_config: base_cli_utils::LogConfig::default(),
