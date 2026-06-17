@@ -248,6 +248,13 @@ impl MeteredOpcodes {
             && !self.beryl_b20_stablecoin_precompiles
     }
 
+    /// Returns true if any fixed or dynamic precompile metering is configured.
+    pub fn meters_any_precompile(&self) -> bool {
+        !self.precompiles.is_empty()
+            || self.beryl_b20_asset_precompiles
+            || self.beryl_b20_stablecoin_precompiles
+    }
+
     /// Adds all known standard and Beryl precompiles to the metered set.
     pub fn with_all_precompiles(mut self) -> Self {
         for &(name, addr) in PRECOMPILES {

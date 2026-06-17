@@ -158,6 +158,10 @@ where
         };
         self.subtract_forwarded_gas(contract_address, opcode, inputs.gas_limit);
 
+        if !self.metered_opcodes.meters_any_precompile() {
+            return;
+        }
+
         let target = inputs.bytecode_address;
         if self.metered_opcodes.meters_precompile(target) {
             let gas_used = outcome.result.gas.total_gas_spent();
