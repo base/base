@@ -13,8 +13,10 @@ use testcontainers::{
 use url::Url;
 
 use super::artifacts::DeploymentArtifacts;
-use crate::config::{BATCHER, CHALLENGER, PROPOSER, SEQUENCER};
-use crate::setup::SetupImage;
+use crate::{
+    config::{BATCHER, CHALLENGER, PROPOSER, SEQUENCER},
+    setup::{SEQUENCER_1_P2P_KEY, SEQUENCER_2_P2P_KEY, SetupImage},
+};
 
 const OUTPUT_DIR: &str = "/output/l2";
 
@@ -62,6 +64,8 @@ pub struct DeployerContainer {
     l2_chain_id: u64,
     deployer_private_key: B256,
     roles: RoleAddresses,
+    sequencer_1_p2p_key: String,
+    sequencer_2_p2p_key: String,
     output_dir: PathBuf,
     network: Option<String>,
 }
@@ -81,6 +85,8 @@ impl DeployerContainer {
             l2_chain_id,
             deployer_private_key,
             roles,
+            sequencer_1_p2p_key: SEQUENCER_1_P2P_KEY.to_string(),
+            sequencer_2_p2p_key: SEQUENCER_2_P2P_KEY.to_string(),
             output_dir: default_output_dir(),
             network: None,
         }
@@ -95,6 +101,17 @@ impl DeployerContainer {
     /// Connects the container to the provided Docker network.
     pub fn with_network(mut self, network: impl Into<String>) -> Self {
         self.network = Some(network.into());
+        self
+    }
+
+    /// Overrides the sequencer P2P keys written into the deployment artifacts.
+    pub fn with_sequencer_p2p_keys(
+        mut self,
+        sequencer_1_p2p_key: impl Into<String>,
+        sequencer_2_p2p_key: impl Into<String>,
+    ) -> Self {
+        self.sequencer_1_p2p_key = sequencer_1_p2p_key.into();
+        self.sequencer_2_p2p_key = sequencer_2_p2p_key.into();
         self
     }
 
@@ -122,7 +139,6 @@ impl DeployerContainer {
 
         let output_dir = self.output_dir.to_string_lossy().to_string();
         let mut request = image
-            .with_entrypoint("/bin/bash")
             .with_cmd(["/usr/local/bin/setup-l2.sh"])
             .with_env_var("L1_RPC_URL", self.l1_rpc_url.to_string())
             .with_env_var("L1_CHAIN_ID", self.l1_chain_id.to_string())
@@ -133,6 +149,8 @@ impl DeployerContainer {
             .with_env_var("BATCHER_ADDR", format_address(self.roles.batcher))
             .with_env_var("PROPOSER_ADDR", format_address(self.roles.proposer))
             .with_env_var("CHALLENGER_ADDR", format_address(self.roles.challenger))
+            .with_env_var("SEQ1_P2P_KEY", self.sequencer_1_p2p_key.clone())
+            .with_env_var("SEQ2_P2P_KEY", self.sequencer_2_p2p_key.clone())
             .with_env_var("OUTPUT_DIR", OUTPUT_DIR)
             .with_mount(Mount::bind_mount(output_dir, OUTPUT_DIR));
 
