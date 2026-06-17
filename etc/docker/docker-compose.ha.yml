@@ -510,7 +510,7 @@ services:
       <<: *conductor-healthcheck
 
   setup-conductor:
-    image: devnet-setup:local
+    image: system-test-setup:local
     container_name: setup-conductor
     depends_on:
       op-conductor-0:

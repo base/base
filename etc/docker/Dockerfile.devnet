@@ -28,20 +28,16 @@ RUN go build -o /go/bin/eth2-val-tools .
 # The foundry image is Ubuntu-based and multi-arch (amd64/arm64)
 FROM ghcr.io/foundry-rs/foundry:v1.7.1 AS contracts-builder
 
-ARG CONTRACTS_COMMIT=
+ARG CONTRACTS_COMMIT=c8f0238ec570a446e01b6290bd2413ef7704fafd
 
 WORKDIR /contracts
 RUN git clone https://github.com/base/contracts.git . && \
-    if [ -n "${CONTRACTS_COMMIT}" ]; then \
-      echo "Pinned contracts commit: ${CONTRACTS_COMMIT}" && \
-      git checkout "${CONTRACTS_COMMIT}"; \
-    else \
-      echo "CONTRACTS_COMMIT not set — using latest main ($(git rev-parse --short HEAD))"; \
-    fi
+    echo "Pinned contracts commit: ${CONTRACTS_COMMIT}" && \
+    git checkout "${CONTRACTS_COMMIT}"
 
 # Install deps from the contracts justfile (single source of truth for pins).
 # --no-git avoids submodule machinery and git user/email config requirement.
-RUN grep -A 20 '^deps:' justfile \
+RUN sed -n '/^deps:/,/^[a-zA-Z_-][a-zA-Z_-]*:/p' justfile \
     | grep 'github\.com/' \
     | sed 's/\\$//' \
     | tr -d ' ' \

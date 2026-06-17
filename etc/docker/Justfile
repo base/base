@@ -144,7 +144,7 @@ bench name:
 _install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
 
-# Env var: CONTRACTS_COMMIT overrides the base/contracts commit SHA (default: latest main).
+# Env var: CONTRACTS_COMMIT overrides the pinned base/contracts commit SHA.
 [private]
 _build-setup-image:
     docker build -t system-test-setup:local -f etc/docker/Dockerfile.devnet \

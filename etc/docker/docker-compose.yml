@@ -7,7 +7,7 @@ x-rust-service-build: &rust-service-build
 
 services:
   setup-l1:
-    image: devnet-setup:local
+    image: system-test-setup:local
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
@@ -133,7 +133,7 @@ services:
     restart: unless-stopped
 
   setup-l2:
-    image: devnet-setup:local
+    image: system-test-setup:local
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
@@ -173,11 +173,13 @@ services:
 
 
   patch-genesis-hash:
-    image: devnet-setup:local
+    image: system-test-setup:local
     container_name: patch-genesis-hash
     depends_on:
       base-builder:
         condition: service_healthy
+      setup-l2:
+        condition: service_completed_successfully
     volumes:
       - ../../.devnet/l2/configs:/configs
     environment:
