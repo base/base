@@ -124,6 +124,7 @@ SCALAR_RAW=$(cast call "$SYSTEM_CONFIG_PROXY" "scalar()" --rpc-url "$L1_RPC_URL"
 
 # gasLimit() — decimal number
 GAS_LIMIT=$(cast call "$SYSTEM_CONFIG_PROXY" "gasLimit()(uint64)" --rpc-url "$L1_RPC_URL" | awk "{print \$1}")
+[ -n "$GAS_LIMIT" ] || { echo "ERROR: Failed to read gasLimit from SystemConfig"; exit 1; }
 
 echo "Batcher address:  $BATCHER_ADDR"
 echo "Overhead:         $OVERHEAD_RAW"

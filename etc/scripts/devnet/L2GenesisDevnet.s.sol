@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.15;
 
-import { Script } from "lib/forge-std/src/Script.sol";
-import { L2Genesis } from "scripts/L2Genesis.s.sol";
-import { DeployConfig } from "scripts/deploy/DeployConfig.s.sol";
-import { Fork } from "scripts/libraries/Config.sol";
+import {Script} from "lib/forge-std/src/Script.sol";
+import {L2Genesis} from "scripts/L2Genesis.s.sol";
+import {DeployConfig} from "scripts/deploy/DeployConfig.s.sol";
+import {Fork} from "scripts/libraries/Config.sol";
 
 /// @title L2GenesisDevnet
 /// @notice Thin wrapper that reads deploy-config + deployed L1 addresses,
@@ -52,7 +52,9 @@ contract L2GenesisDevnet is Script {
         // Clear helper contracts so they don't leak into the genesis alloc.
         // DeployConfig and L2Genesis are only needed during script execution.
         vm.etch(address(cfg), "");
+        vm.resetNonce(address(cfg));
         vm.etch(address(genesis), "");
+        vm.resetNonce(address(genesis));
 
         // Dump the resulting state
         vm.dumpState(vm.envOr("L2_GENESIS_STATE_DUMP", string("state-dump.json")));
