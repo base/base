@@ -1,11 +1,19 @@
 use base64::Engine;
 use rand::RngCore;
 
+use alloy_primitives::Bytes;
+use base_protocol::DERIVATION_VERSION_1;
+
 use crate::error::Error;
 
-const GENERIC_COMMITMENT_TYPE: u8 = 0x01;
+/// Generic commitment type byte (`0x01`).
+pub const GENERIC_COMMITMENT_TYPE: u8 = 0x01;
+/// Generic commitment sentinel byte (`0xff`).
+pub const GENERIC_COMMITMENT_SENTINEL: u8 = 0xff;
+/// Encoded generic commitment length in bytes.
+pub const GENERIC_COMMITMENT_LEN: usize = 34;
 /// Max decoded commitment bytes (generic format is always 34).
-const MAX_COMMITMENT_LEN: usize = 34;
+const MAX_COMMITMENT_LEN: usize = GENERIC_COMMITMENT_LEN;
 
 /// Server-generated generic commitment (`0x01` type byte + `0xff` sentinel + random suffix).
 pub fn generate_generic_commitment() -> Vec<u8> {
@@ -14,6 +22,29 @@ pub fn generate_generic_commitment() -> Vec<u8> {
     commitment[1] = 0xff;
     rand::rng().fill_bytes(&mut commitment[2..]);
     commitment.to_vec()
+}
+
+/// Validate a server-returned generic commitment.
+pub fn validate_generic_commitment(commitment: &[u8]) -> Result<(), Error> {
+    if commitment.len() != GENERIC_COMMITMENT_LEN {
+        return Err(Error::BadRequest(format!(
+            "invalid generic commitment length: {} (expected {GENERIC_COMMITMENT_LEN})",
+            commitment.len()
+        )));
+    }
+    if commitment[0] != GENERIC_COMMITMENT_TYPE || commitment[1] != GENERIC_COMMITMENT_SENTINEL {
+        return Err(Error::BadRequest("invalid generic commitment prefix".into()));
+    }
+    Ok(())
+}
+
+/// Encode alt-DA commitment L1 calldata (`DERIVATION_VERSION_1` ++ commitment).
+pub fn encode_commitment_tx_data(commitment: &[u8]) -> Result<Bytes, Error> {
+    validate_generic_commitment(commitment)?;
+    let mut data = Vec::with_capacity(1 + commitment.len());
+    data.push(DERIVATION_VERSION_1);
+    data.extend_from_slice(commitment);
+    Ok(Bytes::from(data))
 }
 
 /// Decode a `0x`-prefixed hex commitment from an HTTP path segment.
@@ -69,5 +100,15 @@ mod tests {
         let hex = format!("0x{}", "ab".repeat(MAX_COMMITMENT_LEN + 1));
         let err = decode_hex_commitment(&hex).unwrap_err();
         assert!(matches!(err, Error::BadRequest(_)));
+    }
+
+    #[test]
+    fn encode_commitment_tx_data_prefixes_derivation_version() {
+        use base_protocol::DERIVATION_VERSION_1;
+
+        let comm = generate_generic_commitment();
+        let tx_data = encode_commitment_tx_data(&comm).unwrap();
+        assert_eq!(tx_data[0], DERIVATION_VERSION_1);
+        assert_eq!(&tx_data[1..], comm.as_slice());
     }
 }

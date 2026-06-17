@@ -17,6 +17,7 @@ base-blobs.workspace = true
 base-tx-manager.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
+base-alt-da.workspace = true
 base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 base-common-consensus = { workspace = true, features = ["std"] }

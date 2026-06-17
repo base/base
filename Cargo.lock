@@ -3214,6 +3214,7 @@ dependencies = [
 name = "base-alt-da"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
@@ -3283,6 +3284,7 @@ dependencies = [
  "alloy-rpc-types-eth 2.0.5",
  "async-trait",
  "auto_impl",
+ "base-alt-da",
  "base-batcher-encoder",
  "base-batcher-source",
  "base-blobs",
@@ -3332,6 +3334,7 @@ dependencies = [
  "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "async-trait",
+ "base-alt-da",
  "base-batcher-admin",
  "base-batcher-core",
  "base-batcher-encoder",

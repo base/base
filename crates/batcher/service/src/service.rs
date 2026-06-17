@@ -653,6 +653,15 @@ impl BatcherService {
             .spawn(runtime.token().clone());
 
         // Build the driver — all fallible setup is complete at this point.
+        let alt_da = if let Some(cfg) = &self.config.alt_da {
+            Some(Arc::new(
+                base_alt_da::Client::new(cfg.server_url.clone())
+                    .map_err(|e| eyre::eyre!("failed to create alt-da client: {e}"))?,
+            ))
+        } else {
+            None
+        };
+
         let mut driver = BatchDriver::new(
             runtime,
             encoder,
@@ -663,6 +672,7 @@ impl BatcherService {
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout: self.config.resubmission_timeout * 2,
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
+                alt_da,
             },
             DaThrottle::new(throttle, throttle_client),
             l1_head_source,

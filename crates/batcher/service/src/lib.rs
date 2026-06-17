@@ -10,7 +10,7 @@
 pub use base_common_genesis::L1TxFormat;
 
 mod config;
-pub use config::BatcherConfig;
+pub use config::{AltDaConfig, BatcherConfig};
 
 mod recent_txs;
 pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, RecentTxScanner, SCAN_FETCH_CONCURRENCY};

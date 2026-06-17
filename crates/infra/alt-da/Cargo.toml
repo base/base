@@ -18,6 +18,8 @@ rand.workspace = true
 base64.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
+alloy-primitives.workspace = true
+reqwest = { workspace = true, features = ["rustls"] }
 tracing = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["rt"] }
 base-protocol = { workspace = true, features = ["std"] }

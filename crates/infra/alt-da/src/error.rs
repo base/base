@@ -67,6 +67,37 @@ pub enum InternalError {
     Http(String),
 }
 
+/// Alt-DA HTTP client request failed.
+#[derive(Debug, Error)]
+pub enum ClientError {
+    /// Request body was empty.
+    #[error("empty alt-da put body")]
+    EmptyBody,
+    /// Request body exceeds [`crate::MAX_OBJECT_BYTES`].
+    #[error("alt-da put body too large: {size} bytes (max {max})")]
+    BodyTooLarge {
+        /// Request body size in bytes.
+        size: usize,
+        /// Configured maximum object size in bytes.
+        max: usize,
+    },
+    /// HTTP transport or response read failed.
+    #[error("alt-da http error: {0}")]
+    Http(String),
+    /// DA server returned a non-success status.
+    #[error("alt-da put failed with status {status}")]
+    UnexpectedStatus {
+        /// HTTP status code.
+        status: u16,
+    },
+    /// PUT response was not a 34-byte generic commitment.
+    #[error("alt-da put returned invalid commitment length: {len}")]
+    InvalidCommitmentLen {
+        /// Response body length in bytes.
+        len: usize,
+    },
+}
+
 impl From<StoreError> for Error {
     fn from(err: StoreError) -> Self {
         match err {

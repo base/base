@@ -24,6 +24,7 @@ base-common-network.workspace = true
 alloy-signer-local.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
+base-alt-da.workspace = true
 tracing = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
 base-protocol = { workspace = true, features = ["std"] }

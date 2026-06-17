@@ -8,6 +8,13 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::L1TxFormat;
 use url::Url;
 
+/// Alt-DA dual-write settings for the batcher.
+#[derive(Debug, Clone)]
+pub struct AltDaConfig {
+    /// Base URL of the alt-DA HTTP server (e.g. `http://base-da-server:2583`).
+    pub server_url: Url,
+}
+
 /// Full batcher configuration combining RPC endpoints, identity, encoding
 /// parameters, submission limits, and optional throttling.
 ///
@@ -104,6 +111,12 @@ pub struct BatcherConfig {
     /// emit blob-typed submissions even when its configured `da_type` is
     /// calldata. No-op for blob-configured batchers. Default: `true`.
     pub force_blobs_when_throttling: bool,
+    /// Alt-DA dual-write: upload calldata bytes to the DA server and post commitments on L1.
+    ///
+    /// Requires [`EncoderConfig::da_type`](base_batcher_encoder::EncoderConfig::da_type) ==
+    /// [`DaType::Calldata`](base_batcher_encoder::DaType::Calldata). Calldata remains the
+    /// primary derivation path; alt-DA is a shadow path for validation.
+    pub alt_da: Option<AltDaConfig>,
 }
 
 impl Default for BatcherConfig {
@@ -128,6 +141,7 @@ impl Default for BatcherConfig {
             wait_node_sync: false,
             wait_node_sync_timeout: Duration::from_secs(600),
             force_blobs_when_throttling: true,
+            alt_da: None,
         }
     }
 }
@@ -150,6 +164,13 @@ impl BatcherConfig {
                      throttling cannot force blob submissions onto a calldata-only parent"
                 );
             }
+        }
+
+        if self.alt_da.is_some() && self.encoder_config.da_type != DaType::Calldata {
+            eyre::bail!(
+                "alt-da dual-write requires --data-availability-type calldata; \
+                 blob submissions are not dual-written to the DA server"
+            );
         }
 
         Ok(())
