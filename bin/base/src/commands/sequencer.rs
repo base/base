@@ -1,4 +1,4 @@
-//! Integrated sequencer node command.
+//! Integrated execution, builder, and consensus sequencer command.
 
 use std::sync::Arc;
 
@@ -25,21 +25,21 @@ pub(crate) struct SequencerCommand {
     #[arg(long = "execution-chain", value_parser = chain_value_parser)]
     pub(crate) execution_chain: Option<Arc<BaseChainSpec>>,
 
-    /// Execution node arguments.
+    /// Embedded execution node arguments.
     #[command(flatten)]
     pub(crate) execution: ExecutionNodeConfigArgs,
 
-    /// Builder node arguments.
+    /// Embedded builder and Flashblocks arguments.
     #[command(flatten)]
     pub(crate) builder: BuilderArgs,
 
-    /// Consensus node arguments.
+    /// Embedded consensus sequencer arguments.
     #[command(flatten)]
     pub(crate) consensus: EmbeddedSequencerConsensusNodeConfigArgs,
 }
 
 impl SequencerCommand {
-    /// Runs the `sequencer` flavor.
+    /// Runs the `sequencer` flavor with execution, builder, and consensus in one process.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
         let execution_chain = match self.execution_chain {
             Some(chain) => chain,

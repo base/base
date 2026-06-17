@@ -206,7 +206,7 @@ pub struct EmbeddedSequencerConsensusNodeConfigArgs {
     #[command(flatten)]
     pub rpc_flags: EmbeddedRpcArgs,
 
-    /// SEQUENCER CLI arguments.
+    /// Sequencer consensus-control CLI arguments.
     #[command(flatten)]
     pub sequencer_flags: SequencerArgs,
 

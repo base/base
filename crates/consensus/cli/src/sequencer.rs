@@ -1,4 +1,4 @@
-//! Sequencer CLI Flags
+//! Sequencer consensus-control CLI flags.
 
 use std::{num::ParseIntError, time::Duration};
 
@@ -6,7 +6,7 @@ use base_consensus_node::SequencerConfig;
 use clap::Parser;
 use url::Url;
 
-/// Sequencer CLI Flags
+/// Sequencer consensus-control CLI flags.
 #[derive(Parser, Clone, Debug, PartialEq, Eq)]
 pub struct SequencerArgs {
     /// Initialize the sequencer in a stopped state. The sequencer can be started using the
@@ -19,7 +19,8 @@ pub struct SequencerArgs {
     pub stopped: bool,
 
     /// Maximum number of L2 blocks for restricting the distance between L2 safe and unsafe.
-    /// Disabled if 0.
+    ///
+    /// Currently accepted by the CLI but not enforced by the sequencer runtime. Disabled if 0.
     #[arg(
         long = "sequencer.max-safe-lag",
         default_value = "0",
@@ -27,12 +28,12 @@ pub struct SequencerArgs {
     )]
     pub max_safe_lag: u64,
 
-    /// Number of L1 blocks to keep distance from the L1 head as a sequencer for picking an L1
+    /// Number of L1 blocks to keep distance from the L1 head as a sequencer when picking an L1
     /// origin.
     #[arg(long = "sequencer.l1-confs", default_value = "4", env = "BASE_NODE_SEQUENCER_L1_CONFS")]
     pub l1_confs: u64,
 
-    /// Forces the sequencer to strictly prepare the next L1 origin and create empty L2 blocks
+    /// Force the sequencer to strictly prepare the next L1 origin and create empty L2 blocks.
     #[arg(
         long = "sequencer.recover",
         default_value = "false",
@@ -40,11 +41,11 @@ pub struct SequencerArgs {
     )]
     pub recover: bool,
 
-    /// Conductor service rpc endpoint. Providing this value will enable the conductor service.
+    /// Conductor service RPC endpoint. Providing this value enables the conductor service.
     #[arg(long = "conductor.rpc", env = "BASE_NODE_CONDUCTOR_RPC")]
     pub conductor_rpc: Option<Url>,
 
-    /// Conductor service rpc timeout.
+    /// Conductor service RPC timeout.
     #[arg(
         long = "conductor.rpc.timeout",
         default_value = "1",

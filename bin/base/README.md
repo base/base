@@ -30,6 +30,35 @@ for consensus chain resolution:
 base rpc --execution-chain dev
 ```
 
+## `base sequencer`
+
+`base sequencer` starts a sequencing node by launching an embedded execution node, embedded
+Flashblocks builder, and embedded consensus node in the same process. The execution node exposes the
+Engine API over auth IPC, and the consensus node connects to that IPC endpoint internally.
+
+The command accepts the shared execution flags, builder flags, and sequencer consensus flags. It
+requires L1 execution and beacon RPC endpoints, and sequencer mode requires a signing key provided
+by one of `--p2p.sequencer.key`, `--p2p.sequencer.key.path`, or `--p2p.signer.endpoint`.
+
+Supported forms:
+
+```text
+base sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
+base --chain sepolia sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.signer.endpoint <url>
+base --chain ./chain.toml sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
+```
+
+Useful sequencer-specific flags include:
+
+- `--sequencer.stopped` starts the process with sequencing disabled until the admin API starts it.
+- `--sequencer.recover` enables recovery mode and forces empty block production.
+- `--conductor.rpc` enables conductor-backed leader checks.
+- `--conductor.binary-commit` uses the conductor binary commit endpoint.
+- `--flashblocks.port` selects the Flashblocks websocket port.
+
+`--sequencer.max-safe-lag` is currently accepted for CLI compatibility, but it is not enforced by
+the sequencer runtime.
+
 ## `base update`
 
 `base update` updates the installed `base` binary by running `baseup --bin base` against the same

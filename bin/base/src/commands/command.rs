@@ -20,7 +20,7 @@ pub(crate) enum BaseCommand {
     /// Run the integrated node in RPC mode.
     #[command(name = "rpc")]
     Rpc(Box<RpcCommand>),
-    /// Run the integrated node in sequencer mode.
+    /// Run integrated execution, builder, and consensus services in sequencer mode.
     #[command(name = "sequencer")]
     Sequencer(Box<SequencerCommand>),
     /// Update the base binary to the latest release.
