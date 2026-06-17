@@ -41,3 +41,6 @@ pub use nonce_error::NonceError;
 
 mod validate;
 pub use validate::{NonceMode, NonceStatus, NonceValidator};
+
+mod transaction;
+pub use transaction::{AuthorizedTransaction, TransactionAuthorizer};

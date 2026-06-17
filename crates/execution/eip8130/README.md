@@ -47,3 +47,8 @@ The crate keeps the protocol stages explicit while avoiding crate sprawl:
 - **Authorize** binds resolved actors to account config, expiry, scope, and policy.
 - **Transaction auth** applies sender, payer, and config-change operation gates.
 - **Nonce validation** checks protocol, 2D-channel, and nonce-free replay state.
+- **Orchestration** composes the final sender/payer signatures with the
+  transaction's ordered account-configuration changes — advancing each channel
+  sequence per applied entry — into one authorization verdict (`TransactionAuthorizer`),
+  shared by mempool admission and block inclusion. It reads state but never
+  mutates it; nonce, gas, and fee/balance checks remain separate stages.

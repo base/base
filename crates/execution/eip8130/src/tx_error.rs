@@ -52,4 +52,12 @@ pub enum TxAuthError {
         /// The sequence carried by the config change.
         got: u64,
     },
+
+    /// Authorizing the next same-channel config change in a transaction would
+    /// advance the channel sequence past `u64::MAX`. Unreachable in practice
+    /// (the per-transaction change count is bounded far below the sequence
+    /// space), but rejected explicitly rather than wrapping or saturating into a
+    /// state that re-accepts a duplicate sequence.
+    #[error("config change sequence channel overflowed u64")]
+    ConfigSequenceOverflow,
 }
