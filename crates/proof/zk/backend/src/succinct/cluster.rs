@@ -278,6 +278,24 @@ impl ClusterZkProver {
                         "existing cluster request is terminal, trying next proof id"
                     );
                 }
+                ProofRequestStatus::Pending => {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(|e| backend_error!("invalid unix timestamp: {e}"))?
+                        .as_secs();
+                    if existing.deadline <= now {
+                        info!(
+                            proof_id = %candidate,
+                            deadline = existing.deadline,
+                            now = now,
+                            "existing cluster request deadline elapsed, trying next proof id"
+                        );
+                        continue;
+                    }
+
+                    info!(proof_id = %candidate, "cluster proof request already exists");
+                    return Self::session_id_from_request(&existing)?.to_backend_session_id();
+                }
                 ProofRequestStatus::Unspecified => {
                     return Err(backend_error!(
                         "cluster proof {} has unspecified status",
