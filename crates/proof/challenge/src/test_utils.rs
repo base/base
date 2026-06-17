@@ -661,7 +661,7 @@ impl L2Provider for MockL2Provider {
     async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<RpcHeader> {
         let block_number = match block {
             BlockNumberOrTag::Number(number) => number,
-            _ => 0,
+            other => panic!("MockL2Provider::header_by_number does not support tag {other:?}"),
         };
         if self.error_blocks.contains(&block_number) {
             return Err(RpcError::BlockNotFound(format!("block {block_number} not available")));
@@ -979,6 +979,14 @@ mod tests {
 
     use super::*;
     use crate::scanner::{GameCategory, GameScanner};
+
+    #[tokio::test]
+    #[should_panic(expected = "MockL2Provider::header_by_number does not support tag finalized")]
+    async fn test_mock_l2_provider_rejects_block_tags() {
+        let provider = MockL2Provider::new();
+
+        let _ = provider.header_by_number(BlockNumberOrTag::Finalized).await;
+    }
 
     /// Happy path: mixed games, only `IN_PROGRESS` / non-nullified returned.
     #[tokio::test]
