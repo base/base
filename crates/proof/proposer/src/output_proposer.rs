@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{encode_create_calldata, encode_extra_data};
 use base_proof_primitives::{ProofEncoder, Proposal};
-use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
+use base_proof_submission::{AggregateProofSubmitter, KnownRevert};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::info;
 
@@ -127,11 +127,10 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             "Creating dispute game"
         );
 
-        let receipt = self
-            .tx_manager
-            .send(candidate)
-            .await
-            .map_err(ProofSubmissionError::from_tx_manager_error)?;
+        let receipt = self.tx_manager.send(candidate).await.map_err(|err| {
+            KnownRevert::from_tx_manager_error(&err)
+                .map_or_else(|| ProposerError::TxManager(err), ProposerError::from)
+        })?;
 
         let tx_hash = receipt.transaction_hash;
 

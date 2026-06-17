@@ -1,7 +1,7 @@
 //! Error types for the proposer.
 
 use base_proof_rpc::RpcError;
-use base_proof_submission::ProofSubmissionError;
+use base_proof_submission::{KnownRevert, ProofSubmissionError};
 use thiserror::Error;
 
 /// Main error type for the proposer.
@@ -68,6 +68,18 @@ impl From<ProofSubmissionError> for ProposerError {
                 Self::TxReverted(format!("transaction {tx_hash} reverted"))
             }
             ProofSubmissionError::TxManager(err) => Self::TxManager(err),
+        }
+    }
+}
+
+impl From<KnownRevert> for ProposerError {
+    fn from(revert: KnownRevert) -> Self {
+        match revert {
+            KnownRevert::GameAlreadyExists => Self::GameAlreadyExists,
+            KnownRevert::ProofAlreadyVerified => Self::ProofAlreadyVerified,
+            KnownRevert::L1OriginTooOld => Self::L1OriginTooOld,
+            KnownRevert::InvalidParentGame => Self::InvalidParentGame,
+            KnownRevert::InvalidSigner => Self::InvalidSigner,
         }
     }
 }

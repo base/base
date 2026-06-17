@@ -10,6 +10,7 @@ mod error;
 pub use error::ProofSubmissionError;
 
 mod classifier;
+pub use classifier::KnownRevert;
 
 mod submitter;
 pub use submitter::AggregateProofSubmitter;
