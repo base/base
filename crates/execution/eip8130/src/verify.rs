@@ -75,14 +75,12 @@ impl ActorTxVerifier {
         storage: &AccountConfigurationStorage<'_>,
         now: u64,
     ) -> Result<AuthorizedActor, TxAuthError> {
-        let hash = signed.tx().sender_signature_hash();
-
         if let Some(account) = signed.explicit_sender() {
             // Configured account: `sender_auth` is already `authenticator(20) || data`.
             let resolved = Self::authorize_scoped(
                 storage,
                 account,
-                hash,
+                signed.tx().sender_signature_hash(),
                 signed.sender_auth(),
                 Operation::Sender,
                 now,
@@ -90,21 +88,22 @@ impl ActorTxVerifier {
             return Ok(AuthorizedActor { account, resolved });
         }
 
-        // EOA path: recover the sender with the checked (EIP-2) recovery, then
-        // authorize the implicit-EOA owner. `sender_auth` is a bare 65-byte
-        // signature, so synthesize the `address(0)` authenticator prefix that the
-        // unified authorize step expects.
+        // EOA path: recover the sender exactly once with the checked (EIP-2
+        // low-s) recovery. The recovered address *is* the signer, so authorizing
+        // the implicit-EOA owner needs no second ecrecover — only the self-slot
+        // shadow check. (The wire `address(0)` form, by contrast, recovers in
+        // `authenticate_implicit_eoa` because there the account is wire-supplied.)
         let account = signed
             .recover_eoa_sender()
             .map_err(|_| TxAuthError::SenderRecovery)?
             .ok_or(TxAuthError::SenderRecovery)?;
 
-        let mut auth = Vec::with_capacity(Address::len_bytes() + signed.sender_auth().len());
-        auth.extend_from_slice(Address::ZERO.as_slice());
-        auth.extend_from_slice(signed.sender_auth());
-
-        let resolved =
-            Self::authorize_scoped(storage, account, hash, &auth, Operation::Sender, now)?;
+        let resolved = ActorAuthorizer::implicit_eoa_owner(storage, account)?;
+        // Implicit owners are unrestricted, so the sender gate always passes;
+        // enforce it anyway for parity with the configured-account path.
+        if !Operation::Sender.is_granted(&resolved) {
+            return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
+        }
         Ok(AuthorizedActor { account, resolved })
     }
 

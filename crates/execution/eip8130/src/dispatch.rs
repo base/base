@@ -109,29 +109,29 @@ impl AuthenticatorDispatch {
         B256::from(id)
     }
 
-    /// Native secp256k1 ecrecover for the `ECRECOVER_AUTHENTICATOR` sentinel,
-    /// matching the on-chain reference (`AccountConfiguration._recoverSigner`,
-    /// i.e. the EVM `ecrecover` precompile): requires `v in {27, 28}` and accepts
-    /// any `s` (the precompile does not reject malleable high-`s`).
-    /// `actorId = bytes32(bytes20(recovered))`.
+    /// Native secp256k1 ecrecover for the `ECRECOVER_AUTHENTICATOR` sentinel:
+    /// requires `v in {27, 28}` and enforces **EIP-2 low-`s`**, rejecting
+    /// malleable upper-half-`s` signatures. `actorId = bytes32(bytes20(recovered))`.
     ///
-    /// `k256`'s recovery rejects high-`s`, so a high-`s` input is canonicalized to
-    /// its low-`s` malleable equivalent with the recovery parity flipped — this
-    /// recovers the identical key, since `ecrecover(h, v, r, s)` equals
-    /// `ecrecover(h, v ^ 1, r, n - s)`.
+    /// Low-`s` is enforced (rather than canonicalized-and-accepted) so that every
+    /// authorizing surface contributing to the transaction id commits to a single,
+    /// non-malleable signature encoding. This must stay byte-parity with the
+    /// deployed `AccountConfiguration` reference, which likewise rejects high-`s`;
+    /// the two MUST change in lockstep or the canonical address re-pins.
     fn ecrecover(hash: B256, data: &[u8]) -> Result<B256, AuthError> {
         if data.len() != 65 {
             return Err(AuthError::MalformedAuth);
         }
-        let mut recovery = match data[64] {
+        let recovery = match data[64] {
             27 | 28 => data[64] - 27,
             _ => return Err(AuthError::InvalidSignature),
         };
-        let mut signature =
+        let signature =
             K256Signature::from_slice(&data[..64]).map_err(|_| AuthError::InvalidSignature)?;
-        if let Some(low_s) = signature.normalize_s() {
-            signature = low_s;
-            recovery ^= 1;
+        // `normalize_s` returns `Some` only when `s` is in the upper half, i.e. a
+        // malleable high-`s` signature: reject it rather than canonicalizing.
+        if signature.normalize_s().is_some() {
+            return Err(AuthError::InvalidSignature);
         }
         let recovery_id = RecoveryId::from_byte(recovery).ok_or(AuthError::InvalidSignature)?;
         let key = K256VerifyingKey::recover_from_prehash(hash.as_slice(), &signature, recovery_id)
@@ -371,10 +371,10 @@ mod tests {
     }
 
     #[test]
-    fn ecrecover_accepts_high_s() {
-        // The EVM ecrecover precompile does not reject malleable high-s; the
-        // native sentinel must match. Negating s yields the high-s counterpart,
-        // and flipping the recovery parity recovers the same signer.
+    fn ecrecover_rejects_high_s() {
+        // EIP-2 low-s: the malleable upper-half-s counterpart of a valid signature
+        // (negate s, flip the recovery parity) recovers the same signer but MUST be
+        // rejected so the transaction id cannot be malleated.
         let key = k1_key();
         let (sig, recid) = key.sign_prehash_recoverable(HASH.as_slice()).unwrap();
         let s_high = -*sig.s();
@@ -382,14 +382,14 @@ mod tests {
         let mut bytes = [0u8; 65];
         bytes[..64].copy_from_slice(&high.to_bytes());
         bytes[64] = (recid.to_byte() ^ 1) + 27;
-        let out = AuthenticatorDispatch::authenticate(
-            HASH,
-            Eip8130Constants::ECRECOVER_AUTHENTICATOR,
-            &bytes,
-        )
-        .unwrap();
-        let expected = AuthenticatorDispatch::address_actor_id(k1_address(&key));
-        assert_eq!(out, DispatchOutcome::Authenticated { actor_id: expected });
+        assert_eq!(
+            AuthenticatorDispatch::authenticate(
+                HASH,
+                Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+                &bytes,
+            ),
+            Err(AuthError::InvalidSignature),
+        );
     }
 
     #[test]

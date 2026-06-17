@@ -107,11 +107,8 @@ impl ActorAuthorizer {
         hash: B256,
         data: &[u8],
     ) -> Result<ResolvedActor, AuthorizeError> {
-        let self_id = AccountConfigurationStorage::self_actor_id(account);
-        if !storage.get_actor_config(account, self_id)?.is_empty() {
-            return Err(AuthorizeError::ImplicitEoaShadowed);
-        }
-        // Reuse the enshrined ecrecover (identical to the sentinel path).
+        // The wire `address(0)` form supplies the account, so the signature must
+        // be recovered and bound to it. Reuse the enshrined (low-s) ecrecover.
         let recovered = match AuthenticatorDispatch::authenticate(
             hash,
             Eip8130Constants::ECRECOVER_AUTHENTICATOR,
@@ -121,8 +118,27 @@ impl ActorAuthorizer {
             // ecrecover never produces a delegate obligation.
             DispatchOutcome::Delegated { .. } => return Err(AuthError::InvalidSignature.into()),
         };
-        if recovered != self_id {
+        if recovered != AccountConfigurationStorage::self_actor_id(account) {
             return Err(AuthorizeError::ImplicitEoaMismatch);
+        }
+        Self::implicit_eoa_owner(storage, account)
+    }
+
+    /// Authorizes the implicit-EOA owner of `account` once the caller has already
+    /// established that the signer is `account` itself: the self-actor slot must
+    /// be empty (an explicit actor there *shadows* the implicit owner), and the
+    /// owner resolves as an unrestricted actor with no policy.
+    ///
+    /// The empty-`sender` transaction path recovers the signer in the verifier
+    /// (the recovered address *is* the account), so it calls this directly rather
+    /// than re-recovering through [`Self::authenticate_implicit_eoa`].
+    pub fn implicit_eoa_owner(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+    ) -> Result<ResolvedActor, AuthorizeError> {
+        let self_id = AccountConfigurationStorage::self_actor_id(account);
+        if !storage.get_actor_config(account, self_id)?.is_empty() {
+            return Err(AuthorizeError::ImplicitEoaShadowed);
         }
         Ok(ResolvedActor::unrestricted(self_id))
     }
