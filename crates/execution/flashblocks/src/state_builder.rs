@@ -238,6 +238,12 @@ where
         let CachedTransactionExecution { receipt, state, result, execution_time_us } =
             cached_execution;
 
+        // Shadow-diff (#1): when enabled, re-execute the cached transaction against the
+        // current pending state and warn if the fresh outcome diverges from the cached
+        // (frozen) one. This pinpoints the transaction whose stale cache entry produces a
+        // wrong success/revert. Behavior is unchanged; the fresh result is discarded.
+        self.shadow_diff_cached_execution(&transaction, idx, &result);
+
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
             let BaseReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
                 return Err(ExecutionError::DepositReceiptMismatch.into());
@@ -281,6 +287,67 @@ where
             result,
             execution_time_us,
         })
+    }
+
+    /// Re-executes a cached transaction against the current pending state (without committing)
+    /// and emits a `warn!` when the fresh execution outcome diverges from the cached (frozen)
+    /// one. This is a diagnostic for the transaction-cache staleness bug: it identifies the exact
+    /// transaction whose cached status/gas no longer matches a clean re-execution.
+    ///
+    /// Gated behind `BASE_FLASHBLOCKS_TX_CACHE_SHADOW_DIFF`; a no-op (and zero cost) when unset.
+    /// The fresh result is discarded, so committed state and returned values are unchanged.
+    fn shadow_diff_cached_execution(
+        &mut self,
+        transaction: &Recovered<BaseTxEnvelope>,
+        idx: usize,
+        cached_result: &ExecutionResult<BaseHaltReason>,
+    ) {
+        static SHADOW_DIFF: OnceLock<bool> = OnceLock::new();
+        let shadow_diff = *SHADOW_DIFF
+            .get_or_init(|| std::env::var_os("BASE_FLASHBLOCKS_TX_CACHE_SHADOW_DIFF").is_some());
+        if !shadow_diff {
+            return;
+        }
+
+        let tx_hash = transaction.tx_hash();
+        match self.evm.transact(transaction) {
+            Ok(ResultAndState { result: fresh_result, .. }) => {
+                let cached_status = cached_result.is_success();
+                let fresh_status = fresh_result.is_success();
+                let cached_gas = cached_result.tx_gas_used();
+                let fresh_gas = fresh_result.tx_gas_used();
+                if cached_status != fresh_status {
+                    warn!(
+                        tx_hash = %tx_hash,
+                        idx,
+                        block_number = self.pending_block.number,
+                        cached_status,
+                        fresh_status,
+                        cached_gas,
+                        fresh_gas,
+                        "tx cache hit diverges from re-execution: status mismatch"
+                    );
+                } else if cached_gas != fresh_gas {
+                    debug!(
+                        tx_hash = %tx_hash,
+                        idx,
+                        block_number = self.pending_block.number,
+                        cached_gas,
+                        fresh_gas,
+                        "tx cache hit diverges from re-execution: gas mismatch"
+                    );
+                }
+            }
+            Err(err) => {
+                warn!(
+                    tx_hash = %tx_hash,
+                    idx,
+                    block_number = self.pending_block.number,
+                    error = %err,
+                    "tx cache shadow re-execution failed"
+                );
+            }
+        }
     }
 
     fn jovian_da_footprint_estimation(

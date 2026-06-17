@@ -649,6 +649,21 @@ where
                 "reconstructed pending parent hash differs from flashblock parent hash"
             );
         }
+        // (#3) Per-block pre-execution env, fast-path next-block. Correlate with the
+        // tx-cache shadow-diff warnings to attribute outcome divergence to env drift.
+        debug!(
+            path = "next_block",
+            block_number = base.block_number,
+            flashblock_index = flashblock.index,
+            timestamp = base.timestamp,
+            gas_limit = base.gas_limit,
+            base_fee_per_gas = %base.base_fee_per_gas,
+            flashblock_parent_hash = %base.parent_hash,
+            reconstructed_parent_hash = %reconstructed_parent_hash,
+            parent_beacon_block_root = %base.parent_beacon_block_root,
+            previous_block_number = previous_header.number,
+            "pending pre-execution env"
+        );
         pending_state_builder
             .apply_pre_execution_changes(base.parent_hash, Some(base.parent_beacon_block_root))?;
         // Old behavior for comparison runs:
@@ -802,6 +817,20 @@ where
                     "reconstructed pending parent hash differs from flashblock parent hash"
                 );
             }
+            // (#3) Per-block pre-execution env, rebuild path (uses the tx cache). Correlate with
+            // the tx-cache shadow-diff warnings to attribute outcome divergence to env drift.
+            debug!(
+                path = "rebuild",
+                block_number = assembled.base.block_number,
+                timestamp = assembled.base.timestamp,
+                gas_limit = assembled.base.gas_limit,
+                base_fee_per_gas = %assembled.base.base_fee_per_gas,
+                flashblock_parent_hash = %assembled.base.parent_hash,
+                reconstructed_parent_hash = %reconstructed_parent_hash,
+                parent_beacon_block_root = %assembled.base.parent_beacon_block_root,
+                previous_block_number = last_block_header.number,
+                "pending pre-execution env"
+            );
             let parent_beacon_block_root = Some(assembled.base.parent_beacon_block_root);
 
             let mut pending_state_builder = PendingStateBuilder::new(
