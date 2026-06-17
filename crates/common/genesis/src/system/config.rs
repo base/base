@@ -229,7 +229,7 @@ mod tests {
     use alloy_primitives::{B256, LogData, address, b256, hex};
 
     use super::*;
-    use crate::{HardForkConfig, SystemConfigUpdate};
+    use crate::{SystemConfigUpdate, UpgradeConfig};
 
     const BATCHER_UPDATE_TYPE: B256 =
         b256!("0000000000000000000000000000000000000000000000000000000000000000");
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn test_eip_1559_params_from_system_config_some() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let sys_config = SystemConfig {
@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn test_eip_1559_params_from_system_config() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let sys_config = SystemConfig {
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn test_default_eip_1559_params_from_system_config() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         let sys_config = SystemConfig {
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn test_default_eip_1559_params_first_block_holocene() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(2), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(2), ..Default::default() },
             ..Default::default()
         };
         let sys_config = SystemConfig {

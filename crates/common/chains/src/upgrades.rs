@@ -87,47 +87,47 @@ impl Upgrades for RollupConfig {
         match fork {
             BaseUpgrade::Bedrock => ForkCondition::Block(0),
             BaseUpgrade::Regolith => self
-                .hardfork_activation_timestamp(ContractUpgrade::Regolith)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Regolith)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Canyon)),
             BaseUpgrade::Canyon => self
-                .hardfork_activation_timestamp(ContractUpgrade::Canyon)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Canyon)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Ecotone)),
             BaseUpgrade::Ecotone => self
-                .hardfork_activation_timestamp(ContractUpgrade::Ecotone)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Ecotone)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Fjord)),
             BaseUpgrade::Fjord => self
-                .hardfork_activation_timestamp(ContractUpgrade::Fjord)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Fjord)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Granite)),
             BaseUpgrade::Granite => self
-                .hardfork_activation_timestamp(ContractUpgrade::Granite)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Granite)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Holocene)),
             BaseUpgrade::Holocene => self
-                .hardfork_activation_timestamp(ContractUpgrade::Holocene)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Holocene)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Isthmus)),
             BaseUpgrade::Isthmus => self
-                .hardfork_activation_timestamp(ContractUpgrade::Isthmus)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Isthmus)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Jovian)),
             BaseUpgrade::Jovian => self
-                .hardfork_activation_timestamp(ContractUpgrade::Jovian)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Jovian)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Azul => self
-                .hardfork_activation_timestamp(ContractUpgrade::Azul)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Azul)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Beryl => self
-                .hardfork_activation_timestamp(ContractUpgrade::Beryl)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Beryl)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Cobalt => self
-                .hardfork_activation_timestamp(ContractUpgrade::Cobalt)
+                .contract_upgrade_activation_timestamp(ContractUpgrade::Cobalt)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
         }
@@ -142,7 +142,7 @@ mod tests {
     fn rollup_config_upgrade_activation_cascade() {
         const ACTIVATION: u64 = 10;
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.ecotone_time = Some(ACTIVATION);
+        cfg.upgrades.ecotone_time = Some(ACTIVATION);
 
         // Cascading: Regolith and Canyon should fall through to Ecotone.
         assert_eq!(

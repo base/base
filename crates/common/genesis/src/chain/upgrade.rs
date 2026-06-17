@@ -1,4 +1,4 @@
-//! Contains the hardfork configuration for the chain.
+//! Contains the upgrade configuration for the chain.
 
 use alloc::{
     collections::BTreeMap,
@@ -10,12 +10,12 @@ use core::{fmt::Display, str::FromStr};
 use alloy_hardforks::{EthereumHardfork, ParseHardforkError};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-/// Hardfork configuration for Base-specific upgrades.
+/// Upgrade configuration for Base-specific upgrades.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
-pub struct HardforkConfig {
+pub struct BaseUpgradeConfig {
     /// `azul` sets the activation time for the Base Azul network upgrade.
     /// Active if `azul` != None && L2 block timestamp >= `Some(azul)`, inactive otherwise.
     #[cfg_attr(feature = "serde", serde(alias = "v1", skip_serializing_if = "Option::is_none"))]
@@ -30,14 +30,14 @@ pub struct HardforkConfig {
     pub cobalt: Option<u64>,
 }
 
-impl HardforkConfig {
-    /// Returns true if no Base-specific hardforks are configured.
+impl BaseUpgradeConfig {
+    /// Returns true if no Base-specific upgrades are configured.
     pub const fn is_empty(&self) -> bool {
         self.azul.is_none() && self.beryl.is_none() && self.cobalt.is_none()
     }
 }
 
-/// Contract-backed Base hardfork IDs.
+/// Contract-backed Base upgrade IDs.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ContractUpgrade {
     /// Regolith.
@@ -69,7 +69,7 @@ pub enum ContractUpgrade {
 }
 
 impl ContractUpgrade {
-    /// All contract-backed Base hardfork IDs.
+    /// All contract-backed Base upgrade IDs.
     pub const ALL: [Self; 13] = [
         Self::Regolith,
         Self::Canyon,
@@ -86,7 +86,7 @@ impl ContractUpgrade {
         Self::Cobalt,
     ];
 
-    /// Returns the canonical contract hardfork name.
+    /// Returns the canonical contract upgrade name.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Regolith => "regolith",
@@ -144,9 +144,9 @@ impl ContractUpgrade {
         }
     }
 
-    /// Normalizes a contract hardfork ID for matching.
-    pub fn normalized_hardfork_id(hardfork_id: &str) -> String {
-        hardfork_id
+    /// Normalizes a contract upgrade ID for matching.
+    pub fn normalized_hardfork_id(upgrade_id: &str) -> String {
+        upgrade_id
             .bytes()
             .filter(|b| !matches!(b, b'_' | b'-' | b' '))
             .map(|b| b.to_ascii_lowercase() as char)
@@ -157,8 +157,8 @@ impl ContractUpgrade {
 impl FromStr for ContractUpgrade {
     type Err = ParseHardforkError;
 
-    fn from_str(hardfork_id: &str) -> Result<Self, Self::Err> {
-        let upgrade = match Self::normalized_hardfork_id(hardfork_id).as_str() {
+    fn from_str(upgrade_id: &str) -> Result<Self, Self::Err> {
+        let upgrade = match Self::normalized_hardfork_id(upgrade_id).as_str() {
             "regolith" => Some(Self::Regolith),
             "canyon" => Some(Self::Canyon),
             "delta" => Some(Self::Delta),
@@ -175,7 +175,7 @@ impl FromStr for ContractUpgrade {
             _ => None,
         };
 
-        upgrade.ok_or_else(|| ParseHardforkError::new(format!("Unknown hardfork: {hardfork_id}")))
+        upgrade.ok_or_else(|| ParseHardforkError::new(format!("Unknown hardfork: {upgrade_id}")))
     }
 }
 
@@ -373,14 +373,14 @@ impl RuntimeUpgradeRegistry {
     }
 }
 
-/// Hardfork configuration.
+/// Upgrade configuration.
 ///
 /// See: <https://github.com/ethereum-optimism/superchain-registry/blob/8ff62ada16e14dd59d0fb94ffb47761c7fa96e01/ops/internal/config/chain.go#L102-L110>
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
-pub struct HardForkConfig {
+pub struct UpgradeConfig {
     /// `regolith_time` sets the activation time of the Regolith network-upgrade:
     /// a pre-mainnet Bedrock change that addresses findings of the Sherlock contest related to
     /// deposit attributes. "Regolith" is the loose deposited rock that sits on top of Bedrock.
@@ -437,22 +437,22 @@ pub struct HardForkConfig {
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub jovian_time: Option<u64>,
-    /// `base` contains Base-specific hardfork activation times.
+    /// `base` contains Base-specific upgrade activation times.
     #[cfg_attr(
         feature = "serde",
-        serde(default, skip_serializing_if = "HardforkConfig::is_empty")
+        serde(default, skip_serializing_if = "BaseUpgradeConfig::is_empty")
     )]
-    pub base: HardforkConfig,
+    pub base: BaseUpgradeConfig,
 }
 
-impl Display for HardForkConfig {
+impl Display for UpgradeConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         #[inline(always)]
         fn fmt_time(t: Option<u64>) -> String {
             t.map(|t| t.to_string()).unwrap_or_else(|| "Not scheduled".to_string())
         }
 
-        writeln!(f, "🍴 Scheduled Hardforks:")?;
+        writeln!(f, "🍴 Scheduled Upgrades:")?;
         for (name, time) in self.iter() {
             writeln!(f, "-> {} Activation Time: {}", name, fmt_time(time))?;
         }
@@ -460,8 +460,8 @@ impl Display for HardForkConfig {
     }
 }
 
-impl HardForkConfig {
-    /// Clears all timestamp-based hardfork activation times.
+impl UpgradeConfig {
+    /// Clears all timestamp-based upgrade activation times.
     pub fn clear_activation_timestamps(&mut self) {
         self.regolith_time = None;
         self.canyon_time = None;
@@ -473,12 +473,12 @@ impl HardForkConfig {
         self.pectra_blob_schedule_time = None;
         self.isthmus_time = None;
         self.jovian_time = None;
-        self.base = HardforkConfig::default();
+        self.base = BaseUpgradeConfig::default();
     }
 
-    /// Clears a timestamp-based activation time by contract hardfork ID.
-    pub const fn clear_activation_timestamp(&mut self, hardfork_id: ContractUpgrade) -> bool {
-        match hardfork_id {
+    /// Clears a timestamp-based activation time by contract upgrade ID.
+    pub const fn clear_activation_timestamp(&mut self, upgrade_id: ContractUpgrade) -> bool {
+        match upgrade_id {
             ContractUpgrade::Regolith => self.regolith_time = None,
             ContractUpgrade::Canyon => self.canyon_time = None,
             ContractUpgrade::Delta => self.delta_time = None,
@@ -569,7 +569,7 @@ impl HardForkConfig {
         true
     }
 
-    /// Returns an iterator of hardfork names -> their activation times (if scheduled.)
+    /// Returns an iterator of upgrade names -> their activation times (if scheduled.)
     pub fn iter(&self) -> impl Iterator<Item = (&'static str, Option<u64>)> {
         [
             ("Regolith", self.regolith_time),
@@ -596,7 +596,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_hardforks_deserialize_json() {
+    fn test_upgrades_deserialize_json() {
         let raw: &str = r#"
         {
             "canyon_time": 1699981200,
@@ -608,7 +608,7 @@ mod tests {
         }
         "#;
 
-        let hardforks = HardForkConfig {
+        let upgrades = UpgradeConfig {
             regolith_time: None,
             canyon_time: Some(1699981200),
             delta_time: Some(1703203200),
@@ -619,15 +619,15 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
-            base: HardforkConfig::default(),
+            base: BaseUpgradeConfig::default(),
         };
 
-        let deserialized: HardForkConfig = serde_json::from_str(raw).unwrap();
-        assert_eq!(hardforks, deserialized);
+        let deserialized: UpgradeConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(upgrades, deserialized);
     }
 
     #[test]
-    fn test_hardforks_deserialize_new_field_fail_json() {
+    fn test_upgrades_deserialize_new_field_fail_json() {
         let raw: &str = r#"
         {
             "canyon_time": 1704992401,
@@ -640,12 +640,12 @@ mod tests {
         }
         "#;
 
-        let err = serde_json::from_str::<HardForkConfig>(raw).unwrap_err();
+        let err = serde_json::from_str::<UpgradeConfig>(raw).unwrap_err();
         assert_eq!(err.classify(), serde_json::error::Category::Data);
     }
 
     #[test]
-    fn test_hardforks_deserialize_toml() {
+    fn test_upgrades_deserialize_toml() {
         let raw: &str = r#"
         canyon_time =  1699981200 # Tue 14 Nov 2023 17:00:00 UTC
         delta_time =   1703203200 # Fri 22 Dec 2023 00:00:00 UTC
@@ -655,7 +655,7 @@ mod tests {
         holocene_time = 1732633200 # Tue Nov 26 15:00:00 UTC 2024
         "#;
 
-        let hardforks = HardForkConfig {
+        let upgrades = UpgradeConfig {
             regolith_time: None,
             canyon_time: Some(1699981200),
             delta_time: Some(1703203200),
@@ -666,15 +666,15 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
-            base: HardforkConfig::default(),
+            base: BaseUpgradeConfig::default(),
         };
 
-        let deserialized: HardForkConfig = toml::from_str(raw).unwrap();
-        assert_eq!(hardforks, deserialized);
+        let deserialized: UpgradeConfig = toml::from_str(raw).unwrap();
+        assert_eq!(upgrades, deserialized);
     }
 
     #[test]
-    fn test_hardforks_deserialize_new_field_fail_toml() {
+    fn test_upgrades_deserialize_new_field_fail_toml() {
         let raw: &str = r#"
         canyon_time =  1699981200 # Tue 14 Nov 2023 17:00:00 UTC
         delta_time =   1703203200 # Fri 22 Dec 2023 00:00:00 UTC
@@ -684,12 +684,12 @@ mod tests {
         holocene_time = 1732633200 # Tue Nov 26 15:00:00 UTC 2024
         new_field_time = 1732633200 # Tue Nov 26 15:00:00 UTC 2024
         "#;
-        toml::from_str::<HardForkConfig>(raw).unwrap_err();
+        toml::from_str::<UpgradeConfig>(raw).unwrap_err();
     }
 
     #[test]
-    fn test_hardforks_iter() {
-        let hardforks = HardForkConfig {
+    fn test_upgrades_iter() {
+        let upgrades = UpgradeConfig {
             regolith_time: Some(1),
             canyon_time: Some(2),
             delta_time: Some(3),
@@ -700,10 +700,10 @@ mod tests {
             pectra_blob_schedule_time: Some(8),
             isthmus_time: Some(9),
             jovian_time: Some(10),
-            base: HardforkConfig { azul: Some(11), beryl: Some(12), cobalt: Some(13) },
+            base: BaseUpgradeConfig { azul: Some(11), beryl: Some(12), cobalt: Some(13) },
         };
 
-        let mut iter = hardforks.iter();
+        let mut iter = upgrades.iter();
         assert_eq!(iter.next(), Some(("Regolith", Some(1))));
         assert_eq!(iter.next(), Some(("Canyon", Some(2))));
         assert_eq!(iter.next(), Some(("Delta", Some(3))));
@@ -721,29 +721,29 @@ mod tests {
     }
 
     #[test]
-    fn test_set_activation_timestamp_by_hardfork_id() {
-        let mut hardforks = HardForkConfig::default();
+    fn test_set_activation_timestamp_by_upgrade_id() {
+        let mut upgrades = UpgradeConfig::default();
 
-        assert!(hardforks.set_activation_timestamp(ContractUpgrade::Regolith, 1));
-        assert!(hardforks.set_activation_timestamp(ContractUpgrade::PectraBlobSchedule, 2));
-        assert!(hardforks.set_activation_timestamp(ContractUpgrade::Azul, 3));
-        assert!(hardforks.set_activation_timestamp(ContractUpgrade::Beryl, 4));
-        assert!(hardforks.set_activation_timestamp(ContractUpgrade::Cobalt, 5));
+        assert!(upgrades.set_activation_timestamp(ContractUpgrade::Regolith, 1));
+        assert!(upgrades.set_activation_timestamp(ContractUpgrade::PectraBlobSchedule, 2));
+        assert!(upgrades.set_activation_timestamp(ContractUpgrade::Azul, 3));
+        assert!(upgrades.set_activation_timestamp(ContractUpgrade::Beryl, 4));
+        assert!(upgrades.set_activation_timestamp(ContractUpgrade::Cobalt, 5));
 
-        assert_eq!(hardforks.regolith_time, Some(1));
-        assert_eq!(hardforks.pectra_blob_schedule_time, Some(2));
-        assert_eq!(hardforks.base.azul, Some(3));
-        assert_eq!(hardforks.base.beryl, Some(4));
-        assert_eq!(hardforks.base.cobalt, Some(5));
+        assert_eq!(upgrades.regolith_time, Some(1));
+        assert_eq!(upgrades.pectra_blob_schedule_time, Some(2));
+        assert_eq!(upgrades.base.azul, Some(3));
+        assert_eq!(upgrades.base.beryl, Some(4));
+        assert_eq!(upgrades.base.cobalt, Some(5));
 
-        assert!(hardforks.clear_activation_timestamp(ContractUpgrade::Azul));
-        assert_eq!(hardforks.base.azul, None);
-        assert_eq!(hardforks.base.beryl, Some(4));
-        assert_eq!(hardforks.base.cobalt, Some(5));
+        assert!(upgrades.clear_activation_timestamp(ContractUpgrade::Azul));
+        assert_eq!(upgrades.base.azul, None);
+        assert_eq!(upgrades.base.beryl, Some(4));
+        assert_eq!(upgrades.base.cobalt, Some(5));
 
-        hardforks.clear_activation_timestamps();
+        upgrades.clear_activation_timestamps();
 
-        assert_eq!(hardforks, HardForkConfig::default());
+        assert_eq!(upgrades, UpgradeConfig::default());
     }
 }
 
@@ -788,18 +788,18 @@ mod runtime_tests {
     }
 
     #[test]
-    fn hardfork_config_applies_activation_overrides() {
-        let mut hardforks = HardForkConfig { canyon_time: Some(10), ..Default::default() };
+    fn upgrade_config_applies_activation_overrides() {
+        let mut upgrades = UpgradeConfig { canyon_time: Some(10), ..Default::default() };
         let mut overrides = UpgradeActivationOverrides::new();
 
         assert!(overrides.clear_activation_timestamp(ContractUpgrade::Canyon));
         assert!(overrides.set_activation_timestamp(ContractUpgrade::Azul, 42));
         assert!(overrides.set_activation_timestamp(ContractUpgrade::Cobalt, 84));
 
-        hardforks.apply_activation_overrides(&overrides);
+        upgrades.apply_activation_overrides(&overrides);
 
-        assert_eq!(hardforks.canyon_time, None);
-        assert_eq!(hardforks.base.azul, Some(42));
-        assert_eq!(hardforks.base.cobalt, Some(84));
+        assert_eq!(upgrades.canyon_time, None);
+        assert_eq!(upgrades.base.azul, Some(42));
+        assert_eq!(upgrades.base.cobalt, Some(84));
     }
 }
