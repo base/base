@@ -22,7 +22,9 @@ use url::Url;
 use crate::{
     cli::{SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs, SequencerStatusArgs},
     confirm::confirm_or_abort,
-    helpers::{CommandOutcome, fmt_bool, fmt_u32, fmt_u64},
+    helpers::{
+        CommandOutcome, find_conductor_node, fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source,
+    },
 };
 
 // Allow two full `admin_sequencerActive` polls plus the stabilization sleep,
@@ -37,7 +39,8 @@ pub(crate) async fn run(
     conductor_rpc: Option<Url>,
     command: SequencerCommands,
 ) -> Result<CommandOutcome> {
-    let source = resolve_source(&config, conductor_rpc)?;
+    let source =
+        resolve_conductor_source(&config, conductor_rpc).map_err(SequencerCommandError::from)?;
     match command {
         SequencerCommands::Status(args) => run_status(config, source, args).await,
         SequencerCommands::Start(args) => run_start(config, source, args).await,
@@ -90,7 +93,8 @@ async fn run_start(
     let snapshot = ConductorControl::snapshot(source)
         .await
         .context("failed to fetch sequencer status snapshot")?;
-    let node = find_node(&snapshot.nodes, &args.node)?;
+    let node =
+        find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
     debug!(
         node = %node.name,
@@ -194,7 +198,8 @@ async fn run_stop(
     let snapshot = ConductorControl::snapshot(source)
         .await
         .context("failed to fetch sequencer status snapshot")?;
-    let node = find_node(&snapshot.nodes, &args.node)?;
+    let node =
+        find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
     debug!(
         node = %node.name,
@@ -245,25 +250,6 @@ async fn run_stop(
     );
     print_action(&SequencerActionJson::stop(&config.name, node, captured_head, message), args.json)
         .context("failed to write sequencer output")
-}
-
-fn resolve_source(
-    config: &MonitoringConfig,
-    conductor_rpc: Option<Url>,
-) -> Result<ConductorSource, SequencerCommandError> {
-    config
-        .conductor_source(conductor_rpc)
-        .ok_or_else(|| SequencerCommandError::MissingSource { config_name: config.name.clone() })
-}
-
-fn find_node<'a>(
-    nodes: &'a [ConductorNodeConfig],
-    name: &str,
-) -> Result<&'a ConductorNodeConfig, SequencerCommandError> {
-    nodes.iter().find(|node| node.name == name).ok_or_else(|| SequencerCommandError::MissingNode {
-        requested_node: name.to_string(),
-        available_nodes: nodes.iter().map(|node| node.name.clone()).collect(),
-    })
 }
 
 fn resolve_start_hash(
@@ -444,9 +430,7 @@ where
         match timeout(remaining, fetch()).await {
             Ok(Ok(is_active)) => {
                 last_observed = Some(is_active);
-                if last_error.is_some() {
-                    last_error = None;
-                }
+                let _ = last_error.take();
                 let next_matching_observations =
                     if is_active == expected_active { matching_observations + 1 } else { 0 };
                 debug!(
@@ -680,7 +664,8 @@ impl SequencerStatusJson {
         selected_node: Option<&str>,
     ) -> Result<Self, SequencerCommandError> {
         if let Some(selected_node) = selected_node {
-            find_node(&snapshot.nodes, selected_node)?;
+            find_conductor_node(&snapshot.nodes, selected_node)
+                .map_err(SequencerCommandError::from)?;
         }
 
         let nodes = snapshot
@@ -826,8 +811,9 @@ mod tests {
         OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS, SequencerAction,
         SequencerActionJson, SequencerStatusJson, UnsafeHeadSource, ensure_leader_target,
         ensure_start_allowed, ensure_start_request_matches_observed_head, ensure_stop_allowed,
-        find_node, parse_unsafe_head, resolve_start_hash, wait_for_expected_state_with_fetch,
+        parse_unsafe_head, resolve_start_hash, wait_for_expected_state_with_fetch,
     };
+    use crate::helpers::find_conductor_node;
 
     fn node(name: &str) -> ConductorNodeConfig {
         ConductorNodeConfig {
@@ -1195,7 +1181,9 @@ mod tests {
     fn find_node_reports_missing_name() {
         let nodes = vec![node("op-conductor-0")];
 
-        let err = find_node(&nodes, "op-conductor-1").expect_err("missing node should error");
+        let err = find_conductor_node(&nodes, "op-conductor-1")
+            .map_err(SequencerCommandError::from)
+            .expect_err("missing node should error");
 
         assert!(matches!(
             err,

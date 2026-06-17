@@ -18,7 +18,9 @@ use crate::{
         ConductorNodeActionArgs, ConductorStatusArgs,
     },
     confirm::{confirm_or_abort, confirm_typed_or_abort},
-    helpers::{CommandOutcome, fmt_bool, fmt_u32, fmt_u64},
+    helpers::{
+        CommandOutcome, find_conductor_node, fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source,
+    },
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -86,7 +88,8 @@ pub(crate) async fn run(
     conductor_rpc: Option<Url>,
     command: ConductorCommands,
 ) -> Result<CommandOutcome> {
-    let source = resolve_source(&config, conductor_rpc)?;
+    let source =
+        resolve_conductor_source(&config, conductor_rpc).map_err(ConductorCommandError::from)?;
     match command {
         ConductorCommands::Status(args) => run_status(config, source, args).await,
         ConductorCommands::TransferLeader(args) => run_transfer_leader(config, source, args).await,
@@ -131,7 +134,7 @@ async fn run_transfer_leader(
     if let Some(target) = args.target.as_deref() {
         // Validate before prompting so a typo does not ask for confirmation and only
         // fail after the operator already answered yes.
-        find_node(&nodes, target)?;
+        find_conductor_node(&nodes, target).map_err(ConductorCommandError::from)?;
     }
 
     let prompt = args.target.as_deref().map_or_else(
@@ -175,7 +178,7 @@ async fn run_node_action(
     action: NodeActionKind,
 ) -> Result<CommandOutcome> {
     let nodes = current_nodes_for_action(&source).await?;
-    let node = find_node(&nodes, &args.node)?;
+    let node = find_conductor_node(&nodes, &args.node).map_err(ConductorCommandError::from)?;
     let json_action = action.action();
     let prompt = format!(
         "{} conductor control loop on {} ({})? [y/N] ",
@@ -238,15 +241,6 @@ async fn run_cluster_action(
     Ok(CommandOutcome::from_failures(fanout_requires_failure_exit(&report)))
 }
 
-fn resolve_source(
-    config: &MonitoringConfig,
-    conductor_rpc: Option<Url>,
-) -> Result<ConductorSource, ConductorCommandError> {
-    config
-        .conductor_source(conductor_rpc)
-        .ok_or_else(|| ConductorCommandError::MissingSource { config_name: config.name.clone() })
-}
-
 async fn current_nodes_for_action(source: &ConductorSource) -> Result<Vec<ConductorNodeConfig>> {
     match source {
         ConductorSource::Static(nodes) => Ok(nodes.clone()),
@@ -305,16 +299,6 @@ async fn current_nodes_for_cluster_action(
 
 const fn fanout_requires_failure_exit(report: &ConductorFanoutReport) -> bool {
     !report.is_success()
-}
-
-fn find_node<'a>(
-    nodes: &'a [ConductorNodeConfig],
-    name: &str,
-) -> Result<&'a ConductorNodeConfig, ConductorCommandError> {
-    nodes.iter().find(|node| node.name == name).ok_or_else(|| ConductorCommandError::MissingNode {
-        requested_node: name.to_string(),
-        available_nodes: nodes.iter().map(|node| node.name.clone()).collect(),
-    })
 }
 
 fn print_status_pretty(status: &ConductorStatusJson) -> Result<()> {
@@ -616,9 +600,9 @@ mod tests {
 
     use super::{
         ConductorAction, ConductorActionJson, ConductorFanoutJson, ConductorNodeJson,
-        ConductorStatusJson, fanout_requires_failure_exit, find_node,
+        ConductorStatusJson, fanout_requires_failure_exit,
     };
-    use crate::helpers::CommandOutcome;
+    use crate::helpers::{CommandOutcome, find_conductor_node};
 
     fn node(name: &str) -> ConductorNodeConfig {
         ConductorNodeConfig {
@@ -820,7 +804,9 @@ mod tests {
     fn find_node_reports_missing_name() {
         let nodes = vec![node("op-conductor-0")];
 
-        let err = find_node(&nodes, "op-conductor-1").expect_err("missing node should error");
+        let err = find_conductor_node(&nodes, "op-conductor-1")
+            .map_err(ConductorCommandError::from)
+            .expect_err("missing node should error");
 
         assert!(matches!(
             err,

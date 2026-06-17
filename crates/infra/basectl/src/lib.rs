@@ -36,7 +36,7 @@ pub use doctor::{
 mod errors;
 pub use errors::{
     BlockRefParseError, ConductorCommandError, DoctorArgsError, MissingConsensusRpcError,
-    P2pCommandError, P2pTargetError, SequencerCommandError,
+    NodeLookupError, P2pCommandError, P2pTargetError, SequencerCommandError,
 };
 
 mod rpc;

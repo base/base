@@ -49,6 +49,28 @@ pub enum MissingConsensusRpcError {
     },
 }
 
+/// Error returned when shared conductor source or node lookup fails.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum NodeLookupError {
+    /// The command could not resolve a conductor source from config or flags.
+    #[error(
+        "commands need conductor config or a bootstrap RPC URL for '{config_name}'. Set `conductors` or `discovery.bootstrap_rpc` in config, or pass `--conductor-rpc <url>`."
+    )]
+    MissingSource {
+        /// The config name selected for the command.
+        config_name: String,
+    },
+    /// The requested conductor node name was not found.
+    #[error("node {requested_node} not found. Available nodes: {}", available_nodes.join(", "))]
+    MissingNode {
+        /// The node name requested by the caller.
+        requested_node: String,
+        /// The node names available to the command.
+        available_nodes: Vec<String>,
+    },
+}
+
 /// Error returned when a P2P command target is malformed or unsupported.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
@@ -185,6 +207,17 @@ pub enum ConductorCommandError {
     },
 }
 
+impl From<NodeLookupError> for ConductorCommandError {
+    fn from(error: NodeLookupError) -> Self {
+        match error {
+            NodeLookupError::MissingSource { config_name } => Self::MissingSource { config_name },
+            NodeLookupError::MissingNode { requested_node, available_nodes } => {
+                Self::MissingNode { requested_node, available_nodes }
+            }
+        }
+    }
+}
+
 /// Error returned by sequencer command validation and preflight checks.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
@@ -306,6 +339,17 @@ pub enum SequencerCommandError {
         /// The last polling error, if any poll failed.
         last_error: Option<Box<str>>,
     },
+}
+
+impl From<NodeLookupError> for SequencerCommandError {
+    fn from(error: NodeLookupError) -> Self {
+        match error {
+            NodeLookupError::MissingSource { config_name } => Self::MissingSource { config_name },
+            NodeLookupError::MissingNode { requested_node, available_nodes } => {
+                Self::MissingNode { requested_node, available_nodes }
+            }
+        }
+    }
 }
 
 /// Error returned by doctor argument validation.
