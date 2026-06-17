@@ -235,6 +235,14 @@ impl IntrinsicGas {
         let Some(authenticator) = Self::authenticator_of(auth) else {
             return Ok(0);
         };
+        // `address(0)` is the implicit-EOA owner sentinel: authorize routes it to
+        // enshrined ecrecover (identical to `ECRECOVER_AUTHENTICATOR`), so it
+        // authenticates at the native k1 cost. The txpool admits this sentinel on
+        // the authorizing surfaces (sender/payer/config auth), so it reaches here
+        // and must be priced rather than rejected as an unscheduled authenticator.
+        if authenticator == Address::ZERO {
+            return Ok(Eip8130GasSchedule::AUTH_EXEC_K1);
+        }
         if authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
             // blob = delegate_authenticator(20) || delegate_account(20) ||
             // nested_authenticator(20) || nested_data; the nested blob
@@ -485,6 +493,36 @@ mod tests {
         };
         let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
         assert_eq!(gas.account_changes, auth_cost + Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 3);
+    }
+
+    #[test]
+    fn implicit_eoa_sentinel_auth_costs_k1() {
+        // `address(0) || sig` is the implicit-EOA owner sentinel on the configured
+        // (`eoa: false`) surfaces. Authorize routes it to enshrined ecrecover, so
+        // the schedule must price it as native k1 + one cold SLOAD rather than
+        // rejecting it as `UnscheduledAuthenticator(address(0))`.
+        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
+        assert_eq!(IntrinsicGas::auth_cost(&configured_auth(Address::ZERO), false), Ok(auth_cost));
+
+        // End-to-end: a config change authorized by the implicit-EOA owner is
+        // priced (not rejected), charging k1 + SLOAD plus the authorized slot.
+        let cc = ConfigChange {
+            chain_id: 0,
+            sequence: 0,
+            actor_changes: vec![ActorChange {
+                change_type: ActorChangeType::Authorize,
+                actor_id: Default::default(),
+                data: Bytes::from(vec![0u8; 128]),
+            }],
+            auth: Bytes::from(configured_auth(Address::ZERO)),
+        };
+        let tx = TxEip8130 {
+            sender: Some(ACCOUNT),
+            account_changes: vec![AccountChange::ConfigChange(cc)],
+            ..Default::default()
+        };
+        let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
+        assert_eq!(gas.account_changes, auth_cost + Eip8130GasSchedule::ACTOR_SLOT_SET_COST);
     }
 
     #[test]
