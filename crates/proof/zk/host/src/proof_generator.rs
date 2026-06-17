@@ -17,6 +17,7 @@ pub use base_proof_worker::{
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
     BackendSession, BackendSessionState, ProofJob, ProofRequestKind, ProofResult, SessionType,
+    WorkerSubmitProofRequest,
 };
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
@@ -192,12 +193,12 @@ where
             }
         };
 
-        let submit_request = ProofSubmitterRequest::from_zk_result(
-            request.claim.session_id.clone(),
-            request.claim.lock_id.clone(),
-            request.claim.worker_id.clone(),
+        let submit_request = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {
+            session_id: request.claim.session_id.clone(),
+            lock_id: request.claim.lock_id.clone(),
+            worker_id: request.claim.worker_id.clone(),
             result,
-        )
+        })
         .map_err(|source| ProofGeneratorError::BuildSubmission {
             session_id: request.claim.session_id.clone(),
             source,

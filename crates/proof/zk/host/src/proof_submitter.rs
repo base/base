@@ -5,20 +5,28 @@ use base_prover_service_protocol::{ProofResult, WorkerSubmitProofRequest};
 
 /// Helper for building prover-service worker proof submission requests.
 #[derive(Debug)]
-pub struct ProofSubmitterRequest;
+pub struct ProofSubmitterRequest {
+    /// Proof session identifier.
+    pub session_id: String,
+    /// Worker claim lock identifier.
+    pub lock_id: String,
+    /// Worker identifier holding the claim.
+    pub worker_id: String,
+    /// Generated proof result to submit.
+    pub result: ProofResult,
+}
 
-impl ProofSubmitterRequest {
-    /// Builds a worker proof submission request from a generated ZK proof result.
-    pub fn from_zk_result(
-        session_id: String,
-        lock_id: String,
-        worker_id: String,
-        result: ProofResult,
-    ) -> Result<WorkerSubmitProofRequest, ProofSubmitterError> {
-        match result {
-            ProofResult::Compressed(_) | ProofResult::SnarkGroth16(_) => {
-                Ok(WorkerSubmitProofRequest { session_id, lock_id, worker_id, result })
-            }
+impl TryFrom<ProofSubmitterRequest> for WorkerSubmitProofRequest {
+    type Error = ProofSubmitterError;
+
+    fn try_from(request: ProofSubmitterRequest) -> Result<Self, Self::Error> {
+        match request.result {
+            ProofResult::Compressed(_) | ProofResult::SnarkGroth16(_) => Ok(Self {
+                session_id: request.session_id,
+                lock_id: request.lock_id,
+                worker_id: request.worker_id,
+                result: request.result,
+            }),
             ProofResult::Tee(_) => Err(ProofSubmitterError::UnsupportedProofResult),
         }
     }
@@ -36,12 +44,12 @@ mod tests {
 
     #[test]
     fn zk_result_builds_submission_request() {
-        let request = ProofSubmitterRequest::from_zk_result(
-            "session-1".to_owned(),
-            "lock-1".to_owned(),
-            "worker-1".to_owned(),
-            zk_result(),
-        )
+        let request = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {
+            session_id: "session-1".to_owned(),
+            lock_id: "lock-1".to_owned(),
+            worker_id: "worker-1".to_owned(),
+            result: zk_result(),
+        })
         .expect("zk result should build a submission request");
 
         assert_eq!(request.session_id, "session-1");
@@ -70,12 +78,12 @@ mod tests {
             tee_kind: TeeKind::AwsNitro,
         });
 
-        let result = ProofSubmitterRequest::from_zk_result(
-            "session-1".to_owned(),
-            "lock-1".to_owned(),
-            "worker-1".to_owned(),
-            tee_result,
-        );
+        let result = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {
+            session_id: "session-1".to_owned(),
+            lock_id: "lock-1".to_owned(),
+            worker_id: "worker-1".to_owned(),
+            result: tee_result,
+        });
 
         assert!(matches!(result, Err(ProofSubmitterError::UnsupportedProofResult)));
     }
