@@ -145,6 +145,16 @@ pub struct ProposerArgs {
     )]
     pub recovery_scan_concurrency: NonZeroUsize,
 
+    /// Use `ProverClient::prove` (synchronous `prover_prove` JSON-RPC) directly
+    /// instead of the async dispatch+collect pattern via `ProofRequesterProver`.
+    /// Required when the prover endpoint is `nitro-local` rather than prover-service.
+    #[arg(
+        long = "direct-prover-rpc",
+        env = cli_env!("DIRECT_PROVER_RPC"),
+        default_value = "false"
+    )]
+    pub direct_prover_rpc: bool,
+
     /// Transaction manager configuration.
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
