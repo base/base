@@ -23,8 +23,8 @@ type InFlight =
 /// ([`FuturesUnordered`]), txpool blockage state, the [`TxManager`], and the
 /// batcher inbox address. These were previously loose fields on [`BatchDriver`].
 #[derive(Debug)]
-pub struct SubmissionQueue<TM: TxManager> {
-    tx_manager: TM,
+pub struct SubmissionQueue<TM: TxManager + 'static> {
+    tx_manager: Arc<TM>,
     in_flight: InFlight,
     semaphore: Arc<Semaphore>,
     inbox: Address,
@@ -32,7 +32,7 @@ pub struct SubmissionQueue<TM: TxManager> {
     alt_da: Option<Arc<base_alt_da::Client>>,
 }
 
-impl<TM: TxManager> SubmissionQueue<TM> {
+impl<TM: TxManager + 'static> SubmissionQueue<TM> {
     /// Create a new [`SubmissionQueue`].
     pub fn new(
         tx_manager: TM,
@@ -41,7 +41,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
         alt_da: Option<Arc<base_alt_da::Client>>,
     ) -> Self {
         Self {
-            tx_manager,
+            tx_manager: Arc::new(tx_manager),
             in_flight: FuturesUnordered::new(),
             semaphore: Arc::new(Semaphore::new(max_pending)),
             inbox,
@@ -141,9 +141,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 },
             };
             let alt_da_body = match da_type {
-                DaType::Calldata if self.alt_da.is_some() => {
-                    Some(candidate.tx_data.clone())
-                }
+                DaType::Calldata if self.alt_da.is_some() => Some(candidate.tx_data.clone()),
                 _ => None,
             };
             info!(
@@ -189,64 +187,44 @@ impl<TM: TxManager> SubmissionQueue<TM> {
             self.in_flight.push(fut);
 
             if let (Some(alt_da), Some(body)) = (self.alt_da.clone(), alt_da_body) {
-                if let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() {
-                    match alt_da.put(&body).await {
-                        Ok(commitment) => match encode_commitment_tx_data(&commitment) {
-                            Ok(tx_data) => {
-                                info!(
-                                    commitment_bytes = %tx_data.len(),
-                                    "submitting alt-da commitment to L1"
-                                );
-                                let candidate = TxCandidate {
-                                    to: Some(self.inbox),
-                                    tx_data,
-                                    value: U256::ZERO,
-                                    gas_limit: 0,
-                                    blobs: vec![].into(),
-                                };
-                                BatcherMetrics::in_flight_submissions().increment(1.0);
-                                let handle = self.tx_manager.send_async(candidate).await;
-                                let fut: Pin<
-                                    Box<dyn Future<Output = (Vec<SubmissionId>, TxOutcome)> + Send>,
-                                > = Box::pin(async move {
-                                    let outcome = match handle.await {
-                                        Ok(receipt) => {
-                                            let l1_block = receipt.block_number.unwrap_or_else(
-                                                || {
-                                                    warn!(
-                                                        "alt-da commitment receipt missing block number"
-                                                    );
-                                                    0
-                                                },
-                                            );
-                                            TxOutcome::Confirmed { l1_block }
-                                        }
-                                        Err(TxManagerError::AlreadyReserved) => {
-                                            TxOutcome::TxpoolBlocked
-                                        }
-                                        Err(error) => {
-                                            warn!(%error, "alt-da commitment submission failed");
-                                            TxOutcome::Failed
-                                        }
-                                    };
-                                    drop(permit);
-                                    (Vec::new(), outcome)
-                                });
-                                self.in_flight.push(fut);
-                            }
-                            Err(error) => {
-                                warn!(%error, "alt-da commitment encoding failed");
-                                drop(permit);
-                            }
-                        },
+                let tx_manager = Arc::clone(&self.tx_manager);
+                let inbox = self.inbox;
+                tokio::spawn(async move {
+                    let commitment = match alt_da.put(&body).await {
+                        Ok(commitment) => commitment,
                         Err(error) => {
                             warn!(%error, "alt-da put failed; calldata submission unchanged");
-                            drop(permit);
+                            return;
+                        }
+                    };
+
+                    let tx_data = match encode_commitment_tx_data(&commitment) {
+                        Ok(tx_data) => tx_data,
+                        Err(error) => {
+                            warn!(%error, "alt-da commitment encoding failed");
+                            return;
+                        }
+                    };
+
+                    info!(commitment_bytes = %tx_data.len(), "submitting alt-da commitment to L1");
+                    let candidate = TxCandidate {
+                        to: Some(inbox),
+                        tx_data,
+                        value: U256::ZERO,
+                        gas_limit: 0,
+                        blobs: vec![].into(),
+                    };
+
+                    match tx_manager.send_async(candidate).await.await {
+                        Ok(receipt) => {
+                            let l1_block = receipt.block_number.unwrap_or(0);
+                            info!(l1_block = %l1_block, "alt-da commitment confirmed on L1");
+                        }
+                        Err(error) => {
+                            warn!(%error, "alt-da commitment submission failed");
                         }
                     }
-                } else {
-                    warn!("alt-da commitment skipped: submission capacity exhausted");
-                }
+                });
             }
         }
     }
@@ -287,14 +265,10 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 for id in &ids {
                     pipeline.confirm(*id, l1_block);
                 }
-                if !ids.is_empty() {
-                    pipeline.advance_l1_head(l1_block);
-                    BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED)
-                        .increment(ids.len() as u64);
-                    info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1");
-                } else {
-                    info!(l1_block = %l1_block, "alt-da commitment confirmed on L1");
-                }
+                pipeline.advance_l1_head(l1_block);
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED)
+                    .increment(ids.len() as u64);
+                info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1");
             }
             TxOutcome::Failed => {
                 let count = ids.len();
@@ -344,13 +318,9 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                             for id in &ids {
                                 pipeline.confirm(*id, l1_block);
                             }
-                            if !ids.is_empty() {
-                                pipeline.advance_l1_head(l1_block);
-                                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED).increment(ids.len() as u64);
-                                info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1 during drain");
-                            } else {
-                                info!(l1_block = %l1_block, "alt-da commitment confirmed on L1 during drain");
-                            }
+                            pipeline.advance_l1_head(l1_block);
+                            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED).increment(ids.len() as u64);
+                            info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1 during drain");
                         }
                         TxOutcome::Failed => {
                             BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED).increment(ids.len() as u64);

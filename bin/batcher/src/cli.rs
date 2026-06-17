@@ -332,9 +332,9 @@ impl BatcherArgs {
             wait_node_sync_timeout: Duration::from_secs(self.wait_node_sync_timeout_secs),
             force_blobs_when_throttling: !self.no_force_blobs_when_throttling,
             alt_da: if self.altda_enabled {
-                let server_url = self.altda_da_server.ok_or_else(|| {
-                    eyre::eyre!("--altda-enabled requires --altda-da-server")
-                })?;
+                let server_url = self
+                    .altda_da_server
+                    .ok_or_else(|| eyre::eyre!("--altda-enabled requires --altda-da-server"))?;
                 Some(base_batcher_service::AltDaConfig { server_url })
             } else {
                 None
@@ -595,11 +595,8 @@ mod tests {
 
     #[test]
     fn altda_rejected_with_blob_da() {
-        let cli = parse_cli(&[
-            "--altda-enabled",
-            "--altda-da-server",
-            "http://base-da-server:2583",
-        ]);
+        let cli =
+            parse_cli(&["--altda-enabled", "--altda-da-server", "http://base-da-server:2583"]);
         let err = cli.args.into_config().unwrap_err();
         assert!(err.to_string().contains("calldata"));
     }

@@ -29,7 +29,7 @@ tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["sync", "macros", "rt"] }
+tokio = { workspace = true, features = ["sync", "macros", "rt", "rt-multi-thread"] }
 derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
 
 # optional — activated by the `test-utils` feature

@@ -82,8 +82,8 @@ pub enum ClientError {
         max: usize,
     },
     /// HTTP transport or response read failed.
-    #[error("alt-da http error: {0}")]
-    Http(String),
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
     /// DA server returned a non-success status.
     #[error("alt-da put failed with status {status}")]
     UnexpectedStatus {

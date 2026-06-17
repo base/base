@@ -31,7 +31,7 @@ where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
-    TM: TxManager,
+    TM: TxManager + 'static,
     TC: ThrottleClient,
     L: L1HeadSource,
 {
@@ -70,7 +70,7 @@ where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
-    TM: TxManager,
+    TM: TxManager + 'static,
     TC: ThrottleClient,
     L: L1HeadSource,
 {
