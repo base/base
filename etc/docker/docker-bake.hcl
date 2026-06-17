@@ -37,12 +37,13 @@ group "rust-services" {
     "ingress-rpc",
     "audit-archiver",
     "batcher",
+    "da-server",
     "zk-prover",
   ]
 }
 
 group "devnet" {
-  targets = ["builder", "consensus", "client", "base", "batcher", "zk-prover"]
+  targets = ["builder", "consensus", "client", "base", "batcher", "da-server", "zk-prover"]
 }
 
 group "ingress" {
@@ -130,6 +131,16 @@ target "batcher" {
   cache-from = [
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
     "type=registry,ref=${REGISTRY_IMAGE}:cache-batcher-${PLATFORM_PAIR}",
+  ]
+}
+
+target "da-server" {
+  inherits = ["_rust-service-common"]
+  target = "da-server"
+  tags = ["base-da-server:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-da-server-${PLATFORM_PAIR}",
   ]
 }
 
