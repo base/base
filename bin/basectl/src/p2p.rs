@@ -298,10 +298,10 @@ fn resolve_cl_rpc(
     if let Some(u) = override_url {
         return Ok(u.clone());
     }
-    config.consensus_node_rpc.clone().ok_or_else(|| MissingConsensusRpcError::Missing {
-        config_name: config.name.clone(),
-        command_name: command_name.to_string(),
-    })
+    config
+        .consensus_node_rpc
+        .clone()
+        .ok_or_else(|| MissingConsensusRpcError::new(config.name.clone(), command_name))
 }
 
 /// Minimum length used to catch obvious non-libp2p peer IDs before hitting the CL RPC.
@@ -869,9 +869,10 @@ mod tests {
 
         assert!(matches!(
             resolve_cl_rpc(&config, None, "p2p info").unwrap_err(),
-            MissingConsensusRpcError::Missing {
+            MissingConsensusRpcError {
                 config_name,
                 command_name,
+                ..
             } if config_name == "devnet" && command_name == "p2p info"
         ));
     }

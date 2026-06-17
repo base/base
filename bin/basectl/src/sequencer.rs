@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use basectl_cli::{
     ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig, ConductorNodeStatus,
     ConductorSource, JsonOutput, KeyValueTable, MonitoringConfig, SequencerCommandError,
-    fetch_sequencer_active, start_sequencer, stop_sequencer,
+    StateConvergenceTimeoutError, fetch_sequencer_active, start_sequencer, stop_sequencer,
 };
 use serde::Serialize;
 use tokio::time::{Instant, sleep, timeout};
@@ -567,16 +567,16 @@ impl SequencerAction {
         last_observed: Option<bool>,
         last_error: Option<String>,
     ) -> SequencerCommandError {
-        SequencerCommandError::StateConvergenceTimeout {
+        SequencerCommandError::StateConvergenceTimeout(Box::new(StateConvergenceTimeoutError {
             action: self.infinitive(),
-            node: node.name.clone().into_boxed_str(),
-            cl_rpc: node.cl_rpc.to_string().into_boxed_str(),
+            node: node.name.clone(),
+            cl_rpc: node.cl_rpc.to_string(),
             unsafe_head,
             expected_active: self.expected_active(),
             timeout: observation_timeout,
             last_observed,
-            last_error: last_error.map(String::into_boxed_str),
-        }
+            last_error,
+        }))
     }
 }
 
@@ -1080,20 +1080,15 @@ mod tests {
         assert!(start.elapsed() < Duration::from_millis(120));
         assert!(matches!(
             err,
-            SequencerCommandError::StateConvergenceTimeout {
-                action,
-                node,
-                unsafe_head: Some(unsafe_head),
-                expected_active: true,
-                timeout,
-                last_observed: None,
-                last_error: Some(last_error),
-                ..
-            } if action == "start"
-                && node.as_ref() == "op-conductor-0"
-                && unsafe_head == B256::with_last_byte(1)
-                && timeout == Duration::from_millis(40)
-                && last_error.as_ref() == "timed out waiting for admin_sequencerActive"
+            SequencerCommandError::StateConvergenceTimeout(error)
+                if error.action == "start"
+                && error.node == "op-conductor-0"
+                && error.unsafe_head == Some(B256::with_last_byte(1))
+                && error.expected_active
+                && error.timeout == Duration::from_millis(40)
+                && error.last_observed.is_none()
+                && error.last_error.as_deref()
+                    == Some("timed out waiting for admin_sequencerActive")
         ));
     }
 

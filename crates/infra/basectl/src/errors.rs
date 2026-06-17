@@ -1,6 +1,6 @@
 //! Shared typed errors for basectl command validation and preflight checks.
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use alloy_primitives::B256;
 use thiserror::Error;
@@ -33,20 +33,24 @@ pub enum BlockRefParseError {
 
 /// Error returned when a command requires a consensus RPC URL and none is configured.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error(
+    "{command_name} needs a consensus-node RPC URL.\n\
+     The '{config_name}' config does not set `consensus_node_rpc`.\n\
+     Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config."
+)]
 #[non_exhaustive]
-pub enum MissingConsensusRpcError {
-    /// Neither the config nor the command-line flags provided a consensus RPC URL.
-    #[error(
-        "{command_name} needs a consensus-node RPC URL.\n\
-         The '{config_name}' config does not set `consensus_node_rpc`.\n\
-         Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config."
-    )]
-    Missing {
-        /// The config name selected for the command.
-        config_name: String,
-        /// The command that needed a consensus RPC URL.
-        command_name: String,
-    },
+pub struct MissingConsensusRpcError {
+    /// The config name selected for the command.
+    pub config_name: String,
+    /// The command that needed a consensus RPC URL.
+    pub command_name: String,
+}
+
+impl MissingConsensusRpcError {
+    /// Builds an error for a command that could not resolve a consensus RPC URL.
+    pub fn new(config_name: impl Into<String>, command_name: impl Into<String>) -> Self {
+        Self { config_name: config_name.into(), command_name: command_name.into() }
+    }
 }
 
 /// Error returned when shared conductor source or node lookup fails.
@@ -219,19 +223,15 @@ impl From<NodeLookupError> for ConductorCommandError {
 }
 
 /// Error returned by sequencer command validation and preflight checks.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SequencerCommandError {
     /// The command could not resolve a conductor source from config or flags.
-    #[error(
-        "sequencer commands need conductor config or a bootstrap RPC URL for '{config_name}'. Set `conductors` or `discovery.bootstrap_rpc` in config, or pass `--conductor-rpc <url>`."
-    )]
     MissingSource {
         /// The config name selected for the command.
         config_name: String,
     },
     /// The requested sequencer node name was not found.
-    #[error("sequencer node {requested_node} not found. Available nodes: {}", available_nodes.join(", "))]
     MissingNode {
         /// The node name requested by the caller.
         requested_node: String,
@@ -239,29 +239,21 @@ pub enum SequencerCommandError {
         available_nodes: Vec<String>,
     },
     /// The command could not infer an unsafe head hash from the target node.
-    #[error(
-        "could not determine unsafe head for {node}; pass an explicit 32-byte hash or restore CL reachability"
-    )]
     MissingUnsafeHead {
         /// The target node name.
         node: String,
     },
     /// The target sequencer is already active.
-    #[error("sequencer already active on {node}; stop it before starting again")]
     AlreadyActive {
         /// The target node name.
         node: String,
     },
     /// The target sequencer is already stopped.
-    #[error("sequencer already stopped on {node}")]
     AlreadyStopped {
         /// The target node name.
         node: String,
     },
     /// The command targeted a node that is known not to be the conductor leader.
-    #[error(
-        "Node is not the conductor leader. Current leader: {current_leader}. `basectl sequencer {action}` must target the leader instead of {requested_node}."
-    )]
     NotCurrentLeader {
         /// The node name requested by the caller.
         requested_node: String,
@@ -271,9 +263,6 @@ pub enum SequencerCommandError {
         action: String,
     },
     /// The command targeted a follower while no current leader name was available.
-    #[error(
-        "Node is not the conductor leader. `basectl sequencer {action}` must target the current leader instead of {requested_node}."
-    )]
     NotLeader {
         /// The node name requested by the caller.
         requested_node: String,
@@ -281,12 +270,8 @@ pub enum SequencerCommandError {
         action: String,
     },
     /// The observed unsafe head is zero, so no safe prestate exists for start.
-    #[error("no prestate: engine unsafe head is uninitialized, cannot safely start sequencer")]
     UninitializedUnsafeHead,
     /// The requested unsafe head did not match the node's observed unsafe head.
-    #[error(
-        "block hash mismatch: engine unsafe head is {observed_hash}, caller requested {requested_hash}"
-    )]
     UnsafeHeadMismatch {
         /// The unsafe head observed from the node.
         observed_hash: B256,
@@ -294,10 +279,8 @@ pub enum SequencerCommandError {
         requested_hash: B256,
     },
     /// The unsafe head input was empty after trimming whitespace.
-    #[error("unsafe head hash cannot be empty")]
     EmptyUnsafeHead,
     /// The unsafe head input could not be parsed as a 32-byte hash.
-    #[error("parsing unsafe head hash `{raw}`: {message}")]
     InvalidUnsafeHead {
         /// The original unsafe head supplied by the caller.
         raw: String,
@@ -305,41 +288,120 @@ pub enum SequencerCommandError {
         message: String,
     },
     /// The unsafe head input was the zero hash.
-    #[error("unsafe head hash must not be zero")]
     ZeroUnsafeHead {
         /// The parsed zero hash requested by the caller.
         requested_hash: B256,
     },
     /// The sequencer active state did not converge after the command RPC succeeded.
-    #[error(
-        "{action} RPC succeeded on {node} ({cl_rpc}){}, but `sequencer_active={expected_active}` was not observed within {timeout:?}{}",
-        unsafe_head.map_or_else(String::new, |unsafe_head| format!(" at {unsafe_head}")),
-        match (last_observed, last_error.as_deref()) {
-            (Some(observed), Some(error)) => format!(" (last observed `sequencer_active={observed}`; last poll error: {error})"),
-            (Some(observed), None) => format!(" (last observed `sequencer_active={observed}`)"),
+    StateConvergenceTimeout(Box<StateConvergenceTimeoutError>),
+}
+
+/// Error returned when the sequencer active state does not converge after a command RPC succeeds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateConvergenceTimeoutError {
+    /// The sequencer action being observed.
+    pub action: &'static str,
+    /// The target node name.
+    pub node: String,
+    /// The target node consensus-layer RPC URL.
+    pub cl_rpc: String,
+    /// The unsafe head returned or requested for the command, if known.
+    pub unsafe_head: Option<B256>,
+    /// The expected `sequencer_active` state.
+    pub expected_active: bool,
+    /// The observation timeout used for state convergence.
+    pub timeout: Duration,
+    /// The last observed `sequencer_active` state, if any poll succeeded.
+    pub last_observed: Option<bool>,
+    /// The last polling error, if any poll failed.
+    pub last_error: Option<String>,
+}
+
+impl fmt::Display for SequencerCommandError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingSource { config_name } => write!(
+                f,
+                "sequencer commands need conductor config or a bootstrap RPC URL for \
+                 '{config_name}'. Set `conductors` or `discovery.bootstrap_rpc` in config, or \
+                 pass `--conductor-rpc <url>`."
+            ),
+            Self::MissingNode { requested_node, available_nodes } => write!(
+                f,
+                "sequencer node {requested_node} not found. Available nodes: {}",
+                available_nodes.join(", ")
+            ),
+            Self::MissingUnsafeHead { node } => write!(
+                f,
+                "could not determine unsafe head for {node}; pass an explicit 32-byte hash or \
+                 restore CL reachability"
+            ),
+            Self::AlreadyActive { node } => {
+                write!(f, "sequencer already active on {node}; stop it before starting again")
+            }
+            Self::AlreadyStopped { node } => write!(f, "sequencer already stopped on {node}"),
+            Self::NotCurrentLeader { requested_node, current_leader, action } => write!(
+                f,
+                "Node is not the conductor leader. Current leader: {current_leader}. `basectl \
+                 sequencer {action}` must target the leader instead of {requested_node}."
+            ),
+            Self::NotLeader { requested_node, action } => write!(
+                f,
+                "Node is not the conductor leader. `basectl sequencer {action}` must target the \
+                 current leader instead of {requested_node}."
+            ),
+            Self::UninitializedUnsafeHead => write!(
+                f,
+                "no prestate: engine unsafe head is uninitialized, cannot safely start sequencer"
+            ),
+            Self::UnsafeHeadMismatch { observed_hash, requested_hash } => write!(
+                f,
+                "block hash mismatch: engine unsafe head is {observed_hash}, caller requested \
+                 {requested_hash}"
+            ),
+            Self::EmptyUnsafeHead => write!(f, "unsafe head hash cannot be empty"),
+            Self::InvalidUnsafeHead { raw, message } => {
+                write!(f, "parsing unsafe head hash `{raw}`: {message}")
+            }
+            Self::ZeroUnsafeHead { .. } => write!(f, "unsafe head hash must not be zero"),
+            Self::StateConvergenceTimeout(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for SequencerCommandError {}
+
+impl fmt::Display for StateConvergenceTimeoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let unsafe_head_suffix =
+            self.unsafe_head.map_or_else(String::new, |unsafe_head| format!(" at {unsafe_head}"));
+        let last_status_suffix = match (self.last_observed, self.last_error.as_deref()) {
+            (Some(observed), Some(error)) => {
+                format!(" (last observed `sequencer_active={observed}`; last poll error: {error})")
+            }
+            (Some(observed), None) => {
+                format!(" (last observed `sequencer_active={observed}`)")
+            }
             (None, Some(error)) => format!(" (last poll error: {error})"),
             (None, None) => String::new(),
-        }
-    )]
-    StateConvergenceTimeout {
-        /// The sequencer action being observed.
-        action: &'static str,
-        /// The target node name.
-        node: Box<str>,
-        /// The target node consensus-layer RPC URL.
-        cl_rpc: Box<str>,
-        /// The unsafe head returned or requested for the command, if known.
-        unsafe_head: Option<B256>,
-        /// The expected `sequencer_active` state.
-        expected_active: bool,
-        /// The observation timeout used for state convergence.
-        timeout: Duration,
-        /// The last observed `sequencer_active` state, if any poll succeeded.
-        last_observed: Option<bool>,
-        /// The last polling error, if any poll failed.
-        last_error: Option<Box<str>>,
-    },
+        };
+
+        write!(
+            f,
+            "{} RPC succeeded on {} ({}){}, but `sequencer_active={}` was not observed within \
+             {:?}{}",
+            self.action,
+            self.node,
+            self.cl_rpc,
+            unsafe_head_suffix,
+            self.expected_active,
+            self.timeout,
+            last_status_suffix
+        )
+    }
 }
+
+impl std::error::Error for StateConvergenceTimeoutError {}
 
 impl From<NodeLookupError> for SequencerCommandError {
     fn from(error: NodeLookupError) -> Self {

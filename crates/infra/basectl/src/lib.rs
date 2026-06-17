@@ -37,6 +37,7 @@ mod errors;
 pub use errors::{
     BlockRefParseError, ConductorCommandError, DoctorArgsError, MissingConsensusRpcError,
     NodeLookupError, P2pCommandError, P2pTargetError, SequencerCommandError,
+    StateConvergenceTimeoutError,
 };
 
 mod rpc;
