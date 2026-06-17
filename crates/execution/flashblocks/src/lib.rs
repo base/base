@@ -39,6 +39,9 @@ pub use subscription::FlashblocksSubscriber;
 mod traits;
 pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
 
+mod recording_db;
+pub use recording_db::{CapturedReads, ReadLog, RecordingDb};
+
 mod state_builder;
 pub use state_builder::{ExecutedPendingTransaction, PendingStateBuilder};
 

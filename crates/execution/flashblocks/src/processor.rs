@@ -30,7 +30,8 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks,
-    PendingBlocksBuilder, PendingStateBuilder, ProviderError, Result, StateProcessorError,
+    PendingBlocksBuilder, PendingStateBuilder, ProviderError, ReadLog, RecordingDb, Result,
+    StateProcessorError,
     metrics::Metrics,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
@@ -38,7 +39,7 @@ use crate::{
     },
 };
 
-type PendingExecutionDb = State<StateProviderDatabase<StateProviderBox>>;
+type PendingExecutionDb = RecordingDb<State<StateProviderDatabase<StateProviderBox>>>;
 
 #[derive(Debug)]
 struct LivePendingState {
@@ -66,6 +67,10 @@ pub struct StateProcessor<Client> {
     sender: Sender<Arc<PendingBlocks>>,
     cache: Arc<Mutex<FlashblockCache>>,
     live_state: StdMutex<Option<LivePendingState>>,
+    /// Shared read-capture log for the tx-cache shadow-diff (Layer 2). Wired into the
+    /// pending-execution database and the rebuild's [`PendingStateBuilder`]; inert unless the
+    /// shadow toggles it around a re-execution.
+    read_log: Arc<StdMutex<ReadLog>>,
 }
 
 impl<Client> StateProcessor<Client>
@@ -125,6 +130,7 @@ where
             sender,
             cache: Arc::new(Mutex::new(cache)),
             live_state: StdMutex::new(None),
+            read_log: Arc::new(StdMutex::new(ReadLog::default())),
         }
     }
 
@@ -751,8 +757,12 @@ where
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         // Track state changes across flashblocks, accumulating bundle state
-        // from previous pending blocks if available.
-        let mut db = State::builder().with_database(state_provider_db).with_bundle_update().build();
+        // from previous pending blocks if available. Wrapped in a `RecordingDb` so the tx-cache
+        // shadow-diff can capture the read-set of a diverging re-execution (Layer 2).
+        let mut db = RecordingDb::new(
+            State::builder().with_database(state_provider_db).with_bundle_update().build(),
+            Arc::clone(&self.read_log),
+        );
 
         let mut state_overrides =
             prev_pending_blocks.as_ref().map_or_else(StateOverride::default, |pending_blocks| {
@@ -858,6 +868,9 @@ where
                 l1_block_info,
                 state_overrides,
             );
+            // Wire the shared read-capture log so the shadow-diff can record the read-set of a
+            // diverging cached transaction (Layer 2).
+            pending_state_builder.set_read_log(Arc::clone(&self.read_log));
 
             pending_state_builder.apply_pre_execution_changes(
                 assembled.base.parent_hash,
