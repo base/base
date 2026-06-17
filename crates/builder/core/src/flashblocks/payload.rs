@@ -1,7 +1,10 @@
 use core::time::Duration;
 use std::{
     ops::{Div, Rem},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Instant,
 };
 
@@ -72,6 +75,26 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     >,
 >;
 
+#[derive(Debug, Default)]
+struct LastEmittedFlashblockId {
+    block_number: AtomicU64,
+    index: AtomicU64,
+}
+
+impl LastEmittedFlashblockId {
+    fn load(&self) -> FlashblockId {
+        FlashblockId {
+            block_number: self.block_number.load(Ordering::Relaxed),
+            index: self.index.load(Ordering::Relaxed),
+        }
+    }
+
+    fn store(&self, flashblock_id: FlashblockId) {
+        self.block_number.store(flashblock_id.block_number, Ordering::Relaxed);
+        self.index.store(flashblock_id.index, Ordering::Relaxed);
+    }
+}
+
 /// Base payload builder
 #[derive(Debug, Clone)]
 pub(super) struct BasePayloadBuilder<Pool, Client> {
@@ -92,7 +115,7 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
     pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
     /// Last flashblock emitted by this builder instance.
-    pub last_emitted_flashblock_id: Arc<Mutex<Option<FlashblockId>>>,
+    last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
 }
 
 impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
@@ -114,33 +137,16 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             ws_pub,
             config,
             rejected_tx_sender,
-            last_emitted_flashblock_id: Arc::new(Mutex::new(None)),
+            last_emitted_flashblock_id: Arc::default(),
         }
     }
 
-    fn previous_flashblock_id(&self) -> Result<FlashblockId, PayloadBuilderError> {
-        let last_emitted = self.last_emitted_flashblock_id.lock().map_err(|_| {
-            PayloadBuilderError::other(std::io::Error::other(
-                "last emitted flashblock id lock poisoned",
-            ))
-        })?;
-
-        Ok(last_emitted.unwrap_or_default())
+    fn previous_flashblock_id(&self) -> FlashblockId {
+        self.last_emitted_flashblock_id.load()
     }
 
-    fn record_emitted_flashblock(
-        &self,
-        block_number: u64,
-        index: u64,
-    ) -> Result<(), PayloadBuilderError> {
-        let mut last_emitted = self.last_emitted_flashblock_id.lock().map_err(|_| {
-            PayloadBuilderError::other(std::io::Error::other(
-                "last emitted flashblock id lock poisoned",
-            ))
-        })?;
-
-        *last_emitted = Some(FlashblockId { block_number, index });
-        Ok(())
+    fn record_emitted_flashblock(&self, block_number: u64, index: u64) {
+        self.last_emitted_flashblock_id.store(FlashblockId { block_number, index });
     }
 }
 
@@ -294,7 +300,7 @@ where
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
-        let prev_flashblock_id = self.previous_flashblock_id()?;
+        let prev_flashblock_id = self.previous_flashblock_id();
         let (payload, fb_payload) = build_block(
             &mut state,
             &ctx,
@@ -324,7 +330,7 @@ where
                 .ws_pub
                 .publish(&fb_payload, ctx.block_number(), 0)
                 .map_err(PayloadBuilderError::other)?;
-            self.record_emitted_flashblock(ctx.block_number(), 0)?;
+            self.record_emitted_flashblock(ctx.block_number(), 0);
             BuilderMetrics::flashblock_byte_size_histogram().record(flashblock_byte_size as f64);
             BuilderMetrics::first_flashblock_time_offset()
                 .record(first_flashblock_offset.as_millis() as f64);
@@ -683,7 +689,7 @@ where
             .set(payload_transaction_simulation_time);
 
         let total_block_built_duration = Instant::now();
-        let prev_flashblock_id = self.previous_flashblock_id()?;
+        let prev_flashblock_id = self.previous_flashblock_id();
         let build_result =
             build_block(state, ctx, info, prev_flashblock_id, ctx.attributes().no_tx_pool);
         let total_block_built_duration = total_block_built_duration.elapsed();
@@ -713,7 +719,7 @@ where
                             .ws_pub
                             .publish(&fb_payload, ctx.block_number(), flashblock_index)
                             .wrap_err("failed to publish flashblock via websocket")?;
-                        self.record_emitted_flashblock(ctx.block_number(), flashblock_index)?;
+                        self.record_emitted_flashblock(ctx.block_number(), flashblock_index);
                         (false, size)
                     }
                 };

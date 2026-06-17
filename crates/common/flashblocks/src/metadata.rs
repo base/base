@@ -1,8 +1,9 @@
 //! Contains the [`Metadata`] type used in Flashblocks.
 
-use std::{fmt, str::FromStr};
+use std::{fmt, num::ParseIntError, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use thiserror::Error;
 
 /// Identifies a flashblock within a canonical block build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -13,6 +14,37 @@ pub struct FlashblockId {
     pub index: u64,
 }
 
+/// Error returned when parsing a [`FlashblockId`] from its compact string form.
+#[derive(Debug, Error)]
+pub enum FlashblockIdParseError {
+    /// The input did not use the expected `<block_number>-<index>` format.
+    #[error("invalid flashblock id '{value}': expected '<block_number>-<index>' format")]
+    InvalidFormat {
+        /// Original input value.
+        value: String,
+    },
+    /// The block number component was not a valid integer.
+    #[error("invalid flashblock id '{value}': block number '{block_number}' must be an integer")]
+    InvalidBlockNumber {
+        /// Original input value.
+        value: String,
+        /// Block number component.
+        block_number: String,
+        /// Parse error for the block number component.
+        source: ParseIntError,
+    },
+    /// The flashblock index component was not a valid integer.
+    #[error("invalid flashblock id '{value}': index '{index}' must be an integer")]
+    InvalidIndex {
+        /// Original input value.
+        value: String,
+        /// Index component.
+        index: String,
+        /// Parse error for the index component.
+        source: ParseIntError,
+    },
+}
+
 impl fmt::Display for FlashblockId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}-{}", self.block_number, self.index)
@@ -20,18 +52,26 @@ impl fmt::Display for FlashblockId {
 }
 
 impl FromStr for FlashblockId {
-    type Err = &'static str;
+    type Err = FlashblockIdParseError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let Some((block_number, index)) = value.split_once('-') else {
-            return Err("flashblock id must use '<block_number>-<index>' format");
+            return Err(FlashblockIdParseError::InvalidFormat { value: value.to_owned() });
         };
 
         Ok(Self {
-            block_number: block_number
-                .parse()
-                .map_err(|_| "flashblock id block number must be an integer")?,
-            index: index.parse().map_err(|_| "flashblock id index must be an integer")?,
+            block_number: block_number.parse().map_err(|source| {
+                FlashblockIdParseError::InvalidBlockNumber {
+                    value: value.to_owned(),
+                    block_number: block_number.to_owned(),
+                    source,
+                }
+            })?,
+            index: index.parse().map_err(|source| FlashblockIdParseError::InvalidIndex {
+                value: value.to_owned(),
+                index: index.to_owned(),
+                source,
+            })?,
         })
     }
 }
