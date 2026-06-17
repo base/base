@@ -53,7 +53,7 @@ pub enum ProposerError {
 
     /// Transaction manager error (nonce, fees, signing, etc.).
     #[error(transparent)]
-    TxManager(#[from] base_tx_manager::TxManagerError),
+    TxManager(base_tx_manager::TxManagerError),
 }
 
 impl From<ProofSubmissionError> for ProposerError {
