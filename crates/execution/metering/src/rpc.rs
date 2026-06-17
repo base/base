@@ -625,6 +625,7 @@ mod tests {
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
+    use base_node_runner::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::Account;
     use reth_transaction_pool::test_utils::TransactionBuilder;
@@ -658,6 +659,7 @@ mod tests {
 
     async fn generate_txs_for_block(chain_id: u64) -> Vec<Bytes> {
         vec![
+            L1_BLOCK_INFO_DEPOSIT_TX,
             TransactionBuilder::default()
                 .signer(Account::Charlie.signer_b256())
                 .chain_id(chain_id)
