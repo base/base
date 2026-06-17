@@ -625,8 +625,7 @@ mod tests {
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
-    use base_node_runner::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
-    use base_node_runner::test_utils::TestHarness;
+    use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
     use base_test_utils::Account;
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use url::Url;
