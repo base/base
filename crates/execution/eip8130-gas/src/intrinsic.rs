@@ -134,20 +134,22 @@ impl IntrinsicGas {
         for change in &tx.account_changes {
             match change {
                 AccountChange::Create(entry) => {
-                    // Per EIP-8130 a create entry is charged `bytecode_cost`
-                    // alone (`CREATE_BASE_COST` + per-byte deposit). The
-                    // `initial_actors` slot writes are deliberately *not* metered
-                    // here: `account_changes_cost` enumerates only config-change
-                    // and delegation entries, and the create base cost subsumes
-                    // initial-actor setup (each initial actor is written as an
-                    // unrestricted owner with no policy slots). This intentional
-                    // asymmetry with the `ConfigChange` per-slot accounting below
-                    // matches the spec — do not add per-actor charges here.
+                    // `bytecode_cost`: deployment base + per-byte code deposit.
                     let deposit = Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE
                         .saturating_mul(entry.code.len() as u64);
                     bytecode = bytecode
                         .saturating_add(Eip8130GasSchedule::CREATE_BASE_COST)
                         .saturating_add(deposit);
+                    // Each initial actor writes one fresh `actor_config` slot (an
+                    // unrestricted owner: `scope = 0`, `expiry = 0`,
+                    // `policyType = 0`, so no policy slots). These slot writes are
+                    // metered per actor, mirroring the `ConfigChange` per-slot
+                    // accounting below — creation must not register actors for
+                    // free relative to a later config change authorizing the same
+                    // set.
+                    let initial_actor_cost = Eip8130GasSchedule::ACTOR_SLOT_SET_COST
+                        .saturating_mul(entry.initial_actors.len() as u64);
+                    account_changes = account_changes.saturating_add(initial_actor_cost);
                 }
                 AccountChange::ConfigChange(cc) => {
                     account_changes =
@@ -381,12 +383,11 @@ mod tests {
     }
 
     #[test]
-    fn create_with_initial_actors_charges_only_bytecode() {
-        // Per EIP-8130, a create entry's `initial_actors` slot writes are
-        // subsumed by `bytecode_cost`; they are not metered via
-        // `account_changes_cost` (which covers only config-change and delegation
-        // entries). Three initial actors must therefore add nothing beyond the
-        // create base + per-byte deposit.
+    fn create_charges_bytecode_plus_per_initial_actor_slot() {
+        // A create entry pays `bytecode_cost` (base + per-byte deposit) plus one
+        // fresh `actor_config` slot write per initial actor — the same per-slot
+        // model as a config change authorizing the same actors (no policy slots,
+        // since initial actors are unrestricted owners).
         let code = vec![0x60u8; 4];
         let initial_actors = (0u8..3)
             .map(|i| InitialActor {
@@ -407,7 +408,7 @@ mod tests {
             gas.bytecode,
             Eip8130GasSchedule::CREATE_BASE_COST + Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE * 4
         );
-        assert_eq!(gas.account_changes, 0);
+        assert_eq!(gas.account_changes, Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 3);
     }
 
     #[test]
