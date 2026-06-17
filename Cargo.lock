@@ -6653,6 +6653,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "toml 1.1.2+spec-1.1.0",

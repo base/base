@@ -1060,7 +1060,7 @@ mod tests {
             Duration::from_millis(5),
             || async {
                 tokio::time::sleep(Duration::from_millis(200)).await;
-                Ok(false)
+                Ok::<bool, anyhow::Error>(false)
             },
         )
         .await
