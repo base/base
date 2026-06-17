@@ -33,6 +33,7 @@ group "rust-services" {
     "builder",
     "consensus",
     "proposer",
+    "challenger",
     "websocket-proxy",
     "ingress-rpc",
     "audit-archiver",
@@ -104,6 +105,12 @@ target "proposer" {
   inherits = ["_rust-service-common"]
   target = "proposer"
   tags = ["base-proposer:local"]
+}
+
+target "challenger" {
+  inherits = ["_rust-service-common"]
+  target = "challenger"
+  tags = ["base-challenger:local"]
 }
 
 target "websocket-proxy" {
