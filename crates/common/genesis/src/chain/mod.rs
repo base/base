@@ -5,7 +5,7 @@ pub use addresses::AddressList;
 
 mod hardfork;
 pub use hardfork::{
-    HardForkConfig, HardforkConfig, RuntimeUpgradeRegistry, UpgradeActivation,
+    ContractUpgrade, HardForkConfig, HardforkConfig, RuntimeUpgradeRegistry, UpgradeActivation,
     UpgradeActivationOverrides, UpgradeActivationSink,
 };
 

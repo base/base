@@ -29,8 +29,8 @@ pub use system::{
 
 mod chain;
 pub use chain::{
-    AddressList, HardForkConfig, HardforkConfig, Roles, RuntimeUpgradeRegistry, UpgradeActivation,
-    UpgradeActivationOverrides, UpgradeActivationSink,
+    AddressList, ContractUpgrade, HardForkConfig, HardforkConfig, Roles, RuntimeUpgradeRegistry,
+    UpgradeActivation, UpgradeActivationOverrides, UpgradeActivationSink,
 };
 
 mod genesis;

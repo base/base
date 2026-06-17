@@ -3,15 +3,15 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
-use base_common_genesis::HardForkConfig;
+use base_common_genesis::ContractUpgrade;
 
 use crate::{AlloyUpgradeSignalReader, UpgradeSignalMetrics};
 
-/// L1 upgrade signal values for one hardfork ID.
+/// L1 upgrade signal values for one contract-backed upgrade.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UpgradeSignal {
-    /// Hardfork ID passed to the L1 contract.
-    pub hardfork_id: String,
+    /// Contract-backed upgrade passed to the L1 contract.
+    pub hardfork_id: ContractUpgrade,
     /// L2 activation timestamp announced on L1.
     pub activation_timestamp: u64,
     /// Minimum node protocol version announced on L1.
@@ -47,31 +47,16 @@ impl UpgradeSignalSchedule {
         Self { signals }
     }
 
-    /// Returns a copy of this schedule containing only the requested hardfork IDs.
-    pub fn filtered_to_hardfork_ids(&self, hardfork_ids: &[String]) -> Self {
+    /// Returns a copy of this schedule containing only the requested upgrades.
+    pub fn filtered_to_hardfork_ids(&self, hardfork_ids: &[ContractUpgrade]) -> Self {
         let signals = self
             .signals
             .iter()
-            .filter(|signal| {
-                hardfork_ids
-                    .iter()
-                    .any(|hardfork_id| Self::hardfork_ids_match(&signal.hardfork_id, hardfork_id))
-            })
+            .filter(|signal| hardfork_ids.contains(&signal.hardfork_id))
             .cloned()
             .collect();
 
         Self { signals }
-    }
-
-    /// Returns true if two hardfork ID spellings refer to the same contract upgrade.
-    pub fn hardfork_ids_match(left: &str, right: &str) -> bool {
-        match (
-            HardForkConfig::canonical_hardfork_id(left),
-            HardForkConfig::canonical_hardfork_id(right),
-        ) {
-            (Some(left), Some(right)) => left == right,
-            _ => left.trim().eq_ignore_ascii_case(right.trim()),
-        }
     }
 }
 
@@ -86,7 +71,7 @@ pub enum UpgradeSignalStateUpdate {
     Changed,
 }
 
-/// Stateful live metrics tracker for one hardfork ID.
+/// Stateful live metrics tracker for one contract-backed upgrade.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct UpgradeSignalState {
     /// Last signal read from L1 by the live metrics observer.
@@ -117,17 +102,17 @@ impl UpgradeSignalState {
 /// Records live upgrade signal metrics without mutating node configuration.
 #[derive(Debug, Clone)]
 pub struct UpgradeSignalMonitor {
-    /// Live metrics state by hardfork ID.
-    pub states: BTreeMap<String, UpgradeSignalState>,
+    /// Live metrics state by contract-backed upgrade.
+    pub states: BTreeMap<ContractUpgrade, UpgradeSignalState>,
 }
 
 impl UpgradeSignalMonitor {
     /// Creates a monitor for the provided hardfork IDs.
-    pub fn new(hardfork_ids: &[String]) -> Self {
+    pub fn new(hardfork_ids: &[ContractUpgrade]) -> Self {
         UpgradeSignalMetrics::init();
         let mut states = BTreeMap::new();
         for hardfork_id in hardfork_ids {
-            states.insert(hardfork_id.clone(), UpgradeSignalState::new());
+            states.insert(*hardfork_id, UpgradeSignalState::new());
         }
         Self { states }
     }
@@ -139,7 +124,7 @@ impl UpgradeSignalMonitor {
     pub async fn poll(
         &mut self,
         reader: &AlloyUpgradeSignalReader,
-        hardfork_ids: &[String],
+        hardfork_ids: &[ContractUpgrade],
     ) -> usize {
         let schedule = reader.read_schedule_tolerant(hardfork_ids).await;
         self.update_schedule(schedule)
@@ -158,12 +143,12 @@ impl UpgradeSignalMonitor {
 
     /// Applies one signal read from L1 and records corresponding live metrics.
     pub fn update_signal(&mut self, signal: UpgradeSignal) -> UpgradeSignalStateUpdate {
-        let hardfork_id = signal.hardfork_id.clone();
+        let hardfork_id = signal.hardfork_id;
         UpgradeSignalMetrics::record_signal(&signal);
 
-        let update = self.states.entry(hardfork_id.clone()).or_default().update_signal(signal);
+        let update = self.states.entry(hardfork_id).or_default().update_signal(signal);
         if matches!(update, UpgradeSignalStateUpdate::Changed) {
-            UpgradeSignalMetrics::record_signal_update(&hardfork_id);
+            UpgradeSignalMetrics::record_signal_update(hardfork_id);
         }
 
         update
@@ -178,7 +163,7 @@ mod tests {
 
     fn signal(timestamp: u64) -> UpgradeSignal {
         UpgradeSignal {
-            hardfork_id: "azul".to_string(),
+            hardfork_id: ContractUpgrade::Azul,
             activation_timestamp: timestamp,
             protocol_version: U256::from(7),
             l1_block_number: 1,
@@ -224,20 +209,20 @@ mod tests {
     }
 
     #[test]
-    fn filters_schedule_by_canonical_hardfork_id() {
+    fn filters_schedule_by_contract_upgrade() {
         let schedule = UpgradeSignalSchedule::new(vec![
             signal(42),
             UpgradeSignal {
-                hardfork_id: "beryl".to_string(),
+                hardfork_id: ContractUpgrade::Beryl,
                 activation_timestamp: 43,
                 protocol_version: U256::from(7),
                 l1_block_number: 1,
             },
         ]);
 
-        let filtered = schedule.filtered_to_hardfork_ids(&["base_azul".to_string()]);
+        let filtered = schedule.filtered_to_hardfork_ids(&[ContractUpgrade::Azul]);
 
         assert_eq!(filtered.signals.len(), 1);
-        assert_eq!(filtered.signals[0].hardfork_id, "azul");
+        assert_eq!(filtered.signals[0].hardfork_id, ContractUpgrade::Azul);
     }
 }
