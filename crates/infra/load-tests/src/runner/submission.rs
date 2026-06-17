@@ -41,6 +41,12 @@ pub const MAX_SENDER_WORKER_COUNT: usize = 64;
 pub const SUBMIT_BATCH_QUEUE_BUFFER: usize = 4096;
 /// Maximum send attempts for signed transaction batches.
 pub const SUBMIT_MAX_ATTEMPTS: u32 = 5;
+/// Multiplier applied to the base fee when computing `maxFeePerGas`.
+///
+/// Base fee can rise at most 12.5% per block (EIP-1559); a 4x buffer tolerates
+/// ~11 full blocks (~24s on a 2s chain) of growth before a tx goes underwater.
+/// The `max_gas_price` cap bounds worst-case cost, so the headroom is cheap.
+pub const MAX_FEE_BASE_FEE_MULTIPLIER: u128 = 4;
 
 /// A transaction request ready for nonce assignment and signing.
 #[derive(Debug, Clone)]
@@ -110,8 +116,8 @@ pub struct SignedTransaction {
 pub struct PreparedBatch {
     /// Stable batch id used for logging and endpoint sharding.
     pub id: u64,
-    /// Gas price snapshot used while signing the batch.
-    pub gas_price: u128,
+    /// Latest base fee snapshot used to derive `maxFeePerGas` while signing.
+    pub base_fee: u128,
     /// Prepared transactions.
     pub txs: Vec<PreparedTransaction>,
 }
@@ -467,9 +473,16 @@ impl SubmissionPipeline {
         }
     }
 
-    /// Computes EIP-1559 max fee for submissions.
-    pub fn submission_max_fee(gas_price: u128, priority_fee: u128, max_gas_price: u128) -> u128 {
-        gas_price.saturating_mul(2).max(priority_fee).min(max_gas_price)
+    /// Computes EIP-1559 `maxFeePerGas` for submissions.
+    ///
+    /// The result is `min(target, max_gas_price)` but always at least `priority_fee`,
+    /// where `target = max(base_fee * MULTIPLIER, base_fee + priority_fee)`.
+    /// When `max_gas_price` is lower than the target, the tx may be unincludable.
+    pub fn submission_max_fee(base_fee: u128, priority_fee: u128, max_gas_price: u128) -> u128 {
+        let target = base_fee
+            .saturating_mul(MAX_FEE_BASE_FEE_MULTIPLIER)
+            .max(base_fee.saturating_add(priority_fee));
+        target.min(max_gas_price).max(priority_fee)
     }
 
     async fn signer_worker(
@@ -543,7 +556,7 @@ impl SubmissionPipeline {
     async fn sign_batch(ctx: &SignerContext, batch: PreparedBatch) -> Option<SignedBatch> {
         let mut signed_txs = Vec::with_capacity(batch.txs.len());
         for prepared in batch.txs {
-            if let Some(tx) = Self::sign_prepared(ctx, &prepared, batch.gas_price).await {
+            if let Some(tx) = Self::sign_prepared(ctx, &prepared, batch.base_fee).await {
                 signed_txs.push(tx);
             } else {
                 Self::release_prepared(&ctx.submit_event_tx, &prepared).await;
@@ -800,10 +813,10 @@ impl SubmissionPipeline {
     async fn sign_prepared(
         ctx: &SignerContext,
         prepared: &PreparedTransaction,
-        gas_price: u128,
+        base_fee: u128,
     ) -> Option<SignedTransaction> {
-        let priority_fee = (gas_price / 10).max(1);
-        let max_fee = Self::submission_max_fee(gas_price, priority_fee, ctx.max_gas_price);
+        let priority_fee = (base_fee / 10).max(1);
+        let max_fee = Self::submission_max_fee(base_fee, priority_fee, ctx.max_gas_price);
 
         let Some(signer) = ctx.signers.get(&prepared.from) else {
             warn!(from = %prepared.from, "no signer for sender");
@@ -904,8 +917,8 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        BatchTxError, PipelineQueue, PreparedBatch, PreparedTransaction, SignedBatch,
-        SignedTransaction, SubmissionPipeline, SubmitEvent,
+        BatchTxError, MAX_FEE_BASE_FEE_MULTIPLIER, PipelineQueue, PreparedBatch,
+        PreparedTransaction, SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent,
     };
 
     #[test]
@@ -945,8 +958,25 @@ mod tests {
     #[test]
     fn submission_max_fee_is_at_least_priority_fee() {
         assert_eq!(SubmissionPipeline::submission_max_fee(0, 1, 1_000_000_000), 1);
-        assert_eq!(SubmissionPipeline::submission_max_fee(100, 10, 1_000_000_000), 200);
         assert_eq!(SubmissionPipeline::submission_max_fee(1_000, 10, 500), 500);
+    }
+
+    #[test]
+    fn submission_max_fee_applies_base_fee_multiplier() {
+        // 4x base fee dominates when it exceeds base_fee + priority_fee.
+        assert_eq!(SubmissionPipeline::submission_max_fee(100, 10, 1_000_000_000), 400);
+    }
+
+    #[test]
+    fn submission_max_fee_covers_base_fee_plus_tip() {
+        // Verifies a transaction is never minted underwater: max_fee always
+        // covers base_fee + priority_fee when the cap is not binding.
+        let base_fee = 1_000_000u128;
+        let priority_fee = 100u128;
+        let cap = 10_000_000_000u128;
+        let max_fee = SubmissionPipeline::submission_max_fee(base_fee, priority_fee, cap);
+        assert!(max_fee >= base_fee + priority_fee, "max_fee must cover base fee + tip");
+        assert_eq!(max_fee, base_fee * MAX_FEE_BASE_FEE_MULTIPLIER);
     }
 
     #[tokio::test]
@@ -964,7 +994,7 @@ mod tests {
         prepared_batch_tx
             .send(PreparedBatch {
                 id: 0,
-                gas_price: 1,
+                base_fee: 1,
                 txs: vec![PreparedTransaction {
                     from: sender,
                     to: None,

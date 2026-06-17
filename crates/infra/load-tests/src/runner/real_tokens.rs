@@ -13,12 +13,12 @@ use indicatif::ProgressBar;
 use tracing::{debug, info, instrument, warn};
 
 use super::{
-    RealTokenAcquisition, RealTokenRecoverySummary, RealTokenSetup,
+    RealTokenAcquisition, RealTokenRecoverySummary, RealTokenSetup, SubmissionPipeline,
     load_runner::{FUNDING_CONCURRENCY, LoadRunner},
 };
 use crate::{
     BaselineError, Result,
-    rpc::{QueryProvider, RpcResultExt, create_wallet_provider},
+    rpc::{BaseFeeExt, QueryProvider, RpcResultExt, create_wallet_provider},
 };
 
 const WETH_DEPOSIT_GAS_LIMIT: u64 = 100_000;
@@ -107,10 +107,13 @@ impl LoadRunner {
         }
         let approval_targets = self.collect_real_token_setup_approvals(setup);
 
-        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        let max_fee =
-            gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
+        let base_fee = self.client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee = SubmissionPipeline::submission_max_fee(
+            base_fee,
+            max_priority_fee,
+            self.config.max_gas_price,
+        );
 
         let account_data: Vec<_> =
             self.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
@@ -365,10 +368,13 @@ impl LoadRunner {
         let primary_submission_rpc = self.config.primary_submission_rpc().clone();
         let chain_id = self.config.chain_id;
 
-        let gas_price = client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        let max_fee =
-            gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
+        let base_fee = client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee = SubmissionPipeline::submission_max_fee(
+            base_fee,
+            max_priority_fee,
+            self.config.max_gas_price,
+        );
 
         let account_data: Vec<_> =
             self.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
