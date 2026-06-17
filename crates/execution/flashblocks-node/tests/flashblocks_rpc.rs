@@ -3,27 +3,37 @@
 use std::str::FromStr;
 
 use DoubleCounter::DoubleCounterInstance;
+use ParentBlockhashGuard::ParentBlockhashGuardInstance;
 use alloy_consensus::{Transaction, constants::EMPTY_WITHDRAWALS};
-use alloy_eips::{BlockNumberOrTag, eip7685::EMPTY_REQUESTS_HASH};
+use alloy_eips::{
+    BlockHashOrNumber, BlockNumberOrTag, Decodable2718, eip7685::EMPTY_REQUESTS_HASH,
+};
 use alloy_network::{ReceiptResponse, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, address, b256, bytes};
-use alloy_provider::Provider;
+use alloy_provider::{MulticallItem, Provider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
+use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
 use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_flashblocks_node::test_harness::FlashblocksHarness;
+use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
+use base_flashblocks_node::test_harness::{
+    FlashblockBuilder, FlashblocksBuilderTestHarness, FlashblocksHarness,
+};
 use base_node_runner::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
-use base_test_utils::{Account, DoubleCounter};
+use base_test_utils::{Account, DoubleCounter, ParentBlockhashGuard};
 use eyre::Result;
 use futures::{SinkExt, StreamExt};
+use reth_primitives_traits::Block;
+use reth_provider::BlockReader;
 use reth_revm::context::TransactionType;
 use reth_rpc_eth_api::RpcReceipt;
+use reth_transaction_pool::test_utils::TransactionBuilder;
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -286,7 +296,7 @@ impl TestSetup {
                 withdrawals_root: EMPTY_WITHDRAWALS,
                 ..Default::default()
             },
-            metadata: Metadata { block_number: 1 },
+            metadata: Metadata::new(1),
         }
     }
 
@@ -318,7 +328,7 @@ impl TestSetup {
                 logs_bloom: Default::default(),
                 withdrawals_root: EMPTY_WITHDRAWALS,
             },
-            metadata: Metadata { block_number: 1 },
+            metadata: Metadata::new(1),
         }
     }
 
@@ -501,6 +511,80 @@ async fn test_get_transaction_receipt_pending() -> Result<()> {
         .await?
         .expect("receipt expected");
     assert_eq!(receipt.gas_used(), 21000);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_blockhash_dependent_transaction_receipt_pending() -> Result<()> {
+    let mut builder_setup = FlashblocksBuilderTestHarness::new().await;
+    let mut client_setup = FlashblocksBuilderTestHarness::new().await;
+
+    let builder_provider = builder_setup.node.provider();
+    let client_provider = client_setup.node.provider();
+
+    // Step 1. Deploy the ParentBlockhashGuard contract in canon block 1
+    let (deployment_tx, guard_address, _) = Account::Deployer
+        .create_deployment_tx(ParentBlockhashGuard::BYTECODE.clone(), 0)
+        .expect("should be able to sign ParentBlockhashGuard deployment txn");
+    let deployment_tx = BaseTxEnvelope::decode_2718(&mut deployment_tx.as_ref())?;
+    builder_setup.new_canonical_block_without_processing(vec![deployment_tx.clone()]).await;
+    assert_eq!(builder_provider.get_block_number().await?, 1);
+    client_setup.new_canonical_block_without_processing(vec![deployment_tx]).await;
+    assert_eq!(client_provider.get_block_number().await?, 1);
+
+    // Step 2. Random flashblocks for canon block 2
+    // Created by builder_setup, but inserted into client_setup
+    let block_two_fb_base = FlashblockBuilder::new_base(&builder_setup).build();
+    let block_two_fb_one = FlashblockBuilder::new(&builder_setup, 1).build();
+    let block_two_fb_two = FlashblockBuilder::new(&builder_setup, 2).build();
+    client_setup.send_flashblock(block_two_fb_base.clone()).await;
+    client_setup.send_flashblock(block_two_fb_one).await;
+    client_setup.send_flashblock(block_two_fb_two).await;
+    builder_setup
+        .node
+        .build_block_from_transactions(block_two_fb_base.diff.transactions)
+        .await
+        .expect("able to build canon block 2");
+    let canon_block_two = builder_setup
+        .provider
+        .block(BlockHashOrNumber::Number(2))
+        .expect("able to load block 2")
+        .expect("block 2 should be available")
+        .try_into_recovered()
+        .expect("able to recover block 2");
+
+    // Step 3. Builder builds flashblocks for block 3
+    // that contain a call to the contract
+    // It is processed by client before client has canon block 2
+    let guard = ParentBlockhashGuardInstance::new(guard_address, builder_provider.clone());
+    let txn = TransactionBuilder::default()
+        .signer(Account::Deployer.signer_b256())
+        .chain_id(builder_provider.get_chain_id().await?)
+        .to(guard_address)
+        .nonce(1)
+        .input(guard.succeedsOnlyWhenParentBlockHashIsCanonical(canon_block_two.hash()).input())
+        .gas_limit(200_000)
+        .max_fee_per_gas(1_000_000_000)
+        .max_priority_fee_per_gas(1_000_000_000)
+        .into_eip1559()
+        .as_eip1559()
+        .unwrap()
+        .clone();
+    let flashblock = FlashblockBuilder::new_base(&builder_setup).build();
+    client_setup.send_flashblock(flashblock).await;
+    client_setup.flashblocks.on_canonical_block_received(canon_block_two);
+    let flashblock = FlashblockBuilder::new(&builder_setup, 1)
+        .with_transactions(vec![BaseTransactionSigned::Eip1559(txn.clone())])
+        .build();
+    client_setup.send_flashblock(flashblock).await;
+
+    let receipt = client_setup
+        .flashblocks
+        .get_pending_blocks()
+        .get_transaction_receipt(*txn.hash())
+        .expect("blockhash-dependent receipt expected");
+    assert!(!receipt.status(), "transaction should see the canonical parent block hash and revert");
 
     Ok(())
 }
