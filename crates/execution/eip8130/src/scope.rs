@@ -1,7 +1,8 @@
 //! Per-operation scope gating for resolved actors.
 
 use base_common_consensus::Eip8130Constants;
-use base_execution_eip8130_authorize::ResolvedActor;
+
+use crate::ResolvedActor;
 
 /// The transaction context an actor is being authorized for. Each maps to the
 /// EIP-8130 scope bit that gates it.

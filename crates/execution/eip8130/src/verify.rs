@@ -3,10 +3,8 @@
 
 use alloy_primitives::Address;
 use base_common_consensus::Eip8130Signed;
-use base_execution_eip8130_authorize::{ActorAuthorizer, ResolvedActor};
-use base_execution_eip8130_state::AccountConfigurationStorage;
 
-use crate::{Operation, TxAuthError};
+use crate::{AccountConfigurationStorage, ActorAuthorizer, Operation, ResolvedActor, TxAuthError};
 
 /// A resolved transaction actor together with the account it was authorized
 /// against (the sender or payer account, not the actor id).
@@ -132,11 +130,11 @@ impl ActorTxVerifier {
 mod tests {
     use alloy_primitives::{B256, Bytes, U256, address, keccak256};
     use base_common_consensus::{Eip8130Constants, TxEip8130};
-    use base_execution_eip8130_authorize::AuthorizeError;
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
 
     use super::*;
+    use crate::AuthorizeError;
 
     const NOW: u64 = 1_000;
     const ECRECOVER: Address = Eip8130Constants::ECRECOVER_AUTHENTICATOR;

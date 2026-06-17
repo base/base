@@ -1,10 +1,18 @@
 # base-execution-eip8130
 
-EIP-8130 (Account Abstraction by Account Configuration) authenticator **dispatch**.
+Native EIP-8130 (Account Abstraction by Account Configuration) validation helpers.
 
-This crate implements step 2 ("Authenticate") of the EIP-8130 validation flow: given a
-signing `hash` and an authentication blob (`authenticator || data`), it routes to the
-named authenticator, verifies the signature, and returns the resolved `actorId`.
+This crate owns the full reusable EIP-8130 validation pipeline that previously lived
+across several small crates:
+
+- stateless authenticator dispatch (`AuthenticatorDispatch`),
+- `AccountConfiguration` storage reads (`AccountConfigurationStorage`),
+- stateful actor authorization (`ActorAuthorizer`),
+- transaction sender/payer and config-change authorization (`ActorTxVerifier`,
+  `ConfigChangeAuthorizer`), and
+- 2D nonce validation (`NonceValidator`).
+
+The split is now internal module structure instead of independent workspace crates.
 
 ## Enshrined, not a precompile
 
@@ -30,11 +38,12 @@ canonical address (caught by the registry drift test) and requires re-pinning th
 and re-validating parity here. A differential test against the deployed contracts (via the
 EVM) is a planned follow-up.
 
-## Scope
+## Validation Layers
 
-This crate is **stateless / pure**: it performs no storage reads and runs no EVM. The
-stateful "Authorize" step (reading `actor_config`, the implicit-EOA rule, scope/expiry,
-and the delegate authenticator's nested-actor authorization in the delegated account's
-SIGNATURE context) is layered on top in a later stage. For the delegate authenticator,
-dispatch verifies the nested signature and surfaces the nested actor as a
-[`DispatchOutcome::Delegated`] obligation for that authorize stage to discharge.
+The crate keeps the protocol stages explicit while avoiding crate sprawl:
+
+- **Dispatch** verifies canonical authenticator blobs and resolves actor ids.
+- **State** reads `AccountConfiguration` storage directly, without EVM calls.
+- **Authorize** binds resolved actors to account config, expiry, scope, and policy.
+- **Transaction auth** applies sender, payer, and config-change operation gates.
+- **Nonce validation** checks protocol, 2D-channel, and nonce-free replay state.

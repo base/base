@@ -5,10 +5,11 @@
 
 use alloy_primitives::{Address, B256};
 use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
-use base_execution_eip8130::{AuthError, AuthenticatorDispatch, DispatchOutcome};
-use base_execution_eip8130_state::AccountConfigurationStorage;
 
-use crate::{AuthorizeError, ResolvedActor};
+use crate::{
+    AccountConfigurationStorage, AuthError, AuthenticatorDispatch, AuthorizeError, DispatchOutcome,
+    ResolvedActor,
+};
 
 /// Authorizes actors against an [`AccountConfigurationStorage`] view.
 ///

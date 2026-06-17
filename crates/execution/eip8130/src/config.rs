@@ -3,10 +3,11 @@
 
 use alloy_primitives::{Address, B256, Keccak256, b256, keccak256};
 use base_common_consensus::ConfigChange;
-use base_execution_eip8130_authorize::{ActorAuthorizer, AuthorizeError, ResolvedActor};
-use base_execution_eip8130_state::AccountConfigurationStorage;
 
-use crate::{Operation, TxAuthError};
+use crate::{
+    AccountConfigurationStorage, ActorAuthorizer, AuthorizeError, Operation, ResolvedActor,
+    TxAuthError,
+};
 
 /// Precomputed `keccak256` typehash of the `SignedActorChanges` EIP-712-style
 /// struct, identical to the one hashed by `AccountConfiguration` (the trailing

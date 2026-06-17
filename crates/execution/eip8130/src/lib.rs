@@ -8,3 +8,33 @@ pub use outcome::DispatchOutcome;
 
 mod dispatch;
 pub use dispatch::AuthenticatorDispatch;
+
+mod account_config;
+pub use account_config::{AccountConfigurationStorage, AccountState, ActorConfig, LockStatus};
+
+mod authorize_error;
+pub use authorize_error::AuthorizeError;
+
+mod resolved;
+pub use resolved::ResolvedActor;
+
+mod authorize;
+pub use authorize::ActorAuthorizer;
+
+mod scope;
+pub use scope::Operation;
+
+mod tx_error;
+pub use tx_error::TxAuthError;
+
+mod verify;
+pub use verify::{ActorTxVerifier, AuthorizedActor, TxActors};
+
+mod config;
+pub use config::ConfigChangeAuthorizer;
+
+mod nonce_error;
+pub use nonce_error::NonceError;
+
+mod validate;
+pub use validate::{NonceMode, NonceStatus, NonceValidator};

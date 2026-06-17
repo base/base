@@ -4488,59 +4488,14 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base-common-consensus",
+ "base-common-precompiles",
+ "base-precompile-macros",
+ "base-precompile-storage",
  "base64 0.22.1",
  "k256",
  "p256",
- "sha2 0.10.9",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "base-execution-eip8130-authorize"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-consensus",
- "base-execution-eip8130",
- "base-execution-eip8130-state",
- "base-precompile-storage",
- "k256",
- "p256",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "base-execution-eip8130-nonce"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-consensus",
- "base-common-precompiles",
- "base-precompile-storage",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "base-execution-eip8130-state"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-consensus",
- "base-precompile-macros",
- "base-precompile-storage",
  "revm",
-]
-
-[[package]]
-name = "base-execution-eip8130-tx"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-consensus",
- "base-execution-eip8130-authorize",
- "base-execution-eip8130-state",
- "base-precompile-storage",
- "k256",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
 ]
 

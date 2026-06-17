@@ -1,8 +1,6 @@
 //! Errors returned by transaction actor authorization.
 
-use base_execution_eip8130_authorize::AuthorizeError;
-
-use crate::Operation;
+use crate::{AuthorizeError, Operation};
 
 /// Reason a transaction's actors could not be authorized.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

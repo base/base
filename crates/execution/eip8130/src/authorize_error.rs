@@ -1,8 +1,9 @@
 //! Errors returned by the EIP-8130 actor authorization step.
 
 use alloy_primitives::{Address, B256};
-use base_execution_eip8130::AuthError;
 use base_precompile_storage::BasePrecompileError;
+
+use crate::AuthError;
 
 /// Reason an actor could not be authorized for an account.
 ///
