@@ -21,9 +21,6 @@ pub struct BaseSepolia;
 impl BaseSepolia {
     /// Returns the Base Sepolia [`ChainConfig`].
     pub fn l1_config() -> ChainConfig {
-        let mut extra_fields = alloy_serde::OtherFields::default();
-        extra_fields.insert("optimism".to_string(), serde_json::json!({}));
-
         ChainConfig {
             chain_id: 84532,
             // All pre-merge hardforks active at genesis (OP Stack L2, post-merge chain).
@@ -64,7 +61,7 @@ impl BaseSepolia {
             deposit_contract_address: None,
             clique: None,
             parlia: None,
-            extra_fields,
+            extra_fields: Default::default(),
             terminal_total_difficulty_passed: false,
             _non_exhaustive: (),
         }
@@ -73,20 +70,12 @@ impl BaseSepolia {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::L1TxFormat;
-
     use super::*;
 
     #[test]
     fn base_sepolia_chain_id() {
         let cfg = BaseSepolia::l1_config();
         assert_eq!(cfg.chain_id, 84532);
-    }
-
-    #[test]
-    fn base_sepolia_l1_tx_format_is_base() {
-        let cfg = BaseSepolia::l1_config();
-        assert_eq!(L1TxFormat::from_l1_config(&cfg), L1TxFormat::Base);
     }
 
     #[test]
