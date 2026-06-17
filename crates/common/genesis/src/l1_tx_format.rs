@@ -24,8 +24,20 @@ impl L1TxFormat {
     /// Derives the parent-chain transaction format from an L1 config.
     ///
     /// This only selects decoding for bytes already committed by L1 header roots.
+    /// Detection uses the `"optimism"` extra field when present (e.g. configs deserialized
+    /// from JSON) and falls back to a known chain-ID allowlist for statically-constructed
+    /// configs that cannot set `extra_fields` without a `serde_json` dependency.
     pub fn from_l1_config(cfg: &ChainConfig) -> Self {
-        if cfg.extra_fields.contains_key("optimism") { Self::Base } else { Self::Ethereum }
+        if cfg.extra_fields.contains_key("optimism") || Self::is_op_stack_chain(cfg.chain_id) {
+            Self::Base
+        } else {
+            Self::Ethereum
+        }
+    }
+
+    /// Returns `true` for chain IDs of known OP Stack L2s used as settlement layers.
+    const fn is_op_stack_chain(chain_id: u64) -> bool {
+        matches!(chain_id, 8453 | 84532)
     }
 }
 
@@ -51,5 +63,21 @@ mod tests {
         let cfg = ChainConfig::default();
 
         assert_eq!(L1TxFormat::from_l1_config(&cfg), L1TxFormat::Ethereum);
+    }
+
+    #[test]
+    fn base_sepolia_chain_id_derives_base_format() {
+        let mut cfg = ChainConfig::default();
+        cfg.chain_id = 84532;
+
+        assert_eq!(L1TxFormat::from_l1_config(&cfg), L1TxFormat::Base);
+    }
+
+    #[test]
+    fn base_mainnet_chain_id_derives_base_format() {
+        let mut cfg = ChainConfig::default();
+        cfg.chain_id = 8453;
+
+        assert_eq!(L1TxFormat::from_l1_config(&cfg), L1TxFormat::Base);
     }
 }
