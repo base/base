@@ -5,11 +5,11 @@ use std::time::Duration;
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result};
 use base_protocol::{BlockInfo, L2BlockInfo};
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusReport, TimestampJson, fetch_block,
-    fetch_sync_status, format_duration, format_unix_timestamp,
+    JsonOutput, KeyValueTable, MissingConsensusRpcError, MonitoringConfig, SyncStatusReport,
+    TimestampJson, fetch_block, fetch_sync_status, format_duration, format_unix_timestamp,
 };
 use serde::Serialize;
 use url::Url;
@@ -32,12 +32,15 @@ pub(crate) async fn run(
         fetch_sync_status(&el_rpc, &cl_rpc),
         fetch_block(&config.rpc, BlockId::Number(BlockNumberOrTag::Latest)),
     );
-    let report = sync_result?;
+    let report = sync_result
+        .with_context(|| format!("failed to fetch sync status from EL {el_rpc} and CL {cl_rpc}"))?;
     let public_tip_block = tip_result.ok().map(|b| b.header.number);
     let tip_url = config.rpc.as_str();
 
     match (json, raw) {
-        (true, true) => JsonOutput::print(&report.cl)?,
+        (true, true) => {
+            JsonOutput::print(&report.cl).context("failed to write sync-status output")?
+        }
         (true, false) => {
             let summary = SyncStatusJson::from_report(
                 &config.name,
@@ -46,10 +49,11 @@ pub(crate) async fn run(
                 public_tip_block,
                 tip_tolerance,
             );
-            JsonOutput::print(&summary)?;
+            JsonOutput::print(&summary).context("failed to write sync-status output")?;
         }
         (false, _) => {
-            print_pretty(&config.name, &report, tip_url, public_tip_block, tip_tolerance)?;
+            print_pretty(&config.name, &report, tip_url, public_tip_block, tip_tolerance)
+                .context("failed to write sync-status output")?;
         }
     }
     Ok(())
@@ -60,17 +64,16 @@ pub(crate) async fn run(
 ///
 /// The mainnet and sepolia presets ship `consensus_node_rpc: None`, so
 /// non-devnet users must supply the URL explicitly.
-fn resolve_cl_rpc(config: &MonitoringConfig, override_url: Option<&Url>) -> Result<Url> {
+fn resolve_cl_rpc(
+    config: &MonitoringConfig,
+    override_url: Option<&Url>,
+) -> Result<Url, MissingConsensusRpcError> {
     if let Some(u) = override_url {
         return Ok(u.clone());
     }
-    config.consensus_node_rpc.clone().ok_or_else(|| {
-        anyhow!(
-            "sync-status needs a consensus-node RPC URL.\n\
-             The '{}' config does not set `consensus_node_rpc`.\n\
-             Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config.",
-            config.name
-        )
+    config.consensus_node_rpc.clone().ok_or_else(|| MissingConsensusRpcError::Missing {
+        config_name: config.name.clone(),
+        command_name: "sync-status".to_string(),
     })
 }
 
@@ -346,11 +349,31 @@ fn format_block_info(b: &BlockInfo) -> String {
 #[cfg(test)]
 mod tests {
     use alloy_eips::BlockNumHash;
-    use alloy_primitives::B256;
+    use alloy_primitives::{Address, B256};
     use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
-    use basectl_cli::SyncStatusReport;
+    use basectl_cli::{MissingConsensusRpcError, MonitoringConfig, SyncStatusReport};
+    use url::Url;
 
-    use super::SyncStatusJson;
+    use super::{SyncStatusJson, resolve_cl_rpc};
+
+    fn test_config(consensus_node_rpc: Option<Url>) -> MonitoringConfig {
+        MonitoringConfig {
+            name: "mainnet".to_string(),
+            rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
+            flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
+            l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
+            consensus_node_rpc,
+            upgrades: None,
+            system_config: Address::ZERO,
+            batcher_address: None,
+            l1_blob_target: 14,
+            conductors: None,
+            discovery: None,
+            validators: None,
+            proofs: None,
+            pods: None,
+        }
+    }
 
     fn sample_l2(block: u64, ts: u64) -> L2BlockInfo {
         L2BlockInfo::new(
@@ -376,6 +399,19 @@ mod tests {
             finalized_l2: sample_l2(18_425_000, 1_780_260_000),
             local_safe_l2: L2BlockInfo::default(),
         }
+    }
+
+    #[test]
+    fn resolve_cl_rpc_errors_without_config() {
+        let config = test_config(None);
+
+        assert!(matches!(
+            resolve_cl_rpc(&config, None).unwrap_err(),
+            MissingConsensusRpcError::Missing {
+                config_name,
+                command_name,
+            } if config_name == "mainnet" && command_name == "sync-status"
+        ));
     }
 
     #[test]

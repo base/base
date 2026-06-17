@@ -146,7 +146,7 @@ pub enum P2pTargetError {
 }
 
 /// Error returned by the `p2p` command group.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum P2pCommandError {
     /// Some peers failed during `unban-all`.
