@@ -595,7 +595,9 @@ pub async fn replay_capture(request: ReplayRequest) -> ReplayResult<Vec<ReplaySu
         provider.clone(),
         Arc::new(chain_spec.clone()),
         request.block_number,
-        load_captured_block(&request.capture_dir, request.block_number)?.block_hash.unwrap_or_default(),
+        load_captured_block(&request.capture_dir, request.block_number)?
+            .block_hash
+            .unwrap_or_default(),
         std::iter::empty(),
     );
     let variants = replay_variants(&request);
@@ -728,14 +730,8 @@ where
         .await?;
     }
 
-    replay_with_state_processor(
-        client,
-        &captures,
-        &pending_rpc_by_flashblock,
-        events,
-        variant,
-    )
-    .await
+    replay_with_state_processor(client, &captures, &pending_rpc_by_flashblock, events, variant)
+        .await
 }
 
 type PendingRpcByFlashblock = HashMap<(u64, u64), Vec<TransactionWithLogs>>;
