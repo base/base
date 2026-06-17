@@ -53,7 +53,6 @@ impl ProposerService {
             dry_run = config.dry_run,
             allow_non_finalized = config.allow_non_finalized,
             direct_prover_rpc = config.direct_prover_rpc,
-            auto_resolve = config.auto_resolve,
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
@@ -223,7 +222,6 @@ impl ProposerService {
                     config.dispute_game_factory_addr,
                     config.game_type,
                     init_bond,
-                    config.auto_resolve,
                 );
                 (Arc::new(submitter), Some(sender_addr))
             };

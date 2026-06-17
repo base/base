@@ -187,15 +187,6 @@ pub struct ProposerArgs {
     )]
     pub direct_prover_rpc: bool,
 
-    /// Automatically resolve dispute games immediately after creation.
-    /// Intended for use where finality delays are zero.
-    #[arg(
-        long = "auto-resolve",
-        env = cli_env!("AUTO_RESOLVE"),
-        default_value = "false"
-    )]
-    pub auto_resolve: bool,
-
     /// Transaction manager configuration.
     #[command(flatten)]
     pub tx_manager: TxManagerCli,

@@ -17,7 +17,6 @@ alloy-provider.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-alloy-rpc-types-eth.workspace = true
 
 # Tx Manager
 base-tx-manager.workspace = true
@@ -73,6 +72,7 @@ humantime.workspace = true
 rstest.workspace = true
 serde_json.workspace = true
 alloy-consensus.workspace = true
+alloy-rpc-types-eth.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
 metrics-util = { workspace = true, features = ["debugging"] }

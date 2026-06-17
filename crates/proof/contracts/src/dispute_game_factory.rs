@@ -13,9 +13,6 @@ sol! {
     /// `DisputeGameFactory` contract interface.
     #[sol(rpc)]
     interface IDisputeGameFactory {
-        /// Emitted when a new dispute game is created.
-        event DisputeGameCreated(address indexed disputeProxy, uint32 indexed gameType, bytes32 indexed rootClaim);
-
         /// Error returned when a game with the same UUID already exists.
         error GameAlreadyExists(bytes32 uuid);
 

@@ -95,8 +95,6 @@ pub struct ProposerConfig {
     /// Use direct `ProverClient::prove` instead of the async dispatch+collect
     /// pattern via `ProofRequesterProver`.
     pub direct_prover_rpc: bool,
-    /// Automatically resolve dispute games immediately after creation.
-    pub auto_resolve: bool,
 }
 
 impl ProposerConfig {
@@ -213,7 +211,6 @@ impl ProposerConfig {
             recovery_scan_concurrency: proposer.recovery_scan_concurrency,
             tee_prover_registry_address: proposer.tee_prover_registry_address,
             direct_prover_rpc: proposer.direct_prover_rpc,
-            auto_resolve: proposer.auto_resolve,
         })
     }
 }
@@ -288,7 +285,6 @@ mod tests {
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
                 direct_prover_rpc: false,
-                auto_resolve: false,
                 tx_manager: TxManagerCli::default(),
             },
             logging: LogArgs {
