@@ -184,7 +184,6 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             block_number = receipt.block_number,
             "Proposal transaction confirmed"
         );
-
         Ok(())
     }
 }

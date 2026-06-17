@@ -14,13 +14,10 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_primitives::ProverClient;
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
 };
-use base_prover_service_client::{
-    ProofRequesterClient, ProofRequesterProvider, ProverServiceClientConfig,
-};
+use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -29,12 +26,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    Metrics, ProofRequesterProver,
+    Metrics,
     config::ProposerConfig,
     constants::MAX_PROOF_RETRIES,
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::ProposalSubmitter,
-    pipeline::{PipelineConfig, ProvingPipeline},
+    pipeline::{PipelineConfig, ProofBackend, ProvingPipeline},
 };
 
 /// Top-level proposer service.
@@ -93,10 +90,7 @@ impl ProposerService {
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        let (prover_client, proof_requester): (
-            Arc<dyn ProverClient>,
-            Option<Arc<dyn ProofRequesterProvider>>,
-        ) = if config.direct_prover_rpc {
+        let backend = if config.direct_prover_rpc {
             let client = HttpClientBuilder::default()
                 .request_timeout(config.prover_timeout)
                 .build(config.prover_rpc.as_str())
@@ -105,21 +99,15 @@ impl ProposerService {
                 endpoint = %config.prover_rpc,
                 "Direct prover RPC client initialized (bypassing prover-service)"
             );
-            (Arc::new(client), None)
+            ProofBackend::direct(Arc::new(client))
         } else {
             let prover_service_config =
                 ProverServiceClientConfig::new(config.prover_rpc.to_string())
                     .with_max_wait(config.prover_timeout);
-            let proof_requester = ProofRequesterClient::connect(&prover_service_config)
+            let requester = ProofRequesterClient::connect(&prover_service_config)
                 .wrap_err("failed to create prover-service requester client")?;
-            let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);
-            let prover_client: Arc<dyn ProverClient> = Arc::new(ProofRequesterProver::aws_nitro(
-                Arc::clone(&proof_requester),
-                prover_service_config.poll_interval(),
-                prover_service_config.max_wait(),
-            ));
             info!(endpoint = %config.prover_rpc, "Prover-service requester client initialized");
-            (prover_client, Some(proof_requester))
+            ProofBackend::service(Arc::new(requester))
         };
 
         let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
@@ -245,8 +233,7 @@ impl ProposerService {
         };
         let pipeline = ProvingPipeline::new(
             pipeline_config,
-            prover_client,
-            proof_requester,
+            backend,
             l1_client,
             l2_client,
             rollup_client,
