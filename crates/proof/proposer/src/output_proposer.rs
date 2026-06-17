@@ -713,9 +713,7 @@ mod tests {
         }
     }
 
-    fn auto_resolve_submitter(
-        responses: Vec<SendResponse>,
-    ) -> ProposalSubmitter<MockTxManager> {
+    fn auto_resolve_submitter(responses: Vec<SendResponse>) -> ProposalSubmitter<MockTxManager> {
         ProposalSubmitter::new(
             MockTxManager::with_responses(responses),
             Address::repeat_byte(0x01),
@@ -757,9 +755,7 @@ mod tests {
     async fn auto_resolve_no_event_still_succeeds() {
         let create_hash = B256::repeat_byte(0xCC);
 
-        let submitter = auto_resolve_submitter(vec![
-            Ok(receipt_with_status(true, create_hash)),
-        ]);
+        let submitter = auto_resolve_submitter(vec![Ok(receipt_with_status(true, create_hash))]);
 
         let result = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await;
         assert!(result.is_ok(), "propose_output should succeed even without event");
@@ -780,10 +776,7 @@ mod tests {
         ]);
 
         let result = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await;
-        assert!(
-            result.is_ok(),
-            "propose_output must return Ok even when resolve reverts"
-        );
+        assert!(result.is_ok(), "propose_output must return Ok even when resolve reverts");
     }
 
     #[tokio::test]
@@ -797,9 +790,6 @@ mod tests {
         ]);
 
         let result = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await;
-        assert!(
-            result.is_ok(),
-            "propose_output must return Ok even when resolve tx fails"
-        );
+        assert!(result.is_ok(), "propose_output must return Ok even when resolve tx fails");
     }
 }
