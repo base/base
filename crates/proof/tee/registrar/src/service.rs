@@ -27,6 +27,8 @@ use crate::{
     SignerManager, SignerManagerConfig,
 };
 
+const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Configuration needed to run the registrar service.
 pub struct RegistrarConfig {
     /// L1 Ethereum RPC endpoint.
@@ -224,7 +226,7 @@ impl RegistrarConfig {
         ));
         let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             Some(CertManager::new(
-                Duration::from_secs(30),
+                CRL_FETCH_TIMEOUT,
                 Box::new(NitroVerifierContractClient::new(nitro_verifier_address, self.l1_rpc_url)),
                 tx_manager,
             )?)
