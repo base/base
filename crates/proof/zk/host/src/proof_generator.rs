@@ -77,6 +77,12 @@ pub struct ProofGenerator<Client> {
     poll_interval: Duration,
 }
 
+struct ResolvedBackendSession {
+    backend_session_id: String,
+    needs_polling: bool,
+    needs_completion_record: bool,
+}
+
 impl<Client> ProofGenerator<Client> {
     /// Create a proof generator with its own submission cancellation token.
     pub fn new(
@@ -226,24 +232,33 @@ where
             .get(session_type)
             .await
             .map_err(|error| ZkProverError::Session(Box::new(error)))?;
-        let (backend_session_id, should_poll, should_record_completion) =
+        let resolved =
             self.resolve_backend_session(request, &handle, session_type, existing).await?;
 
-        if should_poll {
-            self.wait_for_backend_session(request, &handle, session_type, &backend_session_id)
-                .await?;
+        if resolved.needs_polling {
+            self.wait_for_backend_session(
+                request,
+                &handle,
+                session_type,
+                &resolved.backend_session_id,
+            )
+            .await?;
         }
 
-        let proof = self.prover.download(&backend_session_id).await?;
+        let proof = self.prover.download(&resolved.backend_session_id).await?;
 
-        if should_record_completion
+        if resolved.needs_completion_record
             && let Err(error) = handle
-                .record(session_type, backend_session_id.clone(), BackendSessionState::Completed)
+                .record(
+                    session_type,
+                    resolved.backend_session_id.clone(),
+                    BackendSessionState::Completed,
+                )
                 .await
         {
             warn!(
                 session_id = %request.claim.session_id,
-                backend_session_id = %backend_session_id,
+                backend_session_id = %resolved.backend_session_id,
                 error = %error,
                 "failed to record backend session completion"
             );
@@ -258,7 +273,7 @@ where
         handle: &ProofSessionHandle<Client>,
         session_type: SessionType,
         existing: Option<BackendSession>,
-    ) -> Result<(String, bool, bool), ZkProverError> {
+    ) -> Result<ResolvedBackendSession, ZkProverError> {
         match existing {
             Some(BackendSession { backend_session_id, state: BackendSessionState::Running }) => {
                 info!(
@@ -266,7 +281,11 @@ where
                     backend_session_id = %backend_session_id,
                     "resuming in-flight backend session"
                 );
-                Ok((backend_session_id, true, true))
+                Ok(ResolvedBackendSession {
+                    backend_session_id,
+                    needs_polling: true,
+                    needs_completion_record: true,
+                })
             }
             Some(BackendSession { backend_session_id, state: BackendSessionState::Completed }) => {
                 info!(
@@ -274,7 +293,11 @@ where
                     backend_session_id = %backend_session_id,
                     "backend session already completed, skipping to download"
                 );
-                Ok((backend_session_id, false, false))
+                Ok(ResolvedBackendSession {
+                    backend_session_id,
+                    needs_polling: false,
+                    needs_completion_record: false,
+                })
             }
             None
             | Some(BackendSession {
@@ -294,7 +317,11 @@ where
                     backend_session_id = %backend_session_id,
                     "submitted backend session and recorded it"
                 );
-                Ok((backend_session_id, true, true))
+                Ok(ResolvedBackendSession {
+                    backend_session_id,
+                    needs_polling: true,
+                    needs_completion_record: true,
+                })
             }
         }
     }
@@ -318,6 +345,12 @@ where
                 }
                 ZkSessionState::Completed => return Ok(()),
                 ZkSessionState::Failed(reason) => {
+                    warn!(
+                        session_id = %request.claim.session_id,
+                        backend_session_id = %backend_session_id,
+                        error = %reason,
+                        "backend session failed; marking for resubmission"
+                    );
                     self.record_backend_resubmission(
                         request,
                         handle,
@@ -331,6 +364,11 @@ where
                     });
                 }
                 ZkSessionState::NotFound => {
+                    warn!(
+                        session_id = %request.claim.session_id,
+                        backend_session_id = %backend_session_id,
+                        "backend session not found; marking for resubmission"
+                    );
                     self.record_backend_resubmission(
                         request,
                         handle,
@@ -353,8 +391,8 @@ where
         session_type: SessionType,
         backend_session_id: &str,
     ) {
-        // Worker upsert rejects terminal states; Submitting makes the next claim
-        // replace this dead backend session instead of resuming it.
+        // Worker upsert rejects terminal states; poll branches log the failure
+        // detail, then Submitting makes the next claim replace this session.
         if let Err(error) = handle
             .record(session_type, backend_session_id.to_owned(), BackendSessionState::Submitting)
             .await
@@ -419,6 +457,8 @@ where
                             timeout = ?DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT,
                             "timed out waiting for zk proof generation after heartbeat failure"
                         );
+                        // Keep the recorded Running backend session. A heartbeat failure means
+                        // this worker lost its claim, not that the backend job has stopped.
                     }
                 }
 
