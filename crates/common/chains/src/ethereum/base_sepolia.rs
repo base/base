@@ -20,6 +20,8 @@ use alloy_serde::OtherFields;
 pub struct BaseSepolia;
 
 impl BaseSepolia {
+    const TTD: u128 = 0;
+
     /// Returns the Base Sepolia [`ChainConfig`].
     pub fn l1_config() -> ChainConfig {
         let mut extra_fields = OtherFields::default();
@@ -59,7 +61,7 @@ impl BaseSepolia {
             ethash: Some(EthashConfig {}),
             blob_schedule: super::BlobSchedule::schedule(),
             // OP Stack L2: no PoW, TTD = 0 (matches Hoodi pattern for post-merge genesis).
-            terminal_total_difficulty: Some(U256::from(0u128)),
+            terminal_total_difficulty: Some(U256::from(Self::TTD)),
             merge_netsplit_block: None,
             // No beacon deposit contract on an OP Stack L2.
             deposit_contract_address: None,
