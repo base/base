@@ -28,6 +28,9 @@ RUN go build -o /go/bin/eth2-val-tools .
 # The foundry image is Ubuntu-based and multi-arch (amd64/arm64)
 FROM ghcr.io/foundry-rs/foundry:v1.7.1 AS contracts-builder
 
+# base/contracts l3-changes commit (PRIV-1997, #345) that adds SystemDeploy's deferred
+# AggregateVerifier registration (registerAggregateVerifier) and Artifacts.load for the
+# re-entrant post-genesis registration flow.
 ARG CONTRACTS_COMMIT=65dd69c69b3cb118341e89ed43377e01e75bcc6e
 
 # git is pre-installed in the foundry image (Ubuntu 22.04)

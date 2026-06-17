@@ -41,6 +41,9 @@ replace_output_file() {
 MULTIPROOF_CONFIG_HASH="${MULTIPROOF_CONFIG_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}"
 DEV_TEE_SIGNER="${DEV_TEE_SIGNER:-0x0000000000000000000000000000000000000000}"
 TEE_IMAGE_HASH="${TEE_IMAGE_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}"
+# When true, SystemDeploy skips the AggregateVerifier; the register-aggregate-verifier one-shot
+# deploys + registers it after L2 genesis with the real config hash (see devnet-l3-env).
+MULTIPROOF_DEFER_REGISTRATION="${MULTIPROOF_DEFER_REGISTRATION:-false}"
 
 if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
@@ -166,6 +169,7 @@ echo "--- Step 2: Deploying L1 contracts ---"
   cd /contracts
   FOUNDRY_SCRIPT_EXECUTION_PROTECTION=false \
     DEPLOY_CONFIG_PATH="$WORKDIR/deploy-config/devnet.json" \
+    MULTIPROOF_DEFER_REGISTRATION="$MULTIPROOF_DEFER_REGISTRATION" \
     forge script scripts/deploy/SystemDeploy.s.sol:SystemDeploy \
     --sender "$DEPLOYER_ADDR" \
     --rpc-url "$L1_RPC_URL" \
@@ -173,6 +177,15 @@ echo "--- Step 2: Deploying L1 contracts ---"
     --broadcast \
     --slow
 )
+
+# When deferring AggregateVerifier registration, persist the deploy outfile to the shared
+# volume. The deploy ran in this container's ephemeral /contracts/deployments, but the
+# post-genesis register-aggregate-verifier one-shot runs in a fresh container and reloads
+# these addresses (via Artifacts.load) to deploy + register the verifier.
+if [ "$MULTIPROOF_DEFER_REGISTRATION" = "true" ]; then
+  cp "$WORKDIR/deployments/${L1_CHAIN_ID}-deploy.json" "$OUTPUT_DIR/${L1_CHAIN_ID}-deploy.json"
+  echo "Copied deploy outfile to $OUTPUT_DIR/${L1_CHAIN_ID}-deploy.json for deferred registration"
+fi
 
 # Step 3: Generate L2 genesis allocs via forge script
 # Uses L2GenesisDevnet.s.sol wrapper that reads deploy-config + L1 addresses,
