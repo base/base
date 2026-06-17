@@ -230,11 +230,12 @@ pub struct CrlError(
 
 #[cfg(test)]
 mod tests {
+    use hex_literal::hex;
+
     use super::*;
     use crate::test_utils::{
         CertFixtures, INTER1_HEX, INTER2_HEX, INTER3_HEX, INVALID_DER_BYTES, LEAF_HEX, ROOT_HEX,
     };
-    use hex_literal::hex;
 
     const INTER1_EXPECTED_CRL_URL: &str = "http://aws-nitro-enclaves-crl.s3.amazonaws.com/crl/ab4960cc-7d63-42bd-9e9f-59338cb67f84.crl";
 
