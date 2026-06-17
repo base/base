@@ -273,6 +273,10 @@ where
                 );
                 false
             }
+            Ok(true) if cancel.is_cancelled() => {
+                debug!(signer = %signer, "shutdown requested before submitting orphan deregistration");
+                false
+            }
             Ok(true) => {
                 let candidate = TxCandidate {
                     tx_data: Bytes::from(
@@ -510,6 +514,23 @@ mod tests {
             self.get_registered_signers_started.notify_waiters();
             std::future::pending::<()>().await;
             Ok(vec![])
+        }
+    }
+
+    #[derive(Debug)]
+    struct CancellingRegistry {
+        cancel: CancellationToken,
+    }
+
+    #[async_trait]
+    impl RegistryClient for CancellingRegistry {
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            self.cancel.cancel();
+            Ok(true)
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            Ok(vec![SIGNER_A])
         }
     }
 
@@ -970,6 +991,21 @@ mod tests {
             .await
             .expect("run_orphan_dereg should stop promptly after cancellation")
             .unwrap();
+        assert!(manager.tx_manager.take_sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_orphan_dereg_respects_cancellation_after_verifying_signer() {
+        let cancel = CancellationToken::new();
+        let manager = SignerManager::new(
+            RecordingProofProvider::default(),
+            CancellingRegistry { cancel: cancel.clone() },
+            RecordingTxManager::default(),
+            config(),
+        );
+
+        manager.run_orphan_dereg(|_| false, &cancel).await.unwrap();
+
         assert!(manager.tx_manager.take_sent().is_empty());
     }
 
