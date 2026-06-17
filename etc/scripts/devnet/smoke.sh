@@ -59,7 +59,7 @@ if [ -f "$CONFIG_HASH_FILE" ]; then
     fi
     echo "AggregateVerifier (game type $MULTIPROOF_GAME_TYPE): $VERIFIER"
 
-    ONCHAIN_HASH=$(cast call --rpc-url "$L1_RPC" "$VERIFIER" "CONFIG_HASH()(bytes32)" | tr '[:upper:]' '[:lower:]')
+    ONCHAIN_HASH=$(cast call --rpc-url "$L1_RPC" "$VERIFIER" "CONFIG_HASH()(bytes32)" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
     echo "On-chain CONFIG_HASH: $ONCHAIN_HASH"
     echo "Expected  CONFIG_HASH: $EXPECTED_HASH"
 

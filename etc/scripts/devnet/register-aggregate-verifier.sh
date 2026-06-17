@@ -49,10 +49,14 @@ fi
 
 # Regenerate the deploy config from the template exactly as setup-l2.sh step 1 did, so the
 # verifier's non-hash inputs (teeImageHash, intervals, game type, …) match the original deploy.
+# Override MULTIPROOF_CONFIG_HASH with the computed hash (the env carries only the deploy-time
+# placeholder) so the regenerated devnet.json is self-consistent with the value we register —
+# the forge arg below is authoritative, but this avoids a stale hash on disk being read silently.
 echo ""
 echo "--- Regenerating deploy-config.json ---"
 mkdir -p "$WORKDIR/deploy-config"
-envsubst <"$TEMPLATE_DIR/deploy-config.json.template" >"$WORKDIR/deploy-config/devnet.json"
+MULTIPROOF_CONFIG_HASH="$MULTIPROOF_CONFIG_HASH_COMPUTED" \
+  envsubst <"$TEMPLATE_DIR/deploy-config.json.template" >"$WORKDIR/deploy-config/devnet.json"
 
 echo ""
 echo "--- Calling registerAggregateVerifier ---"
