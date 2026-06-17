@@ -485,6 +485,24 @@ impl ClusterZkProver {
                             "cluster proof {proof_id} created concurrently but has unspecified status"
                         ));
                     }
+                    if proof_status == ProofRequestStatus::Pending {
+                        let now = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_err(|e| backend_error!("invalid unix timestamp: {e}"))?
+                            .as_secs();
+                        if existing.deadline <= now {
+                            error!(
+                                proof_id = %proof_id,
+                                deadline = existing.deadline,
+                                now = now,
+                                error = %e,
+                                "cluster proof create raced into expired pending request"
+                            );
+                            return Err(backend_error!(
+                                "cluster proof {proof_id} created concurrently but deadline already elapsed"
+                            ));
+                        }
+                    }
 
                     info!(
                         proof_id = %proof_id,
