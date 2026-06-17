@@ -66,7 +66,14 @@ impl<B: ProverBackend> ProverService<B> {
         &self,
         request: ProofRequest,
     ) -> Result<ProofResult, ProverError<B>> {
-        info!(l2_block = request.claimed_l2_block_number, "starting proof generation");
+        info!(
+            l2_block = request.claimed_l2_block_number,
+            l1_head = %request.l1_head,
+            l1_head_number = request.l1_head_number,
+            agreed_l2_head = %request.agreed_l2_head_hash,
+            intermediate_block_interval = request.intermediate_block_interval,
+            "starting proof generation"
+        );
 
         let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
         let l1_header_cache = self.l1_header_cache.get_or_init(L1HeaderCache::new).clone();

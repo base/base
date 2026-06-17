@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use alloy_provider::{Network, RootProvider};
+use alloy_provider::{Network, Provider, RootProvider};
 use base_common_evm::BaseEvmFactory;
 use base_common_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
@@ -14,7 +14,7 @@ use tokio::{
     sync::RwLock,
     task::{self, JoinHandle},
 };
-use tracing::{Instrument, info, info_span};
+use tracing::{Instrument, info, info_span, warn};
 
 #[cfg(feature = "disk")]
 use crate::DiskKeyValueStore;
@@ -98,6 +98,42 @@ impl Host {
 
         let kv_store = self.create_key_value_store()?;
         let providers = self.create_providers().await?;
+        match providers.l1.get_block_number().await {
+            Ok(l1_provider_head_number)
+                if l1_provider_head_number < self.config.request.l1_head_number =>
+            {
+                warn!(
+                    l2_block = self.config.request.claimed_l2_block_number,
+                    requested_l1_head = %self.config.request.l1_head,
+                    requested_l1_head_number = self.config.request.l1_head_number,
+                    l1_provider_head_number,
+                    l1_provider_lag_blocks = self
+                        .config
+                        .request
+                        .l1_head_number
+                        .saturating_sub(l1_provider_head_number),
+                    "l1 provider is behind requested l1 head before witness capture"
+                );
+            }
+            Ok(l1_provider_head_number) => {
+                info!(
+                    l2_block = self.config.request.claimed_l2_block_number,
+                    requested_l1_head = %self.config.request.l1_head,
+                    requested_l1_head_number = self.config.request.l1_head_number,
+                    l1_provider_head_number,
+                    "l1 provider head before witness capture"
+                );
+            }
+            Err(err) => {
+                warn!(
+                    l2_block = self.config.request.claimed_l2_block_number,
+                    requested_l1_head = %self.config.request.l1_head,
+                    requested_l1_head_number = self.config.request.l1_head_number,
+                    error = %err,
+                    "failed to read l1 provider head before witness capture"
+                );
+            }
+        }
         let backend = Arc::new(
             OnlineHostBackend::new_with_l1_header_cache(
                 self.config.clone(),

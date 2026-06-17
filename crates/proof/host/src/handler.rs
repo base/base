@@ -24,7 +24,7 @@ use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
 use futures::FutureExt;
 use tokio::sync::Semaphore;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     HostConfig, HostError, HostProviders, Metrics, Result, SharedKeyValueStore, store_ordered_trie,
@@ -659,9 +659,10 @@ impl L1HeaderPrefetcher {
         let decoded_header = match Header::decode(&mut raw_header.as_ref()) {
             Ok(header) => header,
             Err(err) => {
-                debug!(
+                warn!(
                     target: HOST_SERVER_TARGET,
                     block_number,
+                    raw_header_len = raw_header.len(),
                     error = %err,
                     "l1 header prefetch skipped: failed to decode raw header"
                 );
@@ -930,7 +931,7 @@ async fn handle_hint_inner(
             }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
-            let (raw_header, should_mark_ready) = if let Some(prefetcher) =
+            let (raw_header, should_mark_ready, raw_header_source) = if let Some(prefetcher) =
                 l1_header_prefetcher.as_ref()
                 && let Some(raw_header) = prefetcher.get_ready(hash)
             {
@@ -939,13 +940,35 @@ async fn handle_hint_inner(
                     hash = %hash,
                     "l1 header served from prefetch cache"
                 );
-                (raw_header, false)
+                (raw_header, false, "prefetch_cache")
             } else {
                 let raw_header: Bytes =
                     providers.l1.client().request("debug_getRawHeader", [hash]).await?;
-                (raw_header, true)
+                (raw_header, true, "rpc")
             };
-            let header = Header::decode(&mut raw_header.as_ref())?;
+            if raw_header.len() < 512 {
+                warn!(
+                    target: HOST_SERVER_TARGET,
+                    hash = %hash,
+                    raw_header_len = raw_header.len(),
+                    raw_header_source,
+                    "l1 header raw rlp is suspiciously short"
+                );
+            }
+            let header = match Header::decode(&mut raw_header.as_ref()) {
+                Ok(header) => header,
+                Err(err) => {
+                    error!(
+                        target: HOST_SERVER_TARGET,
+                        hash = %hash,
+                        raw_header_len = raw_header.len(),
+                        raw_header_source,
+                        error = %err,
+                        "failed to decode l1 header rlp"
+                    );
+                    return Err(err.into());
+                }
+            };
             let decoded_hash = header.hash_slow();
             if decoded_hash != hash {
                 return Err(HostError::HeaderPreimageHashMismatch {

@@ -167,6 +167,8 @@ where
             lock_id = %request.lock_id,
             worker_id = %request.worker_id,
             l2_block = request.proof.claimed_l2_block_number,
+            l1_head = %request.proof.l1_head,
+            l1_head_number = request.proof.l1_head_number,
             "starting nitro proof generation"
         );
 
@@ -182,6 +184,8 @@ where
                     lock_id = %request.lock_id,
                     worker_id = %request.worker_id,
                     l2_block,
+                    l1_head = %request.proof.l1_head,
+                    l1_head_number = request.proof.l1_head_number,
                     error = %source,
                     "nitro proof generation failed"
                 );
@@ -194,6 +198,8 @@ where
                     lock_id = %request.lock_id,
                     worker_id = %request.worker_id,
                     l2_block,
+                    l1_head = %request.proof.l1_head,
+                    l1_head_number = request.proof.l1_head_number,
                     error = %source,
                     "aborting nitro proof generation due to heartbeat failure"
                 );
@@ -230,6 +236,9 @@ where
             session_id = %request.session_id,
             lock_id = %request.lock_id,
             worker_id = %request.worker_id,
+            l2_block,
+            l1_head = %request.proof.l1_head,
+            l1_head_number = request.proof.l1_head_number,
             "nitro proof generated; proof submitter task spawned"
         );
 

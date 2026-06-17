@@ -50,7 +50,14 @@ where
         loop {
             match oracle_server.next_preimage_request(backend.as_ref()).await {
                 Ok(_) => {}
-                Err(PreimageOracleError::IOError(_)) => return Ok(()),
+                Err(PreimageOracleError::IOError(e)) => {
+                    info!(
+                        target: "host_server",
+                        error = %e,
+                        "oracle server channel closed; exiting"
+                    );
+                    return Ok(());
+                }
                 Err(e) => {
                     error!(target: "host_server", error = %e, "failed to serve preimage request");
                     return Err(HostError::PreimageRequestFailed(e));
@@ -64,7 +71,10 @@ where
         loop {
             match hint_reader.next_hint(backend.as_ref()).await {
                 Ok(_) => {}
-                Err(PreimageOracleError::IOError(_)) => return Ok(()),
+                Err(PreimageOracleError::IOError(e)) => {
+                    info!(target: "host_server", error = %e, "hint router channel closed; exiting");
+                    return Ok(());
+                }
                 Err(e) => {
                     error!(target: "host_server", error = %e, "failed to route hint");
                     return Err(HostError::RouteHintFailed(e));
