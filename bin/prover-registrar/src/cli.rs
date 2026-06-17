@@ -47,9 +47,11 @@ pub(crate) struct Cli {
     /// JSON-RPC port to poll on each prover instance.
     #[arg(long, env = cli_env!("PROVER_PORT"), default_value_t = 8000)]
     prover_port: u16,
+
     /// Signer configuration (local private key or remote sidecar).
     #[command(flatten)]
     signer: SignerCli,
+
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
     #[command(flatten)]
     tx_manager: TxManagerCli,
@@ -162,6 +164,7 @@ pub(crate) struct Cli {
         value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
     )]
     max_concurrency: usize,
+
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -174,6 +177,7 @@ pub(crate) struct Cli {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     tx_retry_delay: u64,
+
     /// Grace period for registering newly launched unhealthy instances.
     #[arg(
         long,
@@ -181,13 +185,17 @@ pub(crate) struct Cli {
         default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS
     )]
     unhealthy_registration_window: u64,
+
     /// `NitroEnclaveVerifier` contract address for CRL checks.
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
     crl_nitro_verifier_address: Option<Address>,
+
     #[command(flatten)]
     health: HealthArgs,
+
     #[command(flatten)]
     log: LogArgs,
+
     #[command(flatten)]
     metrics: MetricsArgs,
 }
