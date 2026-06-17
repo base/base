@@ -2,11 +2,11 @@
 
 use std::io::{self, Write};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use basectl_cli::{
-    ConductorClusterSnapshot, ConductorControl, ConductorFanoutReport, ConductorNodeConfig,
-    ConductorNodeFailure, ConductorNodeStatus, ConductorSource, JsonOutput, KeyValueTable,
-    MonitoringConfig,
+    ConductorClusterSnapshot, ConductorCommandError, ConductorControl, ConductorFanoutReport,
+    ConductorNodeConfig, ConductorNodeFailure, ConductorNodeStatus, ConductorSource, JsonOutput,
+    KeyValueTable, MonitoringConfig,
 };
 use serde::Serialize;
 use tracing::warn;
@@ -18,7 +18,7 @@ use crate::{
         ConductorNodeActionArgs, ConductorStatusArgs,
     },
     confirm::{confirm_or_abort, confirm_typed_or_abort},
-    helpers::{CommandOutcome, find_node, fmt_bool, fmt_u32, fmt_u64, resolve_source},
+    helpers::{CommandOutcome, fmt_bool, fmt_u32, fmt_u64},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -86,7 +86,7 @@ pub(crate) async fn run(
     conductor_rpc: Option<Url>,
     command: ConductorCommands,
 ) -> Result<CommandOutcome> {
-    let source = resolve_source(&config, conductor_rpc, "conductor")?;
+    let source = resolve_source(&config, conductor_rpc)?;
     match command {
         ConductorCommands::Status(args) => run_status(config, source, args).await,
         ConductorCommands::TransferLeader(args) => run_transfer_leader(config, source, args).await,
@@ -110,12 +110,14 @@ async fn run_status(
     source: ConductorSource,
     args: ConductorStatusArgs,
 ) -> Result<CommandOutcome> {
-    let snapshot = ConductorControl::snapshot(source).await?;
+    let snapshot = ConductorControl::snapshot(source)
+        .await
+        .context("failed to fetch conductor status snapshot")?;
     let status = ConductorStatusJson::from_snapshot(&config.name, &snapshot);
     if args.json {
-        JsonOutput::print(&status)?;
+        JsonOutput::print(&status).context("failed to write conductor output")?;
     } else {
-        print_status_pretty(&status)?;
+        print_status_pretty(&status).context("failed to write conductor output")?;
     }
     Ok(CommandOutcome::Success)
 }
@@ -129,7 +131,7 @@ async fn run_transfer_leader(
     if let Some(target) = args.target.as_deref() {
         // Validate before prompting so a typo does not ask for confirmation and only
         // fail after the operator already answered yes.
-        find_node(&nodes, target, "conductor")?;
+        find_node(&nodes, target)?;
     }
 
     let prompt = args.target.as_deref().map_or_else(
@@ -141,11 +143,18 @@ async fn run_transfer_leader(
         },
         |target| format!("Transfer conductor leadership to {target} for {}? [y/N] ", config.name),
     );
-    if !confirm_or_abort(&prompt, args.yes)? {
+    if !confirm_or_abort(&prompt, args.yes).context("failed to read confirmation")? {
         return Ok(CommandOutcome::Success);
     }
 
-    let message = ConductorControl::transfer_leader(&nodes, args.target.as_deref()).await?;
+    let message = ConductorControl::transfer_leader(&nodes, args.target.as_deref())
+        .await
+        .with_context(|| {
+            args.target.as_ref().map_or_else(
+                || "failed to transfer conductor leadership".to_string(),
+                |target| format!("failed to transfer conductor leadership to {target}"),
+            )
+        })?;
     print_single_action(
         &ConductorActionJson::single(
             &config.name,
@@ -154,7 +163,8 @@ async fn run_transfer_leader(
             message,
         ),
         args.json,
-    )?;
+    )
+    .context("failed to write conductor output")?;
     Ok(CommandOutcome::Success)
 }
 
@@ -165,7 +175,7 @@ async fn run_node_action(
     action: NodeActionKind,
 ) -> Result<CommandOutcome> {
     let nodes = current_nodes_for_action(&source).await?;
-    let node = find_node(&nodes, &args.node, "conductor")?;
+    let node = find_node(&nodes, &args.node)?;
     let json_action = action.action();
     let prompt = format!(
         "{} conductor control loop on {} ({})? [y/N] ",
@@ -173,18 +183,23 @@ async fn run_node_action(
         node.name,
         node.conductor_rpc
     );
-    if !confirm_or_abort(&prompt, args.yes)? {
+    if !confirm_or_abort(&prompt, args.yes).context("failed to read confirmation")? {
         return Ok(CommandOutcome::Success);
     }
 
     let message = match action {
-        NodeActionKind::Pause => ConductorControl::pause_node(node).await?,
-        NodeActionKind::Unpause => ConductorControl::resume_node(node).await?,
+        NodeActionKind::Pause => ConductorControl::pause_node(node)
+            .await
+            .with_context(|| format!("failed to pause conductor node {}", node.name))?,
+        NodeActionKind::Unpause => ConductorControl::resume_node(node)
+            .await
+            .with_context(|| format!("failed to resume conductor node {}", node.name))?,
     };
     print_single_action(
         &ConductorActionJson::single(&config.name, json_action, Some(node.name.clone()), message),
         args.json,
-    )?;
+    )
+    .context("failed to write conductor output")?;
     Ok(CommandOutcome::Success)
 }
 
@@ -194,7 +209,7 @@ async fn run_cluster_action(
     args: ConductorClusterActionArgs,
     action: ClusterActionKind,
 ) -> Result<CommandOutcome> {
-    let (nodes, node_scope) = current_nodes_for_cluster_action(&source).await?;
+    let (nodes, node_scope) = current_nodes_for_cluster_action(&source, action).await?;
     let names = nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>().join(", ");
     let json_action = action.action();
     let prompt = format!(
@@ -205,7 +220,9 @@ async fn run_cluster_action(
         node_scope.description(),
         names
     );
-    if !confirm_typed_or_abort(&prompt, &config.name, args.yes)? {
+    if !confirm_typed_or_abort(&prompt, &config.name, args.yes)
+        .context("failed to read confirmation")?
+    {
         return Ok(CommandOutcome::Success);
     }
 
@@ -216,22 +233,36 @@ async fn run_cluster_action(
     print_fanout_action(
         &ConductorFanoutJson::from_report(&config.name, json_action, &report),
         args.json,
-    )?;
-    Ok(fanout_outcome(&report))
+    )
+    .context("failed to write conductor output")?;
+    Ok(CommandOutcome::from_failures(fanout_requires_failure_exit(&report)))
+}
+
+fn resolve_source(
+    config: &MonitoringConfig,
+    conductor_rpc: Option<Url>,
+) -> Result<ConductorSource, ConductorCommandError> {
+    config
+        .conductor_source(conductor_rpc)
+        .ok_or_else(|| ConductorCommandError::MissingSource { config_name: config.name.clone() })
 }
 
 async fn current_nodes_for_action(source: &ConductorSource) -> Result<Vec<ConductorNodeConfig>> {
     match source {
         ConductorSource::Static(nodes) => Ok(nodes.clone()),
         ConductorSource::Discover { .. } => {
-            let membership = ConductorControl::current_membership(source).await?;
+            let membership = ConductorControl::current_membership(source)
+                .await
+                .context("failed to resolve conductor nodes for action")?;
             ConductorControl::nodes_from_membership(source, &membership)
+                .context("failed to resolve conductor nodes for action")
         }
     }
 }
 
 async fn current_nodes_for_cluster_action(
     source: &ConductorSource,
+    action: ClusterActionKind,
 ) -> Result<(Vec<ConductorNodeConfig>, ClusterNodeScope)> {
     match source {
         // Prefer live membership when it is reachable so stale static entries are
@@ -240,7 +271,14 @@ async fn current_nodes_for_cluster_action(
         ConductorSource::Static(nodes) => {
             match ConductorControl::current_membership(source).await {
                 Ok(membership) => Ok((
-                    ConductorControl::nodes_from_membership(source, &membership)?,
+                    ConductorControl::nodes_from_membership(source, &membership).with_context(
+                        || {
+                            format!(
+                                "failed to prepare conductor cluster fanout for {}",
+                                action.verb()
+                            )
+                        },
+                    )?,
                     ClusterNodeScope::CurrentRaftMembers,
                 )),
                 Err(error) => {
@@ -253,19 +291,30 @@ async fn current_nodes_for_cluster_action(
             }
         }
         ConductorSource::Discover { .. } => {
-            let membership = ConductorControl::current_membership(source).await?;
-            let nodes = ConductorControl::nodes_from_membership(source, &membership)?;
+            let membership =
+                ConductorControl::current_membership(source).await.with_context(|| {
+                    format!("failed to prepare conductor cluster fanout for {}", action.verb())
+                })?;
+            let nodes = ConductorControl::nodes_from_membership(source, &membership).with_context(
+                || format!("failed to prepare conductor cluster fanout for {}", action.verb()),
+            )?;
             Ok((nodes, ClusterNodeScope::CurrentRaftMembers))
         }
     }
 }
 
-/// Maps a fanout report onto the process-exit outcome.
-///
-/// An empty fanout (no nodes targeted) is treated as a failure so operators
-/// notice when a bulk action silently matched nothing.
-const fn fanout_outcome(report: &ConductorFanoutReport) -> CommandOutcome {
-    CommandOutcome::from_failures(!report.is_success())
+const fn fanout_requires_failure_exit(report: &ConductorFanoutReport) -> bool {
+    !report.is_success()
+}
+
+fn find_node<'a>(
+    nodes: &'a [ConductorNodeConfig],
+    name: &str,
+) -> Result<&'a ConductorNodeConfig, ConductorCommandError> {
+    nodes.iter().find(|node| node.name == name).ok_or_else(|| ConductorCommandError::MissingNode {
+        requested_node: name.to_string(),
+        available_nodes: nodes.iter().map(|node| node.name.clone()).collect(),
+    })
 }
 
 fn print_status_pretty(status: &ConductorStatusJson) -> Result<()> {
@@ -559,14 +608,17 @@ impl ConductorNodeJson {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use basectl_cli::{ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeFailure};
+    use basectl_cli::{
+        ConductorClusterSnapshot, ConductorCommandError, ConductorNodeConfig, ConductorNodeFailure,
+    };
     use serde_json::json;
     use url::Url;
 
     use super::{
         ConductorAction, ConductorActionJson, ConductorFanoutJson, ConductorNodeJson,
-        ConductorStatusJson, fanout_outcome, find_node,
+        ConductorStatusJson, fanout_requires_failure_exit, find_node,
     };
+    use crate::helpers::CommandOutcome;
 
     fn node(name: &str) -> ConductorNodeConfig {
         ConductorNodeConfig {
@@ -680,9 +732,18 @@ mod tests {
             failures: Vec::new(),
         };
 
-        assert!(!fanout_outcome(&success).has_failures());
-        assert!(fanout_outcome(&partial_failure).has_failures());
-        assert!(fanout_outcome(&empty).has_failures());
+        assert_eq!(
+            CommandOutcome::from_failures(fanout_requires_failure_exit(&success)),
+            CommandOutcome::Success
+        );
+        assert_eq!(
+            CommandOutcome::from_failures(fanout_requires_failure_exit(&partial_failure)),
+            CommandOutcome::HasFailures
+        );
+        assert_eq!(
+            CommandOutcome::from_failures(fanout_requires_failure_exit(&empty)),
+            CommandOutcome::HasFailures
+        );
     }
 
     #[test]
@@ -759,10 +820,15 @@ mod tests {
     fn find_node_reports_missing_name() {
         let nodes = vec![node("op-conductor-0")];
 
-        let err = find_node(&nodes, "op-conductor-1", "conductor")
-            .expect_err("missing node should error");
+        let err = find_node(&nodes, "op-conductor-1").expect_err("missing node should error");
 
-        assert!(err.to_string().contains("op-conductor-1"));
-        assert!(err.to_string().contains("op-conductor-0"));
+        assert!(matches!(
+            err,
+            ConductorCommandError::MissingNode {
+                requested_node,
+                available_nodes,
+            } if requested_node == "op-conductor-1"
+                && available_nodes == vec!["op-conductor-0".to_string()]
+        ));
     }
 }

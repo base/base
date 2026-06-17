@@ -177,18 +177,15 @@ impl ConductorControl {
 
         match &source {
             ConductorSource::Static(static_nodes) => {
-                let membership_result = Self::current_membership(&source).await;
-                let (membership, mut membership_error) = match membership_result {
+                let (membership, mut membership_error) = match Self::current_membership(&source)
+                    .await
+                {
                     Ok(membership) => (Some(membership), None),
                     Err(error) => {
                         warn!(error = %error, "failed to fetch conductor cluster membership for static snapshot");
                         (None, Some(error.to_string()))
                     }
                 };
-                // A fetched membership that references servers missing from the
-                // static config cannot be reconciled, but the configured node
-                // list is still usable, so degrade to it instead of failing the
-                // whole snapshot.
                 let nodes = match Self::snapshot_nodes(&source, membership.as_ref()) {
                     Ok(nodes) => nodes,
                     Err(error) => {
@@ -590,12 +587,8 @@ async fn wait_for_stable_leader(
 ///
 /// Classification is by message content rather than JSON-RPC error code on
 /// purpose. This runs against op-conductor's leader-transfer RPCs, which surface
-/// the not-leader condition under several codes (e.g. `-32000` directly and the
-/// generic `-32603` "internal error" when wrapped), so the code is not a
-/// reliable signal and gating on it would miss legitimate stale-leader errors.
-/// [`is_stale_leader_message`] instead keeps false positives in check with a
-/// strict filler-word allowlist (so e.g. "not authorized as cluster leader" does
-/// not match), and the call site only retries a bounded number of times.
+/// the not-leader condition under several codes, so the code is not a reliable
+/// signal and gating on it would miss legitimate stale-leader errors.
 fn is_stale_leader_error(error: &JsonRpcClientError) -> bool {
     match error {
         JsonRpcClientError::Call(payload) => is_stale_leader_message(payload.message()),
@@ -1296,8 +1289,6 @@ mod tests {
             "leader could not be contacted",
             None::<()>,
         ));
-        // Even under the canonical stale-leader code, an unrelated "not ... leader"
-        // phrase is rejected by the filler-word allowlist (no code-based fallback).
         let unrelated_role = JsonRpcClientError::Call(ErrorObjectOwned::owned(
             -32000,
             "not authorized as cluster leader",
