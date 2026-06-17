@@ -76,6 +76,47 @@ pub struct PipelineConfig {
     pub tee_prover_registry_address: Option<Address>,
 }
 
+/// The proposer's proof backend. Exactly one mode is active for the lifetime
+/// of the pipeline.
+#[derive(Clone)]
+pub enum ProofBackend {
+    /// Synchronous `prover_prove` JSON-RPC (e.g. `nitro-local`). Proofs are
+    /// obtained directly via `ProverClient::prove`; there is no collect phase.
+    Direct(Arc<dyn ProverClient>),
+    /// Prover-service async session protocol: dispatch a session, then poll
+    /// `get_proof` to collect the result.
+    Service {
+        /// Polls `get_proof` to collect completed proofs.
+        requester: Arc<dyn ProofRequesterProvider>,
+        /// Dispatches proof sessions to the prover service.
+        dispatcher: ProofRequesterDispatcher,
+    },
+}
+
+impl std::fmt::Debug for ProofBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Direct(_) => f.debug_struct("Direct").finish_non_exhaustive(),
+            Self::Service { dispatcher, .. } => {
+                f.debug_struct("Service").field("dispatcher", dispatcher).finish_non_exhaustive()
+            }
+        }
+    }
+}
+
+impl ProofBackend {
+    /// Direct backend over a raw `ProverClient` (synchronous prove).
+    pub fn direct(prover: Arc<dyn ProverClient>) -> Self {
+        Self::Direct(prover)
+    }
+
+    /// Prover-service backend. Builds the AWS Nitro dispatcher from the requester.
+    pub fn service(requester: Arc<dyn ProofRequesterProvider>) -> Self {
+        let dispatcher = ProofRequesterDispatcher::aws_nitro(Arc::clone(&requester));
+        Self::Service { requester, dispatcher }
+    }
+}
+
 /// Cached result from the last successful recovery.
 ///
 /// The cache is keyed by `game_count`. When `game_count` is unchanged
@@ -101,8 +142,8 @@ struct CachedRecovery {
 
 /// Mutable state for the coordinator loop.
 struct PipelineState {
-    /// Running proof tasks, each yielding `(target_block, result)`.
-    /// TODO(P6): remove after the transitional `ProverClient` path is deleted.
+    /// Running proof tasks for the [`ProofBackend::Direct`] backend, each
+    /// yielding `(target_block, result)` from a synchronous `ProverClient::prove`.
     prove_tasks: JoinSet<(u64, Result<ProofResult, ProposerError>)>,
     /// Running proof dispatch tasks, each accepting a prover-service session.
     dispatch_tasks: JoinSet<ProofDispatchOutcome>,
@@ -178,9 +219,7 @@ where
     F: DisputeGameFactoryClient,
 {
     config: PipelineConfig,
-    prover: Arc<dyn ProverClient>,
-    proof_requester: Option<Arc<dyn ProofRequesterProvider>>,
-    proof_dispatcher: Option<ProofRequesterDispatcher>,
+    backend: ProofBackend,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
@@ -202,9 +241,7 @@ where
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
-            prover: Arc::clone(&self.prover),
-            proof_requester: self.proof_requester.clone(),
-            proof_dispatcher: self.proof_dispatcher.clone(),
+            backend: self.backend.clone(),
             l1_client: Arc::clone(&self.l1_client),
             l2_client: Arc::clone(&self.l2_client),
             rollup_client: Arc::clone(&self.rollup_client),
@@ -242,8 +279,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: PipelineConfig,
-        prover: Arc<dyn ProverClient>,
-        proof_requester: Option<Arc<dyn ProofRequesterProvider>>,
+        backend: ProofBackend,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
@@ -253,13 +289,9 @@ where
         output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
     ) -> Self {
-        let proof_dispatcher =
-            proof_requester.as_ref().map(|r| ProofRequesterDispatcher::aws_nitro(Arc::clone(r)));
         Self {
             config,
-            prover,
-            proof_requester,
-            proof_dispatcher,
+            backend,
             l1_client,
             l2_client,
             rollup_client,
@@ -344,9 +376,7 @@ where
             Metrics::safe_head().set(safe_head as f64);
             Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
             state.prune_stale(recovered.l2_block_number);
-            if self.proof_requester.is_some() {
-                self.collect_proofs(&recovered, safe_head, state).await;
-            }
+            self.collect_proofs(&recovered, safe_head, state).await;
             self.dispatch_proofs(&recovered, safe_head, state).await?;
         }
         Ok(())
@@ -385,91 +415,95 @@ where
             let retry_count = state.retry_counts.get(&plan.target_block).copied().unwrap_or(0);
             state.inflight.insert(plan.target_block);
 
-            if let Some(ref dispatcher) = self.proof_dispatcher {
-                let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
-                let dispatcher = dispatcher.clone();
-                let cancel = self.cancel.child_token();
+            match &self.backend {
+                ProofBackend::Service { dispatcher, .. } => {
+                    let session_id =
+                        ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+                    let dispatcher = dispatcher.clone();
+                    let cancel = self.cancel.child_token();
 
-                info!(
-                    session_id = %session_id,
-                    from_block = plan.start_block,
-                    to_block = plan.target_block,
-                    blocks = plan.target_block.saturating_sub(plan.start_block),
-                    retry_count,
-                    "Dispatching proof task"
-                );
-                state.dispatch_tasks.spawn(async move {
-                    let inner = async move {
-                        tokio::select! {
-                            () = cancel.cancelled() => {
-                                ProofDispatchOutcome::Failed {
-                                    plan,
-                                    error: ProposerError::Internal("cancelled".into()),
-                                }
-                            }
-                            result = dispatcher.dispatch_tee(request) => {
-                                match result {
-                                    Ok(dispatched) if dispatched.session_id == session_id => {
-                                        ProofDispatchOutcome::Accepted { plan, session_id }
-                                    }
-                                    Ok(dispatched) => ProofDispatchOutcome::Failed {
+                    info!(
+                        session_id = %session_id,
+                        from_block = plan.start_block,
+                        to_block = plan.target_block,
+                        blocks = plan.target_block.saturating_sub(plan.start_block),
+                        retry_count,
+                        "Dispatching proof task"
+                    );
+                    state.dispatch_tasks.spawn(async move {
+                        let inner = async move {
+                            tokio::select! {
+                                () = cancel.cancelled() => {
+                                    ProofDispatchOutcome::Failed {
                                         plan,
-                                        error: ProposerError::Prover(format!(
-                                            "prover service returned mismatched session_id: expected {}, got {}",
-                                            session_id,
-                                            dispatched.session_id
-                                        )),
-                                    },
-                                    Err(error) => ProofDispatchOutcome::Failed { plan, error },
+                                        error: ProposerError::Internal("cancelled".into()),
+                                    }
+                                }
+                                result = dispatcher.dispatch_tee(request) => {
+                                    match result {
+                                        Ok(dispatched) if dispatched.session_id == session_id => {
+                                            ProofDispatchOutcome::Accepted { plan, session_id }
+                                        }
+                                        Ok(dispatched) => ProofDispatchOutcome::Failed {
+                                            plan,
+                                            error: ProposerError::Prover(format!(
+                                                "prover service returned mismatched session_id: expected {}, got {}",
+                                                session_id,
+                                                dispatched.session_id
+                                            )),
+                                        },
+                                        Err(error) => ProofDispatchOutcome::Failed { plan, error },
+                                    }
                                 }
                             }
+                        };
+                        match AssertUnwindSafe(inner).catch_unwind().await {
+                            Ok(outcome) => outcome,
+                            Err(panic) => ProofDispatchOutcome::Failed {
+                                plan,
+                                error: ProposerError::Internal(format!(
+                                    "proof dispatch task panicked: {}",
+                                    panic_message(&panic),
+                                )),
+                            },
                         }
-                    };
-                    match AssertUnwindSafe(inner).catch_unwind().await {
-                        Ok(outcome) => outcome,
-                        Err(panic) => ProofDispatchOutcome::Failed {
-                            plan,
-                            error: ProposerError::Internal(format!(
-                                "proof dispatch task panicked: {}",
-                                panic_message(&panic),
-                            )),
-                        },
-                    }
-                });
-            } else {
-                let prover = Arc::clone(&self.prover);
-                let cancel = self.cancel.child_token();
-                let target = plan.target_block;
+                    });
+                }
+                ProofBackend::Direct(prover) => {
+                    let prover = Arc::clone(prover);
+                    let cancel = self.cancel.child_token();
+                    let target = plan.target_block;
 
-                info!(
-                    from_block = plan.start_block,
-                    to_block = plan.target_block,
-                    blocks = plan.target_block.saturating_sub(plan.start_block),
-                    retry_count,
-                    "Requesting proof directly from prover"
-                );
-                state.prove_tasks.spawn(async move {
-                    let inner = async {
-                        tokio::select! {
-                            () = cancel.cancelled() => {
-                                Err(ProposerError::Internal("cancelled".into()))
+                    info!(
+                        from_block = plan.start_block,
+                        to_block = plan.target_block,
+                        blocks = plan.target_block.saturating_sub(plan.start_block),
+                        retry_count,
+                        "Requesting proof directly from prover"
+                    );
+                    state.prove_tasks.spawn(async move {
+                        let inner = async {
+                            tokio::select! {
+                                () = cancel.cancelled() => {
+                                    Err(ProposerError::Internal("cancelled".into()))
+                                }
+                                result = prover.prove(request) => {
+                                    result.map_err(|e| ProposerError::Prover(e.to_string()))
+                                }
                             }
-                            result = prover.prove(request) => {
-                                result.map_err(|e| ProposerError::Prover(e.to_string()))
-                            }
+                        };
+                        match AssertUnwindSafe(inner).catch_unwind().await {
+                            Ok(result) => (target, result),
+                            Err(panic) => (
+                                target,
+                                Err(ProposerError::Internal(format!(
+                                    "proof task panicked: {}",
+                                    panic_message(&panic),
+                                ))),
+                            ),
                         }
-                    };
-                    match AssertUnwindSafe(inner).catch_unwind().await {
-                        Ok(result) => (target, result),
-                        Err(panic) => (
-                            target,
-                            Err(ProposerError::Internal(format!(
-                                "proof task panicked: {}",
-                                panic_message(&panic),
-                            ))),
-                        ),
-                    }
-                });
+                    });
+                }
             }
         }
 
@@ -605,7 +639,7 @@ where
         safe_head: u64,
         state: &mut PipelineState,
     ) {
-        let Some(ref proof_requester) = self.proof_requester else { return };
+        let ProofBackend::Service { requester, .. } = &self.backend else { return };
         let targets = self.collectable_targets(recovered, safe_head, state);
         let roots = self.fetch_canonical_root_results_with(targets.clone(), false).await;
 
@@ -614,21 +648,20 @@ where
             let session_id =
                 ProposerProofAdapter::tee_session_id_for_root(*root, TeeKind::AwsNitro);
 
-            let response = match proof_requester
-                .get_proof(GetProofRequest { session_id: session_id.clone() })
-                .await
-            {
-                Ok(response) => response,
-                Err(e) => {
-                    debug!(
-                        error = %e,
-                        target_block = target,
-                        session_id = %session_id,
-                        "Failed to poll proof status"
-                    );
-                    continue;
-                }
-            };
+            let response =
+                match requester.get_proof(GetProofRequest { session_id: session_id.clone() }).await
+                {
+                    Ok(response) => response,
+                    Err(e) => {
+                        debug!(
+                            error = %e,
+                            target_block = target,
+                            session_id = %session_id,
+                            "Failed to poll proof status"
+                        );
+                        continue;
+                    }
+                };
 
             match response.status {
                 ProofStatus::Queued | ProofStatus::Running => {
@@ -1881,7 +1914,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
-    use base_proof_primitives::{ProofResult, Proposal, ProverClient};
+    use base_proof_primitives::{ProofResult, Proposal};
     #[cfg(feature = "metrics")]
     use metrics_util::{
         CompositeKey, MetricKind,
@@ -1893,8 +1926,8 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-        MockOutputProposer, MockProofRequester, MockProver, MockRollupClient, test_anchor_root,
-        test_proposal, test_sync_status,
+        MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root, test_proposal,
+        test_sync_status,
     };
 
     // ---- Named constants for test data ----
@@ -1932,9 +1965,6 @@ mod tests {
 
     /// Default L1 block number returned by `MockL1`.
     const TEST_L1_BLOCK_NUMBER: u64 = 1000;
-
-    /// Default mock prover delay for recovery tests (minimal).
-    const MOCK_PROVER_DELAY: Duration = Duration::from_millis(1);
 
     // ---- Helper builders for game data ----
 
@@ -2040,10 +2070,6 @@ mod tests {
     ) -> TestPipeline {
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_millis(10),
-            block_interval: pipeline_config.driver.block_interval,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_block_number, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2057,8 +2083,7 @@ mod tests {
 
         ProvingPipeline::new(
             pipeline_config,
-            prover,
-            Some(Arc::new(MockProofRequester::default())),
+            ProofBackend::service(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2152,8 +2177,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
@@ -2177,8 +2200,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
-            Some(Arc::new(MockProofRequester::default())),
+            ProofBackend::service(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2322,8 +2344,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval: TEST_BLOCK_INTERVAL });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(TEST_BLOCK_INTERVAL * 2, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2353,8 +2373,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
-            Some(Arc::new(MockProofRequester::default())),
+            ProofBackend::service(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2453,8 +2472,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval: TEST_BLOCK_INTERVAL });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
@@ -2478,8 +2495,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
-            Some(Arc::new(MockProofRequester::default())),
+            ProofBackend::service(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2737,10 +2753,6 @@ mod tests {
 
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_secs(3600),
-            block_interval: TEST_BLOCK_INTERVAL,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_head, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2764,8 +2776,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
-            Some(Arc::new(MockProofRequester::default())),
+            ProofBackend::service(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2812,10 +2823,6 @@ mod tests {
 
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_secs(3600),
-            block_interval: TEST_BLOCK_INTERVAL,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_head, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2839,8 +2846,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
-            Some(Arc::new(MockProofRequester::default())),
+            ProofBackend::service(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
@@ -2872,10 +2878,6 @@ mod tests {
 
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_secs(3600),
-            block_interval: TEST_BLOCK_INTERVAL,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_head, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2899,8 +2901,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
-            Some(Arc::new(MockProofRequester::default())),
+            ProofBackend::service(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
