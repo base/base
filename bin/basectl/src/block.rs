@@ -4,7 +4,7 @@ use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use alloy_provider::Network;
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use base_common_network::Base;
 use basectl_cli::{
     BlockRefParseError, JsonOutput, KeyValueTable, MonitoringConfig, TimestampJson, fetch_block,
@@ -55,18 +55,14 @@ pub(crate) async fn run(
     raw: bool,
 ) -> Result<()> {
     let block_ref = parse_block_ref(reference)?;
-    let block = fetch_block(&config.rpc, block_ref)
-        .await
-        .with_context(|| format!("failed to fetch block {reference}"))?;
+    let block = fetch_block(&config.rpc, block_ref).await?;
     match (json, raw) {
-        (true, true) => JsonOutput::print(&block).context("failed to write block output")?,
+        (true, true) => JsonOutput::print(&block)?,
         (true, false) => {
             let summary = BlockSummaryJson::from_block(&config.name, block_ref, &block);
-            JsonOutput::print(&summary).context("failed to write block output")?;
+            JsonOutput::print(&summary)?;
         }
-        (false, _) => {
-            print_pretty(&config.name, block_ref, &block).context("failed to write block output")?
-        }
+        (false, _) => print_pretty(&config.name, block_ref, &block)?,
     }
     Ok(())
 }

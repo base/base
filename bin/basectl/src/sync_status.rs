@@ -5,10 +5,10 @@ use std::time::Duration;
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MissingConsensusRpcError, MonitoringConfig, SyncStatusReport,
+    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusCommandError, SyncStatusReport,
     TimestampJson, fetch_block, fetch_sync_status, format_duration, format_unix_timestamp,
 };
 use serde::Serialize;
@@ -32,15 +32,12 @@ pub(crate) async fn run(
         fetch_sync_status(&el_rpc, &cl_rpc),
         fetch_block(&config.rpc, BlockId::Number(BlockNumberOrTag::Latest)),
     );
-    let report = sync_result
-        .with_context(|| format!("failed to fetch sync status from EL {el_rpc} and CL {cl_rpc}"))?;
+    let report = sync_result?;
     let public_tip_block = tip_result.ok().map(|b| b.header.number);
     let tip_url = config.rpc.as_str();
 
     match (json, raw) {
-        (true, true) => {
-            JsonOutput::print(&report.cl).context("failed to write sync-status output")?
-        }
+        (true, true) => JsonOutput::print(&report.cl)?,
         (true, false) => {
             let summary = SyncStatusJson::from_report(
                 &config.name,
@@ -49,11 +46,10 @@ pub(crate) async fn run(
                 public_tip_block,
                 tip_tolerance,
             );
-            JsonOutput::print(&summary).context("failed to write sync-status output")?;
+            JsonOutput::print(&summary)?;
         }
         (false, _) => {
-            print_pretty(&config.name, &report, tip_url, public_tip_block, tip_tolerance)
-                .context("failed to write sync-status output")?;
+            print_pretty(&config.name, &report, tip_url, public_tip_block, tip_tolerance)?;
         }
     }
     Ok(())
@@ -67,14 +63,13 @@ pub(crate) async fn run(
 fn resolve_cl_rpc(
     config: &MonitoringConfig,
     override_url: Option<&Url>,
-) -> Result<Url, MissingConsensusRpcError> {
+) -> Result<Url, SyncStatusCommandError> {
     if let Some(u) = override_url {
         return Ok(u.clone());
     }
-    config
-        .consensus_node_rpc
-        .clone()
-        .ok_or_else(|| MissingConsensusRpcError::new(config.name.clone(), "sync-status"))
+    config.consensus_node_rpc.clone().ok_or_else(|| SyncStatusCommandError::MissingConsensusRpc {
+        config_name: config.name.clone(),
+    })
 }
 
 /// Humanized JSON shape for `basectl sync-status --json`.
@@ -351,7 +346,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, B256};
     use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
-    use basectl_cli::{MissingConsensusRpcError, MonitoringConfig, SyncStatusReport};
+    use basectl_cli::{MonitoringConfig, SyncStatusCommandError, SyncStatusReport};
     use url::Url;
 
     use super::{SyncStatusJson, resolve_cl_rpc};
@@ -407,11 +402,10 @@ mod tests {
 
         assert!(matches!(
             resolve_cl_rpc(&config, None).unwrap_err(),
-            MissingConsensusRpcError {
+            SyncStatusCommandError::MissingConsensusRpc {
                 config_name,
-                command_name,
                 ..
-            } if config_name == "mainnet" && command_name == "sync-status"
+            } if config_name == "mainnet"
         ));
     }
 

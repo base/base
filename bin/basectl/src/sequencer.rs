@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use basectl_cli::{
     ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig, ConductorNodeStatus,
     ConductorSource, JsonOutput, KeyValueTable, MonitoringConfig, SequencerCommandError,
@@ -65,9 +65,7 @@ async fn run_status(
         selected_node = %args.node.as_deref().unwrap_or("all"),
         "fetching sequencer status"
     );
-    let snapshot = ConductorControl::snapshot(source)
-        .await
-        .context("failed to fetch sequencer status snapshot")?;
+    let snapshot = ConductorControl::snapshot(source).await?;
     let status = SequencerStatusJson::from_snapshot(&config.name, &snapshot, args.node.as_deref())?;
     debug!(
         network = %config.name,
@@ -78,9 +76,9 @@ async fn run_status(
         "sequencer status snapshot ready"
     );
     if args.json {
-        JsonOutput::print(&status).context("failed to write sequencer output")?;
+        JsonOutput::print(&status)?;
     } else {
-        print_status_pretty(&status).context("failed to write sequencer output")?;
+        print_status_pretty(&status)?;
     }
     Ok(())
 }
@@ -96,9 +94,7 @@ async fn run_start(
         requested_unsafe_head = ?args.unsafe_head,
         "running sequencer start command"
     );
-    let snapshot = ConductorControl::snapshot(source)
-        .await
-        .context("failed to fetch sequencer status snapshot")?;
+    let snapshot = ConductorControl::snapshot(source).await?;
     let node =
         find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
@@ -156,7 +152,7 @@ async fn run_start(
     }
     let prompt =
         format!("Start sequencer on {} ({}) at {}? [y/N] ", node.name, node.cl_rpc, unsafe_head);
-    if !confirm_or_abort(&prompt, args.yes).context("failed to read confirmation")? {
+    if !confirm_or_abort(&prompt, args.yes)? {
         debug!(node = %node.name, cl_rpc = %node.cl_rpc, "sequencer start confirmation declined");
         return Ok(());
     }
@@ -169,9 +165,7 @@ async fn run_start(
         unsafe_head_source = %unsafe_head_source.as_str(),
         "calling admin_startSequencer"
     );
-    start_sequencer(&node.cl_rpc, unsafe_head).await.with_context(|| {
-        format!("failed to start sequencer on {} ({}) at {}", node.name, node.cl_rpc, unsafe_head)
-    })?;
+    start_sequencer(&node.cl_rpc, unsafe_head).await?;
     wait_for_expected_state(node, SequencerAction::Start, Some(unsafe_head)).await?;
     info!(
         network = %config.name,
@@ -186,8 +180,8 @@ async fn run_start(
     print_action(
         &SequencerActionJson::start(&config.name, node, unsafe_head, unsafe_head_source, message),
         args.json,
-    )
-    .context("failed to write sequencer output")
+    )?;
+    Ok(())
 }
 
 async fn run_stop(
@@ -200,9 +194,7 @@ async fn run_stop(
         requested_node = %args.node,
         "running sequencer stop command"
     );
-    let snapshot = ConductorControl::snapshot(source)
-        .await
-        .context("failed to fetch sequencer status snapshot")?;
+    let snapshot = ConductorControl::snapshot(source).await?;
     let node =
         find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
@@ -223,7 +215,7 @@ async fn run_stop(
         return Err(error.into());
     }
     let prompt = format!("Stop sequencer on {} ({})? [y/N] ", node.name, node.cl_rpc);
-    if !confirm_or_abort(&prompt, args.yes).context("failed to read confirmation")? {
+    if !confirm_or_abort(&prompt, args.yes)? {
         debug!(node = %node.name, cl_rpc = %node.cl_rpc, "sequencer stop confirmation declined");
         return Ok(());
     }
@@ -234,9 +226,7 @@ async fn run_stop(
         cl_rpc = %node.cl_rpc,
         "calling admin_stopSequencer"
     );
-    let unsafe_head = stop_sequencer(&node.cl_rpc)
-        .await
-        .with_context(|| format!("failed to stop sequencer on {} ({})", node.name, node.cl_rpc))?;
+    let unsafe_head = stop_sequencer(&node.cl_rpc).await?;
     // A zero head means the sequencer stopped but the captured head is unavailable,
     // so do not surface it as a valid restart point.
     let captured_head = (unsafe_head != B256::ZERO).then_some(unsafe_head);
@@ -253,8 +243,11 @@ async fn run_stop(
         || format!("sequencer stopped on {} (unsafe head unavailable)", node.name),
         |unsafe_head| format!("sequencer stopped on {} at {unsafe_head}", node.name),
     );
-    print_action(&SequencerActionJson::stop(&config.name, node, captured_head, message), args.json)
-        .context("failed to write sequencer output")
+    print_action(
+        &SequencerActionJson::stop(&config.name, node, captured_head, message),
+        args.json,
+    )?;
+    Ok(())
 }
 
 fn resolve_start_hash(

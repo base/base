@@ -2,7 +2,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Prints `prompt` and reads a `y`/`yes` answer from stdin.
 pub(crate) fn confirm(prompt: &str, skip: bool) -> Result<bool> {
@@ -46,11 +46,11 @@ fn confirm_with_io<R: BufRead, W: Write>(
         return Ok(true);
     }
 
-    write!(writer, "{prompt}").context("writing confirmation prompt")?;
-    writer.flush().context("flushing confirmation prompt")?;
+    write!(writer, "{prompt}")?;
+    writer.flush()?;
 
     let mut answer = String::new();
-    reader.read_line(&mut answer).context("reading confirmation answer")?;
+    reader.read_line(&mut answer)?;
     Ok(matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
 }
 
@@ -65,11 +65,11 @@ fn confirm_typed_with_io<R: BufRead, W: Write>(
         return Ok(true);
     }
 
-    write!(writer, "{prompt}").context("writing typed confirmation prompt")?;
-    writer.flush().context("flushing typed confirmation prompt")?;
+    write!(writer, "{prompt}")?;
+    writer.flush()?;
 
     let mut answer = String::new();
-    reader.read_line(&mut answer).context("reading typed confirmation answer")?;
+    reader.read_line(&mut answer)?;
     Ok(answer.trim() == expected)
 }
 

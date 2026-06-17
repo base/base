@@ -1,6 +1,6 @@
 use std::{io::Write, time::Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use base_common_flashblocks::Flashblock;
 use base_common_genesis::SystemConfig;
 use tokio::sync::{mpsc, watch};
@@ -29,9 +29,7 @@ pub async fn run_app(
     network: &str,
     conductor_rpc: Option<Url>,
 ) -> Result<()> {
-    let mut config = MonitoringConfig::load(network)
-        .await
-        .with_context(|| format!("loading monitor config {network}"))?;
+    let mut config = MonitoringConfig::load(network).await?;
     if config.conductors.is_none()
         && let Some(source) = config.conductor_source(conductor_rpc.clone())
         && let ConductorSource::Discover { bootstrap, .. } = source
@@ -44,7 +42,7 @@ pub async fn run_app(
     let mut resources = Resources::new(config.clone());
     start_background_services(&config, &mut resources, conductor_rpc.clone());
     let app = App::new(resources, initial_view, conductor_rpc);
-    app.run(create_view).await.context("running monitor TUI")
+    app.run(create_view).await
 }
 
 /// Starts all background data-fetching services, wiring their channels into `resources`.
@@ -204,9 +202,9 @@ pub async fn run_flashblocks_json(config: MonitoringConfig) -> Result<()> {
     let mut writer = std::io::BufWriter::new(stdout.lock());
 
     while let Some(fb) = rx.recv().await {
-        serde_json::to_writer(&mut writer, &fb).context("serializing flashblock")?;
-        writeln!(writer).context("writing flashblocks output")?;
-        writer.flush().context("flushing flashblocks output")?;
+        serde_json::to_writer(&mut writer, &fb)?;
+        writeln!(writer)?;
+        writer.flush()?;
     }
 
     Ok(())

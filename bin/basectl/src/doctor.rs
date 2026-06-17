@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use basectl_cli::{
     Doctor, DoctorArgsError, DoctorCheck, DoctorOptions, DoctorReport, DoctorStatus,
     DoctorThresholds, JsonOutput, MonitoringConfig,
@@ -35,9 +35,9 @@ pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<Co
     let json = args.json;
     let report = Doctor::run(config, options).await;
     if json {
-        JsonOutput::print(&report).context("failed to write doctor output")?;
+        JsonOutput::print(&report)?;
     } else {
-        print_pretty(&report).context("failed to write doctor output")?;
+        print_pretty(&report)?;
     }
     Ok(CommandOutcome::from_failures(report.has_failures()))
 }

@@ -2,13 +2,13 @@
 
 use std::io::{self, Write};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use base_consensus_peers::BootNode;
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MissingConsensusRpcError, MonitoringConfig, NodeEndpoint,
-    P2pCommandError, P2pTargetError, PeerListReport, PeerStatsReport, PeerSummary, add_peer,
-    ban_peer, connect_peer, disconnect_peer, fetch_connected_peers, fetch_info, fetch_raw_info,
-    fetch_raw_peers, list_banned_peers, remove_peer, unban_peer,
+    JsonOutput, KeyValueTable, MonitoringConfig, NodeEndpoint, P2pCommandError, P2pTargetError,
+    PeerListReport, PeerStatsReport, PeerSummary, add_peer, ban_peer, connect_peer,
+    disconnect_peer, fetch_connected_peers, fetch_info, fetch_raw_info, fetch_raw_peers,
+    list_banned_peers, remove_peer, unban_peer,
 };
 use serde::Serialize;
 use url::Url;
@@ -40,23 +40,16 @@ async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
 
     match (json, raw) {
         (true, true) => {
-            let report = fetch_raw_peers(&el_rpc, &cl_rpc).await.with_context(|| {
-                format!("failed to fetch raw peer list from EL {el_rpc} and CL {cl_rpc}")
-            })?;
-            JsonOutput::print(&report).context("failed to write p2p output")?;
+            let report = fetch_raw_peers(&el_rpc, &cl_rpc).await?;
+            JsonOutput::print(&report)?;
         }
         (true, false) => {
-            let report = fetch_connected_peers(&el_rpc, &cl_rpc).await.with_context(|| {
-                format!("failed to fetch peer list from EL {el_rpc} and CL {cl_rpc}")
-            })?;
-            JsonOutput::print(&PeersJson::from_report(&config.name, &report))
-                .context("failed to write p2p output")?;
+            let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
+            JsonOutput::print(&PeersJson::from_report(&config.name, &report))?;
         }
         (false, _) => {
-            let report = fetch_connected_peers(&el_rpc, &cl_rpc).await.with_context(|| {
-                format!("failed to fetch peer list from EL {el_rpc} and CL {cl_rpc}")
-            })?;
-            print_peers_pretty(&config.name, &report).context("failed to write p2p output")?;
+            let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
+            print_peers_pretty(&config.name, &report)?;
         }
     }
 
@@ -78,13 +71,11 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
             );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Add EL peer {enode} through {el_rpc}? [y/N] ");
-            if !confirm(&prompt, yes).context("failed to read confirmation")? {
+            if !confirm(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
-            let accepted = add_peer(&el_rpc, &enode)
-                .await
-                .with_context(|| format!("failed to add EL peer {enode} through {el_rpc}"))?;
+            let accepted = add_peer(&el_rpc, &enode).await?;
             print_peer_action(
                 &PeerActionJson::el(&config.name, PeerAction::Add, enode, accepted),
                 json,
@@ -99,13 +90,11 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
             );
             let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p add-peer")?;
             let prompt = format!("Connect CL peer {multiaddr} through {cl_rpc}? [y/N] ");
-            if !confirm(&prompt, yes).context("failed to read confirmation")? {
+            if !confirm(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
-            connect_peer(&cl_rpc, &multiaddr).await.with_context(|| {
-                format!("failed to connect CL peer {multiaddr} through {cl_rpc}")
-            })?;
+            connect_peer(&cl_rpc, &multiaddr).await?;
             print_peer_action(&PeerActionJson::cl(&config.name, PeerAction::Add, multiaddr), json)?;
         }
     }
@@ -128,13 +117,11 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
             );
             let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
             let prompt = format!("Remove EL peer {enode} through {el_rpc}? [y/N] ");
-            if !confirm(&prompt, yes).context("failed to read confirmation")? {
+            if !confirm(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
-            let accepted = remove_peer(&el_rpc, &enode)
-                .await
-                .with_context(|| format!("failed to remove EL peer {enode} through {el_rpc}"))?;
+            let accepted = remove_peer(&el_rpc, &enode).await?;
             print_peer_action(
                 &PeerActionJson::el(&config.name, PeerAction::Remove, enode, accepted),
                 json,
@@ -149,13 +136,11 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
             );
             let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p remove-peer")?;
             let prompt = format!("Disconnect CL peer {peer_id} from {cl_rpc}? [y/N] ");
-            if !confirm(&prompt, yes).context("failed to read confirmation")? {
+            if !confirm(&prompt, yes)? {
                 println!("aborted");
                 return Ok(());
             }
-            disconnect_peer(&cl_rpc, &peer_id)
-                .await
-                .with_context(|| format!("failed to disconnect CL peer {peer_id} from {cl_rpc}"))?;
+            disconnect_peer(&cl_rpc, &peer_id).await?;
             print_peer_action(
                 &PeerActionJson::cl(&config.name, PeerAction::Remove, peer_id),
                 json,
@@ -171,14 +156,12 @@ async fn run_ban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -> 
     let peer_id = parse_cl_peer_id(&peer_id)?;
     let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p ban")?;
     let prompt = format!("Ban CL peer {peer_id} through {cl_rpc}? [y/N] ");
-    if !confirm(&prompt, yes).context("failed to read confirmation")? {
+    if !confirm(&prompt, yes)? {
         println!("aborted");
         return Ok(());
     }
 
-    ban_peer(&cl_rpc, &peer_id)
-        .await
-        .with_context(|| format!("failed to ban CL peer {peer_id} through {cl_rpc}"))?;
+    ban_peer(&cl_rpc, &peer_id).await?;
     let disconnect_error =
         disconnect_peer(&cl_rpc, &peer_id).await.err().map(|err| err.to_string());
     print_peer_action(
@@ -198,14 +181,12 @@ async fn run_unban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -
     let peer_id = parse_cl_peer_id(&peer_id)?;
     let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p unban")?;
     let prompt = format!("Unban CL peer {peer_id} through {cl_rpc}? [y/N] ");
-    if !confirm(&prompt, yes).context("failed to read confirmation")? {
+    if !confirm(&prompt, yes)? {
         println!("aborted");
         return Ok(());
     }
 
-    unban_peer(&cl_rpc, &peer_id)
-        .await
-        .with_context(|| format!("failed to unban CL peer {peer_id} through {cl_rpc}"))?;
+    unban_peer(&cl_rpc, &peer_id).await?;
     print_peer_action(&PeerActionJson::cl(&config.name, PeerAction::Unban, peer_id), json)?;
     Ok(())
 }
@@ -213,9 +194,7 @@ async fn run_unban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -
 async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) -> Result<()> {
     let DestructiveClBulkArgs { cl_rpc: cl_rpc_override, yes, json } = args;
     let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p unban-all")?;
-    let mut peer_ids = list_banned_peers(&cl_rpc)
-        .await
-        .with_context(|| format!("failed to list banned CL peers through {cl_rpc}"))?;
+    let mut peer_ids = list_banned_peers(&cl_rpc).await?;
     peer_ids.sort();
 
     if peer_ids.is_empty() {
@@ -231,7 +210,7 @@ async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) ->
     }
 
     let prompt = format!("Unban all {} banned CL peers through {cl_rpc}? [y/N] ", peer_ids.len());
-    if !confirm(&prompt, yes).context("failed to read confirmation")? {
+    if !confirm(&prompt, yes)? {
         println!("aborted");
         return Ok(());
     }
@@ -264,26 +243,16 @@ async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
 
     match (json, raw) {
         (true, true) => {
-            let report = fetch_raw_info(&el_rpc, &cl_rpc).await.with_context(|| {
-                format!("failed to fetch raw p2p info from EL {el_rpc} and CL {cl_rpc}")
-            })?;
-            JsonOutput::print(&report).context("failed to write p2p output")?;
+            let report = fetch_raw_info(&el_rpc, &cl_rpc).await?;
+            JsonOutput::print(&report)?;
         }
         (true, false) => {
-            let (node_info, peer_stats) =
-                fetch_info(&el_rpc, &cl_rpc).await.with_context(|| {
-                    format!("failed to fetch p2p info from EL {el_rpc} and CL {cl_rpc}")
-                })?;
-            JsonOutput::print(&InfoJson::from_report(&config.name, &node_info, &peer_stats))
-                .context("failed to write p2p output")?;
+            let (node_info, peer_stats) = fetch_info(&el_rpc, &cl_rpc).await?;
+            JsonOutput::print(&InfoJson::from_report(&config.name, &node_info, &peer_stats))?;
         }
         (false, _) => {
-            let (node_info, peer_stats) =
-                fetch_info(&el_rpc, &cl_rpc).await.with_context(|| {
-                    format!("failed to fetch p2p info from EL {el_rpc} and CL {cl_rpc}")
-                })?;
-            print_info_pretty(&config.name, &node_info, &peer_stats)
-                .context("failed to write p2p output")?;
+            let (node_info, peer_stats) = fetch_info(&el_rpc, &cl_rpc).await?;
+            print_info_pretty(&config.name, &node_info, &peer_stats)?;
         }
     }
 
@@ -294,14 +263,14 @@ fn resolve_cl_rpc(
     config: &MonitoringConfig,
     override_url: Option<&Url>,
     command_name: &str,
-) -> Result<Url, MissingConsensusRpcError> {
+) -> Result<Url, P2pCommandError> {
     if let Some(u) = override_url {
         return Ok(u.clone());
     }
-    config
-        .consensus_node_rpc
-        .clone()
-        .ok_or_else(|| MissingConsensusRpcError::new(config.name.clone(), command_name))
+    config.consensus_node_rpc.clone().ok_or_else(|| P2pCommandError::MissingConsensusRpc {
+        config_name: config.name.clone(),
+        command_name: command_name.to_string(),
+    })
 }
 
 /// Minimum length used to catch obvious non-libp2p peer IDs before hitting the CL RPC.
@@ -542,7 +511,7 @@ impl PeerBulkActionResultJson {
 
 fn print_peer_action(action: &PeerActionJson, json: bool) -> Result<()> {
     if json {
-        JsonOutput::print(action).context("failed to write p2p output")?;
+        JsonOutput::print(action)?;
     } else {
         print_peer_action_pretty(action)?;
     }
@@ -554,50 +523,41 @@ fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
     match action {
         PeerActionJson::El { action: PeerAction::Add, target, accepted, .. } => {
             if *accepted {
-                writeln!(stdout, "OK EL accepted peer {target}")
-                    .context("failed to write p2p output")?;
+                writeln!(stdout, "OK EL accepted peer {target}")?;
             } else {
-                writeln!(stdout, "OK EL did not accept peer {target}")
-                    .context("failed to write p2p output")?;
+                writeln!(stdout, "OK EL did not accept peer {target}")?;
             }
         }
         PeerActionJson::El { action: PeerAction::Remove, target, accepted, .. } => {
             if *accepted {
-                writeln!(stdout, "OK EL removed peer {target}")
-                    .context("failed to write p2p output")?;
+                writeln!(stdout, "OK EL removed peer {target}")?;
             } else {
-                writeln!(stdout, "OK EL did not remove peer {target}")
-                    .context("failed to write p2p output")?;
+                writeln!(stdout, "OK EL did not remove peer {target}")?;
             }
         }
         PeerActionJson::Cl { action: PeerAction::Add, target, .. } => {
-            writeln!(stdout, "OK CL connected {target}").context("failed to write p2p output")?;
+            writeln!(stdout, "OK CL connected {target}")?;
         }
         PeerActionJson::Cl { action: PeerAction::Remove, target, .. } => {
-            writeln!(stdout, "OK CL disconnected {target}")
-                .context("failed to write p2p output")?;
+            writeln!(stdout, "OK CL disconnected {target}")?;
         }
         PeerActionJson::Cl { action: PeerAction::Ban, target, disconnect_error, .. } => {
             if let Some(error) = disconnect_error {
-                writeln!(stdout, "OK CL banned {target} (disconnect warning: {error})")
-                    .context("failed to write p2p output")?;
+                writeln!(stdout, "OK CL banned {target} (disconnect warning: {error})")?;
             } else {
-                writeln!(stdout, "OK CL banned {target}").context("failed to write p2p output")?;
+                writeln!(stdout, "OK CL banned {target}")?;
             }
         }
         PeerActionJson::Cl { action: PeerAction::Unban, target, .. } => {
-            writeln!(stdout, "OK CL unbanned {target}").context("failed to write p2p output")?;
+            writeln!(stdout, "OK CL unbanned {target}")?;
         }
         PeerActionJson::ClBulk { succeeded, failed, results, .. } => {
-            writeln!(stdout, "OK CL unbanned {succeeded} banned peer(s)")
-                .context("failed to write p2p output")?;
+            writeln!(stdout, "OK CL unbanned {succeeded} banned peer(s)")?;
             if *failed > 0 {
-                writeln!(stdout, "failed to unban {failed} banned peer(s)")
-                    .context("failed to write p2p output")?;
+                writeln!(stdout, "failed to unban {failed} banned peer(s)")?;
                 for result in results.iter().filter(|result| !result.ok) {
                     let error = result.error.as_deref().unwrap_or("unknown error");
-                    writeln!(stdout, "  {}: {error}", result.target)
-                        .context("failed to write p2p output")?;
+                    writeln!(stdout, "  {}: {error}", result.target)?;
                 }
             }
         }
@@ -811,7 +771,7 @@ fn unavailable_cl_peer_stats() -> String {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use basectl_cli::{MissingConsensusRpcError, P2pCommandError, P2pTargetError};
+    use basectl_cli::{P2pCommandError, P2pTargetError};
     use serde_json::json;
     use url::Url;
 
@@ -869,7 +829,7 @@ mod tests {
 
         assert!(matches!(
             resolve_cl_rpc(&config, None, "p2p info").unwrap_err(),
-            MissingConsensusRpcError {
+            P2pCommandError::MissingConsensusRpc {
                 config_name,
                 command_name,
                 ..

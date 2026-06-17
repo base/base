@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use basectl_cli::{
     ConductorClusterSnapshot, ConductorCommandError, ConductorControl, ConductorFanoutReport,
     ConductorNodeConfig, ConductorNodeFailure, ConductorNodeStatus, ConductorSource, JsonOutput,
@@ -113,14 +113,12 @@ async fn run_status(
     source: ConductorSource,
     args: ConductorStatusArgs,
 ) -> Result<CommandOutcome> {
-    let snapshot = ConductorControl::snapshot(source)
-        .await
-        .context("failed to fetch conductor status snapshot")?;
+    let snapshot = ConductorControl::snapshot(source).await?;
     let status = ConductorStatusJson::from_snapshot(&config.name, &snapshot);
     if args.json {
-        JsonOutput::print(&status).context("failed to write conductor output")?;
+        JsonOutput::print(&status)?;
     } else {
-        print_status_pretty(&status).context("failed to write conductor output")?;
+        print_status_pretty(&status)?;
     }
     Ok(CommandOutcome::Success)
 }
@@ -146,18 +144,11 @@ async fn run_transfer_leader(
         },
         |target| format!("Transfer conductor leadership to {target} for {}? [y/N] ", config.name),
     );
-    if !confirm_or_abort(&prompt, args.yes).context("failed to read confirmation")? {
+    if !confirm_or_abort(&prompt, args.yes)? {
         return Ok(CommandOutcome::Success);
     }
 
-    let message = ConductorControl::transfer_leader(&nodes, args.target.as_deref())
-        .await
-        .with_context(|| {
-            args.target.as_ref().map_or_else(
-                || "failed to transfer conductor leadership".to_string(),
-                |target| format!("failed to transfer conductor leadership to {target}"),
-            )
-        })?;
+    let message = ConductorControl::transfer_leader(&nodes, args.target.as_deref()).await?;
     print_single_action(
         &ConductorActionJson::single(
             &config.name,
@@ -166,8 +157,7 @@ async fn run_transfer_leader(
             message,
         ),
         args.json,
-    )
-    .context("failed to write conductor output")?;
+    )?;
     Ok(CommandOutcome::Success)
 }
 
@@ -186,23 +176,18 @@ async fn run_node_action(
         node.name,
         node.conductor_rpc
     );
-    if !confirm_or_abort(&prompt, args.yes).context("failed to read confirmation")? {
+    if !confirm_or_abort(&prompt, args.yes)? {
         return Ok(CommandOutcome::Success);
     }
 
     let message = match action {
-        NodeActionKind::Pause => ConductorControl::pause_node(node)
-            .await
-            .with_context(|| format!("failed to pause conductor node {}", node.name))?,
-        NodeActionKind::Unpause => ConductorControl::resume_node(node)
-            .await
-            .with_context(|| format!("failed to resume conductor node {}", node.name))?,
+        NodeActionKind::Pause => ConductorControl::pause_node(node).await?,
+        NodeActionKind::Unpause => ConductorControl::resume_node(node).await?,
     };
     print_single_action(
         &ConductorActionJson::single(&config.name, json_action, Some(node.name.clone()), message),
         args.json,
-    )
-    .context("failed to write conductor output")?;
+    )?;
     Ok(CommandOutcome::Success)
 }
 
@@ -212,7 +197,7 @@ async fn run_cluster_action(
     args: ConductorClusterActionArgs,
     action: ClusterActionKind,
 ) -> Result<CommandOutcome> {
-    let (nodes, node_scope) = current_nodes_for_cluster_action(&source, action).await?;
+    let (nodes, node_scope) = current_nodes_for_cluster_action(&source).await?;
     let names = nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>().join(", ");
     let json_action = action.action();
     let prompt = format!(
@@ -223,9 +208,7 @@ async fn run_cluster_action(
         node_scope.description(),
         names
     );
-    if !confirm_typed_or_abort(&prompt, &config.name, args.yes)
-        .context("failed to read confirmation")?
-    {
+    if !confirm_typed_or_abort(&prompt, &config.name, args.yes)? {
         return Ok(CommandOutcome::Success);
     }
 
@@ -236,8 +219,7 @@ async fn run_cluster_action(
     print_fanout_action(
         &ConductorFanoutJson::from_report(&config.name, json_action, &report),
         args.json,
-    )
-    .context("failed to write conductor output")?;
+    )?;
     Ok(CommandOutcome::from_failures(fanout_requires_failure_exit(&report)))
 }
 
@@ -245,18 +227,14 @@ async fn current_nodes_for_action(source: &ConductorSource) -> Result<Vec<Conduc
     match source {
         ConductorSource::Static(nodes) => Ok(nodes.clone()),
         ConductorSource::Discover { .. } => {
-            let membership = ConductorControl::current_membership(source)
-                .await
-                .context("failed to resolve conductor nodes for action")?;
+            let membership = ConductorControl::current_membership(source).await?;
             ConductorControl::nodes_from_membership(source, &membership)
-                .context("failed to resolve conductor nodes for action")
         }
     }
 }
 
 async fn current_nodes_for_cluster_action(
     source: &ConductorSource,
-    action: ClusterActionKind,
 ) -> Result<(Vec<ConductorNodeConfig>, ClusterNodeScope)> {
     match source {
         // Prefer live membership when it is reachable so stale static entries are
@@ -265,14 +243,7 @@ async fn current_nodes_for_cluster_action(
         ConductorSource::Static(nodes) => {
             match ConductorControl::current_membership(source).await {
                 Ok(membership) => Ok((
-                    ConductorControl::nodes_from_membership(source, &membership).with_context(
-                        || {
-                            format!(
-                                "failed to prepare conductor cluster fanout for {}",
-                                action.verb()
-                            )
-                        },
-                    )?,
+                    ConductorControl::nodes_from_membership(source, &membership)?,
                     ClusterNodeScope::CurrentRaftMembers,
                 )),
                 Err(error) => {
@@ -285,13 +256,8 @@ async fn current_nodes_for_cluster_action(
             }
         }
         ConductorSource::Discover { .. } => {
-            let membership =
-                ConductorControl::current_membership(source).await.with_context(|| {
-                    format!("failed to prepare conductor cluster fanout for {}", action.verb())
-                })?;
-            let nodes = ConductorControl::nodes_from_membership(source, &membership).with_context(
-                || format!("failed to prepare conductor cluster fanout for {}", action.verb()),
-            )?;
+            let membership = ConductorControl::current_membership(source).await?;
+            let nodes = ConductorControl::nodes_from_membership(source, &membership)?;
             Ok((nodes, ClusterNodeScope::CurrentRaftMembers))
         }
     }
