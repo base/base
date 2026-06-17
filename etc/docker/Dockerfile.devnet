@@ -28,7 +28,7 @@ RUN go build -o /go/bin/eth2-val-tools .
 # The foundry image is Ubuntu-based and multi-arch (amd64/arm64)
 FROM ghcr.io/foundry-rs/foundry:v1.7.1 AS contracts-builder
 
-ARG CONTRACTS_COMMIT=c8f0238ec570a446e01b6290bd2413ef7704fafd
+ARG CONTRACTS_COMMIT=65dd69c69b3cb118341e89ed43377e01e75bcc6e
 
 # git is pre-installed in the foundry image (Ubuntu 22.04)
 RUN git config --global user.email "docker@build" && \

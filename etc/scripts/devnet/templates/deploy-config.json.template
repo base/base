@@ -3,6 +3,7 @@
   "baseFeeVaultRecipient": "${DEPLOYER_ADDR}",
   "baseFeeVaultWithdrawalNetwork": 0,
   "batchSenderAddress": "${BATCHER_ADDR}",
+  "devTeeSigner": "${DEV_TEE_SIGNER}",
   "disputeGameFinalityDelaySeconds": 0,
   "delayedWETHWithdrawalDelay": 0,
   "eip1559Denominator": 50,
@@ -24,7 +25,7 @@
   "l2OutputOracleStartingBlockNumber": 1,
   "l2OutputOracleStartingTimestamp": 1,
   "multiproofBlockInterval": 100,
-  "multiproofConfigHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "multiproofConfigHash": "${MULTIPROOF_CONFIG_HASH}",
   "multiproofGameType": 621,
   "multiproofGenesisBlockNumber": 0,
   "multiproofGenesisOutputRoot": "0x0000000000000000000000000000000000000000000000000000000000000001",
@@ -46,8 +47,8 @@
   "superchainConfigGuardian": "${DEPLOYER_ADDR}",
   "superchainConfigIncidentResponder": "0x0000000000000000000000000000000000000000",
   "teeChallenger": "${CHALLENGER_ADDR}",
-  "teeImageHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
-  "teeProposer": "${DEPLOYER_ADDR}",
+  "teeImageHash": "${TEE_IMAGE_HASH}",
+  "teeProposer": "${PROPOSER_ADDR}",
   "zkAggregationHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
   "zkRangeHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
 }

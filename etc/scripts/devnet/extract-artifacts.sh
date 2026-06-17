@@ -83,7 +83,10 @@ jq '{
   ProxyAdmin:                     .ProxyAdmin,
   OptimismMintableERC20FactoryProxy: .OptimismMintableERC20FactoryProxy,
   SuperchainConfigProxy:          .SuperchainConfigProxy,
-  ETHLockboxProxy:                .ETHLockboxProxy
+  ETHLockboxProxy:                .ETHLockboxProxy,
+  TEEProverRegistryProxy:         .TEEProverRegistryProxy,
+  AggregateVerifier:              .AggregateVerifier,
+  TEEVerifier:                    .TEEVerifier
 }' "$DEPLOY_OUTFILE" >"$OUTPUT_DIR/l1-addresses.json"
 
 # Verify critical addresses are present (smoke.sh checks these)

@@ -37,6 +37,11 @@ replace_output_file() {
   mv "$source_file" "$destination_file"
 }
 
+# Multiproof fields — zero defaults disable multiproof in eth-l1 mode; overridden by devnet-l3-env.
+MULTIPROOF_CONFIG_HASH="${MULTIPROOF_CONFIG_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}"
+DEV_TEE_SIGNER="${DEV_TEE_SIGNER:-0x0000000000000000000000000000000000000000}"
+TEE_IMAGE_HASH="${TEE_IMAGE_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}"
+
 if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
   exit 1

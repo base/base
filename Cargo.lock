@@ -5812,6 +5812,7 @@ dependencies = [
  "base-common-chains",
  "base-common-genesis",
  "base-proof-host",
+ "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
  "base-proof-worker",

@@ -20,6 +20,7 @@ workspace = true
 base-proof-worker.workspace = true
 base-common-chains.workspace = true
 base-common-genesis.workspace = true
+base-proof-primitives.workspace = true
 base-proof-tee-nitro-host = { workspace = true, features = ["metrics"] }
 base-prover-service-client.workspace = true
 base-proof-host = { workspace = true, features = ["metrics"] }

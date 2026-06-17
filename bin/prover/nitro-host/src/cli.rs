@@ -8,13 +8,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_primitives::Address;
-#[cfg(any(target_os = "linux", feature = "local"))]
 use alloy_provider::{Provider, ProviderBuilder};
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_common_chains::rollup_config;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
+use base_proof_primitives::PerChainConfig;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro_enclave::Server as EnclaveServer;
 #[cfg(target_os = "linux")]
@@ -33,7 +33,6 @@ use base_proof_worker::{
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::{Parser, Subcommand};
-#[cfg(any(target_os = "linux", feature = "local"))]
 use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tokio_util::sync::CancellationToken;
@@ -66,6 +65,14 @@ pub(crate) struct Cli {
 /// Nitro host subcommands.
 #[derive(Subcommand)]
 enum Command {
+    /// Compute the on-chain config hash for a chain and print it as `0x…`.
+    ///
+    /// Resolves the chain's `RollupConfig` (from op-node via `optimism_rollupConfig`)
+    /// and hashes it with the same `PerChainConfig` encoding the enclave uses, so the
+    /// printed value is exactly what must be set as `AggregateVerifier.CONFIG_HASH`.
+    /// Available on all targets — no enclave/NSM required.
+    ConfigHash(ConfigHashArgs),
+
     /// Claim Nitro TEE jobs from prover-service and forward them to the enclave over vsock.
     #[cfg(target_os = "linux")]
     Server(ServerArgs),
@@ -73,6 +80,26 @@ enum Command {
     /// Claim Nitro TEE jobs from prover-service using in-process local enclave instances.
     #[cfg(feature = "local")]
     Local(LocalArgs),
+}
+
+/// Arguments for the `config-hash` subcommand.
+#[derive(Parser)]
+struct ConfigHashArgs {
+    /// L2 consensus-layer (op-node) RPC URL serving `optimism_rollupConfig`.
+    #[arg(long, env = "L2_CL_URL")]
+    l2_cl_url: String,
+}
+
+impl ConfigHashArgs {
+    async fn run(self) -> eyre::Result<()> {
+        let rollup_config = fetch_rollup_config_from_rpc(&self.l2_cl_url).await?;
+        let mut per_chain = PerChainConfig::from_rollup_config(&rollup_config)
+            .ok_or_else(|| eyre!("rollup config is missing genesis.system_config"))?;
+        per_chain.force_defaults();
+        // Print only the hash to stdout so callers can capture it directly.
+        println!("{:#x}", per_chain.hash());
+        Ok(())
+    }
 }
 
 /// Shared arguments for Nitro proving workers.
@@ -297,6 +324,7 @@ impl Cli {
                 let _ = cancel;
 
                 match command {
+                    Command::ConfigHash(args) => args.run().await,
                     #[cfg(target_os = "linux")]
                     Command::Server(args) => args.run(cancel).await,
                     #[cfg(feature = "local")]
@@ -486,7 +514,6 @@ enum WorkerTransportMode {
     Local,
 }
 
-#[cfg(any(target_os = "linux", feature = "local"))]
 async fn fetch_rollup_config_from_rpc(
     cl_url: &str,
 ) -> eyre::Result<base_common_genesis::RollupConfig> {
