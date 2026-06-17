@@ -4,6 +4,7 @@ use alloy_primitives::U256;
 
 /// Reason a transaction's fees or the payer's balance are invalid.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum FeeError {
     /// `max_priority_fee_per_gas` exceeds `max_fee_per_gas`.
     #[error("max_priority_fee_per_gas {tip} exceeds max_fee_per_gas {max_fee}")]
