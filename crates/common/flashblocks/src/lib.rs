@@ -14,7 +14,7 @@ mod error;
 pub use error::FlashblockDecodeError;
 
 mod metadata;
-pub use metadata::{FlashblockId, Metadata};
+pub use metadata::{FlashblockId, FlashblockIdParseError, Metadata};
 
 mod payload;
 pub use payload::{
