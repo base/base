@@ -24,7 +24,8 @@ use tracing::{info, warn};
 
 use crate::{
     AnchorUpdater, BondManager, BondManagerConfig, ChallengeSubmitter, ChallengerConfig,
-    ChallengerMetrics, Driver, DriverComponents, GameScanner, OutputValidator,
+    ChallengerMetrics, DisputeComponents, Driver, DriverComponents, DriverConfig, GameScanner,
+    OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -33,6 +34,20 @@ pub struct ChallengerService;
 
 impl ChallengerService {
     /// Runs the full challenger service lifecycle.
+    ///
+    /// # Lifecycle
+    ///
+    /// 1. Install TLS provider, create the cancellation token and signal handler
+    /// 2. Create the L1 provider, tx-manager, and challenge submitter
+    /// 3. Create the dispute-game-factory, aggregate-verifier, and anchor-state
+    ///    registry clients and read onchain config
+    /// 4. Build the L2 client, anchor updater, and bond manager (the
+    ///    bond/anchor lifecycle, which always runs)
+    /// 5. Build the dispute-pipeline dependencies — scanner, validator,
+    ///    prover-service requester, and L1 provider (skipped in no-dispute mode)
+    /// 6. Start the health HTTP server
+    /// 7. Assemble and run the driver
+    /// 8. Graceful shutdown
     ///
     /// # Errors
     ///
@@ -140,21 +155,9 @@ impl ChallengerService {
         let l2_client = Arc::new(L2Client::new(L2ClientConfig::new(config.l2_eth_rpc.clone()))?);
         info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 
-        let proof_requester_config = ProverServiceClientConfig::new(config.zk_rpc_url.to_string())
-            .with_request_timeout(config.zk_request_timeout);
-        let proof_requester = Arc::new(ProofRequesterClient::connect(&proof_requester_config)?);
-        info!(endpoint = %config.zk_rpc_url, "Prover-service requester client initialized");
-
-        let l1_client = L1Client::new(L1ClientConfig::new(l1_rpc_url.clone()))
-            .map_err(|e| eyre::eyre!("failed to create L1 client: {e}"))?;
-        let l1_provider: Arc<dyn L1Provider> = Arc::new(l1_client);
-
-        let scanner = GameScanner::new(
-            Arc::clone(&factory_client),
-            Arc::clone(&verifier_client),
-            Arc::clone(&anchor_registry_client),
-        );
-
+        // The bond/anchor lifecycle always runs — including in no-dispute mode,
+        // whose whole purpose is to advance games through resolve → claimCredit
+        // → setAnchorState.
         let anchor_updater = AnchorUpdater::new(
             Arc::clone(&factory_client),
             Arc::clone(&anchor_registry_client),
@@ -169,7 +172,7 @@ impl ChallengerService {
             Some(BondManager::new(
                 BondManagerConfig {
                     claim_addresses: config.bond_claim_addresses,
-                    l1_rpc_url,
+                    l1_rpc_url: l1_rpc_url.clone(),
                     lookback: config.bond_discovery_lookback_games,
                     discovery_interval: config.bond_discovery_interval,
                     metrics_enabled: config.metrics.enabled,
@@ -183,7 +186,42 @@ impl ChallengerService {
             None
         };
 
-        let validator = OutputValidator::new(l2_client);
+        // Dispute-pipeline dependencies (skipped in no-dispute mode). No-dispute
+        // mode runs only the bond/anchor lifecycle, so the prover-service client,
+        // scanner, validator, and L1 provider are never constructed. The type
+        // annotation pins the `Driver`'s `L2`/`P` generics, which are otherwise
+        // unconstrained when `dispute` is `None`.
+        let dispute: Option<DisputeComponents<L2Client, ProofRequesterClient>> = if config.no_dispute
+        {
+            info!("no-dispute mode: skipping prover-service, scanner, validator, and L1 provider");
+            None
+        } else {
+            let zk_rpc_url = config.zk_rpc_url.as_ref().expect("zk_rpc_url is Some when disputing");
+            let proof_requester_config = ProverServiceClientConfig::new(zk_rpc_url.to_string())
+                .with_request_timeout(config.zk_request_timeout);
+            let proof_requester = Arc::new(ProofRequesterClient::connect(&proof_requester_config)?);
+            info!(endpoint = %zk_rpc_url, "Prover-service requester client initialized");
+
+            let l1_client = L1Client::new(L1ClientConfig::new(l1_rpc_url.clone()))
+                .map_err(|e| eyre::eyre!("failed to create L1 client: {e}"))?;
+            let l1_provider: Arc<dyn L1Provider> = Arc::new(l1_client);
+
+            let scanner = GameScanner::new(
+                Arc::clone(&factory_client),
+                Arc::clone(&verifier_client),
+                Arc::clone(&anchor_registry_client),
+            );
+            let validator = OutputValidator::new(l2_client);
+
+            Some(DisputeComponents {
+                scanner,
+                validator,
+                proof_requester,
+                l1_provider,
+                max_proof_duration: config.max_proof_duration,
+                tee_submit_retry_limit: config.tee_submit_retry_limit,
+            })
+        };
 
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle = tokio::spawn(HealthServer::serve(
@@ -192,20 +230,10 @@ impl ChallengerService {
             cancel.clone(),
         ));
 
-        let driver = Driver::new(DriverComponents {
-            scanner,
-            validator,
-            proof_requester,
-            submitter,
-            l1_provider,
-            verifier_client,
-            bond_manager,
-            anchor_updater,
-            poll_interval: config.poll_interval,
-            max_proof_duration: config.max_proof_duration,
-            tee_submit_retry_limit: config.tee_submit_retry_limit,
-            cancel: cancel.child_token(),
-        });
+        let driver = Driver::new(
+            DriverConfig { poll_interval: config.poll_interval, cancel: cancel.child_token() },
+            DriverComponents { dispute, submitter, verifier_client, bond_manager, anchor_updater },
+        );
 
         // Signal readiness immediately after initialization — the driver loop
         // itself is purely operational work that should not gate readiness probes.

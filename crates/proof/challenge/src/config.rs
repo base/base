@@ -25,8 +25,11 @@ pub struct ChallengerConfig {
     pub game_type: u32,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
-    /// URL of the ZK RPC endpoint.
-    pub zk_rpc_url: Url,
+    /// Run in no-dispute mode: skip all ZK/proof-dispute paths and run only the
+    /// bond/anchor lifecycle.
+    pub no_dispute: bool,
+    /// URL of the ZK RPC endpoint. `None` in `--no-dispute` mode.
+    pub zk_rpc_url: Option<Url>,
     /// Timeout for individual gRPC requests to the ZK proof service.
     pub zk_request_timeout: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
@@ -61,9 +64,30 @@ impl ChallengerConfig {
         for (url, message) in [
             (&challenger.l1_eth_rpc, "invalid l1-eth-rpc URL: missing host"),
             (&challenger.l2_eth_rpc, "invalid l2-eth-rpc URL: missing host"),
-            (&challenger.zk_rpc_url, "invalid zk-rpc-url URL: missing host"),
         ] {
             ensure!(url.has_host(), message);
+        }
+
+        if let Some(zk_rpc_url) = &challenger.zk_rpc_url {
+            ensure!(zk_rpc_url.has_host(), "invalid zk-rpc-url URL: missing host");
+        }
+
+        // Mode gating: `--no-dispute` strips the proving path, so it forbids the
+        // proof endpoint (`--zk-rpc-url`) and requires `--bond-claim-addresses`
+        // (otherwise the driver would be a silent no-op). When disputing,
+        // `--zk-rpc-url` is mandatory because the prover-service is the only
+        // proof backend.
+        if challenger.no_dispute {
+            ensure!(
+                challenger.zk_rpc_url.is_none(),
+                "--zk-rpc-url must not be set in --no-dispute mode"
+            );
+            ensure!(
+                !challenger.bond_claim_addresses.is_empty(),
+                "--bond-claim-addresses is required in --no-dispute mode"
+            );
+        } else {
+            ensure!(challenger.zk_rpc_url.is_some(), "--zk-rpc-url is required unless --no-dispute is set");
         }
 
         ensure!(
@@ -99,6 +123,7 @@ impl ChallengerConfig {
             anchor_state_registry_addr: challenger.anchor_state_registry_addr,
             game_type: challenger.game_type,
             poll_interval: challenger.poll_interval,
+            no_dispute: challenger.no_dispute,
             zk_rpc_url: challenger.zk_rpc_url,
             zk_request_timeout: challenger.zk_request_timeout,
             max_proof_duration: challenger.max_proof_duration,
@@ -124,6 +149,8 @@ mod tests {
     use crate::cli::SignerCli;
 
     type InvalidConfigCase = (fn(&mut Cli), &'static str);
+
+    const BOND_ADDR: Address = Address::new([0x11; 20]);
 
     fn minimal_cli() -> Cli {
         Cli::try_parse_from([
@@ -203,7 +230,7 @@ mod tests {
                 "invalid signing config",
             ),
             (
-                |cli| cli.challenger.zk_rpc_url = Url::parse("file:///no/host").unwrap(),
+                |cli| cli.challenger.zk_rpc_url = Some(Url::parse("file:///no/host").unwrap()),
                 "invalid zk-rpc-url URL: missing host",
             ),
         ];
@@ -213,5 +240,49 @@ mod tests {
             mutate(&mut cli);
             assert_eq!(ChallengerConfig::from_cli(cli).unwrap_err().to_string(), expected);
         }
+    }
+
+    #[test]
+    fn test_no_dispute_with_zk_rpc_url_rejected() {
+        let mut cli = minimal_cli();
+        cli.challenger.no_dispute = true;
+        cli.challenger.bond_claim_addresses = vec![BOND_ADDR];
+        // `minimal_cli` sets `--zk-rpc-url`, which is forbidden in no-dispute mode.
+        assert_eq!(
+            ChallengerConfig::from_cli(cli).unwrap_err().to_string(),
+            "--zk-rpc-url must not be set in --no-dispute mode"
+        );
+    }
+
+    #[test]
+    fn test_no_dispute_without_bond_addresses_rejected() {
+        let mut cli = minimal_cli();
+        cli.challenger.no_dispute = true;
+        cli.challenger.zk_rpc_url = None;
+        assert_eq!(
+            ChallengerConfig::from_cli(cli).unwrap_err().to_string(),
+            "--bond-claim-addresses is required in --no-dispute mode"
+        );
+    }
+
+    #[test]
+    fn test_missing_zk_rpc_url_rejected_when_disputing() {
+        let mut cli = minimal_cli();
+        cli.challenger.zk_rpc_url = None;
+        assert_eq!(
+            ChallengerConfig::from_cli(cli).unwrap_err().to_string(),
+            "--zk-rpc-url is required unless --no-dispute is set"
+        );
+    }
+
+    #[test]
+    fn test_no_dispute_valid_config() {
+        let mut cli = minimal_cli();
+        cli.challenger.no_dispute = true;
+        cli.challenger.zk_rpc_url = None;
+        cli.challenger.bond_claim_addresses = vec![BOND_ADDR];
+        let config = ChallengerConfig::from_cli(cli).unwrap();
+        assert!(config.no_dispute);
+        assert!(config.zk_rpc_url.is_none());
     }
 }

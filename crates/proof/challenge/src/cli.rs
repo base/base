@@ -73,9 +73,14 @@ pub struct ChallengerArgs {
     )]
     pub poll_interval: Duration,
 
-    /// URL of the ZK RPC endpoint.
+    /// URL of the ZK RPC endpoint. Required unless `--no-dispute` is set.
     #[arg(long = "zk-rpc-url", env = cli_env!("ZK_RPC_URL"))]
-    pub zk_rpc_url: Url,
+    pub zk_rpc_url: Option<Url>,
+
+    /// Run in no-dispute mode: skip all ZK/proof-dispute paths and run only the
+    /// bond/anchor lifecycle. Requires `--bond-claim-addresses`; forbids `--zk-rpc-url`.
+    #[arg(long = "no-dispute", env = cli_env!("NO_DISPUTE"), default_value_t = false)]
+    pub no_dispute: bool,
 
     /// Timeout for individual gRPC requests to the ZK proof service
     /// (e.g., "30s", "1m").

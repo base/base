@@ -16,7 +16,7 @@ mod config;
 pub use config::ChallengerConfig;
 
 mod driver;
-pub use driver::{Driver, DriverComponents};
+pub use driver::{DisputeComponents, DisputePipeline, Driver, DriverComponents, DriverConfig};
 
 mod pending;
 pub use pending::{DisputeIntent, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate};
