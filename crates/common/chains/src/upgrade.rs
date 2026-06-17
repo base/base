@@ -267,27 +267,22 @@ mod tests {
     }
 
     #[test]
-    fn fork_names_resolve_to_contract_upgrades() {
-        assert_eq!(
-            ContractUpgrade::from_fork_name(EthereumHardfork::Shanghai.name()),
-            Some(ContractUpgrade::Canyon)
-        );
-        assert_eq!(
-            ContractUpgrade::from_fork_name(EthereumHardfork::Cancun.name()),
-            Some(ContractUpgrade::Ecotone)
-        );
-        assert_eq!(
-            ContractUpgrade::from_fork_name(EthereumHardfork::Prague.name()),
-            Some(ContractUpgrade::Isthmus)
-        );
-        assert_eq!(
-            ContractUpgrade::from_fork_name(EthereumHardfork::Osaka.name()),
-            Some(ContractUpgrade::Azul)
-        );
-        assert_eq!(
-            ContractUpgrade::from_fork_name(BaseUpgrade::Beryl.name()),
-            Some(ContractUpgrade::Beryl)
-        );
+    fn contract_upgrade_aliases_resolve_consistently() {
+        let aliases = [
+            (EthereumHardfork::Shanghai.name(), ContractUpgrade::Canyon),
+            (EthereumHardfork::Cancun.name(), ContractUpgrade::Ecotone),
+            (EthereumHardfork::Prague.name(), ContractUpgrade::Isthmus),
+            (EthereumHardfork::Osaka.name(), ContractUpgrade::Azul),
+            (BaseUpgrade::Beryl.name(), ContractUpgrade::Beryl),
+            ("v1", ContractUpgrade::Azul),
+            ("v2", ContractUpgrade::Beryl),
+            ("v3", ContractUpgrade::Cobalt),
+        ];
+
+        for (alias, upgrade) in aliases {
+            assert_eq!(ContractUpgrade::from_fork_name(alias), Some(upgrade));
+            assert_eq!(alias.parse::<ContractUpgrade>().unwrap(), upgrade);
+        }
     }
 
     #[test]
@@ -322,7 +317,7 @@ mod tests {
     #[test]
     fn contract_upgrade_parses_aliases() {
         assert_eq!("base_azul".parse::<ContractUpgrade>().unwrap(), ContractUpgrade::Azul);
-        assert_eq!("v2".parse::<ContractUpgrade>().unwrap(), ContractUpgrade::Beryl);
+        assert_eq!("shanghai".parse::<ContractUpgrade>().unwrap(), ContractUpgrade::Canyon);
         assert_eq!(
             "pectra_blob_schedule".parse::<ContractUpgrade>().unwrap(),
             ContractUpgrade::PectraBlobSchedule

@@ -438,14 +438,18 @@ impl BaseChainSpec {
         hardfork_id: ContractUpgrade,
         condition: ForkCondition,
     ) -> bool {
+        let mut inserted = false;
+
         if let Some(execution_hardfork) = hardfork_id.execution_hardfork() {
             hardforks.insert(execution_hardfork, condition);
+            inserted = true;
         }
         if let Some(base_upgrade) = BaseUpgrade::from_contract_upgrade(hardfork_id) {
             hardforks.insert(base_upgrade, condition);
+            inserted = true;
         }
 
-        true
+        inserted
     }
 }
 
@@ -1264,17 +1268,17 @@ mod tests {
     }
 
     #[test]
-    fn set_hardfork_activation_timestamp_accepts_rollup_only_contract_ids() {
+    fn set_hardfork_activation_timestamp_ignores_rollup_only_contract_ids() {
         let mut chain_spec = BaseChainSpec::devnet();
         let ecotone = chain_spec.fork(BaseUpgrade::Ecotone);
 
-        assert!(chain_spec.set_hardfork_activation_timestamp(ContractUpgrade::Delta, 42));
+        assert!(!chain_spec.set_hardfork_activation_timestamp(ContractUpgrade::Delta, 42));
         assert!(
-            chain_spec.set_hardfork_activation_timestamp(ContractUpgrade::PectraBlobSchedule, 84)
+            !chain_spec.set_hardfork_activation_timestamp(ContractUpgrade::PectraBlobSchedule, 84,)
         );
-        assert!(chain_spec.clear_hardfork_activation_timestamp(ContractUpgrade::Delta));
+        assert!(!chain_spec.clear_hardfork_activation_timestamp(ContractUpgrade::Delta));
         assert!(
-            chain_spec.clear_hardfork_activation_timestamp(ContractUpgrade::PectraBlobSchedule)
+            !chain_spec.clear_hardfork_activation_timestamp(ContractUpgrade::PectraBlobSchedule)
         );
 
         assert_eq!(chain_spec.fork(BaseUpgrade::Ecotone), ecotone);

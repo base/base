@@ -124,7 +124,7 @@ impl ContractUpgrade {
         }
     }
 
-    /// Returns the contract upgrade represented by an execution or Base fork name.
+    /// Returns the contract upgrade represented by an execution, Base, or contract alias name.
     pub fn from_fork_name(name: &str) -> Option<Self> {
         match Self::normalized_hardfork_id(name).as_str() {
             "regolith" => Some(Self::Regolith),
@@ -137,9 +137,9 @@ impl ContractUpgrade {
             "pectrablobschedule" => Some(Self::PectraBlobSchedule),
             "prague" | "isthmus" => Some(Self::Isthmus),
             "jovian" => Some(Self::Jovian),
-            "osaka" | "azul" | "baseazul" => Some(Self::Azul),
-            "beryl" | "baseberyl" => Some(Self::Beryl),
-            "cobalt" | "basecobalt" => Some(Self::Cobalt),
+            "osaka" | "azul" | "baseazul" | "v1" => Some(Self::Azul),
+            "beryl" | "baseberyl" | "v2" => Some(Self::Beryl),
+            "cobalt" | "basecobalt" | "v3" => Some(Self::Cobalt),
             _ => None,
         }
     }
@@ -158,24 +158,8 @@ impl FromStr for ContractUpgrade {
     type Err = ParseHardforkError;
 
     fn from_str(upgrade_id: &str) -> Result<Self, Self::Err> {
-        let upgrade = match Self::normalized_hardfork_id(upgrade_id).as_str() {
-            "regolith" => Some(Self::Regolith),
-            "canyon" => Some(Self::Canyon),
-            "delta" => Some(Self::Delta),
-            "ecotone" => Some(Self::Ecotone),
-            "fjord" => Some(Self::Fjord),
-            "granite" => Some(Self::Granite),
-            "holocene" => Some(Self::Holocene),
-            "pectrablobschedule" => Some(Self::PectraBlobSchedule),
-            "isthmus" => Some(Self::Isthmus),
-            "jovian" => Some(Self::Jovian),
-            "azul" | "baseazul" | "v1" => Some(Self::Azul),
-            "beryl" | "baseberyl" | "v2" => Some(Self::Beryl),
-            "cobalt" | "basecobalt" | "v3" => Some(Self::Cobalt),
-            _ => None,
-        };
-
-        upgrade.ok_or_else(|| ParseHardforkError::new(format!("Unknown hardfork: {upgrade_id}")))
+        Self::from_fork_name(upgrade_id)
+            .ok_or_else(|| ParseHardforkError::new(format!("Unknown hardfork: {upgrade_id}")))
     }
 }
 
