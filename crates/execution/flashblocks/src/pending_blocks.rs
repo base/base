@@ -24,7 +24,7 @@ use revm::{
     state::{AccountInfo, EvmState},
 };
 
-use crate::{BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
+use crate::{BuildError, CapturedReads, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
@@ -51,6 +51,7 @@ pub struct PendingBlocksBuilder {
     transaction_results: HashMap<B256, ExecutionResult<BaseHaltReason>>,
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
+    transaction_reads: HashMap<B256, CapturedReads>,
 
     bundle_state: Option<Arc<BundleState>>,
 
@@ -88,6 +89,7 @@ impl PendingBlocksBuilder {
             transaction_results: HashMap::new(),
             execution_times: HashMap::new(),
             state_root_times: HashMap::new(),
+            transaction_reads: HashMap::new(),
             state_overrides: None,
             bundle_state: None,
             deferred_error: None,
@@ -110,6 +112,7 @@ impl PendingBlocksBuilder {
         let transaction_results = pending_blocks.transaction_results.clone();
         let execution_times = pending_blocks.execution_times.clone();
         let state_root_times = pending_blocks.state_root_times.clone();
+        let transaction_reads = pending_blocks.transaction_reads.clone();
         let next_position_per_block = pending_blocks.next_position_per_block.clone();
         let bundle_state = Arc::clone(&pending_blocks.bundle_state);
 
@@ -137,6 +140,7 @@ impl PendingBlocksBuilder {
             transaction_results,
             execution_times,
             state_root_times,
+            transaction_reads,
             bundle_state: Some(bundle_state),
             deferred_error: None,
         }
@@ -286,6 +290,15 @@ impl PendingBlocksBuilder {
         self
     }
 
+    /// Stores the read-set captured during a transaction's original execution (tx-cache
+    /// shadow-diff only). Carried across rebuilds so the rebuild can diff the values the cached
+    /// execution read against the values the rebuilt prefix now serves.
+    #[inline]
+    pub fn with_transaction_reads(&mut self, hash: B256, reads: CapturedReads) -> &Self {
+        self.transaction_reads.insert(hash, reads);
+        self
+    }
+
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
         if let Some(err) = self.deferred_error {
@@ -376,6 +389,7 @@ impl PendingBlocksBuilder {
             transaction_results: self.transaction_results,
             execution_times: self.execution_times,
             state_root_times: self.state_root_times,
+            transaction_reads: self.transaction_reads,
         })
     }
 }
@@ -407,6 +421,7 @@ pub struct PendingBlocks {
     transaction_results: HashMap<B256, ExecutionResult<BaseHaltReason>>,
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
+    transaction_reads: HashMap<B256, CapturedReads>,
 
     bundle_state: Arc<BundleState>,
 }
@@ -536,20 +551,43 @@ impl PendingBlocks {
         self.transaction_senders.get(tx_hash).copied()
     }
 
-    /// Diagnostic: returns, in execution order, every transaction in the pending window that
-    /// wrote `slot` of `address`, as `(tx_hash, block_number, present_value)`.
+    /// Diagnostic: returns, in execution order, every transaction that executes *strictly before*
+    /// `before` in the pending window and wrote `slot` of `address`, as
+    /// `(tx_hash, block_number, present_value)`.
     ///
-    /// Used by the tx-cache shadow-diff to attribute a divergent storage slot to its last
-    /// writer, distinguishing a stale cached predecessor from a base-state mismatch.
-    pub fn slot_writers(&self, address: Address, slot: U256) -> Vec<(B256, BlockNumber, U256)> {
-        self.transactions
-            .iter()
-            .filter_map(|tx| {
-                let tx_hash = tx.tx_hash();
-                let sslot = self.transaction_state.get(&tx_hash)?.get(&address)?.storage.get(&slot)?;
-                Some((tx_hash, tx.block_number.unwrap_or_default(), sslot.present_value))
-            })
-            .collect()
+    /// Used by the tx-cache shadow-diff to attribute a divergent storage slot to the predecessor
+    /// that last wrote it, distinguishing a stale cached predecessor from a base-state mismatch.
+    /// Excluding `before` itself (and everything after it) avoids two false positives: a
+    /// read-modify-write transaction being flagged against its own post-write value, and a read
+    /// being attributed to a writer in a *later* block.
+    pub fn slot_writers_before(
+        &self,
+        address: Address,
+        slot: U256,
+        before: B256,
+    ) -> Vec<(B256, BlockNumber, U256)> {
+        let mut writers = Vec::new();
+        for tx in &self.transactions {
+            let tx_hash = tx.tx_hash();
+            if tx_hash == before {
+                break;
+            }
+            if let Some(sslot) =
+                self.transaction_state.get(&tx_hash).and_then(|s| s.get(&address)).and_then(
+                    |account| account.storage.get(&slot),
+                )
+            {
+                writers.push((tx_hash, tx.block_number.unwrap_or_default(), sslot.present_value));
+            }
+        }
+        writers
+    }
+
+    /// Diagnostic: returns the read-set captured at the transaction's *original* execution, if it
+    /// was recorded (tx-cache shadow-diff only). Lets the rebuild compare the values the cached
+    /// execution actually read against the values the rebuilt prefix now serves.
+    pub fn get_transaction_reads(&self, tx_hash: &B256) -> Option<&CapturedReads> {
+        self.transaction_reads.get(tx_hash)
     }
 
     /// Returns a shared reference to the bundle state.

@@ -518,6 +518,8 @@ where
             prev_pending_blocks.latest_block_cumulative_gas_used(),
             prev_pending_blocks.latest_block_next_log_index(),
         );
+        // Capture each tx's original read-set (shadow-diff only) so a later rebuild can diff it.
+        pending_state_builder.set_read_log(Arc::clone(&self.read_log));
 
         for (offset, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
             let tx_hash = transaction.tx_hash();
@@ -540,6 +542,9 @@ where
                 }
             }
 
+            if let Some(reads) = executed_transaction.created_reads {
+                pending_blocks_builder.with_transaction_reads(tx_hash, reads);
+            }
             pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
             pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
             pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
@@ -677,6 +682,8 @@ where
         //     reconstructed_parent_hash,
         //     Some(base.parent_beacon_block_root),
         // )?;
+        // Capture each tx's original read-set (shadow-diff only) so a later rebuild can diff it.
+        pending_state_builder.set_read_log(Arc::clone(&self.read_log));
 
         for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
             let tx_hash = transaction.tx_hash();
@@ -698,6 +705,9 @@ where
                 }
             }
 
+            if let Some(reads) = executed_transaction.created_reads {
+                pending_blocks_builder.with_transaction_reads(tx_hash, reads);
+            }
             pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
             pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
             pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
@@ -901,6 +911,9 @@ where
                     }
                 }
 
+                if let Some(reads) = executed_transaction.created_reads {
+                    pending_blocks_builder.with_transaction_reads(tx_hash, reads);
+                }
                 pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
                 pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
                 pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);

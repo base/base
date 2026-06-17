@@ -33,7 +33,7 @@ pub struct ReadLog {
 }
 
 /// A snapshot of reads captured during a single re-execution.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CapturedReads {
     /// Storage reads as `(address, slot, value)`.
     pub storage: Vec<(Address, U256, U256)>,

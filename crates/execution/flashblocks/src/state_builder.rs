@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex, OnceLock},
     time::Instant,
 };
@@ -12,7 +13,7 @@ use alloy_evm::{
     Database as AlloyDatabase,
     block::{StateDB, SystemCaller},
 };
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
@@ -50,6 +51,11 @@ pub struct ExecutedPendingTransaction {
     pub result: ExecutionResult<BaseHaltReason>,
     /// Per-transaction EVM execution time, if known.
     pub execution_time_us: Option<u128>,
+    /// Read-set captured during this (original) execution, present only when the tx-cache
+    /// shadow-diff diagnostic is enabled and a [`crate::RecordingDb`] is wired. Stored in the
+    /// cache so a later rebuild can diff the values this execution read against the values its
+    /// reconstructed prefix serves, pinpointing the read that flipped the cached outcome.
+    pub created_reads: Option<CapturedReads>,
 }
 
 #[derive(Debug)]
@@ -116,6 +122,39 @@ where
     /// log; otherwise captures stay empty and the read-set section of the diagnostic is skipped.
     pub fn set_read_log(&mut self, read_log: Arc<Mutex<ReadLog>>) {
         self.read_log = Some(read_log);
+    }
+
+    /// Returns whether the tx-cache shadow-diff diagnostic is enabled via
+    /// `BASE_FLASHBLOCKS_TX_CACHE_SHADOW_DIFF`. Cached after the first read.
+    fn shadow_diff_enabled() -> bool {
+        static SHADOW_DIFF: OnceLock<bool> = OnceLock::new();
+        *SHADOW_DIFF
+            .get_or_init(|| std::env::var_os("BASE_FLASHBLOCKS_TX_CACHE_SHADOW_DIFF").is_some())
+    }
+
+    /// Arms the shared read-capture log so the next EVM call records its read-set. A no-op when no
+    /// log is wired (i.e. the database is not a [`crate::RecordingDb`]).
+    fn arm_read_capture(&self) {
+        if let Some(log) = &self.read_log
+            && let Ok(mut log) = log.lock()
+        {
+            log.enabled = true;
+            log.storage.clear();
+            log.accounts.clear();
+        }
+    }
+
+    /// Disarms read capture and returns the reads recorded since the last [`Self::arm_read_capture`].
+    fn take_captured_reads(&self) -> Option<CapturedReads> {
+        self.read_log.as_ref().and_then(|log| {
+            log.lock().ok().map(|mut log| {
+                log.enabled = false;
+                CapturedReads {
+                    storage: std::mem::take(&mut log.storage),
+                    accounts: std::mem::take(&mut log.accounts),
+                }
+            })
+        })
     }
 
     /// Consumes the builder and returns the database and state overrides.
@@ -260,6 +299,14 @@ where
         // wrong success/revert. Behavior is unchanged; the fresh result is discarded.
         self.shadow_diff_cached_execution(&transaction, idx, &result, &state);
 
+        // Carry the originally-captured read-set forward across rebuilds (shadow-diff only), so a
+        // reused cached transaction keeps its read-set available to subsequent rebuilds whose
+        // `PendingBlocksBuilder` starts empty. `None` when the diagnostic is off.
+        let created_reads = self
+            .prev_pending_blocks
+            .as_ref()
+            .and_then(|p| p.get_transaction_reads(&transaction.tx_hash()).cloned());
+
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
             let BaseReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
                 return Err(ExecutionError::DepositReceiptMismatch.into());
@@ -302,6 +349,7 @@ where
             state,
             result,
             execution_time_us,
+            created_reads,
         })
     }
 
@@ -319,33 +367,16 @@ where
         cached_result: &ExecutionResult<BaseHaltReason>,
         cached_state: &EvmState,
     ) {
-        static SHADOW_DIFF: OnceLock<bool> = OnceLock::new();
-        let shadow_diff = *SHADOW_DIFF
-            .get_or_init(|| std::env::var_os("BASE_FLASHBLOCKS_TX_CACHE_SHADOW_DIFF").is_some());
-        if !shadow_diff {
+        if !Self::shadow_diff_enabled() {
             return;
         }
 
         let tx_hash = transaction.tx_hash();
         // (Layer 2) Enable read-capture for just this re-execution so we record the diverging
         // transaction's full read-set, including read-only slots absent from the write-set.
-        if let Some(log) = &self.read_log
-            && let Ok(mut log) = log.lock()
-        {
-            log.enabled = true;
-            log.storage.clear();
-            log.accounts.clear();
-        }
+        self.arm_read_capture();
         let outcome = self.evm.transact(transaction);
-        let reads = self.read_log.as_ref().and_then(|log| {
-            log.lock().ok().map(|mut log| {
-                log.enabled = false;
-                CapturedReads {
-                    storage: std::mem::take(&mut log.storage),
-                    accounts: std::mem::take(&mut log.accounts),
-                }
-            })
-        });
+        let reads = self.take_captured_reads();
         match outcome {
             Ok(ResultAndState { result: fresh_result, .. }) => {
                 let cached_status = cached_result.is_success();
@@ -365,9 +396,21 @@ where
                     );
                     // Layers 1 + 3: pinpoint which storage slot the rebuilt prefix
                     // reconstructed differently than when the cache entry was written, and
-                    // attribute it to its last writer in the pending window. Layer 2: dump the
-                    // captured read-set (catches read-only divergences invisible to the write-set).
-                    self.dump_cache_divergence(tx_hash, idx, cached_state, reads.as_ref());
+                    // attribute it to its predecessor writer in the pending window. Layer 2: dump
+                    // the captured read-set (catches read-only divergences invisible to the
+                    // write-set). Layer 4: diff the read-set against the one captured at the
+                    // cache's original execution to pinpoint the exact read that flipped.
+                    let cached_reads = self
+                        .prev_pending_blocks
+                        .as_ref()
+                        .and_then(|p| p.get_transaction_reads(&tx_hash).cloned());
+                    self.dump_cache_divergence(
+                        tx_hash,
+                        idx,
+                        cached_state,
+                        reads.as_ref(),
+                        cached_reads.as_ref(),
+                    );
                 } else if cached_gas != fresh_gas {
                     debug!(
                         tx_hash = %tx_hash,
@@ -391,28 +434,36 @@ where
         }
     }
 
-    /// Diagnostic for a confirmed tx-cache status divergence (Layers 1 + 2 + 3).
+    /// Diagnostic for a confirmed tx-cache status divergence (Layers 1 + 2 + 3 + 4).
     ///
     /// First (Layers 1 + 3), for every storage slot the cached execution *wrote*, compares the
     /// value the cache recorded as the slot's pre-state (`original_value`) against the value the
-    /// *current* rebuilt pending state holds, attributing any mismatch to the slot's last writer
-    /// in the pending window (stale cached predecessor vs. base-state mismatch).
+    /// *current* rebuilt pending state holds, attributing any mismatch to the slot's last
+    /// *predecessor* writer in the pending window (stale cached predecessor vs. base-state
+    /// mismatch).
     ///
-    /// Then (Layer 2), walks the diverging re-execution's captured read-set (`reads`) — which
-    /// includes read-only slots absent from the write-set — and flags any read whose value
-    /// disagrees with the last writer's committed value. This covers the case where the write-set
-    /// comparison finds nothing because the divergence is in a slot the transaction only reads.
-    /// `reads` is `None` (and the read-set section is skipped) unless a [`crate::RecordingDb`] was
-    /// wired via [`PendingStateBuilder::set_read_log`].
+    /// Then (Layer 2), walks the diverging re-execution's captured read-set (`fresh_reads`) —
+    /// which includes read-only slots absent from the write-set — and attributes each storage read
+    /// to its last predecessor writer. `fresh_reads` is `None` (and these sections are skipped)
+    /// unless a [`crate::RecordingDb`] was wired via [`PendingStateBuilder::set_read_log`].
+    ///
+    /// Finally (Layer 4), diffs the read-set captured at the cache's *original* execution
+    /// (`cached_reads`) against `fresh_reads`. A storage slot or account whose value differs
+    /// between the two executions is the exact read that flipped the outcome — the conclusive
+    /// root-cause locator, since it is independent of writer attribution heuristics.
     fn dump_cache_divergence(
         &mut self,
         tx_hash: B256,
         idx: usize,
         cached_state: &EvmState,
-        reads: Option<&CapturedReads>,
+        fresh_reads: Option<&CapturedReads>,
+        cached_reads: Option<&CapturedReads>,
     ) {
         let prev = self.prev_pending_blocks.clone();
         let block_number = self.pending_block.number;
+        let writers_before = |addr: Address, slot: U256| {
+            prev.as_ref().map(|p| p.slot_writers_before(addr, slot, tx_hash)).unwrap_or_default()
+        };
 
         // Layers 1 + 3: write-set slots whose recorded pre-state no longer matches the rebuild.
         for (addr, acct) in cached_state {
@@ -424,8 +475,7 @@ where
                 if current == sslot.original_value {
                     continue;
                 }
-                let writers =
-                    prev.as_ref().map(|p| p.slot_writers(*addr, *slot)).unwrap_or_default();
+                let writers = writers_before(*addr, *slot);
                 let last_writer = writers.last();
                 warn!(
                     tx_hash = %tx_hash,
@@ -445,10 +495,26 @@ where
             }
         }
 
+        // Layer 4: conclusive diff of cached-vs-fresh read-sets. Independent of writer attribution.
+        match (cached_reads, fresh_reads) {
+            (Some(cached), Some(fresh)) => {
+                Self::diff_read_sets(tx_hash, idx, block_number, cached, fresh);
+            }
+            (None, _) => {
+                debug!(
+                    tx_hash = %tx_hash,
+                    idx,
+                    "tx cache divergence: original read-set unavailable (cache predates capture)"
+                );
+            }
+            _ => {}
+        }
+
         // Layer 2: full read-set of the diverging re-execution. Each storage read is attributed to
-        // its last writer in the pending window; a read whose value disagrees with that writer's
-        // committed value (or a base read with no writer) is the read-only divergence candidate.
-        let Some(reads) = reads else {
+        // its last predecessor writer in the pending window; a read whose value disagrees with that
+        // writer's committed value (or a base read with no writer) is the read-only divergence
+        // candidate.
+        let Some(reads) = fresh_reads else {
             debug!(
                 tx_hash = %tx_hash,
                 idx,
@@ -457,7 +523,7 @@ where
             return;
         };
         for (addr, slot, value) in &reads.storage {
-            let writers = prev.as_ref().map(|p| p.slot_writers(*addr, *slot)).unwrap_or_default();
+            let writers = writers_before(*addr, *slot);
             let last_writer = writers.last();
             let inconsistent = last_writer.is_some_and(|w| w.2 != *value);
             if inconsistent {
@@ -472,7 +538,7 @@ where
                     last_writer_tx = ?last_writer.map(|w| w.0),
                     last_writer_block = ?last_writer.map(|w| w.1),
                     last_writer_value = ?last_writer.map(|w| w.2),
-                    "tx cache divergence: read-set slot disagrees with last writer"
+                    "tx cache divergence: read-set slot disagrees with predecessor writer"
                 );
             } else {
                 debug!(
@@ -494,6 +560,85 @@ where
             storage_reads = reads.storage.len(),
             account_reads = reads.accounts.len(),
             "tx cache divergence: read-set captured"
+        );
+    }
+
+    /// Layer 4: warns on every storage slot / account whose value differs between the read-set
+    /// captured at the cache's original execution and the read-set of the diverging re-execution.
+    /// Each warning isolates a single read that the rebuilt prefix served differently — the
+    /// conclusive cause of the status flip.
+    fn diff_read_sets(
+        tx_hash: B256,
+        idx: usize,
+        block_number: u64,
+        cached: &CapturedReads,
+        fresh: &CapturedReads,
+    ) {
+        // First-occurrence value per (address, slot): the pre-state the transaction observed.
+        let mut cached_storage: HashMap<(Address, U256), U256> = HashMap::new();
+        for (addr, slot, value) in &cached.storage {
+            cached_storage.entry((*addr, *slot)).or_insert(*value);
+        }
+        let mut fresh_storage: HashMap<(Address, U256), U256> = HashMap::new();
+        for (addr, slot, value) in &fresh.storage {
+            fresh_storage.entry((*addr, *slot)).or_insert(*value);
+        }
+        let mut storage_flips = 0usize;
+        for ((addr, slot), cached_value) in &cached_storage {
+            if let Some(fresh_value) = fresh_storage.get(&(*addr, *slot))
+                && fresh_value != cached_value
+            {
+                storage_flips += 1;
+                warn!(
+                    tx_hash = %tx_hash,
+                    idx,
+                    block_number,
+                    address = %addr,
+                    slot = %slot,
+                    cached_read = %cached_value,
+                    fresh_read = %fresh_value,
+                    "tx cache divergence: storage read flipped between cached and rebuild execution"
+                );
+            }
+        }
+
+        let mut cached_accounts: HashMap<Address, (U256, u64)> = HashMap::new();
+        for (addr, balance, nonce) in &cached.accounts {
+            cached_accounts.entry(*addr).or_insert((*balance, *nonce));
+        }
+        let mut fresh_accounts: HashMap<Address, (U256, u64)> = HashMap::new();
+        for (addr, balance, nonce) in &fresh.accounts {
+            fresh_accounts.entry(*addr).or_insert((*balance, *nonce));
+        }
+        let mut account_flips = 0usize;
+        for (addr, cached_acct) in &cached_accounts {
+            if let Some(fresh_acct) = fresh_accounts.get(addr)
+                && fresh_acct != cached_acct
+            {
+                account_flips += 1;
+                warn!(
+                    tx_hash = %tx_hash,
+                    idx,
+                    block_number,
+                    address = %addr,
+                    cached_balance = %cached_acct.0,
+                    fresh_balance = %fresh_acct.0,
+                    cached_nonce = cached_acct.1,
+                    fresh_nonce = fresh_acct.1,
+                    "tx cache divergence: account read flipped between cached and rebuild execution"
+                );
+            }
+        }
+
+        warn!(
+            tx_hash = %tx_hash,
+            idx,
+            block_number,
+            storage_flips,
+            account_flips,
+            cached_storage_reads = cached.storage.len(),
+            fresh_storage_reads = fresh.storage.len(),
+            "tx cache divergence: read-set diff complete"
         );
     }
 
@@ -543,9 +688,16 @@ where
             0
         };
 
+        // When the shadow-diff diagnostic is on, capture this original execution's read-set so a
+        // later rebuild can diff it against the re-execution's read-set (Layer 4). Off by default.
+        let capture_reads = Self::shadow_diff_enabled();
+        if capture_reads {
+            self.arm_read_capture();
+        }
         let start = Instant::now();
         let transact_result = self.evm.transact(&transaction);
         let elapsed_us = start.elapsed().as_micros();
+        let created_reads = if capture_reads { self.take_captured_reads() } else { None };
 
         match transact_result {
             Ok(ResultAndState { state, result }) => {
@@ -642,6 +794,7 @@ where
                     state,
                     result,
                     execution_time_us: Some(elapsed_us),
+                    created_reads,
                 })
             }
             Err(e) => Err(ExecutionError::TransactionFailed {
