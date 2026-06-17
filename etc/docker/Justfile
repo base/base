@@ -167,6 +167,13 @@ _build-setup-image:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet \
         $(if [ -n "$CONTRACTS_COMMIT" ]; then echo "--build-arg CONTRACTS_COMMIT=$CONTRACTS_COMMIT"; fi) .
 
+# nitro-host-local image — used by the L3 dev-multiproof compute-config-hash one-shot (and the
+# nitro-local prover service). Built with the dev profile to match the other devnet images.
+[private]
+_build-nitro-host-local:
+    docker build -t nitro-host-local:local -f etc/docker/Dockerfile.nitro-host-local \
+        --build-arg PROFILE=dev .
+
 [private]
 _build-rust-images group profile='dev':
     #!/usr/bin/env bash
@@ -220,6 +227,9 @@ _up-devnet compose_profile l1_mode zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
+        if [ "$l1_mode" = "l3" ]; then
+          just --justfile {{ source_file() }} _build-nitro-host-local
+        fi
         SP1_PROVER=dry-run docker compose "${env_files[@]}" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build
         ;;
       cluster)
@@ -270,6 +280,9 @@ _up-devnet compose_profile l1_mode zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
+        if [ "$l1_mode" = "l3" ]; then
+          just --justfile {{ source_file() }} _build-nitro-host-local
+        fi
         docker compose "${env_files[@]}" --env-file "$cluster_env" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build
         ;;
       *)

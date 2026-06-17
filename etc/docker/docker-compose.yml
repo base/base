@@ -210,6 +210,7 @@ services:
       - PROPOSER_ADDR=${PROPOSER_ADDR}
       - CHALLENGER_ADDR=${CHALLENGER_ADDR}
       - MULTIPROOF_CONFIG_HASH=${MULTIPROOF_CONFIG_HASH-}
+      - MULTIPROOF_DEFER_REGISTRATION=${MULTIPROOF_DEFER_REGISTRATION-}
       - DEV_TEE_SIGNER=${DEV_TEE_SIGNER-}
       - TEE_IMAGE_HASH=${TEE_IMAGE_HASH-}
       - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
@@ -234,6 +235,61 @@ services:
       - L2_RPC_URL=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - CONFIG_DIR=/configs
     entrypoint: ["/usr/local/bin/patch-genesis-hash.sh"]
+
+  # Post-genesis dev-multiproof registration — two ordered one-shots.
+  # AggregateVerifier.CONFIG_HASH is immutable and depends on the L2 rollup config, which only
+  # exists after genesis, so SystemDeploy defers the verifier (MULTIPROOF_DEFER_REGISTRATION).
+  # 1) compute-config-hash: read the real hash from the running op-node.
+  # 2) register-aggregate-verifier: deploy + register the verifier with that hash.
+  # base-l1 profile only: this flow is specific to the L3 / dev-multiproof devnet. In eth-l1 mode
+  # multiproof is disabled and the deploy is not deferred, so these services are not created.
+  compute-config-hash:
+    image: nitro-host-local:local
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.nitro-host-local
+    container_name: compute-config-hash
+    profiles: ["base-l1"]
+    depends_on:
+      base-builder-cl:
+        condition: service_healthy
+    volumes:
+      - ../../.devnet/l2/configs:/configs
+      - ../../etc/scripts/devnet/compute-config-hash.sh:/compute-config-hash.sh:ro
+    user: root
+    environment:
+      - L2_CL_URL=http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
+      - OUTPUT_DIR=/configs
+    entrypoint: ["/bin/bash", "/compute-config-hash.sh"]
+    restart: on-failure
+
+  register-aggregate-verifier:
+    image: devnet-setup:local
+    container_name: register-aggregate-verifier
+    profiles: ["base-l1"]
+    env_file: devnet-env
+    depends_on:
+      compute-config-hash:
+        condition: service_completed_successfully
+    volumes:
+      - ../../.devnet/l2/configs:/devnet/l2/configs
+    environment:
+      - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
+      - L1_CHAIN_ID=${L1_CHAIN_ID}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
+      - OUTPUT_DIR=/devnet/l2/configs
+      - HASH_FILE=/devnet/l2/configs/multiproof-config-hash
+      - DEPLOYER_ADDR=${DEPLOYER_ADDR}
+      - DEPLOYER_KEY=${DEPLOYER_KEY}
+      - SEQUENCER_ADDR=${SEQUENCER_ADDR}
+      - BATCHER_ADDR=${BATCHER_ADDR}
+      - PROPOSER_ADDR=${PROPOSER_ADDR}
+      - CHALLENGER_ADDR=${CHALLENGER_ADDR}
+      - MULTIPROOF_CONFIG_HASH=${MULTIPROOF_CONFIG_HASH-}
+      - DEV_TEE_SIGNER=${DEV_TEE_SIGNER-}
+      - TEE_IMAGE_HASH=${TEE_IMAGE_HASH-}
+    entrypoint: ["/usr/local/bin/register-aggregate-verifier.sh"]
+    restart: on-failure
 
   base-el-bootnode:
     image: base-reth-node:local
