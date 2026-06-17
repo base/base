@@ -22,3 +22,7 @@ base-common-consensus = { workspace = true, default-features = false }
 
 # misc
 thiserror.workspace = true
+
+[dev-dependencies]
+# revm (canonical EVM gas constants, for the drift tripwire test only)
+revm = { workspace = true, features = ["std"] }

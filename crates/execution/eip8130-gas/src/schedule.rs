@@ -5,12 +5,20 @@ use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 
 /// Per-component gas costs for EIP-8130 intrinsic gas.
 ///
+/// This schedule is a **recommendation at the current point in time**, not a
+/// fixed protocol constant. EIP-8130 lets each chain decide how it prices
+/// intrinsic gas and (enshrined) authenticator execution, so a chain MAY adopt a
+/// different schedule; these are the values Base uses today.
+///
 /// The storage primitives are the EIP-2929 access costs and the data-byte costs
 /// are EIP-2028; together they reproduce the EIP-8130 `nonce_key_cost` table
-/// exactly (cold SLOAD + SSTORE set = 22,100; cold SLOAD + SSTORE reset =
-/// 5,000). The authenticator execution costs are the chain-policy values for the
-/// enshrined canonical authenticators, pinned to the EVM precompile costs Base
-/// uses (see the crate docs).
+/// (cold SLOAD + SSTORE set = 22,100; cold SLOAD + warm SSTORE reset = 5,000).
+/// The authenticator execution costs are the chain-policy values for the
+/// enshrined canonical authenticators, set to the EVM precompile costs Base uses
+/// (see the crate docs). The `gas_primitives_match_evm_reference` test is a
+/// drift tripwire that pins the EVM primitives to revm's canonical constants, so
+/// an upstream repricing is surfaced and re-decided deliberately rather than
+/// tracked silently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Eip8130GasSchedule;
@@ -90,5 +98,43 @@ impl Eip8130GasSchedule {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use revm::interpreter::gas;
+
+    use super::*;
+
+    /// The schedule is a recommendation built on the current EIP-2929/EIP-2028
+    /// EVM primitives. This is a drift tripwire, not an invariant: if revm
+    /// reprices a primitive (e.g. via a hardfork), this fails so the schedule
+    /// (and the EIP) can be re-decided deliberately rather than the change being
+    /// adopted silently. It also documents the (non-obvious) name mapping.
+    #[test]
+    fn gas_primitives_match_evm_reference() {
+        assert_eq!(Eip8130GasSchedule::COLD_SLOAD, gas::COLD_SLOAD_COST);
+        assert_eq!(Eip8130GasSchedule::SSTORE_SET, gas::SSTORE_SET);
+        // revm's `SSTORE_RESET` (5,000) bundles the cold SLOAD; the warm-only
+        // reset component is `WARM_SSTORE_RESET` (2,900), which the schedule's
+        // composites add on top of `COLD_SLOAD` separately.
+        assert_eq!(Eip8130GasSchedule::SSTORE_RESET, gas::WARM_SSTORE_RESET);
+        // A zero byte is one standard calldata token; a non-zero byte is the
+        // EIP-2028 (Istanbul) cost, not the EIP-7623 floor token.
+        assert_eq!(Eip8130GasSchedule::TX_DATA_ZERO_BYTE, gas::STANDARD_TOKEN_COST);
+        assert_eq!(Eip8130GasSchedule::TX_DATA_NONZERO_BYTE, gas::NON_ZERO_BYTE_DATA_COST_ISTANBUL);
+        assert_eq!(Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE, gas::CODEDEPOSIT);
+        assert_eq!(Eip8130GasSchedule::CREATE_BASE_COST, gas::CREATE);
+
+        // The EIP-8130 `nonce_key_cost` composites these primitives reproduce.
+        assert_eq!(
+            Eip8130GasSchedule::NONCE_KEY_FIRST_USE_COST,
+            gas::COLD_SLOAD_COST + gas::SSTORE_SET
+        );
+        assert_eq!(
+            Eip8130GasSchedule::NONCE_KEY_EXISTING_COST,
+            gas::COLD_SLOAD_COST + gas::WARM_SSTORE_RESET
+        );
     }
 }
