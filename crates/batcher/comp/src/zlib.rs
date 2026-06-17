@@ -90,9 +90,10 @@ impl CompressorWriter for ZlibCompressor {
 
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
         self.ensure_compressed();
-        let compressed = self.compressed.borrow();
+        let mut compressed = self.compressed.borrow_mut();
         let len = compressed.len().min(buf.len());
         buf[..len].copy_from_slice(&compressed[..len]);
+        compressed.drain(..len);
         Ok(len)
     }
 }
