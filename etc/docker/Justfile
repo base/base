@@ -218,7 +218,19 @@ _up-devnet compose_profile l1_mode zk:
     # calldata DA). Each layers its own env file and activates the matching compose profile.
     case "$l1_mode" in
       eth) env_files=({{ _env_eth }}); l1_profile=({{ _eth }}) ;;
-      l3)  env_files=({{ _env_l3 }}); l1_profile=({{ _l3 }}) ;;
+      l3)
+        env_files=({{ _env_l3 }}); l1_profile=({{ _l3 }})
+        # devnet-tee.env is gitignored and has no committed default; fail early with a fix-it
+        # hint rather than letting docker compose emit a cryptic "env file not found" error.
+        if [ ! -f etc/docker/devnet-tee.env ]; then
+          echo "ERROR: etc/docker/devnet-tee.env not found (required for L3 dev-multiproof)." >&2
+          echo "It carries DEV_TEE_SIGNER_KEY — the dev TEE signer key registered on-chain during" >&2
+          echo "SystemDeploy; nitro-local signs proofs with it. It must match DEV_TEE_SIGNER in" >&2
+          echo "devnet-l3-env. Create it with:" >&2
+          echo "  echo 'DEV_TEE_SIGNER_KEY=0x<private-key>' > etc/docker/devnet-tee.env" >&2
+          exit 1
+        fi
+        ;;
       *)
         echo "ERROR: l1 mode must be 'eth' or 'l3' (got '${l1_mode}')" >&2
         exit 1
