@@ -134,6 +134,15 @@ impl IntrinsicGas {
         for change in &tx.account_changes {
             match change {
                 AccountChange::Create(entry) => {
+                    // Per EIP-8130 a create entry is charged `bytecode_cost`
+                    // alone (`CREATE_BASE_COST` + per-byte deposit). The
+                    // `initial_actors` slot writes are deliberately *not* metered
+                    // here: `account_changes_cost` enumerates only config-change
+                    // and delegation entries, and the create base cost subsumes
+                    // initial-actor setup (each initial actor is written as an
+                    // unrestricted owner with no policy slots). This intentional
+                    // asymmetry with the `ConfigChange` per-slot accounting below
+                    // matches the spec — do not add per-actor charges here.
                     let deposit = Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE
                         .saturating_mul(entry.code.len() as u64);
                     bytecode = bytecode
@@ -198,8 +207,21 @@ impl IntrinsicGas {
 
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
     /// one cold `actor_config` SLOAD the EIP charges per authentication.
+    ///
+    /// The cold SLOAD is charged only when an authenticator is actually resolved
+    /// (an EOA signature, or a configured-actor blob long enough to name an
+    /// authenticator). A degenerate sub-20-byte non-EOA blob resolves no
+    /// authenticator and reads no `actor_config` slot, so it costs `0` rather
+    /// than a phantom SLOAD. Such blobs are unreachable here in practice —
+    /// dispatch rejects them upstream — but guarding keeps the SLOAD tied to a
+    /// real read instead of relying on that invariant.
     fn auth_cost(auth: &[u8], eoa: bool) -> Result<u64, IntrinsicGasError> {
-        Ok(Self::auth_exec_cost(auth, eoa)?.saturating_add(Eip8130GasSchedule::COLD_SLOAD))
+        let exec = Self::auth_exec_cost(auth, eoa)?;
+        if eoa || exec > 0 {
+            Ok(exec.saturating_add(Eip8130GasSchedule::COLD_SLOAD))
+        } else {
+            Ok(0)
+        }
     }
 
     /// Authenticator *execution* gas for an auth blob, resolving the delegate
@@ -273,7 +295,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256, address};
     use base_common_consensus::{
         AccountChange, ActorChange, ActorChangeType, ConfigChange, CreateEntry, Delegation,
-        TxEip8130,
+        InitialActor, TxEip8130,
     };
 
     use super::*;
@@ -355,6 +377,48 @@ mod tests {
         assert_eq!(
             gas.bytecode,
             Eip8130GasSchedule::CREATE_BASE_COST + Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE * 10
+        );
+    }
+
+    #[test]
+    fn create_with_initial_actors_charges_only_bytecode() {
+        // Per EIP-8130, a create entry's `initial_actors` slot writes are
+        // subsumed by `bytecode_cost`; they are not metered via
+        // `account_changes_cost` (which covers only config-change and delegation
+        // entries). Three initial actors must therefore add nothing beyond the
+        // create base + per-byte deposit.
+        let code = vec![0x60u8; 4];
+        let initial_actors = (0u8..3)
+            .map(|i| InitialActor {
+                actor_id: alloy_primitives::B256::repeat_byte(i + 1),
+                authenticator: K1,
+            })
+            .collect();
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(CreateEntry {
+                user_salt: Default::default(),
+                code: Bytes::from(code),
+                initial_actors,
+            })],
+            ..Default::default()
+        };
+        let gas = intrinsic(&signed(tx, vec![0; 65], vec![]), &EXISTING_KEY);
+        assert_eq!(
+            gas.bytecode,
+            Eip8130GasSchedule::CREATE_BASE_COST + Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE * 4
+        );
+        assert_eq!(gas.account_changes, 0);
+    }
+
+    #[test]
+    fn degenerate_short_auth_blob_charges_no_sload() {
+        // A sub-20-byte non-EOA blob resolves no authenticator, so it reads no
+        // `actor_config` slot and must cost 0 (not a phantom cold SLOAD). An EOA
+        // signature still pays the authenticator exec + one cold SLOAD.
+        assert_eq!(IntrinsicGas::auth_cost(&[0u8; 5], false), Ok(0));
+        assert_eq!(
+            IntrinsicGas::auth_cost(&[0u8; 65], true),
+            Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
     }
 
