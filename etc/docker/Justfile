@@ -9,7 +9,10 @@ _yaml_to_env := "etc/scripts/yaml-to-compose-env.py"
 # eth-l1 (default): Ethereum L1 (reth + lighthouse), blob batches.
 # base-l1 (L3):     Base L1 (base-anvil), beaconless, calldata batches.
 _env_eth := "--env-file etc/docker/devnet-env --env-file etc/docker/devnet-eth-env"
-_env_l3 := "--env-file etc/docker/devnet-env --env-file etc/docker/devnet-l3-env"
+# devnet-tee.env (gitignored) carries DEV_TEE_SIGNER_KEY — the private key for the dev TEE
+# signer registered on-chain during SystemDeploy. nitro-local signs proofs with it, so it must
+# match DEV_TEE_SIGNER in devnet-l3-env. Layered last so `${DEV_TEE_SIGNER_KEY}` interpolates.
+_env_l3 := "--env-file etc/docker/devnet-env --env-file etc/docker/devnet-l3-env --env-file etc/docker/devnet-tee.env"
 _eth := "--profile eth-l1"
 _l3 := "--profile base-l1"
 _all_profiles := "--profile eth-l1 --profile base-l1 --profile profiling"
@@ -229,6 +232,7 @@ _up-devnet compose_profile l1_mode zk:
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
         if [ "$l1_mode" = "l3" ]; then
           just --justfile {{ source_file() }} _build-nitro-host-local
+          just --justfile {{ source_file() }} _build-rust-images "devnet-l3" "dev"
         fi
         SP1_PROVER=dry-run docker compose "${env_files[@]}" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build
         ;;
@@ -282,6 +286,7 @@ _up-devnet compose_profile l1_mode zk:
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
         if [ "$l1_mode" = "l3" ]; then
           just --justfile {{ source_file() }} _build-nitro-host-local
+          just --justfile {{ source_file() }} _build-rust-images "devnet-l3" "dev"
         fi
         docker compose "${env_files[@]}" --env-file "$cluster_env" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build
         ;;
