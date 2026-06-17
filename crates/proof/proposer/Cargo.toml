@@ -32,7 +32,7 @@ base-prover-service-protocol.workspace = true
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # JSON-RPC
-jsonrpsee = { workspace = true, features = ["server", "macros"] }
+jsonrpsee = { workspace = true, features = ["server", "macros", "http-client"] }
 
 # Async
 tokio.workspace = true

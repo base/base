@@ -23,6 +23,7 @@ use base_prover_service_client::{
 };
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::{Result, WrapErr};
+use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -51,6 +52,7 @@ impl ProposerService {
         info!(
             dry_run = config.dry_run,
             allow_non_finalized = config.allow_non_finalized,
+            direct_prover_rpc = config.direct_prover_rpc,
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
@@ -91,17 +93,34 @@ impl ProposerService {
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        let prover_service_config = ProverServiceClientConfig::new(config.prover_rpc.to_string())
-            .with_max_wait(config.prover_timeout);
-        let proof_requester = ProofRequesterClient::connect(&prover_service_config)
-            .wrap_err("failed to create prover-service requester client")?;
-        let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);
-        let prover_client: Arc<dyn ProverClient> = Arc::new(ProofRequesterProver::aws_nitro(
-            Arc::clone(&proof_requester),
-            prover_service_config.poll_interval(),
-            prover_service_config.max_wait(),
-        ));
-        info!(endpoint = %config.prover_rpc, "Prover-service requester client initialized");
+        let (prover_client, proof_requester): (
+            Arc<dyn ProverClient>,
+            Option<Arc<dyn ProofRequesterProvider>>,
+        ) = if config.direct_prover_rpc {
+            let client = HttpClientBuilder::default()
+                .request_timeout(config.prover_timeout)
+                .build(config.prover_rpc.as_str())
+                .wrap_err("failed to create direct prover HTTP client")?;
+            info!(
+                endpoint = %config.prover_rpc,
+                "Direct prover RPC client initialized (bypassing prover-service)"
+            );
+            (Arc::new(client), None)
+        } else {
+            let prover_service_config =
+                ProverServiceClientConfig::new(config.prover_rpc.to_string())
+                    .with_max_wait(config.prover_timeout);
+            let proof_requester = ProofRequesterClient::connect(&prover_service_config)
+                .wrap_err("failed to create prover-service requester client")?;
+            let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);
+            let prover_client: Arc<dyn ProverClient> = Arc::new(ProofRequesterProver::aws_nitro(
+                Arc::clone(&proof_requester),
+                prover_service_config.poll_interval(),
+                prover_service_config.max_wait(),
+            ));
+            info!(endpoint = %config.prover_rpc, "Prover-service requester client initialized");
+            (prover_client, Some(proof_requester))
+        };
 
         let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
             config.anchor_state_registry_addr,

@@ -92,6 +92,9 @@ pub struct ProposerConfig {
     /// Optional address of the `TEEProverRegistry` contract on L1.
     /// When set, the proposer validates signers before on-chain submission.
     pub tee_prover_registry_address: Option<Address>,
+    /// Use direct `ProverClient::prove` instead of the async dispatch+collect
+    /// pattern via `ProofRequesterProver`.
+    pub direct_prover_rpc: bool,
 }
 
 impl ProposerConfig {
@@ -207,6 +210,7 @@ impl ProposerConfig {
             max_parallel_proofs: proposer.max_parallel_proofs,
             recovery_scan_concurrency: proposer.recovery_scan_concurrency,
             tee_prover_registry_address: proposer.tee_prover_registry_address,
+            direct_prover_rpc: proposer.direct_prover_rpc,
         })
     }
 }
@@ -280,6 +284,7 @@ mod tests {
                 max_parallel_proofs: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
+                direct_prover_rpc: false,
                 tx_manager: TxManagerCli::default(),
             },
             logging: LogArgs {

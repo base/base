@@ -292,7 +292,7 @@ mod tests {
                 },
             },
             prover,
-            Arc::new(MockProofRequester::default()),
+            Some(Arc::new(MockProofRequester::default())),
             l1,
             l2,
             rollup,
