@@ -186,6 +186,15 @@ pub(crate) struct Cli {
     )]
     unhealthy_registration_window: u64,
 
+    /// Enable on-demand CRL checking at registration time.
+    #[arg(
+        long,
+        env = cli_env!("CRL_CHECK_ENABLED"),
+        default_value_t = false,
+        requires_if("true", "crl_nitro_verifier_address")
+    )]
+    crl_check_enabled: bool,
+
     /// `NitroEnclaveVerifier` contract address for CRL checks.
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
     crl_nitro_verifier_address: Option<Address>,
@@ -253,6 +262,7 @@ impl Cli {
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay),
             unhealthy_registration_window: Duration::from_secs(self.unhealthy_registration_window),
+            crl_check_enabled: self.crl_check_enabled,
             crl_nitro_verifier_address: self.crl_nitro_verifier_address,
             health_addr: self.health.socket_addr(),
             log_config: self.log.into(),
@@ -299,6 +309,30 @@ mod tests {
     const TEST_IMAGE_ID: &str =
         "0x0100000002000000030000000400000005000000060000000700000008000000";
 
+    fn required_args() -> Vec<&'static str> {
+        vec![
+            "prover-registrar",
+            "--l1-rpc-url",
+            "http://localhost:8545",
+            "--tee-prover-registry-address",
+            "0x0000000000000000000000000000000000000001",
+            "--target-group-arn",
+            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
+            "--aws-region",
+            "us-east-1",
+            "--private-key",
+            "0x0101010101010101010101010101010101010101010101010101010101010101",
+            "--image-id",
+            TEST_IMAGE_ID,
+            "--boundless-rpc-url",
+            "http://localhost:9545",
+            "--boundless-private-key",
+            "0x0202020202020202020202020202020202020202020202020202020202020202",
+            "--boundless-verifier-program-url",
+            "https://gateway.pinata.cloud/ipfs/test",
+        ]
+    }
+
     #[test]
     fn boundless_offer_max_price_must_cover_min_price() {
         let result = validate_boundless_offer_prices(
@@ -319,29 +353,27 @@ mod tests {
 
     #[test]
     fn max_concurrency_zero_rejected() {
-        let args = [
-            "prover-registrar",
-            "--l1-rpc-url",
-            "http://localhost:8545",
-            "--tee-prover-registry-address",
-            "0x0000000000000000000000000000000000000001",
-            "--target-group-arn",
-            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
-            "--aws-region",
-            "us-east-1",
-            "--private-key",
-            "0x0101010101010101010101010101010101010101010101010101010101010101",
-            "--image-id",
-            TEST_IMAGE_ID,
-            "--boundless-rpc-url",
-            "http://localhost:9545",
-            "--boundless-private-key",
-            "0x0202020202020202020202020202020202020202020202020202020202020202",
-            "--boundless-verifier-program-url",
-            "https://gateway.pinata.cloud/ipfs/test",
-            "--max-concurrency",
-            "0",
-        ];
+        let mut args = required_args();
+        args.extend(["--max-concurrency", "0"]);
+
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn crl_address_does_not_enable_crl_without_flag() {
+        let mut args = required_args();
+        args.extend(["--crl-nitro-verifier-address", "0x0000000000000000000000000000000000000099"]);
+
+        let config = Cli::parse_from(args).config().unwrap();
+
+        assert!(!config.crl_check_enabled);
+        assert!(config.crl_nitro_verifier_address.is_some());
+    }
+
+    #[test]
+    fn crl_enabled_requires_verifier_address() {
+        let mut args = required_args();
+        args.push("--crl-check-enabled");
 
         assert!(Cli::try_parse_from(args).is_err());
     }

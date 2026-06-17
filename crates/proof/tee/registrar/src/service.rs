@@ -57,6 +57,8 @@ pub struct RegistrarConfig {
     pub tx_retry_delay: Duration,
     /// Grace window for registering recently launched unhealthy instances.
     pub unhealthy_registration_window: Duration,
+    /// Whether CRL checking is enabled.
+    pub crl_check_enabled: bool,
     /// Optional Nitro verifier address for CRL checks.
     pub crl_nitro_verifier_address: Option<Address>,
     /// Health server bind address.
@@ -84,6 +86,7 @@ impl fmt::Debug for RegistrarConfig {
             .field("max_tx_retries", &self.max_tx_retries)
             .field("tx_retry_delay", &self.tx_retry_delay)
             .field("unhealthy_registration_window", &self.unhealthy_registration_window)
+            .field("crl_check_enabled", &self.crl_check_enabled)
             .field("crl_nitro_verifier_address", &self.crl_nitro_verifier_address)
             .field("health_addr", &self.health_addr)
             .field("log_config", &self.log_config)
@@ -199,7 +202,12 @@ impl RegistrarConfig {
                 tx_retry_delay: self.tx_retry_delay,
             },
         ));
-        let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
+        let cert_manager = if self.crl_check_enabled {
+            let Some(nitro_verifier_address) = self.crl_nitro_verifier_address else {
+                return Err(RegistrarError::Config(
+                    "--crl-nitro-verifier-address is required when CRL checking is enabled".into(),
+                ));
+            };
             Some(CertManager::new(
                 Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
                 Box::new(NitroVerifierContractClient::new(nitro_verifier_address, self.l1_rpc_url)),
@@ -301,6 +309,7 @@ mod tests {
             max_tx_retries: 1,
             tx_retry_delay: Duration::from_secs(1),
             unhealthy_registration_window: Duration::from_secs(1),
+            crl_check_enabled: false,
             crl_nitro_verifier_address: None,
             health_addr: "127.0.0.1:0".parse().unwrap(),
             log_config: base_cli_utils::LogConfig::default(),

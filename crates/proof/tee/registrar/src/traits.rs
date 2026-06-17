@@ -7,7 +7,8 @@ use crate::{ProverInstance, Result};
 
 /// Discovers active prover instances from the infrastructure layer.
 ///
-/// The primary implementation is [`AwsTargetGroupDiscovery`], which queries
+/// The primary implementation is
+/// [`AwsTargetGroupDiscovery`](crate::AwsTargetGroupDiscovery), which queries
 /// an ALB target group via the AWS SDK. Other implementations (e.g., a static
 /// list for local testing) can be substituted.
 #[async_trait]
