@@ -448,7 +448,7 @@ where
         let latest_block_header =
             BlockAssembler::refresh_same_block_header(&latest_header, &latest_block_flashblocks)?;
 
-        db.block_hashes.insert(latest_block_base.block_number - 1, latest_block_base.parent_hash);
+        // db.block_hashes.insert(latest_block_base.block_number - 1, latest_block_base.parent_hash);
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let evm_env = evm_config
@@ -459,7 +459,7 @@ where
         let previous_block_transaction_count = prev_pending_blocks.latest_block_transaction_count();
         let pending_block = Block {
             header: Header {
-                parent_hash: latest_block_base.parent_hash,
+                // parent_hash: latest_block_base.parent_hash,
                 number: latest_block_base.block_number,
                 timestamp: latest_block_base.timestamp,
                 gas_limit: latest_block_base.gas_limit,
@@ -588,7 +588,7 @@ where
         let AssembledBlock { block: assembled_block, header: assembled_header, .. } = current_block;
         let pending_block = Block {
             header: Header {
-                parent_hash: base.parent_hash,
+                // parent_hash: base.parent_hash,
                 number: base.block_number,
                 timestamp: base.timestamp,
                 gas_limit: base.gas_limit,
@@ -598,7 +598,7 @@ where
             body: assembled_block.body,
         };
 
-        db.block_hashes.insert(base.block_number - 1, base.parent_hash);
+        // db.block_hashes.insert(base.block_number - 1, base.parent_hash);
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let block_env_attributes = BaseNextBlockEnvAttributes {
@@ -639,9 +639,10 @@ where
             l1_block_info.clone(),
             state_overrides,
         );
-        pending_state_builder
-            .apply_pre_execution_changes(base.parent_hash, Some(base.parent_beacon_block_root))?;
-
+        pending_state_builder.apply_pre_execution_changes(
+            previous_header.hash_slow(),
+            Some(base.parent_beacon_block_root),
+        )?;
         for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
             let tx_hash = transaction.tx_hash();
 
@@ -748,8 +749,8 @@ where
                 extra_data: assembled.base.extra_data.clone(),
             };
 
-            db.block_hashes
-                .insert(latest_block_base.block_number - 1, latest_block_base.parent_hash);
+            // db.block_hashes
+            //     .insert(latest_block_base.block_number - 1, latest_block_base.parent_hash);
 
             let evm_env = evm_config
                 .next_evm_env(&last_block_header, &block_env_attributes)
@@ -781,7 +782,7 @@ where
             // Clone header before moving block to avoid cloning the entire block
             let block_header = assembled.block.header.clone();
 
-            let parent_block_hash = assembled.base.parent_hash;
+            let parent_hash = last_block_header.hash_slow();
             let parent_beacon_block_root = Some(assembled.base.parent_beacon_block_root);
 
             let mut pending_state_builder = PendingStateBuilder::new(
@@ -794,7 +795,7 @@ where
             );
 
             pending_state_builder
-                .apply_pre_execution_changes(parent_block_hash, parent_beacon_block_root)?;
+                .apply_pre_execution_changes(parent_hash, parent_beacon_block_root)?;
 
             for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
                 let tx_hash = transaction.tx_hash();
