@@ -20,15 +20,7 @@ impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
     }
 
     /// Submits `AggregateVerifier.verifyProposalProof(bytes)` to an existing game.
-    ///
-    /// The caller provides already-encoded proof bytes so TEE and ZK attachment
-    /// flows can share the same transaction submission path.
-    ///
-    /// # Errors
-    ///
-    /// Returns a structured proof submission error if transaction submission
-    /// fails, a known contract revert is detected, or the included transaction
-    /// receipt has a reverted status.
+    /// Callers provide already-encoded TEE or ZK proof bytes.
     pub async fn verify_proposal_proof(
         &self,
         game_address: Address,
@@ -42,11 +34,7 @@ impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
             ..Default::default()
         };
 
-        let receipt = self
-            .tx_manager
-            .send(candidate)
-            .await
-            .map_err(ProofSubmissionError::from_tx_manager_error)?;
+        let receipt = self.tx_manager.send(candidate).await.map_err(ProofSubmissionError::from)?;
         let tx_hash = receipt.transaction_hash;
 
         if !receipt.inner.status() {

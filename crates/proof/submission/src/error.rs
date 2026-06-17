@@ -33,5 +33,5 @@ pub enum ProofSubmissionError {
 
     /// Transaction manager error while submitting the proof transaction.
     #[error(transparent)]
-    TxManager(#[from] TxManagerError),
+    TxManager(TxManagerError),
 }

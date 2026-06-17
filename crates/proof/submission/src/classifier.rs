@@ -130,9 +130,8 @@ impl From<KnownRevert> for ProofSubmissionError {
     }
 }
 
-impl ProofSubmissionError {
-    /// Classifies a transaction manager error into a proof submission error.
-    pub fn from_tx_manager_error(err: TxManagerError) -> Self {
+impl From<TxManagerError> for ProofSubmissionError {
+    fn from(err: TxManagerError) -> Self {
         if let Some(revert) = KnownRevert::from_tx_manager_error(&err) {
             return Self::from(revert);
         }
