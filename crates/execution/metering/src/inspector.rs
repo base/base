@@ -1,5 +1,7 @@
 //! Custom EVM inspector for metering per-contract opcode and precompile gas usage.
 
+use std::sync::Arc;
+
 use alloy_primitives::{Address, map::HashMap};
 use revm::{
     Inspector,
@@ -52,13 +54,13 @@ struct OpcodeFrame {
 pub(crate) struct MeteringInspector {
     opcode_gas: HashMap<(Address, OpCode), OpcodeGasUsage>,
     precompile_gas: HashMap<Address, PrecompileGasUsage>,
-    metered_opcodes: MeteredOpcodes,
+    metered_opcodes: Arc<MeteredOpcodes>,
     opcode_frame: Option<OpcodeFrame>,
 }
 
 impl MeteringInspector {
     /// Creates a new inspector that tracks the configured precompiles and opcodes.
-    pub(crate) fn new(metered_opcodes: MeteredOpcodes) -> Self {
+    pub(crate) fn new(metered_opcodes: Arc<MeteredOpcodes>) -> Self {
         Self {
             opcode_gas: HashMap::default(),
             precompile_gas: HashMap::default(),

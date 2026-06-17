@@ -261,7 +261,7 @@ impl MeteredOpcodes {
         self
     }
 
-    /// Returns a copy limited to the precompile set active in `spec`.
+    /// Filters the precompile set to those active in `spec`, consuming `self`.
     pub fn for_spec(mut self, spec: BaseSpecId) -> Self {
         if spec.is_enabled_in(BaseUpgrade::Beryl) {
             return self;
@@ -494,8 +494,8 @@ where
         let evm_config = BaseEvmConfig::base(chain_spec);
         let evm_env = evm_config.next_evm_env(header, &attributes)?;
         let spec = evm_env.cfg_env.spec;
-        let metered_opcodes = metered_opcodes.clone().for_spec(spec);
-        let inspector = MeteringInspector::new(metered_opcodes.clone());
+        let metered_opcodes = Arc::new(metered_opcodes.clone().for_spec(spec));
+        let inspector = MeteringInspector::new(Arc::clone(&metered_opcodes));
         let evm = evm_config.evm_with_env_and_inspector(&mut db, evm_env, inspector);
         let ctx = evm_config.context_for_next_block(header, attributes)?;
         let mut builder = evm_config.create_block_builder(evm, header, ctx);
