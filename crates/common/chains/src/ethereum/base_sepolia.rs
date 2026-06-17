@@ -4,23 +4,27 @@
 //! [`alloy_genesis::ChainConfig`] needed by the prover and derivation pipeline when an L3
 //! chain reports `l1_chain_id: 84532`.
 
+use alloc::string::ToString;
+
 use alloy_genesis::{ChainConfig, EthashConfig};
 use alloy_primitives::U256;
+use alloy_serde::OtherFields;
 
 /// Base Sepolia chain configuration builder.
 ///
 /// Unlike Ethereum L1 configs, Base Sepolia is an OP Stack L2 with no PoW history.
 /// Pre-merge hardfork blocks are all 0 (active at genesis), and the `"optimism"` extra
-/// field is set so the derivation pipeline selects [`L1TxFormat::Base`] (calldata-only DA,
+/// field is set so the derivation pipeline selects `L1TxFormat::Base` (calldata-only DA,
 /// OP Stack transaction envelopes).
-///
-/// [`L1TxFormat::Base`]: crate::L1TxFormat
 #[derive(Debug, Clone, Copy)]
 pub struct BaseSepolia;
 
 impl BaseSepolia {
     /// Returns the Base Sepolia [`ChainConfig`].
     pub fn l1_config() -> ChainConfig {
+        let mut extra_fields = OtherFields::default();
+        extra_fields.insert("optimism".to_string(), serde_json::Value::Object(Default::default()));
+
         ChainConfig {
             chain_id: 84532,
             // All pre-merge hardforks active at genesis (OP Stack L2, post-merge chain).
@@ -61,7 +65,7 @@ impl BaseSepolia {
             deposit_contract_address: None,
             clique: None,
             parlia: None,
-            extra_fields: Default::default(),
+            extra_fields,
             terminal_total_difficulty_passed: false,
             _non_exhaustive: (),
         }
@@ -70,12 +74,20 @@ impl BaseSepolia {
 
 #[cfg(test)]
 mod tests {
+    use base_common_genesis::L1TxFormat;
+
     use super::*;
 
     #[test]
     fn base_sepolia_chain_id() {
         let cfg = BaseSepolia::l1_config();
         assert_eq!(cfg.chain_id, 84532);
+    }
+
+    #[test]
+    fn base_sepolia_l1_tx_format_is_base() {
+        let cfg = BaseSepolia::l1_config();
+        assert_eq!(L1TxFormat::from_l1_config(&cfg), L1TxFormat::Base);
     }
 
     #[test]
