@@ -659,11 +659,17 @@ where
 mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
-    use alloy_sol_types::SolCall;
+    use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
     use base_common_consensus::BaseTransactionSigned;
+    use base_common_precompiles::{
+        ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
+    };
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_node_runner::test_utils::TestHarness;
-    use base_test_utils::{Account, ContractFactory, SimpleStorage};
+    use base_test_utils::{
+        Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
+    };
     use eyre::Context;
     use reth_provider::StateProviderFactory;
     use reth_revm::{bytecode::Bytecode, state::AccountInfo};
@@ -687,6 +693,49 @@ mod tests {
         };
 
         ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
+    }
+
+    fn create_call_tx(
+        chain_id: u64,
+        nonce: u64,
+        to: Address,
+        input: impl Into<Bytes>,
+        gas_limit: u64,
+    ) -> BaseTransactionSigned {
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(chain_id)
+            .nonce(nonce)
+            .to(to)
+            .gas_limit(gas_limit)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(input.into())
+            .into_eip1559();
+
+        BaseTransactionSigned::Eip1559(signed_tx.as_eip1559().expect("eip1559 transaction").clone())
+    }
+
+    fn assert_precompile_gas(
+        output: &MeterBundleOutput,
+        tx_index: usize,
+        address: Address,
+        opcode: &str,
+    ) {
+        let tx_result = output.results.get(tx_index).expect("transaction result should exist");
+        let entry = tx_result
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.contract_address == address && entry.opcode == opcode)
+            .unwrap_or_else(|| {
+                panic!(
+                    "tx {tx_index} should report {opcode} gas for {address}; got {:?}",
+                    tx_result.opcode_gas
+                )
+            });
+
+        assert!(entry.count > 0, "{opcode} count should be non-zero");
+        assert!(entry.gas_used > 0, "{opcode} gas_used should be non-zero");
     }
 
     #[tokio::test]
@@ -1228,6 +1277,157 @@ mod tests {
             assert_eq!(entry.opcode, "SSTORE", "only SSTORE should appear, found {}", entry.opcode);
         }
         assert!(!tx_opcodes.is_empty(), "SSTORE should appear in results");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_precompile_gas_for_beryl_calls() -> eyre::Result<()> {
+        let chain_spec = Arc::new(
+            BaseChainSpecBuilder::default()
+                .chain(DEVNET_CHAIN_ID.into())
+                .genesis(build_test_genesis())
+                .activation_admin_address(Account::Alice.address())
+                .beryl_activated()
+                .build(),
+        );
+        let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
+        let chain_id = harness.chain_id();
+        let sender = Account::Alice.address();
+        let asset_salt = B256::repeat_byte(0x11);
+        let stablecoin_salt = B256::repeat_byte(0x22);
+        let (asset_address, _) = B20Variant::Asset.compute_address(sender, asset_salt);
+        let (stablecoin_address, _) =
+            B20Variant::Stablecoin.compute_address(sender, stablecoin_salt);
+
+        let asset_params = IB20Factory::B20AssetCreateParams {
+            version: B20Variant::Asset.supported_version(),
+            name: "Metered Asset".to_string(),
+            symbol: "MTA".to_string(),
+            initialAdmin: sender,
+            decimals: 6,
+        };
+        let stablecoin_params = IB20Factory::B20StablecoinCreateParams {
+            version: B20Variant::Stablecoin.supported_version(),
+            name: "Metered Stablecoin".to_string(),
+            symbol: "MTS".to_string(),
+            initialAdmin: sender,
+            currency: "USD".to_string(),
+        };
+
+        let txs = vec![
+            create_call_tx(
+                chain_id,
+                0,
+                ActivationRegistryStorage::ADDRESS,
+                IActivationRegistry::activateCall { feature: ActivationFeature::B20Asset.id() }
+                    .abi_encode(),
+                100_000,
+            ),
+            create_call_tx(
+                chain_id,
+                1,
+                ActivationRegistryStorage::ADDRESS,
+                IActivationRegistry::activateCall {
+                    feature: ActivationFeature::B20Stablecoin.id(),
+                }
+                .abi_encode(),
+                100_000,
+            ),
+            create_call_tx(
+                chain_id,
+                2,
+                B20FactoryStorage::ADDRESS,
+                IB20Factory::createB20Call {
+                    variant: IB20Factory::B20Variant::ASSET,
+                    salt: asset_salt,
+                    params: asset_params.abi_encode().into(),
+                    initCalls: Vec::new(),
+                }
+                .abi_encode(),
+                2_000_000,
+            ),
+            create_call_tx(
+                chain_id,
+                3,
+                asset_address,
+                IB20::totalSupplyCall {}.abi_encode(),
+                200_000,
+            ),
+            create_call_tx(
+                chain_id,
+                4,
+                B20FactoryStorage::ADDRESS,
+                IB20Factory::createB20Call {
+                    variant: IB20Factory::B20Variant::STABLECOIN,
+                    salt: stablecoin_salt,
+                    params: stablecoin_params.abi_encode().into(),
+                    initCalls: Vec::new(),
+                }
+                .abi_encode(),
+                2_000_000,
+            ),
+            create_call_tx(
+                chain_id,
+                5,
+                stablecoin_address,
+                IB20Stablecoin::currencyCall {}.abi_encode(),
+                200_000,
+            ),
+            create_call_tx(
+                chain_id,
+                6,
+                PolicyRegistryStorage::ADDRESS,
+                IPolicyRegistry::policyExistsCall {
+                    policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+                }
+                .abi_encode(),
+                200_000,
+            ),
+        ];
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+        let parsed_bundle = create_parsed_bundle(txs)?;
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(MeteredOpcodes::default().with_all_precompiles()),
+        })?;
+
+        assert_eq!(output.results.len(), 7);
+        assert_precompile_gas(
+            &output,
+            0,
+            ActivationRegistryStorage::ADDRESS,
+            BERYL_ACTIVATION_REGISTRY_PRECOMPILE,
+        );
+        assert_precompile_gas(
+            &output,
+            1,
+            ActivationRegistryStorage::ADDRESS,
+            BERYL_ACTIVATION_REGISTRY_PRECOMPILE,
+        );
+        assert_precompile_gas(&output, 2, B20FactoryStorage::ADDRESS, BERYL_B20_FACTORY_PRECOMPILE);
+        assert_precompile_gas(&output, 3, asset_address, BERYL_B20_ASSET_PRECOMPILE);
+        assert_precompile_gas(&output, 4, B20FactoryStorage::ADDRESS, BERYL_B20_FACTORY_PRECOMPILE);
+        assert_precompile_gas(&output, 5, stablecoin_address, BERYL_B20_STABLECOIN_PRECOMPILE);
+        assert_precompile_gas(
+            &output,
+            6,
+            PolicyRegistryStorage::ADDRESS,
+            BERYL_POLICY_REGISTRY_PRECOMPILE,
+        );
 
         Ok(())
     }
