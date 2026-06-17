@@ -730,6 +730,12 @@ where
 
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
+        // (Layer 4) Window bounds for the rebuild-composition diagnostic below. Comparing these
+        // and the per-block tx/flashblock counts across successive rebuilds reveals when the
+        // reconstructed prefix beneath a tx drifts (the cause of a cache divergence flipping
+        // only on a later rebuild).
+        let window_earliest_block = canonical_block + 1;
+        let window_latest_block = *flashblocks_per_block.keys().max().unwrap();
         let mut last_block_header = self
             .client
             .header_by_number(canonical_block)
@@ -760,6 +766,17 @@ where
             let latest_flashblock_tx_count =
                 flashblocks.last().map(|latest| latest.diff.transactions.len()).unwrap_or_default();
             let latest_block_base = assembled.base.clone();
+
+            // (Layer 4) Per-block window composition for the rebuild path.
+            debug!(
+                path = "rebuild",
+                window_earliest = window_earliest_block,
+                window_latest = window_latest_block,
+                block_number = assembled.base.block_number,
+                tx_count = assembled.block.body.transactions.len(),
+                flashblock_count = flashblocks.len(),
+                "rebuild window block composition"
+            );
 
             pending_blocks_builder.with_flashblocks(assembled.flashblocks.clone());
             pending_blocks_builder.with_header(assembled.header.clone());

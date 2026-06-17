@@ -242,7 +242,7 @@ where
         // current pending state and warn if the fresh outcome diverges from the cached
         // (frozen) one. This pinpoints the transaction whose stale cache entry produces a
         // wrong success/revert. Behavior is unchanged; the fresh result is discarded.
-        self.shadow_diff_cached_execution(&transaction, idx, &result);
+        self.shadow_diff_cached_execution(&transaction, idx, &result, &state);
 
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
             let BaseReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
@@ -301,6 +301,7 @@ where
         transaction: &Recovered<BaseTxEnvelope>,
         idx: usize,
         cached_result: &ExecutionResult<BaseHaltReason>,
+        cached_state: &EvmState,
     ) {
         static SHADOW_DIFF: OnceLock<bool> = OnceLock::new();
         let shadow_diff = *SHADOW_DIFF
@@ -327,6 +328,10 @@ where
                         fresh_gas,
                         "tx cache hit diverges from re-execution: status mismatch"
                     );
+                    // Layers 1 + 3: pinpoint which storage slot the rebuilt prefix
+                    // reconstructed differently than when the cache entry was written, and
+                    // attribute it to its last writer in the pending window.
+                    self.dump_cache_divergence(tx_hash, idx, cached_state);
                 } else if cached_gas != fresh_gas {
                     debug!(
                         tx_hash = %tx_hash,
@@ -345,6 +350,58 @@ where
                     block_number = self.pending_block.number,
                     error = %err,
                     "tx cache shadow re-execution failed"
+                );
+            }
+        }
+    }
+
+    /// Diagnostic for a confirmed tx-cache status divergence (Layers 1 + 3).
+    ///
+    /// For every storage slot the cached execution touched, compares the value the cache
+    /// recorded as the slot's pre-state (`original_value`) against the value the *current*
+    /// rebuilt pending state holds for that slot. A mismatch is the smoking gun: the rebuild
+    /// reconstructed that slot differently than the live db did when the entry was cached, so
+    /// the frozen receipt is stale. For each diverging slot it also reports the last writer of
+    /// that slot in the pending window, separating a stale cached predecessor from a base-state
+    /// mismatch (no writer found).
+    ///
+    /// Note: only covers slots present in the cached write-set. Read-only slots that a tx reads
+    /// but never writes are not captured here (that needs an inspector); they are the remaining
+    /// blind spot if a divergence reports no diverging write-set slot.
+    fn dump_cache_divergence(
+        &mut self,
+        tx_hash: B256,
+        idx: usize,
+        cached_state: &EvmState,
+    ) {
+        let prev = self.prev_pending_blocks.clone();
+        let block_number = self.pending_block.number;
+        for (addr, acct) in cached_state {
+            for (slot, sslot) in acct.storage.iter() {
+                let current = match self.evm.db_mut().storage(*addr, *slot) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+                if current == sslot.original_value {
+                    continue;
+                }
+                let writers =
+                    prev.as_ref().map(|p| p.slot_writers(*addr, *slot)).unwrap_or_default();
+                let last_writer = writers.last();
+                warn!(
+                    tx_hash = %tx_hash,
+                    idx,
+                    block_number,
+                    address = %addr,
+                    slot = %slot,
+                    cached_read = %sslot.original_value,
+                    rebuild_now = %current,
+                    cached_write = %sslot.present_value,
+                    writers = writers.len(),
+                    last_writer_tx = ?last_writer.map(|w| w.0),
+                    last_writer_block = ?last_writer.map(|w| w.1),
+                    last_writer_value = ?last_writer.map(|w| w.2),
+                    "tx cache divergence: prefix slot reconstructed differently"
                 );
             }
         }

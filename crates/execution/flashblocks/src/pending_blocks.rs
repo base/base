@@ -536,6 +536,22 @@ impl PendingBlocks {
         self.transaction_senders.get(tx_hash).copied()
     }
 
+    /// Diagnostic: returns, in execution order, every transaction in the pending window that
+    /// wrote `slot` of `address`, as `(tx_hash, block_number, present_value)`.
+    ///
+    /// Used by the tx-cache shadow-diff to attribute a divergent storage slot to its last
+    /// writer, distinguishing a stale cached predecessor from a base-state mismatch.
+    pub fn slot_writers(&self, address: Address, slot: U256) -> Vec<(B256, BlockNumber, U256)> {
+        self.transactions
+            .iter()
+            .filter_map(|tx| {
+                let tx_hash = tx.tx_hash();
+                let sslot = self.transaction_state.get(&tx_hash)?.get(&address)?.storage.get(&slot)?;
+                Some((tx_hash, tx.block_number.unwrap_or_default(), sslot.present_value))
+            })
+            .collect()
+    }
+
     /// Returns a shared reference to the bundle state.
     pub fn get_bundle_state(&self) -> Arc<BundleState> {
         Arc::clone(&self.bundle_state)
