@@ -1,0 +1,29 @@
+[package]
+name = "base-execution-eip8130-validate"
+description = "EIP-8130 transaction authorization orchestrator (sender/payer signatures + ordered account-configuration changes)"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-primitives.workspace = true
+
+# base
+base-execution-eip8130-tx.workspace = true
+base-execution-eip8130-state.workspace = true
+base-execution-eip8130-authorize.workspace = true
+base-common-consensus = { workspace = true, default-features = false }
+
+[dev-dependencies]
+k256 = { workspace = true, features = ["ecdsa"] }
+base-common-consensus = { workspace = true, default-features = false, features = ["k256"] }
+base-precompile-storage = { workspace = true, features = ["test-utils"] }

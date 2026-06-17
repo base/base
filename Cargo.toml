@@ -228,6 +228,7 @@ base-execution-eip8130-authorize = { path = "crates/execution/eip8130-authorize"
 base-execution-eip8130-tx = { path = "crates/execution/eip8130-tx", default-features = false }
 base-execution-eip8130-nonce = { path = "crates/execution/eip8130-nonce", default-features = false }
 base-execution-eip8130-gas = { path = "crates/execution/eip8130-gas", default-features = false }
+base-execution-eip8130-validate = { path = "crates/execution/eip8130-validate", default-features = false }
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl" }
