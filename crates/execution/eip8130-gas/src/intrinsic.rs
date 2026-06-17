@@ -152,8 +152,10 @@ impl IntrinsicGas {
                     account_changes = account_changes.saturating_add(initial_actor_cost);
                 }
                 AccountChange::ConfigChange(cc) => {
-                    account_changes =
-                        account_changes.saturating_add(Self::auth_cost(cc.auth.as_ref(), false)?);
+                    // `cfg.auth` is always `authenticator || data` (never a bare
+                    // signature), including the implicit-EOA `address(0) || sig` form.
+                    let auth = Self::auth_cost(cc.auth.as_ref(), false)?;
+                    account_changes = account_changes.saturating_add(auth);
                     for actor_change in &cc.actor_changes {
                         account_changes = account_changes
                             .saturating_add(Self::actor_change_write_cost(actor_change));
@@ -172,9 +174,10 @@ impl IntrinsicGas {
             0
         };
 
-        // The EOA path (`sender == None`) authenticates with native ecrecover, so
-        // `sender_auth` is a bare signature rather than an `authenticator || data`
-        // blob and must not be parsed as one.
+        // Only the empty-`sender` path (`sender == None`) is a bare 65-byte
+        // signature parsed via native ecrecover; a configured sender (and every
+        // payer) is an `authenticator || data` blob and must not be parsed as a
+        // bare signature.
         let sender_auth = Self::auth_cost(signed.sender_auth().as_ref(), tx.sender.is_none())?;
         let payer_auth = if tx.payer.is_some() {
             Self::auth_cost(signed.payer_auth().as_ref(), false)?
@@ -210,16 +213,22 @@ impl IntrinsicGas {
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
     /// one cold `actor_config` SLOAD the EIP charges per authentication.
     ///
+    /// `bare_signature` selects the wire encoding, not "is this an EOA": `true`
+    /// means the blob is a raw 65-byte secp256k1 signature with no authenticator
+    /// prefix (the empty-`sender` path, charged k1); `false` means it is an
+    /// `authenticator(20) || data` blob (every other surface, including the
+    /// implicit-EOA owner encoded as `address(0) || sig`).
+    ///
     /// The cold SLOAD is charged only when an authenticator is actually resolved
-    /// (an EOA signature, or a configured-actor blob long enough to name an
-    /// authenticator). A degenerate sub-20-byte non-EOA blob resolves no
+    /// (a bare signature, or a prefixed blob long enough to name an
+    /// authenticator). A degenerate sub-20-byte prefixed blob resolves no
     /// authenticator and reads no `actor_config` slot, so it costs `0` rather
     /// than a phantom SLOAD. Such blobs are unreachable here in practice —
     /// dispatch rejects them upstream — but guarding keeps the SLOAD tied to a
     /// real read instead of relying on that invariant.
-    fn auth_cost(auth: &[u8], eoa: bool) -> Result<u64, IntrinsicGasError> {
-        let exec = Self::auth_exec_cost(auth, eoa)?;
-        if eoa || exec > 0 {
+    fn auth_cost(auth: &[u8], bare_signature: bool) -> Result<u64, IntrinsicGasError> {
+        let exec = Self::auth_exec_cost(auth, bare_signature)?;
+        if bare_signature || exec > 0 {
             Ok(exec.saturating_add(Eip8130GasSchedule::COLD_SLOAD))
         } else {
             Ok(0)
@@ -227,9 +236,10 @@ impl IntrinsicGas {
     }
 
     /// Authenticator *execution* gas for an auth blob, resolving the delegate
-    /// authenticator's nested authenticator at depth-1.
-    fn auth_exec_cost(auth: &[u8], eoa: bool) -> Result<u64, IntrinsicGasError> {
-        if eoa {
+    /// authenticator's nested authenticator at depth-1. See [`Self::auth_cost`]
+    /// for the meaning of `bare_signature`.
+    fn auth_exec_cost(auth: &[u8], bare_signature: bool) -> Result<u64, IntrinsicGasError> {
+        if bare_signature {
             return Ok(Eip8130GasSchedule::AUTH_EXEC_K1);
         }
         let Some(authenticator) = Self::authenticator_of(auth) else {
@@ -421,9 +431,9 @@ mod tests {
 
     #[test]
     fn degenerate_short_auth_blob_charges_no_sload() {
-        // A sub-20-byte non-EOA blob resolves no authenticator, so it reads no
-        // `actor_config` slot and must cost 0 (not a phantom cold SLOAD). An EOA
-        // signature still pays the authenticator exec + one cold SLOAD.
+        // A sub-20-byte prefixed (non-bare) blob resolves no authenticator, so it
+        // reads no `actor_config` slot and must cost 0 (not a phantom cold SLOAD).
+        // A bare signature still pays the authenticator exec + one cold SLOAD.
         assert_eq!(IntrinsicGas::auth_cost(&[0u8; 5], false), Ok(0));
         assert_eq!(
             IntrinsicGas::auth_cost(&[0u8; 65], true),
@@ -498,7 +508,7 @@ mod tests {
     #[test]
     fn implicit_eoa_sentinel_auth_costs_k1() {
         // `address(0) || sig` is the implicit-EOA owner sentinel on the configured
-        // (`eoa: false`) surfaces. Authorize routes it to enshrined ecrecover, so
+        // (`bare_signature: false`) surfaces. Authorize routes it to ecrecover, so
         // the schedule must price it as native k1 + one cold SLOAD rather than
         // rejecting it as `UnscheduledAuthenticator(address(0))`.
         let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
