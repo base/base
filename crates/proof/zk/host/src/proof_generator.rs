@@ -318,16 +318,26 @@ where
                 }
                 ZkSessionState::Completed => return Ok(()),
                 ZkSessionState::Failed(reason) => {
-                    self.record_backend_failure(request, handle, session_type, backend_session_id)
-                        .await;
+                    self.record_backend_resubmission(
+                        request,
+                        handle,
+                        session_type,
+                        backend_session_id,
+                    )
+                    .await;
                     return Err(ZkProverError::BackendSessionFailed {
                         backend_session_id: backend_session_id.to_owned(),
                         reason,
                     });
                 }
                 ZkSessionState::NotFound => {
-                    self.record_backend_failure(request, handle, session_type, backend_session_id)
-                        .await;
+                    self.record_backend_resubmission(
+                        request,
+                        handle,
+                        session_type,
+                        backend_session_id,
+                    )
+                    .await;
                     return Err(ZkProverError::BackendSessionNotFound {
                         backend_session_id: backend_session_id.to_owned(),
                     });
@@ -336,22 +346,24 @@ where
         }
     }
 
-    async fn record_backend_failure(
+    async fn record_backend_resubmission(
         &self,
         request: &ProofGeneratorRequest,
         handle: &ProofSessionHandle<Client>,
         session_type: SessionType,
         backend_session_id: &str,
     ) {
+        // Worker upsert rejects terminal states; Submitting makes the next claim
+        // replace this dead backend session instead of resuming it.
         if let Err(error) = handle
-            .record(session_type, backend_session_id.to_owned(), BackendSessionState::Failed)
+            .record(session_type, backend_session_id.to_owned(), BackendSessionState::Submitting)
             .await
         {
             warn!(
                 session_id = %request.claim.session_id,
                 backend_session_id = %backend_session_id,
                 error = %error,
-                "failed to record backend session failure"
+                "failed to mark backend session for resubmission"
             );
         }
     }
