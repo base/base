@@ -1,6 +1,6 @@
 //! Proof encoding for the `AggregateVerifier` contract.
 
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 
 use alloy_primitives::{B256, Bytes, U256};
 use thiserror::Error;
@@ -119,8 +119,10 @@ impl ProofEncoder {
     ///
     /// Format: `proofType(1) + rawZkProof`.
     pub fn encode_zk_dispute_proof_bytes(proof: impl AsRef<[u8]>) -> Bytes {
-        let mut proof_data = vec![PROOF_TYPE_ZK];
-        proof_data.extend_from_slice(proof.as_ref());
+        let proof = proof.as_ref();
+        let mut proof_data = Vec::with_capacity(1 + proof.len());
+        proof_data.push(PROOF_TYPE_ZK);
+        proof_data.extend_from_slice(proof);
         Bytes::from(proof_data)
     }
 }
