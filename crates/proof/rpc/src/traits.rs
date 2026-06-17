@@ -17,7 +17,7 @@ pub trait L1Provider: Send + Sync {
     async fn block_number(&self) -> RpcResult<u64>;
 
     /// Gets a header by block number.
-    /// If `number` is `None`, returns the latest header.
+    /// If `number` is `None`, returns the finalized header.
     async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header>;
 
     /// Gets a header by block hash.

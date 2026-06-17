@@ -163,7 +163,7 @@ impl L1Provider for L1Client {
 
     async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
         let block_id: BlockId =
-            number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
+            number.map_or(BlockNumberOrTag::Finalized, BlockNumberOrTag::Number).into();
 
         let backoff = self.retry_config.to_backoff_builder();
 
