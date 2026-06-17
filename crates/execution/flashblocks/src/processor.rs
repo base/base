@@ -350,6 +350,7 @@ where
             pending_blocks.latest_flashblock_index(),
             flashblock.metadata.block_number,
             flashblock.index,
+            flashblock.metadata.prev_flashblock_id,
         );
 
         match validation_result {
@@ -380,13 +381,29 @@ where
                 self.clear_live_state();
                 Ok(None)
             }
-            SequenceValidationResult::NonSequentialGap { expected: _, actual: _ } => {
-                // We have received a non-sequential Flashblock for the current block
+            SequenceValidationResult::NonSequentialGap { expected, actual } => {
                 Metrics::unexpected_block_order().increment(1);
                 error!(
-                    message = "Received non-sequential Flashblock for current block, zeroing Flashblocks until we receive a base Flashblock",
                     curr_block = %pending_blocks.latest_block_number(),
+                    expected_flashblock_index = %expected,
+                    actual_flashblock_index = %actual,
+                    "received non-sequential flashblock index for current block"
+                );
+                self.clear_live_state();
+                Ok(None)
+            }
+            SequenceValidationResult::NonSequentialPredecessor { expected, actual } => {
+                Metrics::unexpected_block_order().increment(1);
+                error!(
+                    curr_block = %pending_blocks.latest_block_number(),
+                    curr_flashblock_index = %pending_blocks.latest_flashblock_index(),
                     new_block = %flashblock.metadata.block_number,
+                    new_flashblock_index = %flashblock.index,
+                    expected_prev_block = %expected.block_number,
+                    expected_prev_index = %expected.index,
+                    actual_prev_block = %actual.block_number,
+                    actual_prev_index = %actual.index,
+                    "received flashblock with non-sequential predecessor link"
                 );
                 self.clear_live_state();
                 Ok(None)
@@ -412,7 +429,7 @@ where
         let latest_flashblock_tx_start = prev_pending_blocks.pending_transaction_count();
 
         let mut live_state = self.lock_live_state();
-        let Some(LivePendingState { db, state_overrides }) = live_state.take() else {
+        let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -431,6 +448,8 @@ where
         let latest_block_header =
             BlockAssembler::refresh_same_block_header(&latest_header, &latest_block_flashblocks)?;
 
+        db.block_hashes.insert(latest_block_base.block_number - 1, latest_block_base.parent_hash);
+
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let evm_env = evm_config
             .evm_env(&latest_header)
@@ -440,6 +459,7 @@ where
         let previous_block_transaction_count = prev_pending_blocks.latest_block_transaction_count();
         let pending_block = Block {
             header: Header {
+                parent_hash: latest_block_base.parent_hash,
                 number: latest_block_base.block_number,
                 timestamp: latest_block_base.timestamp,
                 gas_limit: latest_block_base.gas_limit,
@@ -549,7 +569,7 @@ where
         };
 
         let mut live_state = self.lock_live_state();
-        let Some(LivePendingState { db, state_overrides }) = live_state.take() else {
+        let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -568,6 +588,7 @@ where
         let AssembledBlock { block: assembled_block, header: assembled_header, .. } = current_block;
         let pending_block = Block {
             header: Header {
+                parent_hash: base.parent_hash,
                 number: base.block_number,
                 timestamp: base.timestamp,
                 gas_limit: base.gas_limit,
@@ -576,6 +597,8 @@ where
             },
             body: assembled_block.body,
         };
+
+        db.block_hashes.insert(base.block_number - 1, base.parent_hash);
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let block_env_attributes = BaseNextBlockEnvAttributes {
@@ -616,10 +639,8 @@ where
             l1_block_info.clone(),
             state_overrides,
         );
-        pending_state_builder.apply_pre_execution_changes(
-            previous_header.hash_slow(),
-            Some(base.parent_beacon_block_root),
-        )?;
+        pending_state_builder
+            .apply_pre_execution_changes(base.parent_hash, Some(base.parent_beacon_block_root))?;
 
         for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
             let tx_hash = transaction.tx_hash();
@@ -727,6 +748,9 @@ where
                 extra_data: assembled.base.extra_data.clone(),
             };
 
+            db.block_hashes
+                .insert(latest_block_base.block_number - 1, latest_block_base.parent_hash);
+
             let evm_env = evm_config
                 .next_evm_env(&last_block_header, &block_env_attributes)
                 .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
@@ -757,7 +781,7 @@ where
             // Clone header before moving block to avoid cloning the entire block
             let block_header = assembled.block.header.clone();
 
-            let parent_hash = last_block_header.hash_slow();
+            let parent_block_hash = assembled.base.parent_hash;
             let parent_beacon_block_root = Some(assembled.base.parent_beacon_block_root);
 
             let mut pending_state_builder = PendingStateBuilder::new(
@@ -770,7 +794,7 @@ where
             );
 
             pending_state_builder
-                .apply_pre_execution_changes(parent_hash, parent_beacon_block_root)?;
+                .apply_pre_execution_changes(parent_block_hash, parent_beacon_block_root)?;
 
             for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
                 let tx_hash = transaction.tx_hash();

@@ -1057,7 +1057,7 @@ mod tests {
                 withdrawals_root: B256::ZERO,
                 blob_gas_used: Some(0),
             },
-            metadata: Metadata { block_number: 2 },
+            metadata: Metadata::new(2),
         };
 
         // Build PendingBlocks with zero-hash header

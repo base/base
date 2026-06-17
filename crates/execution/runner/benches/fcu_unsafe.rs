@@ -26,7 +26,7 @@ use std::{
 
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
-use base_node_runner::test_utils::{PreparedBlock, TestHarness};
+use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, PreparedBlock, TestHarness};
 use criterion::{Criterion, criterion_group, criterion_main};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
@@ -61,7 +61,7 @@ fn fcu_unsafe_benches(c: &mut Criterion) {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
                     let PreparedBlock { new_block_hash, .. } = harness
-                        .prepare_unsafe_block(vec![])
+                        .prepare_unsafe_block(vec![L1_BLOCK_INFO_DEPOSIT_TX])
                         .await
                         .expect("prepare_unsafe_block should succeed");
 
