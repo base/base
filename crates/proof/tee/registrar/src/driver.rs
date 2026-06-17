@@ -150,10 +150,16 @@ where
                         );
 
                         if ok_to_dereg {
-                            let protected = proof_tasks.protected_signers(&resolution);
+                            let active_signers = &resolution.active_signers;
                             if let Err(e) = self
                                 .signer_manager
-                                .run_orphan_dereg(&protected, &self.config.cancel)
+                                .run_orphan_dereg(
+                                    |signer| {
+                                        active_signers.contains(signer)
+                                            || proof_tasks.has_pending_signer(signer)
+                                    },
+                                    &self.config.cancel,
+                                )
                                 .await
                             {
                                 warn!(error = %e, "orphan deregistration pass failed");
