@@ -34,6 +34,3 @@ impl UpgradeSignalDefaults {
     /// applied. Bump this with the node software that fully implements the next dynamic upgrade.
     pub const NODE_PROTOCOL_VERSION: u64 = 7;
 }
-
-#[cfg(test)]
-mod tests;

@@ -2,7 +2,7 @@ use alloy_hardforks::{EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 
-use crate::BaseUpgrade;
+use crate::{BaseUpgrade, ContractUpgrade};
 
 /// Extends [`EthereumHardforks`] with Base upgrade helper methods.
 #[auto_impl::auto_impl(&, Arc)]
@@ -87,47 +87,47 @@ impl Upgrades for RollupConfig {
         match fork {
             BaseUpgrade::Bedrock => ForkCondition::Block(0),
             BaseUpgrade::Regolith => self
-                .hardfork_activation_timestamp("regolith")
+                .hardfork_activation_timestamp(ContractUpgrade::Regolith)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Canyon)),
             BaseUpgrade::Canyon => self
-                .hardfork_activation_timestamp("canyon")
+                .hardfork_activation_timestamp(ContractUpgrade::Canyon)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Ecotone)),
             BaseUpgrade::Ecotone => self
-                .hardfork_activation_timestamp("ecotone")
+                .hardfork_activation_timestamp(ContractUpgrade::Ecotone)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Fjord)),
             BaseUpgrade::Fjord => self
-                .hardfork_activation_timestamp("fjord")
+                .hardfork_activation_timestamp(ContractUpgrade::Fjord)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Granite)),
             BaseUpgrade::Granite => self
-                .hardfork_activation_timestamp("granite")
+                .hardfork_activation_timestamp(ContractUpgrade::Granite)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Holocene)),
             BaseUpgrade::Holocene => self
-                .hardfork_activation_timestamp("holocene")
+                .hardfork_activation_timestamp(ContractUpgrade::Holocene)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Isthmus)),
             BaseUpgrade::Isthmus => self
-                .hardfork_activation_timestamp("isthmus")
+                .hardfork_activation_timestamp(ContractUpgrade::Isthmus)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Jovian)),
             BaseUpgrade::Jovian => self
-                .hardfork_activation_timestamp("jovian")
+                .hardfork_activation_timestamp(ContractUpgrade::Jovian)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Azul => self
-                .hardfork_activation_timestamp("azul")
+                .hardfork_activation_timestamp(ContractUpgrade::Azul)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Beryl => self
-                .hardfork_activation_timestamp("beryl")
+                .hardfork_activation_timestamp(ContractUpgrade::Beryl)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Cobalt => self
-                .hardfork_activation_timestamp("cobalt")
+                .hardfork_activation_timestamp(ContractUpgrade::Cobalt)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
         }
@@ -179,8 +179,16 @@ mod tests {
             ..RollupConfig::default()
         };
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
-        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, "azul", ACTIVATION);
-        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, "cobalt", ACTIVATION + 1);
+        RuntimeUpgradeRegistry::set_activation_timestamp(
+            CHAIN_ID,
+            ContractUpgrade::Azul,
+            ACTIVATION,
+        );
+        RuntimeUpgradeRegistry::set_activation_timestamp(
+            CHAIN_ID,
+            ContractUpgrade::Cobalt,
+            ACTIVATION + 1,
+        );
 
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Timestamp(ACTIVATION));
         assert_eq!(
