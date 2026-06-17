@@ -5,10 +5,7 @@ mod cert_manager;
 pub use cert_manager::CertManager;
 
 mod crl;
-pub use crl::{
-    CertCrlInfo, CrlError, DEFAULT_CRL_FETCH_TIMEOUT_SECS, RevokedCertInfo, build_crl_http_client,
-    check_chain_against_crls,
-};
+pub use crl::{CertCrlInfo, CrlError, check_chain_against_crls};
 
 mod deregistration_manager;
 pub use deregistration_manager::DeregistrationManager;

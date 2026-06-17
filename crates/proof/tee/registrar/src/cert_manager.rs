@@ -37,7 +37,11 @@ where
         nitro_verifier: Box<dyn NitroVerifierClient>,
         tx_manager: T,
     ) -> Result<Self> {
-        let http_client = crl::build_crl_http_client(fetch_timeout)?;
+        let http_client = reqwest::Client::builder()
+            .timeout(fetch_timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| RegistrarError::Config(format!("failed to build HTTP client: {e}")))?;
         Ok(Self { http_client, nitro_verifier, tx_manager })
     }
 
@@ -60,7 +64,7 @@ where
         let cert_infos = crl::CertCrlInfo::from_chain(&report.cert_chain_der())?;
 
         RegistrarMetrics::onchain_revocation_checks_total().increment(1);
-        for info in crl::CertCrlInfo::intermediates(&cert_infos) {
+        for info in &cert_infos {
             match self.nitro_verifier.is_revoked(info.path_digest).await {
                 Ok(true) => {
                     warn!(
@@ -187,7 +191,7 @@ mod tests {
     fn intermediate_digests(attestation: &[u8]) -> Vec<B256> {
         let report = AttestationReport::parse(attestation).unwrap();
         let cert_infos = crl::CertCrlInfo::from_chain(&report.cert_chain_der()).unwrap();
-        crl::CertCrlInfo::intermediates(&cert_infos).map(|info| info.path_digest).collect()
+        cert_infos.iter().map(|info| info.path_digest).collect()
     }
 
     #[tokio::test]
