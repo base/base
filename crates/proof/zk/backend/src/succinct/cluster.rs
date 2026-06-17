@@ -99,23 +99,15 @@ impl std::fmt::Debug for ClusterZkProver {
 impl ClusterZkProver {
     /// Maximum number of deterministic cluster proof ids to try for one request.
     pub const MAX_SUBMIT_ATTEMPTS: u64 = 8;
-    /// Numeric protobuf discriminant expected by `sp1-cluster` in `options_artifact_id`.
-    pub const COMPRESSED_PROOF_MODE_ID: i32 =
-        sp1_sdk::network::proto::types::ProofMode::Compressed as i32;
 
     /// Create a cluster prover with a witness provider and cluster config.
     pub const fn new(provider: OpSuccinctWitnessProvider, config: ClusterZkProverConfig) -> Self {
         Self { provider, config }
     }
 
-    /// Build the deterministic cluster proof id for a prover-service session.
-    pub fn proof_id(request_session_id: &str) -> String {
-        format!("prover_service_{request_session_id}")
-    }
-
     /// Build the cluster proof id for a prover-service session attempt.
     pub fn proof_id_for_attempt(request_session_id: &str, attempt: u64) -> String {
-        let base_proof_id = Self::proof_id(request_session_id);
+        let base_proof_id = format!("prover_service_{request_session_id}");
         if attempt == 0 {
             return base_proof_id;
         }
@@ -158,11 +150,6 @@ impl ClusterZkProver {
         }
 
         parts.join("; ")
-    }
-
-    /// Encodes compressed proof mode for the SP1 cluster API.
-    pub fn compressed_proof_mode_artifact_id() -> String {
-        Self::COMPRESSED_PROOF_MODE_ID.to_string()
     }
 
     /// Fetch a cluster proof request by id.
@@ -444,7 +431,9 @@ impl ClusterZkProver {
             proof_id: proof_id.clone(),
             program_artifact_id: elf_id.to_id(),
             stdin_artifact_id: stdin_id.to_id(),
-            options_artifact_id: Some(Self::compressed_proof_mode_artifact_id()),
+            options_artifact_id: Some(
+                (sp1_sdk::network::proto::types::ProofMode::Compressed as i32).to_string(),
+            ),
             proof_artifact_id: Some(proof_output_id.clone()),
             requester: vec![],
             deadline,
@@ -650,25 +639,11 @@ mod tests {
     }
 
     #[test]
-    fn proof_id_is_derived_from_request_session_id() {
-        let proof_id = ClusterZkProver::proof_id("session-1");
-
-        assert_eq!(proof_id, "prover_service_session-1");
-    }
-
-    #[test]
     fn proof_id_for_attempt_uses_retry_suffix_after_first_attempt() {
         let first = ClusterZkProver::proof_id_for_attempt("session-1", 0);
         let retry = ClusterZkProver::proof_id_for_attempt("session-1", 2);
 
         assert_eq!(first, "prover_service_session-1");
         assert_eq!(retry, "prover_service_session-1_retry_2");
-    }
-
-    #[test]
-    fn compressed_proof_mode_artifact_id_matches_proto_discriminant() {
-        let proof_mode = ClusterZkProver::compressed_proof_mode_artifact_id();
-
-        assert_eq!(proof_mode, "2");
     }
 }
