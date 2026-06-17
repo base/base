@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
 use base_proof_primitives::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
@@ -158,10 +159,15 @@ where
         claimed_l2_output_root: B256,
     ) -> Result<ProofRequest, ProposerError> {
         let (l1_head, agreed_l2_head) = tokio::try_join!(
-            async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
+            async {
+                self.l1_client
+                    .header_by_number(BlockNumberOrTag::Finalized)
+                    .await
+                    .map_err(ProposerError::Rpc)
+            },
             async {
                 self.l2_client
-                    .header_by_number(Some(recovered.l2_block_number))
+                    .header_by_number(BlockNumberOrTag::Number(recovered.l2_block_number))
                     .await
                     .map_err(ProposerError::Rpc)
             },

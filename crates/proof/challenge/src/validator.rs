@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
 use base_common_consensus::Predeploys;
 use base_proof_rpc::{L2Provider, RpcError};
@@ -176,8 +177,11 @@ impl<L2: L2Provider> OutputValidator<L2> {
         &self,
         block_number: u64,
     ) -> Result<(B256, B256), ValidatorError> {
-        let rpc_header =
-            self.l2_provider.header_by_number(Some(block_number)).await.map_err(|e| match &e {
+        let rpc_header = self
+            .l2_provider
+            .header_by_number(BlockNumberOrTag::Number(block_number))
+            .await
+            .map_err(|e| match &e {
                 RpcError::HeaderNotFound(_) | RpcError::BlockNotFound(_) => {
                     ValidatorError::BlockNotAvailable { block_number }
                 }

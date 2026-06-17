@@ -14,9 +14,9 @@ Provides async client traits and concrete Alloy-backed implementations for:
 - **`RollupClient`**: Querying rollup configuration and sync status from op-node.
 
 Also provides a `MeteredCache` with hit/miss tracking, `RetryConfig` for exponential
-backoff, a shared `BaseBlock` alias, and an `RpcError` type for error handling. Rollup
-response types such as `L1BlockRef`, `L2BlockRef`, and `SyncStatus` are provided by
-`base-optimism-rpc`.
+backoff, tag-aware latest/finalized block access, a shared `BaseBlock` alias, and an
+`RpcError` type for error handling. Rollup response types such as `L1BlockRef`,
+`L2BlockRef`, and `SyncStatus` are provided by `base-optimism-rpc`.
 
 These abstractions are used by both [`base-proposer`](../proposer/) and the challenger.
 
@@ -32,11 +32,14 @@ base-proof-rpc = { workspace = true }
 Instantiate the Alloy-backed clients to query L1, L2, and rollup nodes:
 
 ```rust,ignore
-use base_proof_rpc::{L1Client, L2Client, RollupClient};
+use alloy_eips::BlockNumberOrTag;
+use base_proof_rpc::{L1Client, L1Provider, L2Client, RollupClient};
 
 let l1 = L1Client::new(l1_url)?;
 let l2 = L2Client::new(l2_url)?;
 let rollup = RollupClient::new(rollup_url)?;
+
+let finalized_header = l1.header_by_number(BlockNumberOrTag::Finalized).await?;
 ```
 
 ## License

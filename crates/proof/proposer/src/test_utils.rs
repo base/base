@@ -8,6 +8,7 @@ use std::{
     },
 };
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use async_trait::async_trait;
@@ -43,7 +44,10 @@ impl L1Provider for MockL1 {
     async fn block_number(&self) -> RpcResult<u64> {
         Ok(self.latest_block_number)
     }
-    async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {
+    async fn header_by_number(
+        &self,
+        _: BlockNumberOrTag,
+    ) -> RpcResult<alloy_rpc_types_eth::Header> {
         Ok(alloy_rpc_types_eth::Header { hash: B256::repeat_byte(0x11), ..Default::default() })
     }
     async fn header_by_hash(&self, _: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
@@ -55,10 +59,10 @@ impl L1Provider for MockL1 {
     ) -> RpcResult<Vec<alloy_rpc_types_eth::TransactionReceipt>> {
         unimplemented!()
     }
-    async fn code_at(&self, _: Address, _: Option<u64>) -> RpcResult<Bytes> {
+    async fn code_at(&self, _: Address, _: BlockNumberOrTag) -> RpcResult<Bytes> {
         unimplemented!()
     }
-    async fn call_contract(&self, _: Address, _: Bytes, _: Option<u64>) -> RpcResult<Bytes> {
+    async fn call_contract(&self, _: Address, _: Bytes, _: BlockNumberOrTag) -> RpcResult<Bytes> {
         unimplemented!()
     }
     async fn get_balance(&self, _: Address) -> RpcResult<U256> {
@@ -84,11 +88,14 @@ impl L2Provider for MockL2 {
     async fn get_proof(&self, _: Address, _: B256) -> RpcResult<EIP1186AccountProofResponse> {
         unimplemented!()
     }
-    async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {
+    async fn header_by_number(
+        &self,
+        _: BlockNumberOrTag,
+    ) -> RpcResult<alloy_rpc_types_eth::Header> {
         let hash = self.canonical_hash.unwrap_or(B256::repeat_byte(0x30));
         Ok(alloy_rpc_types_eth::Header { hash, ..Default::default() })
     }
-    async fn block_by_number(&self, _: Option<u64>) -> RpcResult<BaseBlock> {
+    async fn block_by_number(&self, _: BlockNumberOrTag) -> RpcResult<BaseBlock> {
         if self.block_not_found {
             Err(RpcError::BlockNotFound("mock: no blocks".into()))
         } else {

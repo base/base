@@ -3624,6 +3624,7 @@ name = "base-challenger"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.0.5",
+ "alloy-eips 2.0.5",
  "alloy-primitives",
  "alloy-provider 2.0.5",
  "alloy-rlp",
@@ -5985,6 +5986,7 @@ name = "base-proposer"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.0.5",
+ "alloy-eips 2.0.5",
  "alloy-primitives",
  "alloy-provider 2.0.5",
  "alloy-rpc-types-eth 2.0.5",

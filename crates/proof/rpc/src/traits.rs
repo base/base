@@ -1,5 +1,6 @@
 //! Async trait definitions for RPC clients.
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header, TransactionReceipt};
 use async_trait::async_trait;
@@ -14,9 +15,8 @@ pub trait L1Provider: Send + Sync {
     /// Gets the latest block number.
     async fn block_number(&self) -> RpcResult<u64>;
 
-    /// Gets a header by block number.
-    /// If `number` is `None`, returns the latest header.
-    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header>;
+    /// Gets a header by block number or tag.
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<Header>;
 
     /// Gets a header by block hash.
     async fn header_by_hash(&self, hash: B256) -> RpcResult<Header>;
@@ -24,17 +24,15 @@ pub trait L1Provider: Send + Sync {
     /// Gets block receipts by block hash.
     async fn block_receipts(&self, hash: B256) -> RpcResult<Vec<TransactionReceipt>>;
 
-    /// Gets contract code at the given address.
-    /// If `block_number` is `None`, uses the latest block.
-    async fn code_at(&self, address: Address, block_number: Option<u64>) -> RpcResult<Bytes>;
+    /// Gets contract code at the given address and block number or tag.
+    async fn code_at(&self, address: Address, block: BlockNumberOrTag) -> RpcResult<Bytes>;
 
-    /// Executes a contract call without creating a transaction.
-    /// If `block_number` is `None`, uses the latest block.
+    /// Executes a contract call at a block number or tag without creating a transaction.
     async fn call_contract(
         &self,
         to: Address,
         data: Bytes,
-        block_number: Option<u64>,
+        block: BlockNumberOrTag,
     ) -> RpcResult<Bytes>;
 
     /// Gets the ETH balance of an address at the latest block.
@@ -54,13 +52,11 @@ pub trait L2Provider: Send + Sync {
         block_hash: B256,
     ) -> RpcResult<EIP1186AccountProofResponse>;
 
-    /// Gets a header by block number.
-    /// If `number` is `None`, returns the latest header.
-    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header>;
+    /// Gets a header by block number or tag.
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<Header>;
 
-    /// Gets a block by number with full transactions.
-    /// If `number` is `None`, returns the latest block.
-    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<BaseBlock>;
+    /// Gets a block by block number or tag with full transactions.
+    async fn block_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseBlock>;
 
     /// Gets a block by hash with full transactions.
     async fn block_by_hash(&self, hash: B256) -> RpcResult<BaseBlock>;

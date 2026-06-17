@@ -1983,7 +1983,7 @@ mod tests {
         }
         async fn header_by_number(
             &self,
-            _: Option<u64>,
+            _: alloy_eips::BlockNumberOrTag,
         ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
             Err(RpcError::Transport("simulated L1 outage".into()))
         }
@@ -2002,7 +2002,7 @@ mod tests {
         async fn code_at(
             &self,
             _: Address,
-            _: Option<u64>,
+            _: alloy_eips::BlockNumberOrTag,
         ) -> base_proof_rpc::RpcResult<alloy_primitives::Bytes> {
             unimplemented!()
         }
@@ -2010,7 +2010,7 @@ mod tests {
             &self,
             _: Address,
             _: alloy_primitives::Bytes,
-            _: Option<u64>,
+            _: alloy_eips::BlockNumberOrTag,
         ) -> base_proof_rpc::RpcResult<alloy_primitives::Bytes> {
             unimplemented!()
         }

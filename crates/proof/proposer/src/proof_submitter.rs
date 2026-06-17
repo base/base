@@ -9,7 +9,7 @@
 //! 2. Intermediate-root validation: extract the per-block intermediate roots
 //!    from the underlying proposals, fetch fresh canonical roots for each
 //!    intermediate block, and verify they all match the canonical chain.
-//! 3. Optional pre-submission TEE signer validation against the on-chain
+//! 3. Optional pre-submission TEE signer validation against the onchain
 //!    `TEEProverRegistry`.
 //! 4. Calls `output_proposer.propose_output(..)` to create the dispute game on
 //!    L1 and maps contract-level errors into the [`SubmitAction`] variants the
@@ -21,6 +21,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Signature, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
@@ -46,7 +47,7 @@ pub enum SubmitAction {
     /// chain. The pipeline drops the cached recovery and re-proves on the
     /// next tick.
     RootMismatch,
-    /// The dispute game already exists on-chain by a previous attempt whose
+    /// The dispute game already exists onchain by a previous attempt whose
     /// result was lost to an RPC propagation delay. The pipeline must
     /// invalidate its recovery cache so the next forward walk discovers the
     /// existing game.
@@ -85,7 +86,7 @@ pub struct ProofSubmitterConfig {
     pub intermediate_block_interval: u64,
     /// Expected TEE enclave image hash.
     pub tee_image_hash: B256,
-    /// Optional on-chain `TEEProverRegistry` address. When set, the submitter
+    /// Optional onchain `TEEProverRegistry` address. When set, the submitter
     /// performs an `isValidSigner` pre-flight check before calling
     /// `propose_output`.
     pub tee_prover_registry_address: Option<Address>,
@@ -236,7 +237,7 @@ where
 
         // Pre-submission signer validation: if a TEE prover registry is
         // configured, recover the signer from the aggregate proposal signature
-        // and check `isValidSigner` on-chain. If the signer is invalid, skip
+        // and check `isValidSigner` onchain. If the signer is invalid, skip
         // submission to avoid wasting gas on a transaction that will revert.
         if let Some(registry_address) = self.config.tee_prover_registry_address {
             match self
@@ -250,13 +251,13 @@ where
             {
                 Ok(true) => {}
                 Ok(false) => {
-                    // The proof's signer is not registered on-chain. Discard
+                    // The proof's signer is not registered onchain. Discard
                     // this proof so the pipeline re-proves with a (potentially
                     // different, registered) enclave on the next attempt.
-                    warn!(target_block, "TEE signer is not valid on-chain, discarding proof");
+                    warn!(target_block, "TEE signer is not valid onchain, discarding proof");
                     Metrics::tee_signer_invalid_total().increment(1);
                     return Err(SubmitAction::Discard(ProposerError::Internal(
-                        "TEE signer not registered on-chain".into(),
+                        "TEE signer not registered onchain".into(),
                     )));
                 }
                 Err(e) => {
@@ -266,7 +267,7 @@ where
                     // This also handles the case where the registry contract
                     // is not yet deployed (rolling out the
                     // --tee-prover-registry-address config before the contract
-                    // exists on-chain).
+                    // exists onchain).
                     warn!(error = %e, target_block, "signer validity check failed, proceeding anyway");
                 }
             }
@@ -352,7 +353,7 @@ where
                     warn!(
                         error = %e,
                         target_block,
-                        "Proof signer is invalid on-chain, discarding proof to re-prove"
+                        "Proof signer is invalid onchain, discarding proof to re-prove"
                     );
                     Metrics::tee_signer_invalid_total().increment(1);
                     Err(SubmitAction::Discard(e))
@@ -426,7 +427,7 @@ where
                     error = %e,
                     target_block,
                     game_address = %game_address,
-                    "Proof signer is invalid on-chain, discarding proof to re-prove"
+                    "Proof signer is invalid onchain, discarding proof to re-prove"
                 );
                 Metrics::tee_signer_invalid_total().increment(1);
                 Err(SubmitAction::Discard(e))
@@ -479,7 +480,7 @@ where
         let calldata = ITEEProverRegistry::isValidSignerCall { signer }.abi_encode();
         let result = self
             .l1_client
-            .call_contract(registry_address, calldata.into(), None)
+            .call_contract(registry_address, calldata.into(), BlockNumberOrTag::Latest)
             .await
             .map_err(ProposerError::Rpc)?;
 
