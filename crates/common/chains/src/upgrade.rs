@@ -293,8 +293,8 @@ mod tests {
     #[test]
     fn fork_names_are_trimmed_and_case_insensitive() {
         assert_eq!(BaseUpgrade::from_fork_name("  shAnGhAi  "), Some(BaseUpgrade::Canyon));
-        assert_eq!(BaseUpgrade::from_fork_name("  base_azul  "), Some(BaseUpgrade::Azul));
-        assert_eq!(BaseUpgrade::from_fork_name("  bERyl  "), Some(BaseUpgrade::Beryl));
+        assert_eq!(BaseUpgrade::from_fork_name("\tbase_azul\n"), Some(BaseUpgrade::Azul));
+        assert_eq!(BaseUpgrade::from_fork_name("\n bERyl\t"), Some(BaseUpgrade::Beryl));
     }
 
     #[test]

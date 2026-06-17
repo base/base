@@ -148,7 +148,7 @@ impl ContractUpgrade {
     pub fn normalized_hardfork_id(upgrade_id: &str) -> String {
         upgrade_id
             .bytes()
-            .filter(|b| !matches!(b, b'_' | b'-' | b' '))
+            .filter(|b| !b.is_ascii_whitespace() && !matches!(b, b'_' | b'-'))
             .map(|b| b.to_ascii_lowercase() as char)
             .collect()
     }
