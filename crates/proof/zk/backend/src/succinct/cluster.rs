@@ -289,7 +289,7 @@ impl ClusterZkProver {
                         candidate
                     ));
                 }
-                _ => {
+                ProofRequestStatus::Completed => {
                     info!(proof_id = %candidate, "cluster proof request already exists");
                     return Self::session_id_from_request(&existing)?.to_backend_session_id();
                 }
@@ -448,49 +448,49 @@ impl ClusterZkProver {
             Err(e) => {
                 if let Some(existing) = self.get_cluster_request(&proof_id).await? {
                     let proof_status = Self::cluster_proof_status(&existing)?;
-                    if matches!(
-                        proof_status,
-                        ProofRequestStatus::Failed | ProofRequestStatus::Cancelled
-                    ) {
-                        error!(
-                            proof_id = %proof_id,
-                            proof_status = %proof_status.as_str_name(),
-                            error = %e,
-                            "cluster proof create raced into terminal request"
-                        );
-                        return Err(backend_error!(
-                            "cluster proof {proof_id} created concurrently but already terminal: {}",
-                            proof_status.as_str_name()
-                        ));
-                    }
-                    if proof_status == ProofRequestStatus::Unspecified {
-                        error!(
-                            proof_id = %proof_id,
-                            proof_status = %proof_status.as_str_name(),
-                            error = %e,
-                            "cluster proof create raced into unspecified request"
-                        );
-                        return Err(backend_error!(
-                            "cluster proof {proof_id} created concurrently but has unspecified status"
-                        ));
-                    }
-                    if proof_status == ProofRequestStatus::Pending {
-                        let now = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map_err(|e| backend_error!("invalid unix timestamp: {e}"))?
-                            .as_secs();
-                        if existing.deadline <= now {
+                    match proof_status {
+                        ProofRequestStatus::Failed | ProofRequestStatus::Cancelled => {
                             error!(
                                 proof_id = %proof_id,
-                                deadline = existing.deadline,
-                                now = now,
+                                proof_status = %proof_status.as_str_name(),
                                 error = %e,
-                                "cluster proof create raced into expired pending request"
+                                "cluster proof create raced into terminal request"
                             );
                             return Err(backend_error!(
-                                "cluster proof {proof_id} created concurrently but deadline already elapsed"
+                                "cluster proof {proof_id} created concurrently but already terminal: {}",
+                                proof_status.as_str_name()
                             ));
                         }
+                        ProofRequestStatus::Unspecified => {
+                            error!(
+                                proof_id = %proof_id,
+                                proof_status = %proof_status.as_str_name(),
+                                error = %e,
+                                "cluster proof create raced into unspecified request"
+                            );
+                            return Err(backend_error!(
+                                "cluster proof {proof_id} created concurrently but has unspecified status"
+                            ));
+                        }
+                        ProofRequestStatus::Pending => {
+                            let now = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .map_err(|e| backend_error!("invalid unix timestamp: {e}"))?
+                                .as_secs();
+                            if existing.deadline <= now {
+                                error!(
+                                    proof_id = %proof_id,
+                                    deadline = existing.deadline,
+                                    now = now,
+                                    error = %e,
+                                    "cluster proof create raced into expired pending request"
+                                );
+                                return Err(backend_error!(
+                                    "cluster proof {proof_id} created concurrently but deadline already elapsed"
+                                ));
+                            }
+                        }
+                        ProofRequestStatus::Completed => {}
                     }
 
                     info!(
