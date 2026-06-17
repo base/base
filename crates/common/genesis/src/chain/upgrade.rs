@@ -249,26 +249,17 @@ impl UpgradeActivationOverrides {
     }
 
     /// Sets the runtime activation override for a contract upgrade ID.
-    pub fn set_activation(
-        &mut self,
-        upgrade_id: ContractUpgrade,
-        activation: UpgradeActivation,
-    ) -> bool {
+    pub fn set_activation(&mut self, upgrade_id: ContractUpgrade, activation: UpgradeActivation) {
         self.activations.insert(upgrade_id, activation);
-        true
     }
 
     /// Sets a runtime timestamp activation override for a contract upgrade ID.
-    pub fn set_activation_timestamp(
-        &mut self,
-        upgrade_id: ContractUpgrade,
-        timestamp: u64,
-    ) -> bool {
+    pub fn set_activation_timestamp(&mut self, upgrade_id: ContractUpgrade, timestamp: u64) {
         self.set_activation(upgrade_id, UpgradeActivation::Timestamp(timestamp))
     }
 
     /// Sets a runtime override that clears an upgrade activation.
-    pub fn clear_activation_timestamp(&mut self, upgrade_id: ContractUpgrade) -> bool {
+    pub fn clear_activation_timestamp(&mut self, upgrade_id: ContractUpgrade) {
         self.set_activation(upgrade_id, UpgradeActivation::Never)
     }
 }
@@ -336,23 +327,19 @@ impl RuntimeUpgradeRegistry {
         chain_id: u64,
         upgrade_id: ContractUpgrade,
         activation: UpgradeActivation,
-    ) -> bool {
+    ) {
         let mut registry = Self::write_registry();
         let overrides = registry.entry(chain_id).or_default();
         overrides.set_activation(upgrade_id, activation)
     }
 
     /// Sets one runtime timestamp activation override for a chain and contract upgrade ID.
-    pub fn set_activation_timestamp(
-        chain_id: u64,
-        upgrade_id: ContractUpgrade,
-        timestamp: u64,
-    ) -> bool {
+    pub fn set_activation_timestamp(chain_id: u64, upgrade_id: ContractUpgrade, timestamp: u64) {
         Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Timestamp(timestamp))
     }
 
     /// Sets one runtime override that clears a chain upgrade activation.
-    pub fn clear_activation_timestamp(chain_id: u64, upgrade_id: ContractUpgrade) -> bool {
+    pub fn clear_activation_timestamp(chain_id: u64, upgrade_id: ContractUpgrade) {
         Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Never)
     }
 }
@@ -461,7 +448,7 @@ impl UpgradeConfig {
     }
 
     /// Clears a timestamp-based activation time by contract upgrade ID.
-    pub const fn clear_activation_timestamp(&mut self, upgrade_id: ContractUpgrade) -> bool {
+    pub const fn clear_activation_timestamp(&mut self, upgrade_id: ContractUpgrade) {
         match upgrade_id {
             ContractUpgrade::Regolith => self.regolith_time = None,
             ContractUpgrade::Canyon => self.canyon_time = None,
@@ -477,8 +464,6 @@ impl UpgradeConfig {
             ContractUpgrade::Beryl => self.base.beryl = None,
             ContractUpgrade::Cobalt => self.base.cobalt = None,
         }
-
-        true
     }
 
     /// Applies an upgrade activation override by contract upgrade ID.
@@ -486,7 +471,7 @@ impl UpgradeConfig {
         &mut self,
         upgrade_id: ContractUpgrade,
         activation: UpgradeActivation,
-    ) -> bool {
+    ) {
         match activation {
             UpgradeActivation::Never => self.clear_activation_timestamp(upgrade_id),
             UpgradeActivation::Timestamp(timestamp) => {
@@ -529,11 +514,7 @@ impl UpgradeConfig {
     }
 
     /// Sets a timestamp-based activation time by contract upgrade ID.
-    pub const fn set_activation_timestamp(
-        &mut self,
-        upgrade_id: ContractUpgrade,
-        timestamp: u64,
-    ) -> bool {
+    pub const fn set_activation_timestamp(&mut self, upgrade_id: ContractUpgrade, timestamp: u64) {
         match upgrade_id {
             ContractUpgrade::Regolith => self.regolith_time = Some(timestamp),
             ContractUpgrade::Canyon => self.canyon_time = Some(timestamp),
@@ -549,8 +530,6 @@ impl UpgradeConfig {
             ContractUpgrade::Beryl => self.base.beryl = Some(timestamp),
             ContractUpgrade::Cobalt => self.base.cobalt = Some(timestamp),
         }
-
-        true
     }
 
     /// Returns an iterator of upgrade names -> their activation times (if scheduled.)
@@ -708,11 +687,11 @@ mod tests {
     fn test_set_activation_timestamp_by_upgrade_id() {
         let mut upgrades = UpgradeConfig::default();
 
-        assert!(upgrades.set_activation_timestamp(ContractUpgrade::Regolith, 1));
-        assert!(upgrades.set_activation_timestamp(ContractUpgrade::PectraBlobSchedule, 2));
-        assert!(upgrades.set_activation_timestamp(ContractUpgrade::Azul, 3));
-        assert!(upgrades.set_activation_timestamp(ContractUpgrade::Beryl, 4));
-        assert!(upgrades.set_activation_timestamp(ContractUpgrade::Cobalt, 5));
+        upgrades.set_activation_timestamp(ContractUpgrade::Regolith, 1);
+        upgrades.set_activation_timestamp(ContractUpgrade::PectraBlobSchedule, 2);
+        upgrades.set_activation_timestamp(ContractUpgrade::Azul, 3);
+        upgrades.set_activation_timestamp(ContractUpgrade::Beryl, 4);
+        upgrades.set_activation_timestamp(ContractUpgrade::Cobalt, 5);
 
         assert_eq!(upgrades.regolith_time, Some(1));
         assert_eq!(upgrades.pectra_blob_schedule_time, Some(2));
@@ -720,7 +699,7 @@ mod tests {
         assert_eq!(upgrades.base.beryl, Some(4));
         assert_eq!(upgrades.base.cobalt, Some(5));
 
-        assert!(upgrades.clear_activation_timestamp(ContractUpgrade::Azul));
+        upgrades.clear_activation_timestamp(ContractUpgrade::Azul);
         assert_eq!(upgrades.base.azul, None);
         assert_eq!(upgrades.base.beryl, Some(4));
         assert_eq!(upgrades.base.cobalt, Some(5));
@@ -740,20 +719,9 @@ mod runtime_tests {
         let chain_id = 9_100_001;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
-        assert!(RuntimeUpgradeRegistry::set_activation_timestamp(
-            chain_id,
-            ContractUpgrade::Azul,
-            42
-        ));
-        assert!(RuntimeUpgradeRegistry::clear_activation_timestamp(
-            chain_id,
-            ContractUpgrade::Beryl
-        ));
-        assert!(RuntimeUpgradeRegistry::set_activation_timestamp(
-            chain_id,
-            ContractUpgrade::Cobalt,
-            84
-        ));
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Azul, 42);
+        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, ContractUpgrade::Beryl);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Cobalt, 84);
 
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Azul),
@@ -776,9 +744,9 @@ mod runtime_tests {
         let mut upgrades = UpgradeConfig { canyon_time: Some(10), ..Default::default() };
         let mut overrides = UpgradeActivationOverrides::new();
 
-        assert!(overrides.clear_activation_timestamp(ContractUpgrade::Canyon));
-        assert!(overrides.set_activation_timestamp(ContractUpgrade::Azul, 42));
-        assert!(overrides.set_activation_timestamp(ContractUpgrade::Cobalt, 84));
+        overrides.clear_activation_timestamp(ContractUpgrade::Canyon);
+        overrides.set_activation_timestamp(ContractUpgrade::Azul, 42);
+        overrides.set_activation_timestamp(ContractUpgrade::Cobalt, 84);
 
         upgrades.apply_activation_overrides(&overrides);
 
