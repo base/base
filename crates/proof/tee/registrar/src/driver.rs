@@ -280,7 +280,9 @@ where
             return Ok(outcome);
         }
         if let Some(cert_manager) = &self.cert_manager {
-            let first_attestation = &all_attestations[0];
+            let first_attestation = all_attestations
+                .first()
+                .expect("guarded by attestation count >= signer count >= 1");
             match cert_manager.check_and_revoke_crls(first_attestation, instance).await {
                 Ok(true) => {
                     warn!(
