@@ -6345,6 +6345,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-tdx-rpc-check"
+version = "0.0.0"
+dependencies = [
+ "reqwest 0.13.4",
+ "tokio",
+]
+
+[[package]]
 name = "base-test-utils"
 version = "0.0.0"
 dependencies = [
