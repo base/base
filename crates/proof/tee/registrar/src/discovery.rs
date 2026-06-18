@@ -47,6 +47,7 @@ impl AwsTargetGroupDiscovery {
                 continue;
             };
             let Some(private_ip) = instance.private_ip_address() else {
+                warn!(instance_id = %instance_id, "EC2 instance present but missing private IP");
                 continue;
             };
             let Some(health_status) = health_map.remove(instance_id) else {
