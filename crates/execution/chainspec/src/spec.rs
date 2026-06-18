@@ -6,7 +6,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
-use base_common_chains::{BaseUpgrade, ChainConfig, ContractUpgrade, Upgrades};
+use base_common_chains::{BaseUpgrade, BaseUpgradeExt, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink};
 use derive_more::{Constructor, Deref, Into};
@@ -292,7 +292,7 @@ impl BaseChainSpec {
 
     /// Returns a runtime upgrade override for an execution fork condition.
     pub fn runtime_fork_condition<H: Hardfork + ?Sized>(&self, fork: &H) -> Option<ForkCondition> {
-        let upgrade_id = ContractUpgrade::from_fork_name(fork.name())?;
+        let upgrade_id = BaseUpgrade::from_contract_fork_name(fork.name())?;
         RuntimeUpgradeRegistry::activation(self.chain().id(), upgrade_id).map(|activation| {
             match activation {
                 UpgradeActivation::Never => ForkCondition::Never,
@@ -362,7 +362,7 @@ impl BaseChainSpec {
 
     /// Clears all timestamp-based Base hardfork activation conditions.
     pub fn clear_hardfork_activation_timestamps(&mut self) {
-        for hardfork_id in ContractUpgrade::ALL {
+        for hardfork_id in BaseUpgrade::CONTRACT_VARIANTS {
             Self::set_hardfork_activation_condition_for(
                 &mut self.inner.hardforks,
                 hardfork_id,
@@ -372,14 +372,14 @@ impl BaseChainSpec {
     }
 
     /// Clears a timestamp-based hardfork activation condition by contract hardfork ID.
-    pub fn clear_hardfork_activation_timestamp(&mut self, hardfork_id: ContractUpgrade) -> bool {
+    pub fn clear_hardfork_activation_timestamp(&mut self, hardfork_id: BaseUpgrade) -> bool {
         self.try_clear_hardfork_activation_timestamp(hardfork_id).unwrap_or(false)
     }
 
     /// Clears a timestamp-based hardfork activation condition by contract hardfork ID.
     pub fn try_clear_hardfork_activation_timestamp(
         &mut self,
-        hardfork_id: ContractUpgrade,
+        hardfork_id: BaseUpgrade,
     ) -> Result<bool, BaseChainSpecError> {
         self.try_set_hardfork_activation_condition(hardfork_id, ForkCondition::Never)
     }
@@ -387,7 +387,7 @@ impl BaseChainSpec {
     /// Sets a timestamp-based hardfork activation condition by contract hardfork ID.
     pub fn set_hardfork_activation_timestamp(
         &mut self,
-        hardfork_id: ContractUpgrade,
+        hardfork_id: BaseUpgrade,
         timestamp: u64,
     ) -> bool {
         self.try_set_hardfork_activation_timestamp(hardfork_id, timestamp).unwrap_or(false)
@@ -396,7 +396,7 @@ impl BaseChainSpec {
     /// Sets a timestamp-based hardfork activation condition by contract hardfork ID.
     pub fn try_set_hardfork_activation_timestamp(
         &mut self,
-        hardfork_id: ContractUpgrade,
+        hardfork_id: BaseUpgrade,
         timestamp: u64,
     ) -> Result<bool, BaseChainSpecError> {
         self.try_set_hardfork_activation_condition(hardfork_id, ForkCondition::Timestamp(timestamp))
@@ -405,7 +405,7 @@ impl BaseChainSpec {
     /// Sets a hardfork activation condition by contract hardfork ID.
     pub fn set_hardfork_activation_condition(
         &mut self,
-        hardfork_id: ContractUpgrade,
+        hardfork_id: BaseUpgrade,
         condition: ForkCondition,
     ) -> bool {
         self.try_set_hardfork_activation_condition(hardfork_id, condition).unwrap_or(false)
@@ -414,7 +414,7 @@ impl BaseChainSpec {
     /// Sets a hardfork activation condition by contract hardfork ID after validating invariants.
     pub fn try_set_hardfork_activation_condition(
         &mut self,
-        hardfork_id: ContractUpgrade,
+        hardfork_id: BaseUpgrade,
         condition: ForkCondition,
     ) -> Result<bool, BaseChainSpecError> {
         let mut hardforks = self.inner.hardforks.clone();
@@ -435,7 +435,7 @@ impl BaseChainSpec {
     /// Sets a hardfork activation condition by contract hardfork ID on a hardfork collection.
     pub fn set_hardfork_activation_condition_for(
         hardforks: &mut ChainHardforks,
-        hardfork_id: ContractUpgrade,
+        hardfork_id: BaseUpgrade,
         condition: ForkCondition,
     ) -> bool {
         let mut inserted = false;
@@ -444,8 +444,10 @@ impl BaseChainSpec {
             hardforks.insert(execution_hardfork, condition);
             inserted = true;
         }
-        if let Some(base_upgrade) = BaseUpgrade::from_contract_upgrade(hardfork_id) {
-            hardforks.insert(base_upgrade, condition);
+        // Only execution-ladder upgrades enter the reth hardfork schedule; contract-only
+        // upgrades (Delta, PectraBlobSchedule) are ignored here.
+        if hardfork_id.is_execution() {
+            hardforks.insert(hardfork_id, condition);
             inserted = true;
         }
 
@@ -458,7 +460,7 @@ impl UpgradeActivationSink for BaseChainSpec {
 
     fn apply_activation(
         &mut self,
-        hardfork_id: ContractUpgrade,
+        hardfork_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
         match activation {
@@ -660,7 +662,7 @@ mod tests {
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
     use alloy_primitives::{Address, B256, U256, address, b256};
-    use base_common_chains::{BaseUpgrade, ChainConfig, ContractUpgrade, Upgrades};
+    use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
     use base_common_genesis::RuntimeUpgradeRegistry;
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
@@ -859,15 +861,15 @@ mod tests {
         assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
         assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
 
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Azul, 42);
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Cobalt, 84);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
 
         assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
         assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
         assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
 
-        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, ContractUpgrade::Azul);
-        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, ContractUpgrade::Cobalt);
+        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Azul);
+        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Cobalt);
 
         assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
@@ -888,8 +890,8 @@ mod tests {
             .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
             .build();
 
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Azul, 42);
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Cobalt, 84);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
 
         assert_eq!(spec.fork_id(&Head { number: 0, timestamp: 41, ..Default::default() }).next, 42);
         assert_eq!(spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
@@ -910,7 +912,7 @@ mod tests {
         assert_eq!(spec.fork(BaseUpgrade::Regolith), ForkCondition::Never);
         assert!(!spec.is_regolith_active_at_timestamp(42));
 
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Regolith, 42);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Regolith, 42);
 
         assert_eq!(spec.fork(BaseUpgrade::Regolith), ForkCondition::Timestamp(42));
         assert!(!spec.is_regolith_active_at_timestamp(41));
@@ -932,16 +934,8 @@ mod tests {
         let static_blob_params = spec.inner.blob_params_at_timestamp(timestamp);
         let static_next_base_fee = spec.inner.next_block_base_fee(parent, timestamp);
 
-        RuntimeUpgradeRegistry::set_activation_timestamp(
-            chain_id,
-            ContractUpgrade::Canyon,
-            timestamp,
-        );
-        RuntimeUpgradeRegistry::set_activation_timestamp(
-            chain_id,
-            ContractUpgrade::Ecotone,
-            timestamp,
-        );
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Canyon, timestamp);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Ecotone, timestamp);
 
         let runtime_chain_spec = spec.runtime_chain_spec();
 
@@ -1253,8 +1247,8 @@ mod tests {
         chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Cobalt, ForkCondition::Never);
-        assert!(chain_spec.set_hardfork_activation_timestamp(ContractUpgrade::Azul, 42));
-        assert!(chain_spec.set_hardfork_activation_timestamp(ContractUpgrade::Cobalt, 84));
+        assert!(chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Azul, 42));
+        assert!(chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Cobalt, 84));
 
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
@@ -1272,14 +1266,12 @@ mod tests {
         let mut chain_spec = BaseChainSpec::devnet();
         let ecotone = chain_spec.fork(BaseUpgrade::Ecotone);
 
-        assert!(!chain_spec.set_hardfork_activation_timestamp(ContractUpgrade::Delta, 42));
+        assert!(!chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Delta, 42));
         assert!(
-            !chain_spec.set_hardfork_activation_timestamp(ContractUpgrade::PectraBlobSchedule, 84,)
+            !chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::PectraBlobSchedule, 84,)
         );
-        assert!(!chain_spec.clear_hardfork_activation_timestamp(ContractUpgrade::Delta));
-        assert!(
-            !chain_spec.clear_hardfork_activation_timestamp(ContractUpgrade::PectraBlobSchedule)
-        );
+        assert!(!chain_spec.clear_hardfork_activation_timestamp(BaseUpgrade::Delta));
+        assert!(!chain_spec.clear_hardfork_activation_timestamp(BaseUpgrade::PectraBlobSchedule));
 
         assert_eq!(chain_spec.fork(BaseUpgrade::Ecotone), ecotone);
     }
@@ -1289,11 +1281,11 @@ mod tests {
         let mut chain_spec = BaseChainSpec::from(ChainSpec::default());
 
         let err = chain_spec
-            .try_set_hardfork_activation_timestamp(ContractUpgrade::Beryl, 42)
+            .try_set_hardfork_activation_timestamp(BaseUpgrade::Beryl, 42)
             .expect_err("Beryl schedule without activation admin should be rejected");
 
         assert!(matches!(err, BaseChainSpecError::MissingActivationAdminAddress { .. }));
-        assert!(!chain_spec.set_hardfork_activation_timestamp(ContractUpgrade::Beryl, 42));
+        assert!(!chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Beryl, 42));
         assert_eq!(chain_spec.fork(BaseUpgrade::Beryl), ForkCondition::Never);
     }
 

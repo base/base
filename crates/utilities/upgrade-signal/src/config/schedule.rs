@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, U256};
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use base_common_genesis::ContractUpgrade;
+use base_common_genesis::BaseUpgrade;
 use tracing::info;
 
 use super::{UpgradeSignalDefaults, UpgradeSignalMode};
@@ -17,9 +17,9 @@ pub struct UpgradeSignalConfig {
     /// L1 upgrade signal contract or proxy address.
     pub contract_address: Address,
     /// Contract-backed upgrades to pass to the contract.
-    pub hardfork_ids: Vec<ContractUpgrade>,
+    pub hardfork_ids: Vec<BaseUpgrade>,
     /// Contract-backed upgrades allowed to mutate local fork schedules.
-    pub apply_hardfork_ids: Vec<ContractUpgrade>,
+    pub apply_hardfork_ids: Vec<BaseUpgrade>,
     /// Local schedule mutation mode.
     pub mode: UpgradeSignalMode,
     /// L1 block tag used to read the contract.
@@ -30,7 +30,7 @@ pub struct UpgradeSignalConfig {
 
 impl UpgradeSignalConfig {
     /// Creates a new schedule read configuration for one contract-backed upgrade.
-    pub fn new(contract_address: Address, hardfork_id: ContractUpgrade) -> Self {
+    pub fn new(contract_address: Address, hardfork_id: BaseUpgrade) -> Self {
         Self {
             contract_address,
             hardfork_ids: vec![hardfork_id],
@@ -62,7 +62,7 @@ impl UpgradeSignalConfig {
     ) -> Result<(), UpgradeSignalError> {
         if signal.activation_timestamp > 0 && signal.protocol_version == U256::ZERO {
             return Err(UpgradeSignalError::missing_protocol_version(
-                signal.hardfork_id.to_string(),
+                signal.hardfork_id.contract_id().to_string(),
             ));
         }
 
@@ -86,7 +86,7 @@ impl UpgradeSignalConfig {
         }
 
         Err(UpgradeSignalError::unsupported_protocol_version(
-            signal.hardfork_id.to_string(),
+            signal.hardfork_id.contract_id().to_string(),
             signal.protocol_version,
             self.node_protocol_version,
         ))
@@ -149,7 +149,7 @@ impl UpgradeSignalConfig {
             info!(
                 target: "upgrade_signal",
                 context = log_context,
-                hardfork_id = %signal.hardfork_id,
+                hardfork_id = %signal.hardfork_id.contract_id(),
                 activation_timestamp = signal.activation_timestamp,
                 minimum_protocol_version = %signal.protocol_version,
                 node_protocol_version = %self.node_protocol_version,
@@ -175,8 +175,8 @@ mod tests {
     use super::*;
     use crate::state::{UpgradeSignal, UpgradeSignalSchedule};
 
-    fn upgrade(hardfork_id: &str) -> ContractUpgrade {
-        hardfork_id.parse().unwrap()
+    fn upgrade(hardfork_id: &str) -> BaseUpgrade {
+        BaseUpgrade::from_contract_fork_name(hardfork_id).unwrap()
     }
 
     #[rstest]
@@ -193,7 +193,7 @@ mod tests {
 
     fn signal(protocol_version: U256) -> UpgradeSignal {
         UpgradeSignal {
-            hardfork_id: ContractUpgrade::Azul,
+            hardfork_id: BaseUpgrade::Azul,
             activation_timestamp: 42,
             protocol_version,
             l1_block_number: 1,
@@ -249,7 +249,7 @@ mod tests {
         UpgradeSignalSchedule::new(vec![
             signal(config.node_protocol_version),
             UpgradeSignal {
-                hardfork_id: ContractUpgrade::Beryl,
+                hardfork_id: BaseUpgrade::Beryl,
                 activation_timestamp: 5,
                 protocol_version: U256::ZERO,
                 l1_block_number: 1,
@@ -261,7 +261,7 @@ mod tests {
     fn read_validation_rejects_missing_protocol_version_on_read_only_fork() {
         let config = UpgradeSignalConfig::new(
             address!("0000000000000000000000000000000000000001"),
-            ContractUpgrade::Azul,
+            BaseUpgrade::Azul,
         );
         let schedule = malformed_read_only_schedule(&config);
 
@@ -275,18 +275,18 @@ mod tests {
     fn applied_validation_allows_unsupported_version_on_read_only_fork() {
         let config = UpgradeSignalConfig::new(
             address!("0000000000000000000000000000000000000001"),
-            ContractUpgrade::Azul,
+            BaseUpgrade::Azul,
         );
 
         let schedule = UpgradeSignalSchedule::new(vec![
             UpgradeSignal {
-                hardfork_id: ContractUpgrade::Azul,
+                hardfork_id: BaseUpgrade::Azul,
                 activation_timestamp: 42,
                 protocol_version: config.node_protocol_version,
                 l1_block_number: 1,
             },
             UpgradeSignal {
-                hardfork_id: ContractUpgrade::Beryl,
+                hardfork_id: BaseUpgrade::Beryl,
                 activation_timestamp: 42,
                 protocol_version: config.node_protocol_version + U256::from(1),
                 l1_block_number: 1,

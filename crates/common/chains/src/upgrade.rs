@@ -1,107 +1,60 @@
-use core::str::FromStr;
-
-use alloy_hardforks::{EthereumHardfork, ForkCondition, hardfork};
-pub use base_common_genesis::ContractUpgrade;
+use alloy_hardforks::ForkCondition;
+pub use base_common_genesis::BaseUpgrade;
 use revm::primitives::hardfork::SpecId;
 
 use crate::{ChainConfig, Upgrades};
 
-hardfork!(
-    /// The name of a Base network upgrade.
-    ///
-    /// When building a list of upgrades for a chain, it's still expected to zip with
-    /// [`EthereumHardfork`](alloy_hardforks::EthereumHardfork).
-    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    #[derive(Default)]
-    BaseUpgrade {
-        /// Bedrock: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#bedrock>.
-        Bedrock,
-        /// Regolith: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#regolith>.
-        Regolith,
-        /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#canyon>.
-        Canyon,
-        /// Ecotone: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#ecotone>.
-        Ecotone,
-        /// Fjord: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#fjord>
-        Fjord,
-        /// Granite: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#granite>
-        Granite,
-        /// Holocene: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#holocene>
-        Holocene,
-        /// Isthmus: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/isthmus/overview.md>
-        Isthmus,
-        /// Jovian: Base network upgrade.
-        Jovian,
-        /// Azul: First Base-specific network upgrade.
-        #[default]
-        Azul,
-        /// Beryl: Second Base-specific network upgrade.
-        Beryl,
-        /// Cobalt: Third Base-specific network upgrade.
-        Cobalt,
-    }
-);
-
-impl BaseUpgrade {
-    /// Latest Base upgrade used by default.
-    pub const LATEST: Self = Self::Azul;
-
-    /// Returns the Base upgrade represented by a contract-backed upgrade, if any.
-    pub const fn from_contract_upgrade(upgrade: ContractUpgrade) -> Option<Self> {
-        match upgrade {
-            ContractUpgrade::Regolith => Some(Self::Regolith),
-            ContractUpgrade::Canyon => Some(Self::Canyon),
-            ContractUpgrade::Delta | ContractUpgrade::PectraBlobSchedule => None,
-            ContractUpgrade::Ecotone => Some(Self::Ecotone),
-            ContractUpgrade::Fjord => Some(Self::Fjord),
-            ContractUpgrade::Granite => Some(Self::Granite),
-            ContractUpgrade::Holocene => Some(Self::Holocene),
-            ContractUpgrade::Isthmus => Some(Self::Isthmus),
-            ContractUpgrade::Jovian => Some(Self::Jovian),
-            ContractUpgrade::Azul => Some(Self::Azul),
-            ContractUpgrade::Beryl => Some(Self::Beryl),
-            ContractUpgrade::Cobalt => Some(Self::Cobalt),
-        }
-    }
-
-    /// Returns the Base upgrade that carries the given Ethereum hardfork on Base.
-    pub const fn from_ethereum_hardfork(fork: EthereumHardfork) -> Option<Self> {
-        match fork {
-            EthereumHardfork::Shanghai => Some(Self::Canyon),
-            EthereumHardfork::Cancun => Some(Self::Ecotone),
-            EthereumHardfork::Prague => Some(Self::Isthmus),
-            EthereumHardfork::Osaka => Some(Self::Azul),
-            _ => None,
-        }
-    }
-
-    /// Returns the Ethereum execution hardfork activated alongside this Base upgrade, if any.
-    pub const fn execution_hardfork(self) -> Option<EthereumHardfork> {
-        match self {
-            Self::Canyon => Some(EthereumHardfork::Shanghai),
-            Self::Ecotone => Some(EthereumHardfork::Cancun),
-            Self::Isthmus => Some(EthereumHardfork::Prague),
-            Self::Azul => Some(EthereumHardfork::Osaka),
-            _ => None,
-        }
-    }
-
-    /// Returns the Base upgrade represented by an execution or Base fork name.
-    pub fn from_fork_name(name: &str) -> Option<Self> {
-        if let Ok(upgrade) = Self::from_str(name.trim()) {
-            return Some(upgrade);
-        }
-
-        // TODO: remove this once runtime override lookups stop passing fork names through strings.
-        Self::from_contract_upgrade(ContractUpgrade::from_fork_name(name)?)
-    }
-
+/// Execution-layer extension methods for [`BaseUpgrade`].
+///
+/// [`BaseUpgrade`] is defined in `base-common-genesis`, which cannot depend on `revm` or
+/// [`ChainConfig`]. These helpers, which map upgrades onto revm specs and Base chain schedules,
+/// therefore live here in `base-common-chains`. Bring this trait into scope to call them.
+pub trait BaseUpgradeExt: Sized {
     /// Converts the Base upgrade into its matching Ethereum execution spec.
-    pub const fn into_eth_spec(self) -> SpecId {
+    ///
+    /// The contract-only upgrades inherit the execution spec of the surrounding era: `Delta`
+    /// behaves like `Canyon` (Shanghai) and `PectraBlobSchedule` like `Holocene` (Cancun).
+    fn into_eth_spec(self) -> SpecId;
+
+    /// Returns the execution fork ladder with activation conditions for the given chain config.
+    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 12];
+
+    /// Base mainnet list of execution upgrades.
+    fn mainnet() -> [(BaseUpgrade, ForkCondition); 12] {
+        Self::forks_for(ChainConfig::mainnet())
+    }
+
+    /// Base Sepolia list of execution upgrades.
+    fn sepolia() -> [(BaseUpgrade, ForkCondition); 12] {
+        Self::forks_for(ChainConfig::sepolia())
+    }
+
+    /// Devnet list of execution upgrades.
+    fn devnet() -> [(BaseUpgrade, ForkCondition); 12] {
+        Self::forks_for(ChainConfig::devnet())
+    }
+
+    /// Base Zeronet list of execution upgrades.
+    fn zeronet() -> [(BaseUpgrade, ForkCondition); 12] {
+        Self::forks_for(ChainConfig::zeronet())
+    }
+
+    /// Returns the active Base upgrade at the given timestamp.
+    ///
+    /// This is intended for post-Bedrock timestamp-based fork resolution.
+    fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> BaseUpgrade;
+}
+
+impl BaseUpgradeExt for BaseUpgrade {
+    fn into_eth_spec(self) -> SpecId {
         match self {
             Self::Bedrock | Self::Regolith => SpecId::MERGE,
-            Self::Canyon => SpecId::SHANGHAI,
-            Self::Ecotone | Self::Fjord | Self::Granite | Self::Holocene => SpecId::CANCUN,
+            Self::Canyon | Self::Delta => SpecId::SHANGHAI,
+            Self::Ecotone
+            | Self::Fjord
+            | Self::Granite
+            | Self::Holocene
+            | Self::PectraBlobSchedule => SpecId::CANCUN,
             Self::Isthmus | Self::Jovian => SpecId::PRAGUE,
             // Azul, Beryl, Cobalt, and newer Base upgrades inherit the latest known Ethereum spec
             // until explicitly mapped.
@@ -109,10 +62,27 @@ impl BaseUpgrade {
         }
     }
 
-    /// Returns the active Base upgrade at the given timestamp.
-    ///
-    /// This is intended for post-Bedrock timestamp-based fork resolution.
-    pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
+    fn forks_for(cfg: &ChainConfig) -> [(BaseUpgrade, ForkCondition); 12] {
+        let azul = cfg.azul_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
+        let beryl = cfg.beryl_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
+        let cobalt = cfg.cobalt_timestamp.map_or(ForkCondition::Never, ForkCondition::Timestamp);
+        [
+            (Self::Bedrock, ForkCondition::Block(cfg.bedrock_block)),
+            (Self::Regolith, ForkCondition::Timestamp(cfg.regolith_timestamp)),
+            (Self::Canyon, ForkCondition::Timestamp(cfg.canyon_timestamp)),
+            (Self::Ecotone, ForkCondition::Timestamp(cfg.ecotone_timestamp)),
+            (Self::Fjord, ForkCondition::Timestamp(cfg.fjord_timestamp)),
+            (Self::Granite, ForkCondition::Timestamp(cfg.granite_timestamp)),
+            (Self::Holocene, ForkCondition::Timestamp(cfg.holocene_timestamp)),
+            (Self::Isthmus, ForkCondition::Timestamp(cfg.isthmus_timestamp)),
+            (Self::Jovian, ForkCondition::Timestamp(cfg.jovian_timestamp)),
+            (Self::Azul, azul),
+            (Self::Beryl, beryl),
+            (Self::Cobalt, cobalt),
+        ]
+    }
+
+    fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> BaseUpgrade {
         if chain_spec.is_cobalt_active_at_timestamp(timestamp) {
             Self::Cobalt
         } else if chain_spec.is_beryl_active_at_timestamp(timestamp) {
@@ -138,61 +108,6 @@ impl BaseUpgrade {
         } else {
             Self::Bedrock
         }
-    }
-
-    /// Returns the list of upgrades with their activation conditions for the given chain config.
-    pub const fn forks_for(cfg: &ChainConfig) -> [(Self, ForkCondition); 12] {
-        let azul = match cfg.azul_timestamp {
-            Some(ts) => ForkCondition::Timestamp(ts),
-            None => ForkCondition::Never,
-        };
-        let beryl = match cfg.beryl_timestamp {
-            Some(ts) => ForkCondition::Timestamp(ts),
-            None => ForkCondition::Never,
-        };
-        let cobalt = match cfg.cobalt_timestamp {
-            Some(ts) => ForkCondition::Timestamp(ts),
-            None => ForkCondition::Never,
-        };
-        [
-            (Self::Bedrock, ForkCondition::Block(cfg.bedrock_block)),
-            (Self::Regolith, ForkCondition::Timestamp(cfg.regolith_timestamp)),
-            (Self::Canyon, ForkCondition::Timestamp(cfg.canyon_timestamp)),
-            (Self::Ecotone, ForkCondition::Timestamp(cfg.ecotone_timestamp)),
-            (Self::Fjord, ForkCondition::Timestamp(cfg.fjord_timestamp)),
-            (Self::Granite, ForkCondition::Timestamp(cfg.granite_timestamp)),
-            (Self::Holocene, ForkCondition::Timestamp(cfg.holocene_timestamp)),
-            (Self::Isthmus, ForkCondition::Timestamp(cfg.isthmus_timestamp)),
-            (Self::Jovian, ForkCondition::Timestamp(cfg.jovian_timestamp)),
-            (Self::Azul, azul),
-            (Self::Beryl, beryl),
-            (Self::Cobalt, cobalt),
-        ]
-    }
-
-    /// Base mainnet list of upgrades.
-    pub const fn mainnet() -> [(Self, ForkCondition); 12] {
-        Self::forks_for(ChainConfig::mainnet())
-    }
-
-    /// Base Sepolia list of upgrades.
-    pub const fn sepolia() -> [(Self, ForkCondition); 12] {
-        Self::forks_for(ChainConfig::sepolia())
-    }
-
-    /// Devnet list of upgrades.
-    pub const fn devnet() -> [(Self, ForkCondition); 12] {
-        Self::forks_for(ChainConfig::devnet())
-    }
-
-    /// Base Zeronet list of upgrades.
-    pub const fn zeronet() -> [(Self, ForkCondition); 12] {
-        Self::forks_for(ChainConfig::zeronet())
-    }
-
-    /// Returns index of `self` in sorted canonical array.
-    pub const fn idx(&self) -> usize {
-        *self as usize
     }
 }
 
@@ -269,27 +184,26 @@ mod tests {
     #[test]
     fn contract_upgrade_aliases_resolve_consistently() {
         let aliases = [
-            (EthereumHardfork::Shanghai.name(), ContractUpgrade::Canyon),
-            (EthereumHardfork::Cancun.name(), ContractUpgrade::Ecotone),
-            (EthereumHardfork::Prague.name(), ContractUpgrade::Isthmus),
-            (EthereumHardfork::Osaka.name(), ContractUpgrade::Azul),
-            (BaseUpgrade::Beryl.name(), ContractUpgrade::Beryl),
-            ("v1", ContractUpgrade::Azul),
-            ("v2", ContractUpgrade::Beryl),
-            ("v3", ContractUpgrade::Cobalt),
+            (EthereumHardfork::Shanghai.name(), BaseUpgrade::Canyon),
+            (EthereumHardfork::Cancun.name(), BaseUpgrade::Ecotone),
+            (EthereumHardfork::Prague.name(), BaseUpgrade::Isthmus),
+            (EthereumHardfork::Osaka.name(), BaseUpgrade::Azul),
+            (BaseUpgrade::Beryl.name(), BaseUpgrade::Beryl),
+            ("v1", BaseUpgrade::Azul),
+            ("v2", BaseUpgrade::Beryl),
+            ("v3", BaseUpgrade::Cobalt),
         ];
 
         for (alias, upgrade) in aliases {
-            assert_eq!(ContractUpgrade::from_fork_name(alias), Some(upgrade));
-            assert_eq!(alias.parse::<ContractUpgrade>().unwrap(), upgrade);
+            assert_eq!(BaseUpgrade::from_contract_fork_name(alias), Some(upgrade));
         }
     }
 
     #[test]
     fn fork_names_are_trimmed_and_case_insensitive() {
-        assert_eq!(BaseUpgrade::from_fork_name("  shAnGhAi  "), Some(BaseUpgrade::Canyon));
-        assert_eq!(BaseUpgrade::from_fork_name("\tbase_azul\n"), Some(BaseUpgrade::Azul));
-        assert_eq!(BaseUpgrade::from_fork_name("\n bERyl\t"), Some(BaseUpgrade::Beryl));
+        assert_eq!(BaseUpgrade::from_contract_fork_name("  shAnGhAi  "), Some(BaseUpgrade::Canyon));
+        assert_eq!(BaseUpgrade::from_contract_fork_name("\tbase_azul\n"), Some(BaseUpgrade::Azul));
+        assert_eq!(BaseUpgrade::from_contract_fork_name("\n bERyl\t"), Some(BaseUpgrade::Beryl));
     }
 
     #[test]
@@ -298,10 +212,12 @@ mod tests {
             (BaseUpgrade::Bedrock, SpecId::MERGE),
             (BaseUpgrade::Regolith, SpecId::MERGE),
             (BaseUpgrade::Canyon, SpecId::SHANGHAI),
+            (BaseUpgrade::Delta, SpecId::SHANGHAI),
             (BaseUpgrade::Ecotone, SpecId::CANCUN),
             (BaseUpgrade::Fjord, SpecId::CANCUN),
             (BaseUpgrade::Granite, SpecId::CANCUN),
             (BaseUpgrade::Holocene, SpecId::CANCUN),
+            (BaseUpgrade::PectraBlobSchedule, SpecId::CANCUN),
             (BaseUpgrade::Isthmus, SpecId::PRAGUE),
             (BaseUpgrade::Jovian, SpecId::PRAGUE),
             (BaseUpgrade::Azul, SpecId::OSAKA),
@@ -316,19 +232,40 @@ mod tests {
 
     #[test]
     fn contract_upgrade_parses_aliases() {
-        assert_eq!("base_azul".parse::<ContractUpgrade>().unwrap(), ContractUpgrade::Azul);
-        assert_eq!("shanghai".parse::<ContractUpgrade>().unwrap(), ContractUpgrade::Canyon);
+        assert_eq!(BaseUpgrade::from_contract_fork_name("base_azul"), Some(BaseUpgrade::Azul));
+        assert_eq!(BaseUpgrade::from_contract_fork_name("shanghai"), Some(BaseUpgrade::Canyon));
         assert_eq!(
-            "pectra_blob_schedule".parse::<ContractUpgrade>().unwrap(),
-            ContractUpgrade::PectraBlobSchedule
+            BaseUpgrade::from_contract_fork_name("pectra_blob_schedule"),
+            Some(BaseUpgrade::PectraBlobSchedule)
         );
     }
 
     #[test]
+    fn bedrock_is_not_contract_backed() {
+        // Bedrock is block-activated and never signaled by the L1 contract.
+        assert!(!BaseUpgrade::Bedrock.is_contract_backed());
+        assert_eq!(BaseUpgrade::from_contract_fork_name("bedrock"), None);
+        assert!(!BaseUpgrade::CONTRACT_VARIANTS.contains(&BaseUpgrade::Bedrock));
+    }
+
+    #[test]
+    fn contract_only_upgrades_are_absent_from_execution_ladder() {
+        // Delta and PectraBlobSchedule are contract-backed config upgrades that do not change
+        // EVM execution, so they have no execution index and are excluded from the ladder.
+        for upgrade in [BaseUpgrade::Delta, BaseUpgrade::PectraBlobSchedule] {
+            assert!(!upgrade.is_execution());
+            assert_eq!(upgrade.execution_idx(), None);
+            assert!(upgrade.is_contract_backed());
+            assert!(!BaseUpgrade::EXECUTION_VARIANTS.contains(&upgrade));
+            assert!(BaseUpgrade::CONTRACT_VARIANTS.contains(&upgrade));
+        }
+    }
+
+    #[test]
     fn contract_upgrade_tracks_execution_companions() {
-        assert_eq!(ContractUpgrade::Canyon.execution_hardfork(), Some(EthereumHardfork::Shanghai));
-        assert_eq!(ContractUpgrade::Regolith.execution_hardfork(), None);
-        assert_eq!(ContractUpgrade::Delta.execution_hardfork(), None);
+        assert_eq!(BaseUpgrade::Canyon.execution_hardfork(), Some(EthereumHardfork::Shanghai));
+        assert_eq!(BaseUpgrade::Regolith.execution_hardfork(), None);
+        assert_eq!(BaseUpgrade::Delta.execution_hardfork(), None);
     }
 
     /// Reverse lookup to find the upgrade given a chain ID and block timestamp.
