@@ -11,7 +11,7 @@ use base_batcher_service::{BatcherConfig, BatcherService, L1TxFormat};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_runtime::TokioRuntime;
 use clap::{Args, Parser, ValueEnum};
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 
 base_cli_utils::define_log_args!("BATCHER");
@@ -286,6 +286,16 @@ pub(crate) struct BatcherArgs {
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     fn into_config(self) -> eyre::Result<BatcherConfig> {
+        if !self.altda_enabled && self.altda_da_server.is_some() {
+            warn!("--altda-da-server is set but --altda-enabled is false; alt-DA dual-write is disabled");
+        }
+        if self.altda_enabled && !self.no_force_blobs_when_throttling {
+            warn!(
+                "alt-DA dual-write is enabled while force-blobs-when-throttling is on; \
+                 throttled batches may switch to blobs and skip the shadow S3 path"
+            );
+        }
+
         let frame_size = match self.da_type {
             base_batcher_encoder::DaType::Blob => self
                 .target_frame_size
