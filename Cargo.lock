@@ -3391,6 +3391,7 @@ dependencies = [
  "base-cli-utils",
  "base-execution-cli",
  "base-node-runner",
+ "base-observability-events",
  "base-reth-cli",
  "base-txpool-rpc",
  "clap",
@@ -3408,6 +3409,7 @@ dependencies = [
  "base-node-core",
  "clap",
  "eyre",
+ "humantime",
  "rstest",
 ]
 
@@ -3455,6 +3457,7 @@ dependencies = [
  "base-metrics",
  "base-node-core",
  "base-node-runner",
+ "base-observability-events",
  "base-test-utils",
  "chrono",
  "clap",

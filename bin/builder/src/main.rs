@@ -10,6 +10,7 @@ use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
+use base_observability_events::TransactionEventWriter;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 
 type BuilderCli = Cli<Args>;
@@ -34,9 +35,18 @@ fn main() {
 
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder_args.build_metering_store());
+        let transaction_events_enabled = builder_args.transaction_events.enabled;
+        let transaction_event_writer =
+            TransactionEventWriter::from_config(builder_args.transaction_events.writer_config())
+                .await?;
+        let transaction_event_sink = transaction_events_enabled.then(|| {
+            base_builder_core::SharedBuilderTransactionEventSink::from(
+                transaction_event_writer.clone(),
+            )
+        });
 
         let builder_config = builder_args
-            .into_builder_config(Arc::clone(&metering_provider))
+            .into_builder_config(Arc::clone(&metering_provider), transaction_event_sink)
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -47,7 +57,9 @@ fn main() {
             .with_service_builder(FlashblocksServiceBuilder(builder_config));
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(());
+        runner.install_ext::<BuilderApiExtension>(
+            transaction_events_enabled.then_some(transaction_event_writer),
+        );
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();

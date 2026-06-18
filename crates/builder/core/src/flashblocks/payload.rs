@@ -26,6 +26,8 @@ use base_common_flashblocks::{
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_observability_events::TransactionEventType;
+use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -59,6 +61,9 @@ use crate::{
         generator::{BlockCell, BuildArguments},
     },
     traits::{ClientBounds, PoolBounds},
+    transaction_events::{
+        BuilderTransactionEventContext, emit_builder_payload_event, emit_builder_transaction_event,
+    },
 };
 
 type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
@@ -583,6 +588,29 @@ where
             "Building flashblock",
         );
         let flashblock_build_start_time = Instant::now();
+        self.emit_flashblock_event(
+            ctx,
+            TransactionEventType::BuilderFlashblockStarted,
+            None,
+            serde_json::Map::from_iter([
+                ("target_gas".to_string(), serde_json::json!(target_gas_for_batch)),
+                ("gas_used".to_string(), serde_json::json!(info.cumulative_gas_used)),
+                ("target_da".to_string(), serde_json::json!(target_da_for_batch)),
+                ("da_used".to_string(), serde_json::json!(info.cumulative_da_bytes_used)),
+                (
+                    "target_da_footprint".to_string(),
+                    serde_json::json!(target_da_footprint_for_batch),
+                ),
+                (
+                    "target_state_root_gas".to_string(),
+                    serde_json::json!(target_state_root_gas_for_batch),
+                ),
+                (
+                    "flashblock_execution_time_limit_us".to_string(),
+                    serde_json::json!(flashblock_execution_time_limit_us),
+                ),
+            ]),
+        );
 
         info.reset_flashblock_execution_time();
 
@@ -674,6 +702,21 @@ where
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
         if block_cancel.is_cancelled() {
+            self.emit_flashblock_event(
+                ctx,
+                TransactionEventType::BuilderFlashblockBuildStopped,
+                None,
+                serde_json::Map::from_iter([
+                    ("reason".to_string(), serde_json::json!("block_cancelled_before_build")),
+                    ("transaction_count".to_string(), serde_json::json!(0)),
+                    (
+                        "build_duration_ms".to_string(),
+                        serde_json::json!(
+                            flashblock_build_start_time.elapsed().as_secs_f64() * 1000.0
+                        ),
+                    ),
+                ]),
+            );
             self.record_flashblocks_metrics(
                 ctx,
                 info,
@@ -727,6 +770,27 @@ where
                 };
 
                 if cancelled {
+                    self.emit_flashblock_event(
+                        ctx,
+                        TransactionEventType::BuilderFlashblockBuildStopped,
+                        None,
+                        serde_json::Map::from_iter([
+                            (
+                                "reason".to_string(),
+                                serde_json::json!("payload_resolved_before_publish"),
+                            ),
+                            (
+                                "transaction_count".to_string(),
+                                serde_json::json!(fb_payload.diff.transactions.len()),
+                            ),
+                            (
+                                "build_duration_ms".to_string(),
+                                serde_json::json!(
+                                    flashblock_build_start_time.elapsed().as_secs_f64() * 1000.0
+                                ),
+                            ),
+                        ]),
+                    );
                     self.record_flashblocks_metrics(
                         ctx,
                         info,
@@ -745,8 +809,29 @@ where
                 best_payload.set(new_payload);
 
                 // Record flashblock build duration
-                BuilderMetrics::flashblock_build_duration()
-                    .record(flashblock_build_start_time.elapsed());
+                let flashblock_build_duration = flashblock_build_start_time.elapsed();
+                self.emit_flashblock_event(
+                    ctx,
+                    TransactionEventType::BuilderFlashblockPublished,
+                    Some(fb_payload.diff.block_hash),
+                    serde_json::Map::from_iter([
+                        (
+                            "transaction_count".to_string(),
+                            serde_json::json!(fb_payload.diff.transactions.len()),
+                        ),
+                        ("byte_size".to_string(), serde_json::json!(flashblock_byte_size)),
+                        (
+                            "build_duration_ms".to_string(),
+                            serde_json::json!(flashblock_build_duration.as_secs_f64() * 1000.0),
+                        ),
+                        ("gas_used".to_string(), serde_json::json!(fb_payload.diff.gas_used)),
+                        (
+                            "block_hash".to_string(),
+                            serde_json::json!(format!("{:#x}", fb_payload.diff.block_hash)),
+                        ),
+                    ]),
+                );
+                BuilderMetrics::flashblock_build_duration().record(flashblock_build_duration);
                 BuilderMetrics::flashblock_byte_size_histogram()
                     .record(flashblock_byte_size as f64);
                 BuilderMetrics::flashblock_num_tx_histogram()
@@ -824,6 +909,33 @@ where
         }
     }
 
+    fn emit_flashblock_event(
+        &self,
+        ctx: &BasePayloadBuilderCtx,
+        event_type: TransactionEventType,
+        block_hash: Option<B256>,
+        data: serde_json::Map<String, serde_json::Value>,
+    ) {
+        let event_ctx = BuilderTransactionEventContext {
+            network: ctx.builder_config.transaction_event_network.clone(),
+            payload_id: ctx.payload_id().to_string(),
+            block_number: ctx.block_number(),
+            block_hash,
+            parent_hash: ctx.parent_hash(),
+            flashblock_index: Some(ctx.flashblock_index()),
+            target_flashblock_count: ctx.target_flashblock_count(),
+            ordering_position: None,
+            builder_mode: "flashblocks",
+            source_queue: "flashblock_builder",
+        };
+        emit_builder_payload_event(
+            ctx.builder_config.transaction_event_sink.as_ref(),
+            event_ctx,
+            event_type,
+            data,
+        );
+    }
+
     /// Do some logging and metric recording when we stop build flashblocks
     fn record_flashblocks_metrics(
         &self,
@@ -876,6 +988,7 @@ where
         let (final_payload, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
 
         ctx.flush_rejected_txs(info);
+        self.emit_final_inclusion_events(ctx, &final_payload);
 
         let elapsed = start_time.elapsed();
         info!(
@@ -889,6 +1002,74 @@ where
         finalized_cell.set(final_payload);
 
         Ok(())
+    }
+
+    fn emit_final_inclusion_events(
+        &self,
+        ctx: &BasePayloadBuilderCtx,
+        final_payload: &BaseBuiltPayload,
+    ) {
+        let Some(sink) = ctx.builder_config.transaction_event_sink.as_ref() else {
+            return;
+        };
+
+        let block = final_payload.block();
+        let block_hash = block.hash();
+        let block_number = block.number;
+        let transaction_count = block.body().transactions.len();
+        let payload_event_ctx = BuilderTransactionEventContext {
+            network: ctx.builder_config.transaction_event_network.clone(),
+            payload_id: ctx.payload_id().to_string(),
+            block_number,
+            block_hash: Some(block_hash),
+            parent_hash: ctx.parent_hash(),
+            flashblock_index: None,
+            target_flashblock_count: ctx.target_flashblock_count(),
+            ordering_position: None,
+            builder_mode: "flashblocks",
+            source_queue: "finalized_payload",
+        };
+        emit_builder_payload_event(
+            Some(sink),
+            payload_event_ctx,
+            TransactionEventType::BuilderPayloadFinalized,
+            serde_json::Map::from_iter([
+                ("transaction_count".to_string(), serde_json::json!(transaction_count)),
+                ("gas_used".to_string(), serde_json::json!(block.gas_used)),
+                ("gas_limit".to_string(), serde_json::json!(block.gas_limit)),
+                ("timestamp".to_string(), serde_json::json!(block.timestamp)),
+                ("inclusion_signal".to_string(), serde_json::json!("builder_finalized_payload")),
+            ]),
+        );
+
+        for (position, tx) in block.body().transactions.iter().enumerate() {
+            let event_ctx = BuilderTransactionEventContext {
+                network: ctx.builder_config.transaction_event_network.clone(),
+                payload_id: ctx.payload_id().to_string(),
+                block_number,
+                block_hash: Some(block_hash),
+                parent_hash: ctx.parent_hash(),
+                flashblock_index: None,
+                target_flashblock_count: ctx.target_flashblock_count(),
+                ordering_position: Some(position as u64),
+                builder_mode: "flashblocks",
+                source_queue: "finalized_payload",
+            };
+            emit_builder_transaction_event(
+                Some(sink),
+                event_ctx,
+                TransactionEventType::BuilderIncluded,
+                tx.tx_hash(),
+                serde_json::Map::from_iter([
+                    ("position".to_string(), serde_json::json!(position)),
+                    ("gas_used".to_string(), serde_json::json!(block.gas_used)),
+                    (
+                        "inclusion_signal".to_string(),
+                        serde_json::json!("builder_finalized_payload"),
+                    ),
+                ]),
+            );
+        }
     }
 
     /// Calculate number of flashblocks, taking time drift into account.

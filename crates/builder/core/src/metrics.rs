@@ -217,6 +217,13 @@ base_metrics::define_metrics! {
     rejected_txs_forwarded: counter,
     #[describe("Number of failed rejected transaction batch forwards to audit-archiver")]
     rejected_tx_forward_failures: counter,
+    #[describe("Builder transaction events successfully enqueued")]
+    #[label(event_type)]
+    builder_transaction_events_emitted: counter,
+    #[describe("Builder transaction events dropped before enqueue")]
+    #[label(event_type)]
+    #[label(reason)]
+    builder_transaction_events_dropped: counter,
 }
 
 impl BuilderMetrics {
