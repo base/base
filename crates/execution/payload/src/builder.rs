@@ -387,9 +387,8 @@ impl<Txs> Builder<'_, Txs> {
             trie_updates,
             block,
             block_access_list,
-        } =
-            debug_span!("finish_payload", block_num)
-                .in_scope(|| builder.finish(state_provider, None))?;
+        } = debug_span!("finish_payload", block_num)
+            .in_scope(|| builder.finish(state_provider, None))?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
