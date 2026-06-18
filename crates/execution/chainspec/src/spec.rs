@@ -6,9 +6,11 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
-use base_common_chains::{BaseUpgrade, BaseUpgradeExt, ChainConfig, Upgrades};
+use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
-use base_common_genesis::{RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink};
+use base_common_genesis::{
+    BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
+};
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks, EthChainSpec,
@@ -662,8 +664,8 @@ mod tests {
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
     use alloy_primitives::{Address, B256, U256, address, b256};
-    use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
-    use base_common_genesis::RuntimeUpgradeRegistry;
+    use base_common_chains::{ChainConfig, Upgrades};
+    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
         BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthChainSpec, EthereumHardforks, test_fork_ids,

@@ -1,7 +1,8 @@
 //! Contains the `[BaseSpecId]` type and its implementation.
 
 use alloy_consensus::BlockHeader;
-use base_common_chains::{BaseUpgrade, BaseUpgradeExt, Upgrades};
+use base_common_chains::{BaseUpgradeExt, Upgrades};
+use base_common_genesis::BaseUpgrade;
 use revm::primitives::hardfork::SpecId;
 
 /// EVM-facing Base spec id.

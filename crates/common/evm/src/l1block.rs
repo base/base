@@ -1,7 +1,7 @@
 //! Contains the `[L1BlockInfo]` type and its implementation.
-use base_common_chains::BaseUpgrade;
 use base_common_consensus::Predeploys;
 use base_common_flz::{NON_ZERO_BYTE_COST, tx_estimated_size_fjord as estimate_tx_compressed_size};
+use base_common_genesis::BaseUpgrade;
 use revm::{
     context_interface::cfg::gas::{NON_ZERO_BYTE_MULTIPLIER_ISTANBUL, STANDARD_TOKEN_COST},
     database_interface::Database,

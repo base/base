@@ -1,7 +1,8 @@
 use alloc::{boxed::Box, vec};
 
 use alloy_primitives::U256;
-use base_common_chains::{BaseUpgrade, ChainUpgrades};
+use base_common_chains::ChainUpgrades;
+use base_common_genesis::BaseUpgrade;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
 
 /// Extension trait to convert alloy's [`ChainUpgrades`] into reth's [`ChainHardforks`].

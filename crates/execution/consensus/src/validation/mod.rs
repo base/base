@@ -231,8 +231,8 @@ mod tests {
     use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
-    use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt};
+    use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 

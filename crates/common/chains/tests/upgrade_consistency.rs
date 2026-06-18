@@ -2,9 +2,10 @@
 //! schedules for every [`BaseUpgrade`] variant.
 
 use base_common_chains::{
-    BaseUpgrade, ChainUpgrades, Upgrades,
+    ChainUpgrades, Upgrades,
     test_utils::{BASE_MAINNET_ROLLUP_CONFIG, BASE_SEPOLIA_ROLLUP_CONFIG},
 };
+use base_common_genesis::BaseUpgrade;
 
 #[test]
 fn mainnet_rollup_config_matches_chain_upgrades() {

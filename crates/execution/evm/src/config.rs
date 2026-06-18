@@ -271,9 +271,9 @@ mod tests {
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
     use base_common_evm::BaseSpecId;
+    use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::ChainSpec;
     use reth_evm::{ConfigureEvm, EvmEnv, execute::ProviderError};

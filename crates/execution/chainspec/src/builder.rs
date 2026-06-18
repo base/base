@@ -2,7 +2,7 @@ use alloy_chains::Chain;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::Address;
-use base_common_chains::BaseUpgrade;
+use base_common_genesis::BaseUpgrade;
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_primitives_traits::SealedHeader;
