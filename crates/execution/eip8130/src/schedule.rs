@@ -55,6 +55,12 @@ impl Eip8130GasSchedule {
     pub const CREATE_BASE_COST: u64 = 32_000;
     /// Code-deposit cost per byte of deployed account bytecode.
     pub const CODE_DEPOSIT_PER_BYTE: u64 = 200;
+    /// Compile-time guard that `DELEGATION_INDICATOR_SIZE` fits in `u64`, so the
+    /// `as u64` cast in [`Self::DELEGATION_DEPOSIT_COST`] can never truncate
+    /// (it is `23` today). Keeps the cast consistent with the
+    /// `u64::try_from(..).unwrap_or(u64::MAX)` discipline used for runtime casts.
+    const _DELEGATION_INDICATOR_FITS_U64: () =
+        assert!(Eip8130Constants::DELEGATION_INDICATOR_SIZE <= u64::MAX as usize);
     /// Delegation-indicator deposit: `200 × 23` for the `0xef0100 || address`
     /// indicator (`auto_delegation_cost` and per delegation entry).
     pub const DELEGATION_DEPOSIT_COST: u64 =

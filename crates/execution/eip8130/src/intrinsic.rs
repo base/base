@@ -1,11 +1,11 @@
 //! EIP-8130 intrinsic gas: the total cost to include an AA transaction.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use base_common_consensus::{
     AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
 };
 
-use crate::Eip8130GasSchedule;
+use crate::{AccountConfigurationStorage, Eip8130GasSchedule};
 
 /// Reason intrinsic gas cannot be computed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -310,8 +310,10 @@ impl IntrinsicGas {
             // nested authenticator is resolved as a *leaf* (never via the
             // delegate branch), so depth-1 is enforced here rather than relying
             // on dispatch: a nested delegate is not a priced leaf and errors. A
-            // blob too short to carry a nested authenticator (`len < 60`) charges
-            // the overhead alone — dispatch rejects such blobs before this runs.
+            // 40..60-byte blob carries no nested authenticator, so it charges the
+            // delegate overhead alone here plus the outer authorize SLOAD (via
+            // `auth_sloads`) — a safe overcharge on a blob dispatch rejects before
+            // this runs, not a reachable underprice.
             let nested_exec = match auth.get(40..).and_then(Self::authenticator_of) {
                 Some(nested) => Self::leaf_exec_gas(nested)?,
                 None => 0,
@@ -374,19 +376,15 @@ impl IntrinsicGas {
         let self_changes = sender.map_or_else(
             || u64::from(!actor_changes.is_empty()),
             |account| {
-                let self_id = Self::self_actor_id(account);
+                // Delegate to the canonical self-actor id (the authorize layer's
+                // `AccountConfigurationStorage::self_actor_id`) so the gas layer and
+                // the authorize layer can never match different actors.
+                let self_id = AccountConfigurationStorage::self_actor_id(account);
                 let count = actor_changes.iter().filter(|c| c.actor_id == self_id).count();
                 u64::try_from(count).unwrap_or(u64::MAX)
             },
         );
         Eip8130GasSchedule::SELF_ACTOR_DUAL_HOME_COST.saturating_mul(self_changes)
-    }
-
-    /// `bytes32(bytes20(account))` — the account's secp256k1 self-actor id.
-    fn self_actor_id(account: Address) -> B256 {
-        let mut id = [0u8; 32];
-        id[..20].copy_from_slice(account.as_slice());
-        B256::from(id)
     }
 }
 
@@ -426,6 +424,54 @@ mod tests {
     fn intrinsic(signed: &Eip8130Signed, input: &IntrinsicGasInput) -> IntrinsicGas {
         IntrinsicGas::compute(signed, &encode(signed), input)
             .expect("canonical authenticators are scheduled")
+    }
+
+    alloy_sol_types::sol! {
+        // Mirror of the contract's `ActorConfig` authorize payload, used only to
+        // pin the byte offset `authorize_has_policy` reads.
+        struct ActorConfigAbi {
+            address authenticator;
+            uint8 scope;
+            uint48 expiry;
+            uint8 policyType;
+        }
+    }
+
+    #[test]
+    fn authorize_has_policy_reads_the_policy_type_word() {
+        use alloy_sol_types::SolValue;
+
+        // Drift tripwire: `authorize_has_policy` decodes `policyType` at a hardcoded
+        // 32-byte offset (bytes 96..128) of the ABI-encoded `(ActorConfig, bytes)`
+        // authorize payload. If the `ActorConfig` field layout ever changes, this
+        // catches it: a non-zero `policyType` must be detected, and non-zero values
+        // in *every other* field (authenticator, scope, expiry) must not be.
+        let gated = (
+            ActorConfigAbi {
+                authenticator: Address::ZERO,
+                scope: 0,
+                expiry: alloy_primitives::Uint::ZERO,
+                policyType: 7,
+            },
+            Bytes::new(),
+        )
+            .abi_encode_params();
+        let ungated = (
+            ActorConfigAbi {
+                authenticator: address!("0xffffffffffffffffffffffffffffffffffffffff"),
+                scope: 0xff,
+                expiry: alloy_primitives::Uint::from(0xffff_ffff_ffffu64),
+                policyType: 0,
+            },
+            Bytes::new(),
+        )
+            .abi_encode_params();
+
+        assert!(IntrinsicGas::authorize_has_policy(&gated));
+        assert!(!IntrinsicGas::authorize_has_policy(&ungated));
+        // `policyType = 7` lands in the low byte of the fourth word.
+        assert_eq!(gated[96..128].iter().rposition(|&b| b != 0), Some(31));
+        assert_eq!(gated[127], 7);
     }
 
     #[test]
