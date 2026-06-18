@@ -1901,7 +1901,7 @@ mod tests {
     #[test]
     fn unscheduled_selected_checks_do_not_start() {
         let mut view = UpgradesView::new();
-        view.selected_chain = 3;
+        view.selected_chain = 0;
         let resources = Resources::new(MonitoringConfig::mainnet());
 
         assert_eq!(view.selected_check_upgrade(now_unix()), Some("Beryl"));
