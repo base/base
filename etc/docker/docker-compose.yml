@@ -878,7 +878,7 @@ services:
 
   # base-proposer: sole game creator for L3 dev multiproof. Talks directly to nitro-local over
   # JSON-RPC (--direct-prover-rpc), creates AggregateVerifier games (type 621), and submits the
-  # TEE-signed output root. It does NOT resolve games — the challenger does. setup-dispute-service.sh
+  # TEE-signed output root. setup-dispute-service.sh
   # sources the DisputeGameFactory + AnchorStateRegistry addresses from l1-addresses.json (only
   # known post-deploy) and exports them before exec'ing the binary. L3 (base-l1) only.
   base-proposer:
@@ -912,40 +912,6 @@ services:
       - BASE_PROPOSER_POLL_INTERVAL=6s
       - BASE_PROPOSER_NUM_CONFIRMATIONS=1
     entrypoint: ["/bin/bash", "/setup-dispute-service.sh", "proposer"]
-    restart: unless-stopped
-
-  # base-challenger: sole resolver, running in --no-dispute mode (no proving). It drives the
-  # post-game bond/anchor lifecycle (resolve -> claimCredit -> setAnchorState) for games whose
-  # bond recipient is the proposer (BOND_CLAIM_ADDRESSES). no-dispute validation forbids the
-  # zk-/tee-rpc-url flags and requires bond-claim-addresses. setup-dispute-service.sh sources the
-  # L1 dispute addresses like the proposer. L3 (base-l1) only.
-  base-challenger:
-    image: base-challenger:local
-    build:
-      <<: *rust-service-build
-      target: challenger
-    container_name: base-challenger
-    profiles: ["base-l1"]
-    depends_on:
-      base-rpc:
-        condition: service_healthy
-      register-aggregate-verifier:
-        condition: service_completed_successfully
-      base-proposer:
-        condition: service_started
-    volumes:
-      - ../../.devnet/l2/configs:/devnet/l2/configs:ro
-      - ../../etc/scripts/devnet/setup-dispute-service.sh:/setup-dispute-service.sh:ro
-    environment:
-      - ADDRESSES_FILE=/devnet/l2/configs/l1-addresses.json
-      - BASE_CHALLENGER_L1_ETH_RPC=http://l1-el:${L1_HTTP_PORT}
-      - BASE_CHALLENGER_L2_ETH_RPC=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
-      - BASE_CHALLENGER_NO_DISPUTE=true
-      - BASE_CHALLENGER_BOND_CLAIM_ADDRESSES=${PROPOSER_ADDR}
-      - BASE_CHALLENGER_PRIVATE_KEY=${CHALLENGER_KEY}
-      - BASE_CHALLENGER_POLL_INTERVAL=6s
-      - BASE_CHALLENGER_NUM_CONFIRMATIONS=1
-    entrypoint: ["/bin/bash", "/setup-dispute-service.sh", "challenger"]
     restart: unless-stopped
 
   zk-prover-postgres:

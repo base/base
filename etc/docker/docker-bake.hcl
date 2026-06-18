@@ -33,7 +33,6 @@ group "rust-services" {
     "builder",
     "consensus",
     "proposer",
-    "challenger",
     "websocket-proxy",
     "ingress-rpc",
     "audit-archiver",
@@ -50,7 +49,7 @@ group "devnet" {
 # L3 dev-multiproof services, built only on the `up-l3` path (alongside nitro-host-local).
 # Kept out of the shared `devnet` group so the default eth-l1 devnet does not build them.
 group "devnet-l3" {
-  targets = ["proposer", "challenger"]
+  targets = ["proposer"]
 }
 
 group "ingress" {
@@ -111,12 +110,6 @@ target "proposer" {
   inherits = ["_rust-service-common"]
   target = "proposer"
   tags = ["base-proposer:local"]
-}
-
-target "challenger" {
-  inherits = ["_rust-service-common"]
-  target = "challenger"
-  tags = ["base-challenger:local"]
 }
 
 target "websocket-proxy" {
