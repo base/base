@@ -12,7 +12,6 @@ use clap::Args;
 use eyre::Context;
 use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
-use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use url::Url;
 
@@ -66,8 +65,7 @@ impl ConsensusNodeCommand {
         }
 
         let metrics_enabled = self.metrics.enabled;
-        let manager = RuntimeManager::new();
-        let rt = manager.tokio_runtime()?;
+        let rt = RuntimeManager::new().tokio_runtime()?;
         // Build the subscriber — including the gRPC OTLP layer — inside the main runtime
         // so tonic's transport channel lives for the full program lifetime (reth pattern).
         rt.block_on(async {

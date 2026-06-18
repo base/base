@@ -57,8 +57,7 @@ impl ConsensusFollowNodeCommand {
             None
         };
 
-        let manager = RuntimeManager::new();
-        let rt = manager.tokio_runtime()?;
+        let rt = RuntimeManager::new().tokio_runtime()?;
         rt.block_on(async {
             LogConfig::from(self.logging.clone())
                 .init_with_trace_args(&mut self.traces, &["libp2p_gossipsub=error"])

@@ -102,7 +102,9 @@ impl PayloadSealer {
 
         let result = match self.state {
             SealState::Sealed => {
-                debug!(target: "sequencer", step = "commit", "seal pipeline step");
+                self.seal_span.in_scope(
+                    || debug!(target: "sequencer", step = "commit", "seal pipeline step"),
+                );
                 if let Some(conductor) = conductor {
                     conductor
                         .commit_unsafe_payload(&self.envelope)
@@ -114,7 +116,9 @@ impl PayloadSealer {
                 Ok(SealStepOutcome::Pending)
             }
             SealState::Committed => {
-                debug!(target: "sequencer", step = "gossip", "seal pipeline step");
+                self.seal_span.in_scope(
+                    || debug!(target: "sequencer", step = "gossip", "seal pipeline step"),
+                );
                 gossip_client
                     .schedule_execution_payload_gossip(self.envelope.clone())
                     .instrument(self.seal_span.clone())
@@ -124,7 +128,9 @@ impl PayloadSealer {
                 Ok(SealStepOutcome::Pending)
             }
             SealState::Gossiped => {
-                debug!(target: "sequencer", step = "insert", "seal pipeline step");
+                self.seal_span.in_scope(
+                    || debug!(target: "sequencer", step = "insert", "seal pipeline step"),
+                );
                 let inserted_head = engine_client
                     .insert_unsafe_payload(self.envelope.clone())
                     .instrument(self.seal_span.clone())

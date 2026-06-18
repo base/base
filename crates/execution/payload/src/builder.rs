@@ -195,7 +195,7 @@ where
             cancel,
             best_payload,
         };
-        tracing::Span::current().record("payload_id", ctx.payload_id().to_string());
+        tracing::Span::current().record("payload_id", tracing::field::display(ctx.payload_id()));
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let builder = Builder::new(best);

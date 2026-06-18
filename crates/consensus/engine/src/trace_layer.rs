@@ -1,3 +1,5 @@
+//! Tower layer that injects W3C `traceparent` / `tracestate` headers into outbound HTTP requests.
+
 use std::task::{Context as TaskContext, Poll};
 
 use http::{Request, Response};
@@ -7,7 +9,7 @@ use tower::{Layer, Service};
 
 /// Tower layer that injects W3C `traceparent` headers into outbound HTTP requests.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct TraceContextLayer;
+pub struct TraceContextLayer;
 
 impl<S> Layer<S> for TraceContextLayer {
     type Service = TraceContextService<S>;
@@ -17,8 +19,9 @@ impl<S> Layer<S> for TraceContextLayer {
     }
 }
 
+/// Tower service that injects W3C trace context into outbound HTTP requests.
 #[derive(Clone, Debug)]
-pub(crate) struct TraceContextService<S> {
+pub struct TraceContextService<S> {
     inner: S,
 }
 
@@ -35,6 +38,7 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
+        // Keep this middleware in sync with execution/rpc trace_middleware extraction logic.
         global::get_text_map_propagator(|propagator| {
             propagator.inject_context(
                 &opentelemetry::Context::current(),

@@ -8,13 +8,16 @@
 //!               caller's trace
 
 use std::{
-    future::{Future, poll_fn},
+    future::Future,
     task::{Context as TaskContext, Poll},
 };
 
 use http::{Request, Response};
 use jsonrpsee_core::middleware::{Batch, Notification, Request as RpcRequest, RpcServiceT};
-use opentelemetry::{Context, global, trace::TraceContextExt};
+use opentelemetry::{
+    Context, global,
+    trace::{FutureExt, TraceContextExt},
+};
 use opentelemetry_http::HeaderExtractor;
 use tower::{Layer, Service};
 
@@ -99,16 +102,10 @@ where
         let inner = self.inner.clone();
 
         async move {
-            let mut fut = Box::pin(inner.call(req));
-
             if let Some(InboundOtelContext(parent_ctx)) = cx {
-                poll_fn(move |poll_cx| {
-                    let _guard = parent_ctx.clone().attach();
-                    fut.as_mut().poll(poll_cx)
-                })
-                .await
+                inner.call(req).with_context(parent_ctx).await
             } else {
-                fut.await
+                inner.call(req).await
             }
         }
     }
@@ -121,16 +118,10 @@ where
         let inner = self.inner.clone();
 
         async move {
-            let mut fut = Box::pin(inner.batch(req));
-
             if let Some(InboundOtelContext(parent_ctx)) = cx {
-                poll_fn(move |poll_cx| {
-                    let _guard = parent_ctx.clone().attach();
-                    fut.as_mut().poll(poll_cx)
-                })
-                .await
+                inner.batch(req).with_context(parent_ctx).await
             } else {
-                fut.await
+                inner.batch(req).await
             }
         }
     }
@@ -143,16 +134,10 @@ where
         let inner = self.inner.clone();
 
         async move {
-            let mut fut = Box::pin(inner.notification(req));
-
             if let Some(InboundOtelContext(parent_ctx)) = cx {
-                poll_fn(move |poll_cx| {
-                    let _guard = parent_ctx.clone().attach();
-                    fut.as_mut().poll(poll_cx)
-                })
-                .await
+                inner.notification(req).with_context(parent_ctx).await
             } else {
-                fut.await
+                inner.notification(req).await
             }
         }
     }
