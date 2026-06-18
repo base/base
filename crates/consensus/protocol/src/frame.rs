@@ -37,6 +37,9 @@ use crate::ChannelId;
 /// ensure compatibility and enable future protocol upgrades.
 pub const DERIVATION_VERSION_0: u8 = 0;
 
+/// Alt-DA commitment batcher tx version ([OP Stack alt-da](https://specs.optimism.io/experimental/alt-da.html)).
+pub const DERIVATION_VERSION_1: u8 = 1;
+
 /// Maximum number of derivation payload bytes that fit in a single EIP-4844 blob.
 ///
 /// The blob codec packs 127 data bytes into every 128 blob bytes across 1024
