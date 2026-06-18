@@ -4,7 +4,10 @@
 use alloy_primitives::Address;
 use base_common_consensus::Eip8130Signed;
 
-use crate::{AccountConfigurationStorage, ActorAuthorizer, Operation, ResolvedActor, TxAuthError};
+use crate::{
+    AccountConfigurationStorage, ActorAuthorizer, Operation, RecoveredActorId, ResolvedActor,
+    TxAuthError,
+};
 
 /// A resolved transaction actor together with the account it was authorized
 /// against (the sender or payer account, not the actor id).
@@ -89,22 +92,18 @@ impl ActorTxVerifier {
         }
 
         // EOA path: recover the sender exactly once with the checked (EIP-2
-        // low-s) recovery. The recovered address *is* the signer, so the k1
-        // resolution runs against the self id directly — no second ecrecover.
-        // The inline self config governs: a full-owner self resolves to the
-        // unrestricted owner, a scoped self to its inline scope/policy, and a
-        // disabled (`DEFAULT_EOA_REVOKED`) self is rejected.
-        let account = signed
-            .recover_eoa_sender()
+        // low-s) recovery. The recovered address *is* the signer, so the
+        // `RecoveredActorId` token doubles as the account and feeds the k1
+        // resolution directly — no second ecrecover. The inline self config
+        // governs: a full-owner self resolves to the unrestricted owner, a
+        // scoped self to its inline scope/policy, and a disabled
+        // (`DEFAULT_EOA_REVOKED`) self is rejected.
+        let recovered = RecoveredActorId::recover_eoa_sender(signed)
             .map_err(|_| TxAuthError::SenderRecovery)?
             .ok_or(TxAuthError::SenderRecovery)?;
+        let account = recovered.address();
 
-        let resolved = ActorAuthorizer::authorize_k1(
-            storage,
-            account,
-            AccountConfigurationStorage::self_actor_id(account),
-            now,
-        )?;
+        let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;
         if !Operation::Sender.is_granted(&resolved) {
             return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
         }

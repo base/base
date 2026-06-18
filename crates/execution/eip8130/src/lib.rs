@@ -18,6 +18,9 @@ pub use authorize_error::AuthorizeError;
 mod resolved;
 pub use resolved::ResolvedActor;
 
+mod recovered;
+pub use recovered::RecoveredActorId;
+
 mod authorize;
 pub use authorize::ActorAuthorizer;
 

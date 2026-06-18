@@ -8,7 +8,7 @@ use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 
 use crate::{
     AccountConfigurationStorage, AuthError, AuthenticatorDispatch, AuthorizeError, DispatchOutcome,
-    ResolvedActor,
+    RecoveredActorId, ResolvedActor,
 };
 
 /// Authorizes actors against an [`AccountConfigurationStorage`] view.
@@ -53,14 +53,16 @@ impl ActorAuthorizer {
         now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
         // secp256k1 signers — the implicit default EOA and every explicit k1
-        // actor — authenticate through `K1_AUTHENTICATOR`.
+        // actor — authenticate through `K1_AUTHENTICATOR`. Recover here (the
+        // `RecoveredActorId` token proves the recovery) and authorize against
+        // the account.
         if authenticator == Eip8130Constants::K1_AUTHENTICATOR {
-            let recovered = match AuthenticatorDispatch::authenticate(hash, authenticator, data)? {
-                DispatchOutcome::Authenticated { actor_id } => actor_id,
-                // k1 ecrecover never produces a delegate obligation.
-                DispatchOutcome::Delegated { .. } => return Err(AuthError::InvalidSignature.into()),
-            };
-            return Self::authorize_k1(storage, account, recovered, now);
+            return Self::authorize_k1(
+                storage,
+                account,
+                RecoveredActorId::recover_k1(hash, data)?,
+                now,
+            );
         }
 
         // P-256, WebAuthn, and delegate route through enshrined dispatch;
@@ -115,16 +117,21 @@ impl ActorAuthorizer {
     /// signer must carry an explicit k1 `actor_config` entry, validated by
     /// [`Self::resolve_bound`].
     ///
-    /// `recovered` is the recovered signer's `actorId` (`bytes32(bytes20(addr))`).
-    /// The empty-`sender` transaction path recovers the signer in the verifier
-    /// (the recovered address *is* the account) and calls this directly rather
-    /// than re-recovering.
+    /// `recovered` is a [`RecoveredActorId`] — a proof-of-recovery token, so
+    /// this method trusts it as a genuinely recovered signer without
+    /// re-verifying. The token can only be produced by a recovery constructor
+    /// ([`RecoveredActorId::recover_k1`] / [`RecoveredActorId::recover_eoa_sender`]),
+    /// which keeps this `pub` entrypoint from granting owner access on a bare
+    /// caller-supplied `B256`. The empty-`sender` transaction path recovers the
+    /// signer once in the verifier and passes the token here rather than
+    /// re-recovering.
     pub fn authorize_k1(
         storage: &AccountConfigurationStorage<'_>,
         account: Address,
-        recovered: B256,
+        recovered: RecoveredActorId,
         now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
+        let recovered = recovered.actor_id();
         if recovered == AccountConfigurationStorage::self_actor_id(account) {
             let state = storage.get_account_state(account)?;
             // Flag set => the inline k1 self is disabled: either revoked outright
