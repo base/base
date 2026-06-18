@@ -179,7 +179,7 @@ base-common-consensus = { path = "crates/common/consensus", default-features = f
 base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
-base-observability-events = { path = "crates/common/observability-events" }
+base-observability-events = { path = "crates/common/observability-events", default-features = false }
 
 # Builder
 base-builder-cli = { path = "crates/builder/cli" }
