@@ -129,7 +129,7 @@ mod tests {
 
     const NOW: u64 = 1_000;
     const LOCAL: u64 = 8453;
-    const ECRECOVER: Address = Eip8130Constants::ECRECOVER_AUTHENTICATOR;
+    const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
 
     fn key(byte: u8) -> K256SigningKey {
         K256SigningKey::from_slice(&[byte; 32]).unwrap()
@@ -239,8 +239,8 @@ mod tests {
         let k = key(0x11);
         let account = addr(&k);
         // Two multichain entries: the second is checked against `base + 1`.
-        let cc0 = signed_change(account, Address::ZERO, &k, 0, 0, vec![revoke(0xa0)]);
-        let cc1 = signed_change(account, Address::ZERO, &k, 0, 1, vec![revoke(0xa1)]);
+        let cc0 = signed_change(account, K1, &k, 0, 0, vec![revoke(0xa0)]);
+        let cc1 = signed_change(account, K1, &k, 0, 1, vec![revoke(0xa1)]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -264,8 +264,8 @@ mod tests {
         let account = addr(&k);
         // Both entries claim sequence 0; the second must fail once the channel
         // has advanced to 1.
-        let cc0 = signed_change(account, Address::ZERO, &k, 0, 0, vec![revoke(0xa0)]);
-        let stale = signed_change(account, Address::ZERO, &k, 0, 0, vec![revoke(0xa1)]);
+        let cc0 = signed_change(account, K1, &k, 0, 0, vec![revoke(0xa0)]);
+        let stale = signed_change(account, K1, &k, 0, 0, vec![revoke(0xa1)]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -287,9 +287,9 @@ mod tests {
         let k = key(0x11);
         let account = addr(&k);
         // multichain#0, local#0, multichain#1 — each channel counted separately.
-        let m0 = signed_change(account, Address::ZERO, &k, 0, 0, vec![revoke(0xa0)]);
-        let l0 = signed_change(account, Address::ZERO, &k, LOCAL, 0, vec![revoke(0xb0)]);
-        let m1 = signed_change(account, Address::ZERO, &k, 0, 1, vec![revoke(0xa1)]);
+        let m0 = signed_change(account, K1, &k, 0, 0, vec![revoke(0xa0)]);
+        let l0 = signed_change(account, K1, &k, LOCAL, 0, vec![revoke(0xb0)]);
+        let m1 = signed_change(account, K1, &k, 0, 1, vec![revoke(0xa1)]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -317,8 +317,8 @@ mod tests {
         // channel selection — it must not be bucketed into the local channel —
         // surfacing `ConfigChainId` rather than silently advancing a counter.
         const FOREIGN: u64 = LOCAL + 1;
-        let m0 = signed_change(account, Address::ZERO, &k, 0, 0, vec![revoke(0xa0)]);
-        let foreign = signed_change(account, Address::ZERO, &k, FOREIGN, 0, vec![revoke(0xb0)]);
+        let m0 = signed_change(account, K1, &k, 0, 0, vec![revoke(0xa0)]);
+        let foreign = signed_change(account, K1, &k, FOREIGN, 0, vec![revoke(0xb0)]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -342,8 +342,8 @@ mod tests {
         // The first entry sits at the channel's max sequence; authorizing a
         // second same-channel entry would advance past u64::MAX, which must be
         // rejected rather than wrapping back to a duplicate-accepting state.
-        let at_max = signed_change(account, Address::ZERO, &k, 0, u64::MAX, vec![revoke(0xa0)]);
-        let next = signed_change(account, Address::ZERO, &k, 0, u64::MAX, vec![revoke(0xa1)]);
+        let at_max = signed_change(account, K1, &k, 0, u64::MAX, vec![revoke(0xa0)]);
+        let next = signed_change(account, K1, &k, 0, u64::MAX, vec![revoke(0xa1)]);
         let signed = eoa_signed(
             tx_with(
                 None,
@@ -374,7 +374,7 @@ mod tests {
             initial_actors: Vec::new(),
         });
         let delegation = AccountChange::Delegation(Delegation { target: account });
-        let cc = signed_change(account, Address::ZERO, &k, 0, 0, vec![revoke(0xa0)]);
+        let cc = signed_change(account, K1, &k, 0, 0, vec![revoke(0xa0)]);
         let signed = eoa_signed(
             tx_with(None, None, vec![create, AccountChange::ConfigChange(cc), delegation]),
             &k,
@@ -392,15 +392,15 @@ mod tests {
         let sid = actor_id(addr(&sk));
         // A config change that would itself authorize, but the sender gate fails
         // first, so the config stage is never reached.
-        let cc = signed_change(account, ECRECOVER, &sk, 0, 0, vec![revoke(0xa0)]);
+        let cc = signed_change(account, K1, &sk, 0, 0, vec![revoke(0xa0)]);
         let tx = tx_with(Some(account), None, vec![AccountChange::ConfigChange(cc)]);
         let hash = tx.sender_signature_hash();
-        let signed = Eip8130Signed::new(tx, auth_blob(ECRECOVER, &sig(&sk, hash)), Bytes::new());
+        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&sk, hash)), Bytes::new());
         with_storage(|acc| {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&account)
-                .write(pack(ECRECOVER, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
                 .unwrap();
             assert_eq!(
                 TransactionAuthorizer::authorize(&signed, acc, LOCAL, NOW),
@@ -423,7 +423,7 @@ mod tests {
         let ck = key(0x44);
         let cid = actor_id(addr(&ck));
 
-        let cc = signed_change(sender_account, ECRECOVER, &ck, 0, 0, vec![revoke(0xa0)]);
+        let cc = signed_change(sender_account, K1, &ck, 0, 0, vec![revoke(0xa0)]);
         let tx = tx_with(
             Some(sender_account),
             Some(payer_account),
@@ -433,24 +433,24 @@ mod tests {
         let payer_hash = tx.payer_signature_hash(sender_account);
         let signed = Eip8130Signed::new(
             tx,
-            auth_blob(ECRECOVER, &sig(&sk, sender_hash)),
-            auth_blob(ECRECOVER, &sig(&pk, payer_hash)),
+            auth_blob(K1, &sig(&sk, sender_hash)),
+            auth_blob(K1, &sig(&pk, payer_hash)),
         );
         with_storage(|acc| {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(ECRECOVER, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
                 .unwrap();
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(ECRECOVER, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
                 .unwrap();
             acc.actor_config
                 .at_mut(&cid)
                 .at_mut(&sender_account)
-                .write(pack(ECRECOVER, Eip8130Constants::SCOPE_CONFIG, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_CONFIG, 0, 0))
                 .unwrap();
             let out = TransactionAuthorizer::authorize(&signed, acc, LOCAL, NOW).unwrap();
             assert_eq!(out.actors.sender.account, sender_account);
