@@ -190,7 +190,10 @@ mod tests {
             base_mainnet_forks[Azul],
             ForkCondition::Timestamp(ChainConfig::mainnet().azul_timestamp.unwrap())
         );
-        assert_eq!(base_mainnet_forks[Beryl], ForkCondition::Never);
+        assert_eq!(
+            base_mainnet_forks[Beryl],
+            ForkCondition::Timestamp(ChainConfig::mainnet().beryl_timestamp.unwrap())
+        );
         assert_eq!(base_mainnet_forks[Cobalt], ForkCondition::Never);
     }
 
@@ -305,6 +308,12 @@ mod tests {
 
     #[test]
     fn is_beryl_active_at_timestamp() {
+        let base_mainnet_forks = ChainUpgrades::mainnet();
+        assert!(!base_mainnet_forks.is_beryl_active_at_timestamp(0));
+        assert!(!base_mainnet_forks.is_beryl_active_at_timestamp(1_782_410_399));
+        assert!(base_mainnet_forks.is_beryl_active_at_timestamp(1_782_410_400));
+        assert!(base_mainnet_forks.is_beryl_active_at_timestamp(u64::MAX));
+
         let base_sepolia_forks = ChainUpgrades::sepolia();
         assert!(!base_sepolia_forks.is_beryl_active_at_timestamp(0));
         assert!(!base_sepolia_forks.is_beryl_active_at_timestamp(1_781_805_599));
