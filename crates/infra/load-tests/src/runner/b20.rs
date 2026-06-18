@@ -15,7 +15,7 @@ use tracing::{debug, info, instrument, warn};
 
 use super::{
     LoadRunner, SubmissionPipeline, TxType,
-    load_runner::{BATCH_SIZE, FUNDING_CONCURRENCY},
+    load_runner::FUNDING_CONCURRENCY,
 };
 use crate::{
     BaselineError, Result,
@@ -180,32 +180,48 @@ impl LoadRunner {
             }
         }
 
-        let mut grant_failed = 0usize;
-        let mut txs_remaining = grant_txs.into_iter().peekable();
-        while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
-            let send_futs = batch.into_iter().map(|tx| {
-                let provider = Arc::clone(&funder_provider);
-                async move {
-                    let pending = provider.send_transaction(tx).await?;
-                    pending.get_receipt().await
-                }
-            });
+        // Pipeline: send all txs first, then collect receipts in parallel.
+        // This decouples submission from confirmation for ~10x speedup.
+        let pb_send = self.progress_bar(total_grants as u64, "Submitting B-20 role grants");
+        let mut pending_txs = Vec::with_capacity(total_grants);
+        let mut send_failed = 0usize;
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
-            while let Some(result) = send_stream.next().await {
-                match result {
-                    Ok(receipt) if receipt.status() => pb.inc(1),
-                    Ok(receipt) => {
-                        warn!(tx_hash = %receipt.transaction_hash, "B-20 role grant reverted");
-                        grant_failed += 1;
-                        pb.inc(1);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "B-20 role grant failed");
-                        grant_failed += 1;
-                        pb.inc(1);
-                    }
+        // Phase 2a: Submit all grant txs without waiting for receipts.
+        for tx in grant_txs {
+            match funder_provider.send_transaction(tx).await {
+                Ok(pending) => pending_txs.push(pending),
+                Err(e) => {
+                    warn!(error = %e, "B-20 role grant submission failed");
+                    send_failed += 1;
+                }
+            }
+            pb_send.inc(1);
+        }
+        pb_send.finish_and_clear();
+
+        if send_failed > 0 {
+            warn!(failed = send_failed, "some B-20 role grant submissions failed");
+        }
+
+        // Phase 2b: Collect all receipts in parallel.
+        let receipt_futs = pending_txs.into_iter().map(|pending| async move {
+            pending.get_receipt().await
+        });
+
+        let mut grant_failed = 0usize;
+        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(FUNDING_CONCURRENCY);
+        while let Some(result) = receipt_stream.next().await {
+            match result {
+                Ok(receipt) if receipt.status() => pb.inc(1),
+                Ok(receipt) => {
+                    warn!(tx_hash = %receipt.transaction_hash, "B-20 role grant reverted");
+                    grant_failed += 1;
+                    pb.inc(1);
+                }
+                Err(e) => {
+                    warn!(error = %e, "B-20 role grant receipt failed");
+                    grant_failed += 1;
+                    pb.inc(1);
                 }
             }
         }
@@ -240,44 +256,51 @@ impl LoadRunner {
             })
             .collect();
 
-        let mut mint_failed = 0usize;
-        let mut txs_remaining = mint_txs.into_iter().peekable();
+        // Pipeline: send all mint txs first, then collect receipts in parallel.
+        let pb_mint_send = self.progress_bar(total_mints as u64, "Submitting B-20 mints");
+        let mut pending_mints: Vec<(_, Address)> = Vec::with_capacity(total_mints);
+        let mut mint_send_failed = 0usize;
 
-        while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
-            let send_futs = batch.into_iter().map(|(tx, sender)| {
-                let provider = Arc::clone(&funder_provider);
-                async move {
-                    match provider.send_transaction(tx).await {
-                        Ok(pending) => {
-                            let receipt = pending
-                                .get_receipt()
-                                .await
-                                .map_err(|e| eyre::eyre!("mint receipt failed: {e}"))?;
-                            Ok::<_, eyre::Report>((receipt, sender))
-                        }
-                        Err(e) => Err(eyre::eyre!("mint send failed: {e}")),
-                    }
+        for (tx, sender) in mint_txs {
+            match funder_provider.send_transaction(tx).await {
+                Ok(pending) => pending_mints.push((pending, sender)),
+                Err(e) => {
+                    warn!(to = %sender, error = %e, "B-20 mint submission failed");
+                    mint_send_failed += 1;
                 }
-            });
+            }
+            pb_mint_send.inc(1);
+        }
+        pb_mint_send.finish_and_clear();
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
-            while let Some(result) = send_stream.next().await {
-                match result {
-                    Ok((receipt, sender)) if receipt.status() => {
-                        debug!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint confirmed");
-                        pb_mint.inc(1);
-                    }
-                    Ok((receipt, sender)) => {
-                        warn!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint reverted");
-                        mint_failed += 1;
-                        pb_mint.inc(1);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "B-20 mint failed");
-                        mint_failed += 1;
-                        pb_mint.inc(1);
-                    }
+        if mint_send_failed > 0 {
+            warn!(failed = mint_send_failed, "some B-20 mint submissions failed");
+        }
+
+        let receipt_futs = pending_mints.into_iter().map(|(pending, sender)| async move {
+            match pending.get_receipt().await {
+                Ok(receipt) => Ok((receipt, sender)),
+                Err(e) => Err((sender, e)),
+            }
+        });
+
+        let mut mint_failed = 0usize;
+        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(FUNDING_CONCURRENCY);
+        while let Some(result) = receipt_stream.next().await {
+            match result {
+                Ok((receipt, sender)) if receipt.status() => {
+                    debug!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint confirmed");
+                    pb_mint.inc(1);
+                }
+                Ok((receipt, sender)) => {
+                    warn!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint reverted");
+                    mint_failed += 1;
+                    pb_mint.inc(1);
+                }
+                Err((sender, e)) => {
+                    warn!(to = %sender, error = %e, "B-20 mint receipt failed");
+                    mint_failed += 1;
+                    pb_mint.inc(1);
                 }
             }
         }
@@ -407,7 +430,7 @@ impl LoadRunner {
             })
             .collect();
 
-        let mut burn_stream = stream::iter(burn_futs).buffer_unordered(BATCH_SIZE);
+        let mut burn_stream = stream::iter(burn_futs).buffer_unordered(FUNDING_CONCURRENCY);
         while let Some(result) = burn_stream.next().await {
             match result {
                 Ok((sender, balance, receipt)) if receipt.status() => {
