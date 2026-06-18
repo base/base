@@ -96,6 +96,7 @@ async fn read_bounded_error_body(mut resp: reqwest::Response) -> Result<String, 
 
 #[cfg(test)]
 mod tests {
+    use axum::{Router, http::StatusCode, routing::post};
     use url::Url;
 
     use crate::{Client, server::router, store::StoreOpener};
@@ -133,8 +134,6 @@ mod tests {
 
     #[tokio::test]
     async fn surfaces_non_success_response_body() {
-        use axum::{Router, http::StatusCode, routing::post};
-
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let app = Router::new()

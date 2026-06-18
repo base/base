@@ -125,8 +125,6 @@ mod tests {
 
     #[test]
     fn encode_commitment_tx_data_prefixes_derivation_version() {
-        use base_protocol::DERIVATION_VERSION_1;
-
         let comm = generate_generic_commitment();
         let tx_data = encode_commitment_tx_data(comm);
         assert_eq!(tx_data[0], DERIVATION_VERSION_1);
