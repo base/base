@@ -13,7 +13,8 @@ pub use event::*;
 mod id;
 pub use id::EventIdBuilder;
 
-pub mod metrics;
+mod metrics;
+pub use metrics::Metrics;
 
 mod writer;
 pub use writer::{TransactionEventWriter, TransactionEventWriterConfig, WriteEventError};

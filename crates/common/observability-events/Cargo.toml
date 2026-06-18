@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 alloy-primitives = { workspace = true, features = ["serde"] }
-base-metrics = { workspace = true, features = ["metrics"] }
+base-metrics.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 eyre.workspace = true
 hex.workspace = true

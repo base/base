@@ -17,8 +17,8 @@ use tokio::{
 use tracing::{error, warn};
 
 use crate::{
-    DEFAULT_FLUSH_INTERVAL, DEFAULT_QUEUE_CAPACITY, TransactionEvent, TransactionEventProducer,
-    TransactionEventValidationError, metrics::Metrics,
+    DEFAULT_FLUSH_INTERVAL, DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent,
+    TransactionEventProducer, TransactionEventValidationError,
 };
 
 /// Configuration for the dedicated transaction event JSONL writer.
@@ -188,19 +188,25 @@ impl TransactionEventWriter {
             line,
         };
 
+        self.inner.queued.fetch_add(1, Ordering::Relaxed);
+
         match tx.try_send(queued_event) {
             Ok(()) => {
-                let depth = self.inner.queued.fetch_add(1, Ordering::Relaxed) + 1;
+                let depth = self.inner.queued.load(Ordering::Relaxed);
                 Metrics::emitted_events().increment(1);
                 Metrics::queue_depth().set(depth as f64);
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
+                let depth = decrement_queued(&self.inner.queued);
                 Metrics::dropped_events("backpressure").increment(1);
+                Metrics::queue_depth().set(depth as f64);
                 Err(WriteEventError::Backpressure)
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
+                let depth = decrement_queued(&self.inner.queued);
                 Metrics::dropped_events("closed").increment(1);
+                Metrics::queue_depth().set(depth as f64);
                 Err(WriteEventError::Closed)
             }
         }
