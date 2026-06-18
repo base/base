@@ -16,4 +16,6 @@ All `use` imports must be at the top of the file or the top of a `mod` block. Ne
 
 Use structured tracing instead of interpolated strings. Always use key=value fields for any dynamic data: `info!(block = %block_number, "processed block")` rather than `info!("processed block {block_number}")`. Use `%` for Display, `?` for Debug. The message string should be a static description; all variable data goes in fields. Correct: `error!(error = %e, peer = %peer_id, "connection failed")`. Incorrect: `error!("connection to {peer_id} failed: {e}")`.
 
+Keep unit tests colocated with their implementation. Do not introduce standalone `tests.rs` modules for unit tests; define tests in the same `.rs` implementation file/module inside a `#[cfg(test)] mod tests { ... }` block.
+
 `#[cfg(test)] mod tests { ... }` must always be placed at the end of the file, after all non-test code.
