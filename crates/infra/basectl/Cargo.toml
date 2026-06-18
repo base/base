@@ -38,10 +38,11 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-rpc-types-txpool = { workspace = true }
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-common-consensus = { workspace = true, features = ["k256"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 alloy-consensus = { workspace = true, features = ["std", "k256"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
-alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub", "ws"] }
+alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub", "txpool-api", "ws"] }

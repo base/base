@@ -343,6 +343,7 @@ alloy-consensus = { version = "2.0.5", default-features = false }
 alloy-sol-types = { version = "1.6.0", default-features = false }
 alloy-primitives = { version = "1.6.0", default-features = false }
 alloy-rpc-types-eth = { version = "2.0.5", default-features = false }
+alloy-rpc-types-txpool = { version = "2.0.5", default-features = false }
 alloy-rpc-types-debug = { version = "2.0.5", default-features = false }
 alloy-rpc-types-engine = { version = "2.0.5", default-features = false }
 alloy-network-primitives = { version = "2.0.5", default-features = false }

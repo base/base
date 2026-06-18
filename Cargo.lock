@@ -6682,6 +6682,7 @@ dependencies = [
  "alloy-provider 2.0.5",
  "alloy-rpc-client 2.0.5",
  "alloy-rpc-types-eth 2.0.5",
+ "alloy-rpc-types-txpool",
  "alloy-sol-types",
  "alloy-transport 2.0.5",
  "alloy-transport-http 2.0.5",

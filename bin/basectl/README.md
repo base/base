@@ -150,6 +150,46 @@ Important EL RPC note:
 - CL data comes from `opp2p_self`, `opp2p_peerStats`, and `opp2p_peers(true)` on the consensus RPC.
 - CL ban/unban commands use `opp2p_blockPeer`, `opp2p_unblockPeer`, and `opp2p_listBlockedPeers` underneath, but the basectl command surface uses ban/unban terminology so it can stay consistent when EL ban support is added later.
 
+### `basectl txpool`
+
+Transaction-pool inspection and clearing commands for one execution-layer node.
+By default the command uses the selected config's `rpc` field. Pass
+`--el-rpc <URL>` to target a specific admin-enabled node directly. The global
+`--conductor-rpc` flag is ignored.
+
+- `basectl txpool pending [SENDER]` shows pending txpool transactions.
+- `basectl txpool queued [SENDER]` shows queued txpool transactions.
+- `basectl txpool all [SENDER]` shows pending and queued txpool transactions.
+- `basectl txpool clear` clears the whole txpool through upstream Reth
+  `admin_clearTxpool`.
+- `basectl txpool clear --sender <ADDRESS>` drops every txpool transaction for
+  one sender through Base `admin_dropSenderTransactions`.
+
+Read-only txpool commands support:
+
+| Flag | Description |
+|------|-------------|
+| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field. |
+| `--json` | Emit humanized JSON with `network`, `rpc`, `scope`, optional `sender`, counts, sender summaries, and decoded transaction rows. |
+| `--raw` | With `--json`, emit the txpool wire shape (`TxpoolContent` for unfiltered reads, `TxpoolContentFrom` for sender-filtered reads), scoped to the selected `pending`, `queued`, or `all` command. Errors at parse time if used without `--json`. |
+
+Destructive txpool clearing supports:
+
+| Flag | Description |
+|------|-------------|
+| `--sender <ADDRESS>` | Drop only transactions from one sender instead of clearing the whole pool. |
+| `--el-rpc <URL>` | Override the execution-layer RPC URL. Destructive txpool calls usually require an admin-enabled node RPC. |
+| `--yes` | Skip the interactive confirmation prompt. By default, `clear` prints the exact target and waits for `y` or `yes`; empty input and every other answer abort without error. |
+| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. The `action` field is `clearTxpool` or `dropSenderTransactions`. |
+
+`txpool pending`, `queued`, and `all` use Reth's `txpool_content` namespace, or
+`txpool_contentFrom` when a sender filter is provided. `clear` does not support
+dropping by individual transaction hash in v1.
+
+Pretty read output includes the selected scope counts, per-sender nonce
+summaries, and one transaction row per included tx with pool, sender, nonce,
+hash, destination, value, gas, fee, and input byte length.
+
 ### `basectl conductor`
 
 Conductor inspection and control commands for HA sequencer clusters.
