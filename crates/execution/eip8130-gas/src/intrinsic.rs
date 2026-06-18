@@ -65,10 +65,11 @@ pub struct IntrinsicGas {
     pub account_changes: u64,
     /// `auto_delegation_cost` — code-less sender auto-delegation.
     pub auto_delegation: u64,
-    /// `sender_auth_cost` — sender authenticator execution + 1 SLOAD.
+    /// `sender_auth_cost` — sender authenticator execution + its `authorize`
+    /// SLOAD(s) (see `auth_sloads`).
     pub sender_auth: u64,
-    /// `payer_auth_cost` — payer authenticator execution + 1 SLOAD, or `0` for
-    /// self-pay.
+    /// `payer_auth_cost` — payer authenticator execution + its `authorize`
+    /// SLOAD(s), or `0` for self-pay.
     pub payer_auth: u64,
 }
 
@@ -212,7 +213,7 @@ impl IntrinsicGas {
     }
 
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
-    /// one cold `actor_config` SLOAD the EIP charges per authentication.
+    /// cold SLOADs the `authorize` step reads.
     ///
     /// `bare_signature` selects the wire encoding, not "is this an EOA": `true`
     /// means the blob is a raw 65-byte secp256k1 signature with no authenticator
@@ -220,19 +221,37 @@ impl IntrinsicGas {
     /// `authenticator(20) || data` blob (every other surface, including the
     /// implicit-EOA owner naming itself as `K1_AUTHENTICATOR || sig`).
     ///
-    /// The cold SLOAD is charged only when an authenticator is actually resolved
-    /// (a bare signature, or a prefixed blob long enough to name an
-    /// authenticator). A degenerate sub-20-byte prefixed blob resolves no
-    /// authenticator and reads no `actor_config` slot, so it costs `0` rather
-    /// than a phantom SLOAD. Such blobs are unreachable here in practice —
-    /// dispatch rejects them upstream — but guarding keeps the SLOAD tied to a
-    /// real read instead of relying on that invariant.
+    /// See [`Self::auth_sloads`] for how the SLOAD count is derived.
     fn auth_cost(auth: &[u8], bare_signature: bool) -> Result<u64, IntrinsicGasError> {
         let exec = Self::auth_exec_cost(auth, bare_signature)?;
-        if bare_signature || exec > 0 {
-            Ok(exec.saturating_add(Eip8130GasSchedule::COLD_SLOAD))
-        } else {
-            Ok(0)
+        let sloads = Self::auth_sloads(auth, bare_signature, exec);
+        Ok(exec.saturating_add(Eip8130GasSchedule::COLD_SLOAD.saturating_mul(sloads)))
+    }
+
+    /// Number of cold SLOADs the `authorize` step reads for one authentication.
+    ///
+    /// - **Bare signature** (live default EOA): one account-state SLOAD (the
+    ///   `DEFAULT_EOA_REVOKED` flag). The implicit owner short-circuits to the
+    ///   unrestricted owner before any `actor_config` read.
+    /// - **Explicit `K1_AUTHENTICATOR`**: priced at the worst case of **two**
+    ///   cold SLOADs — a permissioned self key reads the account-state flag *and*
+    ///   its `actor_config` slot (load account, then self). A live owner (config
+    ///   change) or a non-self k1 actor reads one fewer slot, so this errs on the
+    ///   safe side rather than undercharging the permissioned self. The two
+    ///   sub-cases are indistinguishable from the transaction body alone.
+    /// - **Any other resolved authenticator**: one `actor_config` SLOAD.
+    /// - **A degenerate sub-20-byte prefixed blob** resolves no authenticator and
+    ///   reads no slot, so it costs `0` rather than a phantom SLOAD. Such blobs
+    ///   are unreachable here (dispatch rejects them upstream); guarding keeps the
+    ///   SLOAD tied to a real read.
+    fn auth_sloads(auth: &[u8], bare_signature: bool, exec: u64) -> u64 {
+        if bare_signature {
+            return 1;
+        }
+        match Self::authenticator_of(auth) {
+            Some(a) if a == Eip8130Constants::K1_AUTHENTICATOR => 2,
+            Some(_) if exec > 0 => 1,
+            _ => 0,
         }
     }
 
@@ -477,7 +496,9 @@ mod tests {
             ..Default::default()
         };
         let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
-        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
+        // Explicit `K1_AUTHENTICATOR` auth: priced at the worst-case two cold
+        // SLOADs (account-state flag + self `actor_config`).
+        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD * 2;
         let expected = auth_cost
             + Eip8130GasSchedule::ACTOR_SLOT_SET_COST
             + Eip8130GasSchedule::ACTOR_SLOT_RESET_COST;
@@ -508,8 +529,9 @@ mod tests {
     fn implicit_eoa_config_auth_costs_k1() {
         // An implicit-EOA owner authorizing a config change names itself explicitly
         // as `K1_AUTHENTICATOR || sig` on the configured (`bare_signature: false`)
-        // surface, priced as native k1 + one cold SLOAD.
-        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
+        // surface. Explicit k1 is priced at the worst-case two cold SLOADs
+        // (account-state flag + self `actor_config`).
+        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD * 2;
         assert_eq!(IntrinsicGas::auth_cost(&configured_auth(K1), false), Ok(auth_cost));
 
         // End-to-end: a config change authorized by the implicit-EOA owner is
@@ -531,6 +553,27 @@ mod tests {
         };
         let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
         assert_eq!(gas.account_changes, auth_cost + Eip8130GasSchedule::ACTOR_SLOT_SET_COST);
+    }
+
+    #[test]
+    fn k1_self_key_charges_account_and_actor_config_sloads() {
+        // A bare signature (live default EOA) reads only the account-state flag:
+        // one cold SLOAD. An explicit `K1_AUTHENTICATOR` blob is priced at the
+        // worst case — a permissioned self key loads the account-state flag *and*
+        // its `actor_config` slot — two cold SLOADs.
+        assert_eq!(
+            IntrinsicGas::auth_cost(&[0u8; 65], true),
+            Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
+        );
+        assert_eq!(
+            IntrinsicGas::auth_cost(&configured_auth(K1), false),
+            Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD * 2)
+        );
+        // A non-k1 leaf actor reads only its `actor_config` slot: one cold SLOAD.
+        assert_eq!(
+            IntrinsicGas::auth_cost(&configured_auth(Eip8130Contracts::P256_AUTHENTICATOR), false),
+            Ok(Eip8130GasSchedule::AUTH_EXEC_P256 + Eip8130GasSchedule::COLD_SLOAD)
+        );
     }
 
     #[test]
