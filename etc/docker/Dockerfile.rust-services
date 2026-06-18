@@ -63,11 +63,22 @@ FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-# Pre-build workspace dependencies (cached until Cargo.toml/Cargo.lock change)
+# Pre-build non-ZK workspace dependencies (cached until Cargo.toml/Cargo.lock change)
 FROM chef AS deps
 ARG PROFILE=release
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --profile $PROFILE --recipe-path recipe.json
+RUN cargo chef cook --profile $PROFILE --recipe-path recipe.json \
+    --package base-reth-node \
+    --package base \
+    --package base-builder-bin \
+    --package base-consensus \
+    --package base-proposer-bin \
+    --package base-challenger-bin \
+    --package websocket-proxy-bin \
+    --package ingress-rpc \
+    --package audit-archiver \
+    --package base-batcher-bin \
+    --package base-da-server-bin
 
 # Full source on top of pre-built deps
 FROM deps AS source
@@ -140,7 +151,8 @@ COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/cargo/bin/cargo-chef
 FROM zk-chef AS zk-deps
 ARG PROFILE=release
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --profile $PROFILE --recipe-path recipe.json
+RUN cargo chef cook --profile $PROFILE --recipe-path recipe.json \
+    --package base-prover-zk
 
 FROM zk-deps AS zk-source
 COPY . .
