@@ -50,7 +50,6 @@ pub use rollup::{
 
 mod txpool;
 pub use txpool::{
-    BaseTxpoolContent, BaseTxpoolContentFrom, TxpoolCounts, TxpoolReport, TxpoolScope,
-    TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow, clear_txpool,
-    drop_sender_transactions, fetch_txpool_content, fetch_txpool_content_from, fetch_txpool_report,
+    BaseTxpoolContent, BaseTxpoolContentFrom, TxpoolClient, TxpoolCounts, TxpoolReport,
+    TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow,
 };

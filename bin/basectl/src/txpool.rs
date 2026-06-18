@@ -5,9 +5,8 @@ use std::io::{self, Write};
 use alloy_primitives::{Address, TxHash};
 use anyhow::Result;
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, TxpoolCounts, TxpoolReport, TxpoolScope,
-    TxpoolSenderSummary, TxpoolTransactionRow, clear_txpool, drop_sender_transactions,
-    fetch_txpool_content, fetch_txpool_content_from, fetch_txpool_report, format_gas, format_gwei,
+    JsonOutput, KeyValueTable, MonitoringConfig, TxpoolClient, TxpoolCounts, TxpoolReport,
+    TxpoolScope, TxpoolSenderSummary, TxpoolTransactionRow, format_gas, format_gwei,
 };
 use serde::Serialize;
 use tracing::{debug, info, warn};
@@ -15,7 +14,7 @@ use url::Url;
 
 use crate::{
     cli::{TxpoolClearArgs, TxpoolCommands, TxpoolReadArgs},
-    confirm::confirm,
+    confirm::confirm_or_abort,
 };
 
 /// Runs the `basectl txpool` command group.
@@ -47,8 +46,9 @@ async fn run_read(
 
     match (json, raw, sender) {
         (true, true, Some(sender)) => {
-            let mut content =
-                fetch_txpool_content_from(&el_rpc, sender).await.inspect_err(|error| {
+            let mut content = TxpoolClient::fetch_txpool_content_from(&el_rpc, sender)
+                .await
+                .inspect_err(|error| {
                     warn!(
                         error = %error,
                         network = %config.name,
@@ -63,22 +63,24 @@ async fn run_read(
             JsonOutput::print(&content)?;
         }
         (true, true, None) => {
-            let mut content = fetch_txpool_content(&el_rpc).await.inspect_err(|error| {
-                warn!(
-                    error = %error,
-                    network = %config.name,
-                    rpc = %el_rpc,
-                    scope = %scope.as_str(),
-                    raw = true,
-                    "txpool raw read failed"
-                );
-            })?;
+            let mut content =
+                TxpoolClient::fetch_txpool_content(&el_rpc).await.inspect_err(|error| {
+                    warn!(
+                        error = %error,
+                        network = %config.name,
+                        rpc = %el_rpc,
+                        scope = %scope.as_str(),
+                        raw = true,
+                        "txpool raw read failed"
+                    );
+                })?;
             scope.filter_content(&mut content);
             JsonOutput::print(&content)?;
         }
         (true, false, sender) => {
-            let report =
-                fetch_txpool_report(&el_rpc, scope, sender).await.inspect_err(|error| {
+            let report = TxpoolClient::fetch_txpool_report(&el_rpc, scope, sender)
+                .await
+                .inspect_err(|error| {
                     warn!(
                         error = %error,
                         network = %config.name,
@@ -102,8 +104,9 @@ async fn run_read(
             );
         }
         (false, _, sender) => {
-            let report =
-                fetch_txpool_report(&el_rpc, scope, sender).await.inspect_err(|error| {
+            let report = TxpoolClient::fetch_txpool_report(&el_rpc, scope, sender)
+                .await
+                .inspect_err(|error| {
                     warn!(
                         error = %error,
                         network = %config.name,
@@ -146,25 +149,26 @@ async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()
     match sender {
         Some(sender) => {
             let prompt = format!("Drop txpool transactions from {sender} through {el_rpc}? [y/N] ");
-            if !confirm(&prompt, yes)? {
+            if !confirm_or_abort(&prompt, yes)? {
                 debug!(
                     network = %config.name,
                     rpc = %el_rpc,
                     sender = %sender,
                     "txpool sender drop confirmation declined"
                 );
-                println!("aborted");
                 return Ok(());
             }
-            let hashes = drop_sender_transactions(&el_rpc, sender).await.inspect_err(|error| {
-                warn!(
-                    error = %error,
-                    network = %config.name,
-                    rpc = %el_rpc,
-                    sender = %sender,
-                    "txpool sender drop failed"
-                );
-            })?;
+            let hashes = TxpoolClient::drop_sender_transactions(&el_rpc, sender)
+                .await
+                .inspect_err(|error| {
+                    warn!(
+                        error = %error,
+                        network = %config.name,
+                        rpc = %el_rpc,
+                        sender = %sender,
+                        "txpool sender drop failed"
+                    );
+                })?;
             let action = TxpoolClearJson::drop_sender(&config.name, &el_rpc, sender, hashes);
             print_clear_action(&action, json)?;
             info!(
@@ -177,16 +181,15 @@ async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()
         }
         None => {
             let prompt = format!("Clear all txpool transactions through {el_rpc}? [y/N] ");
-            if !confirm(&prompt, yes)? {
+            if !confirm_or_abort(&prompt, yes)? {
                 debug!(
                     network = %config.name,
                     rpc = %el_rpc,
                     "txpool clear confirmation declined"
                 );
-                println!("aborted");
                 return Ok(());
             }
-            let removed = clear_txpool(&el_rpc).await.inspect_err(|error| {
+            let removed = TxpoolClient::clear_txpool(&el_rpc).await.inspect_err(|error| {
                 warn!(
                     error = %error,
                     network = %config.name,

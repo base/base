@@ -232,10 +232,16 @@ impl TxpoolReport {
     {
         let mut rows = Vec::new();
         if scope.includes_pending() {
-            rows.extend(rows_from_sender_maps(TxpoolTransactionPool::Pending, &content.pending));
+            rows.extend(TxpoolClient::rows_from_sender_maps(
+                TxpoolTransactionPool::Pending,
+                &content.pending,
+            ));
         }
         if scope.includes_queued() {
-            rows.extend(rows_from_sender_maps(TxpoolTransactionPool::Queued, &content.queued));
+            rows.extend(TxpoolClient::rows_from_sender_maps(
+                TxpoolTransactionPool::Queued,
+                &content.queued,
+            ));
         }
         Self::from_rows(scope, None, rows)
     }
@@ -251,14 +257,14 @@ impl TxpoolReport {
     {
         let mut rows = Vec::new();
         if scope.includes_pending() {
-            rows.extend(rows_from_nonce_map(
+            rows.extend(TxpoolClient::rows_from_nonce_map(
                 TxpoolTransactionPool::Pending,
                 sender,
                 &content.pending,
             ));
         }
         if scope.includes_queued() {
-            rows.extend(rows_from_nonce_map(
+            rows.extend(TxpoolClient::rows_from_nonce_map(
                 TxpoolTransactionPool::Queued,
                 sender,
                 &content.queued,
@@ -288,188 +294,200 @@ impl TxpoolReport {
         let queued =
             transactions.iter().filter(|tx| tx.pool == TxpoolTransactionPool::Queued).count();
         let counts = TxpoolCounts::new(pending, queued);
-        let senders = summarize_senders(sender, &transactions);
+        let senders = TxpoolClient::summarize_senders(sender, &transactions);
 
         Self { scope, sender, counts, senders, transactions }
     }
 }
 
-/// Fetches raw txpool content via `txpool_content`.
-pub async fn fetch_txpool_content(rpc: &Url) -> Result<BaseTxpoolContent, TxpoolCommandError> {
-    const METHOD: &str = "txpool_content";
+/// Transaction-pool RPC client helpers.
+#[derive(Debug)]
+pub struct TxpoolClient;
 
-    connect_txpool_provider(rpc)
-        .await?
-        .txpool_content()
-        .await
-        .map_err(|error| txpool_transport_error(rpc, METHOD, error))
-}
+impl TxpoolClient {
+    /// Fetches raw txpool content via `txpool_content`.
+    pub async fn fetch_txpool_content(rpc: &Url) -> Result<BaseTxpoolContent, TxpoolCommandError> {
+        const METHOD: &str = "txpool_content";
 
-/// Fetches raw sender-filtered txpool content via `txpool_contentFrom`.
-pub async fn fetch_txpool_content_from(
-    rpc: &Url,
-    sender: Address,
-) -> Result<BaseTxpoolContentFrom, TxpoolCommandError> {
-    const METHOD: &str = "txpool_contentFrom";
+        Self::connect_txpool_provider(rpc)?
+            .txpool_content()
+            .await
+            .map_err(|error| Self::txpool_transport_error(rpc, METHOD, error))
+    }
 
-    connect_txpool_provider(rpc)
-        .await?
-        .txpool_content_from(sender)
-        .await
-        .map_err(|error| txpool_transport_error(rpc, METHOD, error))
-}
+    /// Fetches raw sender-filtered txpool content via `txpool_contentFrom`.
+    pub async fn fetch_txpool_content_from(
+        rpc: &Url,
+        sender: Address,
+    ) -> Result<BaseTxpoolContentFrom, TxpoolCommandError> {
+        const METHOD: &str = "txpool_contentFrom";
 
-/// Fetches and normalizes txpool content for a read command.
-pub async fn fetch_txpool_report(
-    rpc: &Url,
-    scope: TxpoolScope,
-    sender: Option<Address>,
-) -> Result<TxpoolReport, TxpoolCommandError> {
-    match sender {
-        Some(sender) => {
-            let content = fetch_txpool_content_from(rpc, sender).await?;
-            Ok(TxpoolReport::from_content_from(scope, sender, &content))
+        Self::connect_txpool_provider(rpc)?
+            .txpool_content_from(sender)
+            .await
+            .map_err(|error| Self::txpool_transport_error(rpc, METHOD, error))
+    }
+
+    /// Fetches and normalizes txpool content for a read command.
+    pub async fn fetch_txpool_report(
+        rpc: &Url,
+        scope: TxpoolScope,
+        sender: Option<Address>,
+    ) -> Result<TxpoolReport, TxpoolCommandError> {
+        match sender {
+            Some(sender) => {
+                let content = Self::fetch_txpool_content_from(rpc, sender).await?;
+                Ok(TxpoolReport::from_content_from(scope, sender, &content))
+            }
+            None => {
+                let content = Self::fetch_txpool_content(rpc).await?;
+                Ok(TxpoolReport::from_content(scope, &content))
+            }
         }
-        None => {
-            let content = fetch_txpool_content(rpc).await?;
-            Ok(TxpoolReport::from_content(scope, &content))
+    }
+
+    /// Clears the full transaction pool via upstream Reth `admin_clearTxpool`.
+    pub async fn clear_txpool(rpc: &Url) -> Result<u64, TxpoolCommandError> {
+        const METHOD: &str = "admin_clearTxpool";
+
+        let client = Self::connect_admin_client(rpc)?;
+        ClientT::request(&client, METHOD, rpc_params![])
+            .await
+            .map_err(|error| Self::admin_jsonrpc_error(rpc, METHOD, error))
+    }
+
+    /// Drops every txpool transaction for one sender via Base `admin_dropSenderTransactions`.
+    pub async fn drop_sender_transactions(
+        rpc: &Url,
+        sender: Address,
+    ) -> Result<Vec<TxHash>, TxpoolCommandError> {
+        const METHOD: &str = "admin_dropSenderTransactions";
+
+        let client = Self::connect_admin_client(rpc)?;
+        ClientT::request(&client, METHOD, rpc_params![sender])
+            .await
+            .map_err(|error| Self::admin_jsonrpc_error(rpc, METHOD, error))
+    }
+
+    fn connect_txpool_provider(rpc: &Url) -> Result<impl Provider<Base>, TxpoolCommandError> {
+        let http_client = alloy_transport_http::reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|error| TxpoolCommandError::BuildHttpClient {
+                rpc: rpc.to_string(),
+                message: error.to_string(),
+            })?;
+        let transport = Http::with_client(http_client, rpc.clone());
+        Ok(ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect_client(RpcClient::new(transport, false)))
+    }
+
+    fn connect_admin_client(
+        rpc: &Url,
+    ) -> Result<jsonrpsee::http_client::HttpClient, TxpoolCommandError> {
+        HttpClientBuilder::default()
+            .request_timeout(Duration::from_secs(30))
+            .build(rpc.as_str())
+            .map_err(|error| TxpoolCommandError::BuildAdminClient {
+                rpc: rpc.to_string(),
+                message: error.to_string(),
+            })
+    }
+
+    fn txpool_transport_error(
+        rpc: &Url,
+        method: &'static str,
+        error: TransportError,
+    ) -> TxpoolCommandError {
+        if Self::is_transport_method_not_found(&error) {
+            TxpoolCommandError::TxpoolMethodUnavailable { rpc: rpc.to_string(), method }
+        } else {
+            TxpoolCommandError::TxpoolRpc {
+                rpc: rpc.to_string(),
+                method,
+                message: error.to_string(),
+            }
         }
     }
-}
 
-/// Clears the full transaction pool via upstream Reth `admin_clearTxpool`.
-pub async fn clear_txpool(rpc: &Url) -> Result<u64, TxpoolCommandError> {
-    const METHOD: &str = "admin_clearTxpool";
-
-    let client = connect_admin_client(rpc)?;
-    ClientT::request(&client, METHOD, rpc_params![])
-        .await
-        .map_err(|error| admin_jsonrpc_error(rpc, METHOD, error))
-}
-
-/// Drops every txpool transaction for one sender via Base `admin_dropSenderTransactions`.
-pub async fn drop_sender_transactions(
-    rpc: &Url,
-    sender: Address,
-) -> Result<Vec<TxHash>, TxpoolCommandError> {
-    const METHOD: &str = "admin_dropSenderTransactions";
-
-    let client = connect_admin_client(rpc)?;
-    ClientT::request(&client, METHOD, rpc_params![sender])
-        .await
-        .map_err(|error| admin_jsonrpc_error(rpc, METHOD, error))
-}
-
-async fn connect_txpool_provider(rpc: &Url) -> Result<impl Provider<Base>, TxpoolCommandError> {
-    let http_client = alloy_transport_http::reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|error| TxpoolCommandError::BuildHttpClient {
-            rpc: rpc.to_string(),
-            message: error.to_string(),
-        })?;
-    let transport = Http::with_client(http_client, rpc.clone());
-    Ok(ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Base>()
-        .connect_client(RpcClient::new(transport, false)))
-}
-
-fn connect_admin_client(
-    rpc: &Url,
-) -> Result<jsonrpsee::http_client::HttpClient, TxpoolCommandError> {
-    HttpClientBuilder::default()
-        .request_timeout(Duration::from_secs(30))
-        .build(rpc.as_str())
-        .map_err(|error| TxpoolCommandError::BuildAdminClient {
-            rpc: rpc.to_string(),
-            message: error.to_string(),
-        })
-}
-
-fn txpool_transport_error(
-    rpc: &Url,
-    method: &'static str,
-    error: TransportError,
-) -> TxpoolCommandError {
-    if is_transport_method_not_found(&error) {
-        TxpoolCommandError::TxpoolMethodUnavailable { rpc: rpc.to_string(), method }
-    } else {
-        TxpoolCommandError::TxpoolRpc { rpc: rpc.to_string(), method, message: error.to_string() }
-    }
-}
-
-fn admin_jsonrpc_error(
-    rpc: &Url,
-    method: &'static str,
-    error: JsonRpcClientError,
-) -> TxpoolCommandError {
-    if is_jsonrpc_method_not_found(&error) {
-        TxpoolCommandError::AdminMethodUnavailable { rpc: rpc.to_string(), method }
-    } else {
-        TxpoolCommandError::AdminRpc { rpc: rpc.to_string(), method, message: error.to_string() }
-    }
-}
-
-const fn is_transport_method_not_found(error: &TransportError) -> bool {
-    matches!(error, TransportError::ErrorResp(payload) if payload.code == -32601)
-}
-
-fn is_jsonrpc_method_not_found(error: &JsonRpcClientError) -> bool {
-    matches!(error, JsonRpcClientError::Call(payload) if payload.code() == -32601)
-}
-
-fn rows_from_sender_maps<T>(
-    pool: TxpoolTransactionPool,
-    sender_maps: &BTreeMap<Address, BTreeMap<String, T>>,
-) -> Vec<TxpoolTransactionRow>
-where
-    T: ConsensusTransaction + TransactionResponse,
-{
-    sender_maps
-        .iter()
-        .flat_map(|(sender, nonce_map)| rows_from_nonce_map(pool, *sender, nonce_map))
-        .collect()
-}
-
-fn rows_from_nonce_map<T>(
-    pool: TxpoolTransactionPool,
-    sender: Address,
-    nonce_map: &BTreeMap<String, T>,
-) -> Vec<TxpoolTransactionRow>
-where
-    T: ConsensusTransaction + TransactionResponse,
-{
-    nonce_map
-        .iter()
-        .map(|(nonce_key, transaction)| {
-            TxpoolTransactionRow::from_transaction(pool, sender, nonce_key.clone(), transaction)
-        })
-        .collect()
-}
-
-fn summarize_senders(
-    selected_sender: Option<Address>,
-    transactions: &[TxpoolTransactionRow],
-) -> Vec<TxpoolSenderSummary> {
-    let mut summaries = BTreeMap::<Address, TxpoolSenderSummary>::new();
-    for tx in transactions {
-        let summary =
-            summaries.entry(tx.sender).or_insert_with(|| TxpoolSenderSummary::empty(tx.sender));
-        match tx.pool {
-            TxpoolTransactionPool::Pending => summary.pending += 1,
-            TxpoolTransactionPool::Queued => summary.queued += 1,
+    fn admin_jsonrpc_error(
+        rpc: &Url,
+        method: &'static str,
+        error: JsonRpcClientError,
+    ) -> TxpoolCommandError {
+        if Self::is_jsonrpc_method_not_found(&error) {
+            TxpoolCommandError::AdminMethodUnavailable { rpc: rpc.to_string(), method }
+        } else {
+            TxpoolCommandError::AdminRpc {
+                rpc: rpc.to_string(),
+                method,
+                message: error.to_string(),
+            }
         }
-        summary.total += 1;
-        summary.lowest_nonce =
-            Some(summary.lowest_nonce.map_or(tx.nonce, |nonce| nonce.min(tx.nonce)));
-        summary.highest_nonce =
-            Some(summary.highest_nonce.map_or(tx.nonce, |nonce| nonce.max(tx.nonce)));
     }
-    if let Some(sender) = selected_sender {
-        summaries.entry(sender).or_insert_with(|| TxpoolSenderSummary::empty(sender));
+
+    const fn is_transport_method_not_found(error: &TransportError) -> bool {
+        matches!(error, TransportError::ErrorResp(payload) if payload.code == -32601)
     }
-    summaries.into_values().collect()
+
+    fn is_jsonrpc_method_not_found(error: &JsonRpcClientError) -> bool {
+        matches!(error, JsonRpcClientError::Call(payload) if payload.code() == -32601)
+    }
+
+    fn rows_from_sender_maps<T>(
+        pool: TxpoolTransactionPool,
+        sender_maps: &BTreeMap<Address, BTreeMap<String, T>>,
+    ) -> Vec<TxpoolTransactionRow>
+    where
+        T: ConsensusTransaction + TransactionResponse,
+    {
+        sender_maps
+            .iter()
+            .flat_map(|(sender, nonce_map)| Self::rows_from_nonce_map(pool, *sender, nonce_map))
+            .collect()
+    }
+
+    fn rows_from_nonce_map<T>(
+        pool: TxpoolTransactionPool,
+        sender: Address,
+        nonce_map: &BTreeMap<String, T>,
+    ) -> Vec<TxpoolTransactionRow>
+    where
+        T: ConsensusTransaction + TransactionResponse,
+    {
+        nonce_map
+            .iter()
+            .map(|(nonce_key, transaction)| {
+                TxpoolTransactionRow::from_transaction(pool, sender, nonce_key.clone(), transaction)
+            })
+            .collect()
+    }
+
+    fn summarize_senders(
+        selected_sender: Option<Address>,
+        transactions: &[TxpoolTransactionRow],
+    ) -> Vec<TxpoolSenderSummary> {
+        let mut summaries = BTreeMap::<Address, TxpoolSenderSummary>::new();
+        for tx in transactions {
+            let summary =
+                summaries.entry(tx.sender).or_insert_with(|| TxpoolSenderSummary::empty(tx.sender));
+            match tx.pool {
+                TxpoolTransactionPool::Pending => summary.pending += 1,
+                TxpoolTransactionPool::Queued => summary.queued += 1,
+            }
+            summary.total += 1;
+            summary.lowest_nonce =
+                Some(summary.lowest_nonce.map_or(tx.nonce, |nonce| nonce.min(tx.nonce)));
+            summary.highest_nonce =
+                Some(summary.highest_nonce.map_or(tx.nonce, |nonce| nonce.max(tx.nonce)));
+        }
+        if let Some(sender) = selected_sender {
+            summaries.entry(sender).or_insert_with(|| TxpoolSenderSummary::empty(sender));
+        }
+        summaries.into_values().collect()
+    }
 }
 
 #[cfg(test)]
