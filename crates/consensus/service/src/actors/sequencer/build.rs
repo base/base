@@ -78,6 +78,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         parent: L2BlockInfo,
     ) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
         let Some(l1_origin) = self.get_next_payload_l1_origin(parent).await? else {
+            tracing::Span::current().record("l1_origin_num", tracing::field::display("none"));
             return Ok(None);
         };
         tracing::Span::current().record("l1_origin_num", l1_origin.number);
