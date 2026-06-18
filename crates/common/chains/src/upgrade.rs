@@ -237,6 +237,11 @@ mod tests {
             (Chain::base_sepolia(), ChainConfig::sepolia().ecotone_timestamp, BaseUpgrade::Ecotone),
             (Chain::base_sepolia(), ChainConfig::sepolia().jovian_timestamp, BaseUpgrade::Jovian),
             (
+                Chain::base_mainnet(),
+                ChainConfig::mainnet().beryl_timestamp.unwrap(),
+                BaseUpgrade::Beryl,
+            ),
+            (
                 Chain::base_sepolia(),
                 ChainConfig::sepolia().azul_timestamp.unwrap(),
                 BaseUpgrade::Azul,
