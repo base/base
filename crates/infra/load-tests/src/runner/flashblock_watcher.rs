@@ -20,10 +20,50 @@ use super::{FlashblockInclusion, ResultsTracker};
 /// unbounded memory growth; a full channel signals the decoder cannot keep up.
 const DECODE_QUEUE_CAPACITY: usize = 1024;
 
+/// How often the read loop emits aggregated scheduling-lag stats.
+const STATS_LOG_INTERVAL: Duration = Duration::from_secs(5);
+
 /// A raw flashblock message paired with the instant its bytes arrived on the socket.
 struct ReceivedMessage {
     received_at: Instant,
     bytes: Bytes,
+}
+
+/// Aggregated read-loop scheduling diagnostics, logged periodically.
+///
+/// The read gap is the wall-clock time between consecutive socket reads returning. If
+/// the read task is starved on a shared runtime, this balloons and `received_at` is
+/// stamped late — inflating measured flashblock latency without any real network delay.
+#[derive(Default)]
+struct ReadLoopStats {
+    messages: u64,
+    max_read_gap: Duration,
+    sum_read_gap: Duration,
+    queue_full_drops: u64,
+}
+
+impl ReadLoopStats {
+    fn record_read_gap(&mut self, gap: Duration) {
+        self.messages += 1;
+        self.max_read_gap = self.max_read_gap.max(gap);
+        self.sum_read_gap = self.sum_read_gap.saturating_add(gap);
+    }
+
+    fn flush(&mut self) {
+        if self.messages == 0 {
+            return;
+        }
+        let mean_read_gap_ms =
+            self.sum_read_gap.as_secs_f64() * 1000.0 / self.messages as f64;
+        info!(
+            messages = self.messages,
+            mean_read_gap_ms,
+            max_read_gap_ms = self.max_read_gap.as_millis(),
+            queue_full_drops = self.queue_full_drops,
+            "flashblock read-loop stats"
+        );
+        *self = Self::default();
+    }
 }
 
 /// Watches transaction inclusion times from the builder flashblocks broadcast WebSocket.
@@ -44,10 +84,32 @@ impl FlashblockWatcher {
         Self { ws_url, results_tracker, cancel_token }
     }
 
-    /// Spawns the watcher as a background task.
+    /// Spawns the watcher on a dedicated single-threaded runtime.
+    ///
+    /// The flashblock read loop stamps `received_at`, the inclusion timestamp used for
+    /// flashblock latency. Running it on its own OS thread keeps that loop from being
+    /// starved by the hundreds of sender/signer tasks on the main runtime, which would
+    /// otherwise delay socket reads and inflate measured latency. The returned handle
+    /// completes when the dedicated thread exits (after the cancel token fires).
     pub fn start(self) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            self.run().await;
+        let thread = std::thread::Builder::new()
+            .name("flashblock-watcher".to_string())
+            .spawn(move || {
+                // A dedicated current-thread runtime. The win is isolation from the main
+                // runtime's hundreds of sender tasks; decode work (keccak + parse) is cheap
+                // and the bounded drop-queue keeps the read loop from blocking on it.
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to build flashblock watcher runtime");
+                runtime.block_on(self.run());
+            })
+            .expect("failed to spawn flashblock watcher thread");
+
+        tokio::task::spawn_blocking(move || {
+            if thread.join().is_err() {
+                warn!("flashblock watcher thread panicked");
+            }
         })
     }
 
@@ -67,24 +129,37 @@ impl FlashblockWatcher {
                     let (tx, rx) = mpsc::channel::<ReceivedMessage>(DECODE_QUEUE_CAPACITY);
                     let decoder = tokio::spawn(Self::decode_loop(rx, self.results_tracker.clone()));
 
+                    let mut stats = ReadLoopStats::default();
+                    let mut last_read = Instant::now();
+                    let mut last_stats_flush = Instant::now();
+
                     loop {
                         tokio::select! {
                             biased;
 
                             _ = self.cancel_token.cancelled() => {
                                 debug!("flashblock watcher stopping");
+                                stats.flush();
                                 drop(tx);
                                 let _ = decoder.await;
                                 return;
                             }
                             msg = read.next() => {
                                 let received_at = Instant::now();
+                                // Gap since the previous read returned. Under runtime
+                                // starvation this grows and pushes received_at late.
+                                stats.record_read_gap(received_at.duration_since(last_read));
+                                last_read = received_at;
+                                if last_stats_flush.elapsed() >= STATS_LOG_INTERVAL {
+                                    stats.flush();
+                                    last_stats_flush = Instant::now();
+                                }
                                 match msg {
                                     Some(Ok(Message::Binary(data))) => {
-                                        Self::enqueue(&tx, received_at, data);
+                                        Self::enqueue(&tx, received_at, data, &mut stats);
                                     }
                                     Some(Ok(Message::Text(data))) => {
-                                        Self::enqueue(&tx, received_at, Bytes::from(data));
+                                        Self::enqueue(&tx, received_at, Bytes::from(data), &mut stats);
                                     }
                                     Some(Ok(Message::Close(_))) => {
                                         info!("flashblock websocket closed by server");
@@ -104,6 +179,7 @@ impl FlashblockWatcher {
                         }
                     }
 
+                    stats.flush();
                     drop(tx);
                     let _ = decoder.await;
                 }
@@ -128,11 +204,16 @@ impl FlashblockWatcher {
         debug!("flashblock watcher stopped");
     }
 
-    fn enqueue(tx: &mpsc::Sender<ReceivedMessage>, received_at: Instant, bytes: Bytes) {
+    fn enqueue(
+        tx: &mpsc::Sender<ReceivedMessage>,
+        received_at: Instant,
+        bytes: Bytes,
+        stats: &mut ReadLoopStats,
+    ) {
         // A full queue means the decoder is lagging; dropping here keeps the read loop's
         // timestamps honest rather than letting socket backpressure inflate received_at.
-        if let Err(e) = tx.try_send(ReceivedMessage { received_at, bytes }) {
-            warn!(error = %e, "flashblock decode queue full, dropping message");
+        if tx.try_send(ReceivedMessage { received_at, bytes }).is_err() {
+            stats.queue_full_drops += 1;
         }
     }
 
@@ -160,11 +241,16 @@ impl FlashblockWatcher {
         flashblock: &Flashblock,
         included_at: Instant,
     ) -> Vec<FlashblockInclusion> {
+        let flashblock_index = flashblock.index;
         flashblock
             .diff
             .transactions
             .iter()
-            .map(|tx_bytes| FlashblockInclusion { tx_hash: keccak256(tx_bytes), included_at })
+            .map(|tx_bytes| FlashblockInclusion {
+                tx_hash: keccak256(tx_bytes),
+                included_at,
+                flashblock_index,
+            })
             .collect()
     }
 }

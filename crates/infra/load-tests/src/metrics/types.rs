@@ -36,6 +36,8 @@ pub struct TransactionMetrics {
     pub gas_price: u128,
     /// Block number where transaction was included.
     pub block_number: Option<u64>,
+    /// Index of the flashblock (0-based within its block) that first carried this tx.
+    pub flashblock_index: Option<u64>,
     /// Whether the transaction reverted during execution.
     pub reverted: bool,
     /// When canonical inclusion was observed (used by the rolling window).
@@ -61,6 +63,7 @@ impl TransactionMetrics {
             gas_used,
             gas_price,
             block_number,
+            flashblock_index: None,
             reverted: false,
             confirmed_at: None,
         }
@@ -87,6 +90,19 @@ pub struct LatencyMetrics {
     pub p95: Duration,
     /// 99th percentile latency.
     pub p99: Duration,
+}
+
+/// Flashblock latency for a single flashblock index (slice position within a block).
+///
+/// Used to show how flashblock latency scales with the slice a tx landed in: under
+/// load, txs spill from index 0 into later indexes, and latency rises ~linearly with
+/// index because each slice is published ~one flashblock interval later.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FlashblocksLatencyByIndex {
+    /// Flashblock index (0-based position within its block).
+    pub flashblock_index: u64,
+    /// Latency stats for transactions that first landed in this flashblock index.
+    pub latency: FlashblocksLatencyMetrics,
 }
 
 /// Aggregated throughput metrics.

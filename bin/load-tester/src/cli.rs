@@ -367,6 +367,33 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             }
             _ => println!("Blocks: no confirmed transactions"),
         }
+
+        // Latency over every confirmed tx (observed window + tail). Unlike the
+        // per-bucket sections, this is not partitioned by block-watcher observation
+        // timing, so it reflects the full, undistorted latency distribution.
+        let abl = &summary.block_latency;
+        println!(
+            "All Confirmed Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+            abl.min, abl.p50, abl.mean, abl.p99, abl.max
+        );
+        let afb = &summary.flashblocks_latency;
+        println!(
+            "All Confirmed FB Latency:    min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
+            afb.min, afb.p50, afb.mean, afb.p99, afb.max, afb.count
+        );
+
+        // Per-flashblock-index breakdown: shows latency rising with slice position,
+        // the structural cause of high FB latency under load (txs spill into later slices).
+        if !summary.flashblocks_latency_by_index.is_empty() {
+            println!("FB Latency by flashblock index:");
+            for entry in &summary.flashblocks_latency_by_index {
+                let l = &entry.latency;
+                println!(
+                    "  index {:>2}: p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
+                    entry.flashblock_index, l.p50, l.mean, l.p99, l.max, l.count
+                );
+            }
+        }
         if !summary.top_failure_reasons.is_empty() {
             println!("Top failures:");
             for (reason, count) in &summary.top_failure_reasons {

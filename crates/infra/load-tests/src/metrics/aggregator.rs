@@ -1,11 +1,11 @@
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    ObservedWindowMetrics, SubmissionStats, TailMetrics, ThroughputMetrics, ThroughputPercentiles,
-    ThroughputSample, TransactionMetrics, types::BLOCK_INTERVAL,
+    BlockRange, ConfigSummary, FlashblocksLatencyByIndex, FlashblocksLatencyMetrics, GasMetrics,
+    LatencyMetrics, ObservedWindowMetrics, SubmissionStats, TailMetrics, ThroughputMetrics,
+    ThroughputPercentiles, ThroughputSample, TransactionMetrics, types::BLOCK_INTERVAL,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -72,6 +72,9 @@ impl<'a> MetricsAggregator<'a> {
             block_latency: Self::compute_block_latency(self.transactions),
             block_receipt_delay: Self::compute_block_receipt_delay(self.transactions),
             flashblocks_latency: Self::compute_flashblocks_latency(self.transactions),
+            flashblocks_latency_by_index: Self::compute_flashblocks_latency_by_index(
+                self.transactions,
+            ),
             throughput: Self::compute_throughput(
                 self.transactions,
                 throughput_duration,
@@ -264,6 +267,26 @@ impl<'a> MetricsAggregator<'a> {
         }
     }
 
+    fn compute_flashblocks_latency_by_index(
+        transactions: &[TransactionMetrics],
+    ) -> Vec<FlashblocksLatencyByIndex> {
+        let mut by_index: BTreeMap<u64, Vec<&TransactionMetrics>> = BTreeMap::new();
+        for t in transactions {
+            if let Some(index) = t.flashblock_index
+                && t.flashblocks_latency.is_some()
+            {
+                by_index.entry(index).or_default().push(t);
+            }
+        }
+        by_index
+            .into_iter()
+            .map(|(flashblock_index, txs)| FlashblocksLatencyByIndex {
+                flashblock_index,
+                latency: Self::compute_flashblocks_latency(txs),
+            })
+            .collect()
+    }
+
     fn compute_throughput(
         transactions: &[TransactionMetrics],
         duration: Duration,
@@ -380,6 +403,9 @@ pub struct MetricsSummary {
     pub block_receipt_delay: LatencyMetrics,
     /// Flashblocks sequencer latency (full run, baseline accounting).
     pub flashblocks_latency: FlashblocksLatencyMetrics,
+    /// Flashblock latency broken down by flashblock index (slice position), full run.
+    /// Shows how latency scales as txs spill into later flashblock slices under load.
+    pub flashblocks_latency_by_index: Vec<FlashblocksLatencyByIndex>,
     /// Throughput statistics (full run, baseline accounting).
     pub throughput: ThroughputMetrics,
     /// Rolling-window throughput percentiles (TPS and GPS).
