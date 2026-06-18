@@ -11,15 +11,19 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
+axum = { workspace = true, features = ["tokio", "http1", "json"] }
 bytes.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 base-bundles.workspace = true
+base-observability-events.workspace = true
 metrics = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
+chrono = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["server", "macros", "http-client"] }
 uuid = { workspace = true, features = ["v5", "serde"] }
 serde = { workspace = true, features = ["std", "derive"] }
@@ -29,6 +33,8 @@ alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 moka = { workspace = true, features = ["sync"] }
 jsonrpsee-types.workspace = true
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
+tower-http.workspace = true
 
 [dev-dependencies]
 base-bundles = { workspace = true, features = ["test-utils"] }
