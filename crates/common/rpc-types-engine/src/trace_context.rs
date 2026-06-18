@@ -1,4 +1,4 @@
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 
 use crate::ExecutionData;
 
@@ -64,6 +64,8 @@ impl TraceContextHeaders {
             }
 
             fn keys(&self) -> Vec<&str> {
+                use alloc::vec::Vec;
+
                 let mut keys = Vec::with_capacity(2);
                 if self.0.traceparent.is_some() {
                     keys.push("traceparent");

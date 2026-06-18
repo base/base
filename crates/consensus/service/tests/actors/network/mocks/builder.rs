@@ -14,6 +14,7 @@ use base_consensus_peers::BootNode;
 use base_consensus_sources::BlockSigner;
 use discv5::{ConfigBuilder, Enr, ListenConfig};
 use libp2p::{Multiaddr, identity::Keypair, multiaddr::Protocol};
+use opentelemetry::Context;
 use rand::RngCore;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -122,6 +123,7 @@ impl NetworkEngineClient for ForwardingNetworkEngineClient {
     async fn send_unsafe_block(
         &self,
         block: BaseExecutionPayloadEnvelope,
+        _otel_cx: Context,
     ) -> EngineClientResult<()> {
         let _ = self
             .blocks_tx

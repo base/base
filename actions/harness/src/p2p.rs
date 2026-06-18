@@ -12,8 +12,9 @@ use async_trait::async_trait;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope, PayloadHash,
 };
-use base_consensus_gossip::P2pRpcRequest;
+use base_consensus_gossip::{P2pRpcRequest, ReceivedUnsafePayload};
 use base_consensus_node::GossipTransport;
+use opentelemetry::Context;
 use tokio::sync::mpsc;
 
 /// Handle for injecting blocks into a [`TestGossipTransport`].
@@ -190,11 +191,11 @@ impl GossipTransport for TestGossipTransport {
         Ok(())
     }
 
-    async fn next_unsafe_block(&mut self) -> Option<NetworkPayloadEnvelope> {
+    async fn next_unsafe_block(&mut self) -> Option<ReceivedUnsafePayload> {
         loop {
             let envelope = self.rx.recv().await?;
             if self.signature_valid(&envelope) {
-                return Some(envelope);
+                return Some(ReceivedUnsafePayload::new(envelope, Context::current()));
             }
         }
     }
