@@ -1,7 +1,11 @@
 use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_eips::Encodable2718;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, TxHash};
+use base_observability_events::{
+    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
+};
+use chrono::Utc;
 use jsonrpsee::{
     core::{
         ClientError,
@@ -11,6 +15,7 @@ use jsonrpsee::{
     http_client::HttpClient,
 };
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use serde_json::{Map, json};
 use tokio::{sync::broadcast, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
@@ -90,6 +95,7 @@ pub struct Forwarder<T: PoolTransaction> {
     cancel: CancellationToken,
     limiter: RateLimiter,
     buffer: Vec<ValidatedTransaction>,
+    tx_hash_buffer: Vec<TxHash>,
 }
 
 impl<T> Forwarder<T>
@@ -108,8 +114,19 @@ where
         let limiter = RateLimiter::new(config.max_rps);
         let initial_capacity = if config.max_batch_size == 0 { 256 } else { config.max_batch_size };
         let buffer = Vec::with_capacity(initial_capacity);
+        let tx_hash_buffer = Vec::with_capacity(initial_capacity);
         let url_label: Arc<str> = builder_url.to_string().into();
-        Self { builder_url, url_label, client, receiver, config, cancel, limiter, buffer }
+        Self {
+            builder_url,
+            url_label,
+            client,
+            receiver,
+            config,
+            cancel,
+            limiter,
+            buffer,
+            tx_hash_buffer,
+        }
     }
 
     /// Runs the forwarder loop until cancelled.
@@ -172,6 +189,7 @@ where
         match result {
             Ok(tx) => {
                 let sender = *tx.sender_ref();
+                let tx_hash = *tx.transaction.hash();
                 let consensus = tx.transaction.clone_into_consensus();
                 let raw = Bytes::from(consensus.inner().encoded_2718());
                 let target_block_number = tx.transaction.target_block_number();
@@ -184,6 +202,7 @@ where
                     min_timestamp,
                     max_timestamp,
                 });
+                self.tx_hash_buffer.push(tx_hash);
                 ForwarderMetrics::buffer_size(Arc::clone(&self.url_label))
                     .set(self.buffer.len() as f64);
                 false
@@ -222,6 +241,7 @@ where
             self.buffer.len().min(self.config.max_batch_size)
         };
         let batch: Vec<ValidatedTransaction> = self.buffer.drain(..batch_size).collect();
+        let tx_hashes: Vec<TxHash> = self.tx_hash_buffer.drain(..batch_size).collect();
         ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
 
         if batch.is_empty() {
@@ -235,14 +255,24 @@ where
             "flushing batch",
         );
 
-        self.send_with_retries(batch).await;
+        self.send_with_retries(batch, tx_hashes).await;
         self.limiter.record_send();
     }
 
-    async fn send_with_retries(&self, batch: Vec<ValidatedTransaction>) {
+    async fn send_with_retries(&self, batch: Vec<ValidatedTransaction>, tx_hashes: Vec<TxHash>) {
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
+            for tx_hash in &tx_hashes {
+                self.emit_forward_event(
+                    TransactionEventType::TxpoolBuilderForwardAttempt,
+                    Some(*tx_hash),
+                    Map::from_iter([
+                        ("attempt".to_string(), json!(attempt)),
+                        ("batch_size".to_string(), json!(tx_count)),
+                    ]),
+                );
+            }
             let result = self.send_batch(&batch).await;
 
             match result {
@@ -253,9 +283,20 @@ where
 
                     let mut ok_count = 0u64;
                     let mut err_count = 0u64;
-                    for res in response {
+                    for (idx, res) in response.into_iter().enumerate() {
+                        let tx_hash = tx_hashes.get(idx).copied();
                         match res {
-                            Ok(()) => ok_count += 1,
+                            Ok(()) => {
+                                ok_count += 1;
+                                self.emit_forward_event(
+                                    TransactionEventType::TxpoolBuilderForwardSuccess,
+                                    tx_hash,
+                                    Map::from_iter([
+                                        ("attempt".to_string(), json!(attempt)),
+                                        ("batch_size".to_string(), json!(tx_count)),
+                                    ]),
+                                );
+                            }
                             Err(e) => {
                                 debug!(
                                     builder_url = %self.builder_url,
@@ -263,6 +304,15 @@ where
                                     "batch item rejected",
                                 );
                                 err_count += 1;
+                                self.emit_forward_event(
+                                    TransactionEventType::TxpoolBuilderForwardFailure,
+                                    tx_hash,
+                                    Map::from_iter([
+                                        ("attempt".to_string(), json!(attempt)),
+                                        ("batch_size".to_string(), json!(tx_count)),
+                                        ("error".to_string(), json!(e.to_string())),
+                                    ]),
+                                );
                             }
                         }
                     }
@@ -293,6 +343,19 @@ where
                 Err(err) => {
                     ForwarderMetrics::rpc_latency(Arc::clone(&self.url_label))
                         .record(overall_start.elapsed().as_secs_f64());
+                    for tx_hash in &tx_hashes {
+                        self.emit_forward_event(
+                            TransactionEventType::TxpoolBuilderForwardDropped,
+                            Some(*tx_hash),
+                            Map::from_iter([
+                                ("drop_reason".to_string(), json!("rpc_failure")),
+                                ("attempt".to_string(), json!(attempt)),
+                                ("batch_size".to_string(), json!(tx_count)),
+                                ("retryable".to_string(), json!(Self::is_retryable(&err))),
+                                ("error".to_string(), json!(err.to_string())),
+                            ]),
+                        );
+                    }
                     error!(
                         builder_url = %self.builder_url,
                         error = %err,
@@ -327,6 +390,47 @@ where
             err,
             ClientError::Transport(_) | ClientError::RequestTimeout | ClientError::RestartNeeded(_)
         )
+    }
+
+    fn emit_forward_event(
+        &self,
+        event_type: TransactionEventType,
+        tx_hash: Option<TxHash>,
+        mut data: Map<String, serde_json::Value>,
+    ) {
+        let Some(writer) = self.config.transaction_event_writer.as_ref() else {
+            return;
+        };
+
+        data.entry("target".to_string()).or_insert_with(|| json!("builder_forwarder"));
+        data.entry("rpc_method".to_string())
+            .or_insert_with(|| json!("base_insertValidatedTransaction"));
+
+        let event_time = Utc::now();
+        let mut event_id = EventIdBuilder::new()
+            .part("producer", TransactionEventProducer::BaseRethNode)
+            .part("event_type", event_type)
+            .part("builder_url", self.url_label.as_ref())
+            .part("event_time", event_time.timestamp_nanos_opt().unwrap_or_default());
+        if let Some(tx_hash) = tx_hash {
+            event_id = event_id.part("tx_hash", tx_hash);
+        }
+
+        let mut event = TransactionEvent::new(
+            event_id.finish(),
+            event_time,
+            TransactionEventProducer::BaseRethNode,
+            event_type,
+        )
+        .with_network(writer.network())
+        .with_data(data);
+        if let Some(tx_hash) = tx_hash {
+            event = event.with_tx_hash(tx_hash);
+        }
+
+        if let Err(err) = writer.try_write(&event) {
+            debug!(error = %err, event_type = %event_type, "transaction event not written");
+        }
     }
 }
 

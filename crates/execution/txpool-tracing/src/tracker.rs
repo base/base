@@ -6,15 +6,20 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::TxHash;
+use alloy_primitives::{B256, TxHash};
 use base_flashblocks::PendingBlocks;
-use chrono::Local;
+use base_observability_events::{
+    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
+    TransactionEventWriter,
+};
+use chrono::{Local, Utc};
 use lru::LruCache;
 use reth_node_api::{BlockBody, NodePrimitives};
-use reth_primitives_traits::transaction::TxHashRef;
+use reth_primitives_traits::{AlloyBlockHeader, transaction::TxHashRef};
 use reth_provider::{CanonStateNotification, Chain};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
+use serde_json::{Map, Value, json};
 
 use crate::{EventLog, NonceSlot, NonceSummary, Pool, TxEvent, metrics::Metrics};
 
@@ -31,6 +36,10 @@ pub struct Tracker {
     nonce_summaries: LruCache<NonceSlot, NonceSummary>,
     /// Enable `info` logs for transaction tracing.
     enable_logs: bool,
+    /// Optional durable transaction event journal writer.
+    event_writer: Option<TransactionEventWriter>,
+    /// Optional node role label included in journal event data.
+    node_role: Option<String>,
 }
 
 impl Tracker {
@@ -41,9 +50,20 @@ impl Tracker {
     const SLOW_BLOCK_INCLUSION_THRESHOLD: Duration = Duration::from_secs(3);
     /// Flashblock inclusion duration above this threshold increments the slow counter.
     const SLOW_FLASHBLOCK_INCLUSION_THRESHOLD: Duration = Duration::from_millis(1000);
+    /// Producer-local event source label.
+    const EVENT_SOURCE: &'static str = "txpool-tracing";
 
     /// Create a new tracker.
     pub fn new(enable_logs: bool) -> Self {
+        Self::new_with_event_writer(enable_logs, None, None)
+    }
+
+    /// Create a new tracker with an optional durable transaction event journal writer.
+    pub fn new_with_event_writer(
+        enable_logs: bool,
+        event_writer: Option<TransactionEventWriter>,
+        node_role: Option<String>,
+    ) -> Self {
         let cache_size = NonZeroUsize::new(Self::MAX_SIZE).expect("non zero");
         Self {
             txs: LruCache::new(cache_size),
@@ -51,6 +71,8 @@ impl Tracker {
             tx_nonce_slots: LruCache::new(cache_size),
             nonce_summaries: LruCache::new(cache_size),
             enable_logs,
+            event_writer,
+            node_role,
         }
     }
 
@@ -115,11 +137,14 @@ impl Tracker {
 
     fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>, received_at: Instant) {
         for block in chain.blocks().values() {
+            let block_hash = block.hash();
+            let block_number = block.number();
             for transaction in block.body().transactions() {
-                self.transaction_completed(
+                self.transaction_completed_with_context(
                     *transaction.tx_hash(),
                     TxEvent::BlockInclusion,
                     received_at,
+                    Some(BlockInclusion { block_hash, block_number }),
                 );
             }
         }
@@ -151,9 +176,32 @@ impl Tracker {
             && let Some((tx_hash, event_log)) = self.txs.peek_lru()
         {
             self.log(tx_hash, event_log, "Transaction inserted");
+            self.emit_transaction_event(
+                *tx_hash,
+                TxEvent::Overflowed,
+                event_log.events.len(),
+                TxpoolEventData {
+                    overflow_reason: Some("tracker_lru_eviction"),
+                    time_in_mempool: Some(event_log.mempool_time.elapsed()),
+                    ..Default::default()
+                },
+            );
         }
 
         self.txs.put(tx_hash, EventLog::new(Local::now(), event));
+        self.emit_transaction_event(
+            tx_hash,
+            event,
+            0,
+            TxpoolEventData {
+                pool: match event {
+                    TxEvent::Pending => Some(Pool::Pending),
+                    TxEvent::Queued => Some(Pool::Queued),
+                    _ => None,
+                },
+                ..Default::default()
+            },
+        );
     }
 
     /// Track a transaction moving from one pool to another.
@@ -186,8 +234,19 @@ impl Tracker {
                 }
 
                 event_log.push(Local::now(), event);
+                let event_index = event_log.events.len() - 1;
                 self.txs.put(tx_hash, event_log);
 
+                self.emit_transaction_event(
+                    tx_hash,
+                    event,
+                    event_index,
+                    TxpoolEventData {
+                        pool: Some(pool.clone()),
+                        time_in_mempool: Some(time_in_mempool),
+                        ..Default::default()
+                    },
+                );
                 Self::record_histogram(time_in_mempool, event);
             }
         }
@@ -199,6 +258,17 @@ impl Tracker {
 
     /// Track a transaction being included in a block or dropped.
     pub fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent, received_at: Instant) {
+        self.transaction_completed_with_context(tx_hash, event, received_at, None);
+    }
+
+    /// Track a transaction being included in a block or dropped with optional block context.
+    fn transaction_completed_with_context(
+        &mut self,
+        tx_hash: TxHash,
+        event: TxEvent,
+        received_at: Instant,
+        inclusion: Option<BlockInclusion>,
+    ) {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = received_at.duration_since(mempool_time);
@@ -210,10 +280,15 @@ impl Tracker {
             // but do update the event log with the final event (i.e., included/dropped).
             event_log.push(Local::now(), event);
 
+            let time_pending_to_inclusion = if event == TxEvent::BlockInclusion {
+                event_log.pending_time.map(|pending_time| received_at.duration_since(pending_time))
+            } else {
+                None
+            };
+
             if event == TxEvent::BlockInclusion
-                && let Some(pending_time) = event_log.pending_time
+                && let Some(time_pending_to_inclusion) = time_pending_to_inclusion
             {
-                let time_pending_to_inclusion = received_at.duration_since(pending_time);
                 Metrics::inclusion_duration().record(time_pending_to_inclusion.as_millis() as f64);
 
                 if time_pending_to_inclusion > Self::SLOW_BLOCK_INCLUSION_THRESHOLD {
@@ -225,6 +300,17 @@ impl Tracker {
 
             self.nonce_completed(&tx_hash, &event, received_at);
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
+            self.emit_transaction_event(
+                tx_hash,
+                event,
+                event_log.events.len() - 1,
+                TxpoolEventData {
+                    time_in_mempool: Some(time_in_mempool),
+                    time_pending_to_inclusion,
+                    inclusion,
+                    ..Default::default()
+                },
+            );
             Self::record_histogram(time_in_mempool, event);
         }
     }
@@ -236,6 +322,8 @@ impl Tracker {
     /// recorded once per transaction, even when [`PendingBlocks`] contains
     /// transactions from earlier flashblocks that have already been measured.
     pub fn transaction_fb_included(&mut self, tx_hash: TxHash, received_at: Instant) {
+        let mut event_to_emit = None;
+
         // Only track if we have seen this transaction before and it hasn't
         // already been recorded as included in a flashblock.
         if let Some(event_log) = self.txs.get_mut(&tx_hash) {
@@ -260,9 +348,26 @@ impl Tracker {
                     duration_ms = time_pending_to_fb_inclusion.as_millis(),
                     "Transaction included in flashblock"
                 );
+                event_to_emit = Some((
+                    event_log.events.len(),
+                    TxpoolEventData {
+                        time_pending_to_flashblock_inclusion: Some(time_pending_to_fb_inclusion),
+                        inclusion_signal: Some("flashblock_pending_block"),
+                        ..Default::default()
+                    },
+                ));
             }
 
             event_log.fb_included = true;
+        }
+
+        if let Some((event_index, event_data)) = event_to_emit {
+            self.emit_transaction_event(
+                tx_hash,
+                TxEvent::FlashblockInclusion,
+                event_index,
+                event_data,
+            );
         }
     }
 
@@ -277,6 +382,7 @@ impl Tracker {
                 return;
             }
             event_log.push(Local::now(), TxEvent::Replaced);
+            let event_index = event_log.events.len() - 1;
             // Reset pending_time so the replacement tx measures its own
             // inclusion duration rather than inheriting from the original.
             event_log.pending_time = Some(Instant::now());
@@ -284,6 +390,16 @@ impl Tracker {
             self.tx_nonce_slots.pop(&tx_hash);
             self.txs.put(replaced_by, event_log);
 
+            self.emit_transaction_event(
+                tx_hash,
+                TxEvent::Replaced,
+                event_index,
+                TxpoolEventData {
+                    replacement_hash: Some(replaced_by),
+                    time_in_mempool: Some(time_in_mempool),
+                    ..Default::default()
+                },
+            );
             Self::record_histogram(time_in_mempool, TxEvent::Replaced);
         }
     }
@@ -336,6 +452,15 @@ impl Tracker {
         }
 
         self.log(tx_hash, event_log, "Transaction removed from cache due to limit");
+        self.emit_transaction_event(
+            *tx_hash,
+            TxEvent::Overflowed,
+            event_log.events.len(),
+            TxpoolEventData {
+                time_in_mempool: Some(event_log.mempool_time.elapsed()),
+                ..Default::default()
+            },
+        );
         Self::record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
         true
     }
@@ -345,6 +470,128 @@ impl Tracker {
         metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event.to_string())
             .record(time_in_mempool.as_millis() as f64);
     }
+
+    fn emit_transaction_event(
+        &self,
+        tx_hash: TxHash,
+        txpool_event: TxEvent,
+        event_index: usize,
+        event_data: TxpoolEventData,
+    ) {
+        let Some(writer) = &self.event_writer else {
+            return;
+        };
+
+        let event_type = transaction_event_type(txpool_event);
+        let mut data = Map::from_iter([
+            ("event_source".to_string(), json!(Self::EVENT_SOURCE)),
+            ("txpool_event".to_string(), json!(txpool_event.to_string())),
+            ("event_index".to_string(), json!(event_index)),
+        ]);
+
+        if let Some(node_role) = &self.node_role {
+            data.insert("node_role".to_string(), json!(node_role));
+        }
+        if let Some(pool) = event_data.pool {
+            data.insert("pool".to_string(), json!(pool.as_str()));
+        }
+        if let Some(replacement_hash) = event_data.replacement_hash {
+            data.insert("replacement_hash".to_string(), json!(format!("{replacement_hash:#x}")));
+        }
+        if let Some(duration) = event_data.time_in_mempool {
+            data.insert("time_in_mempool_ms".to_string(), duration_ms_json(duration));
+        }
+        if let Some(duration) = event_data.time_pending_to_inclusion {
+            data.insert("time_pending_to_inclusion_ms".to_string(), duration_ms_json(duration));
+        }
+        if let Some(duration) = event_data.time_pending_to_flashblock_inclusion {
+            data.insert(
+                "time_pending_to_flashblock_inclusion_ms".to_string(),
+                duration_ms_json(duration),
+            );
+        }
+        if let Some(inclusion_signal) = event_data.inclusion_signal {
+            data.insert("inclusion_signal".to_string(), json!(inclusion_signal));
+        }
+        if let Some(overflow_reason) = event_data.overflow_reason {
+            data.insert("overflow_reason".to_string(), json!(overflow_reason));
+        }
+        if let Some(inclusion) = event_data.inclusion {
+            data.insert("block_hash".to_string(), json!(format!("{:#x}", inclusion.block_hash)));
+            data.insert("block_number".to_string(), json!(inclusion.block_number));
+        }
+
+        let event_id = EventIdBuilder::new()
+            .part("producer", TransactionEventProducer::BaseRethNode)
+            .part("event_type", event_type)
+            .part("tx_hash", tx_hash)
+            .part("event_index", event_index)
+            .finish();
+
+        let mut event = TransactionEvent::new(
+            event_id,
+            Utc::now(),
+            TransactionEventProducer::BaseRethNode,
+            event_type,
+        )
+        .with_network(writer.network())
+        .with_tx_hash(tx_hash)
+        .with_data(data);
+
+        if let Some(inclusion) = event_data.inclusion {
+            event.block_hash = Some(inclusion.block_hash);
+            event.block_number = Some(inclusion.block_number);
+        }
+
+        if let Err(err) = writer.try_write(&event) {
+            debug!(target: "tracex", error = %err, tx_hash = ?tx_hash, event = %txpool_event, "Failed to enqueue transaction event journal entry");
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BlockInclusion {
+    block_hash: B256,
+    block_number: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TxpoolEventData {
+    pool: Option<Pool>,
+    replacement_hash: Option<TxHash>,
+    time_in_mempool: Option<Duration>,
+    time_pending_to_inclusion: Option<Duration>,
+    time_pending_to_flashblock_inclusion: Option<Duration>,
+    inclusion: Option<BlockInclusion>,
+    inclusion_signal: Option<&'static str>,
+    overflow_reason: Option<&'static str>,
+}
+
+impl Pool {
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Queued => "queued",
+        }
+    }
+}
+
+fn transaction_event_type(event: TxEvent) -> TransactionEventType {
+    match event {
+        TxEvent::Pending => TransactionEventType::Pending,
+        TxEvent::Queued => TransactionEventType::Queued,
+        TxEvent::Dropped => TransactionEventType::Dropped,
+        TxEvent::Replaced => TransactionEventType::Replaced,
+        TxEvent::BlockInclusion => TransactionEventType::Included,
+        TxEvent::FlashblockInclusion => TransactionEventType::FlashblockIncluded,
+        TxEvent::PendingToQueued => TransactionEventType::PendingToQueued,
+        TxEvent::QueuedToPending => TransactionEventType::QueuedToPending,
+        TxEvent::Overflowed => TransactionEventType::Overflowed,
+    }
+}
+
+fn duration_ms_json(duration: Duration) -> Value {
+    json!(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
 }
 
 #[cfg(test)]
@@ -354,10 +601,30 @@ mod tests {
     use alloy_primitives::Address;
     use base_flashblocks::FlashblocksAPI;
     use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
+    use base_observability_events::{
+        DEFAULT_QUEUE_CAPACITY, TransactionEventProducer, TransactionEventWriterConfig,
+    };
     use base_test_utils::Account;
+    use serde_json::Value;
     use tokio::time;
 
     use super::*;
+
+    fn writer_config(
+        enabled: bool,
+        file_path: std::path::PathBuf,
+        network: &str,
+    ) -> TransactionEventWriterConfig {
+        TransactionEventWriterConfig {
+            enabled,
+            file_path,
+            queue_capacity: DEFAULT_QUEUE_CAPACITY,
+            flush_interval: Duration::from_millis(10),
+            required: true,
+            producer: TransactionEventProducer::BaseRethNode,
+            network: network.to_string(),
+        }
+    }
 
     #[test]
     fn test_transaction_inserted_pending() {
@@ -373,6 +640,72 @@ mod tests {
         assert_eq!(event_log.events[0].1, TxEvent::Pending);
         // Pending transactions should have pending_time set
         assert!(event_log.pending_time.is_some());
+    }
+
+    #[test]
+    fn maps_txpool_events_to_shared_transaction_event_types() {
+        assert_eq!(transaction_event_type(TxEvent::Pending), TransactionEventType::Pending);
+        assert_eq!(transaction_event_type(TxEvent::Queued), TransactionEventType::Queued);
+        assert_eq!(transaction_event_type(TxEvent::Dropped), TransactionEventType::Dropped);
+        assert_eq!(transaction_event_type(TxEvent::Replaced), TransactionEventType::Replaced);
+        assert_eq!(transaction_event_type(TxEvent::BlockInclusion), TransactionEventType::Included);
+        assert_eq!(
+            transaction_event_type(TxEvent::FlashblockInclusion),
+            TransactionEventType::FlashblockIncluded
+        );
+        assert_eq!(
+            transaction_event_type(TxEvent::PendingToQueued),
+            TransactionEventType::PendingToQueued
+        );
+        assert_eq!(
+            transaction_event_type(TxEvent::QueuedToPending),
+            TransactionEventType::QueuedToPending
+        );
+        assert_eq!(transaction_event_type(TxEvent::Overflowed), TransactionEventType::Overflowed);
+    }
+
+    #[tokio::test]
+    async fn transaction_event_journal_disabled_does_not_create_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transaction-events.jsonl");
+        let writer =
+            TransactionEventWriter::disabled(writer_config(false, path.clone(), "base-mainnet"));
+        let mut tracker =
+            Tracker::new_with_event_writer(false, Some(writer), Some("mempool".into()));
+
+        tracker.transaction_inserted(TxHash::random(), TxEvent::Pending);
+        time::sleep(Duration::from_millis(20)).await;
+
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn transaction_event_journal_enabled_writes_pending_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transaction-events.jsonl");
+        let writer =
+            TransactionEventWriter::from_config(writer_config(true, path.clone(), "base-mainnet"))
+                .await
+                .unwrap();
+        let mut tracker =
+            Tracker::new_with_event_writer(false, Some(writer.clone()), Some("mempool".into()));
+        let tx_hash = TxHash::repeat_byte(0x42);
+
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        time::sleep(Duration::from_millis(50)).await;
+
+        let contents = std::fs::read_to_string(path).unwrap();
+        let line = contents.lines().next().expect("journal should contain one event");
+        let value: Value = serde_json::from_str(line).unwrap();
+
+        assert_eq!(value["schema_version"], "transaction-event/v1");
+        assert_eq!(value["producer"], "base-reth-node");
+        assert_eq!(value["event_type"], "TXPOOL_PENDING");
+        assert_eq!(value["network"], "base-mainnet");
+        assert_eq!(value["tx_hash"], format!("{tx_hash:#x}"));
+        assert_eq!(value["data"]["event_source"], Tracker::EVENT_SOURCE);
+        assert_eq!(value["data"]["node_role"], "mempool");
+        assert_eq!(value["data"]["pool"], "pending");
     }
 
     #[test]

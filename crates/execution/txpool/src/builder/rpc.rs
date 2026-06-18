@@ -2,13 +2,20 @@ use std::time::Instant;
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
+use alloy_primitives::TxHash;
 use base_common_consensus::BaseTransactionSigned;
+use base_observability_events::{
+    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
+    TransactionEventWriter,
+};
+use chrono::Utc;
 use jsonrpsee::{
     core::RpcResult,
     proc_macros::rpc,
     types::{ErrorCode, ErrorObjectOwned},
 };
 use reth_transaction_pool::TransactionPool;
+use serde_json::{Map, json};
 use tracing::debug;
 
 use super::metrics::Metrics as BuilderApiMetrics;
@@ -36,12 +43,21 @@ pub trait BuilderApi {
 #[derive(Debug)]
 pub struct BuilderApiImpl<P> {
     pool: P,
+    transaction_event_writer: Option<TransactionEventWriter>,
 }
 
 impl<P> BuilderApiImpl<P> {
     /// Creates a new handler backed by the given transaction pool.
     pub const fn new(pool: P) -> Self {
-        Self { pool }
+        Self { pool, transaction_event_writer: None }
+    }
+
+    /// Creates a new handler with a durable transaction event writer.
+    pub fn new_with_transaction_event_writer(
+        pool: P,
+        transaction_event_writer: Option<TransactionEventWriter>,
+    ) -> Self {
+        Self { pool, transaction_event_writer }
     }
 }
 
@@ -67,6 +83,7 @@ where
                     None::<()>,
                 )
             })?;
+        let tx_hash = *consensus_tx.hash();
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
@@ -83,11 +100,25 @@ where
 
         match result {
             Ok(_) => {
+                self.emit_validated_insert_event(
+                    TransactionEventType::TxpoolValidatedInsertAccepted,
+                    Some(tx_hash),
+                    Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
+                );
                 debug!(sender = %sender, "inserted validated transaction");
                 BuilderApiMetrics::txs_inserted().increment(1);
                 Ok(())
             }
             Err(e) => {
+                self.emit_validated_insert_event(
+                    TransactionEventType::TxpoolValidatedInsertRejected,
+                    Some(tx_hash),
+                    Map::from_iter([
+                        ("rejection_stage".to_string(), json!("pool_insert")),
+                        ("encoded_len".to_string(), json!(encoded_len)),
+                        ("error".to_string(), json!(e.to_string())),
+                    ]),
+                );
                 debug!(sender = %sender, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
                 Err(ErrorObjectOwned::owned(
@@ -96,6 +127,47 @@ where
                     None::<()>,
                 ))
             }
+        }
+    }
+}
+
+impl<P> BuilderApiImpl<P> {
+    fn emit_validated_insert_event(
+        &self,
+        event_type: TransactionEventType,
+        tx_hash: Option<TxHash>,
+        mut data: Map<String, serde_json::Value>,
+    ) {
+        let Some(writer) = self.transaction_event_writer.as_ref() else {
+            return;
+        };
+
+        data.entry("rpc_method".to_string())
+            .or_insert_with(|| json!("base_insertValidatedTransaction"));
+
+        let event_time = Utc::now();
+        let mut event_id = EventIdBuilder::new()
+            .part("producer", TransactionEventProducer::BaseBuilder)
+            .part("event_type", event_type)
+            .part("event_time", event_time.timestamp_nanos_opt().unwrap_or_default());
+        if let Some(tx_hash) = tx_hash {
+            event_id = event_id.part("tx_hash", tx_hash);
+        }
+
+        let mut event = TransactionEvent::new(
+            event_id.finish(),
+            event_time,
+            TransactionEventProducer::BaseBuilder,
+            event_type,
+        )
+        .with_network(writer.network())
+        .with_data(data);
+        if let Some(tx_hash) = tx_hash {
+            event = event.with_tx_hash(tx_hash);
+        }
+
+        if let Err(err) = writer.try_write(&event) {
+            debug!(error = %err, event_type = %event_type, "transaction event not written");
         }
     }
 }

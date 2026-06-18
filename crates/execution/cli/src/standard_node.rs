@@ -1,6 +1,6 @@
 //! Standard Base execution-node arguments and runner wiring.
 
-use std::{sync::Arc, time::Duration};
+use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
@@ -9,6 +9,10 @@ use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
+use base_observability_events::{
+    DEFAULT_FLUSH_INTERVAL, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
+    TransactionEventWriterConfig,
+};
 use base_proofs_extension::ProofsHistoryExtension;
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
@@ -176,6 +180,21 @@ pub struct RpcStandardNodeArgs {
         value_name = "ENABLE_TRANSACTION_TRACING_LOGS"
     )]
     pub enable_transaction_tracing_logs: bool,
+
+    /// Enable durable transaction event journal emission from txpool tracing.
+    #[arg(
+        long = "enable-transaction-event-journal",
+        value_name = "ENABLE_TRANSACTION_EVENT_JOURNAL"
+    )]
+    pub enable_transaction_event_journal: bool,
+
+    /// Dedicated JSONL path for durable transaction event journal emission.
+    #[arg(
+        long = "transaction-event-journal-path",
+        value_name = "TRANSACTION_EVENT_JOURNAL_PATH",
+        requires = "enable_transaction_event_journal"
+    )]
+    pub transaction_event_journal_path: Option<PathBuf>,
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
@@ -345,8 +364,11 @@ impl StandardBaseRethNode {
             sequencer_rpc: args.rpc.rollup_args.sequencer.clone(),
         });
         runner.install_ext::<TxPoolExtension>(TxpoolConfig {
-            tracing_enabled: args.rpc.enable_transaction_tracing,
+            tracing_enabled: args.rpc.enable_transaction_tracing
+                || args.rpc.enable_transaction_event_journal,
             tracing_logs_enabled: args.rpc.enable_transaction_tracing_logs,
+            transaction_event_writer_config: transaction_event_writer_config(&args.rpc)?,
+            transaction_event_node_role: transaction_event_node_role(),
             flashblocks_config: flashblocks_config.clone(),
         });
 
@@ -380,7 +402,10 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
-        runner.install_ext::<TxForwardingExtension>((&args).into());
+        runner.install_ext::<TxForwardingExtension>((
+            (&args).into(),
+            transaction_event_writer_config(&args.rpc)?,
+        ));
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         let eip8130_rpc_mode = if flashblocks_config.is_some() {
@@ -440,14 +465,76 @@ impl StandardBaseRethNode {
     }
 }
 
+fn transaction_event_writer_config(
+    args: &RpcStandardNodeArgs,
+) -> eyre::Result<Option<TransactionEventWriterConfig>> {
+    if !args.enable_transaction_event_journal && !transaction_event_journal_env_enabled() {
+        return Ok(None);
+    }
+
+    let file_path = args
+        .transaction_event_journal_path
+        .clone()
+        .or_else(|| env::var_os("BASE_TRANSACTION_EVENTS_PATH").map(PathBuf::from))
+        .or_else(|| env::var_os("TRANSACTION_EVENTS_PATH").map(PathBuf::from))
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "--enable-transaction-event-journal requires --transaction-event-journal-path \
+                 or BASE_TRANSACTION_EVENTS_PATH/TRANSACTION_EVENTS_PATH"
+            )
+        })?;
+
+    Ok(Some(TransactionEventWriterConfig {
+        enabled: true,
+        file_path,
+        queue_capacity: DEFAULT_QUEUE_CAPACITY,
+        flush_interval: DEFAULT_FLUSH_INTERVAL,
+        required: false,
+        producer: TransactionEventProducer::BaseRethNode,
+        network: transaction_event_network(),
+    }))
+}
+
+fn transaction_event_journal_env_enabled() -> bool {
+    env::var("BASE_TRANSACTION_EVENTS_ENABLED")
+        .or_else(|_| env::var("TRANSACTION_EVENTS_ENABLED"))
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "True" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn transaction_event_network() -> String {
+    env::var("BASE_TRANSACTION_EVENTS_NETWORK")
+        .or_else(|_| env::var("BASE_NODE_NETWORK"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn transaction_event_node_role() -> Option<String> {
+    env::var("BASE_TRANSACTION_EVENTS_NODE_ROLE")
+        .ok()
+        .or_else(|| parse_otel_resource_attribute("base.node"))
+}
+
+fn parse_otel_resource_attribute(key: &str) -> Option<String> {
+    env::var("OTEL_RESOURCE_ATTRIBUTES").ok().and_then(|attrs| {
+        attrs.split(',').find_map(|part| {
+            let (attr_key, attr_value) = part.split_once('=')?;
+            (attr_key.trim() == key)
+                .then(|| attr_value.trim().to_string())
+                .filter(|v| !v.is_empty())
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::sync::Mutex;
 
     use alloy_primitives::address;
     use clap::{Args, Parser};
 
     use super::*;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[derive(Debug, Parser)]
     struct CommandParser<T: Args> {
@@ -464,6 +551,8 @@ mod tests {
             flashblocks_ping_interval: Duration::from_secs(30),
             enable_transaction_tracing: false,
             enable_transaction_tracing_logs: false,
+            enable_transaction_event_journal: false,
+            transaction_event_journal_path: None,
         }
     }
 
@@ -537,6 +626,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_transaction_event_journal_flags() {
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-transaction-event-journal",
+            "--transaction-event-journal-path",
+            "/var/log/transaction-events/execution/events.jsonl",
+        ])
+        .args;
+
+        assert!(args.enable_transaction_event_journal);
+        assert_eq!(
+            args.transaction_event_journal_path.as_deref(),
+            Some(std::path::Path::new("/var/log/transaction-events/execution/events.jsonl"))
+        );
+    }
+
+    #[test]
     fn test_rpc_forwarding_endpoint_keeps_tx_forwarding_extension_disabled() {
         let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
             "reth",
@@ -588,5 +694,50 @@ mod tests {
 
         assert!(args.metering.enable_metering);
         assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
+    }
+
+    #[test]
+    fn transaction_event_journal_requires_path_when_no_env_path_exists() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            env::remove_var("BASE_TRANSACTION_EVENTS_ENABLED");
+            env::remove_var("TRANSACTION_EVENTS_ENABLED");
+            env::remove_var("BASE_TRANSACTION_EVENTS_PATH");
+            env::remove_var("TRANSACTION_EVENTS_PATH");
+        }
+
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-transaction-event-journal",
+            "--transaction-event-journal-path",
+            "/tmp/events.jsonl",
+        ])
+        .args;
+
+        let config = transaction_event_writer_config(&args).unwrap().unwrap();
+        assert_eq!(config.file_path, PathBuf::from("/tmp/events.jsonl"));
+        assert_eq!(config.producer, TransactionEventProducer::BaseRethNode);
+    }
+
+    #[test]
+    fn transaction_event_journal_can_be_enabled_by_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            env::set_var("BASE_TRANSACTION_EVENTS_ENABLED", "true");
+            env::set_var("BASE_TRANSACTION_EVENTS_PATH", "/tmp/env-events.jsonl");
+            env::set_var("BASE_TRANSACTION_EVENTS_NETWORK", "base-devnet");
+        }
+
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from(["base-reth"]).args;
+        let config = transaction_event_writer_config(&args).unwrap().unwrap();
+
+        assert_eq!(config.file_path, PathBuf::from("/tmp/env-events.jsonl"));
+        assert_eq!(config.network, "base-devnet");
+
+        unsafe {
+            env::remove_var("BASE_TRANSACTION_EVENTS_ENABLED");
+            env::remove_var("BASE_TRANSACTION_EVENTS_PATH");
+            env::remove_var("BASE_TRANSACTION_EVENTS_NETWORK");
+        }
     }
 }

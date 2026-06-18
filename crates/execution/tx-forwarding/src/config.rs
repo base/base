@@ -5,6 +5,7 @@ use std::time::Duration;
 use base_execution_txpool::{
     ConsumerConfig as TxpoolConsumerConfig, ForwarderConfig as TxpoolForwarderConfig,
 };
+use base_observability_events::TransactionEventWriter;
 use url::Url;
 
 /// Default resend-after window in milliseconds (~2 blocks on Base).
@@ -26,6 +27,8 @@ pub struct TxForwardingConfig {
     pub max_batch_size: usize,
     /// Maximum RPC requests per second per forwarder (0 = unlimited).
     pub max_rps: u32,
+    /// Optional durable transaction event journal writer.
+    pub transaction_event_writer: Option<TransactionEventWriter>,
 }
 
 impl Default for TxForwardingConfig {
@@ -37,6 +40,7 @@ impl Default for TxForwardingConfig {
             resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_rps: DEFAULT_MAX_RPS,
+            transaction_event_writer: None,
         }
     }
 }
@@ -70,6 +74,12 @@ impl TxForwardingConfig {
         self
     }
 
+    /// Sets the transaction event writer.
+    pub fn with_transaction_event_writer(mut self, writer: Option<TransactionEventWriter>) -> Self {
+        self.transaction_event_writer = writer;
+        self
+    }
+
     /// Converts to the consumer config used by `base-txpool`.
     pub fn to_consumer_config(&self) -> TxpoolConsumerConfig {
         TxpoolConsumerConfig::default()
@@ -82,5 +92,6 @@ impl TxForwardingConfig {
             .with_builder_urls(self.builder_urls.clone())
             .with_max_batch_size(self.max_batch_size)
             .with_max_rps(self.max_rps)
+            .with_transaction_event_writer(self.transaction_event_writer.clone())
     }
 }
