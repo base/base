@@ -50,6 +50,10 @@ smoke:
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 
+# Sends an ingress transaction and verifies transaction events reached audit-archiver Postgres
+tx-observability-smoke:
+    ./etc/scripts/devnet/transaction-events-smoke.sh
+
 # Stream FB's from the builder via websocket
 flashblocks:
     @command -v flashblocks-websocket-client >/dev/null 2>&1 || go install github.com/danyalprout/flashblocks-websocket-client@latest
@@ -86,16 +90,16 @@ conductor:
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
 ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
-    docker compose {{ _env }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml up -d --no-build
+    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml up -d --no-build
 
 # Stops devnet+ingress and deletes all data
 ingress-down:
-    -docker compose {{ _env }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml down
+    -docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml down
     -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Stream logs from devnet+ingress containers (optionally specify container names)
 ingress-logs *containers:
-    docker compose {{ _env }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml logs -f {{ containers }}
+    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml logs -f {{ containers }}
 
 # Builds one of the shared Rust service images (default: base)
 build-image target='base' profile='dev':
@@ -160,7 +164,7 @@ _build-rust-images group profile='dev':
     case "{{ profile }}" in
       dev|profiling)
         case "{{ group }}" in
-          devnet) elf_require=0 ;;
+          devnet|ingress) elf_require=0 ;;
         esac
         ;;
     esac

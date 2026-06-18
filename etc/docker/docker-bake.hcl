@@ -22,6 +22,14 @@ variable "PLATFORM_PAIR" {
   default = "linux-amd64"
 }
 
+variable "DEVNET_TARGETS" {
+  default = ["base", "batcher", "prover-service", "zk-host"]
+}
+
+variable "INGRESS_EXTRA_TARGETS" {
+  default = ["ingress-rpc", "audit-archiver"]
+}
+
 group "default" {
   targets = ["base"]
 }
@@ -46,16 +54,11 @@ group "rust-services" {
 }
 
 group "devnet" {
-  targets = ["base", "batcher", "prover-service", "zk-host"]
+  targets = DEVNET_TARGETS
 }
 
 group "ingress" {
-  targets = [
-    "base",
-    "ingress-rpc",
-    "audit-archiver",
-    "batcher",
-  ]
+  targets = concat(DEVNET_TARGETS, INGRESS_EXTRA_TARGETS)
 }
 
 target "_rust-service-common" {

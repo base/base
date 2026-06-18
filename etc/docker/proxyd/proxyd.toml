@@ -87,3 +87,12 @@ base_meterBundle = "client"
 base_meterBlockByHash = "client"
 base_meterBlockByNumber = "client"
 base_meteredPriorityFeePerGas = "client"
+
+[transaction_events]
+enabled = false
+file_path = "$TRANSACTION_EVENTS_PATH"
+queue_capacity = 10000
+flush_interval = "1s"
+required = false
+producer = "base-routing/proxyd"
+network = "base-devnet"
