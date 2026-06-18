@@ -357,11 +357,16 @@ async fn get_block_compat<EngineClient_: EngineClient>(
     }
 }
 
-/// Returns `true` for reth's custom "pruned history unavailable" error (code 4444), which base/base
-/// raises when a block-by-number request targets a block whose body has been pruned. Upstream reth
-/// instead returns the block with an empty body (surfaced as
-/// [`FromBlockError::MissingL1InfoDeposit`]), so this hard RPC error must be routed into the same
-/// pruned-recovery paths — otherwise the snapshot's stale finalized/safe labels crash-loop the node.
+/// The JSON-RPC error code base/base reth returns for a block-by-number request whose target block
+/// has a pruned body ("pruned history unavailable"). Upstream reth instead returns the block with an
+/// empty body (surfaced as [`FromBlockError::MissingL1InfoDeposit`]); this hard RPC error must be
+/// routed into the same pruned-recovery paths, otherwise the snapshot's stale finalized/safe labels
+/// crash-loop the node.
+const PRUNED_HISTORY_ERROR_CODE: i64 = 4444;
+
+/// Returns `true` for the [`PRUNED_HISTORY_ERROR_CODE`] response. Matched by JSON-RPC code (not
+/// message text) to mirror the existing `INVALID_FORK_CHOICE_STATE_ERROR` handling in the engine
+/// task queue and to survive any rewording of the human-readable message.
 fn is_pruned_history_error(e: &RpcError<TransportErrorKind>) -> bool {
-    e.to_string().contains("pruned history unavailable")
+    e.as_error_resp().is_some_and(|resp| resp.code == PRUNED_HISTORY_ERROR_CODE)
 }
