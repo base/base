@@ -14,6 +14,8 @@ pub const DEFAULT_QUEUE_CAPACITY: usize = 16_384;
 /// Default background flush interval.
 pub const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
+const MAX_DATA_VALIDATION_DEPTH: usize = 16;
+
 /// Producer identity for a transaction event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TransactionEventProducer {
@@ -310,8 +312,13 @@ impl TransactionEvent {
         if self.event_id.trim().is_empty() {
             return Err(TransactionEventValidationError::MissingEventId);
         }
-        if let Some(key) = find_forbidden_data_key(&self.data) {
-            return Err(TransactionEventValidationError::ForbiddenDataKey(key));
+        if let Some(reason) = find_forbidden_data_key(&self.data, 0) {
+            return Err(match reason {
+                ForbiddenDataReason::Key(key) => {
+                    TransactionEventValidationError::ForbiddenDataKey(key)
+                }
+                ForbiddenDataReason::TooDeep => TransactionEventValidationError::DataTooDeep,
+            });
         }
         Ok(())
     }
@@ -360,63 +367,77 @@ impl TransactionEvent {
 }
 
 /// Validation error for transaction event envelopes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TransactionEventValidationError {
     /// `schema_version` did not match [`SCHEMA_VERSION`].
+    #[error("invalid transaction event schema_version {0}")]
     InvalidSchemaVersion(String),
     /// `event_id` was empty.
+    #[error("transaction event event_id is required")]
     MissingEventId,
     /// `data` contained a key reserved for unsafe payloads or secrets.
+    #[error("transaction event data contains forbidden key {0}")]
     ForbiddenDataKey(String),
+    /// `data` nesting exceeded the validation depth limit.
+    #[error("transaction event data exceeds maximum validation depth")]
+    DataTooDeep,
 }
 
-impl fmt::Display for TransactionEventValidationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidSchemaVersion(version) => {
-                write!(f, "invalid transaction event schema_version {version}")
-            }
-            Self::MissingEventId => f.write_str("transaction event event_id is required"),
-            Self::ForbiddenDataKey(key) => {
-                write!(f, "transaction event data contains forbidden key {key}")
-            }
-        }
+enum ForbiddenDataReason {
+    Key(String),
+    TooDeep,
+}
+
+fn find_forbidden_data_key(data: &Map<String, Value>, depth: usize) -> Option<ForbiddenDataReason> {
+    if depth > MAX_DATA_VALIDATION_DEPTH {
+        return Some(ForbiddenDataReason::TooDeep);
     }
-}
-
-impl std::error::Error for TransactionEventValidationError {}
-
-fn find_forbidden_data_key(data: &Map<String, Value>) -> Option<String> {
     for (key, value) in data {
         if is_forbidden_data_key(key) {
-            return Some(key.clone());
+            return Some(ForbiddenDataReason::Key(key.clone()));
         }
-        if let Value::Object(child) = value
-            && let Some(key) = find_forbidden_data_key(child)
-        {
-            return Some(key);
+        if let Some(reason) = find_forbidden_data_value(value, depth + 1) {
+            return Some(reason);
         }
     }
     None
 }
 
+fn find_forbidden_data_value(value: &Value, depth: usize) -> Option<ForbiddenDataReason> {
+    if depth > MAX_DATA_VALIDATION_DEPTH {
+        return Some(ForbiddenDataReason::TooDeep);
+    }
+    match value {
+        Value::Object(child) => find_forbidden_data_key(child, depth),
+        Value::Array(items) => {
+            for item in items {
+                if let Some(reason) = find_forbidden_data_value(item, depth + 1) {
+                    return Some(reason);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 fn is_forbidden_data_key(key: &str) -> bool {
-    matches!(
-        key.to_ascii_lowercase().as_str(),
-        "raw_transaction"
-            | "raw_tx"
-            | "raw_transaction_bytes"
-            | "raw_tx_bytes"
-            | "calldata"
-            | "request_body"
-            | "body"
-            | "authorization"
-            | "api_key"
-            | "api_keys"
-            | "secret"
-            | "secrets"
-            | "x-forwarded-for"
-            | "forwarded_headers"
-            | "headers"
-    )
+    const FORBIDDEN: &[&str] = &[
+        "raw_transaction",
+        "raw_tx",
+        "raw_transaction_bytes",
+        "raw_tx_bytes",
+        "calldata",
+        "request_body",
+        "body",
+        "authorization",
+        "api_key",
+        "api_keys",
+        "secret",
+        "secrets",
+        "x-forwarded-for",
+        "forwarded_headers",
+        "headers",
+    ];
+    FORBIDDEN.iter().any(|forbidden| key.eq_ignore_ascii_case(forbidden))
 }

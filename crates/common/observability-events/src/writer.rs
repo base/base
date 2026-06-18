@@ -1,5 +1,4 @@
 use std::{
-    fmt,
     path::PathBuf,
     sync::{
         Arc,
@@ -68,10 +67,17 @@ pub struct TransactionEventWriter {
 
 #[derive(Debug)]
 struct WriterInner {
-    tx: Option<mpsc::Sender<Vec<u8>>>,
+    tx: Option<mpsc::Sender<QueuedEvent>>,
     queued: Arc<AtomicUsize>,
-    _task: Option<Arc<JoinHandle<()>>>,
+    _task: Option<JoinHandle<()>>,
     config: TransactionEventWriterConfig,
+}
+
+#[derive(Debug)]
+struct QueuedEvent {
+    event_id: String,
+    tx_hash: Option<String>,
+    line: Vec<u8>,
 }
 
 impl TransactionEventWriter {
@@ -127,12 +133,7 @@ impl TransactionEventWriter {
         });
 
         Ok(Self {
-            inner: Arc::new(WriterInner {
-                tx: Some(tx),
-                queued,
-                _task: Some(Arc::new(task)),
-                config,
-            }),
+            inner: Arc::new(WriterInner { tx: Some(tx), queued, _task: Some(task), config }),
         })
     }
 
@@ -181,7 +182,13 @@ impl TransactionEventWriter {
         })?;
         line.push(b'\n');
 
-        match tx.try_send(line) {
+        let queued_event = QueuedEvent {
+            event_id: event.event_id.clone(),
+            tx_hash: event.tx_hash.map(|tx_hash| format!("{tx_hash:#x}")),
+            line,
+        };
+
+        match tx.try_send(queued_event) {
             Ok(()) => {
                 let depth = self.inner.queued.fetch_add(1, Ordering::Relaxed) + 1;
                 Metrics::emitted_events().increment(1);
@@ -211,37 +218,34 @@ impl TransactionEventWriter {
 }
 
 /// Error returned when an event cannot be queued.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum WriteEventError {
     /// Writer is disabled.
+    #[error("transaction event writer is disabled")]
     Disabled,
     /// Bounded queue is full.
+    #[error("transaction event writer queue is full")]
     Backpressure,
     /// Background writer task has stopped.
+    #[error("transaction event writer task is closed")]
     Closed,
     /// Serialization failed.
+    #[error("failed to serialize transaction event: {0}")]
     Serialize(serde_json::Error),
     /// Event failed contract validation.
+    #[error("invalid transaction event: {0}")]
     Invalid(TransactionEventValidationError),
 }
 
-impl fmt::Display for WriteEventError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Disabled => f.write_str("transaction event writer is disabled"),
-            Self::Backpressure => f.write_str("transaction event writer queue is full"),
-            Self::Closed => f.write_str("transaction event writer task is closed"),
-            Self::Serialize(err) => write!(f, "failed to serialize transaction event: {err}"),
-            Self::Invalid(err) => write!(f, "invalid transaction event: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for WriteEventError {}
-
+/// Drains queued events to the JSONL file.
+///
+/// Runtime write and flush failures are observable through metrics and logs but
+/// do not block or fail transaction-serving paths. A write failure permanently
+/// drops the affected queued event; callers that require startup-time fail
+/// closed behavior should configure [`TransactionEventWriterConfig::required`].
 async fn run_writer<W>(
     mut writer: BufWriter<W>,
-    mut rx: mpsc::Receiver<Vec<u8>>,
+    mut rx: mpsc::Receiver<QueuedEvent>,
     queued: Arc<AtomicUsize>,
     flush_interval: Duration,
 ) where
@@ -252,8 +256,8 @@ async fn run_writer<W>(
 
     loop {
         tokio::select! {
-            maybe_line = rx.recv() => {
-                let Some(line) = maybe_line else {
+            maybe_event = rx.recv() => {
+                let Some(event) = maybe_event else {
                     if let Err(err) = writer.flush().await {
                         Metrics::write_errors("flush").increment(1);
                         error!(error = %err, "failed to flush transaction event journal on shutdown");
@@ -265,12 +269,17 @@ async fn run_writer<W>(
                 let depth = decrement_queued(&queued);
                 Metrics::queue_depth().set(depth as f64);
 
-                let bytes = line.len();
-                match writer.write_all(&line).await {
+                let bytes = event.line.len();
+                match writer.write_all(&event.line).await {
                     Ok(()) => Metrics::bytes_written().increment(bytes as u64),
                     Err(err) => {
                         Metrics::write_errors("write").increment(1);
-                        error!(error = %err, "failed to write transaction event journal entry");
+                        error!(
+                            error = %err,
+                            event_id = %event.event_id,
+                            tx_hash = ?event.tx_hash,
+                            "failed to write transaction event journal entry; queued event dropped"
+                        );
                     }
                 }
             }
@@ -396,6 +405,37 @@ mod tests {
             event.validate(),
             Err(TransactionEventValidationError::ForbiddenDataKey(key)) if key == "authorization"
         ));
+    }
+
+    #[test]
+    fn validation_rejects_forbidden_data_keys_inside_arrays() {
+        let mut event = sample_event();
+        event.data = Map::from_iter([(
+            "responses".to_string(),
+            json!([
+                {
+                    "Authorization": "redacted-but-still-not-allowed"
+                }
+            ]),
+        )]);
+
+        assert!(matches!(
+            event.validate(),
+            Err(TransactionEventValidationError::ForbiddenDataKey(key)) if key == "Authorization"
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_excessive_data_depth() {
+        let mut value = json!("leaf");
+        for _ in 0..=16 {
+            value = json!({ "nested": value });
+        }
+
+        let mut event = sample_event();
+        event.data = Map::from_iter([("nested".to_string(), value)]);
+
+        assert!(matches!(event.validate(), Err(TransactionEventValidationError::DataTooDeep)));
     }
 
     #[test]
@@ -571,8 +611,20 @@ mod tests {
             Duration::from_millis(10),
         ));
 
-        tx.send(Vec::from(&b"{}\n"[..])).await.unwrap();
-        tx.send(Vec::from(&b"{}\n"[..])).await.unwrap();
+        tx.send(QueuedEvent {
+            event_id: "event-1".to_string(),
+            tx_hash: None,
+            line: Vec::from(&b"{}\n"[..]),
+        })
+        .await
+        .unwrap();
+        tx.send(QueuedEvent {
+            event_id: "event-2".to_string(),
+            tx_hash: None,
+            line: Vec::from(&b"{}\n"[..]),
+        })
+        .await
+        .unwrap();
         drop(tx);
 
         task.await.unwrap();
