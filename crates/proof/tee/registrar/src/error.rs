@@ -25,39 +25,21 @@ pub enum RegistrarError {
 
     /// ZK proof generation failed.
     #[error("proof generation failed")]
-    ProofGeneration(#[source] Box<dyn std::error::Error + Send + Sync>),
+    ProofGeneration(#[from] ProverError),
 
-    /// On-chain registry operation failed.
-    #[error("registry error")]
-    Registry(#[source] Box<dyn std::error::Error + Send + Sync>),
-
-    /// An onchain registry contract call failed.
-    #[error("registry call failed: {context}")]
-    RegistryCall {
-        /// Description of the call that failed (e.g. `"isValidSigner(0x1234…)"`).
+    /// An onchain contract call failed.
+    #[error("contract call failed: {context}")]
+    ContractCall {
+        /// Description of the call that failed (e.g. `"registry.isValidSigner(0x1234…)"`).
         context: String,
         /// The underlying contract call error.
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-
-    /// An onchain `NitroEnclaveVerifier` contract call failed.
-    #[error("nitro verifier call failed: {context}")]
-    NitroVerifierCall {
-        /// Description of the call that failed (e.g. `"revokedCerts(0x…)"`).
-        context: String,
-        /// The underlying contract call error.
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-
-    /// Transaction signing or submission failed.
-    #[error("signing error")]
-    Signing(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// Transaction submission or confirmation failed (RPC, nonce, fee, timeout).
     #[error("transaction error")]
-    Transaction(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Transaction(#[from] TxManagerError),
 
     /// Configuration is invalid.
     #[error("config error: {0}")]
@@ -72,17 +54,5 @@ pub enum RegistrarError {
     Crl(#[from] crate::crl::CrlError),
 }
 
-impl From<ProverError> for RegistrarError {
-    fn from(e: ProverError) -> Self {
-        Self::ProofGeneration(Box::new(e))
-    }
-}
-
-impl From<TxManagerError> for RegistrarError {
-    fn from(e: TxManagerError) -> Self {
-        Self::Transaction(Box::new(e))
-    }
-}
-
 /// Convenience result alias for registrar operations.
-pub type Result<T, E = RegistrarError> = std::result::Result<T, E>;
+pub type Result<T> = std::result::Result<T, RegistrarError>;

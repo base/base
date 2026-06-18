@@ -233,9 +233,13 @@ where
                 "registration transaction reverted onchain",
             );
             self.proof_provider.block_recovery_for_signer(signer_address);
-            return Err(RegistrarError::Transaction(
-                format!("registration transaction {} reverted", receipt.transaction_hash).into(),
-            ));
+            return Err(RegistrarError::Transaction(TxManagerError::ExecutionReverted {
+                reason: Some(format!(
+                    "registration transaction {} reverted",
+                    receipt.transaction_hash
+                )),
+                data: None,
+            }));
         }
 
         info!(

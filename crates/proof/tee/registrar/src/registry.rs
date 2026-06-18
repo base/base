@@ -42,9 +42,9 @@ impl RegistryContractClient {
     }
 }
 
-/// Converts a [`ContractError`] into a [`RegistrarError::RegistryCall`].
+/// Converts a [`ContractError`] into a [`RegistrarError::ContractCall`].
 fn map_contract_error(e: ContractError) -> RegistrarError {
-    RegistrarError::RegistryCall { context: e.to_string(), source: Box::new(e) }
+    RegistrarError::ContractCall { context: e.to_string(), source: Box::new(e) }
 }
 
 #[async_trait]
