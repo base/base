@@ -19,6 +19,10 @@ TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 WORKDIR=/contracts
 HASH_FILE="${HASH_FILE:-$OUTPUT_DIR/multiproof-config-hash}"
 DEPLOY_OUTFILE="$OUTPUT_DIR/${L1_CHAIN_ID}-deploy.json"
+# foundry.toml only grants fs_permissions write access to paths under /contracts
+# (./deployments/). DEPLOYMENT_OUTFILE must therefore live there, not on the shared volume;
+# we stage the shared copy in and copy the result back out (mirrors setup-l2.sh).
+LOCAL_DEPLOY_OUTFILE="$WORKDIR/deployments/${L1_CHAIN_ID}-deploy.json"
 
 : "${DEPLOYER_ADDR:?DEPLOYER_ADDR is required}"
 : "${DEPLOYER_KEY:?DEPLOYER_KEY is required}"
@@ -60,13 +64,17 @@ MULTIPROOF_CONFIG_HASH="$MULTIPROOF_CONFIG_HASH_COMPUTED" \
 
 echo ""
 echo "--- Calling registerAggregateVerifier ---"
+# Stage the shared deploy outfile into the foundry-writable /contracts/deployments dir so
+# Artifacts.load reloads the existing addresses, then registerAggregateVerifier appends the new
+# AggregateVerifier entry. forge writes back to LOCAL_DEPLOY_OUTFILE (a permitted path); we copy
+# the updated file back to the shared volume afterwards.
+mkdir -p "$WORKDIR/deployments"
+cp "$DEPLOY_OUTFILE" "$LOCAL_DEPLOY_OUTFILE"
 (
   cd "$WORKDIR"
-  # DEPLOYMENT_OUTFILE points Artifacts at the shared copy: registerAggregateVerifier reloads
-  # the existing addresses from it and appends the new AggregateVerifier entry back to it.
   FOUNDRY_SCRIPT_EXECUTION_PROTECTION=false \
     DEPLOY_CONFIG_PATH="$WORKDIR/deploy-config/devnet.json" \
-    DEPLOYMENT_OUTFILE="$DEPLOY_OUTFILE" \
+    DEPLOYMENT_OUTFILE="$LOCAL_DEPLOY_OUTFILE" \
     forge script scripts/deploy/SystemDeploy.s.sol:SystemDeploy \
     --sig "registerAggregateVerifier(bytes32)" "$MULTIPROOF_CONFIG_HASH_COMPUTED" \
     --sender "$DEPLOYER_ADDR" \
@@ -75,6 +83,9 @@ echo "--- Calling registerAggregateVerifier ---"
     --broadcast \
     --slow
 )
+# Persist the updated deploy outfile (now carrying the AggregateVerifier address) back to the
+# shared volume for downstream consumers (smoke.sh, the l1-addresses.json refresh below).
+cp "$LOCAL_DEPLOY_OUTFILE" "$DEPLOY_OUTFILE"
 
 # Refresh l1-addresses.json so downstream consumers (and smoke.sh) see the AggregateVerifier
 # address now that it has been registered.
