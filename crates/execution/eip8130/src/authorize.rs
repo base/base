@@ -52,9 +52,8 @@ impl ActorAuthorizer {
         data: &[u8],
         now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
-        // The single secp256k1 path: the implicit default EOA and every explicit
-        // k1 actor share `K1_AUTHENTICATOR`. `address(0)` is the empty sentinel,
-        // never a selector, and is rejected by dispatch as non-canonical.
+        // secp256k1 signers — the implicit default EOA and every explicit k1
+        // actor — authenticate through `K1_AUTHENTICATOR`.
         if authenticator == Eip8130Constants::K1_AUTHENTICATOR {
             let recovered = match AuthenticatorDispatch::authenticate(hash, authenticator, data)? {
                 DispatchOutcome::Authenticated { actor_id } => actor_id,
