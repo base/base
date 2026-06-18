@@ -843,6 +843,111 @@ services:
           - base-rpc-cl
     restart: unless-stopped
 
+  # nitro-local: in-process TEE prover (base-prover-nitro-host `local` subcommand) serving the
+  # prover_prove JSON-RPC on :8000. L3 (base-l1) only. Runs the enclave in-process and signs with
+  # BASE_ENCLAVE_SIGNER_KEY — which must equal DEV_TEE_SIGNER_KEY (the key behind DEV_TEE_SIGNER
+  # registered on-chain during SystemDeploy); otherwise proofs are signed by a random key and fail
+  # on-chain verification. FETCH_ROLLUP_CONFIG + L2_CL_URL make it derive the rollup config (and
+  # thus the config hash) from the live op-node, so the ephemeral L2 chain id works without a
+  # built-in config. L1_BEACON_URL is intentionally unset so the entrypoint selects calldata-only.
+  nitro-local:
+    image: nitro-host-local:local
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.nitro-host-local
+    container_name: nitro-local
+    profiles: ["base-l1"]
+    depends_on:
+      base-rpc:
+        condition: service_healthy
+    environment:
+      - LISTEN_ADDR=0.0.0.0:8000
+      - L1_ETH_URL=http://l1-el:${L1_HTTP_PORT}
+      - L2_ETH_URL=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
+      - FETCH_ROLLUP_CONFIG=true
+      - L2_CL_URL=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
+      - BASE_ENCLAVE_SIGNER_KEY=${DEV_TEE_SIGNER_KEY}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8000"]
+      interval: 5s
+      timeout: 2s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  # base-proposer: sole game creator for L3 dev multiproof. Talks directly to nitro-local over
+  # JSON-RPC (--direct-prover-rpc), creates AggregateVerifier games (type 621), and submits the
+  # TEE-signed output root. It does NOT resolve games — the challenger does. setup-dispute-service.sh
+  # sources the DisputeGameFactory + AnchorStateRegistry addresses from l1-addresses.json (only
+  # known post-deploy) and exports them before exec'ing the binary. L3 (base-l1) only.
+  base-proposer:
+    image: base-proposer:local
+    build:
+      <<: *rust-service-build
+      target: proposer
+    container_name: base-proposer
+    profiles: ["base-l1"]
+    depends_on:
+      base-rpc:
+        condition: service_healthy
+      nitro-local:
+        condition: service_healthy
+      register-aggregate-verifier:
+        condition: service_completed_successfully
+    volumes:
+      - ../../.devnet/l2/configs:/devnet/l2/configs:ro
+      - ../../etc/scripts/devnet/setup-dispute-service.sh:/setup-dispute-service.sh:ro
+    environment:
+      - ADDRESSES_FILE=/devnet/l2/configs/l1-addresses.json
+      - BASE_PROPOSER_L1_ETH_RPC=http://l1-el:${L1_HTTP_PORT}
+      - BASE_PROPOSER_L2_ETH_RPC=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
+      - BASE_PROPOSER_ROLLUP_RPC=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
+      - BASE_PROPOSER_PROVER_RPC=http://nitro-local:8000
+      - BASE_PROPOSER_DIRECT_PROVER_RPC=true
+      - BASE_PROPOSER_GAME_TYPE=621
+      - BASE_PROPOSER_TEE_IMAGE_HASH=${TEE_IMAGE_HASH}
+      - BASE_PROPOSER_PRIVATE_KEY=${PROPOSER_KEY}
+      - BASE_PROPOSER_ALLOW_NON_FINALIZED=true
+      - BASE_PROPOSER_POLL_INTERVAL=6s
+      - BASE_PROPOSER_NUM_CONFIRMATIONS=1
+    entrypoint: ["/bin/bash", "/setup-dispute-service.sh", "proposer"]
+    restart: unless-stopped
+
+  # base-challenger: sole resolver, running in --no-dispute mode (no proving). It drives the
+  # post-game bond/anchor lifecycle (resolve -> claimCredit -> setAnchorState) for games whose
+  # bond recipient is the proposer (BOND_CLAIM_ADDRESSES). no-dispute validation forbids the
+  # zk-/tee-rpc-url flags and requires bond-claim-addresses. setup-dispute-service.sh sources the
+  # L1 dispute addresses like the proposer. L3 (base-l1) only.
+  base-challenger:
+    image: base-challenger:local
+    build:
+      <<: *rust-service-build
+      target: challenger
+    container_name: base-challenger
+    profiles: ["base-l1"]
+    depends_on:
+      base-rpc:
+        condition: service_healthy
+      register-aggregate-verifier:
+        condition: service_completed_successfully
+      base-proposer:
+        condition: service_started
+    volumes:
+      - ../../.devnet/l2/configs:/devnet/l2/configs:ro
+      - ../../etc/scripts/devnet/setup-dispute-service.sh:/setup-dispute-service.sh:ro
+    environment:
+      - ADDRESSES_FILE=/devnet/l2/configs/l1-addresses.json
+      - BASE_CHALLENGER_L1_ETH_RPC=http://l1-el:${L1_HTTP_PORT}
+      - BASE_CHALLENGER_L2_ETH_RPC=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
+      - BASE_CHALLENGER_NO_DISPUTE=true
+      - BASE_CHALLENGER_BOND_CLAIM_ADDRESSES=${PROPOSER_ADDR}
+      - BASE_CHALLENGER_PRIVATE_KEY=${CHALLENGER_KEY}
+      - BASE_CHALLENGER_POLL_INTERVAL=6s
+      - BASE_CHALLENGER_NUM_CONFIRMATIONS=1
+    entrypoint: ["/bin/bash", "/setup-dispute-service.sh", "challenger"]
+    restart: unless-stopped
+
   zk-prover-postgres:
     image: postgres:17-alpine
     container_name: zk-prover-postgres
