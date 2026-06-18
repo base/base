@@ -91,7 +91,7 @@ async fn put_generate(State(store): State<DynStore>, body: Bytes) -> Result<Resp
     // Commitment is random; on store failure the batcher must retry POST /put (new commitment).
     let key = generate_generic_commitment();
     store.put(&key, &body).await?;
-    Ok((StatusCode::OK, key).into_response())
+    Ok((StatusCode::OK, key.to_vec()).into_response())
 }
 
 struct ApiError(Error);

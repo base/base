@@ -14,10 +14,17 @@ use base_protocol::BLOB_MAX_DATA_SIZE;
 pub const MAX_OBJECT_BYTES: usize = 8 * BLOB_MAX_DATA_SIZE;
 
 mod commitment;
-pub use commitment::{decode_hex_commitment, generate_generic_commitment, object_key, object_name};
+pub use commitment::{
+    GENERIC_COMMITMENT_LEN, GENERIC_COMMITMENT_SENTINEL, GENERIC_COMMITMENT_TYPE,
+    GenericCommitment, decode_hex_commitment, encode_commitment_tx_data,
+    generate_generic_commitment, object_key, object_name, validate_generic_commitment,
+};
+
+mod client;
+pub use client::Client;
 
 mod error;
-pub use error::{ConfigError, Error, InternalError, StoreError};
+pub use error::{ClientError, CommitmentError, ConfigError, Error, InternalError, StoreError};
 
 mod server;
 pub use server::{Config, Server};
