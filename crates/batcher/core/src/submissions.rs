@@ -197,8 +197,9 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                 });
             self.in_flight.push(fut);
 
-            if let Some(body) = alt_da_body {
-                if let Some(alt_da) = self.alt_da.clone() {
+            if let Some(body) = alt_da_body
+                && let Some(alt_da) = self.alt_da.clone()
+            {
                     let shadow_ids = shadow_ids.expect("shadow ids when alt-da body present");
                     let alt_da_semaphore = self
                         .alt_da_semaphore
@@ -278,7 +279,6 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                         BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_SKIPPED)
                             .increment(1);
                     }
-                }
             }
         }
     }

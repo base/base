@@ -663,6 +663,7 @@ impl BatcherService {
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout: self.config.resubmission_timeout * 2,
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
+                alt_da: None,
             },
             DaThrottle::new(throttle, throttle_client),
             l1_head_source,
