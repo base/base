@@ -248,7 +248,7 @@ hardforks: HardForkConfig {
 
 ### 8. Verify the upgrade consistency tests
 
-**File:** [`crates/common/chains/tests/hardfork_consistency.rs`](https://github.com/base/base/blob/main/crates/common/chains/tests/hardfork_consistency.rs)
+**File:** [`crates/common/chains/tests/hardfork_consistency.rs`](../../crates/common/chains/tests/hardfork_consistency.rs)
 
 These tests assert that `BaseChainConfig::mainnet().upgrade_activation(fork)` matches `BaseChainUpgrades::mainnet().upgrade_activation(fork)` for every `BaseUpgrade` variant. They should pass without changes as long as both sides consistently return `ForkCondition::Never` for an unscheduled upgrade or the same timestamp once scheduled.
 
