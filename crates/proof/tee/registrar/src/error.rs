@@ -1,3 +1,4 @@
+use alloy_primitives::B256;
 use base_proof_tee_nitro_attestation_prover::ProverError;
 use base_tx_manager::TxManagerError;
 use thiserror::Error;
@@ -40,6 +41,13 @@ pub enum RegistrarError {
     /// Transaction submission or confirmation failed (RPC, nonce, fee, timeout).
     #[error("transaction error")]
     Transaction(#[from] TxManagerError),
+
+    /// Registration transaction was mined but reverted.
+    #[error("registration transaction {tx_hash} reverted")]
+    ReceiptReverted {
+        /// Hash of the reverted transaction.
+        tx_hash: B256,
+    },
 
     /// Configuration is invalid.
     #[error("config error: {0}")]

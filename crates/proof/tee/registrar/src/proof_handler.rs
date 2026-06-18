@@ -233,13 +233,7 @@ where
                 "registration transaction reverted onchain",
             );
             self.proof_provider.block_recovery_for_signer(signer_address);
-            return Err(RegistrarError::Transaction(TxManagerError::ExecutionReverted {
-                reason: Some(format!(
-                    "registration transaction {} reverted",
-                    receipt.transaction_hash
-                )),
-                data: None,
-            }));
+            return Err(RegistrarError::ReceiptReverted { tx_hash: receipt.transaction_hash });
         }
 
         info!(
@@ -577,7 +571,10 @@ mod tests {
 
         let result = handle_proof(&harness, &CancellationToken::new()).await;
 
-        assert!(result.is_err(), "reverted receipt should fail registration");
+        assert!(
+            matches!(result, Err(RegistrarError::ReceiptReverted { tx_hash }) if tx_hash == tx.receipt.transaction_hash),
+            "reverted receipt should fail with ReceiptReverted: {result:?}"
+        );
         assert_eq!(tx.send_count(), 1, "should submit exactly one tx");
         assert_eq!(harness.proof_provider.blocked_signers(), vec![TEST_SIGNER]);
     }
