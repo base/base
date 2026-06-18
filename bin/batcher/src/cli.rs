@@ -292,6 +292,7 @@ impl BatcherArgs {
             l2_ws_url: self.l2_ws_url,
             rollup_rpc_url: self.rollup_rpc_url,
             batcher_private_key: Some(self.private_key),
+            metrics_enabled: self.metrics.enabled,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,
@@ -381,6 +382,14 @@ mod tests {
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.encoder_config.batch_type, base_protocol::BatchType::Single);
+    }
+
+    #[test]
+    fn into_config_sets_metrics_enabled() {
+        let cli = parse_cli(&["--metrics.enabled"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert!(config.metrics_enabled);
     }
 
     #[test]

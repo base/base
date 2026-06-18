@@ -50,6 +50,10 @@ pub struct BatcherConfig {
     /// Must be `Some` before the batcher is started; a `None` value will cause
     /// startup to fail with a clear error rather than proceeding with a random key.
     pub batcher_private_key: Option<PrivateKeySigner>,
+    /// Whether Prometheus metrics are enabled for this service.
+    ///
+    /// When enabled, the service starts the signer account balance monitor.
+    pub metrics_enabled: bool,
     /// L2 block polling interval.
     pub poll_interval: Duration,
     /// Encoder configuration.
@@ -112,6 +116,7 @@ impl Default for BatcherConfig {
             l2_ws_url: None,
             rollup_rpc_url: vec!["http://localhost:7545".parse().expect("valid default URL")],
             batcher_private_key: None,
+            metrics_enabled: false,
             poll_interval: Duration::from_secs(1),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,

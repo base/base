@@ -2,14 +2,15 @@
 
 use std::sync::Arc;
 
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
     AdminHandle, BatchDriver, DaThrottle, NoopThrottleClient, ThrottleClient, ThrottleConfig,
     ThrottleController, ThrottleStrategy,
 };
-use base_batcher_encoder::BatchEncoder;
+use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
 use base_common_consensus::BaseBlock;
 use base_common_network::Base;
@@ -27,6 +28,8 @@ use crate::{
     RecentTxScanner, RpcL1HeadPollingSource, RpcPollingSource, RpcThrottleClient, SafeHeadPoller,
     WsBlockSubscription, WsL1HeadSubscription,
 };
+
+const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
 
 /// Service-internal throttle client variant: either a no-op or an RPC client.
 ///
@@ -394,6 +397,13 @@ impl BatcherService {
             eyre::bail!("at least one rollup RPC endpoint is required");
         }
 
+        let batcher_address = self
+            .config
+            .batcher_private_key
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("batcher_private_key must be set before starting"))?
+            .address();
+
         info!(
             l1_rpc_count = self.config.l1_rpc_url.len(),
             l2_rpc_count = self.config.l2_rpc_url.len(),
@@ -503,17 +513,29 @@ impl BatcherService {
             })
             .await?;
 
+        if self.config.metrics_enabled {
+            let (layer, mut balance_rx) = BalanceMonitorLayer::new(
+                batcher_address,
+                runtime.token().clone(),
+                BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+            );
+            let _ = layer.layer(l1_provider.clone());
+            tokio::spawn(async move {
+                while balance_rx.changed().await.is_ok() {
+                    let balance_ether = f64::from(*balance_rx.borrow_and_update()) / WEI_PER_ETHER;
+                    BatcherMetrics::balance().set(balance_ether);
+                }
+            });
+            info!(
+                address = %batcher_address,
+                "batcher balance monitor started"
+            );
+        }
+
         // Optionally scan recent L1 blocks to find the highest L2 block already
         // submitted but not yet reflected in the safe head, preventing re-submissions
-        // after an unclean restart. Peek at the batcher address from the private key
-        // (without consuming it) only when the scan is requested.
+        // after an unclean restart.
         let scanned_highest = if self.config.check_recent_txs_depth > 0 {
-            let batcher_address = self
-                .config
-                .batcher_private_key
-                .as_ref()
-                .ok_or_else(|| eyre::eyre!("batcher_private_key must be set before starting"))?
-                .address();
             RecentTxScanner::highest_submitted_l2_block(
                 &l1_provider,
                 batcher_address,
