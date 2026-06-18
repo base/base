@@ -3726,6 +3726,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-crypto"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "k256",
+ "p256",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "base-common-evm"
 version = "0.0.0"
 dependencies = [
@@ -4488,6 +4498,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base-common-consensus",
+ "base-common-crypto",
  "base-common-precompiles",
  "base-precompile-macros",
  "base-precompile-storage",

@@ -1,6 +1,7 @@
 //! Errors returned by EIP-8130 authenticator dispatch.
 
 use alloy_primitives::Address;
+use base_common_crypto::CryptoError;
 
 /// Reason an authentication blob was rejected during dispatch.
 ///
@@ -32,4 +33,18 @@ pub enum AuthError {
     /// The supplied P-256 public-key coordinates do not lie on the curve.
     #[error("invalid public key")]
     InvalidPublicKey,
+}
+
+impl From<CryptoError> for AuthError {
+    /// Maps a low-level [`CryptoError`] from [`base_common_crypto`] onto the
+    /// dispatch-level rejection, preserving the existing wire-error semantics: a
+    /// wrong-length payload is a malformed blob, everything else is an invalid
+    /// signature or public key.
+    fn from(err: CryptoError) -> Self {
+        match err {
+            CryptoError::MalformedSignature => Self::MalformedAuth,
+            CryptoError::InvalidSignature => Self::InvalidSignature,
+            CryptoError::InvalidPublicKey => Self::InvalidPublicKey,
+        }
+    }
 }

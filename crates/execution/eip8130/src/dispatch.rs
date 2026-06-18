@@ -5,10 +5,7 @@ use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_sol_types::{SolValue, sol};
 use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use p256::ecdsa::{
-    Signature as P256Signature, VerifyingKey as P256VerifyingKey,
-    signature::hazmat::PrehashVerifier,
-};
+use base_common_crypto::Secp256r1;
 use sha2::{Digest, Sha256};
 
 use crate::{AuthError, DispatchOutcome, RecoveredActorId};
@@ -131,34 +128,8 @@ impl AuthenticatorDispatch {
             return Err(AuthError::MalformedAuth);
         }
         let (r, s, x, y) = (&data[0..32], &data[32..64], &data[64..96], &data[96..128]);
-        Self::p256_verify(hash.as_slice(), r, s, x, y)?;
+        Secp256r1::verify_prehash(hash.as_slice(), r, s, x, y)?;
         Ok(keccak256([x, y].concat()))
-    }
-
-    /// Verify a P-256 signature `(r, s)` over `prehash` for public key `(x, y)`.
-    /// Enforces low-`s` to match `OpenZeppelin` `P256.verify` (malleability check).
-    fn p256_verify(
-        prehash: &[u8],
-        r: &[u8],
-        s: &[u8],
-        x: &[u8],
-        y: &[u8],
-    ) -> Result<(), AuthError> {
-        let mut sec1 = [0u8; 65];
-        sec1[0] = 0x04;
-        sec1[1..33].copy_from_slice(x);
-        sec1[33..65].copy_from_slice(y);
-        let key =
-            P256VerifyingKey::from_sec1_bytes(&sec1).map_err(|_| AuthError::InvalidPublicKey)?;
-
-        let mut rs = [0u8; 64];
-        rs[..32].copy_from_slice(r);
-        rs[32..].copy_from_slice(s);
-        let signature = P256Signature::from_slice(&rs).map_err(|_| AuthError::InvalidSignature)?;
-        if signature.normalize_s().is_some() {
-            return Err(AuthError::InvalidSignature);
-        }
-        key.verify_prehash(prehash, &signature).map_err(|_| AuthError::InvalidSignature)
     }
 
     /// `WebAuthn` authenticator. `data = abi.encode(WebAuthnAuth, x, y)`.
@@ -199,7 +170,7 @@ impl AuthenticatorDispatch {
         signed.update(client_hash);
         let signed = signed.finalize();
 
-        Self::p256_verify(
+        Secp256r1::verify_prehash(
             signed.as_slice(),
             auth.r.as_slice(),
             auth.s.as_slice(),

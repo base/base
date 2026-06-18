@@ -17,14 +17,13 @@ workspace = true
 # crypto
 sha2.workspace = true
 base64.workspace = true
-k256 = { workspace = true, features = ["ecdsa"] }
-p256 = { workspace = true, features = ["ecdsa"] }
 
 # alloy
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
 # base
+base-common-crypto.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 base-common-precompiles.workspace = true
@@ -37,6 +36,8 @@ revm.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+k256 = { workspace = true, features = ["ecdsa"] }
+p256 = { workspace = true, features = ["ecdsa"] }
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
 
 [features]
