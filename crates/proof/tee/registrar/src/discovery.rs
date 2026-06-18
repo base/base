@@ -5,8 +5,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use aws_sdk_ec2::Client as Ec2Client;
-use aws_sdk_ec2::types::Reservation;
+use aws_sdk_ec2::{Client as Ec2Client, types::Reservation};
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
 use tracing::{debug, warn};
 use url::Url;
