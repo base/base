@@ -13,7 +13,7 @@ use crate::AuthError;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AuthorizeError {
     /// The stateless authenticate (dispatch) step failed: malformed blob,
-    /// non-canonical or revoked authenticator, or an invalid signature.
+    /// non-canonical authenticator, or an invalid signature.
     #[error("authenticate failed: {0}")]
     Authenticate(#[from] AuthError),
 
@@ -55,15 +55,4 @@ pub enum AuthorizeError {
         /// The nested actor id that failed the SIGNATURE-scope check.
         actor_id: B256,
     },
-
-    /// The implicit-EOA self-actor slot is occupied by an explicit actor, so the
-    /// implicit owner is shadowed and `address(0)` cannot authenticate. Mirrors
-    /// `require(_actorConfig[self][account].authenticator == address(0))`.
-    #[error("implicit-EOA self-actor slot is occupied by an explicit actor")]
-    ImplicitEoaShadowed,
-
-    /// The implicit-EOA signature recovered an address other than the account
-    /// itself. Mirrors `require(recovered == account)`.
-    #[error("implicit-EOA signer does not match the account")]
-    ImplicitEoaMismatch,
 }

@@ -82,8 +82,8 @@ impl Eip8130Contracts {
     // ─────────────────────────────────────────────────────────────────────────
 
     // Note: secp256k1 has no contract entry. It is the protocol-reserved native
-    // ecrecover sentinel
-    // [`Eip8130Constants::ECRECOVER_AUTHENTICATOR`](super::Eip8130Constants::ECRECOVER_AUTHENTICATOR)
+    // k1 sentinel
+    // [`Eip8130Constants::K1_AUTHENTICATOR`](super::Eip8130Constants::K1_AUTHENTICATOR)
     // (`address(1)`), handled directly by the protocol, not a deployed contract.
 
     /// secp256r1 / P-256 (raw) authenticator contract.

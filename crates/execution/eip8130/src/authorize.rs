@@ -52,14 +52,20 @@ impl ActorAuthorizer {
         data: &[u8],
         now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
-        // `address(0)` is the implicit-EOA owner: it needs state (empty self-slot
-        // + recovered == account) and so is handled here, not by stateless dispatch.
-        if authenticator == Address::ZERO {
-            return Self::authenticate_implicit_eoa(storage, account, hash, data);
+        // The single secp256k1 path: the implicit default EOA and every explicit
+        // k1 actor share `K1_AUTHENTICATOR`. `address(0)` is the empty sentinel,
+        // never a selector, and is rejected by dispatch as non-canonical.
+        if authenticator == Eip8130Constants::K1_AUTHENTICATOR {
+            let recovered = match AuthenticatorDispatch::authenticate(hash, authenticator, data)? {
+                DispatchOutcome::Authenticated { actor_id } => actor_id,
+                // k1 ecrecover never produces a delegate obligation.
+                DispatchOutcome::Delegated { .. } => return Err(AuthError::InvalidSignature.into()),
+            };
+            return Self::authorize_k1(storage, account, recovered, now);
         }
 
-        // The native ecrecover sentinel, P-256, WebAuthn, and delegate all route
-        // through enshrined dispatch; REVOKED and non-canonical are rejected there.
+        // P-256, WebAuthn, and delegate route through enshrined dispatch;
+        // non-canonical authenticators are rejected there.
         match AuthenticatorDispatch::authenticate(hash, authenticator, data)? {
             DispatchOutcome::Authenticated { actor_id } => {
                 Self::resolve_bound(storage, account, actor_id, authenticator, now)
@@ -98,55 +104,42 @@ impl ActorAuthorizer {
         }
     }
 
-    /// Mirror of `_authenticateImplicitEOA`: native ecrecover, requires the
-    /// self-actor slot empty and `recovered == account`. Implicit EOAs are always
-    /// unrestricted owners with no policy.
-    fn authenticate_implicit_eoa(
-        storage: &AccountConfigurationStorage<'_>,
-        account: Address,
-        hash: B256,
-        data: &[u8],
-    ) -> Result<ResolvedActor, AuthorizeError> {
-        // The wire `address(0)` form supplies the account, so the signature must
-        // be recovered and bound to it. Reuse the enshrined (low-s) ecrecover.
-        let recovered = match AuthenticatorDispatch::authenticate(
-            hash,
-            Eip8130Constants::ECRECOVER_AUTHENTICATOR,
-            data,
-        )? {
-            DispatchOutcome::Authenticated { actor_id } => actor_id,
-            // ecrecover never produces a delegate obligation.
-            DispatchOutcome::Delegated { .. } => return Err(AuthError::InvalidSignature.into()),
-        };
-        if recovered != AccountConfigurationStorage::self_actor_id(account) {
-            return Err(AuthorizeError::ImplicitEoaMismatch);
-        }
-        Self::implicit_eoa_owner(storage, account)
-    }
-
-    /// Authorizes the implicit-EOA owner of `account` once the caller has already
-    /// established that the signer is `account` itself: the self-actor slot must
-    /// be empty (an explicit actor there *shadows* the implicit owner), and the
-    /// owner resolves as an unrestricted actor with no policy.
+    /// Mirror of `_authenticateK1` after recovery: resolve a recovered secp256k1
+    /// signer against `account`.
     ///
+    /// A **live implicit default EOA** — the recovered signer is the account
+    /// (`recovered == bytes32(bytes20(account))`) and the account's
+    /// `DEFAULT_EOA_REVOKED` flag is unset — is an unrestricted owner with no
+    /// policy, resolved from a single account-state read. Otherwise the signer
+    /// must carry an explicit k1 `actor_config` entry (a scoped or re-enabled self
+    /// key, or any other registered k1 actor), validated by [`Self::resolve_bound`].
+    ///
+    /// The "an explicit self-actor entry implies the flag is set" invariant
+    /// guarantees a live self can never have a config to shadow, so the
+    /// full-owner short-circuit is safe.
+    ///
+    /// `recovered` is the recovered signer's `actorId` (`bytes32(bytes20(addr))`).
     /// The empty-`sender` transaction path recovers the signer in the verifier
-    /// (the recovered address *is* the account), so it calls this directly rather
-    /// than re-recovering through [`Self::authenticate_implicit_eoa`].
-    pub fn implicit_eoa_owner(
+    /// (the recovered address *is* the account) and calls this directly rather
+    /// than re-recovering.
+    pub fn authorize_k1(
         storage: &AccountConfigurationStorage<'_>,
         account: Address,
+        recovered: B256,
+        now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
-        let self_id = AccountConfigurationStorage::self_actor_id(account);
-        if !storage.get_actor_config(account, self_id)?.is_empty() {
-            return Err(AuthorizeError::ImplicitEoaShadowed);
+        if recovered == AccountConfigurationStorage::self_actor_id(account)
+            && !storage.get_account_state(account)?.default_eoa_revoked()
+        {
+            return Ok(ResolvedActor::unrestricted(recovered));
         }
-        Ok(ResolvedActor::unrestricted(self_id))
+        Self::resolve_bound(storage, account, recovered, Eip8130Constants::K1_AUTHENTICATOR, now)
     }
 
     /// Loads `actor_config[actor_id][account]`, requires it to be bound to
     /// `authenticator` and not expired, and returns the authorization surface
     /// (`scope`, `policy_type`, resolved `policy_target`). Mirrors the shared tail
-    /// of `_authenticate` / `_authenticateEcrecover`.
+    /// of `_authenticate` / `_authenticateK1`.
     fn resolve_bound(
         storage: &AccountConfigurationStorage<'_>,
         account: Address,
@@ -266,7 +259,9 @@ mod tests {
     fn implicit_eoa_authorizes_unrestricted_owner() {
         let key = k1_key(0x11);
         let account = k1_address(&key);
-        let auth = blob(Address::ZERO, &k1_sig(&key, HASH));
+        // The k1 blob whose signer recovers to the account: a live default EOA
+        // (flag unset, no explicit self entry) resolves to the unrestricted owner.
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
             let resolved = ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW);
             assert_eq!(resolved.unwrap(), ResolvedActor::unrestricted(actor_id(account)));
@@ -274,48 +269,84 @@ mod tests {
     }
 
     #[test]
-    fn implicit_eoa_rejected_when_self_slot_occupied() {
+    fn default_eoa_revoked_without_self_config_is_rejected() {
         let key = k1_key(0x11);
         let account = k1_address(&key);
-        let self_id = actor_id(account);
-        let auth = blob(Address::ZERO, &k1_sig(&key, HASH));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
-            // An explicit actor registered at the self id shadows the implicit owner.
-            acc.actor_config
-                .at_mut(&self_id)
+            // DEFAULT_EOA_REVOKED set and no explicit self entry: the implicit owner
+            // is gone and the self id is unbound.
+            acc.account_state
                 .at_mut(&account)
-                .write(pack(Eip8130Constants::ECRECOVER_AUTHENTICATOR, 0, 0, 0))
+                .write(U256::from(Eip8130Constants::DEFAULT_EOA_REVOKED) << 184)
                 .unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
-                Err(AuthorizeError::ImplicitEoaShadowed),
+                Err(AuthorizeError::NotBound {
+                    actor_id: actor_id(account),
+                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
+                }),
             );
         });
     }
 
     #[test]
-    fn implicit_eoa_rejected_when_signer_is_not_the_account() {
+    fn revoked_self_re_registered_resolves_explicit_config() {
         let key = k1_key(0x11);
-        // Authenticate against a different account than the signer recovers to.
-        let auth = blob(Address::ZERO, &k1_sig(&key, HASH));
+        let account = k1_address(&key);
+        let self_id = actor_id(account);
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        with_storage(|acc| {
+            // Invariant: an explicit self entry implies the flag is set. With both,
+            // the owner short-circuit is skipped and the scoped self config resolves.
+            acc.account_state
+                .at_mut(&account)
+                .write(U256::from(Eip8130Constants::DEFAULT_EOA_REVOKED) << 184)
+                .unwrap();
+            acc.actor_config
+                .at_mut(&self_id)
+                .at_mut(&account)
+                .write(pack(
+                    Eip8130Constants::K1_AUTHENTICATOR,
+                    Eip8130Constants::SCOPE_SENDER,
+                    0,
+                    0,
+                ))
+                .unwrap();
+            let resolved =
+                ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
+            assert_eq!(resolved.actor_id, self_id);
+            assert_eq!(resolved.scope, Eip8130Constants::SCOPE_SENDER);
+        });
+    }
+
+    #[test]
+    fn k1_signer_without_actor_entry_is_rejected() {
+        let key = k1_key(0x11);
+        // Signer recovers to a non-account address with no registered actor entry.
+        let id = actor_id(k1_address(&key));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::ImplicitEoaMismatch),
+                Err(AuthorizeError::NotBound {
+                    actor_id: id,
+                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
+                }),
             );
         });
     }
 
     #[test]
-    fn explicit_ecrecover_resolves_bound_actor_surface() {
+    fn explicit_k1_resolves_bound_actor_surface() {
         let key = k1_key(0x22);
         let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::ECRECOVER_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::ECRECOVER_AUTHENTICATOR, 0x04, 0, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0x04, 0, 0))
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
@@ -335,13 +366,13 @@ mod tests {
     fn ecrecover_unbound_actor_is_rejected() {
         let key = k1_key(0x22);
         let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::ECRECOVER_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
                 Err(AuthorizeError::NotBound {
                     actor_id: id,
-                    authenticator: Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 }),
             );
         });
@@ -351,12 +382,12 @@ mod tests {
     fn expiry_is_enforced_against_now() {
         let key = k1_key(0x22);
         let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::ECRECOVER_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::ECRECOVER_AUTHENTICATOR, 0, 500, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 500, 0))
                 .unwrap();
             // Valid at/under expiry.
             assert!(ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, 500).is_ok());
@@ -373,12 +404,12 @@ mod tests {
         let key = k1_key(0x22);
         let id = actor_id(k1_address(&key));
         let manager = address!("0x00000000000000000000000000000000000000d4");
-        let auth = blob(Eip8130Constants::ECRECOVER_AUTHENTICATOR, &k1_sig(&key, HASH));
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::ECRECOVER_AUTHENTICATOR, 0, 0, 1))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0, 1))
                 .unwrap();
             acc.policy_manager.at_mut(&id).at_mut(&ACCOUNT).write(manager).unwrap();
             let resolved =
@@ -413,11 +444,11 @@ mod tests {
         });
     }
 
-    /// `DELEGATE || delegate_account(20) || ECRECOVER || nested_sig`.
+    /// `DELEGATE || delegate_account(20) || K1_AUTHENTICATOR || nested_sig`.
     fn delegate_auth(delegate_account: Address, nested_key: &K256SigningKey) -> Vec<u8> {
         let mut data = Vec::new();
         data.extend_from_slice(delegate_account.as_slice());
-        data.extend_from_slice(Eip8130Constants::ECRECOVER_AUTHENTICATOR.as_slice());
+        data.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
         data.extend_from_slice(&k1_sig(nested_key, HASH));
         blob(Eip8130Contracts::DELEGATE_AUTHENTICATOR, &data)
     }
@@ -434,7 +465,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)
-                .write(pack(Eip8130Constants::ECRECOVER_AUTHENTICATOR, 0, 0, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0, 0))
                 .unwrap();
             // Outer delegate actor on the originating account carries the surface.
             acc.actor_config
@@ -470,7 +501,7 @@ mod tests {
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)
                 .write(pack(
-                    Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+                    Eip8130Constants::K1_AUTHENTICATOR,
                     Eip8130Constants::SCOPE_PAYER,
                     0,
                     0,
@@ -506,7 +537,7 @@ mod tests {
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)
                 .write(pack(
-                    Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+                    Eip8130Constants::K1_AUTHENTICATOR,
                     Eip8130Constants::SCOPE_SIGNATURE,
                     0,
                     0,
@@ -547,7 +578,7 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
                 Err(AuthorizeError::NotBound {
                     actor_id: nested_id,
-                    authenticator: Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 }),
             );
         });
@@ -565,7 +596,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)
-                .write(pack(Eip8130Constants::ECRECOVER_AUTHENTICATOR, 0, 0, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0, 0))
                 .unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -589,7 +620,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&Address::ZERO)
-                .write(pack(Eip8130Constants::ECRECOVER_AUTHENTICATOR, 0, 0, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0, 0))
                 .unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -609,12 +640,13 @@ mod tests {
     }
 
     #[test]
-    fn revoked_authenticator_is_rejected() {
-        let auth = blob(Eip8130Constants::REVOKED_AUTHENTICATOR, &[0u8; 65]);
+    fn zero_authenticator_selector_is_rejected() {
+        // `address(0)` is the empty sentinel, never a valid authenticator selector.
+        let auth = blob(Address::ZERO, &[0u8; 65]);
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::Authenticate(AuthError::Revoked)),
+                Err(AuthorizeError::Authenticate(AuthError::NotCanonical(Address::ZERO))),
             );
         });
     }

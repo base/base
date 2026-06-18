@@ -46,17 +46,21 @@ impl AccountConfigurationStorage<'_> {
         Ok(ActorConfig::from_word(self.actor_config.at(&actor_id).at(&account).read()?))
     }
 
-    /// Mirrors `AccountConfiguration.isActor`: `true` for any actor bound to a
-    /// real authenticator (`authenticator >= ECRECOVER && != REVOKED`), or the
-    /// implicit-EOA self-actor (empty slot whose `actor_id` is the account).
+    /// Mirrors `AccountConfiguration.isActor`: `true` for any explicit entry
+    /// (a non-empty authenticator), or the implicit default-EOA self-actor (empty
+    /// slot whose `actor_id` is the account) while its `DEFAULT_EOA_REVOKED` flag
+    /// is unset.
     pub fn is_actor(&self, account: Address, actor_id: B256) -> Result<bool> {
-        let authenticator = self.get_actor_config(account, actor_id)?.authenticator;
-        if authenticator >= Eip8130Constants::ECRECOVER_AUTHENTICATOR
-            && authenticator != Eip8130Constants::REVOKED_AUTHENTICATOR
-        {
+        // An explicit entry (any non-empty authenticator) is always a live actor.
+        if self.get_actor_config(account, actor_id)?.authenticator != Address::ZERO {
             return Ok(true);
         }
-        Ok(authenticator == Address::ZERO && actor_id == Self::self_actor_id(account))
+        // No explicit entry: the self-actor is the implicit default EOA, live
+        // unless disabled by the account's `DEFAULT_EOA_REVOKED` flag.
+        if actor_id == Self::self_actor_id(account) {
+            return Ok(!self.get_account_state(account)?.default_eoa_revoked());
+        }
+        Ok(false)
     }
 
     /// Mirrors `AccountConfiguration.getPolicy`: an ungated actor
@@ -141,7 +145,7 @@ impl AccountConfigurationStorage<'_> {
 #[non_exhaustive]
 pub struct ActorConfig {
     /// Authenticator address bound to the actor (`address(0)` = empty slot,
-    /// `address(1)` = native ecrecover, `address(uint160).max` = revoked).
+    /// `address(1)` = native k1/ecrecover, any other = `IAuthenticator` contract).
     pub authenticator: Address,
     /// Elevated-scope bitfield (`0 = unrestricted`).
     pub scope: u8,
@@ -181,11 +185,11 @@ impl ActorConfig {
 /// Decoded `AccountConfiguration.AccountState` (one packed storage slot).
 ///
 /// Solidity layout `{uint64 multichainSequence; uint64 localSequence; uint40
-/// unlocksAt; uint16 unlockDelay;}`, packed right-aligned, lowest-order field
-/// first:
+/// unlocksAt; uint16 unlockDelay; uint8 flags;}`, packed right-aligned,
+/// lowest-order field first:
 ///
 /// ```text
-/// bits (LSB-first): multichain 0..64 | local 64..128 | unlocksAt 128..168 | unlockDelay 168..184
+/// bits (LSB-first): multichain 0..64 | local 64..128 | unlocksAt 128..168 | unlockDelay 168..184 | flags 184..192
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -200,6 +204,9 @@ pub struct AccountState {
     pub unlocks_at: u64,
     /// Unlock delay in seconds.
     pub unlock_delay: u16,
+    /// Account flags bitfield; bit 0 ([`Eip8130Constants::DEFAULT_EOA_REVOKED`])
+    /// disables the implicit default-EOA path.
+    pub flags: u8,
 }
 
 impl AccountState {
@@ -224,7 +231,15 @@ impl AccountState {
             local_sequence: u64::from_be_bytes(local),
             unlocks_at: u64::from_be_bytes(unlocks_at),
             unlock_delay: u16::from_be_bytes(unlock_delay),
+            flags: b[8], // uint8 at bits 184..192
         }
+    }
+
+    /// `true` when the implicit default-EOA path is disabled for this account
+    /// (the `DEFAULT_EOA_REVOKED` flag bit is set).
+    #[must_use]
+    pub const fn default_eoa_revoked(&self) -> bool {
+        self.flags & Eip8130Constants::DEFAULT_EOA_REVOKED != 0
     }
 }
 
@@ -263,11 +278,18 @@ mod tests {
             | (U256::from(policy_type) << 216)
     }
 
-    fn pack_account_state(multichain: u64, local: u64, unlocks_at: u64, unlock_delay: u16) -> U256 {
+    fn pack_account_state(
+        multichain: u64,
+        local: u64,
+        unlocks_at: u64,
+        unlock_delay: u16,
+        flags: u8,
+    ) -> U256 {
         U256::from(multichain)
             | (U256::from(local) << 64)
             | (U256::from(unlocks_at) << 128)
             | (U256::from(unlock_delay) << 168)
+            | (U256::from(flags) << 184)
     }
 
     #[test]
@@ -301,8 +323,8 @@ mod tests {
     #[test]
     fn is_actor_matches_contract_predicate() {
         let mut storage = HashMapStorageProvider::new(1);
-        let revoked = Eip8130Constants::REVOKED_AUTHENTICATOR;
         let bound = address!("0x00000000000000000000000000000000000000ff");
+        let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
 
@@ -310,16 +332,23 @@ mod tests {
             acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
             assert!(acc.is_actor(ACCOUNT, ACTOR).unwrap());
 
-            // Revoked sentinel -> not an actor.
-            acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(revoked)).unwrap();
-            assert!(!acc.is_actor(ACCOUNT, ACTOR).unwrap());
-
             // Empty slot, non-self actor id -> not an actor.
             let other = b256!("0x00000000000000000000000000000000000000cc000000000000000000000000");
             assert!(!acc.is_actor(ACCOUNT, other).unwrap());
 
-            // Empty slot, self actor id -> implicit EOA actor.
-            let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
+            // Empty slot, self actor id, flag unset -> implicit default EOA actor.
+            assert!(acc.is_actor(ACCOUNT, self_id).unwrap());
+
+            // Empty slot, self actor id, DEFAULT_EOA_REVOKED set -> not an actor.
+            acc.account_state
+                .at_mut(&ACCOUNT)
+                .write(pack_account_state(0, 1, 0, 0, Eip8130Constants::DEFAULT_EOA_REVOKED))
+                .unwrap();
+            assert!(!acc.is_actor(ACCOUNT, self_id).unwrap());
+
+            // Explicit self entry stays live even with the flag set (re-registered
+            // scoped/owner k1 self key); the entry-exists => flag-set invariant.
+            acc.actor_config.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
             assert!(acc.is_actor(ACCOUNT, self_id).unwrap());
         });
     }
@@ -360,7 +389,13 @@ mod tests {
 
     #[test]
     fn account_state_unpacks_sequences_and_lock_fields() {
-        let word = pack_account_state(7, 3, (1u64 << 40) - 1, 0xBEEF);
+        let word = pack_account_state(
+            7,
+            3,
+            (1u64 << 40) - 1,
+            0xBEEF,
+            Eip8130Constants::DEFAULT_EOA_REVOKED,
+        );
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
@@ -371,6 +406,7 @@ mod tests {
             assert_eq!(state.local_sequence, 3);
             assert_eq!(state.unlocks_at, AccountState::UNLOCKS_AT_MAX);
             assert_eq!(state.unlock_delay, 0xBEEF);
+            assert!(state.default_eoa_revoked());
             assert_eq!(acc.get_change_sequences(ACCOUNT).unwrap(), (7, 3));
             assert!(acc.is_initialized(ACCOUNT).unwrap());
         });
@@ -386,7 +422,7 @@ mod tests {
             // lock(): unlocks_at = max, delay set. Locked, no unlock initiated.
             acc.account_state
                 .at_mut(&ACCOUNT)
-                .write(pack_account_state(0, 1, AccountState::UNLOCKS_AT_MAX, delay))
+                .write(pack_account_state(0, 1, AccountState::UNLOCKS_AT_MAX, delay, 0))
                 .unwrap();
             assert!(acc.is_locked(ACCOUNT, 1_000).unwrap());
             let status = acc.get_lock_status(ACCOUNT, 1_000).unwrap();
@@ -395,7 +431,10 @@ mod tests {
             assert_eq!(status.unlock_delay, delay);
 
             // initiateUnlock(): unlocks_at = real future time, delay cleared.
-            acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(0, 1, 2_000, 0)).unwrap();
+            acc.account_state
+                .at_mut(&ACCOUNT)
+                .write(pack_account_state(0, 1, 2_000, 0, 0))
+                .unwrap();
             assert!(acc.is_locked(ACCOUNT, 1_000).unwrap()); // before unlocks_at
             assert!(!acc.is_locked(ACCOUNT, 2_000).unwrap()); // at/after unlocks_at
             let status = acc.get_lock_status(ACCOUNT, 1_000).unwrap();
@@ -404,7 +443,7 @@ mod tests {
             assert_eq!(status.unlocks_at, 2_000);
 
             // Never locked: unlocks_at = 0.
-            acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(0, 1, 0, 0)).unwrap();
+            acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(0, 1, 0, 0, 0)).unwrap();
             assert!(!acc.is_locked(ACCOUNT, 0).unwrap());
             assert!(!acc.get_lock_status(ACCOUNT, 0).unwrap().has_initiated_unlock);
         });

@@ -87,16 +87,26 @@ impl Eip8130Constants {
     /// `actor_change` operation byte: revoke an existing actor.
     pub const ACTOR_CHANGE_REVOKE: u8 = 0x02;
 
-    /// Lower-bound authenticator address. The `ECRECOVER_AUTHENTICATOR` native is fixed at
-    /// `address(1)`; authenticator addresses smaller than this are reserved.
-    pub const ECRECOVER_AUTHENTICATOR: Address =
-        address!("0x0000000000000000000000000000000000000001");
+    /// The single canonical secp256k1 ("k1") authenticator, fixed at
+    /// `address(1)`. Native `ecrecover`: the protocol recovers from the `data`
+    /// blob (`r || s || v`) rather than `STATICCALL`-ing a contract. The same
+    /// identity serves both the implicit default EOA and any explicitly
+    /// registered k1 actor; the `actor_config` slot alone distinguishes a
+    /// full-owner EOA from a scoped key.
+    ///
+    /// `address(0)` is reserved as the empty / "no actor configured" sentinel and
+    /// is never a valid authenticator selector; addresses below this are reserved.
+    pub const K1_AUTHENTICATOR: Address = address!("0x0000000000000000000000000000000000000001");
 
-    /// Sentinel authenticator address indicating an actor slot has been revoked
-    /// (`type(uint160).max`). Submitting authentication data prefixed with this
-    /// authenticator MUST be rejected.
-    pub const REVOKED_AUTHENTICATOR: Address =
-        address!("0xffffffffffffffffffffffffffffffffffffffff");
+    /// `AccountState.flags` bit that disables the implicit default-EOA path.
+    ///
+    /// The implicit default EOA is a [`Self::K1_AUTHENTICATOR`] signature whose
+    /// recovered signer equals the account; with no explicit `actor_config` it
+    /// resolves to a full owner, gated solely on this flag. Set by
+    /// `createAccount`/`importAccount` (disabled by default), and by authorizing
+    /// or revoking the self-actor; once set it is never cleared (monotonic), so
+    /// an explicit self-actor entry always implies the flag is set.
+    pub const DEFAULT_EOA_REVOKED: u8 = 0x01;
 
     /// Maximum number of `ConfigChange` entries the mempool accepts in a single
     /// transaction. The spec marks this as a node policy ("Nodes SHOULD enforce

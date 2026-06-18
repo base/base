@@ -132,7 +132,7 @@ mod tests {
 
     const NOW: u64 = 1_000;
     const LOCAL: u64 = 8453;
-    const ECRECOVER: Address = Eip8130Constants::ECRECOVER_AUTHENTICATOR;
+    const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
 
     #[test]
     fn typehashes_match_their_preimages() {
@@ -235,7 +235,7 @@ mod tests {
     fn implicit_eoa_owner_authorizes_config_change() {
         let k = key(0x11);
         let account = addr(&k);
-        let change = signed_change(account, Address::ZERO, &k, 0, 0, vec![revoke(0xab)]);
+        let change = signed_change(account, K1, &k, 0, 0, vec![revoke(0xab)]);
         with_storage(|acc| {
             let resolved =
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
@@ -248,12 +248,12 @@ mod tests {
         let k = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let id = actor_id(addr(&k));
-        let change = signed_change(account, ECRECOVER, &k, 0, 0, vec![revoke(0xcd)]);
+        let change = signed_change(account, K1, &k, 0, 0, vec![revoke(0xcd)]);
         with_storage(|acc| {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(ECRECOVER, Eip8130Constants::SCOPE_CONFIG, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_CONFIG, 0, 0))
                 .unwrap();
             let resolved =
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
@@ -266,13 +266,13 @@ mod tests {
         let k = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let id = actor_id(addr(&k));
-        let change = signed_change(account, ECRECOVER, &k, 0, 0, vec![revoke(0x01)]);
+        let change = signed_change(account, K1, &k, 0, 0, vec![revoke(0x01)]);
         with_storage(|acc| {
             // Bound actor that lacks CONFIG (only SENDER).
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(ECRECOVER, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
                 .unwrap();
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
@@ -288,7 +288,7 @@ mod tests {
     fn locked_account_is_rejected() {
         let k = key(0x11);
         let account = addr(&k);
-        let change = signed_change(account, Address::ZERO, &k, 0, 0, vec![revoke(0x01)]);
+        let change = signed_change(account, K1, &k, 0, 0, vec![revoke(0x01)]);
         with_storage(|acc| {
             // Locked until after `now`.
             acc.account_state.at_mut(&account).write(pack_state(0, 0, NOW + 1)).unwrap();
@@ -303,7 +303,7 @@ mod tests {
     fn foreign_chain_id_is_rejected() {
         let k = key(0x11);
         let account = addr(&k);
-        let change = signed_change(account, Address::ZERO, &k, LOCAL + 1, 0, vec![revoke(0x01)]);
+        let change = signed_change(account, K1, &k, LOCAL + 1, 0, vec![revoke(0x01)]);
         with_storage(|acc| {
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
@@ -317,7 +317,7 @@ mod tests {
         let k = key(0x11);
         let account = addr(&k);
         // Multichain channel sequence in state is 0; the entry claims 5.
-        let change = signed_change(account, Address::ZERO, &k, 0, 5, vec![revoke(0x01)]);
+        let change = signed_change(account, K1, &k, 0, 5, vec![revoke(0x01)]);
         with_storage(|acc| {
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
@@ -331,7 +331,7 @@ mod tests {
         let k = key(0x11);
         let account = addr(&k);
         // Local channel (chain_id == LOCAL); the entry must match local_sequence.
-        let change = signed_change(account, Address::ZERO, &k, LOCAL, 3, vec![revoke(0x01)]);
+        let change = signed_change(account, K1, &k, LOCAL, 3, vec![revoke(0x01)]);
         with_storage(|acc| {
             acc.account_state.at_mut(&account).write(pack_state(0, 3, 0)).unwrap();
             let resolved =
@@ -345,6 +345,7 @@ mod tests {
         let owner = key(0x11);
         let account = addr(&owner);
         let attacker = key(0x99);
+        let attacker_id = actor_id(addr(&attacker));
         // The digest binds `account`, but the auth is signed by a different key.
         let mut change = ConfigChange {
             chain_id: 0,
@@ -353,12 +354,16 @@ mod tests {
             auth: Bytes::new(),
         };
         let digest = ConfigChangeAuthorizer::signed_actor_changes_digest(account, &change);
-        change.auth = auth_blob(Address::ZERO, &sig(&attacker, digest));
+        change.auth = auth_blob(K1, &sig(&attacker, digest));
         with_storage(|acc| {
-            assert!(matches!(
+            // The recovered signer is not the account and has no registered actor.
+            assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
-                Err(TxAuthError::Authorize(AuthorizeError::ImplicitEoaMismatch)),
-            ));
+                Err(TxAuthError::Authorize(AuthorizeError::NotBound {
+                    actor_id: attacker_id,
+                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
+                })),
+            );
         });
     }
 

@@ -301,11 +301,11 @@ where
     /// range. Mirrors the check in [`Self::validate_initial_actors`] and
     /// [`Self::validate_actor_changes`] so all auth surfaces (`sender_auth`,
     /// `payer_auth`, `cfg.auth`, and per-actor authenticators) reject the reserved
-    /// `< ECRECOVER_AUTHENTICATOR` window and the `REVOKED_AUTHENTICATOR` sentinel
-    /// identically.
+    /// `< K1_AUTHENTICATOR` window identically. `address(0)` (the only address in
+    /// that window) is the empty / "no actor configured" sentinel and is never a
+    /// valid authenticator selector.
     fn authenticator_out_of_range(authenticator: &Address) -> bool {
-        *authenticator < Eip8130Constants::ECRECOVER_AUTHENTICATOR
-            || *authenticator == Eip8130Constants::REVOKED_AUTHENTICATOR
+        *authenticator < Eip8130Constants::K1_AUTHENTICATOR
     }
 
     /// Walks `account_changes` and enforces structural invariants:
@@ -366,8 +366,8 @@ where
     /// Validates `Create.initial_actors`: the slice length is bounded by
     /// [`Eip8130Constants::MAX_ACTORS_PER_ENTRY`] (anti-DoS cap on memory + work
     /// spent on duplicate detection), every `authenticator` is at or above the
-    /// `ECRECOVER_AUTHENTICATOR` floor and never the `REVOKED_AUTHENTICATOR`
-    /// sentinel, and no two entries share the same `actor_id`.
+    /// `K1_AUTHENTICATOR` floor (i.e. not the `address(0)` empty sentinel), and no
+    /// two entries share the same `actor_id`.
     fn validate_initial_actors(actors: &[InitialActor]) -> Result<(), InvalidPoolTransactionError> {
         if actors.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
@@ -386,7 +386,7 @@ where
 
     /// Validates `ConfigChange.actor_changes`: the same length cap and
     /// `actor_id`-uniqueness rules as [`Self::validate_initial_actors`], plus the
-    /// reserved/`REVOKED` authenticator bound for the *new* actor of each
+    /// reserved-window authenticator bound for the *new* actor of each
     /// `Authorize`. The authenticator lives in the ABI-encoded `data`
     /// (`abi.encode(ActorConfig, bytes)`), where `ActorConfig.authenticator` is
     /// the right-aligned address in the first 32-byte word, so it is read from
@@ -397,10 +397,10 @@ where
     ///
     /// Per EIP-8130 a config change MAY authorize a non-canonical authenticator
     /// (for in-EVM use such as recovery keys); only the reserved window
-    /// (`< ECRECOVER_AUTHENTICATOR`) and the `REVOKED_AUTHENTICATOR` sentinel are
-    /// rejected here, matching the bound applied to the other auth surfaces. A
-    /// `Revoke` names no authenticator and MUST carry empty `data`; a non-empty
-    /// `data` is malformed and rejected at the gate.
+    /// (`< K1_AUTHENTICATOR`, i.e. the `address(0)` empty sentinel) is rejected
+    /// here, matching the bound applied to the other auth surfaces. A `Revoke`
+    /// names no authenticator and MUST carry empty `data`; a non-empty `data` is
+    /// malformed and rejected at the gate.
     fn validate_actor_changes(changes: &[ActorChange]) -> Result<(), InvalidPoolTransactionError> {
         if changes.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
@@ -834,18 +834,9 @@ mod tests {
         assert_unsupported(TestValidator::validate_sender_auth(&signed));
     }
 
-    #[test]
-    fn rejects_eip8130_configured_actor_with_revoked_authenticator() {
-        let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
-        // 20-byte authenticator prefix == REVOKED_AUTHENTICATOR, followed by an empty payload.
-        let auth = Bytes::from(Eip8130Constants::REVOKED_AUTHENTICATOR.to_vec());
-        let signed = Eip8130Signed::new(tx, auth, Bytes::new());
-        assert_unsupported(TestValidator::validate_sender_auth(&signed));
-    }
-
     // Regression: configured-actor path must reject the reserved authenticator
-    // range below `ECRECOVER_AUTHENTICATOR`, matching `validate_actor_changes`.
-    // `address(0)` is the canonical reserved value.
+    // range below `K1_AUTHENTICATOR`, matching `validate_actor_changes`.
+    // `address(0)` is the only reserved value (the empty sentinel).
     #[test]
     fn rejects_eip8130_configured_actor_with_reserved_authenticator() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
@@ -887,19 +878,8 @@ mod tests {
         assert_unsupported(TestValidator::validate_payer_auth(&signed));
     }
 
-    #[test]
-    fn rejects_eip8130_payer_authenticator_revoked() {
-        let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
-        let signed = Eip8130Signed::new(
-            tx,
-            Bytes::from_static(&[0u8; 65]),
-            Bytes::from(Eip8130Constants::REVOKED_AUTHENTICATOR.to_vec()),
-        );
-        assert_unsupported(TestValidator::validate_payer_auth(&signed));
-    }
-
-    /// Returns a authenticator address comfortably above the `ECRECOVER_AUTHENTICATOR` floor
-    /// and distinct from the `REVOKED_AUTHENTICATOR` sentinel.
+    /// Returns an authenticator address comfortably above the `K1_AUTHENTICATOR`
+    /// floor.
     fn ok_authenticator() -> Address {
         Address::repeat_byte(0x42)
     }
@@ -1021,20 +1001,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_create_with_revoked_actor_authenticator() {
-        let mut entry = make_valid_create_entry();
-        entry.initial_actors[0].authenticator = Eip8130Constants::REVOKED_AUTHENTICATOR;
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::Create(entry)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(TestValidator::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
-    }
-
-    #[test]
     fn rejects_eip8130_create_with_too_many_initial_actors() {
         let mut entry = make_valid_create_entry();
         entry.initial_actors.clear();
@@ -1097,47 +1063,6 @@ mod tests {
     fn rejects_eip8130_config_change_with_short_auth() {
         let cfg =
             ConfigChange { auth: Bytes::from_static(&[0u8; 5]), ..make_valid_config_change() };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(TestValidator::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
-    }
-
-    // Mirrors the `sender_auth`/`payer_auth` rejection of a `REVOKED_AUTHENTICATOR`
-    // prefix: the per-`ConfigChange` `auth` blob must use a live authenticator so the
-    // mempool never propagates a config-change scoped to a revoked authority.
-    #[test]
-    fn rejects_eip8130_config_change_with_revoked_authenticator_in_auth() {
-        let cfg = ConfigChange {
-            auth: Bytes::from(Eip8130Constants::REVOKED_AUTHENTICATOR.to_vec()),
-            ..make_valid_config_change()
-        };
-        let tx = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(cfg)],
-            ..minimal_valid_eoa_tx()
-        };
-        assert_unsupported(TestValidator::validate_account_changes(
-            &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
-    }
-
-    // An `Authorize` change must not register a new actor against the
-    // `REVOKED_AUTHENTICATOR` sentinel; the authenticator is read from the
-    // leading word of the ABI-encoded `data`.
-    #[test]
-    fn rejects_eip8130_config_change_with_revoked_authenticator_in_actor_changes() {
-        let cfg = ConfigChange {
-            actor_changes: vec![make_authorize_change(
-                B256::repeat_byte(0x01),
-                Eip8130Constants::REVOKED_AUTHENTICATOR,
-            )],
-            ..make_valid_config_change()
-        };
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()

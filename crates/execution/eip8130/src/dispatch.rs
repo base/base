@@ -58,10 +58,9 @@ impl AuthenticatorDispatch {
     /// delegate authenticator).
     ///
     /// `hash` is the context-appropriate signing hash (sender, payer, or config
-    /// change digest); the caller computes it. For the EOA path (`sender` empty
-    /// in the wire format), the caller passes
-    /// [`Eip8130Constants::ECRECOVER_AUTHENTICATOR`] as `authenticator` with the
-    /// raw 65-byte signature as `data`.
+    /// change digest); the caller computes it. For the native secp256k1 path the
+    /// caller passes [`Eip8130Constants::K1_AUTHENTICATOR`] as `authenticator`
+    /// with the raw 65-byte signature as `data`.
     pub fn authenticate(
         hash: B256,
         authenticator: Address,
@@ -78,12 +77,12 @@ impl AuthenticatorDispatch {
         data: &[u8],
         allow_delegate: bool,
     ) -> Result<DispatchOutcome, AuthError> {
-        if authenticator == Eip8130Constants::REVOKED_AUTHENTICATOR {
-            return Err(AuthError::Revoked);
-        }
-        // secp256k1 is the protocol-reserved native ecrecover sentinel
-        // (`address(1)`); there is no deployed secp256k1 authenticator contract.
-        if authenticator == Eip8130Constants::ECRECOVER_AUTHENTICATOR {
+        // `address(0)` is the empty / "no actor configured" sentinel and is never
+        // a valid authenticator selector; it falls through to `NotCanonical`.
+        //
+        // secp256k1 is the protocol-reserved native k1 sentinel (`address(1)`);
+        // there is no deployed secp256k1 authenticator contract.
+        if authenticator == Eip8130Constants::K1_AUTHENTICATOR {
             return Ok(DispatchOutcome::Authenticated { actor_id: Self::ecrecover(hash, data)? });
         }
         if authenticator == Eip8130Contracts::P256_AUTHENTICATOR {
@@ -109,7 +108,7 @@ impl AuthenticatorDispatch {
         B256::from(id)
     }
 
-    /// Native secp256k1 ecrecover for the `ECRECOVER_AUTHENTICATOR` sentinel:
+    /// Native secp256k1 ecrecover for the `K1_AUTHENTICATOR` sentinel:
     /// requires `v in {27, 28}` and enforces **EIP-2 low-`s`**, rejecting
     /// malleable upper-half-`s` signatures. `actorId = bytes32(bytes20(recovered))`.
     ///
@@ -347,7 +346,7 @@ mod tests {
         let key = k1_key();
         let out = AuthenticatorDispatch::authenticate(
             HASH,
-            Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+            Eip8130Constants::K1_AUTHENTICATOR,
             &k1_sig(&key, HASH),
         )
         .unwrap();
@@ -361,11 +360,7 @@ mod tests {
         let mut sig = k1_sig(&key, HASH);
         sig[64] -= 27; // 0 or 1: invalid for the EVM ecrecover sentinel.
         assert_eq!(
-            AuthenticatorDispatch::authenticate(
-                HASH,
-                Eip8130Constants::ECRECOVER_AUTHENTICATOR,
-                &sig,
-            ),
+            AuthenticatorDispatch::authenticate(HASH, Eip8130Constants::K1_AUTHENTICATOR, &sig,),
             Err(AuthError::InvalidSignature),
         );
     }
@@ -383,11 +378,7 @@ mod tests {
         bytes[..64].copy_from_slice(&high.to_bytes());
         bytes[64] = (recid.to_byte() ^ 1) + 27;
         assert_eq!(
-            AuthenticatorDispatch::authenticate(
-                HASH,
-                Eip8130Constants::ECRECOVER_AUTHENTICATOR,
-                &bytes,
-            ),
+            AuthenticatorDispatch::authenticate(HASH, Eip8130Constants::K1_AUTHENTICATOR, &bytes,),
             Err(AuthError::InvalidSignature),
         );
     }
@@ -397,7 +388,7 @@ mod tests {
         assert_eq!(
             AuthenticatorDispatch::authenticate(
                 HASH,
-                Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+                Eip8130Constants::K1_AUTHENTICATOR,
                 &[0u8; 64],
             ),
             Err(AuthError::MalformedAuth),
@@ -509,7 +500,7 @@ mod tests {
 
         let mut data = Vec::new();
         data.extend_from_slice(delegate_account.as_slice());
-        data.extend_from_slice(Eip8130Constants::ECRECOVER_AUTHENTICATOR.as_slice());
+        data.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
         data.extend_from_slice(&k1_sig(&nested_key, HASH));
 
         let out = AuthenticatorDispatch::authenticate(
@@ -523,7 +514,7 @@ mod tests {
             DispatchOutcome::Delegated {
                 actor_id: AuthenticatorDispatch::address_actor_id(delegate_account),
                 delegate_account,
-                nested_authenticator: Eip8130Constants::ECRECOVER_AUTHENTICATOR,
+                nested_authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 nested_actor_id: AuthenticatorDispatch::address_actor_id(k1_address(&nested_key)),
             }
         );
@@ -565,14 +556,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_revoked_authenticator() {
+    fn rejects_zero_authenticator_selector() {
+        // `address(0)` is the empty / "no actor configured" sentinel, never a
+        // valid authenticator selector.
         assert_eq!(
-            AuthenticatorDispatch::authenticate(
-                HASH,
-                Eip8130Constants::REVOKED_AUTHENTICATOR,
-                &[0u8; 65],
-            ),
-            Err(AuthError::Revoked),
+            AuthenticatorDispatch::authenticate(HASH, Address::ZERO, &[0u8; 65]),
+            Err(AuthError::NotCanonical(Address::ZERO)),
         );
     }
 
