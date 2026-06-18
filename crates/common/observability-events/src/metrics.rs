@@ -10,8 +10,6 @@ base_metrics::define_metrics! {
     #[describe("Transaction event journal write or flush errors")]
     #[label(name = "operation", default = ["write", "flush"])]
     write_errors: counter,
-    #[describe("Transaction event journal queue depth")]
-    queue_depth: gauge,
     #[describe("Transaction event journal bytes written")]
     bytes_written: counter,
 }
