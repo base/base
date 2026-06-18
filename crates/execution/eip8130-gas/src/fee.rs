@@ -76,6 +76,7 @@ impl FeeCheck {
     /// # Errors
     /// - [`FeeError::TipAboveFeeCap`] — the priority fee cap exceeds the total cap.
     /// - [`FeeError::FeeCapBelowBaseFee`] — the total cap is below the base fee.
+    #[must_use = "discarding the result silently skips the fee-cap check"]
     pub const fn validate_fees(
         max_fee: u128,
         max_priority_fee: u128,
@@ -95,6 +96,7 @@ impl FeeCheck {
     ///
     /// # Errors
     /// - [`FeeError::InsufficientBalance`] — the balance is below the maximum charge.
+    #[must_use = "discarding the result silently skips the balance check"]
     pub fn validate_balance(
         balance: U256,
         gas_limit: u64,

@@ -115,6 +115,7 @@ impl IntrinsicGas {
     ///
     /// Returns [`IntrinsicGasError::UnscheduledAuthenticator`] if any sender,
     /// payer, or config-change authenticator lacks a gas-schedule entry.
+    #[must_use = "discarding the result silently skips the entire intrinsic-gas computation"]
     pub fn compute(
         signed: &Eip8130Signed,
         encoded: &[u8],
@@ -137,7 +138,7 @@ impl IntrinsicGas {
                 AccountChange::Create(entry) => {
                     // `bytecode_cost`: deployment base + per-byte code deposit.
                     let deposit = Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE
-                        .saturating_mul(entry.code.len() as u64);
+                        .saturating_mul(u64::try_from(entry.code.len()).unwrap_or(u64::MAX));
                     bytecode = bytecode
                         .saturating_add(Eip8130GasSchedule::CREATE_BASE_COST)
                         .saturating_add(deposit);
@@ -149,7 +150,9 @@ impl IntrinsicGas {
                     // free relative to a later config change authorizing the same
                     // set.
                     let initial_actor_cost = Eip8130GasSchedule::ACTOR_SLOT_SET_COST
-                        .saturating_mul(entry.initial_actors.len() as u64);
+                        .saturating_mul(
+                            u64::try_from(entry.initial_actors.len()).unwrap_or(u64::MAX),
+                        );
                     account_changes = account_changes.saturating_add(initial_actor_cost);
                 }
                 AccountChange::ConfigChange(cc) => {
@@ -342,7 +345,8 @@ impl IntrinsicGas {
             || u64::from(!actor_changes.is_empty()),
             |account| {
                 let self_id = Self::self_actor_id(account);
-                actor_changes.iter().filter(|c| c.actor_id == self_id).count() as u64
+                let count = actor_changes.iter().filter(|c| c.actor_id == self_id).count();
+                u64::try_from(count).unwrap_or(u64::MAX)
             },
         );
         Eip8130GasSchedule::SELF_ACTOR_DUAL_HOME_COST.saturating_mul(self_changes)
