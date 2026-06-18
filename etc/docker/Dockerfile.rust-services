@@ -135,7 +135,7 @@ RUN cargo build --profile $PROFILE --package base-da-server-bin --bin base-da-se
 # ---- zk-prover (needs Go + protoc from zk-builder-base) ----
 
 FROM zk-builder-base AS zk-chef
-RUN cargo install cargo-chef --locked
+COPY --from=chef /usr/local/cargo/bin/cargo-chef /usr/local/cargo/bin/cargo-chef
 
 FROM zk-chef AS zk-deps
 ARG PROFILE=release
