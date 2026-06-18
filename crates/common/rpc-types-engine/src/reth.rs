@@ -95,7 +95,7 @@ impl ExecutionPayload for TracedExecutionData {
     }
 
     fn block_access_list(&self) -> Option<&Bytes> {
-        None
+        self.inner.block_access_list.as_ref()
     }
 
     fn parent_beacon_block_root(&self) -> Option<B256> {
@@ -120,5 +120,28 @@ impl ExecutionPayload for TracedExecutionData {
 
     fn transaction_count(&self) -> usize {
         self.inner.payload.as_v1().transactions.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{B256, Bytes};
+    use base_common_consensus::BaseBlock;
+    use reth_payload_primitives::ExecutionPayload as _;
+
+    use super::{ExecutionData, TracedExecutionData};
+
+    #[test]
+    fn traced_execution_data_preserves_block_access_list() {
+        let expected = Bytes::from_static(b"block-access-list");
+        let execution_data = ExecutionData::from_block_unchecked_with_extras(
+            B256::ZERO,
+            &BaseBlock::default(),
+            Some(expected.clone()),
+        );
+
+        let traced = TracedExecutionData::from(execution_data);
+
+        assert_eq!(traced.block_access_list(), Some(&expected));
     }
 }
