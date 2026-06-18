@@ -205,9 +205,9 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                         .as_ref()
                         .expect("shadow semaphore when alt-da enabled");
                     if let Ok(alt_da_permit) = Arc::clone(alt_da_semaphore).try_acquire_owned() {
-                    let tx_manager = Arc::clone(&self.tx_manager);
-                    let inbox = self.inbox;
-                    // Reap finished shadow tasks so the JoinSet stays bounded.
+                        let tx_manager = Arc::clone(&self.tx_manager);
+                        let inbox = self.inbox;
+                        // Reap finished shadow tasks so the JoinSet stays bounded.
                         while self.alt_da_tasks.try_join_next().is_some() {}
                         self.alt_da_tasks.spawn(async move {
                         let _alt_da_permit = alt_da_permit;
@@ -432,8 +432,7 @@ mod tests {
     };
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::Bloom;
-    use alloy_primitives::{Address, Bytes};
+    use alloy_primitives::{Address, Bloom, Bytes};
     use alloy_rpc_types_eth::TransactionReceipt;
     use async_trait::async_trait;
     use base_batcher_encoder::{
