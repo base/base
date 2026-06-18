@@ -1,8 +1,6 @@
 use alloy_hardforks::{EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
-use base_common_genesis::RollupConfig;
-
-use crate::BaseUpgrade;
+use base_common_genesis::{BaseUpgrade, RollupConfig};
 
 /// Extends [`EthereumHardforks`] with Base upgrade helper methods.
 #[auto_impl::auto_impl(&, Arc)]

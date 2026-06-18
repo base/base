@@ -8,8 +8,9 @@ use EthereumHardfork::{
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
+use base_common_genesis::BaseUpgrade;
 
-use crate::{BaseUpgrade, BaseUpgradeExt, Upgrades};
+use crate::{BaseUpgradeExt, Upgrades};
 
 /// Number of upgrades in the Base execution fork ladder
 /// ([`BaseUpgrade::EXECUTION_VARIANTS`]).
