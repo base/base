@@ -199,12 +199,8 @@ impl RegistrarConfig {
             .region(aws_config::Region::new(self.aws_region))
             .load()
             .await;
-        let discovery = AwsTargetGroupDiscovery::new(
-            aws_sdk_elasticloadbalancingv2::Client::new(&aws_config),
-            aws_sdk_ec2::Client::new(&aws_config),
-            self.target_group_arn,
-            self.prover_port,
-        );
+        let discovery =
+            AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arn, self.prover_port);
 
         let registry =
             RegistryContractClient::new(self.tee_prover_registry_address, self.l1_rpc_url.clone());

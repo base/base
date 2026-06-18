@@ -1,5 +1,7 @@
 //! Abstraction traits for the registration driver.
 
+use std::future::Future;
+
 use async_trait::async_trait;
 use url::Url;
 
@@ -11,10 +13,9 @@ use crate::{ProverInstance, Result};
 /// [`AwsTargetGroupDiscovery`](crate::AwsTargetGroupDiscovery), which queries
 /// an ALB target group via the AWS SDK. Other implementations (e.g., a static
 /// list for local testing) can be substituted.
-#[async_trait]
 pub trait InstanceDiscovery: Send + Sync {
     /// Return the current set of prover instances with their health status.
-    async fn discover_instances(&self) -> Result<Vec<ProverInstance>>;
+    fn discover_instances(&self) -> impl Future<Output = Result<Vec<ProverInstance>>> + Send + '_;
 }
 
 /// Fetches signer identity data from a prover instance endpoint.

@@ -417,7 +417,6 @@ mod tests {
         },
     };
 
-    #[async_trait]
     impl InstanceDiscovery for Vec<ProverInstance> {
         async fn discover_instances(&self) -> Result<Self> {
             Ok(self.clone())
