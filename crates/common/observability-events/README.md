@@ -31,6 +31,11 @@ Producer-specific fields belong in `data`. Do not put raw transaction bytes,
 calldata, full request bodies, API keys, secrets, or raw forwarding headers in
 transaction events.
 
+The writer is best-effort after initialization. Runtime write or flush failures
+are reported through metrics and logs, but they do not block transaction-serving
+paths. Collectors must tolerate and skip malformed JSONL lines because storage
+failures such as disk-full conditions can leave a partial line in the file.
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

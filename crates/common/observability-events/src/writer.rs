@@ -151,21 +151,6 @@ impl TransactionEventWriter {
 
     /// Attempts to enqueue one event without blocking the caller.
     pub fn try_write(&self, event: &TransactionEvent) -> Result<(), WriteEventError> {
-        if event.producer != self.inner.config.producer {
-            warn!(
-                expected = %self.inner.config.producer,
-                actual = %event.producer,
-                "transaction event producer does not match writer config"
-            );
-        }
-        if event.network.as_deref() != Some(self.inner.config.network.as_str()) {
-            warn!(
-                expected = %self.inner.config.network,
-                actual = ?event.network,
-                "transaction event network does not match writer config"
-            );
-        }
-
         let Some(tx) = &self.inner.tx else {
             Metrics::dropped_events("disabled").increment(1);
             return Err(WriteEventError::Disabled);
@@ -247,8 +232,10 @@ pub enum WriteEventError {
 ///
 /// Runtime write and flush failures are observable through metrics and logs but
 /// do not block or fail transaction-serving paths. A write failure permanently
-/// drops the affected queued event; callers that require startup-time fail
-/// closed behavior should configure [`TransactionEventWriterConfig::required`].
+/// drops the affected queued event, and storage failures can leave a partial
+/// JSONL line on disk. Collectors should tolerate and skip malformed lines.
+/// Callers that require startup-time fail closed behavior should configure
+/// [`TransactionEventWriterConfig::required`].
 async fn run_writer<W>(
     mut writer: BufWriter<W>,
     mut rx: mpsc::Receiver<QueuedEvent>,
