@@ -57,7 +57,7 @@ RUN set -eux; \
 # dependency build entirely.
 
 FROM rust-builder-base AS chef
-RUN cargo install cargo-chef --locked
+RUN cargo install cargo-chef@0.1.77 --locked
 
 FROM chef AS planner
 COPY . .
