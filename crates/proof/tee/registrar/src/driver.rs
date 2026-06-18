@@ -412,37 +412,30 @@ mod tests {
     }
 
     impl SignerClient for MockSignerClient {
-        fn signer_public_key<'a>(
-            &'a self,
-            endpoint: &'a Url,
-        ) -> impl std::future::Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a {
-            async move {
-                self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
-                    instance: endpoint.to_string(),
-                    source: "unreachable".into(),
-                })
-            }
+        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+            self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
+                instance: endpoint.to_string(),
+                source: "unreachable".into(),
+            })
         }
 
-        fn signer_attestation<'a>(
-            &'a self,
-            endpoint: &'a Url,
+        async fn signer_attestation(
+            &self,
+            endpoint: &Url,
             _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
-        ) -> impl std::future::Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a {
-            async move {
-                if self.fail_attestation.contains(endpoint) {
-                    return Err(RegistrarError::ProverClient {
-                        instance: endpoint.to_string(),
-                        source: "attestation unavailable".into(),
-                    });
-                }
-                if let Some(atts) = self.attestations.get(endpoint) {
-                    return Ok(atts.clone());
-                }
-                let count = self.keys.get(endpoint).map_or(1, |k| k.len());
-                Ok(vec![b"mock-attestation".to_vec(); count])
+        ) -> Result<Vec<Vec<u8>>> {
+            if self.fail_attestation.contains(endpoint) {
+                return Err(RegistrarError::ProverClient {
+                    instance: endpoint.to_string(),
+                    source: "attestation unavailable".into(),
+                });
             }
+            if let Some(atts) = self.attestations.get(endpoint) {
+                return Ok(atts.clone());
+            }
+            let count = self.keys.get(endpoint).map_or(1, |k| k.len());
+            Ok(vec![b"mock-attestation".to_vec(); count])
         }
     }
 

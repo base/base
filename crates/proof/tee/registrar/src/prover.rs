@@ -81,33 +81,26 @@ impl ProverClient {
 }
 
 impl SignerClient for ProverClient {
-    fn signer_public_key<'a>(
-        &'a self,
-        endpoint: &'a Url,
-    ) -> impl std::future::Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a {
-        async move {
-            debug!(endpoint = %endpoint, "fetching signer public keys");
-            let client = self.get_or_build_client(endpoint)?;
-            client.signer_public_key().await.map_err(|e| RegistrarError::ProverClient {
-                instance: endpoint.to_string(),
-                source: Box::new(e),
-            })
-        }
+    async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+        debug!(endpoint = %endpoint, "fetching signer public keys");
+        let client = self.get_or_build_client(endpoint)?;
+        client.signer_public_key().await.map_err(|e| RegistrarError::ProverClient {
+            instance: endpoint.to_string(),
+            source: Box::new(e),
+        })
     }
 
-    fn signer_attestation<'a>(
-        &'a self,
-        endpoint: &'a Url,
+    async fn signer_attestation(
+        &self,
+        endpoint: &Url,
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
-    ) -> impl std::future::Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a {
-        async move {
-            debug!(endpoint = %endpoint, "fetching signer attestations");
-            let client = self.get_or_build_client(endpoint)?;
-            client.signer_attestation(user_data, nonce).await.map_err(|e| {
-                RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }
-            })
-        }
+    ) -> Result<Vec<Vec<u8>>> {
+        debug!(endpoint = %endpoint, "fetching signer attestations");
+        let client = self.get_or_build_client(endpoint)?;
+        client.signer_attestation(user_data, nonce).await.map_err(|e| {
+            RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }
+        })
     }
 }
 
