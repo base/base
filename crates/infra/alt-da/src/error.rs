@@ -1,5 +1,24 @@
 use thiserror::Error;
 
+use crate::commitment::GENERIC_COMMITMENT_LEN;
+
+/// Generic commitment failed structural validation.
+///
+/// Independent of the server/store [`Error`] and the [`ClientError`] hierarchies so
+/// both sides can validate a commitment and map the failure into their own type.
+#[derive(Debug, Error)]
+pub enum CommitmentError {
+    /// Commitment was not exactly [`GENERIC_COMMITMENT_LEN`] bytes.
+    #[error("invalid generic commitment length: {len} (expected {GENERIC_COMMITMENT_LEN})")]
+    InvalidLength {
+        /// Actual commitment length in bytes.
+        len: usize,
+    },
+    /// Commitment did not start with the type + sentinel prefix.
+    #[error("invalid generic commitment prefix")]
+    InvalidPrefix,
+}
+
 /// Alt-DA server and store errors.
 #[derive(Debug, Error)]
 pub enum Error {
@@ -65,6 +84,51 @@ pub enum InternalError {
     /// HTTP server failed to start or serve requests.
     #[error("http server error: {0}")]
     Http(String),
+}
+
+/// Alt-DA HTTP client request failed.
+#[derive(Debug, Error)]
+pub enum ClientError {
+    /// Request body was empty.
+    #[error("empty alt-da put body")]
+    EmptyBody,
+    /// Request body exceeds [`crate::MAX_OBJECT_BYTES`].
+    #[error("alt-da put body too large: {size} bytes (max {max})")]
+    BodyTooLarge {
+        /// Request body size in bytes.
+        size: usize,
+        /// Configured maximum object size in bytes.
+        max: usize,
+    },
+    /// HTTP transport or response read failed.
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
+    /// DA server returned a non-success status.
+    #[error("alt-da put failed with status {status}: {detail}")]
+    UnexpectedStatus {
+        /// HTTP status code.
+        status: u16,
+        /// Bounded response body from the server, if any.
+        detail: String,
+    },
+    /// PUT response was not a 34-byte generic commitment.
+    #[error("alt-da put returned invalid commitment length: {len}")]
+    InvalidCommitmentLen {
+        /// Response body length in bytes.
+        len: usize,
+    },
+    /// PUT response had a malformed generic commitment prefix.
+    #[error("alt-da put returned malformed commitment prefix")]
+    InvalidCommitment,
+}
+
+impl From<CommitmentError> for ClientError {
+    fn from(err: CommitmentError) -> Self {
+        match err {
+            CommitmentError::InvalidLength { len } => Self::InvalidCommitmentLen { len },
+            CommitmentError::InvalidPrefix => Self::InvalidCommitment,
+        }
+    }
 }
 
 impl From<StoreError> for Error {

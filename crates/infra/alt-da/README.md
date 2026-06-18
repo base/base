@@ -8,6 +8,8 @@ stored under base64url(commitment) keys in S3 or on disk.
 
 Runnable binary: `bin/da-server` (`base-da-server`).
 
+Batcher dual-write uses [`Client::put`](crate::Client::put) and [`encode_commitment_tx_data`](crate::encode_commitment_tx_data).
+
 ## Usage
 
 ```rust,ignore

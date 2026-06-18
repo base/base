@@ -3001,6 +3001,7 @@ dependencies = [
 name = "base-alt-da"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "async-trait",
  "aws-config",
  "aws-sdk-s3",

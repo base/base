@@ -18,6 +18,8 @@ rand.workspace = true
 base64.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
+alloy-primitives.workspace = true
+reqwest = { workspace = true, features = ["rustls"] }
 tracing = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["rt"] }
 base-protocol = { workspace = true, features = ["std"] }
@@ -28,5 +30,4 @@ aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "
 
 [dev-dependencies]
 tempfile.workspace = true
-reqwest = { workspace = true, features = ["rustls"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
