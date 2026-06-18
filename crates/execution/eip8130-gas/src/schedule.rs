@@ -69,7 +69,7 @@ impl Eip8130GasSchedule {
     pub const ACTOR_SLOT_RESET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_RESET;
 
     // ── Enshrined authenticator execution gas (chain policy) ─────────────────
-    /// secp256k1 (`ECRECOVER` sentinel / EOA path) execution gas — the
+    /// secp256k1 (`K1_AUTHENTICATOR` sentinel / EOA path) execution gas — the
     /// `ECRECOVER` precompile cost.
     pub const AUTH_EXEC_K1: u64 = 3_000;
     /// P-256 authenticator execution gas — the EIP-7951 `P256VERIFY` precompile
@@ -89,7 +89,7 @@ impl Eip8130GasSchedule {
     /// before its gas is charged).
     #[must_use]
     pub fn leaf_auth_exec_gas(authenticator: Address) -> Option<u64> {
-        if authenticator == Eip8130Constants::ECRECOVER_AUTHENTICATOR {
+        if authenticator == Eip8130Constants::K1_AUTHENTICATOR {
             Some(Self::AUTH_EXEC_K1)
         } else if authenticator == Eip8130Contracts::P256_AUTHENTICATOR {
             Some(Self::AUTH_EXEC_P256)

@@ -38,7 +38,7 @@ costs Base already uses:
 
 | Authenticator | execution gas | basis |
 |---|---|---|
-| secp256k1 (`ECRECOVER` sentinel, EOA path) | 3,000 | `ECRECOVER` precompile |
+| secp256k1 (`K1_AUTHENTICATOR` sentinel, EOA path) | 3,000 | `ECRECOVER` precompile |
 | P-256 | 6,900 | EIP-7951 `P256VERIFY` precompile |
 | `WebAuthn` | 6,900 | P-256 verify + SHA-256 + `clientDataJSON` handling |
 | delegate (depth-1) | `2,100 + nested` | extra cold `actor_config` SLOAD on the delegate account + the nested authenticator's execution |

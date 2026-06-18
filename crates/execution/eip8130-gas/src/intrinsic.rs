@@ -153,7 +153,8 @@ impl IntrinsicGas {
                 }
                 AccountChange::ConfigChange(cc) => {
                     // `cfg.auth` is always `authenticator || data` (never a bare
-                    // signature), including the implicit-EOA `address(0) || sig` form.
+                    // signature); an implicit-EOA owner names itself explicitly as
+                    // `K1_AUTHENTICATOR || sig` here.
                     let auth = Self::auth_cost(cc.auth.as_ref(), false)?;
                     account_changes = account_changes.saturating_add(auth);
                     for actor_change in &cc.actor_changes {
@@ -217,7 +218,7 @@ impl IntrinsicGas {
     /// means the blob is a raw 65-byte secp256k1 signature with no authenticator
     /// prefix (the empty-`sender` path, charged k1); `false` means it is an
     /// `authenticator(20) || data` blob (every other surface, including the
-    /// implicit-EOA owner encoded as `address(0) || sig`).
+    /// implicit-EOA owner naming itself as `K1_AUTHENTICATOR || sig`).
     ///
     /// The cold SLOAD is charged only when an authenticator is actually resolved
     /// (a bare signature, or a prefixed blob long enough to name an
@@ -245,14 +246,12 @@ impl IntrinsicGas {
         let Some(authenticator) = Self::authenticator_of(auth) else {
             return Ok(0);
         };
-        // `address(0)` is the implicit-EOA owner sentinel: authorize routes it to
-        // enshrined ecrecover (identical to `ECRECOVER_AUTHENTICATOR`), so it
-        // authenticates at the native k1 cost. The txpool admits this sentinel on
-        // the authorizing surfaces (sender/payer/config auth), so it reaches here
-        // and must be priced rather than rejected as an unscheduled authenticator.
-        if authenticator == Address::ZERO {
-            return Ok(Eip8130GasSchedule::AUTH_EXEC_K1);
-        }
+        // A configured k1 actor (including a re-registered self key, or an
+        // implicit-EOA owner authorizing a config change) is named explicitly as
+        // `K1_AUTHENTICATOR || sig` and priced via `leaf_exec_gas` below.
+        // `address(0)` is the empty "no actor configured" sentinel and is never a
+        // valid authenticator selector, so it falls through to
+        // `UnscheduledAuthenticator` here just as dispatch rejects it upstream.
         if authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
             // blob = delegate_authenticator(20) || delegate_account(20) ||
             // nested_authenticator(20) || nested_data; the nested blob
@@ -321,7 +320,7 @@ mod tests {
     use super::*;
 
     const ACCOUNT: Address = address!("0x1111111111111111111111111111111111111111");
-    const K1: Address = Eip8130Constants::ECRECOVER_AUTHENTICATOR;
+    const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
     const EXISTING_KEY: IntrinsicGasInput = IntrinsicGasInput::new(false, false);
 
     fn signed(tx: TxEip8130, sender_auth: Vec<u8>, payer_auth: Vec<u8>) -> Eip8130Signed {
@@ -506,13 +505,12 @@ mod tests {
     }
 
     #[test]
-    fn implicit_eoa_sentinel_auth_costs_k1() {
-        // `address(0) || sig` is the implicit-EOA owner sentinel on the configured
-        // (`bare_signature: false`) surfaces. Authorize routes it to ecrecover, so
-        // the schedule must price it as native k1 + one cold SLOAD rather than
-        // rejecting it as `UnscheduledAuthenticator(address(0))`.
+    fn implicit_eoa_config_auth_costs_k1() {
+        // An implicit-EOA owner authorizing a config change names itself explicitly
+        // as `K1_AUTHENTICATOR || sig` on the configured (`bare_signature: false`)
+        // surface, priced as native k1 + one cold SLOAD.
         let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
-        assert_eq!(IntrinsicGas::auth_cost(&configured_auth(Address::ZERO), false), Ok(auth_cost));
+        assert_eq!(IntrinsicGas::auth_cost(&configured_auth(K1), false), Ok(auth_cost));
 
         // End-to-end: a config change authorized by the implicit-EOA owner is
         // priced (not rejected), charging k1 + SLOAD plus the authorized slot.
@@ -524,7 +522,7 @@ mod tests {
                 actor_id: Default::default(),
                 data: Bytes::from(vec![0u8; 128]),
             }],
-            auth: Bytes::from(configured_auth(Address::ZERO)),
+            auth: Bytes::from(configured_auth(K1)),
         };
         let tx = TxEip8130 {
             sender: Some(ACCOUNT),
@@ -533,6 +531,17 @@ mod tests {
         };
         let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
         assert_eq!(gas.account_changes, auth_cost + Eip8130GasSchedule::ACTOR_SLOT_SET_COST);
+    }
+
+    #[test]
+    fn zero_authenticator_selector_is_unscheduled() {
+        // `address(0)` is the empty "no actor configured" sentinel, never a valid
+        // authenticator selector. A configured (`bare_signature: false`) blob naming
+        // it is rejected as unscheduled rather than silently priced as k1.
+        assert_eq!(
+            IntrinsicGas::auth_cost(&configured_auth(Address::ZERO), false),
+            Err(IntrinsicGasError::UnscheduledAuthenticator(Address::ZERO))
+        );
     }
 
     #[test]
