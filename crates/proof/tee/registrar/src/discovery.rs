@@ -129,10 +129,10 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
         missing_ids.sort();
         if !missing_ids.is_empty() {
             for instance_id in &missing_ids {
-                warn!(instance_id = %instance_id, "EC2 response missing data for ELB target");
+                warn!(instance_id = %instance_id, "EC2 response missing or incomplete data for ELB target");
             }
             return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
-                "EC2 response missing data for ELB target(s): {}",
+                "EC2 response missing or incomplete data for ELB target(s): {}",
                 missing_ids.join(",")
             )))));
         }
