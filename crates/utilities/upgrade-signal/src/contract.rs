@@ -107,12 +107,16 @@ impl AlloyUpgradeSignalReader {
     ) -> Result<UpgradeSignal, UpgradeSignalError> {
         let (timestamp_output, version_output) = try_join(
             self.call_at_block(
-                IUpgradeSignal::getTimestampCall { hardforkId: hardfork_id.contract_id().to_string() },
+                IUpgradeSignal::getTimestampCall {
+                    hardforkId: hardfork_id.contract_id().to_string(),
+                },
                 l1_block,
                 "getTimestamp failed",
             ),
             self.call_at_block(
-                IUpgradeSignal::getProtocolVersionCall { hardforkId: hardfork_id.contract_id().to_string() },
+                IUpgradeSignal::getProtocolVersionCall {
+                    hardforkId: hardfork_id.contract_id().to_string(),
+                },
                 l1_block,
                 "getProtocolVersion failed",
             ),

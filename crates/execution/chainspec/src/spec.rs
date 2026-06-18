@@ -934,16 +934,8 @@ mod tests {
         let static_blob_params = spec.inner.blob_params_at_timestamp(timestamp);
         let static_next_base_fee = spec.inner.next_block_base_fee(parent, timestamp);
 
-        RuntimeUpgradeRegistry::set_activation_timestamp(
-            chain_id,
-            BaseUpgrade::Canyon,
-            timestamp,
-        );
-        RuntimeUpgradeRegistry::set_activation_timestamp(
-            chain_id,
-            BaseUpgrade::Ecotone,
-            timestamp,
-        );
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Canyon, timestamp);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Ecotone, timestamp);
 
         let runtime_chain_spec = spec.runtime_chain_spec();
 
@@ -1279,9 +1271,7 @@ mod tests {
             !chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::PectraBlobSchedule, 84,)
         );
         assert!(!chain_spec.clear_hardfork_activation_timestamp(BaseUpgrade::Delta));
-        assert!(
-            !chain_spec.clear_hardfork_activation_timestamp(BaseUpgrade::PectraBlobSchedule)
-        );
+        assert!(!chain_spec.clear_hardfork_activation_timestamp(BaseUpgrade::PectraBlobSchedule));
 
         assert_eq!(chain_spec.fork(BaseUpgrade::Ecotone), ecotone);
     }

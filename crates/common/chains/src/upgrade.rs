@@ -232,14 +232,8 @@ mod tests {
 
     #[test]
     fn contract_upgrade_parses_aliases() {
-        assert_eq!(
-            BaseUpgrade::from_contract_fork_name("base_azul"),
-            Some(BaseUpgrade::Azul)
-        );
-        assert_eq!(
-            BaseUpgrade::from_contract_fork_name("shanghai"),
-            Some(BaseUpgrade::Canyon)
-        );
+        assert_eq!(BaseUpgrade::from_contract_fork_name("base_azul"), Some(BaseUpgrade::Azul));
+        assert_eq!(BaseUpgrade::from_contract_fork_name("shanghai"), Some(BaseUpgrade::Canyon));
         assert_eq!(
             BaseUpgrade::from_contract_fork_name("pectra_blob_schedule"),
             Some(BaseUpgrade::PectraBlobSchedule)

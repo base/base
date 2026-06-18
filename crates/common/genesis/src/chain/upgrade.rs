@@ -397,11 +397,7 @@ impl RuntimeUpgradeRegistry {
     }
 
     /// Sets one runtime activation override for a chain and contract upgrade ID.
-    pub fn set_activation(
-        chain_id: u64,
-        upgrade_id: BaseUpgrade,
-        activation: UpgradeActivation,
-    ) {
+    pub fn set_activation(chain_id: u64, upgrade_id: BaseUpgrade, activation: UpgradeActivation) {
         let mut registry = Self::write_registry();
         let overrides = registry.entry(chain_id).or_default();
         overrides.set_activation(upgrade_id, activation)
@@ -542,11 +538,7 @@ impl UpgradeConfig {
     }
 
     /// Applies an upgrade activation override by contract upgrade ID.
-    pub const fn set_activation(
-        &mut self,
-        upgrade_id: BaseUpgrade,
-        activation: UpgradeActivation,
-    ) {
+    pub const fn set_activation(&mut self, upgrade_id: BaseUpgrade, activation: UpgradeActivation) {
         match activation {
             UpgradeActivation::Never => self.clear_activation_timestamp(upgrade_id),
             UpgradeActivation::Timestamp(timestamp) => {

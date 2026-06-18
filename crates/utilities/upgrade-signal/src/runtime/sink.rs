@@ -208,10 +208,7 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, RecordingSinkError);
-        assert_eq!(
-            sink.applied,
-            vec![(BaseUpgrade::Regolith, UpgradeActivation::Timestamp(1))]
-        );
+        assert_eq!(sink.applied, vec![(BaseUpgrade::Regolith, UpgradeActivation::Timestamp(1))]);
     }
 
     #[test]

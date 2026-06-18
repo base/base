@@ -94,9 +94,10 @@ impl UpgradeSignalArgs {
             if hardfork_id.is_empty() {
                 return Err(UpgradeSignalConfigError::EmptyHardforkId);
             }
-            let hardfork_id = BaseUpgrade::from_contract_fork_name(hardfork_id).ok_or_else(|| {
-                UpgradeSignalConfigError::UnknownHardforkId(hardfork_id.to_string())
-            })?;
+            let hardfork_id =
+                BaseUpgrade::from_contract_fork_name(hardfork_id).ok_or_else(|| {
+                    UpgradeSignalConfigError::UnknownHardforkId(hardfork_id.to_string())
+                })?;
             if !ids.contains(&hardfork_id) {
                 ids.push(hardfork_id);
             }

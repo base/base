@@ -197,10 +197,7 @@ impl RollupConfig {
     }
 
     /// Returns this rollup config's runtime-aware activation timestamp for a contract upgrade ID.
-    pub fn contract_upgrade_activation_timestamp(
-        &self,
-        upgrade_id: BaseUpgrade,
-    ) -> Option<u64> {
+    pub fn contract_upgrade_activation_timestamp(&self, upgrade_id: BaseUpgrade) -> Option<u64> {
         self.contract_upgrade_activation(upgrade_id).timestamp()
     }
 
@@ -896,20 +893,9 @@ mod tests {
 
         assert!(cfg.is_canyon_active(10));
 
-        crate::RuntimeUpgradeRegistry::clear_activation_timestamp(
-            chain_id,
-            BaseUpgrade::Canyon,
-        );
-        crate::RuntimeUpgradeRegistry::set_activation_timestamp(
-            chain_id,
-            BaseUpgrade::Azul,
-            42,
-        );
-        crate::RuntimeUpgradeRegistry::set_activation_timestamp(
-            chain_id,
-            BaseUpgrade::Cobalt,
-            84,
-        );
+        crate::RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Canyon);
+        crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
+        crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
 
         assert!(!cfg.is_canyon_active(10));
         assert!(cfg.is_base_azul_active(42));

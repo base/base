@@ -182,11 +182,7 @@ mod tests {
             ..RollupConfig::default()
         };
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
-        RuntimeUpgradeRegistry::set_activation_timestamp(
-            CHAIN_ID,
-            BaseUpgrade::Azul,
-            ACTIVATION,
-        );
+        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Azul, ACTIVATION);
         RuntimeUpgradeRegistry::set_activation_timestamp(
             CHAIN_ID,
             BaseUpgrade::Cobalt,
