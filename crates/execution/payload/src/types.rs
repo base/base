@@ -1,3 +1,4 @@
+use alloy_primitives::Bytes;
 use base_common_consensus::BasePrimitives;
 use base_common_rpc_types_engine::TracedExecutionData;
 use reth_payload_primitives::{BuiltPayload, PayloadTypes};
@@ -22,11 +23,13 @@ where
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
+        block_access_list: Option<Bytes>,
     ) -> Self::ExecutionData {
         TracedExecutionData::from(
-            base_common_rpc_types_engine::ExecutionData::from_block_unchecked(
+            base_common_rpc_types_engine::ExecutionData::from_block_unchecked_with_extras(
                 block.hash(),
                 &block.into_block().into_ethereum_block(),
+                block_access_list,
             ),
         )
     }

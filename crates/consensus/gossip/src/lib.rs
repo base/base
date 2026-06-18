@@ -50,7 +50,7 @@ mod event;
 pub use event::Event;
 
 mod handler;
-pub use handler::{BlockHandler, Handler};
+pub use handler::{BlockHandler, Handler, ReceivedUnsafePayload};
 
 mod driver;
 pub use driver::{GossipDriver, GossipDriverConfig};

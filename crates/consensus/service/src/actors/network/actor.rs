@@ -195,16 +195,21 @@ where
                         error!(target: "node::p2p", "The gossip transport has closed");
                         return Err(NetworkActorError::ChannelClosed);
                     };
-                    if self.engine_client.send_unsafe_block(block.into()).await.is_err() {
+                    if self
+                        .engine_client
+                        .send_unsafe_block(block.payload.into(), block.otel_cx)
+                        .await
+                        .is_err()
+                    {
                         warn!(target: "network", "Failed to forward unsafe block to engine");
                         return Err(NetworkActorError::ChannelClosed);
                     }
                 }
                 Some(query) = self.admin_rpc.recv(), if !self.admin_rpc.is_closed() => {
                     match query {
-                        NetworkAdminQuery::PostUnsafePayload { payload } => {
+                        NetworkAdminQuery::PostUnsafePayload { payload, otel_cx } => {
                             debug!(target: "node::p2p", "Forwarding unsafe payload from admin api to engine");
-                            if self.engine_client.send_unsafe_block(*payload).await.is_err() {
+                            if self.engine_client.send_unsafe_block(*payload, otel_cx).await.is_err() {
                                 warn!(target: "node::p2p", "Failed to forward admin api unsafe block to engine");
                             }
                         }

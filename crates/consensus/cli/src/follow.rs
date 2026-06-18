@@ -3,7 +3,7 @@
 use std::{num::ParseIntError, sync::Arc, time::Duration};
 
 use alloy_provider::{Provider, RootProvider};
-use base_cli_utils::{LogConfig, RuntimeManager};
+use base_cli_utils::{LogConfig, RuntimeManager, shutdown_tracer_provider};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_node::{
@@ -43,7 +43,7 @@ pub struct ConsensusFollowNodeCommand {
 
 impl ConsensusFollowNodeCommand {
     /// Runs the standalone consensus follow-node command.
-    pub fn run(mut self, chain: ConsensusChainArgs) -> eyre::Result<()> {
+    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
@@ -58,13 +58,13 @@ impl ConsensusFollowNodeCommand {
         let rt = manager.tokio_runtime()?;
         rt.block_on(async {
             LogConfig::from(self.logging.clone())
-                .init_with_trace_args(&mut self.traces, &["libp2p_gossipsub=error"])
+                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
         })?;
         rt.block_on(async move {
             tokio::select! {
-                biased;
                 _ = tokio::signal::ctrl_c() => {
                     tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
+                    shutdown_tracer_provider();
                     Ok(())
                 }
                 res = args.start() => res,

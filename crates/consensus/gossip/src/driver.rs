@@ -29,7 +29,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     Behaviour, BlockHandler, ConnectionGate, ConnectionGater, Event, GossipDriverBuilder, Handler,
-    Metrics, PublishError,
+    Metrics, PublishError, ReceivedUnsafePayload,
 };
 
 /// Configuration applied when constructing a [`GossipDriver`].
@@ -354,7 +354,7 @@ where
         count
     }
 
-    fn handle_gossip_event(&mut self, event: Event) -> Option<NetworkPayloadEnvelope> {
+    fn handle_gossip_event(&mut self, event: Event) -> Option<ReceivedUnsafePayload> {
         match event {
             Event::Gossipsub(e) => return self.handle_gossipsub_event(*e),
             Event::Ping(libp2p::ping::Event { peer, result, .. }) => {
@@ -436,7 +436,7 @@ where
     fn handle_gossipsub_event(
         &mut self,
         event: libp2p::gossipsub::Event,
-    ) -> Option<NetworkPayloadEnvelope> {
+    ) -> Option<ReceivedUnsafePayload> {
         match event {
             libp2p::gossipsub::Event::Message {
                 propagation_source: src,
@@ -476,7 +476,7 @@ where
     }
 
     /// Handles the [`SwarmEvent<Event>`].
-    pub fn handle_event(&mut self, event: SwarmEvent<Event>) -> Option<NetworkPayloadEnvelope> {
+    pub fn handle_event(&mut self, event: SwarmEvent<Event>) -> Option<ReceivedUnsafePayload> {
         match event {
             SwarmEvent::Behaviour(behavior_event) => {
                 return self.handle_gossip_event(behavior_event);

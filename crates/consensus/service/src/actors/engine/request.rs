@@ -57,11 +57,20 @@ pub enum EngineActorRequest {
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
     /// Request to insert the provided external unsafe block.
-    ProcessUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
+    ProcessUnsafeL2BlockRequest(Box<ExternalUnsafePayloadRequest>),
     /// Request to insert a locally produced sequencer unsafe block.
     ProcessLocalUnsafeL2BlockRequest(Box<InsertUnsafePayloadRequest>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
+}
+
+/// A request to insert an external unsafe payload received over gossip or admin RPC.
+#[derive(Debug)]
+pub struct ExternalUnsafePayloadRequest {
+    /// The payload envelope to insert.
+    pub envelope: BaseExecutionPayloadEnvelope,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
 }
 
 /// RPC Request for the engine to handle.

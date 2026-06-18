@@ -8,6 +8,7 @@ use base_common_rpc_types_engine::{
 use base_consensus_disc::{Discv5Handler, HandlerRequest};
 use base_consensus_gossip::{
     BlockHandler, ConnectionGate, ConnectionGater, GossipDriver, Metrics, P2pRpcRequest,
+    ReceivedUnsafePayload,
 };
 use base_consensus_sources::BlockSignerHandler;
 use discv5::Enr;
@@ -145,7 +146,7 @@ impl GossipTransport for NetworkHandler {
         Ok(())
     }
 
-    async fn next_unsafe_block(&mut self) -> Option<NetworkPayloadEnvelope> {
+    async fn next_unsafe_block(&mut self) -> Option<ReceivedUnsafePayload> {
         loop {
             let has_peer_monitoring = self.gossip.peer_monitoring.as_ref().is_some();
             select! {

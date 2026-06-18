@@ -1,3 +1,5 @@
+//! Tower middleware for injecting W3C trace context into outbound engine HTTP requests.
+
 use std::task::{Context as TaskContext, Poll};
 
 use http::{Request, Response};

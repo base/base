@@ -65,14 +65,14 @@ where
 
         let otel_cx = req.extensions().get::<InboundOtelContext>().cloned();
 
-        OtelHttpMiddlewareFuture { inner: self.inner.call(req), otel_cx }
+        OtelHttpMiddlewareFuture { inner: Box::pin(self.inner.call(req)), otel_cx }
     }
 }
 
-/// Future wrapper that keeps an extracted OTel context attached while the request is polled.
+/// Future wrapper that keeps an extracted `OTel` context attached while the request is polled.
 #[derive(Debug)]
 pub struct OtelHttpMiddlewareFuture<F> {
-    inner: F,
+    inner: Pin<Box<F>>,
     otel_cx: Option<InboundOtelContext>,
 }
 
@@ -85,10 +85,10 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
         // Keep the inbound context current while the auth/engine request future is polled so
         // handler spans created inside that future inherit the caller's traceparent.
-        let this = unsafe { self.get_unchecked_mut() };
+        let this = self.get_mut();
         let _guard =
             this.otel_cx.as_ref().cloned().map(|InboundOtelContext(otel_cx)| otel_cx.attach());
-        unsafe { Pin::new_unchecked(&mut this.inner) }.poll(cx)
+        this.inner.as_mut().poll(cx)
     }
 }
 

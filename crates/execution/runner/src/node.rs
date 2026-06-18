@@ -182,7 +182,7 @@ where
     fn add_ons(&self) -> Self::AddOns {
         self.add_ons_builder()
             .with_rpc_middleware(OtelRpcMiddlewareLayer)
-            .with_http_middleware(OtelHttpMiddlewareLayer)
+            .with_auth_http_middleware(OtelHttpMiddlewareLayer)
             .build()
     }
 }

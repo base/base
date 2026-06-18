@@ -12,7 +12,6 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
-use base_access_lists::FlashblockAccessList;
 use base_builder_publish::WebSocketPublisher;
 use base_bundles::RejectedTransaction;
 use base_common_chains::Upgrades;
@@ -25,7 +24,6 @@ use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadAttributesExt, TracedBasePayloadBuilderAttributes,
 };
-use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -921,8 +919,6 @@ struct FlashblocksMetadata {
     new_account_balances: Option<HashMap<Address, U256>>,
     /// The block number this flashblock belongs to
     block_number: u64,
-    /// The flashblock access list
-    access_list: Option<FlashblockAccessList>,
 }
 
 pub(crate) fn execute_pre_steps<DB>(
@@ -1096,8 +1092,8 @@ where
             },
             state: state.take_bundle(),
         }),
-        hashed_state: Either::Left(Arc::new(hashed_state)),
-        trie_updates: Either::Left(Arc::new(trie_output)),
+        hashed_state: Arc::new(hashed_state),
+        trie_updates: Arc::new(trie_output),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 
@@ -1112,9 +1108,6 @@ where
     let new_transactions_encoded =
         new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
-    let min_tx_index = info.extra.last_flashblock_index as u64;
-    let max_tx_index = min_tx_index + new_transactions_encoded.len() as u64;
-
     let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
     info.extra.last_flashblock_index = info.executed_transactions.len();
 
@@ -1124,22 +1117,16 @@ where
         .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
         .collect::<HashMap<B256, BaseReceipt>>();
 
-    // finalize and build the FAL
-    let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
-    let _access_list = fal_builder.build(min_tx_index, max_tx_index);
-
     let metadata: FlashblocksMetadata =
         if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
             FlashblocksMetadata {
                 block_number: ctx.parent().number + 1,
-                access_list: None,
                 receipts: None,
                 new_account_balances: None,
             }
         } else {
             FlashblocksMetadata {
                 block_number: ctx.parent().number + 1,
-                access_list: None,
                 new_account_balances: Some(new_account_balances),
                 receipts: Some(receipts_with_hash),
             }
@@ -1187,7 +1174,13 @@ where
     state.transition_state = untouched_transition_state;
 
     Ok((
-        BaseBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed)),
+        BaseBuiltPayload::new(
+            ctx.payload_id(),
+            sealed_block,
+            info.total_fees,
+            Some(executed),
+            None,
+        ),
         fb_payload,
     ))
 }
@@ -1384,7 +1377,6 @@ mod tests {
             receipts: Some(receipts),
             new_account_balances: Some(balances),
             block_number: 42,
-            access_list: None,
         };
 
         let json = serde_json::to_value(&metadata).unwrap();
@@ -1425,7 +1417,6 @@ mod tests {
             receipts: Some(HashMap::default()),
             new_account_balances: Some(HashMap::default()),
             block_number: 99,
-            access_list: None,
         };
 
         let json = serde_json::to_value(&metadata).unwrap();

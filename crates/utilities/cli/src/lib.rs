@@ -26,7 +26,7 @@ pub use logging::{
 };
 
 mod tracing;
-pub use tracing::{LogfmtFormatter, init_test_tracing};
+pub use tracing::{LogfmtFormatter, init_test_tracing, shutdown_tracer_provider};
 
 mod version;
 pub use version::Version;

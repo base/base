@@ -164,13 +164,13 @@ where
         )
     }
 
-    /// Sets the HTTP middleware stack for processing HTTP requests.
+    /// Sets the authenticated engine HTTP middleware stack for processing HTTP requests.
     ///
-    /// This middleware is applied at the transport layer before requests are decoded and routed
-    /// to JSON-RPC method handlers.
+    /// This middleware is applied to the authenticated Engine API HTTP transport before requests
+    /// are decoded and routed to JSON-RPC method handlers.
     ///
-    /// See also [`RpcAddOns::with_http_middleware`].
-    pub fn with_http_middleware<T>(
+    /// See also [`RpcAddOns::with_auth_http_middleware`].
+    pub fn with_auth_http_middleware<T>(
         self,
         http_middleware: T,
     ) -> BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware, T> {
@@ -448,8 +448,8 @@ impl<NetworkT, RpcMiddleware, HttpMiddleware>
         }
     }
 
-    /// Configure the HTTP middleware to use.
-    pub fn with_http_middleware<T>(
+    /// Configure the authenticated engine HTTP middleware to use.
+    pub fn with_auth_http_middleware<T>(
         self,
         http_middleware: T,
     ) -> BaseAddOnsBuilder<NetworkT, RpcMiddleware, T> {

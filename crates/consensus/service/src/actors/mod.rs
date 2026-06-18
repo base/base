@@ -18,7 +18,8 @@ pub use engine::{
     BootstrapRole, BuildRequest, EngineActor, EngineActorRequest, EngineClientError,
     EngineClientResult, EngineConfig, EngineDerivationClient, EngineError, EngineProcessor,
     EngineProcessorOptions, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
-    GetPayloadRequest, InsertUnsafePayloadRequest, QueuedEngineDerivationClient, ResetRequest,
+    ExternalUnsafePayloadRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
+    QueuedEngineDerivationClient, ResetRequest,
 };
 
 mod rpc;

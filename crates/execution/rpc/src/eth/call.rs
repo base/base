@@ -12,18 +12,18 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{EthApiError, cache::db::StateProviderTraitObjWrapper};
 use revm::{Database, context::Block, context_interface::Transaction};
-use tracing::{Instrument, Span, info_span, trace, warn};
+use tracing::{Instrument, Span, info_span, trace, trace_span, warn};
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
 impl<N, Rpc> EthCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm> + From<ProviderError>,
+    BaseEthApiError: FromEvmError<<Self as RpcNodeCore>::Evm> + From<ProviderError>,
     Rpc: RpcConvert<
             Primitives = N::Primitives,
             Error = BaseEthApiError,
-            Evm = <BaseEthApi<N, Rpc> as RpcNodeCore>::Evm,
+            Evm = <Self as RpcNodeCore>::Evm,
         >,
 {
     fn call(
@@ -39,11 +39,11 @@ where
 impl<N, Rpc> EstimateCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm> + From<ProviderError>,
+    BaseEthApiError: FromEvmError<<Self as RpcNodeCore>::Evm> + From<ProviderError>,
     Rpc: RpcConvert<
             Primitives = N::Primitives,
             Error = BaseEthApiError,
-            Evm = <BaseEthApi<N, Rpc> as RpcNodeCore>::Evm,
+            Evm = <Self as RpcNodeCore>::Evm,
         >,
 {
 }
@@ -51,11 +51,11 @@ where
 impl<N, Rpc> Call for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm> + From<ProviderError>,
+    BaseEthApiError: FromEvmError<<Self as RpcNodeCore>::Evm> + From<ProviderError>,
     Rpc: RpcConvert<
             Primitives = N::Primitives,
             Error = BaseEthApiError,
-            Evm = <BaseEthApi<N, Rpc> as RpcNodeCore>::Evm,
+            Evm = <Self as RpcNodeCore>::Evm,
         >,
 {
     #[inline]
@@ -82,11 +82,11 @@ where
 impl<N, Rpc> BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    BaseEthApiError: FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm> + From<ProviderError>,
+    BaseEthApiError: FromEvmError<<Self as RpcNodeCore>::Evm> + From<ProviderError>,
     Rpc: RpcConvert<
             Primitives = N::Primitives,
             Error = BaseEthApiError,
-            Evm = <BaseEthApi<N, Rpc> as RpcNodeCore>::Evm,
+            Evm = <Self as RpcNodeCore>::Evm,
         >,
     Self: reth_rpc_eth_api::EthApiTypes<Error = BaseEthApiError, RpcConvert = Rpc>,
     Self: LoadPendingBlock,
@@ -115,16 +115,16 @@ where
             let call_span = Span::current();
 
             let (mut evm_env, at) = async { self.evm_env_at(block_number).await }
-                .instrument(info_span!(parent: &call_span, "resolve_call_evm_env", block = ?block_number))
+                .instrument(trace_span!(parent: &call_span, "resolve_call_evm_env", block = ?block_number))
                 .await?;
 
             let res = self
                 .spawn_blocking_io_fut(async move |this| {
                     let state = async { this.state_at_block_id(at).await }
-                        .instrument(info_span!(parent: &call_span, "load_call_state", block = ?at))
+                        .instrument(trace_span!(parent: &call_span, "load_call_state", block = ?at))
                         .await?;
 
-                    let mut db = info_span!(parent: &call_span, "build_call_state_db", block = ?at)
+                    let mut db = trace_span!(parent: &call_span, "build_call_state_db", block = ?at)
                         .in_scope(|| {
                             State::builder()
                                 .with_database(StateProviderDatabase::new(
@@ -137,7 +137,7 @@ where
                     let requested_gas = request.as_ref().gas;
                     let mut request = request;
 
-                    let tx_env = info_span!(
+                    let tx_env = trace_span!(
                         parent: &call_span,
                         "prepare_call_env",
                         from = ?request.as_ref().from,
@@ -171,7 +171,7 @@ where
                         request.as_mut().nonce = None;
 
                         if let Some(block_overrides) = overrides.block {
-                            info_span!(parent: &call_span, "apply_call_block_overrides")
+                            trace_span!(parent: &call_span, "apply_call_block_overrides")
                                 .in_scope(|| {
                                     apply_block_overrides(
                                         *block_overrides,
@@ -181,17 +181,17 @@ where
                                 });
                         }
                         if let Some(state_overrides) = overrides.state {
-                            info_span!(parent: &call_span, "apply_call_state_overrides")
+                            trace_span!(parent: &call_span, "apply_call_state_overrides")
                                 .in_scope(|| apply_state_overrides(state_overrides, &mut db))
                                 .map_err(EthApiError::from_state_overrides_err)?;
                         }
 
                         let mut tx_env =
-                            info_span!(parent: &call_span, "build_call_tx_env").in_scope(
+                            trace_span!(parent: &call_span, "build_call_tx_env").in_scope(
                                 || -> Result<_, BaseEthApiError> {
                                     if request.as_ref().nonce.is_none() {
                                         let caller = request.as_ref().from.unwrap_or_default();
-                                        let nonce = info_span!(parent: &call_span, "load_call_nonce", caller = %caller)
+                                        let nonce = trace_span!(parent: &call_span, "load_call_nonce", caller = %caller)
                                             .in_scope(|| {
                                                 db.basic(caller)
                                                     .map_err(EthApiError::from)
@@ -204,7 +204,7 @@ where
                                         request.as_mut().nonce = Some(nonce);
                                     }
 
-                                    info_span!(parent: &call_span, "convert_call_tx_env")
+                                    trace_span!(parent: &call_span, "convert_call_tx_env")
                                         .in_scope(|| Call::create_txn_env(&this, &evm_env, request, &mut db))
                                 },
                             )?;
@@ -219,7 +219,7 @@ where
                                 tx_env = ?tx_env,
                                 "applying gas limit cap with caller allowance",
                             );
-                            let cap = info_span!(
+                            let cap = trace_span!(
                                 parent: &call_span,
                                 "cap_call_gas_limit_with_allowance",
                             )
@@ -234,10 +234,10 @@ where
                         return Err(EthApiError::InternalEthError.into())
                     }
 
-                    let res = info_span!(parent: &call_span, "execute_eth_call", block = ?at)
+                    let res = trace_span!(parent: &call_span, "execute_eth_call", block = ?at)
                         .in_scope(|| Call::transact(&this, &mut db, evm_env, tx_env))?;
 
-                    <BaseEthApiError as FromEvmError<<BaseEthApi<N, Rpc> as RpcNodeCore>::Evm>>::ensure_success(res.result)
+                    <BaseEthApiError as FromEvmError<<Self as RpcNodeCore>::Evm>>::ensure_success(res.result)
                 })
                 .await;
 

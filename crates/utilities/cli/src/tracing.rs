@@ -116,9 +116,10 @@ impl LogConfig {
     /// This is the preferred entry point for binaries that want OTLP support.
     pub fn init_with_trace_args(
         &self,
-        trace_args: &mut reth_node_core::args::TraceArgs,
+        trace_args: &reth_node_core::args::TraceArgs,
         directives: &[&str],
     ) -> eyre::Result<()> {
+        #[cfg(feature = "otlp")]
         opentelemetry::global::set_text_map_propagator(
             opentelemetry_sdk::propagation::TraceContextPropagator::new(),
         );
@@ -140,7 +141,10 @@ impl LogConfig {
                 None
             }
             #[cfg(not(feature = "otlp"))]
-            None
+            {
+                let _ = trace_args;
+                None
+            }
         };
 
         self.init_tracing_subscriber_with_directives_and_extra_layer(directives, otlp_layer)
@@ -165,13 +169,15 @@ impl LogConfig {
         filter: EnvFilter,
         extra_layer: Option<Box<dyn Layer<Registry> + Send + Sync>>,
     ) -> eyre::Result<()> {
-        let registry = tracing_subscriber::registry().with(extra_layer).with(filter);
+        let registry = tracing_subscriber::registry().with(extra_layer);
 
         // Build stdout layer
-        let stdout_layer = self.stdout_logs.as_ref().map(build_stdout_layer);
+        let stdout_layer =
+            self.stdout_logs.as_ref().map(|config| build_stdout_layer(config, filter.clone()));
 
         // Build file layer
-        let file_layer = self.file_logs.as_ref().map(build_file_layer);
+        let file_layer =
+            self.file_logs.as_ref().map(|config| build_file_layer(config, filter.clone()));
 
         // Combine and init
         registry
@@ -182,8 +188,21 @@ impl LogConfig {
     }
 }
 
+/// Flushes and shuts down the global tracer provider when OTLP export is enabled.
+#[cfg(feature = "otlp")]
+pub fn shutdown_tracer_provider() {
+    opentelemetry::global::shutdown_tracer_provider();
+}
+
+/// No-op shutdown helper when OTLP export is disabled.
+#[cfg(not(feature = "otlp"))]
+pub const fn shutdown_tracer_provider() {}
+
 /// Build a stdout layer with the specified format.
-fn build_stdout_layer<S>(config: &StdoutLogConfig) -> Box<dyn Layer<S> + Send + Sync>
+fn build_stdout_layer<S>(
+    config: &StdoutLogConfig,
+    filter: EnvFilter,
+) -> Box<dyn Layer<S> + Send + Sync>
 where
     S: Subscriber + for<'a> LookupSpan<'a> + Send + Sync,
 {
@@ -193,16 +212,16 @@ where
         .with_timer(SystemTime);
 
     match config.format {
-        LogFormat::Full => Box::new(base),
-        LogFormat::Compact => Box::new(base.compact()),
-        LogFormat::Json => Box::new(base.json()),
-        LogFormat::Pretty => Box::new(base.pretty()),
-        LogFormat::Logfmt => Box::new(base.event_format(LogfmtFormatter)),
+        LogFormat::Full => Box::new(base.with_filter(filter)),
+        LogFormat::Compact => Box::new(base.compact().with_filter(filter)),
+        LogFormat::Json => Box::new(base.json().with_filter(filter)),
+        LogFormat::Pretty => Box::new(base.pretty().with_filter(filter)),
+        LogFormat::Logfmt => Box::new(base.event_format(LogfmtFormatter).with_filter(filter)),
     }
 }
 
 /// Build a file layer with the specified format and rotation.
-fn build_file_layer<S>(config: &FileLogConfig) -> Box<dyn Layer<S> + Send + Sync>
+fn build_file_layer<S>(config: &FileLogConfig, filter: EnvFilter) -> Box<dyn Layer<S> + Send + Sync>
 where
     S: Subscriber + for<'a> LookupSpan<'a> + Send + Sync,
 {
@@ -226,11 +245,11 @@ where
         .with_timer(SystemTime);
 
     match config.format {
-        LogFormat::Full => Box::new(base),
-        LogFormat::Compact => Box::new(base.compact()),
-        LogFormat::Json => Box::new(base.json()),
-        LogFormat::Pretty => Box::new(base.pretty()),
-        LogFormat::Logfmt => Box::new(base.event_format(LogfmtFormatter)),
+        LogFormat::Full => Box::new(base.with_filter(filter)),
+        LogFormat::Compact => Box::new(base.compact().with_filter(filter)),
+        LogFormat::Json => Box::new(base.json().with_filter(filter)),
+        LogFormat::Pretty => Box::new(base.pretty().with_filter(filter)),
+        LogFormat::Logfmt => Box::new(base.event_format(LogfmtFormatter).with_filter(filter)),
     }
 }
 

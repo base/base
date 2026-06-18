@@ -2,8 +2,8 @@
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope};
-use base_consensus_gossip::P2pRpcRequest;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_consensus_gossip::{P2pRpcRequest, ReceivedUnsafePayload};
 
 /// Abstracts the gossip and discovery networking backend used by the [`crate::NetworkActor`].
 ///
@@ -24,7 +24,7 @@ pub trait GossipTransport: Send + 'static {
     ///
     /// Discovery (ENR reception, dialing) and peer monitoring are handled internally by the
     /// implementation. Returns `None` when the underlying transport has closed.
-    async fn next_unsafe_block(&mut self) -> Option<NetworkPayloadEnvelope>;
+    async fn next_unsafe_block(&mut self) -> Option<ReceivedUnsafePayload>;
 
     /// Updates the unsafe block signer address used to validate inbound gossip.
     fn set_block_signer(&mut self, address: Address);

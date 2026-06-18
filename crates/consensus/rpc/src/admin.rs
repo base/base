@@ -10,6 +10,7 @@ use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
+use opentelemetry::Context;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{AdminApiServer, SequencerAdminAPIClient, SequencerAdminAPIError};
@@ -21,6 +22,8 @@ pub enum NetworkAdminQuery {
     PostUnsafePayload {
         /// The payload to post.
         payload: Box<BaseExecutionPayloadEnvelope>,
+        /// [`opentelemetry::Context`] captured from the inbound admin RPC request.
+        otel_cx: Context,
     },
     /// An admin rpc request to clear pending outbound P2P connections.
     ClearPendingP2pConnections {
@@ -96,7 +99,10 @@ where
         // operation that is valid on both sequencer and validator nodes.
         Metrics::rpc_calls("admin_postUnsafePayload").increment(1.0);
         self.network_sender
-            .send(NetworkAdminQuery::PostUnsafePayload { payload: Box::new(payload) })
+            .send(NetworkAdminQuery::PostUnsafePayload {
+                payload: Box::new(payload),
+                otel_cx: Context::current(),
+            })
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }

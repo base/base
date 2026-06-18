@@ -11,7 +11,7 @@ use base_consensus_engine::{
     NoopForkchoiceCheckpointReader, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
-use opentelemetry::context::FutureExt as OtelFutureExt;
+use opentelemetry::context::FutureExt as _;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -19,8 +19,8 @@ use tokio::{
 
 use crate::{
     BuildRequest, CheckpointWriter, Conductor, EngineActorRequest, EngineClientError,
-    EngineDerivationClient, EngineError, GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode,
-    NoopCheckpointWriter,
+    EngineDerivationClient, EngineError, ExternalUnsafePayloadRequest, GetPayloadRequest,
+    InsertUnsafePayloadRequest, NodeMode, NoopCheckpointWriter,
 };
 
 /// Requires that the implementor handles engine requests via the provided channel.
@@ -824,8 +824,8 @@ where
                         self.engine.enqueue(task);
                     }
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
-                        let otel_cx = opentelemetry::Context::current();
-                        self.handle_external_unsafe_l2_block(*envelope, otel_cx);
+                        let ExternalUnsafePayloadRequest { envelope, otel_cx } = *envelope;
+                        self.handle_external_unsafe_l2_block(envelope, otel_cx);
                     }
                     EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
                         let InsertUnsafePayloadRequest { envelope, result_tx, otel_cx } = *envelope;

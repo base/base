@@ -6,10 +6,27 @@ use alloy_primitives::{Address, B256};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::NetworkPayloadEnvelope;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
+use opentelemetry::Context;
 use tokio::sync::watch::Receiver;
 use tracing::instrument;
 
 use crate::HandlerEncodeError;
+
+/// A validated unsafe payload received from gossip together with its local trace context.
+#[derive(Clone, Debug)]
+pub struct ReceivedUnsafePayload {
+    /// The validated network payload envelope.
+    pub payload: NetworkPayloadEnvelope,
+    /// The `OTel` context active while the payload was decoded and validated.
+    pub otel_cx: Context,
+}
+
+impl ReceivedUnsafePayload {
+    /// Creates a new received unsafe payload.
+    pub const fn new(payload: NetworkPayloadEnvelope, otel_cx: Context) -> Self {
+        Self { payload, otel_cx }
+    }
+}
 
 /// This trait defines the functionality required to process incoming messages
 /// and determine their acceptance within the network.
@@ -19,7 +36,7 @@ use crate::HandlerEncodeError;
 pub trait Handler: Send {
     /// Manages validation and further processing of messages
     /// This is a stateful method, because the handler needs to keep track of seen hashes.
-    fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<NetworkPayloadEnvelope>);
+    fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<ReceivedUnsafePayload>);
 
     /// Specifies which topics the handler is interested in
     fn topics(&self) -> Vec<TopicHash>;
@@ -56,7 +73,7 @@ impl Handler for BlockHandler {
             block_number = tracing::field::Empty
         )
     )]
-    fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<NetworkPayloadEnvelope>) {
+    fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<ReceivedUnsafePayload>) {
         let decoded = if msg.topic == self.blocks_v1_topic.hash() {
             NetworkPayloadEnvelope::decode_v1(&msg.data)
         } else if msg.topic == self.blocks_v2_topic.hash() {
@@ -76,7 +93,10 @@ impl Handler for BlockHandler {
                     .record("block_hash", tracing::field::display(envelope.payload.block_hash()));
                 tracing::Span::current().record("block_number", envelope.payload.block_number());
                 match self.block_valid(&envelope) {
-                    Ok(()) => (MessageAcceptance::Accept, Some(envelope)),
+                    Ok(()) => (
+                        MessageAcceptance::Accept,
+                        Some(ReceivedUnsafePayload::new(envelope, Context::current())),
+                    ),
                     Err(err) => {
                         warn!(target: "gossip", ?err, hash = ?envelope.payload_hash, "Received invalid block");
                         (err.into(), None)
