@@ -5,7 +5,7 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned onchain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, hex};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
@@ -13,12 +13,11 @@ use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use rand::random;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, info, info_span, warn};
+use tracing::{Instrument, debug, info, warn};
 
 use crate::{
     CertManager, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
-    ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result, SignerClient,
-    SignerManager,
+    ProverInstance, RegistrarMetrics, RegistryClient, Result, SignerClient, SignerManager,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -43,7 +42,7 @@ pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 5100;
 
 /// Runtime parameters for the [`RegistrationDriver`] that are not
 /// trait-based dependencies.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DriverConfig {
     /// Interval between discovery and registration poll cycles.
     pub poll_interval: Duration,
@@ -86,6 +85,7 @@ pub struct DiscoveryResolution {
 /// lifecycle reconciliation, and orphan cleanup.
 ///
 /// Generic over discovery and RPC backends.
+#[derive(Debug)]
 pub struct RegistrationDriver<D, S, P, R, T> {
     discovery: D,
     signer_client: S,
@@ -96,20 +96,7 @@ pub struct RegistrationDriver<D, S, P, R, T> {
     signer_manager: Arc<SignerManager<P, R, T>>,
 }
 
-impl<D, S, P, R, T> fmt::Debug for RegistrationDriver<D, S, P, R, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RegistrationDriver").field("config", &self.config).finish_non_exhaustive()
-    }
-}
-
-impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
-where
-    D: InstanceDiscovery + 'static,
-    S: SignerClient + 'static,
-    P: AttestationProofProvider + 'static,
-    R: RegistryClient + 'static,
-    T: TxManager + 'static,
-{
+impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T> {
     /// Creates a new registration driver.
     ///
     /// Accepts a pre-built certificate manager so CRL client construction and
@@ -123,9 +110,23 @@ where
     ) -> Self {
         Self { discovery, signer_client, config, cert_manager, signer_manager }
     }
+}
 
+impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
+where
+    D: InstanceDiscovery,
+    S: SignerClient,
+    T: TxManager,
+{
     /// Runs the registration loop until cancelled.
-    pub async fn run(&self) -> Result<()> {
+    pub async fn run(&self) -> Result<()>
+    where
+        D: 'static,
+        S: 'static,
+        P: AttestationProofProvider + 'static,
+        R: RegistryClient + 'static,
+        T: 'static,
+    {
         info!(
             poll_interval = ?self.config.poll_interval,
             max_concurrency = self.config.max_concurrency,
@@ -135,36 +136,35 @@ where
         let mut proof_tasks = ProofTaskSet::new();
 
         loop {
+            let discovery = self.discover_and_resolve().await;
+
             // Keep task state current before reconcile decisions each cycle.
             proof_tasks.reap_finished_tasks();
 
-            match self.discover_and_resolve().await {
-                Ok((resolution, ok_to_dereg)) => {
-                    proof_tasks.reap_finished_tasks();
+            match discovery {
+                Ok(_) if self.config.cancel.is_cancelled() => {}
+                Ok(resolution) => {
+                    self.signer_manager.reconcile_proof_tasks(
+                        &resolution,
+                        &mut proof_tasks,
+                        &self.config.cancel,
+                    );
 
-                    if !self.config.cancel.is_cancelled() {
-                        self.signer_manager.reconcile_proof_tasks(
-                            &resolution,
-                            &mut proof_tasks,
-                            &self.config.cancel,
-                        );
-
-                        if ok_to_dereg {
-                            let active_signers = &resolution.active_signers;
-                            if let Err(e) = self
-                                .signer_manager
-                                .run_orphan_dereg(
-                                    |signer| {
-                                        active_signers.contains(signer)
-                                            || proof_tasks.has_pending_signer(signer)
-                                    },
-                                    &self.config.cancel,
-                                )
-                                .await
-                            {
-                                warn!(error = %e, "orphan deregistration pass failed");
-                                RegistrarMetrics::processing_errors_total().increment(1);
-                            }
+                    if resolution.unresolved_instance_ids.is_empty() {
+                        let active_signers = &resolution.active_signers;
+                        if let Err(e) = self
+                            .signer_manager
+                            .run_orphan_dereg(
+                                |signer| {
+                                    active_signers.contains(signer)
+                                        || proof_tasks.has_pending_signer(signer)
+                                },
+                                &self.config.cancel,
+                            )
+                            .await
+                        {
+                            warn!(error = %e, "orphan deregistration pass failed");
+                            RegistrarMetrics::processing_errors_total().increment(1);
                         }
                     }
                 }
@@ -194,7 +194,6 @@ where
         info!("registration driver stopped");
         Ok(())
     }
-
     /// Resolves one instance into active and registerable signers.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<DiscoveryResolution> {
         if self.config.cancel.is_cancelled() {
@@ -215,21 +214,20 @@ where
             return Ok(outcome);
         }
 
-        if !instance.health_status.should_register() {
-            let recently_launched_unhealthy = instance.health_status
-                == InstanceHealthStatus::Unhealthy
-                && instance.launch_time.is_some_and(|lt| {
-                    lt.elapsed()
-                        .is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
-                });
-            if !recently_launched_unhealthy {
-                debug!(
-                    status = ?instance.health_status,
-                    instance = %instance.instance_id,
-                    "instance not registerable, skipping registration"
-                );
-                return Ok(outcome);
-            }
+        let recently_launched_unhealthy = instance.health_status == InstanceHealthStatus::Unhealthy
+            && instance.launch_time.is_some_and(|lt| {
+                lt.elapsed()
+                    .is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
+            });
+        if !instance.health_status.should_register() && !recently_launched_unhealthy {
+            debug!(
+                status = ?instance.health_status,
+                instance = %instance.instance_id,
+                "instance not registerable, skipping registration"
+            );
+            return Ok(outcome);
+        }
+        if recently_launched_unhealthy {
             info!(
                 instance = %instance.instance_id,
                 launch_time = ?instance.launch_time,
@@ -282,11 +280,7 @@ where
             return Ok(outcome);
         }
         if let Some(cert_manager) = &self.cert_manager {
-            let first_attestation =
-                all_attestations.first().ok_or_else(|| RegistrarError::ProverClient {
-                    instance: instance.endpoint.to_string(),
-                    source: "no attestations available for CRL check".into(),
-                })?;
+            let first_attestation = &all_attestations[0];
             match cert_manager.check_and_revoke_crls(first_attestation, instance).await {
                 Ok(true) => {
                     warn!(
@@ -318,26 +312,14 @@ where
     }
 
     /// Runs one discovery cycle and resolves every instance into a [`DiscoveryResolution`].
-    async fn discover_and_resolve(&self) -> Result<(DiscoveryResolution, bool)> {
+    async fn discover_and_resolve(&self) -> Result<DiscoveryResolution> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
 
-        if !instances.is_empty() {
-            let registerable_count =
-                instances.iter().filter(|i| i.health_status.should_register()).count();
-            info!(
-                total = instances.len(),
-                registerable = registerable_count,
-                "discovered prover instances"
-            );
-        }
-
-        let total_count = instances.len();
         let mut resolution = DiscoveryResolution::default();
-        let mut reachable_count = 0usize;
 
         let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
-            let span = info_span!(
+            let span = tracing::info_span!(
                 "resolve_instance",
                 instance_id = %instance.instance_id,
                 endpoint = %instance.endpoint,
@@ -358,7 +340,6 @@ where
         while let Some((instance, result)) = futs.next().await {
             match result {
                 Ok(outcome) => {
-                    reachable_count += 1;
                     resolution.registerable.extend(outcome.registerable);
                     resolution.active_signers.extend(outcome.active_signers);
                     resolution.unresolved_instance_ids.extend(outcome.unresolved_instance_ids);
@@ -376,19 +357,7 @@ where
             }
         }
 
-        let ok_to_dereg = !self.config.cancel.is_cancelled()
-            && resolution.unresolved_instance_ids.is_empty()
-            && (total_count == 0 || reachable_count * 2 > total_count);
-
-        if !ok_to_dereg {
-            debug!(
-                reachable = reachable_count,
-                total = total_count,
-                "skipping orphan deregistration this cycle"
-            );
-        }
-
-        Ok((resolution, ok_to_dereg))
+        Ok(resolution)
     }
 }
 
@@ -400,16 +369,13 @@ mod tests {
         time::SystemTime,
     };
 
-    use alloy_primitives::Address;
-    use async_trait::async_trait;
-    use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
     use super::*;
     use crate::{
         DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, InstanceHealthStatus, RegistrarError,
-        RegistryClient, Result, SignerClient, SignerManagerConfig,
+        Result, SignerClient, SignerManagerConfig,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
             TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
@@ -428,17 +394,13 @@ mod tests {
         keys: HashMap<Url, Vec<Vec<u8>>>,
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
-        cancel_after_public_key_success: Option<CancellationToken>,
     }
 
     impl MockSignerClient {
         fn from_keys(entries: &[(&str, &[u8; 32])]) -> Self {
             let keys = entries
                 .iter()
-                .map(|(ep, pk)| {
-                    let url = endpoint_url(ep);
-                    (url, vec![public_key_from_private(pk)])
-                })
+                .map(|(ep, pk)| (endpoint_url(ep), vec![public_key_from_private(pk)]))
                 .collect();
             Self { keys, ..Self::default() }
         }
@@ -447,80 +409,50 @@ mod tests {
             let pubs = private_keys.iter().map(|pk| public_key_from_private(pk)).collect();
             Self { keys: HashMap::from([(endpoint_url(host_port), pubs)]), ..Self::default() }
         }
-
-        fn with_attestations(mut self, host_port: &str, attestations: Vec<Vec<u8>>) -> Self {
-            self.attestations.insert(endpoint_url(host_port), attestations);
-            self
-        }
-
-        fn with_attestation_failure(mut self, host_port: &str) -> Self {
-            self.fail_attestation.insert(endpoint_url(host_port));
-            self
-        }
-
-        fn with_cancel_after_public_key_success(mut self, cancel: CancellationToken) -> Self {
-            self.cancel_after_public_key_success = Some(cancel);
-            self
-        }
     }
 
-    #[async_trait]
     impl SignerClient for MockSignerClient {
-        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
-            let result =
+        fn signer_public_key<'a>(
+            &'a self,
+            endpoint: &'a Url,
+        ) -> impl std::future::Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a {
+            async move {
                 self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
                     instance: endpoint.to_string(),
                     source: "unreachable".into(),
-                });
-            if result.is_ok()
-                && let Some(cancel) = &self.cancel_after_public_key_success
-            {
-                cancel.cancel();
+                })
             }
-            result
         }
 
-        async fn signer_attestation(
-            &self,
-            endpoint: &Url,
+        fn signer_attestation<'a>(
+            &'a self,
+            endpoint: &'a Url,
             _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
-        ) -> Result<Vec<Vec<u8>>> {
-            if self.fail_attestation.contains(endpoint) {
-                return Err(RegistrarError::ProverClient {
-                    instance: endpoint.to_string(),
-                    source: "attestation unavailable".into(),
-                });
+        ) -> impl std::future::Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a {
+            async move {
+                if self.fail_attestation.contains(endpoint) {
+                    return Err(RegistrarError::ProverClient {
+                        instance: endpoint.to_string(),
+                        source: "attestation unavailable".into(),
+                    });
+                }
+                if let Some(atts) = self.attestations.get(endpoint) {
+                    return Ok(atts.clone());
+                }
+                let count = self.keys.get(endpoint).map_or(1, |k| k.len());
+                Ok(vec![b"mock-attestation".to_vec(); count])
             }
-            if let Some(atts) = self.attestations.get(endpoint) {
-                return Ok(atts.clone());
-            }
-            let count = self.keys.get(endpoint).map_or(1, |k| k.len());
-            Ok(vec![b"mock-attestation".to_vec(); count])
         }
     }
 
-    #[async_trait]
-    impl AttestationProofProvider for MockSignerClient {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            unreachable!("driver discover_and_resolve tests do not spawn proof tasks")
-        }
-    }
-
-    #[async_trait]
-    impl RegistryClient for () {
-        async fn is_registered(&self, _signer: Address) -> Result<bool> {
-            unreachable!("driver discover_and_resolve tests do not query registration state")
-        }
-
-        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-            unreachable!("driver discover_and_resolve tests do not run orphan deregistration")
-        }
-    }
+    type TestDriver = RegistrationDriver<
+        Vec<ProverInstance>,
+        MockSignerClient,
+        MockSignerClient,
+        (),
+        NoopTxManager,
+    >;
 
     fn endpoint_url(host_port: &str) -> Url {
         Url::parse(&format!("http://{host_port}")).unwrap()
@@ -530,21 +462,7 @@ mod tests {
         instances: Vec<ProverInstance>,
         signer_client: MockSignerClient,
         cancel: CancellationToken,
-    ) -> RegistrationDriver<
-        Vec<ProverInstance>,
-        MockSignerClient,
-        MockSignerClient,
-        (),
-        NoopTxManager,
-    > {
-        let config = DriverConfig {
-            poll_interval: Duration::from_secs(1),
-            cancel,
-            max_concurrency: DEFAULT_MAX_CONCURRENCY,
-            unhealthy_registration_window: Duration::from_secs(
-                DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
-            ),
-        };
+    ) -> TestDriver {
         let signer_manager = Arc::new(SignerManager::new(
             signer_client.clone(),
             (),
@@ -557,13 +475,24 @@ mod tests {
             },
         ));
 
-        RegistrationDriver::new(instances, signer_client, config, None, signer_manager)
+        RegistrationDriver::new(
+            instances,
+            signer_client,
+            DriverConfig {
+                poll_interval: Duration::from_secs(1),
+                cancel,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                unhealthy_registration_window: Duration::from_secs(
+                    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
+                ),
+            },
+            None,
+            signer_manager,
+        )
     }
 
     #[tokio::test]
     async fn discover_and_resolve_admits_recently_launched_unhealthy_to_active_and_registerable() {
-        // A recently-launched Unhealthy instance must be included in
-        // `registerable` and contribute its signer to `active_signers`.
         let addr = signer_from_private_key(&HARDHAT_KEY_0);
         let launch_time = Some(SystemTime::now() - Duration::from_secs(300));
 
@@ -577,11 +506,11 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
+        let resolution = driver.discover_and_resolve().await.unwrap();
         assert_eq!(resolution.registerable.len(), 1);
         assert_eq!(resolution.registerable[0].signer, addr);
         assert!(resolution.active_signers.contains(&addr));
-        assert!(ok_to_dereg);
+        assert!(resolution.unresolved_instance_ids.is_empty());
     }
 
     #[tokio::test]
@@ -589,49 +518,20 @@ mod tests {
         let driver =
             cycle_driver(vec![], MockSignerClient::from_keys(&[]), CancellationToken::new());
 
-        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
+        let resolution = driver.discover_and_resolve().await.unwrap();
         assert!(resolution.active_signers.is_empty());
-        assert!(ok_to_dereg);
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_clears_ok_to_dereg_when_cancelled_mid_resolution() {
-        let cancel = CancellationToken::new();
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)])
-            .with_cancel_after_public_key_success(cancel.clone());
-        let driver = cycle_driver(vec![healthy_prover_instance(EP1)], signer_client, cancel);
-
-        let (_, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
-
-        assert!(!ok_to_dereg);
-    }
-
-    #[tokio::test]
-    async fn discover_and_resolve_majority_unreachable_clears_ok_to_dereg() {
-        let instances = vec![
-            healthy_prover_instance(EP1),
-            healthy_prover_instance(EP2),
-            healthy_prover_instance(EP3),
-        ];
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let driver = cycle_driver(instances, signer_client, CancellationToken::new());
-
-        let (_, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
-
-        assert!(!ok_to_dereg);
+        assert!(resolution.unresolved_instance_ids.is_empty());
     }
 
     #[tokio::test]
     async fn discover_and_resolve_includes_all_reachable_when_one_instance_is_unreachable() {
         let unreachable = healthy_prover_instance(EP4);
-        let reachable = [
+        let instances = vec![
+            unreachable.clone(),
             healthy_prover_instance(EP1),
             healthy_prover_instance(EP2),
             healthy_prover_instance(EP3),
         ];
-        let instances = std::iter::once(unreachable.clone())
-            .chain(reachable.iter().cloned())
-            .collect::<Vec<_>>();
 
         let signer_client = MockSignerClient::from_keys(&[
             (EP1, &HARDHAT_KEY_0),
@@ -641,10 +541,9 @@ mod tests {
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
-        assert_eq!(resolution.registerable.len(), reachable.len());
+        let resolution = driver.discover_and_resolve().await.unwrap();
+        assert_eq!(resolution.registerable.len(), 3);
         assert_eq!(resolution.unresolved_instance_ids, HashSet::from([unreachable.instance_id]));
-        assert!(!ok_to_dereg);
     }
 
     #[tokio::test]
@@ -658,11 +557,11 @@ mod tests {
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
+        let resolution = driver.discover_and_resolve().await.unwrap();
         assert!(resolution.registerable.is_empty());
         assert!(resolution.active_signers.contains(&addr0));
         assert!(resolution.active_signers.contains(&addr1));
-        assert!(ok_to_dereg);
+        assert!(resolution.unresolved_instance_ids.is_empty());
     }
 
     #[tokio::test]
@@ -680,26 +579,27 @@ mod tests {
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
-        let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
+        let resolution = driver.discover_and_resolve().await.unwrap();
         assert_eq!(resolution.registerable.len(), 1);
         assert_eq!(resolution.registerable[0].signer, addr_healthy);
         assert!(resolution.active_signers.contains(&addr_unhealthy));
-        assert!(ok_to_dereg);
+        assert!(resolution.unresolved_instance_ids.is_empty());
     }
 
     #[tokio::test]
     async fn discover_and_resolve_attestation_failure_keeps_signer_active_and_unresolved() {
         let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
         let inst = healthy_prover_instance(EP1);
-        let signer_clients = [
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestations(EP1, vec![]),
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestation_failure(EP1),
-        ];
+        let mut missing_attestation = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        missing_attestation.attestations.insert(endpoint_url(EP1), vec![]);
+        let mut failing_attestation = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        failing_attestation.fail_attestation.insert(endpoint_url(EP1));
+        let signer_clients = [missing_attestation, failing_attestation];
 
         for signer_client in signer_clients {
             let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
 
-            let (resolution, ok_to_dereg) = driver.discover_and_resolve().await.unwrap();
+            let resolution = driver.discover_and_resolve().await.unwrap();
 
             assert!(resolution.active_signers.contains(&signer_addr));
             assert!(resolution.registerable.is_empty());
@@ -707,7 +607,6 @@ mod tests {
                 resolution.unresolved_instance_ids,
                 HashSet::from([inst.instance_id.clone()])
             );
-            assert!(!ok_to_dereg);
         }
     }
 }

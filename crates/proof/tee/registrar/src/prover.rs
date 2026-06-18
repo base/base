@@ -4,7 +4,6 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_signer::utils::public_key_to_address;
-use async_trait::async_trait;
 use base_proof_primitives::EnclaveApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use k256::ecdsa::VerifyingKey;
@@ -81,28 +80,34 @@ impl ProverClient {
     }
 }
 
-#[async_trait]
 impl SignerClient for ProverClient {
-    async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
-        debug!(endpoint = %endpoint, "fetching signer public keys");
-        let client = self.get_or_build_client(endpoint)?;
-        client.signer_public_key().await.map_err(|e| RegistrarError::ProverClient {
-            instance: endpoint.to_string(),
-            source: Box::new(e),
-        })
+    fn signer_public_key<'a>(
+        &'a self,
+        endpoint: &'a Url,
+    ) -> impl std::future::Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a {
+        async move {
+            debug!(endpoint = %endpoint, "fetching signer public keys");
+            let client = self.get_or_build_client(endpoint)?;
+            client.signer_public_key().await.map_err(|e| RegistrarError::ProverClient {
+                instance: endpoint.to_string(),
+                source: Box::new(e),
+            })
+        }
     }
 
-    async fn signer_attestation(
-        &self,
-        endpoint: &Url,
+    fn signer_attestation<'a>(
+        &'a self,
+        endpoint: &'a Url,
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
-    ) -> Result<Vec<Vec<u8>>> {
-        debug!(endpoint = %endpoint, "fetching signer attestations");
-        let client = self.get_or_build_client(endpoint)?;
-        client.signer_attestation(user_data, nonce).await.map_err(|e| {
-            RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }
-        })
+    ) -> impl std::future::Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a {
+        async move {
+            debug!(endpoint = %endpoint, "fetching signer attestations");
+            let client = self.get_or_build_client(endpoint)?;
+            client.signer_attestation(user_data, nonce).await.map_err(|e| {
+                RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }
+            })
+        }
     }
 }
 

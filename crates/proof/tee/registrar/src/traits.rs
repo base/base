@@ -2,7 +2,6 @@
 
 use std::future::Future;
 
-use async_trait::async_trait;
 use url::Url;
 
 use crate::{ProverInstance, Result};
@@ -26,19 +25,21 @@ pub trait InstanceDiscovery: Send + Sync {
 /// to avoid real HTTP calls.
 ///
 /// The `endpoint` parameter is a [`Url`] (e.g. `http://10.0.1.5:8000/`).
-#[async_trait]
 pub trait SignerClient: Send + Sync {
     /// Fetches the SEC1-encoded public key for each enclave signer at the given endpoint.
-    async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>>;
+    fn signer_public_key<'a>(
+        &'a self,
+        endpoint: &'a Url,
+    ) -> impl Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a;
 
     /// Fetches the raw Nitro attestation document for each enclave signer at the given endpoint.
     ///
     /// Optional `user_data` and `nonce` bind the attestation to a specific
     /// request (e.g. a random nonce for replay protection).
-    async fn signer_attestation(
-        &self,
-        endpoint: &Url,
+    fn signer_attestation<'a>(
+        &'a self,
+        endpoint: &'a Url,
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
-    ) -> Result<Vec<Vec<u8>>>;
+    ) -> impl Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a;
 }
