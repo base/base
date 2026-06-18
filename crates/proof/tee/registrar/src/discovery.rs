@@ -85,14 +85,11 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             let Some(instance_id) = instance.instance_id() else {
                 continue;
             };
-            let Some(health_status) = health_map.remove(instance_id) else {
+            let Some(private_ip) = instance.private_ip_address() else {
                 continue;
             };
-            let Some(private_ip) = instance.private_ip_address() else {
-                warn!(instance_id = %instance_id, "instance missing private IP address");
-                return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
-                    "EC2 response missing data for ELB target: {instance_id}"
-                )))));
+            let Some(health_status) = health_map.remove(instance_id) else {
+                continue;
             };
             let launch_time = instance
                 .launch_time()
@@ -115,10 +112,15 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             });
         }
 
-        if let Some(instance_id) = health_map.into_keys().next() {
-            warn!(instance_id = %instance_id, "instance missing from EC2 response");
+        let mut missing_ids: Vec<_> = health_map.into_keys().collect();
+        missing_ids.sort();
+        if !missing_ids.is_empty() {
+            for instance_id in &missing_ids {
+                warn!(instance_id = %instance_id, "EC2 response missing data for ELB target");
+            }
             return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
-                "EC2 response missing data for ELB target: {instance_id}"
+                "EC2 response missing data for ELB target(s): {}",
+                missing_ids.join(",")
             )))));
         }
 
