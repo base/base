@@ -297,8 +297,7 @@ mod tests {
 
     use alloy_primitives::TxHash;
     use chrono::{DateTime, Utc};
-    use serde_json::json;
-    use serde_json::{Map, Value};
+    use serde_json::{Map, Value, json};
     use tokio::io;
 
     use super::*;
