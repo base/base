@@ -2998,6 +2998,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-alt-da"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
+ "axum 0.8.9",
+ "base-protocol",
+ "base64 0.22.1",
+ "hex",
+ "rand 0.9.5",
+ "reqwest 0.13.4",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-balance-monitor"
 version = "0.0.0"
 dependencies = [
@@ -3470,9 +3491,12 @@ dependencies = [
  "alloy-genesis",
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
+ "alloy-serde 2.4.1",
  "auto_impl",
  "base-common-genesis",
  "revm",
+ "serde",
+ "serde_json",
  "spin 0.10.1",
 ]
 
@@ -4131,6 +4155,17 @@ dependencies = [
  "base-common-evm",
  "revm",
  "rstest",
+]
+
+[[package]]
+name = "base-da-server-bin"
+version = "0.0.0"
+dependencies = [
+ "base-alt-da",
+ "base-cli-utils",
+ "base-runtime",
+ "clap",
+ "eyre",
 ]
 
 [[package]]
@@ -5807,7 +5842,7 @@ name = "base-prover-nitro-host"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-provider 2.0.5",
+ "alloy-provider",
  "base-cli-utils",
  "base-common-chains",
  "base-common-genesis",

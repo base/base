@@ -5,7 +5,7 @@ use alloy_genesis::ChainConfig as GenesisChainConfig;
 use alloy_primitives::map::HashMap;
 use spin::Lazy;
 
-use crate::{Devnet, Holesky, Hoodi, Mainnet, Sepolia};
+use crate::{BaseSepolia, Devnet, Holesky, Hoodi, Mainnet, Sepolia};
 
 /// Ethereum L1 chain configurations keyed by chain ID.
 pub static L1_CONFIGS: Lazy<HashMap<u64, GenesisChainConfig>> = Lazy::new(|| {
@@ -15,6 +15,7 @@ pub static L1_CONFIGS: Lazy<HashMap<u64, GenesisChainConfig>> = Lazy::new(|| {
     map.insert(NamedChain::Sepolia.into(), Sepolia::l1_config());
     map.insert(NamedChain::Holesky.into(), Holesky::l1_config());
     map.insert(NamedChain::Hoodi.into(), Hoodi::l1_config());
+    map.insert(84532, BaseSepolia::l1_config());
     map
 });
 
@@ -40,6 +41,7 @@ mod tests {
         assert!(L1_CONFIGS.get(&sepolia_chain_id).is_some());
         assert!(L1_CONFIGS.get(&holesky_chain_id).is_some());
         assert!(L1_CONFIGS.get(&hoodi_chain_id).is_some());
+        assert!(L1_CONFIGS.get(&84532).is_some());
         assert!(L1_CONFIGS.get(&99999).is_none());
     }
 

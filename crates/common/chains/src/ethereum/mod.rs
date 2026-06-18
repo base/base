@@ -22,6 +22,9 @@ pub use holesky::Holesky;
 mod hoodi;
 pub use hoodi::Hoodi;
 
+mod base_sepolia;
+pub use base_sepolia::BaseSepolia;
+
 mod config;
 pub use config::L1_CONFIGS;
 
