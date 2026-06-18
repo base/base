@@ -6,9 +6,8 @@ use alloy_primitives::{Address, TxHash};
 use anyhow::Result;
 use basectl_cli::{
     JsonOutput, KeyValueTable, MonitoringConfig, TxpoolCounts, TxpoolReport, TxpoolScope,
-    TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow, clear_txpool,
-    drop_sender_transactions, fetch_txpool_content, fetch_txpool_content_from, fetch_txpool_report,
-    format_gas, format_gwei,
+    TxpoolSenderSummary, TxpoolTransactionRow, clear_txpool, drop_sender_transactions,
+    fetch_txpool_content, fetch_txpool_content_from, fetch_txpool_report, format_gas, format_gwei,
 };
 use serde::Serialize;
 use tracing::{debug, info, warn};
@@ -172,7 +171,7 @@ async fn run_clear(config: MonitoringConfig, args: TxpoolClearArgs) -> Result<()
                 network = %config.name,
                 rpc = %el_rpc,
                 sender = %sender,
-                removed = action.removed,
+                removed = action.removed(),
                 "txpool sender drop completed"
             );
         }
@@ -237,49 +236,42 @@ impl TxpoolReadJson {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TxpoolClearJson {
-    network: String,
-    rpc: String,
-    action: TxpoolClearAction,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    sender: Option<Address>,
-    removed: u64,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    hashes: Vec<TxHash>,
+#[serde(rename_all = "camelCase", tag = "action")]
+enum TxpoolClearJson {
+    #[serde(rename = "clearTxpool")]
+    Clear { network: String, rpc: String, removed: u64 },
+    #[serde(rename = "dropSenderTransactions")]
+    DropSender {
+        network: String,
+        rpc: String,
+        sender: Address,
+        removed: u64,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        hashes: Vec<TxHash>,
+    },
 }
 
 impl TxpoolClearJson {
     fn clear(network: &str, rpc: &Url, removed: u64) -> Self {
-        Self {
-            network: network.to_string(),
-            rpc: rpc.to_string(),
-            action: TxpoolClearAction::ClearTxpool,
-            sender: None,
-            removed,
-            hashes: Vec::new(),
-        }
+        Self::Clear { network: network.to_string(), rpc: rpc.to_string(), removed }
     }
 
     fn drop_sender(network: &str, rpc: &Url, sender: Address, hashes: Vec<TxHash>) -> Self {
         let removed = u64::try_from(hashes.len()).unwrap_or(u64::MAX);
-        Self {
+        Self::DropSender {
             network: network.to_string(),
             rpc: rpc.to_string(),
-            action: TxpoolClearAction::DropSenderTransactions,
-            sender: Some(sender),
+            sender,
             removed,
             hashes,
         }
     }
-}
 
-#[derive(Debug, Clone, Copy, Serialize)]
-enum TxpoolClearAction {
-    #[serde(rename = "clearTxpool")]
-    ClearTxpool,
-    #[serde(rename = "dropSenderTransactions")]
-    DropSenderTransactions,
+    const fn removed(&self) -> u64 {
+        match self {
+            Self::Clear { removed, .. } | Self::DropSender { removed, .. } => *removed,
+        }
+    }
 }
 
 fn print_read_pretty(network: &str, rpc: &Url, report: &TxpoolReport) -> Result<()> {
@@ -372,11 +364,7 @@ fn format_value_wei(value_wei: &str) -> String {
 fn format_transaction_fee(transaction: &TxpoolTransactionRow) -> String {
     let priority_fee =
         transaction.max_priority_fee_per_gas_wei.map_or_else(|| "n/a".to_string(), format_gwei);
-    match transaction.pool {
-        TxpoolTransactionPool::Pending | TxpoolTransactionPool::Queued => {
-            format!("max={} priority={priority_fee}", format_gwei(transaction.max_fee_per_gas_wei))
-        }
-    }
+    format!("max={} priority={priority_fee}", format_gwei(transaction.max_fee_per_gas_wei))
 }
 
 fn print_clear_action(action: &TxpoolClearJson, json: bool) -> Result<()> {
@@ -390,13 +378,12 @@ fn print_clear_action(action: &TxpoolClearJson, json: bool) -> Result<()> {
 
 fn print_clear_action_pretty(action: &TxpoolClearJson) -> Result<()> {
     let mut stdout = io::stdout().lock();
-    match action.action {
-        TxpoolClearAction::ClearTxpool => {
-            writeln!(stdout, "OK cleared {} txpool transaction(s)", action.removed)?;
+    match action {
+        TxpoolClearJson::Clear { removed, .. } => {
+            writeln!(stdout, "OK cleared {removed} txpool transaction(s)")?;
         }
-        TxpoolClearAction::DropSenderTransactions => {
-            let sender = action.sender.expect("drop sender action has sender");
-            writeln!(stdout, "OK dropped {} txpool transaction(s) from {sender}", action.removed)?;
+        TxpoolClearJson::DropSender { sender, removed, .. } => {
+            writeln!(stdout, "OK dropped {removed} txpool transaction(s) from {sender}")?;
         }
     }
     Ok(())
@@ -480,17 +467,21 @@ mod tests {
         );
 
         let sender = address!("1111111111111111111111111111111111111111");
-        let drop_sender = serde_json::to_value(TxpoolClearJson::drop_sender(
-            "devnet",
-            &rpc,
-            sender,
-            vec![B256::repeat_byte(0x22)],
-        ))
-        .unwrap();
-        assert_eq!(drop_sender["action"], "dropSenderTransactions");
-        assert_eq!(drop_sender["sender"], sender.to_string());
-        assert_eq!(drop_sender["removed"], 1);
-        assert_eq!(drop_sender["hashes"].as_array().unwrap().len(), 1);
+        let hash = B256::repeat_byte(0x22);
+        let drop_sender =
+            serde_json::to_value(TxpoolClearJson::drop_sender("devnet", &rpc, sender, vec![hash]))
+                .unwrap();
+        assert_eq!(
+            drop_sender,
+            json!({
+                "network": "devnet",
+                "rpc": "http://127.0.0.1:8545/",
+                "action": "dropSenderTransactions",
+                "sender": sender.to_string(),
+                "removed": 1,
+                "hashes": [hash.to_string()]
+            })
+        );
     }
 
     #[test]
