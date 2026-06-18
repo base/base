@@ -106,16 +106,14 @@ impl ActorAuthorizer {
     /// Mirror of `_authenticateK1` after recovery: resolve a recovered secp256k1
     /// signer against `account`.
     ///
-    /// A **live implicit default EOA** — the recovered signer is the account
-    /// (`recovered == bytes32(bytes20(account))`) and the account's
-    /// `DEFAULT_EOA_REVOKED` flag is unset — is an unrestricted owner with no
-    /// policy, resolved from a single account-state read. Otherwise the signer
-    /// must carry an explicit k1 `actor_config` entry (a scoped or re-enabled self
-    /// key, or any other registered k1 actor), validated by [`Self::resolve_bound`].
-    ///
-    /// The "an explicit self-actor entry implies the flag is set" invariant
-    /// guarantees a live self can never have a config to shadow, so the
-    /// full-owner short-circuit is safe.
+    /// The account's own key — the **secp256k1 self** (`recovered ==
+    /// bytes32(bytes20(account))`) — resolves entirely from the inline config in
+    /// the account-state slot, a single SLOAD: a set `DEFAULT_EOA_REVOKED` flag
+    /// disables it (revoked, or a non-k1 self is the live self authenticator), an
+    /// all-zero inline config is the implicit full owner, and a non-zero inline
+    /// `scope`/`policy_type`/`expiry` is a scoped self. Every *other* recovered
+    /// signer must carry an explicit k1 `actor_config` entry, validated by
+    /// [`Self::resolve_bound`].
     ///
     /// `recovered` is the recovered signer's `actorId` (`bytes32(bytes20(addr))`).
     /// The empty-`sender` transaction path recovers the signer in the verifier
@@ -127,10 +125,35 @@ impl ActorAuthorizer {
         recovered: B256,
         now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
-        if recovered == AccountConfigurationStorage::self_actor_id(account)
-            && !storage.get_account_state(account)?.default_eoa_revoked()
-        {
-            return Ok(ResolvedActor::unrestricted(recovered));
+        if recovered == AccountConfigurationStorage::self_actor_id(account) {
+            let state = storage.get_account_state(account)?;
+            // Flag set => the inline k1 self is disabled: either revoked outright
+            // or superseded by a non-k1 self in `actor_config`. A k1 signature
+            // recovering to the account can never authorize in that state.
+            if state.default_eoa_revoked() {
+                return Err(AuthorizeError::DefaultEoaRevoked { account });
+            }
+            // 0 = no expiry; otherwise valid while now <= expiry.
+            if state.default_eoa_expiry != 0 && now > state.default_eoa_expiry {
+                return Err(AuthorizeError::Expired {
+                    actor_id: recovered,
+                    expiry: state.default_eoa_expiry,
+                });
+            }
+            // `_resolvePolicyTarget`: address(0) when ungated, else the policy
+            // manager (keyed by the self-actorId, shared keyspace). An ungated
+            // (full-owner) self costs no extra read.
+            let policy_target = if state.default_eoa_policy_type == 0 {
+                Address::ZERO
+            } else {
+                storage.get_policy_manager(account, recovered)?
+            };
+            return Ok(ResolvedActor {
+                actor_id: recovered,
+                scope: state.default_eoa_scope,
+                policy_type: state.default_eoa_policy_type,
+                policy_target,
+            });
         }
         Self::resolve_bound(storage, account, recovered, Eip8130Constants::K1_AUTHENTICATOR, now)
     }
@@ -196,6 +219,16 @@ mod tests {
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
             | (U256::from(policy_type) << 216)
+    }
+
+    /// Packs an `AccountState` word carrying the inline secp256k1 self config
+    /// (each field at its bit offset; sequences/lock left zero).
+    fn pack_self(scope: u8, policy_type: u8, expiry: u64, revoked: bool) -> U256 {
+        let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
+        (U256::from(flags) << 184)
+            | (U256::from(scope) << 192)
+            | (U256::from(policy_type) << 200)
+            | (U256::from(expiry) << 208)
     }
 
     fn actor_id(address: Address) -> B256 {
@@ -268,54 +301,76 @@ mod tests {
     }
 
     #[test]
-    fn default_eoa_revoked_without_self_config_is_rejected() {
+    fn default_eoa_revoked_self_is_rejected() {
         let key = k1_key(0x11);
         let account = k1_address(&key);
         let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
-            // DEFAULT_EOA_REVOKED set and no explicit self entry: the implicit owner
-            // is gone and the self id is unbound.
-            acc.account_state
-                .at_mut(&account)
-                .write(U256::from(Eip8130Constants::DEFAULT_EOA_REVOKED) << 184)
-                .unwrap();
+            // DEFAULT_EOA_REVOKED set: the inline k1 self is disabled (revoked, or a
+            // non-k1 self is the live self authenticator), so a k1 signature
+            // recovering to the account is rejected outright.
+            acc.account_state.at_mut(&account).write(pack_self(0, 0, 0, true)).unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
-                Err(AuthorizeError::NotBound {
-                    actor_id: actor_id(account),
-                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
-                }),
+                Err(AuthorizeError::DefaultEoaRevoked { account }),
             );
         });
     }
 
     #[test]
-    fn revoked_self_re_registered_resolves_explicit_config() {
+    fn scoped_self_resolves_inline_config() {
         let key = k1_key(0x11);
         let account = k1_address(&key);
         let self_id = actor_id(account);
         let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
-            // Invariant: an explicit self entry implies the flag is set. With both,
-            // the owner short-circuit is skipped and the scoped self config resolves.
+            // Flag unset with an inline scope: the self key is live but scoped, and
+            // resolves from the account-state slot alone (no `actor_config` read).
             acc.account_state
                 .at_mut(&account)
-                .write(U256::from(Eip8130Constants::DEFAULT_EOA_REVOKED) << 184)
-                .unwrap();
-            acc.actor_config
-                .at_mut(&self_id)
-                .at_mut(&account)
-                .write(pack(
-                    Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_SENDER,
-                    0,
-                    0,
-                ))
+                .write(pack_self(Eip8130Constants::SCOPE_SENDER, 0, 0, false))
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
             assert_eq!(resolved.actor_id, self_id);
             assert_eq!(resolved.scope, Eip8130Constants::SCOPE_SENDER);
+            assert_eq!(resolved.policy_type, 0);
+            assert_eq!(resolved.policy_target, Address::ZERO);
+        });
+    }
+
+    #[test]
+    fn expired_self_is_rejected() {
+        let key = k1_key(0x11);
+        let account = k1_address(&key);
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        with_storage(|acc| {
+            // Inline expiry in the past: the self key is no longer valid.
+            acc.account_state.at_mut(&account).write(pack_self(0, 0, NOW - 1, false)).unwrap();
+            assert_eq!(
+                ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
+                Err(AuthorizeError::Expired { actor_id: actor_id(account), expiry: NOW - 1 }),
+            );
+        });
+    }
+
+    #[test]
+    fn gated_self_resolves_inline_policy_manager() {
+        let key = k1_key(0x11);
+        let account = k1_address(&key);
+        let self_id = actor_id(account);
+        let manager = address!("0x00000000000000000000000000000000000000d4");
+        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+        with_storage(|acc| {
+            // Inline policy_type set: the self key is gated and resolves its policy
+            // target from `policy_manager[self][account]`.
+            acc.account_state.at_mut(&account).write(pack_self(0, 5, 0, false)).unwrap();
+            acc.policy_manager.at_mut(&self_id).at_mut(&account).write(manager).unwrap();
+            let resolved =
+                ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
+            assert_eq!(resolved.actor_id, self_id);
+            assert_eq!(resolved.policy_type, 5);
+            assert_eq!(resolved.policy_target, manager);
         });
     }
 

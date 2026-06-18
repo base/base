@@ -91,8 +91,9 @@ impl ActorTxVerifier {
         // EOA path: recover the sender exactly once with the checked (EIP-2
         // low-s) recovery. The recovered address *is* the signer, so the k1
         // resolution runs against the self id directly — no second ecrecover.
-        // A live default EOA resolves to the unrestricted owner; a revoked one
-        // resolves to its explicit (possibly scoped) self config, if any.
+        // The inline self config governs: a full-owner self resolves to the
+        // unrestricted owner, a scoped self to its inline scope/policy, and a
+        // disabled (`DEFAULT_EOA_REVOKED`) self is rejected.
         let account = signed
             .recover_eoa_sender()
             .map_err(|_| TxAuthError::SenderRecovery)?

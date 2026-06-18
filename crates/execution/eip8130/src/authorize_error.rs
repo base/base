@@ -37,6 +37,17 @@ pub enum AuthorizeError {
         authenticator: Address,
     },
 
+    /// A k1 signature recovered to the account itself, but the account's
+    /// secp256k1 self key is disabled: its `DEFAULT_EOA_REVOKED` flag is set, so
+    /// the self key has been revoked outright or superseded by a non-k1 self
+    /// authenticator. Mirrors `_authenticateK1`'s `require(flag unset)` on the
+    /// `recovered == account` path.
+    #[error("secp256k1 self key is disabled for account {account}")]
+    DefaultEoaRevoked {
+        /// The account whose inline self key is disabled.
+        account: Address,
+    },
+
     /// The resolved actor's configured expiry has passed (`now > expiry`).
     #[error("actor {actor_id} expired at {expiry}")]
     Expired {
