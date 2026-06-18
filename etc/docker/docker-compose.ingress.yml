@@ -97,7 +97,9 @@ services:
   proxyd:
     build:
       context: .
-      dockerfile: Dockerfile.proxyd
+      dockerfile: Dockerfile.proxyd.transaction-events
+      additional_contexts:
+        base-routing: ${BASE_ROUTING_CONTEXT:-https://github.com/base/infra-routing.git#release-rb}
     container_name: proxyd
     depends_on:
       ingress-rpc:
@@ -110,6 +112,12 @@ services:
       - "${L2_INGRESS_HTTP_PORT}:8080"
     volumes:
       - ./proxyd:/config:ro
+      - ../../.devnet/transaction-events:/var/log/transaction-events
+    environment:
+      - TRANSACTION_EVENTS_ENABLED=true
+      - TRANSACTION_EVENTS_PATH=/var/log/transaction-events/proxyd/events.jsonl
+      - TRANSACTION_EVENTS_PRODUCER=base-routing/proxyd
+      - TRANSACTION_EVENTS_NETWORK=base-devnet
     command: ["/config/proxyd.toml"]
     healthcheck:
       test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "-H", "X-Forwarded-For: 127.0.0.1", "--data", "{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}", "http://localhost:8080"]

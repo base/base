@@ -100,9 +100,19 @@ just devnet ingress
 just devnet tx-observability-smoke
 ```
 
+Set `BASE_ROUTING_CONTEXT` to a local `protocols/base-routing` checkout when
+testing proxyd transaction events before that implementation has landed in the
+default proxyd image:
+
+```bash
+BASE_ROUTING_CONTEXT=/path/to/base-routing just devnet ingress
+just devnet tx-observability-smoke
+```
+
 The smoke test sends one transaction through ingress, waits for Vector to ship
-the producer JSONL event, and verifies `audit-archiver` can read the persisted
-event back from Postgres by transaction hash.
+JSONL events from ingress, proxyd, txpool tracing, and builder producers, and
+verifies `audit-archiver` can read the persisted events back from Postgres by
+transaction hash.
 
 ## Producer Values
 

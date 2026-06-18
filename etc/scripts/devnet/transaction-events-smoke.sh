@@ -38,12 +38,26 @@ for attempt in $(seq 1 60); do
   count="$(jq -r 'if (.result | type) == "array" then (.result | length) else 0 end' <<<"$response" 2>/dev/null || echo 0)"
   if [ "$count" -gt 0 ]; then
     if jq -e '
-      .result[]
-      | select(
-          .schema_version == "transaction-event/v1"
-          and .producer == "ingress-rpc"
-          and .event_type == "INGRESS_RECEIVED"
-        )
+      def has_event($producer; $event_types):
+        any(.result[]; .schema_version == "transaction-event/v1"
+          and .producer == $producer
+          and (.event_type as $event_type | $event_types | index($event_type)));
+
+      has_event("ingress-rpc"; ["INGRESS_RECEIVED"])
+      and has_event("base-routing/proxyd"; ["PROXY_RECEIVED"])
+      and has_event("base-reth-node"; [
+        "TXPOOL_PENDING",
+        "TXPOOL_QUEUED",
+        "TXPOOL_FLASHBLOCK_INCLUDED",
+        "TXPOOL_BLOCK_INCLUDED",
+        "TXPOOL_BUILDER_FORWARD_ATTEMPT",
+        "TXPOOL_BUILDER_FORWARD_SUCCESS"
+      ])
+      and has_event("base-builder"; [
+        "BUILDER_CONSIDERED",
+        "BUILDER_ACCEPTED",
+        "BUILDER_INCLUDED"
+      ])
     ' <<<"$response" >/dev/null; then
       echo "Observed ${count} persisted transaction event(s) for ${tx_hash}"
       jq '.result[] | {event_time, producer, event_type, tx_hash, data}' <<<"$response"
@@ -52,7 +66,7 @@ for attempt in $(seq 1 60); do
   fi
 
   if [ "$attempt" = 60 ]; then
-    echo "Timed out waiting for persisted transaction event for ${tx_hash}" >&2
+    echo "Timed out waiting for ingress, proxyd, txpool, and builder transaction events for ${tx_hash}" >&2
     if [ -n "$last_response" ]; then
       echo "$last_response" | jq . >&2 || echo "$last_response" >&2
     fi

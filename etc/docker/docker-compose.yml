@@ -511,6 +511,7 @@ services:
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
       - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --enable-transaction-event-journal
       - --enable-metering
       - --metering.gas-limit=${METERING_GAS_LIMIT}
       - --metering.execution-time-us=${METERING_EXECUTION_TIME_US}
