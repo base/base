@@ -18,9 +18,9 @@ base_metrics::define_metrics! {
     da_bytes_submitted_total: counter,
     #[describe("Total bytes of frame payload packed into EIP-4844 blobs")]
     blob_used_bytes_total: counter,
-    #[describe("Batcher signer account balance in ether")]
+    #[describe("Batcher signer account balance in wei")]
     #[no_zero]
-    balance: gauge,
+    account_balance_wei: gauge,
     #[describe("Number of input bytes to a channel")]
     #[label(name = "stage", default = ["added", "closed"])]
     input_bytes: gauge,

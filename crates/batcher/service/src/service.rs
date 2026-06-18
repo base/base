@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
@@ -28,8 +28,6 @@ use crate::{
     RecentTxScanner, RpcL1HeadPollingSource, RpcPollingSource, RpcThrottleClient, SafeHeadPoller,
     WsBlockSubscription, WsL1HeadSubscription,
 };
-
-const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
 
 /// Service-internal throttle client variant: either a no-op or an RPC client.
 ///
@@ -519,11 +517,14 @@ impl BatcherService {
                 runtime.token().clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
-            let _ = layer.layer(l1_provider.clone());
+            let _provider = ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .layer(layer)
+                .connect_provider(l1_provider.clone());
             tokio::spawn(async move {
                 while balance_rx.changed().await.is_ok() {
-                    let balance_ether = f64::from(*balance_rx.borrow_and_update()) / WEI_PER_ETHER;
-                    BatcherMetrics::balance().set(balance_ether);
+                    BatcherMetrics::account_balance_wei()
+                        .set(f64::from(*balance_rx.borrow_and_update()));
                 }
             });
             info!(
