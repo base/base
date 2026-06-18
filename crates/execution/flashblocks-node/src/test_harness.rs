@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::{Receipt, Transaction};
+use alloy_consensus::{BlockHeader, Receipt, Transaction};
 use alloy_eips::{BlockHashOrNumber, Decodable2718, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
 use alloy_rpc_types_engine::PayloadId;
@@ -288,6 +288,11 @@ impl FlashblocksHarness {
         Self::with_options(false).await
     }
 
+    /// Get a reference to the inner [`TestHarness`]
+    pub const fn inner(&self) -> &TestHarness {
+        &self.inner
+    }
+
     /// Get a handle to the in-memory Flashblocks state backing the harness.
     pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
         self.parts.state()
@@ -356,6 +361,11 @@ impl FlashblocksBuilderTestHarness {
         flashblocks.on_canonical_block_received(genesis_block);
 
         Self { node, provider, flashblocks }
+    }
+
+    /// Get a reference to the inner [`FlashblocksHarness`]
+    pub const fn inner(&self) -> &FlashblocksHarness {
+        &self.node
     }
 
     /// Decode a private key from an account.
@@ -577,7 +587,9 @@ impl<'a> FlashblockBuilder<'a> {
 
         let base = if self.index == 0 {
             Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: current_block.hash(),
+                parent_beacon_block_root: current_block
+                    .parent_beacon_block_root()
+                    .unwrap_or_default(),
                 parent_hash: current_block.hash(),
                 fee_recipient: Address::random(),
                 prev_randao: B256::random(),
@@ -611,7 +623,7 @@ impl<'a> FlashblockBuilder<'a> {
                 transactions,
                 blob_gas_used: Default::default(),
             },
-            metadata: Metadata { block_number: canonical_block_num },
+            metadata: Metadata::new(canonical_block_num),
         }
     }
 }

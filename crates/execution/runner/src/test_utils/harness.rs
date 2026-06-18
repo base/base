@@ -23,8 +23,7 @@ use tokio::time::sleep;
 use crate::{
     BaseNodeExtension, FromExtensionConfig,
     test_utils::{
-        BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
-        NODE_STARTUP_DELAY_MS,
+        BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, NODE_STARTUP_DELAY_MS,
         engine::{EngineApi, IpcEngine},
         node::{LocalNode, LocalNodeProvider},
         tracing::init_silenced_tracing,
@@ -158,14 +157,7 @@ impl TestHarness {
     /// Returns the parent hash and the new block hash so callers can issue the
     /// final FCU themselves — useful for benchmarks that want to time only the
     /// canonical FCU step.
-    pub async fn prepare_unsafe_block(
-        &self,
-        mut transactions: Vec<Bytes>,
-    ) -> Result<PreparedBlock> {
-        if transactions.first().is_none_or(|tx| tx != &L1_BLOCK_INFO_DEPOSIT_TX) {
-            transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX);
-        }
-
+    pub async fn prepare_unsafe_block(&self, transactions: Vec<Bytes>) -> Result<PreparedBlock> {
         let latest_block = self
             .provider()
             .get_block_by_number(BlockNumberOrTag::Latest)
@@ -259,7 +251,8 @@ impl TestHarness {
         Ok(())
     }
 
-    async fn wait_for_header(&self, block_hash: B256, block_number: u64) -> Result<()> {
+    /// Wait for a given block to become available
+    pub async fn wait_for_header(&self, block_hash: B256, block_number: u64) -> Result<()> {
         const HEADER_PERSIST_TIMEOUT: Duration = Duration::from_secs(5);
         const HEADER_PERSIST_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
