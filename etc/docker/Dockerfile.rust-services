@@ -51,108 +51,102 @@ RUN set -eux; \
     unzip /tmp/protoc.zip -d /usr/local; \
     rm /tmp/protoc.zip
 
-FROM rust-builder-base AS source
+# ---- cargo-chef: dependency caching ----
+# Dependencies are pre-compiled in a layer that only invalidates when
+# Cargo.toml or Cargo.lock change.  Source-only changes skip the expensive
+# dependency build entirely.
+
+FROM rust-builder-base AS chef
+RUN cargo install cargo-chef --locked
+
+FROM chef AS planner
 COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Pre-build workspace dependencies (cached until Cargo.toml/Cargo.lock change)
+FROM chef AS deps
+ARG PROFILE=release
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --profile $PROFILE --recipe-path recipe.json
+
+# Full source on top of pre-built deps
+FROM deps AS source
+COPY . .
+
+# ---- service builder stages ----
+# Each stage only recompiles workspace crates; external deps are already built
+# in the `deps` layer above.
 
 FROM source AS client-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=client-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-reth-node --bin base-reth-node && \
+RUN cargo build --profile $PROFILE --package base-reth-node --bin base-reth-node && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-reth-node /app/base-client
 
 FROM source AS base-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=base-target,sharing=locked \
-    cargo build --profile $PROFILE --package base --bin base && \
+RUN cargo build --profile $PROFILE --package base --bin base && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base /app/base
 
 FROM source AS builder-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=builder-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-builder-bin --bin base-builder && \
+RUN cargo build --profile $PROFILE --package base-builder-bin --bin base-builder && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-builder /app/base-builder
 
 FROM source AS consensus-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=consensus-target,sharing=locked \
-    cargo build --profile $PROFILE --bin base-consensus && \
+RUN cargo build --profile $PROFILE --bin base-consensus && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-consensus /app/base-consensus
 
 FROM source AS proposer-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=proposer-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-proposer-bin --bin base-proposer && \
+RUN cargo build --profile $PROFILE --package base-proposer-bin --bin base-proposer && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-proposer /app/base-proposer
-
-FROM source AS challenger-builder
-ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=challenger-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-challenger-bin --bin base-challenger && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-challenger /app/base-challenger
 
 FROM source AS websocket-proxy-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=websocket-proxy-target,sharing=locked \
-    cargo build --profile $PROFILE --package websocket-proxy-bin --bin websocket-proxy && \
+RUN cargo build --profile $PROFILE --package websocket-proxy-bin --bin websocket-proxy && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/websocket-proxy /app/websocket-proxy
 
 FROM source AS ingress-rpc-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=ingress-rpc-target,sharing=locked \
-    cargo build --profile $PROFILE --package ingress-rpc --bin ingress-rpc && \
+RUN cargo build --profile $PROFILE --package ingress-rpc --bin ingress-rpc && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/ingress-rpc /app/ingress-rpc
 
 FROM source AS audit-archiver-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=audit-archiver-target,sharing=locked \
-    cargo build --profile $PROFILE --package audit-archiver --bin audit-archiver && \
+RUN cargo build --profile $PROFILE --package audit-archiver --bin audit-archiver && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/audit-archiver /app/audit-archiver
 
 FROM source AS batcher-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=batcher-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-batcher-bin --bin base-batcher && \
+RUN cargo build --profile $PROFILE --package base-batcher-bin --bin base-batcher && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-batcher /app/base-batcher
 
 FROM source AS da-server-builder
 ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=da-server-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-da-server-bin --bin base-da-server && \
+RUN cargo build --profile $PROFILE --package base-da-server-bin --bin base-da-server && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-da-server /app/base-da-server
 
-FROM zk-builder-base AS zk-source
+# ---- zk-prover (needs Go + protoc from zk-builder-base) ----
+
+FROM zk-builder-base AS zk-chef
+RUN cargo install cargo-chef --locked
+
+FROM zk-chef AS zk-deps
+ARG PROFILE=release
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --profile $PROFILE --recipe-path recipe.json
+
+FROM zk-deps AS zk-source
 COPY . .
 
 FROM zk-source AS zk-prover-builder
 ARG PROFILE=release
 ARG BASE_SUCCINCT_ELF_REQUIRE=1
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=zk-prover-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-prover-zk --bin base-prover-zk && \
+RUN cargo build --profile $PROFILE --package base-prover-zk --bin base-prover-zk && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-zk /app/base-prover-zk
+
+# ---- runtime images ----
 
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
 RUN apt-get update && \
@@ -180,10 +174,6 @@ FROM runtime-base AS proposer
 COPY --from=proposer-builder /app/base-proposer ./base-proposer
 EXPOSE 9090
 ENTRYPOINT ["./base-proposer"]
-
-FROM runtime-base AS challenger
-COPY --from=challenger-builder /app/base-challenger ./base-challenger
-ENTRYPOINT ["./base-challenger"]
 
 FROM runtime-base AS websocket-proxy
 COPY --from=websocket-proxy-builder /app/websocket-proxy ./websocket-proxy
