@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
-use base_common_genesis::ContractUpgrade;
+use base_common_genesis::BaseUpgrade;
 
 use crate::{AlloyUpgradeSignalReader, UpgradeSignalMetrics};
 
@@ -11,7 +11,7 @@ use crate::{AlloyUpgradeSignalReader, UpgradeSignalMetrics};
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UpgradeSignal {
     /// Contract-backed upgrade passed to the L1 contract.
-    pub hardfork_id: ContractUpgrade,
+    pub hardfork_id: BaseUpgrade,
     /// L2 activation timestamp announced on L1.
     pub activation_timestamp: u64,
     /// Minimum node protocol version announced on L1.
@@ -48,7 +48,7 @@ impl UpgradeSignalSchedule {
     }
 
     /// Returns a copy of this schedule containing only the requested upgrades.
-    pub fn filtered_to_hardfork_ids(&self, hardfork_ids: &[ContractUpgrade]) -> Self {
+    pub fn filtered_to_hardfork_ids(&self, hardfork_ids: &[BaseUpgrade]) -> Self {
         let signals = self
             .signals
             .iter()
@@ -103,12 +103,12 @@ impl UpgradeSignalState {
 #[derive(Debug, Clone)]
 pub struct UpgradeSignalMonitor {
     /// Live metrics state by contract-backed upgrade.
-    pub states: BTreeMap<ContractUpgrade, UpgradeSignalState>,
+    pub states: BTreeMap<BaseUpgrade, UpgradeSignalState>,
 }
 
 impl UpgradeSignalMonitor {
     /// Creates a monitor for the provided hardfork IDs.
-    pub fn new(hardfork_ids: &[ContractUpgrade]) -> Self {
+    pub fn new(hardfork_ids: &[BaseUpgrade]) -> Self {
         UpgradeSignalMetrics::init();
         let mut states = BTreeMap::new();
         for hardfork_id in hardfork_ids {
@@ -124,7 +124,7 @@ impl UpgradeSignalMonitor {
     pub async fn poll(
         &mut self,
         reader: &AlloyUpgradeSignalReader,
-        hardfork_ids: &[ContractUpgrade],
+        hardfork_ids: &[BaseUpgrade],
     ) -> usize {
         let schedule = reader.read_schedule_tolerant(hardfork_ids).await;
         self.update_schedule(schedule)
@@ -163,7 +163,7 @@ mod tests {
 
     fn signal(timestamp: u64) -> UpgradeSignal {
         UpgradeSignal {
-            hardfork_id: ContractUpgrade::Azul,
+            hardfork_id: BaseUpgrade::Azul,
             activation_timestamp: timestamp,
             protocol_version: U256::from(7),
             l1_block_number: 1,
@@ -213,16 +213,16 @@ mod tests {
         let schedule = UpgradeSignalSchedule::new(vec![
             signal(42),
             UpgradeSignal {
-                hardfork_id: ContractUpgrade::Beryl,
+                hardfork_id: BaseUpgrade::Beryl,
                 activation_timestamp: 43,
                 protocol_version: U256::from(7),
                 l1_block_number: 1,
             },
         ]);
 
-        let filtered = schedule.filtered_to_hardfork_ids(&[ContractUpgrade::Azul]);
+        let filtered = schedule.filtered_to_hardfork_ids(&[BaseUpgrade::Azul]);
 
         assert_eq!(filtered.signals.len(), 1);
-        assert_eq!(filtered.signals[0].hardfork_id, ContractUpgrade::Azul);
+        assert_eq!(filtered.signals[0].hardfork_id, BaseUpgrade::Azul);
     }
 }

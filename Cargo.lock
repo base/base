@@ -3690,7 +3690,6 @@ dependencies = [
  "auto_impl",
  "base-common-genesis",
  "revm",
- "serde",
  "spin 0.10.0",
 ]
 

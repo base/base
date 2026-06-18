@@ -1,7 +1,7 @@
 //! Metrics for upgrade signal schedule reads.
 
 use alloy_primitives::U256;
-use base_common_genesis::ContractUpgrade;
+use base_common_genesis::BaseUpgrade;
 
 use crate::{UpgradeSignal, UpgradeSignalSchedule};
 
@@ -36,7 +36,7 @@ impl UpgradeSignalMetrics {
     /// Records all metrics derived from a successfully read signal.
     pub fn record_signal(signal: &UpgradeSignal) {
         Self::init();
-        let hardfork_id = signal.hardfork_id.to_string();
+        let hardfork_id = signal.hardfork_id.contract_id().to_string();
 
         Self::activation_timestamp(hardfork_id.clone()).set(signal.activation_timestamp as f64);
         Self::expected_protocol_version(hardfork_id.clone())
@@ -45,23 +45,23 @@ impl UpgradeSignalMetrics {
     }
 
     /// Records a failed L1 read for one hardfork ID.
-    pub fn record_l1_read_error(hardfork_id: ContractUpgrade) {
+    pub fn record_l1_read_error(hardfork_id: BaseUpgrade) {
         Self::init();
-        Self::l1_read_errors_total(hardfork_id.to_string()).increment(1);
+        Self::l1_read_errors_total(hardfork_id.contract_id().to_string()).increment(1);
     }
 
     /// Records failed L1 reads for all configured hardfork IDs.
-    pub fn record_l1_read_errors(hardfork_ids: &[ContractUpgrade]) {
+    pub fn record_l1_read_errors(hardfork_ids: &[BaseUpgrade]) {
         Self::init();
         for hardfork_id in hardfork_ids {
-            Self::l1_read_errors_total(hardfork_id.to_string()).increment(1);
+            Self::l1_read_errors_total(hardfork_id.contract_id().to_string()).increment(1);
         }
     }
 
     /// Records a live L1 signal value update for one hardfork ID.
-    pub fn record_signal_update(hardfork_id: ContractUpgrade) {
+    pub fn record_signal_update(hardfork_id: BaseUpgrade) {
         Self::init();
-        Self::signal_updates_total(hardfork_id.to_string()).increment(1);
+        Self::signal_updates_total(hardfork_id.contract_id().to_string()).increment(1);
     }
 
     /// Converts a protocol version to a metric gauge value.

@@ -33,7 +33,6 @@ revm.workspace = true
 # misc
 spin.workspace = true
 auto_impl.workspace = true
-serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy-chains.workspace = true
@@ -51,7 +50,6 @@ std = [
 	"alloy-primitives/std",
 	"base-common-genesis/std",
 	"revm/std",
-	"serde?/std",
 	"spin/std",
 ]
 serde = [
@@ -60,7 +58,6 @@ serde = [
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
 	"base-common-genesis/serde",
-	"dep:serde",
 	"revm/serde",
 ]
 test-utils = []

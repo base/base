@@ -2,7 +2,7 @@ use alloy_hardforks::{EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 
-use crate::{BaseUpgrade, ContractUpgrade};
+use crate::BaseUpgrade;
 
 /// Extends [`EthereumHardforks`] with Base upgrade helper methods.
 #[auto_impl::auto_impl(&, Arc)]
@@ -87,49 +87,52 @@ impl Upgrades for RollupConfig {
         match fork {
             BaseUpgrade::Bedrock => ForkCondition::Block(0),
             BaseUpgrade::Regolith => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Regolith)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Regolith)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Canyon)),
             BaseUpgrade::Canyon => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Canyon)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Canyon)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Ecotone)),
             BaseUpgrade::Ecotone => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Ecotone)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Fjord)),
             BaseUpgrade::Fjord => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Fjord)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Fjord)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Granite)),
             BaseUpgrade::Granite => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Granite)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Granite)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Holocene)),
             BaseUpgrade::Holocene => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Holocene)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Holocene)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Isthmus)),
             BaseUpgrade::Isthmus => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Isthmus)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Jovian)),
             BaseUpgrade::Jovian => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Jovian)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Jovian)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Azul => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Azul)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Azul)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Beryl => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Beryl)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Beryl)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Cobalt => self
-                .contract_upgrade_activation_timestamp(ContractUpgrade::Cobalt)
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
+            // Contract-only upgrades (Delta, PectraBlobSchedule) and any future variants are
+            // absent from the execution fork ladder.
+            _ => ForkCondition::Never,
         }
     }
 }
@@ -181,12 +184,12 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
         RuntimeUpgradeRegistry::set_activation_timestamp(
             CHAIN_ID,
-            ContractUpgrade::Azul,
+            BaseUpgrade::Azul,
             ACTIVATION,
         );
         RuntimeUpgradeRegistry::set_activation_timestamp(
             CHAIN_ID,
-            ContractUpgrade::Cobalt,
+            BaseUpgrade::Cobalt,
             ACTIVATION + 1,
         );
 

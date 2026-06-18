@@ -1,7 +1,7 @@
 //! Contains the `[BaseSpecId]` type and its implementation.
 
 use alloy_consensus::BlockHeader;
-use base_common_chains::{BaseUpgrade, Upgrades};
+use base_common_chains::{BaseUpgrade, BaseUpgradeExt, Upgrades};
 use revm::primitives::hardfork::SpecId;
 
 /// EVM-facing Base spec id.
@@ -24,7 +24,7 @@ impl BaseSpecId {
     }
 
     /// Converts the [`BaseSpecId`] into a [`SpecId`].
-    pub const fn into_eth_spec(self) -> SpecId {
+    pub fn into_eth_spec(self) -> SpecId {
         self.0.into_eth_spec()
     }
 

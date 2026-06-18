@@ -5,7 +5,7 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 
 use crate::{
-    ChainGenesis, ContractUpgrade, FeeConfig, RuntimeUpgradeRegistry, UpgradeActivation,
+    BaseUpgrade, ChainGenesis, FeeConfig, RuntimeUpgradeRegistry, UpgradeActivation,
     UpgradeActivationSink, UpgradeConfig,
 };
 
@@ -132,32 +132,32 @@ impl EthereumHardforks for RollupConfig {
         } else if fork <= EthereumHardfork::Shanghai {
             // Canyon activates Shanghai; cascade through later Base upgrades if unset.
             cascade(&[
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Canyon),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Ecotone),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Fjord),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Granite),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Holocene),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Isthmus),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Jovian),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Canyon),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Fjord),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Granite),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Holocene),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Jovian),
             ])
         } else if fork <= EthereumHardfork::Cancun {
             // Ecotone activates Cancun; cascade through later Base upgrades if unset.
             cascade(&[
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Ecotone),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Fjord),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Granite),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Holocene),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Isthmus),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Jovian),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Fjord),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Granite),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Holocene),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Jovian),
             ])
         } else if fork <= EthereumHardfork::Prague {
             // Isthmus activates Prague; cascade through later Base upgrades if unset.
             cascade(&[
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Isthmus),
-                self.contract_upgrade_activation_timestamp(ContractUpgrade::Jovian),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus),
+                self.contract_upgrade_activation_timestamp(BaseUpgrade::Jovian),
             ])
         } else if fork <= EthereumHardfork::Osaka {
-            self.contract_upgrade_activation_timestamp(ContractUpgrade::Azul)
+            self.contract_upgrade_activation_timestamp(BaseUpgrade::Azul)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never)
         } else {
@@ -191,7 +191,7 @@ macro_rules! rollup_fork_methods {
 
 impl RollupConfig {
     /// Returns this rollup config's runtime-aware activation for a contract upgrade ID.
-    pub fn contract_upgrade_activation(&self, upgrade_id: ContractUpgrade) -> UpgradeActivation {
+    pub fn contract_upgrade_activation(&self, upgrade_id: BaseUpgrade) -> UpgradeActivation {
         RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), upgrade_id)
             .unwrap_or_else(|| self.upgrades.activation(upgrade_id))
     }
@@ -199,7 +199,7 @@ impl RollupConfig {
     /// Returns this rollup config's runtime-aware activation timestamp for a contract upgrade ID.
     pub fn contract_upgrade_activation_timestamp(
         &self,
-        upgrade_id: ContractUpgrade,
+        upgrade_id: BaseUpgrade,
     ) -> Option<u64> {
         self.contract_upgrade_activation(upgrade_id).timestamp()
     }
@@ -224,14 +224,14 @@ impl RollupConfig {
     }
 
     /// Clears a timestamp-based upgrade activation time by contract upgrade ID.
-    pub const fn clear_upgrade_activation_timestamp(&mut self, upgrade_id: ContractUpgrade) {
+    pub const fn clear_upgrade_activation_timestamp(&mut self, upgrade_id: BaseUpgrade) {
         self.upgrades.clear_activation_timestamp(upgrade_id)
     }
 
     /// Sets a timestamp-based upgrade activation time by contract upgrade ID.
     pub const fn set_upgrade_activation_timestamp(
         &mut self,
-        upgrade_id: ContractUpgrade,
+        upgrade_id: BaseUpgrade,
         timestamp: u64,
     ) {
         self.upgrades.set_activation_timestamp(upgrade_id, timestamp)
@@ -240,7 +240,7 @@ impl RollupConfig {
     /// Applies an upgrade activation by contract upgrade ID.
     pub const fn apply_upgrade_activation(
         &mut self,
-        upgrade_id: ContractUpgrade,
+        upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) {
         match activation {
@@ -254,75 +254,75 @@ impl RollupConfig {
     rollup_fork_methods! {
         is_regolith_active,
         is_first_regolith_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Regolith)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Regolith)],
         "Regolith",
         implies is_canyon_active;
 
         is_canyon_active,
         is_first_canyon_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Canyon)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Canyon)],
         "Canyon",
         implies is_delta_active;
 
         is_delta_active,
         is_first_delta_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Delta)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Delta)],
         "Delta",
         implies is_ecotone_active;
 
         is_ecotone_active,
         is_first_ecotone_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Ecotone)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone)],
         "Ecotone",
         implies is_fjord_active;
 
         is_fjord_active,
         is_first_fjord_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Fjord)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Fjord)],
         "Fjord",
         implies is_granite_active;
 
         is_granite_active,
         is_first_granite_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Granite)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Granite)],
         "Granite",
         implies is_holocene_active;
 
         is_holocene_active,
         is_first_holocene_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Holocene)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Holocene)],
         "Holocene",
         implies is_isthmus_active;
 
         is_pectra_blob_schedule_active,
         is_first_pectra_blob_schedule_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::PectraBlobSchedule)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)],
         "pectra blob schedule";
 
         is_isthmus_active,
         is_first_isthmus_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Isthmus)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus)],
         "Isthmus",
         implies is_jovian_active;
 
         is_jovian_active,
         is_first_jovian_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Jovian)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Jovian)],
         "Jovian";
 
         is_base_azul_active,
         is_first_base_azul_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Azul)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Azul)],
         "Base Azul";
 
         is_beryl_active,
         is_first_beryl_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Beryl)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Beryl)],
         "Beryl";
 
         is_cobalt_active,
         is_first_cobalt_block,
-        [contract_upgrade_activation_timestamp(ContractUpgrade::Cobalt)],
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt)],
         "Cobalt";
     }
 
@@ -439,7 +439,7 @@ impl UpgradeActivationSink for RollupConfig {
 
     fn apply_activation(
         &mut self,
-        upgrade_id: ContractUpgrade,
+        upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
         self.apply_upgrade_activation(upgrade_id, activation);
@@ -870,7 +870,7 @@ mod tests {
     fn set_upgrade_activation_timestamp_updates_osaka_activation() {
         let mut cfg = RollupConfig::default();
 
-        cfg.set_upgrade_activation_timestamp(ContractUpgrade::Azul, 700);
+        cfg.set_upgrade_activation_timestamp(BaseUpgrade::Azul, 700);
 
         assert_eq!(cfg.upgrades.base.azul, Some(700));
         assert!(cfg.is_base_azul_active(700));
@@ -898,16 +898,16 @@ mod tests {
 
         crate::RuntimeUpgradeRegistry::clear_activation_timestamp(
             chain_id,
-            ContractUpgrade::Canyon,
+            BaseUpgrade::Canyon,
         );
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(
             chain_id,
-            ContractUpgrade::Azul,
+            BaseUpgrade::Azul,
             42,
         );
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(
             chain_id,
-            ContractUpgrade::Cobalt,
+            BaseUpgrade::Cobalt,
             84,
         );
 

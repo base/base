@@ -88,6 +88,8 @@ impl ChainUpgradesExt for ChainUpgrades {
 
 #[cfg(test)]
 mod tests {
+    use base_common_chains::BaseUpgradeExt;
+
     use super::*;
 
     #[test]

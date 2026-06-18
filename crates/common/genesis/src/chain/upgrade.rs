@@ -2,12 +2,11 @@
 
 use alloc::{
     collections::BTreeMap,
-    format,
     string::{String, ToString},
 };
-use core::{fmt::Display, str::FromStr};
+use core::fmt::Display;
 
-use alloy_hardforks::{EthereumHardfork, ParseHardforkError};
+use alloy_hardforks::{EthereumHardfork, hardfork};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Upgrade configuration for Base-specific upgrades.
@@ -37,40 +36,89 @@ impl BaseUpgradeConfig {
     }
 }
 
-/// Contract-backed Base upgrade IDs.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum ContractUpgrade {
-    /// Regolith.
-    Regolith,
-    /// Canyon.
-    Canyon,
-    /// Delta.
-    Delta,
-    /// Ecotone.
-    Ecotone,
-    /// Fjord.
-    Fjord,
-    /// Granite.
-    Granite,
-    /// Holocene.
-    Holocene,
-    /// Pectra blob schedule.
-    PectraBlobSchedule,
-    /// Isthmus.
-    Isthmus,
-    /// Jovian.
-    Jovian,
-    /// Azul.
-    Azul,
-    /// Beryl.
-    Beryl,
-    /// Cobalt.
-    Cobalt,
-}
+hardfork!(
+    /// The canonical Base network upgrade.
+    ///
+    /// This single enum spans two domains:
+    /// - the **execution fork ladder** ([`BaseUpgrade::EXECUTION_VARIANTS`]) that maps onto the
+    ///   reth/revm hardfork schedule, and
+    /// - the **contract-backed upgrade set** ([`BaseUpgrade::CONTRACT_VARIANTS`]) that is keyed by
+    ///   the L1 upgrade-signal contract `hardforkId` strings and the genesis [`UpgradeConfig`]
+    ///   timestamp fields.
+    ///
+    /// Variants are listed in chronological order. [`Bedrock`](BaseUpgrade::Bedrock) is
+    /// execution-only (block-activated, not contract-backed), while
+    /// [`Delta`](BaseUpgrade::Delta) and [`PectraBlobSchedule`](BaseUpgrade::PectraBlobSchedule)
+    /// are contract-backed config upgrades that do not change EVM execution and therefore never
+    /// enter the execution fork ladder.
+    ///
+    /// When building a list of upgrades for a chain, it's still expected to zip with
+    /// [`EthereumHardfork`](alloy_hardforks::EthereumHardfork).
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[derive(Default)]
+    BaseUpgrade {
+        /// Bedrock: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#bedrock>.
+        Bedrock,
+        /// Regolith: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#regolith>.
+        Regolith,
+        /// Canyon: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#canyon>.
+        Canyon,
+        /// Delta: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#delta>.
+        Delta,
+        /// Ecotone: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#ecotone>.
+        Ecotone,
+        /// Fjord: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#fjord>
+        Fjord,
+        /// Granite: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#granite>
+        Granite,
+        /// Holocene: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#holocene>
+        Holocene,
+        /// Pectra blob schedule: an optional fork present on Base Sepolia chains that observed the
+        /// L1 Pectra network upgrade with the reference node `<=v1.11.1` sequencing the network.
+        PectraBlobSchedule,
+        /// Isthmus: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/isthmus/overview.md>
+        Isthmus,
+        /// Jovian: Base network upgrade.
+        Jovian,
+        /// Azul: First Base-specific network upgrade.
+        #[default]
+        Azul,
+        /// Beryl: Second Base-specific network upgrade.
+        Beryl,
+        /// Cobalt: Third Base-specific network upgrade.
+        Cobalt,
+    }
+);
 
-impl ContractUpgrade {
-    /// All contract-backed Base upgrade IDs.
-    pub const ALL: [Self; 13] = [
+impl BaseUpgrade {
+    /// Latest Base upgrade used by default.
+    pub const LATEST: Self = Self::Azul;
+
+    /// The execution fork ladder, in activation order.
+    ///
+    /// These are the upgrades that participate in the reth/revm hardfork schedule. Excludes the
+    /// contract-only [`Delta`](Self::Delta) and [`PectraBlobSchedule`](Self::PectraBlobSchedule)
+    /// upgrades, which do not change EVM execution.
+    pub const EXECUTION_VARIANTS: [Self; 12] = [
+        Self::Bedrock,
+        Self::Regolith,
+        Self::Canyon,
+        Self::Ecotone,
+        Self::Fjord,
+        Self::Granite,
+        Self::Holocene,
+        Self::Isthmus,
+        Self::Jovian,
+        Self::Azul,
+        Self::Beryl,
+        Self::Cobalt,
+    ];
+
+    /// The contract-backed upgrade set, in activation order.
+    ///
+    /// These are the upgrades addressable by the L1 upgrade-signal contract and stored in the
+    /// genesis [`UpgradeConfig`]. Excludes block-activated [`Bedrock`](Self::Bedrock).
+    pub const CONTRACT_VARIANTS: [Self; 13] = [
         Self::Regolith,
         Self::Canyon,
         Self::Delta,
@@ -86,9 +134,45 @@ impl ContractUpgrade {
         Self::Cobalt,
     ];
 
-    /// Returns the canonical contract upgrade name.
-    pub const fn name(self) -> &'static str {
+    /// Returns true if this upgrade participates in the execution fork ladder.
+    pub const fn is_execution(self) -> bool {
+        self.execution_idx().is_some()
+    }
+
+    /// Returns true if this upgrade is contract-backed (i.e. signaled by the L1 upgrade-signal
+    /// contract and stored in [`UpgradeConfig`]). False only for [`Bedrock`](Self::Bedrock).
+    pub const fn is_contract_backed(self) -> bool {
+        !matches!(self, Self::Bedrock)
+    }
+
+    /// Returns this upgrade's index within [`EXECUTION_VARIANTS`](Self::EXECUTION_VARIANTS), or
+    /// `None` for contract-only upgrades that are absent from the execution fork ladder.
+    pub const fn execution_idx(self) -> Option<usize> {
+        Some(match self {
+            Self::Bedrock => 0,
+            Self::Regolith => 1,
+            Self::Canyon => 2,
+            Self::Ecotone => 3,
+            Self::Fjord => 4,
+            Self::Granite => 5,
+            Self::Holocene => 6,
+            Self::Isthmus => 7,
+            Self::Jovian => 8,
+            Self::Azul => 9,
+            Self::Beryl => 10,
+            Self::Cobalt => 11,
+            Self::Delta | Self::PectraBlobSchedule => return None,
+        })
+    }
+
+    /// Returns the canonical `snake_case` contract upgrade ID used by the L1 upgrade-signal
+    /// contract and metrics.
+    ///
+    /// Note this differs from [`name`](Self::name) (`PascalCase`), which is the reth/execution
+    /// hardfork identity.
+    pub const fn contract_id(self) -> &'static str {
         match self {
+            Self::Bedrock => "bedrock",
             Self::Regolith => "regolith",
             Self::Canyon => "canyon",
             Self::Delta => "delta",
@@ -105,67 +189,57 @@ impl ContractUpgrade {
         }
     }
 
-    /// Returns the Ethereum execution hardfork activated by this contract upgrade, if any.
+    /// Returns the Ethereum execution hardfork activated by this upgrade, if any.
     pub const fn execution_hardfork(self) -> Option<EthereumHardfork> {
         match self {
             Self::Canyon => Some(EthereumHardfork::Shanghai),
             Self::Ecotone => Some(EthereumHardfork::Cancun),
             Self::Isthmus => Some(EthereumHardfork::Prague),
             Self::Azul => Some(EthereumHardfork::Osaka),
-            Self::Regolith
-            | Self::Delta
-            | Self::Fjord
-            | Self::Granite
-            | Self::Holocene
-            | Self::PectraBlobSchedule
-            | Self::Jovian
-            | Self::Beryl
-            | Self::Cobalt => None,
-        }
-    }
-
-    /// Returns the contract upgrade represented by an execution, Base, or contract alias name.
-    pub fn from_fork_name(name: &str) -> Option<Self> {
-        match Self::normalized_hardfork_id(name).as_str() {
-            "regolith" => Some(Self::Regolith),
-            "shanghai" | "canyon" => Some(Self::Canyon),
-            "delta" => Some(Self::Delta),
-            "cancun" | "ecotone" => Some(Self::Ecotone),
-            "fjord" => Some(Self::Fjord),
-            "granite" => Some(Self::Granite),
-            "holocene" => Some(Self::Holocene),
-            "pectrablobschedule" => Some(Self::PectraBlobSchedule),
-            "prague" | "isthmus" => Some(Self::Isthmus),
-            "jovian" => Some(Self::Jovian),
-            "osaka" | "azul" | "baseazul" | "v1" => Some(Self::Azul),
-            "beryl" | "baseberyl" | "v2" => Some(Self::Beryl),
-            "cobalt" | "basecobalt" | "v3" => Some(Self::Cobalt),
             _ => None,
         }
     }
 
-    /// Normalizes a contract upgrade ID for matching.
+    /// Returns the Base upgrade that carries the given Ethereum hardfork on Base.
+    pub const fn from_ethereum_hardfork(fork: EthereumHardfork) -> Option<Self> {
+        match fork {
+            EthereumHardfork::Shanghai => Some(Self::Canyon),
+            EthereumHardfork::Cancun => Some(Self::Ecotone),
+            EthereumHardfork::Prague => Some(Self::Isthmus),
+            EthereumHardfork::Osaka => Some(Self::Azul),
+            _ => None,
+        }
+    }
+
+    /// Returns the contract-backed upgrade represented by an execution, Base, or contract alias
+    /// name. Returns `None` for unknown names and for non-contract-backed upgrades (Bedrock).
+    pub fn from_contract_fork_name(name: &str) -> Option<Self> {
+        let upgrade = match Self::normalized_hardfork_id(name).as_str() {
+            "regolith" => Self::Regolith,
+            "shanghai" | "canyon" => Self::Canyon,
+            "delta" => Self::Delta,
+            "cancun" | "ecotone" => Self::Ecotone,
+            "fjord" => Self::Fjord,
+            "granite" => Self::Granite,
+            "holocene" => Self::Holocene,
+            "pectrablobschedule" => Self::PectraBlobSchedule,
+            "prague" | "isthmus" => Self::Isthmus,
+            "jovian" => Self::Jovian,
+            "osaka" | "azul" | "baseazul" | "v1" => Self::Azul,
+            "beryl" | "baseberyl" | "v2" => Self::Beryl,
+            "cobalt" | "basecobalt" | "v3" => Self::Cobalt,
+            _ => return None,
+        };
+        Some(upgrade)
+    }
+
+    /// Normalizes a contract upgrade ID for matching (lowercase, stripping whitespace, `_`, `-`).
     pub fn normalized_hardfork_id(upgrade_id: &str) -> String {
         upgrade_id
             .bytes()
             .filter(|b| !b.is_ascii_whitespace() && !matches!(b, b'_' | b'-'))
             .map(|b| b.to_ascii_lowercase() as char)
             .collect()
-    }
-}
-
-impl FromStr for ContractUpgrade {
-    type Err = ParseHardforkError;
-
-    fn from_str(upgrade_id: &str) -> Result<Self, Self::Err> {
-        Self::from_fork_name(upgrade_id)
-            .ok_or_else(|| ParseHardforkError::new(format!("Unknown hardfork: {upgrade_id}")))
-    }
-}
-
-impl Display for ContractUpgrade {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(self.name())
     }
 }
 
@@ -210,7 +284,7 @@ pub trait UpgradeActivationSink {
     /// and was ignored.
     fn apply_activation(
         &mut self,
-        upgrade_id: ContractUpgrade,
+        upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error>;
 
@@ -224,7 +298,7 @@ pub trait UpgradeActivationSink {
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct UpgradeActivationOverrides {
     /// Upgrade activations keyed by canonical contract upgrade ID.
-    pub activations: BTreeMap<ContractUpgrade, UpgradeActivation>,
+    pub activations: BTreeMap<BaseUpgrade, UpgradeActivation>,
 }
 
 impl UpgradeActivationOverrides {
@@ -239,27 +313,27 @@ impl UpgradeActivationOverrides {
     }
 
     /// Returns the runtime activation override for a contract upgrade ID.
-    pub fn activation(&self, upgrade_id: ContractUpgrade) -> Option<UpgradeActivation> {
+    pub fn activation(&self, upgrade_id: BaseUpgrade) -> Option<UpgradeActivation> {
         self.activations.get(&upgrade_id).copied()
     }
 
     /// Removes the runtime activation override for a contract upgrade ID.
-    pub fn remove_activation(&mut self, upgrade_id: ContractUpgrade) -> bool {
+    pub fn remove_activation(&mut self, upgrade_id: BaseUpgrade) -> bool {
         self.activations.remove(&upgrade_id).is_some()
     }
 
     /// Sets the runtime activation override for a contract upgrade ID.
-    pub fn set_activation(&mut self, upgrade_id: ContractUpgrade, activation: UpgradeActivation) {
+    pub fn set_activation(&mut self, upgrade_id: BaseUpgrade, activation: UpgradeActivation) {
         self.activations.insert(upgrade_id, activation);
     }
 
     /// Sets a runtime timestamp activation override for a contract upgrade ID.
-    pub fn set_activation_timestamp(&mut self, upgrade_id: ContractUpgrade, timestamp: u64) {
+    pub fn set_activation_timestamp(&mut self, upgrade_id: BaseUpgrade, timestamp: u64) {
         self.set_activation(upgrade_id, UpgradeActivation::Timestamp(timestamp))
     }
 
     /// Sets a runtime override that clears an upgrade activation.
-    pub fn clear_activation_timestamp(&mut self, upgrade_id: ContractUpgrade) {
+    pub fn clear_activation_timestamp(&mut self, upgrade_id: BaseUpgrade) {
         self.set_activation(upgrade_id, UpgradeActivation::Never)
     }
 }
@@ -293,7 +367,7 @@ impl RuntimeUpgradeRegistry {
     }
 
     /// Returns the runtime activation override for a chain and contract upgrade ID.
-    pub fn activation(chain_id: u64, upgrade_id: ContractUpgrade) -> Option<UpgradeActivation> {
+    pub fn activation(chain_id: u64, upgrade_id: BaseUpgrade) -> Option<UpgradeActivation> {
         Self::read_registry().get(&chain_id).and_then(|overrides| overrides.activation(upgrade_id))
     }
 
@@ -313,7 +387,7 @@ impl RuntimeUpgradeRegistry {
     }
 
     /// Removes one runtime activation override for a chain and contract upgrade ID.
-    pub fn remove_activation_override(chain_id: u64, upgrade_id: ContractUpgrade) -> bool {
+    pub fn remove_activation_override(chain_id: u64, upgrade_id: BaseUpgrade) -> bool {
         let mut registry = Self::write_registry();
         let Some(overrides) = registry.get_mut(&chain_id) else {
             return false;
@@ -325,7 +399,7 @@ impl RuntimeUpgradeRegistry {
     /// Sets one runtime activation override for a chain and contract upgrade ID.
     pub fn set_activation(
         chain_id: u64,
-        upgrade_id: ContractUpgrade,
+        upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) {
         let mut registry = Self::write_registry();
@@ -334,12 +408,12 @@ impl RuntimeUpgradeRegistry {
     }
 
     /// Sets one runtime timestamp activation override for a chain and contract upgrade ID.
-    pub fn set_activation_timestamp(chain_id: u64, upgrade_id: ContractUpgrade, timestamp: u64) {
+    pub fn set_activation_timestamp(chain_id: u64, upgrade_id: BaseUpgrade, timestamp: u64) {
         Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Timestamp(timestamp))
     }
 
     /// Sets one runtime override that clears a chain upgrade activation.
-    pub fn clear_activation_timestamp(chain_id: u64, upgrade_id: ContractUpgrade) {
+    pub fn clear_activation_timestamp(chain_id: u64, upgrade_id: BaseUpgrade) {
         Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Never)
     }
 }
@@ -448,28 +522,29 @@ impl UpgradeConfig {
     }
 
     /// Clears a timestamp-based activation time by contract upgrade ID.
-    pub const fn clear_activation_timestamp(&mut self, upgrade_id: ContractUpgrade) {
+    pub const fn clear_activation_timestamp(&mut self, upgrade_id: BaseUpgrade) {
         match upgrade_id {
-            ContractUpgrade::Regolith => self.regolith_time = None,
-            ContractUpgrade::Canyon => self.canyon_time = None,
-            ContractUpgrade::Delta => self.delta_time = None,
-            ContractUpgrade::Ecotone => self.ecotone_time = None,
-            ContractUpgrade::Fjord => self.fjord_time = None,
-            ContractUpgrade::Granite => self.granite_time = None,
-            ContractUpgrade::Holocene => self.holocene_time = None,
-            ContractUpgrade::PectraBlobSchedule => self.pectra_blob_schedule_time = None,
-            ContractUpgrade::Isthmus => self.isthmus_time = None,
-            ContractUpgrade::Jovian => self.jovian_time = None,
-            ContractUpgrade::Azul => self.base.azul = None,
-            ContractUpgrade::Beryl => self.base.beryl = None,
-            ContractUpgrade::Cobalt => self.base.cobalt = None,
+            BaseUpgrade::Bedrock => {}
+            BaseUpgrade::Regolith => self.regolith_time = None,
+            BaseUpgrade::Canyon => self.canyon_time = None,
+            BaseUpgrade::Delta => self.delta_time = None,
+            BaseUpgrade::Ecotone => self.ecotone_time = None,
+            BaseUpgrade::Fjord => self.fjord_time = None,
+            BaseUpgrade::Granite => self.granite_time = None,
+            BaseUpgrade::Holocene => self.holocene_time = None,
+            BaseUpgrade::PectraBlobSchedule => self.pectra_blob_schedule_time = None,
+            BaseUpgrade::Isthmus => self.isthmus_time = None,
+            BaseUpgrade::Jovian => self.jovian_time = None,
+            BaseUpgrade::Azul => self.base.azul = None,
+            BaseUpgrade::Beryl => self.base.beryl = None,
+            BaseUpgrade::Cobalt => self.base.cobalt = None,
         }
     }
 
     /// Applies an upgrade activation override by contract upgrade ID.
     pub const fn set_activation(
         &mut self,
-        upgrade_id: ContractUpgrade,
+        upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) {
         match activation {
@@ -488,47 +563,49 @@ impl UpgradeConfig {
     }
 
     /// Returns the activation for a timestamp-based contract upgrade ID.
-    pub const fn activation(&self, upgrade_id: ContractUpgrade) -> UpgradeActivation {
+    pub const fn activation(&self, upgrade_id: BaseUpgrade) -> UpgradeActivation {
         let timestamp = match upgrade_id {
-            ContractUpgrade::Regolith => self.regolith_time,
-            ContractUpgrade::Canyon => self.canyon_time,
-            ContractUpgrade::Delta => self.delta_time,
-            ContractUpgrade::Ecotone => self.ecotone_time,
-            ContractUpgrade::Fjord => self.fjord_time,
-            ContractUpgrade::Granite => self.granite_time,
-            ContractUpgrade::Holocene => self.holocene_time,
-            ContractUpgrade::PectraBlobSchedule => self.pectra_blob_schedule_time,
-            ContractUpgrade::Isthmus => self.isthmus_time,
-            ContractUpgrade::Jovian => self.jovian_time,
-            ContractUpgrade::Azul => self.base.azul,
-            ContractUpgrade::Beryl => self.base.beryl,
-            ContractUpgrade::Cobalt => self.base.cobalt,
+            BaseUpgrade::Bedrock => None,
+            BaseUpgrade::Regolith => self.regolith_time,
+            BaseUpgrade::Canyon => self.canyon_time,
+            BaseUpgrade::Delta => self.delta_time,
+            BaseUpgrade::Ecotone => self.ecotone_time,
+            BaseUpgrade::Fjord => self.fjord_time,
+            BaseUpgrade::Granite => self.granite_time,
+            BaseUpgrade::Holocene => self.holocene_time,
+            BaseUpgrade::PectraBlobSchedule => self.pectra_blob_schedule_time,
+            BaseUpgrade::Isthmus => self.isthmus_time,
+            BaseUpgrade::Jovian => self.jovian_time,
+            BaseUpgrade::Azul => self.base.azul,
+            BaseUpgrade::Beryl => self.base.beryl,
+            BaseUpgrade::Cobalt => self.base.cobalt,
         };
 
         UpgradeActivation::from_timestamp(timestamp)
     }
 
     /// Returns the activation timestamp for a timestamp-based contract upgrade ID.
-    pub const fn activation_timestamp(&self, upgrade_id: ContractUpgrade) -> Option<u64> {
+    pub const fn activation_timestamp(&self, upgrade_id: BaseUpgrade) -> Option<u64> {
         self.activation(upgrade_id).timestamp()
     }
 
     /// Sets a timestamp-based activation time by contract upgrade ID.
-    pub const fn set_activation_timestamp(&mut self, upgrade_id: ContractUpgrade, timestamp: u64) {
+    pub const fn set_activation_timestamp(&mut self, upgrade_id: BaseUpgrade, timestamp: u64) {
         match upgrade_id {
-            ContractUpgrade::Regolith => self.regolith_time = Some(timestamp),
-            ContractUpgrade::Canyon => self.canyon_time = Some(timestamp),
-            ContractUpgrade::Delta => self.delta_time = Some(timestamp),
-            ContractUpgrade::Ecotone => self.ecotone_time = Some(timestamp),
-            ContractUpgrade::Fjord => self.fjord_time = Some(timestamp),
-            ContractUpgrade::Granite => self.granite_time = Some(timestamp),
-            ContractUpgrade::Holocene => self.holocene_time = Some(timestamp),
-            ContractUpgrade::PectraBlobSchedule => self.pectra_blob_schedule_time = Some(timestamp),
-            ContractUpgrade::Isthmus => self.isthmus_time = Some(timestamp),
-            ContractUpgrade::Jovian => self.jovian_time = Some(timestamp),
-            ContractUpgrade::Azul => self.base.azul = Some(timestamp),
-            ContractUpgrade::Beryl => self.base.beryl = Some(timestamp),
-            ContractUpgrade::Cobalt => self.base.cobalt = Some(timestamp),
+            BaseUpgrade::Bedrock => {}
+            BaseUpgrade::Regolith => self.regolith_time = Some(timestamp),
+            BaseUpgrade::Canyon => self.canyon_time = Some(timestamp),
+            BaseUpgrade::Delta => self.delta_time = Some(timestamp),
+            BaseUpgrade::Ecotone => self.ecotone_time = Some(timestamp),
+            BaseUpgrade::Fjord => self.fjord_time = Some(timestamp),
+            BaseUpgrade::Granite => self.granite_time = Some(timestamp),
+            BaseUpgrade::Holocene => self.holocene_time = Some(timestamp),
+            BaseUpgrade::PectraBlobSchedule => self.pectra_blob_schedule_time = Some(timestamp),
+            BaseUpgrade::Isthmus => self.isthmus_time = Some(timestamp),
+            BaseUpgrade::Jovian => self.jovian_time = Some(timestamp),
+            BaseUpgrade::Azul => self.base.azul = Some(timestamp),
+            BaseUpgrade::Beryl => self.base.beryl = Some(timestamp),
+            BaseUpgrade::Cobalt => self.base.cobalt = Some(timestamp),
         }
     }
 
@@ -687,11 +764,11 @@ mod tests {
     fn test_set_activation_timestamp_by_upgrade_id() {
         let mut upgrades = UpgradeConfig::default();
 
-        upgrades.set_activation_timestamp(ContractUpgrade::Regolith, 1);
-        upgrades.set_activation_timestamp(ContractUpgrade::PectraBlobSchedule, 2);
-        upgrades.set_activation_timestamp(ContractUpgrade::Azul, 3);
-        upgrades.set_activation_timestamp(ContractUpgrade::Beryl, 4);
-        upgrades.set_activation_timestamp(ContractUpgrade::Cobalt, 5);
+        upgrades.set_activation_timestamp(BaseUpgrade::Regolith, 1);
+        upgrades.set_activation_timestamp(BaseUpgrade::PectraBlobSchedule, 2);
+        upgrades.set_activation_timestamp(BaseUpgrade::Azul, 3);
+        upgrades.set_activation_timestamp(BaseUpgrade::Beryl, 4);
+        upgrades.set_activation_timestamp(BaseUpgrade::Cobalt, 5);
 
         assert_eq!(upgrades.regolith_time, Some(1));
         assert_eq!(upgrades.pectra_blob_schedule_time, Some(2));
@@ -699,7 +776,7 @@ mod tests {
         assert_eq!(upgrades.base.beryl, Some(4));
         assert_eq!(upgrades.base.cobalt, Some(5));
 
-        upgrades.clear_activation_timestamp(ContractUpgrade::Azul);
+        upgrades.clear_activation_timestamp(BaseUpgrade::Azul);
         assert_eq!(upgrades.base.azul, None);
         assert_eq!(upgrades.base.beryl, Some(4));
         assert_eq!(upgrades.base.cobalt, Some(5));
@@ -719,20 +796,20 @@ mod runtime_tests {
         let chain_id = 9_100_001;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Azul, 42);
-        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, ContractUpgrade::Beryl);
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Cobalt, 84);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
+        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Beryl);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
 
         assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Azul),
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
         );
         assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Beryl),
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl),
             Some(UpgradeActivation::Never)
         );
         assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Cobalt),
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Cobalt),
             Some(UpgradeActivation::Timestamp(84))
         );
 
@@ -744,9 +821,9 @@ mod runtime_tests {
         let mut upgrades = UpgradeConfig { canyon_time: Some(10), ..Default::default() };
         let mut overrides = UpgradeActivationOverrides::new();
 
-        overrides.clear_activation_timestamp(ContractUpgrade::Canyon);
-        overrides.set_activation_timestamp(ContractUpgrade::Azul, 42);
-        overrides.set_activation_timestamp(ContractUpgrade::Cobalt, 84);
+        overrides.clear_activation_timestamp(BaseUpgrade::Canyon);
+        overrides.set_activation_timestamp(BaseUpgrade::Azul, 42);
+        overrides.set_activation_timestamp(BaseUpgrade::Cobalt, 84);
 
         upgrades.apply_activation_overrides(&overrides);
 

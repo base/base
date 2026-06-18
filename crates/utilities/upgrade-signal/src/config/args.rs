@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, U256};
-use base_common_genesis::ContractUpgrade;
+use base_common_genesis::BaseUpgrade;
 use url::Url;
 
 use super::{
@@ -82,9 +82,9 @@ impl UpgradeSignalArgs {
     /// Returns the configured hardfork IDs, or the default contract-backed hardfork schedule.
     pub fn configured_hardfork_ids(
         hardfork_ids: &[String],
-    ) -> Result<Vec<ContractUpgrade>, UpgradeSignalConfigError> {
+    ) -> Result<Vec<BaseUpgrade>, UpgradeSignalConfigError> {
         if hardfork_ids.is_empty() {
-            return Ok(ContractUpgrade::ALL.to_vec());
+            return Ok(BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         }
 
         let source = hardfork_ids.iter().map(String::as_str).collect::<Vec<_>>();
@@ -94,7 +94,7 @@ impl UpgradeSignalArgs {
             if hardfork_id.is_empty() {
                 return Err(UpgradeSignalConfigError::EmptyHardforkId);
             }
-            let hardfork_id = hardfork_id.parse().map_err(|_| {
+            let hardfork_id = BaseUpgrade::from_contract_fork_name(hardfork_id).ok_or_else(|| {
                 UpgradeSignalConfigError::UnknownHardforkId(hardfork_id.to_string())
             })?;
             if !ids.contains(&hardfork_id) {
@@ -110,9 +110,9 @@ impl UpgradeSignalArgs {
     /// Every apply hardfork ID must also be a read hardfork ID, since only read signals can be
     /// applied. A non-subset apply ID is rejected rather than silently ignored.
     pub fn configured_apply_hardfork_ids(
-        hardfork_ids: &[ContractUpgrade],
+        hardfork_ids: &[BaseUpgrade],
         apply_hardfork_ids: &[String],
-    ) -> Result<Vec<ContractUpgrade>, UpgradeSignalConfigError> {
+    ) -> Result<Vec<BaseUpgrade>, UpgradeSignalConfigError> {
         if apply_hardfork_ids.is_empty() {
             return Ok(hardfork_ids.to_vec());
         }
@@ -121,7 +121,7 @@ impl UpgradeSignalArgs {
         for apply_hardfork_id in &apply_hardfork_ids {
             if !hardfork_ids.contains(apply_hardfork_id) {
                 return Err(UpgradeSignalConfigError::ApplyHardforkIdNotRead(
-                    apply_hardfork_id.to_string(),
+                    apply_hardfork_id.contract_id().to_string(),
                 ));
             }
         }
@@ -146,7 +146,7 @@ pub struct UpgradeSignalL1RpcArgs {
 mod tests {
     use alloy_primitives::address;
     use alloy_rpc_types_eth::BlockNumberOrTag;
-    use base_common_genesis::ContractUpgrade;
+    use base_common_genesis::BaseUpgrade;
 
     use super::*;
 
@@ -166,8 +166,8 @@ mod tests {
 
         let config = args.config().unwrap().unwrap();
 
-        assert_eq!(config.hardfork_ids, ContractUpgrade::ALL.to_vec());
-        assert_eq!(config.apply_hardfork_ids, ContractUpgrade::ALL.to_vec());
+        assert_eq!(config.hardfork_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
+        assert_eq!(config.apply_hardfork_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         assert_eq!(config.mode, UpgradeSignalMode::MetricsOnly);
     }
 
@@ -206,8 +206,8 @@ mod tests {
         let config = args.config().unwrap().unwrap();
 
         assert_eq!(config.contract_address, contract);
-        assert_eq!(config.hardfork_ids, [ContractUpgrade::Azul]);
-        assert_eq!(config.apply_hardfork_ids, [ContractUpgrade::Azul]);
+        assert_eq!(config.hardfork_ids, [BaseUpgrade::Azul]);
+        assert_eq!(config.apply_hardfork_ids, [BaseUpgrade::Azul]);
         assert_eq!(config.mode, UpgradeSignalMode::StartupApply);
         assert_eq!(
             config.node_protocol_version,
@@ -227,8 +227,8 @@ mod tests {
 
         let config = args.config().unwrap().unwrap();
 
-        assert_eq!(config.hardfork_ids, [ContractUpgrade::Azul, ContractUpgrade::Beryl]);
-        assert_eq!(config.apply_hardfork_ids, [ContractUpgrade::Beryl]);
+        assert_eq!(config.hardfork_ids, [BaseUpgrade::Azul, BaseUpgrade::Beryl]);
+        assert_eq!(config.apply_hardfork_ids, [BaseUpgrade::Beryl]);
         assert_eq!(config.mode, UpgradeSignalMode::RuntimeAdmin);
     }
 

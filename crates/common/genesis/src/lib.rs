@@ -29,8 +29,8 @@ pub use system::{
 
 mod chain;
 pub use chain::{
-    AddressList, BaseUpgradeConfig, ContractUpgrade, Roles, RuntimeUpgradeRegistry,
-    UpgradeActivation, UpgradeActivationOverrides, UpgradeActivationSink, UpgradeConfig,
+    AddressList, BaseUpgrade, BaseUpgradeConfig, Roles, RuntimeUpgradeRegistry, UpgradeActivation,
+    UpgradeActivationOverrides, UpgradeActivationSink, UpgradeConfig,
 };
 
 mod genesis;

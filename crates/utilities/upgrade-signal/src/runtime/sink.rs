@@ -1,5 +1,5 @@
 use base_common_genesis::{
-    ContractUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationOverrides,
+    BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationOverrides,
     UpgradeActivationSink,
 };
 
@@ -27,7 +27,7 @@ impl UpgradeActivationSink for RuntimeRegistrySink {
 
     fn apply_activation(
         &mut self,
-        hardfork_id: ContractUpgrade,
+        hardfork_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
         self.updates.set_activation(hardfork_id, activation);
@@ -85,7 +85,7 @@ impl UpgradeSignalRuntimeApplier {
             }
 
             summary.changes.push(UpgradeSignalApplyChange {
-                hardfork_id: signal.hardfork_id.to_string(),
+                hardfork_id: signal.hardfork_id.contract_id().to_string(),
                 action,
                 activation_timestamp: signal.activation_timestamp,
                 minimum_protocol_version: signal.protocol_version.to_string(),
@@ -114,13 +114,13 @@ impl UpgradeSignalRuntimeApplier {
 mod tests {
     use alloy_primitives::U256;
     use base_common_genesis::{
-        ContractUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
+        BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
     };
 
     use super::{RuntimeRegistrySink, UpgradeSignalRuntimeApplier};
     use crate::{UpgradeSignal, UpgradeSignalSchedule};
 
-    fn schedule(signals: &[(ContractUpgrade, u64)]) -> UpgradeSignalSchedule {
+    fn schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
             signals
                 .iter()
@@ -142,9 +142,9 @@ mod tests {
         let summary = UpgradeSignalRuntimeApplier::apply_schedule(
             chain_id,
             &schedule(&[
-                (ContractUpgrade::Azul, 42),
-                (ContractUpgrade::Beryl, 0),
-                (ContractUpgrade::Cobalt, 10),
+                (BaseUpgrade::Azul, 42),
+                (BaseUpgrade::Beryl, 0),
+                (BaseUpgrade::Cobalt, 10),
             ]),
         );
 
@@ -152,15 +152,15 @@ mod tests {
         assert_eq!(summary.cleared_hardforks, 1);
         assert_eq!(summary.ignored_hardforks, 0);
         assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Azul),
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
         );
         assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Beryl),
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl),
             Some(UpgradeActivation::Never)
         );
         assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Cobalt),
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Cobalt),
             Some(UpgradeActivation::Timestamp(10))
         );
 
@@ -169,8 +169,8 @@ mod tests {
 
     #[derive(Debug, Clone, Default, Eq, PartialEq)]
     struct RecordingSink {
-        applied: Vec<(ContractUpgrade, UpgradeActivation)>,
-        fail_on_hardfork_id: Option<ContractUpgrade>,
+        applied: Vec<(BaseUpgrade, UpgradeActivation)>,
+        fail_on_hardfork_id: Option<BaseUpgrade>,
     }
 
     #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -181,7 +181,7 @@ mod tests {
 
         fn apply_activation(
             &mut self,
-            hardfork_id: ContractUpgrade,
+            hardfork_id: BaseUpgrade,
             activation: UpgradeActivation,
         ) -> Result<bool, Self::Error> {
             if self.fail_on_hardfork_id == Some(hardfork_id) {
@@ -196,13 +196,13 @@ mod tests {
     #[test]
     fn apply_schedule_to_sink_is_transactional() {
         let mut sink = RecordingSink {
-            applied: vec![(ContractUpgrade::Regolith, UpgradeActivation::Timestamp(1))],
-            fail_on_hardfork_id: Some(ContractUpgrade::Beryl),
+            applied: vec![(BaseUpgrade::Regolith, UpgradeActivation::Timestamp(1))],
+            fail_on_hardfork_id: Some(BaseUpgrade::Beryl),
         };
 
         let error = UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
             9_000_007,
-            &schedule(&[(ContractUpgrade::Azul, 42), (ContractUpgrade::Beryl, 84)]),
+            &schedule(&[(BaseUpgrade::Azul, 42), (BaseUpgrade::Beryl, 84)]),
             &mut sink,
         )
         .unwrap_err();
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(error, RecordingSinkError);
         assert_eq!(
             sink.applied,
-            vec![(ContractUpgrade::Regolith, UpgradeActivation::Timestamp(1))]
+            vec![(BaseUpgrade::Regolith, UpgradeActivation::Timestamp(1))]
         );
     }
 
@@ -220,14 +220,14 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
         let mut sink = RuntimeRegistrySink::new(chain_id);
 
-        sink.apply_activation(ContractUpgrade::Azul, UpgradeActivation::Timestamp(42)).unwrap();
+        sink.apply_activation(BaseUpgrade::Azul, UpgradeActivation::Timestamp(42)).unwrap();
 
-        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Azul), None);
+        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul), None);
 
         sink.finalize().unwrap();
 
         assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Azul),
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
         );
 
@@ -238,17 +238,17 @@ mod tests {
     fn runtime_registry_sink_replaces_existing_overrides() {
         let chain_id = 9_000_009;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, ContractUpgrade::Cobalt, 84);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
 
         let mut sink = RuntimeRegistrySink::new(chain_id);
-        sink.apply_activation(ContractUpgrade::Azul, UpgradeActivation::Timestamp(42)).unwrap();
+        sink.apply_activation(BaseUpgrade::Azul, UpgradeActivation::Timestamp(42)).unwrap();
         sink.finalize().unwrap();
 
         assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Azul),
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
         );
-        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, ContractUpgrade::Cobalt), None);
+        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Cobalt), None);
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }

@@ -1,10 +1,5 @@
-use alloc::vec::Vec;
 use core::ops::Index;
 
-use BaseUpgrade::{
-    Azul, Bedrock, Beryl, Canyon, Cobalt, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian,
-    Regolith,
-};
 // Production imports for upgrade implementations
 use EthereumHardfork::{
     Amsterdam, ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Constantinople, Dao,
@@ -14,7 +9,11 @@ use EthereumHardfork::{
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
 
-use crate::{BaseUpgrade, Upgrades};
+use crate::{BaseUpgrade, BaseUpgradeExt, Upgrades};
+
+/// Number of upgrades in the Base execution fork ladder
+/// ([`BaseUpgrade::EXECUTION_VARIANTS`]).
+const EXECUTION_FORK_COUNT: usize = BaseUpgrade::EXECUTION_VARIANTS.len();
 
 /// A type allowing to configure activation [`ForkCondition`]s for a given list of
 /// [`BaseUpgrade`]s.
@@ -29,17 +28,26 @@ use crate::{BaseUpgrade, Upgrades};
 /// around.
 #[derive(Debug, Clone)]
 pub struct ChainUpgrades {
-    /// Ordered list of upgrade activations.
-    forks: Vec<(BaseUpgrade, ForkCondition)>,
+    /// Activation conditions for the execution fork ladder, indexed by
+    /// [`BaseUpgrade::execution_idx`]. Upgrades absent from the input default to
+    /// [`ForkCondition::Never`].
+    forks: [ForkCondition; EXECUTION_FORK_COUNT],
 }
 
 impl ChainUpgrades {
-    /// Creates a new [`ChainUpgrades`] with the given list of forks. The input list is sorted
-    /// w.r.t. the hardcoded canonicity of [`BaseUpgrade`]s.
+    /// Creates a new [`ChainUpgrades`] from the given list of forks.
+    ///
+    /// Only execution-ladder upgrades ([`BaseUpgrade::EXECUTION_VARIANTS`]) are stored; any
+    /// contract-only upgrades (e.g. `Delta`, `PectraBlobSchedule`) in the input are ignored.
+    /// When an upgrade appears more than once, the last entry wins.
     pub fn new(forks: impl IntoIterator<Item = (BaseUpgrade, ForkCondition)>) -> Self {
-        let mut forks = forks.into_iter().collect::<Vec<_>>();
-        forks.sort();
-        Self { forks }
+        let mut conditions = [ForkCondition::Never; EXECUTION_FORK_COUNT];
+        for (upgrade, condition) in forks {
+            if let Some(idx) = upgrade.execution_idx() {
+                conditions[idx] = condition;
+            }
+        }
+        Self { forks: conditions }
     }
 
     /// Creates a new [`ChainUpgrades`] with Base mainnet configuration.
@@ -65,28 +73,12 @@ impl ChainUpgrades {
 
 impl EthereumHardforks for ChainUpgrades {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        if self.forks.is_empty() {
-            return ForkCondition::Never;
-        }
-
-        let forks_len = self.forks.len();
-        // check index out of bounds
-        if let Some(base_upgrade) = BaseUpgrade::from_ethereum_hardfork(fork)
-            && forks_len <= base_upgrade.idx()
-        {
-            return ForkCondition::Never;
-        }
-
         self[fork]
     }
 }
 
 impl Upgrades for ChainUpgrades {
     fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
-        // check index out of bounds
-        if self.forks.len() <= fork.idx() {
-            return ForkCondition::Never;
-        }
         self[fork]
     }
 }
@@ -95,20 +87,8 @@ impl Index<BaseUpgrade> for ChainUpgrades {
     type Output = ForkCondition;
 
     fn index(&self, hf: BaseUpgrade) -> &Self::Output {
-        match hf {
-            Bedrock => &self.forks[Bedrock.idx()].1,
-            Regolith => &self.forks[Regolith.idx()].1,
-            Canyon => &self.forks[Canyon.idx()].1,
-            Ecotone => &self.forks[Ecotone.idx()].1,
-            Fjord => &self.forks[Fjord.idx()].1,
-            Granite => &self.forks[Granite.idx()].1,
-            Holocene => &self.forks[Holocene.idx()].1,
-            Isthmus => &self.forks[Isthmus.idx()].1,
-            Jovian => &self.forks[Jovian.idx()].1,
-            Azul => &self.forks[Azul.idx()].1,
-            Beryl => &self.forks[Beryl.idx()].1,
-            Cobalt => &self.forks[Cobalt.idx()].1,
-        }
+        // Contract-only upgrades are absent from the execution fork ladder.
+        hf.execution_idx().map_or(&ForkCondition::Never, |idx| &self.forks[idx])
     }
 }
 
@@ -125,7 +105,7 @@ impl Index<EthereumHardfork> for ChainUpgrades {
             Dao | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
             Frontier | Homestead | Tangerine | SpuriousDragon | Byzantium | Constantinople
             | Petersburg | Istanbul | MuirGlacier | Berlin => &ForkCondition::ZERO_BLOCK,
-            London | ArrowGlacier | GrayGlacier => &self[Bedrock],
+            London | ArrowGlacier | GrayGlacier => &self[BaseUpgrade::Bedrock],
             Paris => &ForkCondition::TTD {
                 activation_block_number: 0,
                 fork_block: Some(0),
