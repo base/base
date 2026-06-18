@@ -1,6 +1,6 @@
 //! EIP-8130 intrinsic gas: the total cost to include an AA transaction.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_common_consensus::{
     AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
 };
@@ -162,6 +162,8 @@ impl IntrinsicGas {
                         account_changes = account_changes
                             .saturating_add(Self::actor_change_write_cost(actor_change));
                     }
+                    account_changes = account_changes
+                        .saturating_add(Self::self_actor_change_cost(tx.sender, &cc.actor_changes));
                 }
                 AccountChange::Delegation(_) => {
                     account_changes =
@@ -230,16 +232,14 @@ impl IntrinsicGas {
 
     /// Number of cold SLOADs the `authorize` step reads for one authentication.
     ///
-    /// - **Bare signature** (live default EOA): one account-state SLOAD (the
-    ///   `DEFAULT_EOA_REVOKED` flag). The implicit owner short-circuits to the
-    ///   unrestricted owner before any `actor_config` read.
-    /// - **Explicit `K1_AUTHENTICATOR`**: priced at the worst case of **two**
-    ///   cold SLOADs — a permissioned self key reads the account-state flag *and*
-    ///   its `actor_config` slot (load account, then self). A live owner (config
-    ///   change) or a non-self k1 actor reads one fewer slot, so this errs on the
-    ///   safe side rather than undercharging the permissioned self. The two
-    ///   sub-cases are indistinguishable from the transaction body alone.
-    /// - **Any other resolved authenticator**: one `actor_config` SLOAD.
+    /// - **Bare signature** (default-EOA wire form): one account-state SLOAD that
+    ///   carries the inline self config (scope/policy/expiry and the
+    ///   `DEFAULT_EOA_REVOKED` flag), resolving the self key in a single read.
+    /// - **Any resolved authenticator** (explicit `K1_AUTHENTICATOR`, P-256,
+    ///   `WebAuthn`, delegate): one cold SLOAD. The inline self-config model
+    ///   collapses the former permissioned-self worst case (account-state *and*
+    ///   `actor_config`) to a single read, so an explicit k1 self and a non-self
+    ///   k1 actor each read exactly one slot.
     /// - **A degenerate sub-20-byte prefixed blob** resolves no authenticator and
     ///   reads no slot, so it costs `0` rather than a phantom SLOAD. Such blobs
     ///   are unreachable here (dispatch rejects them upstream); guarding keeps the
@@ -249,7 +249,6 @@ impl IntrinsicGas {
             return 1;
         }
         match Self::authenticator_of(auth) {
-            Some(a) if a == Eip8130Constants::K1_AUTHENTICATOR => 2,
             Some(_) if exec > 0 => 1,
             _ => 0,
         }
@@ -325,6 +324,35 @@ impl IntrinsicGas {
     /// expiry, uint8 policyType)`, so `policyType` is the fourth 32-byte word.
     fn authorize_has_policy(data: &[u8]) -> bool {
         data.len() >= 128 && data[96..128].iter().any(|&byte| byte != 0)
+    }
+
+    /// Worst-case extra cost for self-targeted actor changes in a config change.
+    ///
+    /// A change to the account's own secp256k1 self-actor is a dual-home write:
+    /// the self key's config lives inline in the account-state slot, and the
+    /// change also touches the mutually-exclusive `actor_config(self)` home — a
+    /// second storage home a non-self actor change never writes. `tx.sender` is
+    /// the config-change account when wire-visible, so each self-targeted change
+    /// is matched exactly. On the empty-`sender` (EOA) path the account is
+    /// recovered off-wire and can't be matched here; the self-actorId is unique,
+    /// so at most one change can target it and a single worst-case bump covers
+    /// the config change.
+    fn self_actor_change_cost(sender: Option<Address>, actor_changes: &[ActorChange]) -> u64 {
+        let self_changes = sender.map_or_else(
+            || u64::from(!actor_changes.is_empty()),
+            |account| {
+                let self_id = Self::self_actor_id(account);
+                actor_changes.iter().filter(|c| c.actor_id == self_id).count() as u64
+            },
+        );
+        Eip8130GasSchedule::SELF_ACTOR_DUAL_HOME_COST.saturating_mul(self_changes)
+    }
+
+    /// `bytes32(bytes20(account))` — the account's secp256k1 self-actor id.
+    fn self_actor_id(account: Address) -> B256 {
+        let mut id = [0u8; 32];
+        id[..20].copy_from_slice(account.as_slice());
+        B256::from(id)
     }
 }
 
@@ -496,9 +524,10 @@ mod tests {
             ..Default::default()
         };
         let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
-        // Explicit `K1_AUTHENTICATOR` auth: priced at the worst-case two cold
-        // SLOADs (account-state flag + self `actor_config`).
-        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD * 2;
+        // Explicit `K1_AUTHENTICATOR` auth resolves in a single cold SLOAD (the
+        // inline self config or a non-self k1 actor's `actor_config`). The actor
+        // ids are non-self, so no self-actor dual-home bump applies.
+        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
         let expected = auth_cost
             + Eip8130GasSchedule::ACTOR_SLOT_SET_COST
             + Eip8130GasSchedule::ACTOR_SLOT_RESET_COST;
@@ -526,12 +555,57 @@ mod tests {
     }
 
     #[test]
+    fn self_targeted_config_change_charges_dual_home_bump() {
+        // bytes32(bytes20(account)) — the account's own self-actor id.
+        let mut bytes = [0u8; 32];
+        bytes[..20].copy_from_slice(ACCOUNT.as_slice());
+        let self_id = alloy_primitives::B256::from(bytes);
+        let other_id = alloy_primitives::B256::repeat_byte(0x07);
+
+        let account_changes = |actor_id, sender| {
+            let cc = ConfigChange {
+                chain_id: 0,
+                sequence: 0,
+                actor_changes: vec![ActorChange {
+                    change_type: ActorChangeType::Authorize,
+                    actor_id,
+                    data: Bytes::from(vec![0u8; 128]),
+                }],
+                auth: Bytes::from(configured_auth(K1)),
+            };
+            let tx = TxEip8130 {
+                sender,
+                account_changes: vec![AccountChange::ConfigChange(cc)],
+                ..Default::default()
+            };
+            intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY).account_changes
+        };
+
+        let base = Eip8130GasSchedule::AUTH_EXEC_K1
+            + Eip8130GasSchedule::COLD_SLOAD
+            + Eip8130GasSchedule::ACTOR_SLOT_SET_COST;
+
+        // Configured sender targeting a non-self actor: no dual-home bump.
+        assert_eq!(account_changes(other_id, Some(ACCOUNT)), base);
+        // Configured sender targeting its own self-actor: + dual-home bump.
+        assert_eq!(
+            account_changes(self_id, Some(ACCOUNT)),
+            base + Eip8130GasSchedule::SELF_ACTOR_DUAL_HOME_COST
+        );
+        // EOA sender (`sender == None`): the account is off-wire, so the unique
+        // self-actorId can't be matched and a single worst-case bump is charged.
+        assert_eq!(
+            account_changes(other_id, None),
+            base + Eip8130GasSchedule::SELF_ACTOR_DUAL_HOME_COST
+        );
+    }
+
+    #[test]
     fn implicit_eoa_config_auth_costs_k1() {
         // An implicit-EOA owner authorizing a config change names itself explicitly
         // as `K1_AUTHENTICATOR || sig` on the configured (`bare_signature: false`)
-        // surface. Explicit k1 is priced at the worst-case two cold SLOADs
-        // (account-state flag + self `actor_config`).
-        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD * 2;
+        // surface. The inline self config resolves in a single cold SLOAD.
+        let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
         assert_eq!(IntrinsicGas::auth_cost(&configured_auth(K1), false), Ok(auth_cost));
 
         // End-to-end: a config change authorized by the implicit-EOA owner is
@@ -556,18 +630,19 @@ mod tests {
     }
 
     #[test]
-    fn k1_self_key_charges_account_and_actor_config_sloads() {
-        // A bare signature (live default EOA) reads only the account-state flag:
-        // one cold SLOAD. An explicit `K1_AUTHENTICATOR` blob is priced at the
-        // worst case — a permissioned self key loads the account-state flag *and*
-        // its `actor_config` slot — two cold SLOADs.
+    fn k1_authentication_costs_a_single_sload() {
+        // The inline self-config model resolves any k1 authentication in one cold
+        // SLOAD: a bare signature (default-EOA wire form) reads the account-state
+        // slot carrying the inline self config, and an explicit `K1_AUTHENTICATOR`
+        // blob reads exactly one slot too (the inline self, or a non-self k1
+        // actor's `actor_config`).
         assert_eq!(
             IntrinsicGas::auth_cost(&[0u8; 65], true),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
         assert_eq!(
             IntrinsicGas::auth_cost(&configured_auth(K1), false),
-            Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD * 2)
+            Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
         // A non-k1 leaf actor reads only its `actor_config` slot: one cold SLOAD.
         assert_eq!(

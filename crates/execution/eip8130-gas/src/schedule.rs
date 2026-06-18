@@ -67,6 +67,14 @@ impl Eip8130GasSchedule {
     /// Overwriting an already-set actor slot (e.g. a revoke) — cold SLOAD +
     /// SSTORE reset.
     pub const ACTOR_SLOT_RESET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_RESET;
+    /// Worst-case extra cost for a config change targeting the account's own
+    /// secp256k1 self-actor. The self key's config lives inline in the
+    /// account-state slot, so authorizing or revoking it mutates that slot *and*
+    /// touches the mutually-exclusive `actor_config(self)` home — a second
+    /// storage home a non-self actor change never writes. Priced at one fresh
+    /// slot write (cold SLOAD + SSTORE set) as a safe upper bound over the
+    /// actual set/reset/clear mix.
+    pub const SELF_ACTOR_DUAL_HOME_COST: u64 = Self::ACTOR_SLOT_SET_COST;
 
     // ── Enshrined authenticator execution gas (chain policy) ─────────────────
     /// secp256k1 (`K1_AUTHENTICATOR` sentinel / EOA path) execution gas — the

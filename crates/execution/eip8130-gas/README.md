@@ -22,9 +22,9 @@ intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + bytecode_cost
 | `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the caller-supplied EIP-2718 serialization of the signed transaction |
 | `nonce_key` | nonce-free `14,000`; otherwise first-use `22,100` / existing `5,000` (a cold SLOAD plus an SSTORE set or reset) |
 | `bytecode` | per create entry: `32,000 + 200 · code_len` |
-| `account_changes` | per create entry: one fresh `actor_config` slot write per initial actor (unrestricted owner, no policy slots); per config-change entry: its `auth` cost plus each mutated actor slot (`actor_config`, plus `policy_commitment`/`policy_manager` when the authorize carries a policy); per delegation entry: the `4,600` indicator deposit |
+| `account_changes` | per create entry: one fresh `actor_config` slot write per initial actor (unrestricted owner, no policy slots); per config-change entry: its `auth` cost plus each mutated actor slot (`actor_config`, plus `policy_commitment`/`policy_manager` when the authorize carries a policy), plus a worst-case dual-home bump (`22,100`) for a change targeting the account's own self-actor (whose config is inline in the account-state slot and is mutually exclusive with `actor_config(self)`); per delegation entry: the `4,600` indicator deposit |
 | `auto_delegation` | `4,600` when a code-less `sender` EOA is auto-delegated to `DEFAULT_ACCOUNT` |
-| `sender_auth` / `payer_auth` | authenticator execution gas + the `authorize` SLOAD(s): one cold `actor_config` SLOAD for most authenticators; a live default EOA (bare signature) reads one account-state SLOAD; an explicit `K1_AUTHENTICATOR` is priced at the worst case of two cold SLOADs (account-state flag + self `actor_config`); `payer_auth` is `0` for self-pay |
+| `sender_auth` / `payer_auth` | authenticator execution gas + one cold `authorize` SLOAD: a bare signature reads the account-state slot carrying the inline self config, and every resolved authenticator (explicit `K1_AUTHENTICATOR`, P-256, `WebAuthn`) reads one slot — the inline self-config model resolves any k1 self in a single read; `payer_auth` is `0` for self-pay |
 
 `sender_intrinsic` excludes `payer_auth` (payer authentication is metered on top
 of `gas_limit`), so `execution_gas_available(gas_limit) = gas_limit -
