@@ -23,6 +23,34 @@ pub enum IntrinsicGasError {
     UnscheduledAuthenticator(Address),
 }
 
+/// Wire encoding of an authentication blob, selecting how it is parsed and
+/// priced. This is the encoding shape, not the account type: an implicit-EOA
+/// owner is [`Self::BareSignature`] on the `sender_auth` path but
+/// [`Self::Prefixed`] when it names itself as `K1_AUTHENTICATOR || sig` inside a
+/// config change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthWireForm {
+    /// A raw 65-byte secp256k1 signature with no authenticator prefix: the
+    /// empty-`sender` (default-EOA) path, priced as a k1 authentication over a
+    /// single account-state SLOAD.
+    BareSignature,
+    /// An `authenticator(20) || data` blob: every other surface — a configured
+    /// sender, any payer, and every `cfg.auth`.
+    Prefixed,
+}
+
+impl AuthWireForm {
+    /// The wire form of a transaction's `sender_auth`: a bare signature on the
+    /// empty-`sender` (EOA) path, otherwise an `authenticator || data` blob.
+    #[must_use]
+    pub const fn for_sender(sender: Option<Address>) -> Self {
+        match sender {
+            Some(_) => Self::Prefixed,
+            None => Self::BareSignature,
+        }
+    }
+}
+
 /// State-derived inputs the transaction body alone cannot determine.
 ///
 /// Both flags come from the caller's state view (the nonce manager / account
@@ -159,7 +187,7 @@ impl IntrinsicGas {
                     // `cfg.auth` is always `authenticator || data` (never a bare
                     // signature); an implicit-EOA owner names itself explicitly as
                     // `K1_AUTHENTICATOR || sig` here.
-                    let auth = Self::auth_cost(cc.auth.as_ref(), false)?;
+                    let auth = Self::auth_cost(cc.auth.as_ref(), AuthWireForm::Prefixed)?;
                     account_changes = account_changes.saturating_add(auth);
                     for actor_change in &cc.actor_changes {
                         account_changes = account_changes
@@ -185,9 +213,10 @@ impl IntrinsicGas {
         // signature parsed via native ecrecover; a configured sender (and every
         // payer) is an `authenticator || data` blob and must not be parsed as a
         // bare signature.
-        let sender_auth = Self::auth_cost(signed.sender_auth().as_ref(), tx.sender.is_none())?;
+        let sender_auth =
+            Self::auth_cost(signed.sender_auth().as_ref(), AuthWireForm::for_sender(tx.sender))?;
         let payer_auth = if tx.payer.is_some() {
-            Self::auth_cost(signed.payer_auth().as_ref(), false)?
+            Self::auth_cost(signed.payer_auth().as_ref(), AuthWireForm::Prefixed)?
         } else {
             0
         };
@@ -220,16 +249,17 @@ impl IntrinsicGas {
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
     /// cold SLOADs the `authorize` step reads.
     ///
-    /// `bare_signature` selects the wire encoding, not "is this an EOA": `true`
-    /// means the blob is a raw 65-byte secp256k1 signature with no authenticator
-    /// prefix (the empty-`sender` path, charged k1); `false` means it is an
-    /// `authenticator(20) || data` blob (every other surface, including the
-    /// implicit-EOA owner naming itself as `K1_AUTHENTICATOR || sig`).
+    /// `form` selects how the blob is parsed:
+    /// [`AuthWireForm::BareSignature`] is a raw 65-byte secp256k1 signature with
+    /// no authenticator prefix (the empty-`sender` path, charged k1);
+    /// [`AuthWireForm::Prefixed`] is an `authenticator(20) || data` blob (every
+    /// other surface, including the implicit-EOA owner naming itself as
+    /// `K1_AUTHENTICATOR || sig`).
     ///
     /// See [`Self::auth_sloads`] for how the SLOAD count is derived.
-    fn auth_cost(auth: &[u8], bare_signature: bool) -> Result<u64, IntrinsicGasError> {
-        let exec = Self::auth_exec_cost(auth, bare_signature)?;
-        let sloads = Self::auth_sloads(auth, bare_signature, exec);
+    fn auth_cost(auth: &[u8], form: AuthWireForm) -> Result<u64, IntrinsicGasError> {
+        let exec = Self::auth_exec_cost(auth, form)?;
+        let sloads = Self::auth_sloads(auth, form, exec);
         Ok(exec.saturating_add(Eip8130GasSchedule::COLD_SLOAD.saturating_mul(sloads)))
     }
 
@@ -247,8 +277,8 @@ impl IntrinsicGas {
     ///   reads no slot, so it costs `0` rather than a phantom SLOAD. Such blobs
     ///   are unreachable here (dispatch rejects them upstream); guarding keeps the
     ///   SLOAD tied to a real read.
-    fn auth_sloads(auth: &[u8], bare_signature: bool, exec: u64) -> u64 {
-        if bare_signature {
+    fn auth_sloads(auth: &[u8], form: AuthWireForm, exec: u64) -> u64 {
+        if matches!(form, AuthWireForm::BareSignature) {
             return 1;
         }
         match Self::authenticator_of(auth) {
@@ -259,9 +289,9 @@ impl IntrinsicGas {
 
     /// Authenticator *execution* gas for an auth blob, resolving the delegate
     /// authenticator's nested authenticator at depth-1. See [`Self::auth_cost`]
-    /// for the meaning of `bare_signature`.
-    fn auth_exec_cost(auth: &[u8], bare_signature: bool) -> Result<u64, IntrinsicGasError> {
-        if bare_signature {
+    /// for the meaning of `form`.
+    fn auth_exec_cost(auth: &[u8], form: AuthWireForm) -> Result<u64, IntrinsicGasError> {
+        if matches!(form, AuthWireForm::BareSignature) {
             return Ok(Eip8130GasSchedule::AUTH_EXEC_K1);
         }
         let Some(authenticator) = Self::authenticator_of(auth) else {
@@ -484,9 +514,9 @@ mod tests {
         // A sub-20-byte prefixed (non-bare) blob resolves no authenticator, so it
         // reads no `actor_config` slot and must cost 0 (not a phantom cold SLOAD).
         // A bare signature still pays the authenticator exec + one cold SLOAD.
-        assert_eq!(IntrinsicGas::auth_cost(&[0u8; 5], false), Ok(0));
+        assert_eq!(IntrinsicGas::auth_cost(&[0u8; 5], AuthWireForm::Prefixed), Ok(0));
         assert_eq!(
-            IntrinsicGas::auth_cost(&[0u8; 65], true),
+            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
     }
@@ -607,10 +637,13 @@ mod tests {
     #[test]
     fn implicit_eoa_config_auth_costs_k1() {
         // An implicit-EOA owner authorizing a config change names itself explicitly
-        // as `K1_AUTHENTICATOR || sig` on the configured (`bare_signature: false`)
+        // as `K1_AUTHENTICATOR || sig` on the configured (`AuthWireForm::Prefixed`)
         // surface. The inline self config resolves in a single cold SLOAD.
         let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
-        assert_eq!(IntrinsicGas::auth_cost(&configured_auth(K1), false), Ok(auth_cost));
+        assert_eq!(
+            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed),
+            Ok(auth_cost)
+        );
 
         // End-to-end: a config change authorized by the implicit-EOA owner is
         // priced (not rejected), charging k1 + SLOAD plus the authorized slot.
@@ -641,16 +674,19 @@ mod tests {
         // blob reads exactly one slot too (the inline self, or a non-self k1
         // actor's `actor_config`).
         assert_eq!(
-            IntrinsicGas::auth_cost(&[0u8; 65], true),
+            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
         assert_eq!(
-            IntrinsicGas::auth_cost(&configured_auth(K1), false),
+            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
         // A non-k1 leaf actor reads only its `actor_config` slot: one cold SLOAD.
         assert_eq!(
-            IntrinsicGas::auth_cost(&configured_auth(Eip8130Contracts::P256_AUTHENTICATOR), false),
+            IntrinsicGas::auth_cost(
+                &configured_auth(Eip8130Contracts::P256_AUTHENTICATOR),
+                AuthWireForm::Prefixed
+            ),
             Ok(Eip8130GasSchedule::AUTH_EXEC_P256 + Eip8130GasSchedule::COLD_SLOAD)
         );
     }
@@ -658,10 +694,10 @@ mod tests {
     #[test]
     fn zero_authenticator_selector_is_unscheduled() {
         // `address(0)` is the empty "no actor configured" sentinel, never a valid
-        // authenticator selector. A configured (`bare_signature: false`) blob naming
+        // authenticator selector. A configured (`AuthWireForm::Prefixed`) blob naming
         // it is rejected as unscheduled rather than silently priced as k1.
         assert_eq!(
-            IntrinsicGas::auth_cost(&configured_auth(Address::ZERO), false),
+            IntrinsicGas::auth_cost(&configured_auth(Address::ZERO), AuthWireForm::Prefixed),
             Err(IntrinsicGasError::UnscheduledAuthenticator(Address::ZERO))
         );
     }

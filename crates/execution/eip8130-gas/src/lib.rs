@@ -4,7 +4,7 @@ mod schedule;
 pub use schedule::Eip8130GasSchedule;
 
 mod intrinsic;
-pub use intrinsic::{IntrinsicGas, IntrinsicGasError, IntrinsicGasInput};
+pub use intrinsic::{AuthWireForm, IntrinsicGas, IntrinsicGasError, IntrinsicGasInput};
 
 mod fee;
 pub use fee::{FeeCheck, FeeError};
