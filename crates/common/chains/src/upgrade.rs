@@ -1,5 +1,5 @@
 use alloy_hardforks::ForkCondition;
-use base_common_genesis::BaseUpgrade;
+pub use base_common_genesis::BaseUpgrade;
 use revm::primitives::hardfork::SpecId;
 
 use crate::{ChainConfig, Upgrades};
