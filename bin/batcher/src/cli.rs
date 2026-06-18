@@ -287,7 +287,9 @@ impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     fn into_config(self) -> eyre::Result<BatcherConfig> {
         if !self.altda_enabled && self.altda_da_server.is_some() {
-            warn!("--altda-da-server is set but --altda-enabled is false; alt-DA dual-write is disabled");
+            warn!(
+                "--altda-da-server is set but --altda-enabled is false; alt-DA dual-write is disabled"
+            );
         }
         if self.altda_enabled && !self.no_force_blobs_when_throttling {
             warn!(
