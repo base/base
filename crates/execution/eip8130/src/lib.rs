@@ -41,3 +41,12 @@ pub use nonce_error::NonceError;
 
 mod validate;
 pub use validate::{NonceMode, NonceStatus, NonceValidator};
+
+mod schedule;
+pub use schedule::Eip8130GasSchedule;
+
+mod intrinsic;
+pub use intrinsic::{AuthWireForm, IntrinsicGas, IntrinsicGasError, IntrinsicGasInput};
+
+mod fee;
+pub use fee::{FeeCheck, FeeError};

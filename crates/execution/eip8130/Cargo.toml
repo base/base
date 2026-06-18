@@ -1,6 +1,6 @@
 [package]
 name = "base-execution-eip8130"
-description = "EIP-8130 native validation helpers"
+description = "EIP-8130 native validation, intrinsic gas, and fee helpers"
 
 version.workspace = true
 edition.workspace = true

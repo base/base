@@ -4500,16 +4500,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-eip8130-gas"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-consensus",
- "revm",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "base-execution-evm"
 version = "0.0.0"
 dependencies = [
