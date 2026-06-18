@@ -27,6 +27,8 @@ base_metrics::define_metrics! {
     input_bytes_total: counter,
     #[describe("Total number of compressed output bytes from channels")]
     output_bytes_total: counter,
+    #[describe("Total number of frames in the closed channel")]
+    channel_num_frames: gauge,
     #[describe("Number of frames currently waiting for L1 submission")]
     pending_frames: gauge,
     #[describe("Number of L2 blocks buffered in the encoder input queue")]

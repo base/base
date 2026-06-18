@@ -306,6 +306,7 @@ impl BatchEncoder {
         BatcherMetrics::output_bytes().set(compressed_bytes as f64);
         BatcherMetrics::input_bytes_total().increment(input_bytes);
         BatcherMetrics::output_bytes_total().increment(closed_da_backlog_bytes);
+        BatcherMetrics::channel_num_frames().set(frame_count as f64);
         if input_bytes > 0 {
             let ratio = compressed_bytes as f64 / input_bytes as f64;
             BatcherMetrics::channel_compression_ratio().record(ratio);
