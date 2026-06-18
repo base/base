@@ -169,10 +169,14 @@ mod tests {
         let reservations = vec![reservation(vec![
             instance("i-001", Some("10.0.0.1"), Some(launch_secs)),
             instance("i-002", Some("10.0.0.2"), None),
+            instance("i-003", Some("10.0.0.3"), None),
+            instance("i-004", Some("10.0.0.4"), None),
         ])];
         let mut health_map = HashMap::from([
             ("i-001".to_string(), InstanceHealthStatus::Healthy),
             ("i-002".to_string(), InstanceHealthStatus::Initial),
+            ("i-003".to_string(), InstanceHealthStatus::Unhealthy),
+            ("i-004".to_string(), InstanceHealthStatus::Draining),
         ]);
 
         let instances = AwsTargetGroupDiscovery::assemble_prover_instances(
@@ -183,7 +187,7 @@ mod tests {
         .unwrap();
 
         assert!(health_map.is_empty());
-        assert_eq!(instances.len(), 2);
+        assert_eq!(instances.len(), 4);
         assert_eq!(instances[0].instance_id, "i-001");
         assert_eq!(instances[0].endpoint, Url::parse("http://10.0.0.1:9000").unwrap());
         assert_eq!(instances[0].health_status, InstanceHealthStatus::Healthy);
@@ -192,6 +196,26 @@ mod tests {
         assert_eq!(instances[1].endpoint, Url::parse("http://10.0.0.2:9000").unwrap());
         assert_eq!(instances[1].health_status, InstanceHealthStatus::Initial);
         assert_eq!(instances[1].launch_time, None);
+        assert_eq!(instances[2].health_status, InstanceHealthStatus::Unhealthy);
+        assert_eq!(instances[3].health_status, InstanceHealthStatus::Draining);
+    }
+
+    #[test]
+    fn assemble_prover_instances_returns_url_parse_error() {
+        let reservations = vec![reservation(vec![instance("i-001", Some("bad host"), None)])];
+        let mut health_map = HashMap::from([("i-001".to_string(), InstanceHealthStatus::Healthy)]);
+
+        let err = AwsTargetGroupDiscovery::assemble_prover_instances(
+            &reservations,
+            &mut health_map,
+            9000,
+        )
+        .unwrap_err();
+
+        let RegistrarError::Discovery(source) = err else {
+            panic!("expected discovery error");
+        };
+        assert!(source.downcast_ref::<url::ParseError>().is_some());
     }
 
     #[test]
