@@ -46,16 +46,16 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
         max_pending: usize,
         alt_da: Option<DynAltDaClient>,
     ) -> Self {
+        let alt_da_semaphore =
+            alt_da.is_some().then(|| Arc::new(Semaphore::new(ALT_DA_MAX_IN_FLIGHT)));
         Self {
             tx_manager: Arc::new(tx_manager),
             in_flight: FuturesUnordered::new(),
             semaphore: Arc::new(Semaphore::new(max_pending)),
             inbox,
             txpool_blocked: false,
-            alt_da: alt_da.clone(),
-            alt_da_semaphore: alt_da
-                .as_ref()
-                .map(|_| Arc::new(Semaphore::new(ALT_DA_MAX_IN_FLIGHT))),
+            alt_da,
+            alt_da_semaphore,
             alt_da_tasks: JoinSet::new(),
         }
     }
@@ -154,6 +154,7 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                 DaType::Calldata if self.alt_da.is_some() => Some(candidate.tx_data.clone()),
                 _ => None,
             };
+            let shadow_ids = alt_da_body.as_ref().map(|_| ids.clone());
             info!(
                 submissions = %ids.len(),
                 da_type = %da_type_label,
@@ -196,15 +197,19 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                 });
             self.in_flight.push(fut);
 
-            if let (Some(alt_da), Some(body)) = (self.alt_da.clone(), alt_da_body) {
-                let alt_da_semaphore =
-                    self.alt_da_semaphore.as_ref().expect("shadow semaphore when alt-da enabled");
-                if let Ok(alt_da_permit) = Arc::clone(alt_da_semaphore).try_acquire_owned() {
+            if let Some(body) = alt_da_body {
+                if let Some(alt_da) = self.alt_da.clone() {
+                    let shadow_ids = shadow_ids.expect("shadow ids when alt-da body present");
+                    let alt_da_semaphore = self
+                        .alt_da_semaphore
+                        .as_ref()
+                        .expect("shadow semaphore when alt-da enabled");
+                    if let Ok(alt_da_permit) = Arc::clone(alt_da_semaphore).try_acquire_owned() {
                     let tx_manager = Arc::clone(&self.tx_manager);
                     let inbox = self.inbox;
                     // Reap finished shadow tasks so the JoinSet stays bounded.
-                    while self.alt_da_tasks.try_join_next().is_some() {}
-                    self.alt_da_tasks.spawn(async move {
+                        while self.alt_da_tasks.try_join_next().is_some() {}
+                        self.alt_da_tasks.spawn(async move {
                         let _alt_da_permit = alt_da_permit;
                         let commitment = match alt_da.put(body).await {
                             Ok(commitment) => commitment,
@@ -212,7 +217,7 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                                 // A failed PUT leaves this batch absent from S3. Harmless while
                                 // calldata is primary, but it is a gap that would block the S3-only
                                 // cutover, so surface it as a metric, not just a log line.
-                                warn!(%error, "alt-da put failed; calldata submission unchanged");
+                                warn!(submission_ids = ?shadow_ids, %error, "alt-da put failed; calldata submission unchanged");
                                 BatcherMetrics::alt_da_commitment_total(
                                     BatcherMetrics::OUTCOME_PUT_FAILED,
                                 )
@@ -222,7 +227,11 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                         };
 
                         let tx_data = encode_commitment_tx_data(commitment);
-                        info!(commitment_bytes = %tx_data.len(), "submitting alt-da commitment to L1");
+                        info!(
+                            submission_ids = ?shadow_ids,
+                            commitment_bytes = %tx_data.len(),
+                            "submitting alt-da commitment to L1"
+                        );
                         let candidate = TxCandidate {
                             to: Some(inbox),
                             tx_data,
@@ -231,17 +240,32 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                             blobs: vec![].into(),
                         };
 
+                        // Shadow commitments share the primary TxManager nonce pool today.
                         match tx_manager.send_async(candidate).await.await {
                             Ok(receipt) => {
-                                let l1_block = receipt.block_number.unwrap_or(0);
-                                info!(l1_block = %l1_block, "alt-da commitment confirmed on L1");
+                                let l1_block = receipt.block_number.unwrap_or_else(|| {
+                                    warn!(
+                                        submission_ids = ?shadow_ids,
+                                        "alt-da commitment receipt missing block number"
+                                    );
+                                    0
+                                });
+                                info!(
+                                    submission_ids = ?shadow_ids,
+                                    l1_block = %l1_block,
+                                    "alt-da commitment confirmed on L1"
+                                );
                                 BatcherMetrics::alt_da_commitment_total(
                                     BatcherMetrics::OUTCOME_CONFIRMED,
                                 )
                                 .increment(1);
                             }
                             Err(error) => {
-                                warn!(%error, "alt-da commitment submission failed");
+                                warn!(
+                                    submission_ids = ?shadow_ids,
+                                    %error,
+                                    "alt-da commitment submission failed"
+                                );
                                 BatcherMetrics::alt_da_commitment_total(
                                     BatcherMetrics::OUTCOME_FAILED,
                                 )
@@ -249,10 +273,11 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                             }
                         }
                     });
-                } else {
-                    warn!("alt-da shadow write skipped: shadow capacity exhausted");
-                    BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_SKIPPED)
-                        .increment(1);
+                    } else {
+                        warn!("alt-da shadow write skipped: shadow capacity exhausted");
+                        BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_SKIPPED)
+                            .increment(1);
+                    }
                 }
             }
         }
@@ -406,20 +431,22 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    use alloy_primitives::{Address, Bytes};
-    use async_trait::async_trait;
-    use base_batcher_encoder::{BatchPipeline, BatchSubmission, DaType, StepError, StepResult, SubmissionId};
-    use base_protocol::{ChannelId, DERIVATION_VERSION_0, DERIVATION_VERSION_1, Frame};
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::Bloom;
+    use alloy_primitives::{Address, Bytes};
     use alloy_rpc_types_eth::TransactionReceipt;
+    use async_trait::async_trait;
+    use base_batcher_encoder::{
+        BatchPipeline, BatchSubmission, DaType, StepError, StepResult, SubmissionId,
+    };
+    use base_protocol::{ChannelId, DERIVATION_VERSION_0, DERIVATION_VERSION_1, Frame};
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
     use tokio::sync::oneshot;
 
     use super::SubmissionQueue;
     use crate::{
-        AltDaClient, AltDaError, DynAltDaClient, GenericCommitment, GENERIC_COMMITMENT_SENTINEL,
-        GENERIC_COMMITMENT_TYPE, TxOutcome,
+        AltDaClient, AltDaError, DynAltDaClient, GENERIC_COMMITMENT_SENTINEL,
+        GENERIC_COMMITMENT_TYPE, GenericCommitment, TxOutcome,
     };
 
     fn sample_commitment() -> GenericCommitment {
@@ -460,10 +487,7 @@ mod tests {
             let sends = Arc::new(AtomicUsize::new(0));
             let commitment_sends = Arc::new(AtomicUsize::new(0));
             (
-                Self {
-                    sends: Arc::clone(&sends),
-                    commitment_sends: Arc::clone(&commitment_sends),
-                },
+                Self { sends: Arc::clone(&sends), commitment_sends: Arc::clone(&commitment_sends) },
                 sends,
                 commitment_sends,
             )
@@ -479,7 +503,10 @@ mod tests {
             unreachable!()
         }
 
-        fn send_async(&self, candidate: TxCandidate) -> impl std::future::Future<Output = SendHandle> + Send {
+        fn send_async(
+            &self,
+            candidate: TxCandidate,
+        ) -> impl std::future::Future<Output = SendHandle> + Send {
             self.sends.fetch_add(1, Ordering::SeqCst);
             if Self::is_commitment(&candidate) {
                 self.commitment_sends.fetch_add(1, Ordering::SeqCst);
@@ -528,7 +555,8 @@ mod tests {
         fn add_block(
             &mut self,
             _: base_common_consensus::BaseBlock,
-        ) -> Result<(), (base_batcher_encoder::ReorgError, Box<base_common_consensus::BaseBlock>)> {
+        ) -> Result<(), (base_batcher_encoder::ReorgError, Box<base_common_consensus::BaseBlock>)>
+        {
             Ok(())
         }
 
