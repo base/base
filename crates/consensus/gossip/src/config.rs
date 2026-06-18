@@ -6,7 +6,7 @@ use libp2p::{
     connection_limits::ConnectionLimits,
     gossipsub::{Config, ConfigBuilder, Message, MessageId},
 };
-use openssl::sha::Sha256;
+use sha2::{Digest, Sha256};
 use snap::raw::Decoder;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -236,7 +236,7 @@ fn message_id_hash(msg: &Message, domain: &[u8; 4], data: &[u8]) -> Vec<u8> {
     hasher.update(topic);
     hasher.update(data);
 
-    hasher.finish()[..20].to_vec()
+    hasher.finalize()[..20].to_vec()
 }
 
 #[cfg(test)]
