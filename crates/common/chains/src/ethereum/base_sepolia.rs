@@ -12,7 +12,7 @@ use alloy_serde::OtherFields;
 
 /// Base Sepolia chain configuration builder.
 ///
-/// Unlike Ethereum L1 configs, Base Sepolia is an OP Stack L2 with no PoW history.
+/// Unlike Ethereum L1 configs, Base Sepolia is an OP Stack L2 with no `PoW` history.
 /// Pre-merge hardfork blocks are all 0 (active at genesis), and the `"optimism"` extra
 /// field is set so the derivation pipeline selects `L1TxFormat::Base` (calldata-only DA,
 /// OP Stack transaction envelopes).
