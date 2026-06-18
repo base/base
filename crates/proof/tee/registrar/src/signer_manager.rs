@@ -60,6 +60,8 @@ pub struct PendingRegistration {
     pub task_id: task::Id,
     /// Cooperative cancel handle for this single task.
     pub cancel: CancellationToken,
+    /// Whether this task was already cancelled by the reconcile pass.
+    pub cancelled_by_reconcile: bool,
 }
 
 /// Coordinates signer registration and orphan signer deregistration.
@@ -114,8 +116,15 @@ impl ProofTaskSet {
         F: Future<Output = (Address, Result<()>)> + Send + 'static,
     {
         let handle = self.tasks.spawn(task);
-        self.pending
-            .insert(signer, PendingRegistration { instance_id, task_id: handle.id(), cancel });
+        self.pending.insert(
+            signer,
+            PendingRegistration {
+                instance_id,
+                task_id: handle.id(),
+                cancel,
+                cancelled_by_reconcile: false,
+            },
+        );
         RegistrarMetrics::proof_tasks_spawned().increment(1);
     }
 
@@ -189,8 +198,8 @@ impl ProofTaskSet {
 
     /// Cancels every pending task cooperatively and awaits natural completion.
     pub async fn drain_proof_tasks(&mut self) {
-        for task in self.pending.values() {
-            if !task.cancel.is_cancelled() {
+        for task in self.pending.values_mut() {
+            if !task.cancelled_by_reconcile {
                 task.cancel.cancel();
                 RegistrarMetrics::proof_tasks_cancelled().increment(1);
             }
@@ -368,6 +377,7 @@ where
                     "cancelling proof task: signer no longer registerable"
                 );
                 task.cancel.cancel();
+                task.cancelled_by_reconcile = true;
                 RegistrarMetrics::proof_tasks_cancelled().increment(1);
             }
         }
@@ -1028,7 +1038,7 @@ mod tests {
         use crate::test_utils::HARDHAT_KEY_2;
 
         #[test]
-        fn drain_counts_only_tasks_not_already_cancelled() {
+        fn drain_counts_shutdown_cancelled_tasks_once() {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
             let recorder = PrometheusBuilder::new().build_recorder();
             let handle = recorder.handle();
@@ -1036,19 +1046,24 @@ mod tests {
             metrics::with_local_recorder(&recorder, || {
                 rt.block_on(async {
                     let mut proof_tasks = ProofTaskSet::new();
-                    let seed: &[(&[u8; 32], bool)] =
-                        &[(&HARDHAT_KEY_0, true), (&HARDHAT_KEY_1, false), (&HARDHAT_KEY_2, false)];
+                    let seed: &[(&[u8; 32], bool, bool)] = &[
+                        (&HARDHAT_KEY_0, true, true),
+                        (&HARDHAT_KEY_1, true, false),
+                        (&HARDHAT_KEY_2, false, false),
+                    ];
 
-                    for (key, flagged) in seed {
+                    for (key, cancelled_before_drain, cancelled_by_reconcile) in seed {
                         let signer = signer_from_private_key(key);
                         let (_, cancel) = spawn_pending_success_task(
                             &mut proof_tasks,
                             signer,
                             TEST_PENDING_INSTANCE_ID,
                         );
-                        if *flagged {
+                        if *cancelled_before_drain {
                             cancel.cancel();
                         }
+                        proof_tasks.pending.get_mut(&signer).unwrap().cancelled_by_reconcile =
+                            *cancelled_by_reconcile;
                     }
 
                     proof_tasks.drain_proof_tasks().await;
@@ -1058,7 +1073,7 @@ mod tests {
             let rendered = handle.render();
             assert!(
                 rendered.contains("base_registrar_proof_tasks_cancelled 2"),
-                "drain must count only the unflagged tasks once each. Got:\n{rendered}",
+                "drain must count shutdown and live task cancellations once each. Got:\n{rendered}",
             );
         }
     }
