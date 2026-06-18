@@ -44,6 +44,7 @@ CREATE INDEX IF NOT EXISTS transaction_events_bundle_id_event_time_idx
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'audit_archiver') THEN
+        GRANT SELECT ON _sqlx_migrations TO audit_archiver;
         GRANT SELECT, INSERT, UPDATE, DELETE ON transaction_events TO audit_archiver;
     END IF;
 END $$;

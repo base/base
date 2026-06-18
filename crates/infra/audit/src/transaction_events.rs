@@ -21,7 +21,7 @@ use base_observability_events::TransactionEvent;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{PgPool, QueryBuilder, Row, postgres::PgPoolOptions};
+use sqlx::{PgPool, QueryBuilder, Row, migrate::Migrator, postgres::PgPoolOptions};
 use tokio::net::TcpListener;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, info};
@@ -124,6 +124,23 @@ pub struct TransactionEventInsertOutcome {
 pub const DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 500;
 /// Hard maximum query result count for read APIs.
 pub(crate) const MAX_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 2_000;
+const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events";
+static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+
+/// Required sqlx migration version for transaction event storage.
+pub fn required_transaction_event_migration_version() -> i64 {
+    let mut matching_migrations = TRANSACTION_EVENT_MIGRATOR.iter().filter(|migration| {
+        migration.description.as_ref() == REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION
+    });
+    let migration = matching_migrations.next().expect(
+        "transaction event migration 001_transaction_events.sql must be embedded in audit migrator",
+    );
+    debug_assert!(
+        matching_migrations.next().is_none(),
+        "transaction event migration description must be unique"
+    );
+    migration.version
+}
 
 /// Persisted transaction event row returned by audit read APIs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -164,6 +181,47 @@ impl TransactionEventStorageError {
     }
 }
 
+/// Error returned when the Postgres transaction event schema is not ready.
+#[derive(Debug, thiserror::Error)]
+pub enum TransactionEventSchemaReadinessError {
+    /// sqlx migration metadata is missing.
+    #[error(
+        "transaction-event Postgres schema is not ready: _sqlx_migrations is missing; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+    )]
+    MigrationTableMissing,
+    /// The transaction event migration has not completed successfully.
+    #[error(
+        "transaction-event Postgres schema is not ready: required sqlx migration version {required_version} for 001_transaction_events.sql has not been applied successfully; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+    )]
+    RequiredMigrationMissing {
+        /// Required sqlx migration version.
+        required_version: i64,
+    },
+    /// The expected table is missing or not visible to the runtime role.
+    #[error(
+        "transaction-event Postgres schema is not ready: public.transaction_events is missing or not visible to the runtime role; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+    )]
+    TransactionEventsRelationMissing,
+    /// The expected table exists but cannot be queried by the runtime role.
+    #[error(
+        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events; verify audit_archiver privileges from 001_transaction_events.sql"
+    )]
+    TransactionEventsRelationUnavailable {
+        /// Underlying database error.
+        #[source]
+        source: sqlx::Error,
+    },
+    /// A database query failed before readiness could be determined.
+    #[error(
+        "transaction-event Postgres schema readiness query failed: {source}; verify database connectivity and that the runtime role can read _sqlx_migrations"
+    )]
+    QueryFailed {
+        /// Underlying database error.
+        #[source]
+        source: sqlx::Error,
+    },
+}
+
 /// Durable sink for transaction observability events.
 #[async_trait]
 pub trait TransactionEventSink: Send + Sync {
@@ -202,13 +260,67 @@ impl PgTransactionEventSink {
     /// Runs pending Postgres migrations.
     pub async fn migrate(database_url: &str) -> Result<()> {
         let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
+        TRANSACTION_EVENT_MIGRATOR.run(&pool).await?;
         Ok(())
     }
 
     /// Creates a sink from an existing pool.
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Checks whether transaction event Postgres storage is ready for runtime use.
+    pub async fn check_schema_ready(
+        &self,
+    ) -> std::result::Result<(), TransactionEventSchemaReadinessError> {
+        let (migration_table_exists, transaction_events_relation_exists): (bool, bool) =
+            sqlx::query_as(
+                "SELECT \
+                    to_regclass('_sqlx_migrations') IS NOT NULL AS migration_table_exists, \
+                    to_regclass('public.transaction_events') IS NOT NULL AS transaction_events_relation_exists",
+            )
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|source| TransactionEventSchemaReadinessError::QueryFailed { source })?;
+
+        if !migration_table_exists {
+            return Err(TransactionEventSchemaReadinessError::MigrationTableMissing);
+        }
+
+        let required_version = required_transaction_event_migration_version();
+        let migration_applied: Option<bool> =
+            sqlx::query_scalar("SELECT success FROM _sqlx_migrations WHERE version = $1")
+                .bind(required_version)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|source| TransactionEventSchemaReadinessError::QueryFailed { source })?;
+        if !matches!(migration_applied, Some(true)) {
+            return Err(TransactionEventSchemaReadinessError::RequiredMigrationMissing {
+                required_version,
+            });
+        }
+
+        if !transaction_events_relation_exists {
+            return Err(TransactionEventSchemaReadinessError::TransactionEventsRelationMissing);
+        }
+
+        sqlx::query("SELECT 1 FROM transaction_events LIMIT 0").execute(&self.pool).await.map_err(
+            |source| TransactionEventSchemaReadinessError::TransactionEventsRelationUnavailable {
+                source,
+            },
+        )?;
+
+        Ok(())
+    }
+
+    /// Checks optional transaction event storage readiness.
+    pub async fn check_optional_schema_ready(
+        sink: Option<&Self>,
+    ) -> std::result::Result<(), TransactionEventSchemaReadinessError> {
+        match sink {
+            Some(sink) => sink.check_schema_ready().await,
+            None => Ok(()),
+        }
     }
 
     /// Returns events for one transaction hash sorted by event time.

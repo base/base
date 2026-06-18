@@ -13,14 +13,21 @@ use audit_archiver_lib::{
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
-use axum::{BoxError, error_handling::HandleErrorLayer, http::StatusCode};
+use axum::{
+    BoxError,
+    error_handling::HandleErrorLayer,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+};
 use base_cli_utils::LogConfig;
 use clap::{Parser, ValueEnum};
 use jsonrpsee::server::{ServerBuilder, stop_channel};
 use moka::{policy::EvictionPolicy, sync::Cache};
 use tokio::{net::TcpListener, sync::mpsc};
 use tower::ServiceBuilder;
-use tracing::info;
+use tracing::{error, info};
 
 base_cli_utils::define_log_args!("TIPS_AUDIT");
 base_cli_utils::define_metrics_args!("TIPS_AUDIT", 9002);
@@ -40,6 +47,11 @@ enum Command {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum MigrationDirection {
     Up,
+}
+
+#[derive(Debug, Clone)]
+struct HealthState {
+    transaction_event_sink: Option<PgTransactionEventSink>,
 }
 
 #[derive(Parser, Debug)]
@@ -239,6 +251,7 @@ async fn run_server(args: Args) -> Result<()> {
         }))
         .service(rpc_service);
 
+    let health_router = health_router(transaction_event_sink.clone());
     let http_app = if let Some(sink) = transaction_event_sink {
         let config = TransactionEventIngestConfig {
             listen_addr: rpc_addr,
@@ -250,10 +263,12 @@ async fn run_server(args: Args) -> Result<()> {
         };
         let path = config.path.clone();
         info!(rpc_addr = %rpc_addr, %path, "transaction event HTTP ingest enabled on audit RPC server");
-        transaction_event_router(Arc::new(sink), config).fallback_service(rpc_service)
+        transaction_event_router(Arc::new(sink), config)
+            .merge(health_router)
+            .fallback_service(rpc_service)
     } else {
         info!("transaction event HTTP ingest disabled; TIPS_AUDIT_POSTGRES_URL is not set");
-        axum::Router::new().fallback_service(rpc_service)
+        health_router.fallback_service(rpc_service)
     };
 
     let http_listener = TcpListener::bind(rpc_addr).await?;
@@ -274,6 +289,29 @@ async fn run_server(args: Args) -> Result<()> {
         result = archiver.run() => result,
         result = http_server => {
             result.map_err(|e| anyhow::anyhow!("audit archiver HTTP server stopped unexpectedly: {e}"))
+        }
+    }
+}
+
+fn health_router(transaction_event_sink: Option<PgTransactionEventSink>) -> axum::Router {
+    axum::Router::new()
+        .route("/healthz", get(healthz_handler))
+        .route("/readyz", get(readyz_handler))
+        .with_state(HealthState { transaction_event_sink })
+}
+
+async fn healthz_handler() -> &'static str {
+    "ok\n"
+}
+
+async fn readyz_handler(State(state): State<HealthState>) -> Response {
+    match PgTransactionEventSink::check_optional_schema_ready(state.transaction_event_sink.as_ref())
+        .await
+    {
+        Ok(()) => (StatusCode::OK, "ready\n".to_string()).into_response(),
+        Err(err) => {
+            error!(error = %err, "audit archiver readiness check failed");
+            (StatusCode::SERVICE_UNAVAILABLE, format!("{err}\n")).into_response()
         }
     }
 }

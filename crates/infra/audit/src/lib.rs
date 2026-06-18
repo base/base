@@ -42,7 +42,8 @@ pub use transaction_events::{
     PgTransactionEventSink, RejectedTransactionEventQuery, TransactionEventBatchResponse,
     TransactionEventBatchStatus, TransactionEventIngestConfig, TransactionEventInsertOutcome,
     TransactionEventItemResult, TransactionEventItemStatus, TransactionEventRecord,
-    TransactionEventSink, TransactionEventStorageError, serve_transaction_event_ingest,
+    TransactionEventSchemaReadinessError, TransactionEventSink, TransactionEventStorageError,
+    required_transaction_event_migration_version, serve_transaction_event_ingest,
     transaction_event_router,
 };
 
