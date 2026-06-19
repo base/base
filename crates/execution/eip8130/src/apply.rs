@@ -98,11 +98,6 @@ pub enum ApplyError {
         actor_id: B256,
     },
 
-    /// An actor change carried an op byte that is neither authorize nor revoke.
-    /// Mirrors the trailing `else revert()`.
-    #[error("invalid actor-change operation")]
-    InvalidActorChangeOp,
-
     /// A create entry had no initial actors. Mirrors
     /// `require(initialActors.length > 0)`.
     #[error("create entry has no initial actors")]

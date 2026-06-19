@@ -240,8 +240,13 @@ impl ActorConfig {
 
     /// Packs this config into its raw storage word — the exact inverse of
     /// [`Self::from_word`].
+    ///
+    /// `expiry` must fit in `uint48` (the storage field width); higher bytes are
+    /// dropped. Values sourced from [`Self::from_word`] or ABI decoding always
+    /// satisfy this, so the `debug_assert!` only guards hand-constructed misuse.
     #[must_use]
     pub fn to_word(&self) -> U256 {
+        debug_assert!(self.expiry >> 48 == 0, "expiry exceeds uint48 storage width");
         let mut b = [0u8; 32];
         b[12..32].copy_from_slice(self.authenticator.as_slice());
         b[11] = self.scope;
@@ -337,8 +342,18 @@ impl AccountState {
 
     /// Packs this state into its raw storage word — the exact inverse of
     /// [`Self::from_word`].
+    ///
+    /// `unlocks_at` must fit in `uint40` and `default_eoa_expiry` in `uint48`
+    /// (their storage field widths); higher bytes are dropped. Values sourced
+    /// from [`Self::from_word`] or ABI decoding always satisfy this, so the
+    /// `debug_assert!`s only guard hand-constructed misuse.
     #[must_use]
     pub fn to_word(&self) -> U256 {
+        debug_assert!(self.unlocks_at >> 40 == 0, "unlocks_at exceeds uint40 storage width");
+        debug_assert!(
+            self.default_eoa_expiry >> 48 == 0,
+            "default_eoa_expiry exceeds uint48 storage width"
+        );
         let mut b = [0u8; 32];
         b[24..32].copy_from_slice(&self.multichain_sequence.to_be_bytes());
         b[16..24].copy_from_slice(&self.local_sequence.to_be_bytes());
