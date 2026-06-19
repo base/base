@@ -39,6 +39,3 @@ jsonrpsee-types.workspace = true
 
 # misc
 tracing = { workspace = true, features = ["std"] }
-
-[dev-dependencies]
-alloy-rpc-types = { workspace = true }

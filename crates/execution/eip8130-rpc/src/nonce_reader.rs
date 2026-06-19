@@ -115,16 +115,14 @@ impl ChannelNonceReader {
         state_diff.get(&slot).copied().map(b256_to_u256)
     }
 
-    /// Decodes a Solidity-packed `u64` (the channel nonce) from the low 8
-    /// bytes of an EVM storage slot, returning it widened to [`U256`].
+    /// Decodes a Solidity-packed `u64` (the channel nonce) from the low 64
+    /// bits of an EVM storage slot, returning it widened to [`U256`].
     ///
     /// Widening to `U256` matches the return type of
     /// [`EthState::transaction_count`] so all three `nonce_key` branches of
     /// [`Self::read`] return the same shape.
     pub fn decode_channel_nonce(slot_value: U256) -> U256 {
-        let bytes = slot_value.to_be_bytes::<32>();
-        let nonce = u64::from_be_bytes(bytes[24..32].try_into().expect("8 bytes"));
-        U256::from(nonce)
+        slot_value & U256::from(u64::MAX)
     }
 }
 
