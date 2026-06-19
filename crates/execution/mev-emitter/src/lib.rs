@@ -32,6 +32,10 @@ pub type Selector = FixedBytes<4>;
 /// Pure logic (no revm), unit-tested directly.
 pub mod state_diff;
 
+/// C-2 execution loop (part): ERC-20 Transfer-log → candidate-holder extraction.
+/// Pure logic, unit-tested directly.
+pub mod candidates;
+
 /// C-2 wiring: bridge revm per-tx `EvmState` to [`StateDiffEvent`]s. Behind the
 /// `node` feature (pulls revm).
 #[cfg(feature = "node")]
