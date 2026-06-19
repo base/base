@@ -84,6 +84,7 @@ impl TxForwardingConfig {
     pub fn to_consumer_config(&self) -> TxpoolConsumerConfig {
         TxpoolConsumerConfig::default()
             .with_resend_after(Duration::from_millis(self.resend_after_ms))
+            .with_transaction_event_writer(self.transaction_event_writer.clone())
     }
 
     /// Converts to the forwarder config used by `base-txpool`.

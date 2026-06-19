@@ -47,7 +47,6 @@ impl BaseNodeExtension for TxForwardingExtension {
             );
 
             let pool = ctx.pool().clone();
-            let consumer_config = config.to_consumer_config();
             let executor = ctx.task_executor;
             let task_executor = executor.clone();
 
@@ -64,8 +63,9 @@ impl BaseNodeExtension for TxForwardingExtension {
                         None => None,
                     };
 
-                    let forwarder_config =
-                        config.with_transaction_event_writer(event_writer).to_forwarder_config();
+                    let config = config.with_transaction_event_writer(event_writer);
+                    let consumer_config = config.to_consumer_config();
+                    let forwarder_config = config.to_forwarder_config();
                     let consumer = SpawnedConsumer::spawn(pool, consumer_config, &task_executor);
                     let forwarder =
                         SpawnedForwarder::spawn(&consumer.sender, forwarder_config, &task_executor);

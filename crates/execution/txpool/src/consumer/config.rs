@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use base_observability_events::TransactionEventWriter;
+
 /// Configuration for the transaction pool consumer task.
 ///
 /// The consumer continuously reads from the pool's `best_transactions()` iterator,
@@ -19,6 +21,9 @@ pub struct ConsumerConfig {
     /// Sleep duration when the pool iterator yields no transactions,
     /// preventing busy-spinning.
     pub poll_interval: Duration,
+
+    /// Optional durable transaction event journal writer.
+    pub transaction_event_writer: Option<TransactionEventWriter>,
 }
 
 impl Default for ConsumerConfig {
@@ -27,6 +32,7 @@ impl Default for ConsumerConfig {
             resend_after: Duration::from_secs(4),
             channel_capacity: 10_000,
             poll_interval: Duration::from_millis(10),
+            transaction_event_writer: None,
         }
     }
 }
@@ -49,6 +55,12 @@ impl ConsumerConfig {
         self.poll_interval = interval;
         self
     }
+
+    /// Sets the transaction event writer.
+    pub fn with_transaction_event_writer(mut self, writer: Option<TransactionEventWriter>) -> Self {
+        self.transaction_event_writer = writer;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -61,6 +73,7 @@ mod tests {
         assert_eq!(config.resend_after, Duration::from_secs(4));
         assert_eq!(config.channel_capacity, 10_000);
         assert_eq!(config.poll_interval, Duration::from_millis(10));
+        assert!(config.transaction_event_writer.is_none());
     }
 
     #[test]
