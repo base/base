@@ -87,6 +87,7 @@ pub struct ProofTaskSet {
     tasks: JoinSet<(Address, Result<()>)>,
     /// Pending registration tasks keyed by signer address.
     pub pending: HashMap<Address, PendingRegistration>,
+    cancelled_by_reconcile: HashSet<Address>,
 }
 
 impl ProofTaskSet {
@@ -106,6 +107,7 @@ impl ProofTaskSet {
         match joined {
             Ok((id, (signer, result))) => {
                 let removed = self.pending.remove(&signer);
+                self.cancelled_by_reconcile.remove(&signer);
                 let instance_id =
                     removed.as_ref().map_or("missing", |entry| entry.instance_id.as_str());
 
@@ -139,6 +141,9 @@ impl ProofTaskSet {
                     .iter()
                     .find_map(|(addr, p)| (p.task_id == id).then_some(*addr))
                     .and_then(|signer| self.pending.remove(&signer).map(|entry| (signer, entry)));
+                if let Some((signer, _)) = &removed {
+                    self.cancelled_by_reconcile.remove(signer);
+                }
                 let signer = removed.as_ref().map(|(signer, _)| *signer);
                 warn!(
                     task_id = ?id,
@@ -155,15 +160,18 @@ impl ProofTaskSet {
 
     /// Cancels every pending task cooperatively and awaits natural completion.
     pub async fn drain_proof_tasks(&mut self) {
-        for task in self.pending.values_mut() {
+        for (signer, task) in &mut self.pending {
+            if !self.cancelled_by_reconcile.contains(signer) {
+                RegistrarMetrics::proof_tasks_cancelled().increment(1);
+            }
             if !task.cancel.is_cancelled() {
                 task.cancel.cancel();
-                RegistrarMetrics::proof_tasks_cancelled().increment(1);
             }
         }
         while let Some(joined) = self.tasks.join_next_with_id().await {
             self.apply_join_outcome(joined);
         }
+        self.cancelled_by_reconcile.clear();
         RegistrarMetrics::proof_tasks_pending().set(0.0);
     }
 }
@@ -208,7 +216,7 @@ where
         else {
             return Ok(());
         };
-        let _permit = match permit {
+        let proof_permit = match permit {
             Ok(p) => p,
             Err(_) => {
                 warn!(
@@ -239,6 +247,7 @@ where
             }
             Err(e) => return Err(e.into()),
         };
+        drop(proof_permit);
 
         let calldata = Bytes::from(
             ITEEProverRegistry::registerSignerCall {
@@ -373,6 +382,18 @@ where
                 break;
             }
 
+            let Some(is_registered) = cancel
+                .run_until_cancelled(self.registry.is_registered(signer))
+                .await
+                .transpose()?
+            else {
+                return Ok(());
+            };
+            if !is_registered {
+                debug!(signer = %signer, "orphan signer is no longer registered, skipping");
+                continue;
+            }
+
             let candidate = TxCandidate {
                 tx_data: Bytes::from(
                     ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode(),
@@ -450,6 +471,7 @@ where
                 "cancelling proof task: signer no longer registerable"
             );
             task.cancel.cancel();
+            proof_tasks.cancelled_by_reconcile.insert(*signer);
             RegistrarMetrics::proof_tasks_cancelled().increment(1);
         }
 
@@ -528,21 +550,25 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockRegistry {
         signers: Vec<Address>,
+        registered: HashSet<Address>,
         mode: RegistryMode,
         get_registered_signers_started: Notify,
     }
 
     impl MockRegistry {
         fn with_registered_signers(signers: Vec<Address>) -> Self {
-            Self { signers, ..Self::default() }
+            let registered = signers.iter().copied().collect();
+            Self { signers, registered, ..Self::default() }
         }
     }
 
     #[async_trait]
     impl RegistryClient for MockRegistry {
-        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+        async fn is_registered(&self, signer: Address) -> Result<bool> {
             match &self.mode {
-                RegistryMode::Static | RegistryMode::StallGetRegisteredSigners => Ok(false),
+                RegistryMode::Static | RegistryMode::StallGetRegisteredSigners => {
+                    Ok(self.registered.contains(&signer))
+                }
                 RegistryMode::RegisteredAfterFirstProbe(registered) => {
                     Ok(registered.swap(true, Ordering::SeqCst))
                 }
@@ -563,15 +589,21 @@ mod tests {
     struct RecordingTxManager {
         results: Mutex<VecDeque<base_tx_manager::SendResponse>>,
         sent: Mutex<Vec<(Option<Address>, Bytes)>>,
+        stall_sends: AtomicBool,
+        send_started: Notify,
     }
 
     impl RecordingTxManager {
+        fn stalling() -> Self {
+            Self { stall_sends: AtomicBool::new(true), ..Self::default() }
+        }
+
         fn with_errors(errors: Vec<TxManagerError>) -> Self {
             Self::with_results(errors.into_iter().map(Err).collect())
         }
 
         fn with_results(results: Vec<base_tx_manager::SendResponse>) -> Self {
-            Self { results: Mutex::new(results.into()), sent: Mutex::new(vec![]) }
+            Self { results: Mutex::new(results.into()), ..Self::default() }
         }
 
         fn send_count(&self) -> usize {
@@ -586,6 +618,10 @@ mod tests {
     impl TxManager for RecordingTxManager {
         async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
             self.sent.lock().unwrap().push((candidate.to, candidate.tx_data));
+            self.send_started.notify_one();
+            if self.stall_sends.load(Ordering::SeqCst) {
+                return std::future::pending::<base_tx_manager::SendResponse>().await;
+            }
             self.results.lock().unwrap().pop_front().unwrap_or_else(|| Ok(stub_receipt()))
         }
 
@@ -735,6 +771,7 @@ mod tests {
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         proof_tasks.pending.clear();
+        proof_tasks.cancelled_by_reconcile.clear();
     }
 
     #[tokio::test]
@@ -932,6 +969,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn register_signer_releases_proof_permit_before_tx_submission_finishes() {
+        let proof_provider = RecordingProofProvider::default();
+        let manager = Arc::new(SignerManager::new(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::stalling(),
+            TEST_REGISTRY_ADDRESS,
+            1,
+            DEFAULT_MAX_TX_RETRIES,
+            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+        ));
+        let cancel = CancellationToken::new();
+
+        let first_manager = Arc::clone(&manager);
+        let first_cancel = cancel.clone();
+        let first = tokio::spawn(async move {
+            first_manager
+                .register_signer(TEST_PENDING_INSTANCE_ID, SIGNER_A, ATTESTATION, &first_cancel)
+                .await
+        });
+        let second_manager = Arc::clone(&manager);
+        let second_cancel = cancel.clone();
+        let second = tokio::spawn(async move {
+            second_manager
+                .register_signer("i-pending-test-2", SIGNER_B, ATTESTATION, &second_cancel)
+                .await
+        });
+
+        tokio::time::timeout(GATED_WAIT_TIMEOUT, manager.tx_manager.send_started.notified())
+            .await
+            .expect("first registration never reached tx submission");
+        let records = tokio::time::timeout(GATED_WAIT_TIMEOUT, async {
+            loop {
+                let records = proof_provider.records.lock().unwrap().clone();
+                if records.len() >= 2 {
+                    break records;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("second proof generation was blocked behind stalled tx submission");
+
+        assert!(records.iter().any(|(signer, _)| *signer == SIGNER_A));
+        assert!(records.iter().any(|(signer, _)| *signer == SIGNER_B));
+        first.abort();
+        second.abort();
+        let _ = first.await;
+        let _ = second.await;
+    }
+
+    #[tokio::test]
     async fn reconcile_proof_tasks_cancel_and_spawn_passes() {
         for (pre_existing, kept, expected_new_spawns, expected_cancels) in [
             (&[][..], &[(EP1, &HARDHAT_KEY_0)][..], 1, 0),
@@ -957,9 +1046,11 @@ mod tests {
 
             let cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
             let new_spawns = proof_tasks.tasks.len().saturating_sub(pre_task_count);
+            let counted_by_reconcile = proof_tasks.cancelled_by_reconcile.len();
 
             assert_eq!(new_spawns, expected_new_spawns, "spawn-pass count");
             assert_eq!(cancelled, expected_cancels, "cancel-pass count");
+            assert_eq!(counted_by_reconcile, expected_cancels, "metric accounting flag count");
             assert_eq!(proof_tasks.pending.len(), expected_pending, "pending task count");
 
             drain_test_tasks(&mut proof_tasks).await;
@@ -1182,6 +1273,27 @@ mod tests {
                 assert_eq!(tx_data, &expected);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_skips_ghost_signers() {
+        let manager = manager_with(
+            RecordingProofProvider::default(),
+            MockRegistry {
+                signers: vec![SIGNER_A, SIGNER_B],
+                registered: HashSet::from([SIGNER_A]),
+                ..Default::default()
+            },
+            RecordingTxManager::default(),
+        );
+
+        manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await.unwrap();
+
+        let sent = manager.tx_manager.take_sent();
+        assert_eq!(sent.len(), 1);
+        let expected =
+            Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer: SIGNER_A }.abi_encode());
+        assert_eq!(sent[0], (Some(TEST_REGISTRY_ADDRESS), expected));
     }
 
     #[tokio::test]
