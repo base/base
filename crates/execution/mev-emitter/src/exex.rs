@@ -8,10 +8,12 @@
 //! C-3 folds in Flashblocks, and C-4 streams the encoded events to the TS
 //! `ProviderNodeStream` consumer.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_evm::Evm;
+use alloy_primitives::B256;
 use base_execution_evm::BaseEvmConfig;
 use base_flashblocks::FlashblocksSubscriber;
 use base_node_runner::{BaseNodeAdapter, BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -104,6 +106,9 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
             // so it stays accurate even when a block fails re-execution partway
             // and its diff counts are discarded.
             let mut total_events_sent = 0usize;
+            // C-5: count of (payloadId) boundary pairs emitted this chain, so the
+            // TS NodeStreamProcessor can finalize+flush the buffered diffs.
+            let mut total_boundaries = 0usize;
             for (&block_number, block) in committed.blocks() {
                 // Events written to the wire for THIS block — tracked outside the
                 // closure's return so a mid-block failure can't lose the count.
@@ -112,7 +117,7 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                 // skipped, NEVER propagated — an ExEx error would otherwise crash
                 // the whole node (ExEx is a critical task). The emitter must never
                 // be able to take the node down.
-                let block_result: eyre::Result<(usize, usize, usize, usize)> = (|| {
+                let block_result: eyre::Result<(usize, usize, usize, usize, usize)> = (|| {
                     // C-2 ②: the parent state to re-execute this block's txs against.
                     let parent = block_number.saturating_sub(1);
                     let db = StateProviderDatabase::new(
@@ -133,6 +138,14 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                     // its EvmState + Transfer-log candidates, committing between txs.
                     let (mut diffs, mut cands, mut trusted, mut attributed) =
                         (0usize, 0usize, 0usize, 0usize);
+                    // C-5: accumulate, per distinct payloadId (insertion-ordered for
+                    // determinism — mirrors `state_diff.rs`), every tx hash seen and
+                    // the max flashblock_index, so we can emit one synthetic
+                    // flashblock frame + boundary per payload after the tx loop. The
+                    // `Vec` preserves first-seen order; `fb_order` maps payloadId to
+                    // its slot for O(1) accumulation.
+                    let mut flashblocks: Vec<(String, (Vec<B256>, u32))> = Vec::new();
+                    let mut fb_order: HashMap<String, usize> = HashMap::new();
                     for tx in block.transactions_recovered() {
                         let out = evm.transact(evm_config.tx_env(tx))?;
                         // Diagnostics: did this tx's EvmState touch a trusted token
@@ -152,11 +165,28 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                                     found
                                 },
                             );
+                        // C-5: record THIS tx under its payloadId (every tx, not
+                        // just those with diffs) and track the max flashblock_index
+                        // seen — insertion-ordered, so the post-loop emission is
+                        // deterministic. Clone the key before `payload_id` is moved
+                        // into `state_diffs_from_evm_state` below.
+                        let tx_hash = tx.tx_hash();
+                        match fb_order.get(&payload_id) {
+                            Some(&i) => {
+                                let entry = &mut flashblocks[i].1;
+                                entry.0.push(tx_hash);
+                                entry.1 = entry.1.max(fb_index);
+                            }
+                            None => {
+                                fb_order.insert(payload_id.clone(), flashblocks.len());
+                                flashblocks.push((payload_id.clone(), (vec![tx_hash], fb_index)));
+                            }
+                        }
                         let events = crate::revm_bridge::state_diffs_from_evm_state(
                             &out.state,
                             &registry,
                             &candidates,
-                            tx.tx_hash(),
+                            tx_hash,
                             block_number,
                             fb_index,
                             payload_id,
@@ -172,17 +202,58 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                         }
                         evm.db_mut().commit(out.state);
                     }
-                    Ok((diffs, cands, trusted, attributed))
+                    // C-5: the tx loop completed successfully — emit, per payloadId
+                    // in insertion order, a synthetic flashblock frame followed by
+                    // its block boundary, AFTER all state-diffs already streamed in
+                    // the loop. The TS NodeStreamProcessor needs a frame for a
+                    // payloadId before `finalize(payloadId, ...)` returns non-null,
+                    // so flashblock MUST precede boundary; the boundary then
+                    // finalizes+flushes the buffered diffs. This runs only on a
+                    // fully-successful block (a mid-block failure exits the closure
+                    // via `?` before reaching here), so a partially re-executed
+                    // block is NEVER finalized.
+                    let header = block.header();
+                    let timestamp = header.timestamp;
+                    let state_root = header.state_root;
+                    let canonical = block.hash();
+                    let boundaries = flashblocks.len();
+                    for (payload_id, (tx_hashes, max_index)) in flashblocks {
+                        sink.send_event(&crate::NodeEvent::Flashblock(crate::FlashblockEvent {
+                            protocol_version: crate::PROTOCOL_VERSION,
+                            payload_id: payload_id.clone(),
+                            block_number,
+                            flashblock_index: max_index,
+                            parent_block_hash: None,
+                            timestamp,
+                            state_root,
+                            tx_hashes,
+                            finalized: false,
+                        }));
+                        sent_this_block += 1;
+                        sink.send_event(&crate::NodeEvent::BlockBoundary(
+                            crate::BlockBoundaryEvent {
+                                protocol_version: crate::PROTOCOL_VERSION,
+                                payload_id,
+                                block_number,
+                                canonical_hash: canonical,
+                                flashblock_count: 1,
+                                finalized: true,
+                            },
+                        ));
+                        sent_this_block += 1;
+                    }
+                    Ok((diffs, cands, trusted, attributed, boundaries))
                 })();
                 // Accumulate AFTER the closure regardless of Ok/Err: events sent
                 // before a mid-block failure still went out on the wire.
                 total_events_sent += sent_this_block;
                 match block_result {
-                    Ok((d, c, t, a)) => {
+                    Ok((d, c, t, a, b)) => {
                         total_diffs += d;
                         total_cands += c;
                         total_trusted += t;
                         total_fb_attributed += a;
+                        total_boundaries += b;
                     }
                     Err(e) => warn!(
                         target: "base::mev_emitter",
@@ -208,6 +279,9 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                 candidates = total_cands,
                 trusted_touched = total_trusted,
                 fb_attributed = total_fb_attributed,
+                // C-5: flashblock+boundary pairs emitted (one per distinct payloadId
+                // across fully-successful blocks), enabling TS finalize+flush.
+                boundaries = total_boundaries,
                 "chain committed",
             );
             // Report progress so the node can prune ExEx-held data. Don't `?`:
