@@ -114,7 +114,7 @@ pub struct ProposerProofAdapter;
 
 impl ProposerProofAdapter {
     /// Namespace used to derive proposer proof session IDs.
-    pub const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v1";
+    pub const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v2";
 
     /// Returns the session-ID proof subtype label for a TEE implementation.
     pub const fn tee_session_label(tee_kind: TeeKind) -> &'static str {

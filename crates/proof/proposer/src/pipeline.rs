@@ -228,7 +228,8 @@ where
                 intermediate_block_interval: config.driver.intermediate_block_interval,
                 tee_image_hash: config.driver.tee_image_hash,
             },
-        );
+        )
+        .with_allow_non_finalized(config.driver.allow_non_finalized);
         let proof_submitter = ProofSubmitter::new(
             Arc::clone(&output_proposer),
             Arc::clone(&rollup_client),
@@ -1991,7 +1992,7 @@ mod tests {
             &self,
             _: B256,
         ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
-            unimplemented!()
+            Err(RpcError::Transport("simulated L1 outage".into()))
         }
         async fn block_receipts(
             &self,

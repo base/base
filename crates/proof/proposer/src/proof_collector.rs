@@ -1425,7 +1425,7 @@ mod tests {
             &self,
             _: B256,
         ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
-            unimplemented!("tests do not fetch L1 headers by hash")
+            Err(base_proof_rpc::RpcError::Transport("simulated L1 outage".into()))
         }
 
         async fn block_receipts(
