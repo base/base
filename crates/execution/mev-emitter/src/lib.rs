@@ -28,6 +28,11 @@ pub const EXPECTED_FLASHBLOCKS_PER_BLOCK: u32 = 10;
 /// 4-byte function selector; lowercased `0x` + 8 hex on the wire.
 pub type Selector = FixedBytes<4>;
 
+/// Node-integration ExEx + extension (C-1+). Behind the `node` feature so the
+/// default crate stays wire-only.
+#[cfg(feature = "node")]
+pub mod exex;
+
 /// `bigint` <-> decimal-string codec for unsigned 64-bit fields.
 mod dec_u64 {
     use serde::{Deserialize, Deserializer, Serializer};
