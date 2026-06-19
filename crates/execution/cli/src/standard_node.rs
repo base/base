@@ -257,6 +257,12 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rpc.rollup_args);
+        // MEV emitter (Section C, C-2): opt-in via `MEV_EMITTER_ENABLE`. OFF by
+        // default so a rebuild never changes node behavior; the ExEx isolates
+        // per-block re-execution failures and cannot crash the node.
+        if std::env::var("MEV_EMITTER_ENABLE").is_ok() {
+            runner.install_ext::<base_mev_emitter::exex::MevEmitterExtension>(());
+        }
 
         Ok(runner)
     }

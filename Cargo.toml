@@ -200,6 +200,7 @@ base-consensus-providers = { path = "crates/consensus/providers", default-featur
 base-node-core = { path = "crates/execution/node" }
 base-execution-cli = { path = "crates/execution/cli" }
 base-execution-evm = { path = "crates/execution/evm" }
+base-mev-emitter = { path = "crates/execution/mev-emitter" }
 base-execution-rpc = { path = "crates/execution/rpc" }
 base-metering = { path = "crates/execution/metering" }
 base-node-runner = { path = "crates/execution/runner" }
