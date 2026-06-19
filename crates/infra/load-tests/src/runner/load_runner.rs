@@ -41,7 +41,7 @@ use crate::{
     config::{OsakaTarget, WorkloadConfig},
     metrics::{ConfigSummary, MetricsCollector, MetricsSummary},
     rpc::{
-        BatchRpcClient, QueryProvider, RpcProviders, RpcResultExt, TxpoolAdminClient,
+        BaseFeeExt, BatchRpcClient, QueryProvider, RpcProviders, RpcResultExt, TxpoolAdminClient,
         create_wallet_provider,
     },
     workload::{
@@ -69,7 +69,7 @@ pub struct LoadRunner {
     nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     signers: Arc<HashMap<Address, PrivateKeySigner>>,
     submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
-    gas_price: u128,
+    base_fee: u128,
     display: Option<LoadTestDisplay>,
     snapshot_tx: Option<watch::Sender<DisplaySnapshot>>,
     last_total_eth: Option<String>,
@@ -145,7 +145,7 @@ impl LoadRunner {
             nonce_managers: Arc::new(HashMap::new()),
             signers,
             submission_batch_rpcs,
-            gas_price: 0,
+            base_fee: 0,
             display: None,
             snapshot_tx: None,
             last_total_eth: None,
@@ -388,12 +388,10 @@ impl LoadRunner {
         let funder_provider =
             Arc::new(create_wallet_provider(primary_submission_rpc.clone(), wallet));
 
-        let gas_price = client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        // Ensure max_fee >= max_priority_fee (EIP-1559 requirement).
-        // When gas_price is 0 (e.g. a fresh devnet), `gas_price * 2` would be 0
-        // while max_priority_fee=1, causing the transaction to be rejected.
-        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+        let base_fee = client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee =
+            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
 
         // Phase 2: Early balance validation — abort before sending any TXs if
         // the funder cannot cover the total cost.
@@ -861,9 +859,10 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
         let max_gas_price = self.config.max_gas_price;
 
-        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+        let base_fee = self.client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee =
+            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
 
         // Pre-flight balance check — abort before sending any TXs if the funder
         // cannot cover the total gas cost for needed token transfers.
@@ -990,8 +989,8 @@ impl LoadRunner {
         self.stop_flag.store(false, Ordering::SeqCst);
         self.cancel_token = CancellationToken::new();
 
-        self.gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
-        info!(gas_price = self.gas_price, "fetched current gas price");
+        self.base_fee = self.client.get_base_fee().await?;
+        info!(base_fee = self.base_fee, "fetched current base fee");
 
         for account in self.accounts.accounts() {
             if !self.nonce_managers.contains_key(&account.address) {
@@ -1079,10 +1078,12 @@ impl LoadRunner {
         let mut queued_per_sender: HashMap<Address, u64> =
             self.accounts.accounts().iter().map(|a| (a.address, 0)).collect();
 
-        let mut last_gas_price_refresh = Instant::now();
+        let mut last_base_fee_refresh = Instant::now();
         let mut last_rate_limiter_update = Instant::now();
         let mut last_progress_report = Instant::now();
-        const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+        // Refresh once per block so the cached base fee tracks the climb the load
+        // test itself induces; a stale fee mints underwater (unincludable) txs.
+        const BASE_FEE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
         const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
         const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
@@ -1113,14 +1114,14 @@ impl LoadRunner {
         {
             // --- Housekeeping (runs once per batch iteration) ---
 
-            if last_gas_price_refresh.elapsed() >= GAS_PRICE_REFRESH_INTERVAL {
-                if let Ok(new_price) = self.client.get_gas_price().await.rpc("get gas price")
-                    && new_price != self.gas_price
+            if last_base_fee_refresh.elapsed() >= BASE_FEE_REFRESH_INTERVAL {
+                if let Ok(new_base_fee) = self.client.get_base_fee().await
+                    && new_base_fee != self.base_fee
                 {
-                    debug!(old_price = self.gas_price, new_price, "gas price updated");
-                    self.gas_price = new_price;
+                    debug!(old_base_fee = self.base_fee, new_base_fee, "base fee updated");
+                    self.base_fee = new_base_fee;
                 }
-                last_gas_price_refresh = Instant::now();
+                last_base_fee_refresh = Instant::now();
             }
 
             if last_rate_limiter_update.elapsed() >= RATE_LIMITER_UPDATE_INTERVAL {
@@ -1189,7 +1190,7 @@ impl LoadRunner {
                     pending,
                     total_queued,
                     senders_blocked,
-                    gas_price = self.gas_price,
+                    base_fee = self.base_fee,
                     p50_ms = p50.as_millis() as u64,
                     p99_ms = p99.as_millis() as u64,
                     block_receipt_delay_p50_ms = block_receipt_delay_p50.as_millis() as u64,
@@ -1272,8 +1273,7 @@ impl LoadRunner {
             let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
             let batch_id = next_submit_batch_id.fetch_add(1, Ordering::SeqCst);
             let batch_len = batch.len();
-            let submit_batch =
-                PreparedBatch { id: batch_id, gas_price: self.gas_price, txs: batch };
+            let submit_batch = PreparedBatch { id: batch_id, base_fee: self.base_fee, txs: batch };
             match submission_pipeline.enqueue_prepared(submit_batch).await {
                 Ok(()) => {
                     debug!(batch_id, batch_len, "queued submit batch");
@@ -1296,7 +1296,7 @@ impl LoadRunner {
             let final_batch_len = pending_batch.len();
             let batch_id = next_submit_batch_id.fetch_add(1, Ordering::SeqCst);
             let submit_batch =
-                PreparedBatch { id: batch_id, gas_price: self.gas_price, txs: pending_batch };
+                PreparedBatch { id: batch_id, base_fee: self.base_fee, txs: pending_batch };
             match submission_pipeline.enqueue_prepared(submit_batch).await {
                 Ok(()) => {
                     debug!(batch_id, batch_len = final_batch_len, "queued final submit batch");
@@ -1460,7 +1460,7 @@ impl LoadRunner {
             block_receipt_delay_p99,
             flashblocks_p50_latency: flashblocks_p50,
             flashblocks_p99_latency: flashblocks_p99,
-            gas_price_gwei: self.gas_price as f64 / 1e9,
+            gas_price_gwei: self.base_fee as f64 / 1e9,
             total_eth: self.last_total_eth.clone(),
             min_eth: self.last_min_eth.clone(),
             funds_low: self.last_funds_low,
@@ -1515,11 +1515,13 @@ impl LoadRunner {
         let primary_submission_rpc = self.config.primary_submission_rpc().clone();
         let chain_id = self.config.chain_id;
 
-        let gas_price = client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        // Ensure max_fee >= max_priority_fee (EIP-1559 requirement).
-        let max_fee =
-            gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
+        let base_fee = client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee = SubmissionPipeline::submission_max_fee(
+            base_fee,
+            max_priority_fee,
+            self.config.max_gas_price,
+        );
         let drain_gas_limit = 21_000u128;
         // L1 data fee on Base can be significant (0.0001-0.001 ETH depending on L1 gas prices).
         // Use 0.001 ETH (1e15 wei) buffer to be safe. We may leave dust in accounts.

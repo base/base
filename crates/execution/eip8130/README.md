@@ -51,6 +51,11 @@ The crate keeps the protocol stages explicit while avoiding crate sprawl:
 - **Nonce validation** checks protocol, 2D-channel, and nonce-free replay state.
 - **Gas and fees** compute the EIP-8130 intrinsic gas and validate the fee caps
   and the payer's balance (see below).
+- **Orchestration** composes the final sender/payer signatures with the
+  transaction's ordered account-configuration changes — advancing each channel
+  sequence per applied entry — into one authorization verdict (`TransactionAuthorizer`),
+  shared by mempool admission and block inclusion. It reads state but never
+  mutates it; nonce, gas, and fee/balance checks remain separate stages.
 
 ## Intrinsic gas
 

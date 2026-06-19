@@ -55,6 +55,38 @@ impl ConfigChangeAuthorizer {
         change: &ConfigChange,
         now: u64,
     ) -> Result<ResolvedActor, TxAuthError> {
+        // The contract reads the sequence from state and the signer signs over
+        // the value that will be used; the entry must match the account's
+        // current channel sequence so the reconstructed digest is the signed one.
+        let (multichain_seq, local_seq) =
+            storage.get_change_sequences(account).map_err(AuthorizeError::Storage)?;
+        let expected = if change.chain_id == 0 { multichain_seq } else { local_seq };
+        Self::authorize_at_sequence(storage, account, local_chain_id, change, expected, now)
+    }
+
+    /// Authorize a single [`ConfigChange`] against an explicitly-supplied
+    /// `expected_sequence` rather than the value currently in state.
+    ///
+    /// [`authorize`](Self::authorize) reads the channel sequence from state, so
+    /// it only validates an entry against the account's *current* sequence. When
+    /// one transaction carries several same-channel entries, each applied entry
+    /// advances the channel by one, so the second and later entries must be
+    /// checked against `current + 1`, `current + 2`, … — values not yet written
+    /// to state. An orchestrator validating the full set reads the base sequence
+    /// once and calls this with the running expected value per channel, in tx
+    /// order.
+    ///
+    /// Performs every check `authorize` does (lock, chain binding, sequence,
+    /// digest reconstruction, actor authorization, `SCOPE_CONFIG` gate) except
+    /// that the sequence is compared against `expected_sequence`.
+    pub fn authorize_at_sequence(
+        storage: &AccountConfigurationStorage<'_>,
+        account: Address,
+        local_chain_id: u64,
+        change: &ConfigChange,
+        expected_sequence: u64,
+        now: u64,
+    ) -> Result<ResolvedActor, TxAuthError> {
         // Locked accounts reject all config changes (`onlyUnlocked`).
         if storage.is_locked(account, now).map_err(AuthorizeError::Storage)? {
             return Err(TxAuthError::AccountLocked);
@@ -68,14 +100,11 @@ impl ConfigChangeAuthorizer {
             });
         }
 
-        // The contract reads the sequence from state and the signer signs over
-        // the value that will be used; require the entry to match the account's
-        // current channel sequence so the reconstructed digest is the signed one.
-        let (multichain_seq, local_seq) =
-            storage.get_change_sequences(account).map_err(AuthorizeError::Storage)?;
-        let expected = if change.chain_id == 0 { multichain_seq } else { local_seq };
-        if change.sequence != expected {
-            return Err(TxAuthError::ConfigSequence { expected, got: change.sequence });
+        if change.sequence != expected_sequence {
+            return Err(TxAuthError::ConfigSequence {
+                expected: expected_sequence,
+                got: change.sequence,
+            });
         }
 
         // Reconstruct the digest, authorize the entry's auth, and require CONFIG scope.

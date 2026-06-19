@@ -14,13 +14,13 @@ use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 
 use super::{
-    LoadRunner, TxType,
+    LoadRunner, SubmissionPipeline, TxType,
     load_runner::{BATCH_SIZE, FUNDING_CONCURRENCY},
 };
 use crate::{
     BaselineError, Result,
     config::WorkloadConfig,
-    rpc::{RpcResultExt, create_wallet_provider},
+    rpc::{BaseFeeExt, RpcResultExt, create_wallet_provider},
 };
 
 impl LoadRunner {
@@ -46,9 +46,10 @@ impl LoadRunner {
             Arc::new(create_wallet_provider(self.config.primary_submission_rpc().clone(), wallet));
         let chain_id = self.config.chain_id;
         let max_gas_price = self.config.max_gas_price;
-        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+        let base_fee = self.client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee =
+            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
         let b20_gas_limit = 10_000_000u64;
 
         let mut nonce = funder_provider
@@ -318,9 +319,10 @@ impl LoadRunner {
 
         let chain_id = self.config.chain_id;
         let max_gas_price = self.config.max_gas_price;
-        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
-        let max_priority_fee = (gas_price / 10).max(1);
-        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+        let base_fee = self.client.get_base_fee().await?;
+        let max_priority_fee = (base_fee / 10).max(1);
+        let max_fee =
+            SubmissionPipeline::submission_max_fee(base_fee, max_priority_fee, max_gas_price);
         let burn_gas_limit = 200_000u64;
 
         let sender_addresses: Vec<Address> =
