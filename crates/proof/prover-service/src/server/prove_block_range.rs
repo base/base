@@ -123,8 +123,9 @@ fn validate_intermediate_root_interval(
     number_of_blocks_to_prove: u64,
     intermediate_root_interval: Option<u64>,
 ) -> RpcResult<()> {
-    if api_proof_type == ApiProofType::Tee {
-        return Ok(());
+    match api_proof_type {
+        ApiProofType::Tee => return Ok(()),
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {}
     }
 
     if let Some(interval) = intermediate_root_interval {
