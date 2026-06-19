@@ -52,6 +52,12 @@ pub mod flashblocks;
 #[cfg(feature = "node")]
 pub mod exex;
 
+/// C-4: outbound WebSocket transport that streams encoded events to the TS
+/// `ProviderNodeStream` consumer. Behind the `node` feature (pulls tokio +
+/// tokio-tungstenite).
+#[cfg(feature = "node")]
+pub mod transport;
+
 /// `bigint` <-> decimal-string codec for unsigned 64-bit fields.
 mod dec_u64 {
     use serde::{Deserialize, Deserializer, Serializer};

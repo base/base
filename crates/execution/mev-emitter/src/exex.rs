@@ -88,6 +88,10 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
     // failure-isolated — on any error the index stays empty and the loop falls
     // back to the block-hash placeholder.
     let index = start_flashblocks_index();
+    // C-4: outbound WebSocket transport. Failure-isolated: a bind failure leaves
+    // the sink valid (events go nowhere) and never affects the ExEx. `info!` is
+    // emitted inside once the listener is up.
+    let sink = crate::transport::start_event_server();
     info!(target: "base::mev_emitter", "mev-emitter ExEx started");
     ctx.notifications.set_without_head();
     while let Some(notification) = ctx.notifications.try_next().await? {
@@ -151,7 +155,13 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                             payload_id,
                         );
                         diffs += events.len();
-                        // TODO(C-4): emit `events` over the outbound transport.
+                        // C-4: stream each per-tx event out over the WebSocket
+                        // transport — one `Message::Text` per `encode_event`
+                        // string. `send_event` never blocks/panics, so this is
+                        // safe inside the critical ExEx task.
+                        for ev in &events {
+                            sink.send_event(&crate::NodeEvent::StateDiff(ev.clone()));
+                        }
                         evm.db_mut().commit(out.state);
                     }
                     Ok((diffs, cands, trusted, attributed))
@@ -180,6 +190,9 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                 number = tip.number,
                 blocks = committed.blocks().len(),
                 state_diffs = total_diffs,
+                // C-4: every produced state-diff event is streamed out, so
+                // events_sent == total_diffs (one Message::Text per event).
+                events_sent = total_diffs,
                 candidates = total_cands,
                 trusted_touched = total_trusted,
                 fb_attributed = total_fb_attributed,

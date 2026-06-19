@@ -32,6 +32,11 @@ futures = { workspace = true, optional = true }
 eyre = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
+# C-4 outbound transport: plaintext loopback WebSocket server streaming encoded
+# events to the TS ProviderNodeStream consumer (one event per TEXT frame).
+tokio = { workspace = true, optional = true, features = ["net", "rt", "sync", "macros"] }
+tokio-tungstenite = { workspace = true, optional = true }
+
 # C-3 flashblock attribution: websocket subscriber + flashblock types + tx
 # decode (BaseTxEnvelope::decode_2718_exact / tx_hash via alloy-eips Decodable2718).
 base-common-flashblocks = { workspace = true, optional = true }
@@ -58,4 +63,6 @@ node = [
     "dep:base-flashblocks",
     "dep:base-common-consensus",
     "dep:alloy-eips",
+    "dep:tokio",
+    "dep:tokio-tungstenite",
 ]
