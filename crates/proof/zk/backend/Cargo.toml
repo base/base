@@ -15,25 +15,33 @@ workspace = true
 # base
 base-l1-head.workspace = true
 base-proof-zk-host.workspace = true
+base-proof-succinct-elfs.workspace = true
 base-prover-service-protocol.workspace = true
 base-proof-succinct-host-utils.workspace = true
+base-proof-succinct-proof-utils.workspace = true
 base-proof-succinct-client-utils.workspace = true
 base-proof-succinct-ethereum-host-utils.workspace = true
 
 # network
+tonic.workspace = true
 alloy-primitives.workspace = true
 
 # sp1
+sp1-prover-types.workspace = true
+sp1-cluster-common.workspace = true
 sp1-sdk = { workspace = true, features = ["network"] }
 
 # async
+backoff.workspace = true
 async-trait.workspace = true
 
 # error handling
 thiserror.workspace = true
 
 # serialization
+serde_json.workspace = true
 bincode = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive", "std"] }
 
 # observability
 tracing.workspace = true

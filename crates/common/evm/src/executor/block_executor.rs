@@ -316,8 +316,9 @@ mod tests {
     };
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
-    use base_common_chains::{BaseUpgrade, ChainUpgrades};
+    use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{BaseTxEnvelope, Predeploys};
+    use base_common_genesis::BaseUpgrade;
     use revm::{
         Context,
         context::BlockEnv,

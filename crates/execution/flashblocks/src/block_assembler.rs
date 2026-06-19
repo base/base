@@ -202,7 +202,7 @@ mod tests {
                 withdrawals_root: B256::ZERO,
                 blob_gas_used: None,
             },
-            metadata: Metadata { block_number: 100 },
+            metadata: Metadata::new(100),
         }
     }
 

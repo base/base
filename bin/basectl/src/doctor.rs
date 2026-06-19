@@ -2,10 +2,10 @@
 
 use std::io::{self, Write};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use basectl_cli::{
-    Doctor, DoctorCheck, DoctorOptions, DoctorReport, DoctorStatus, DoctorThresholds, JsonOutput,
-    MonitoringConfig,
+    Doctor, DoctorArgsError, DoctorCheck, DoctorOptions, DoctorReport, DoctorStatus,
+    DoctorThresholds, JsonOutput, MonitoringConfig,
 };
 
 use crate::{cli::DoctorArgs, helpers::CommandOutcome};
@@ -42,12 +42,18 @@ pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<Co
     Ok(CommandOutcome::from_failures(report.has_failures()))
 }
 
-fn validate_thresholds(args: &DoctorArgs) -> Result<()> {
+const fn validate_thresholds(args: &DoctorArgs) -> Result<(), DoctorArgsError> {
     if args.head_lag_warn_blocks >= args.head_lag_fail_blocks {
-        bail!("`--head-lag-warn-blocks` must be less than `--head-lag-fail-blocks`");
+        return Err(DoctorArgsError::HeadLagWarnMustBeLessThanFail {
+            warn_blocks: args.head_lag_warn_blocks,
+            fail_blocks: args.head_lag_fail_blocks,
+        });
     }
     if args.safe_recency_warn_blocks >= args.safe_recency_fail_blocks {
-        bail!("`--safe-recency-warn-blocks` must be less than `--safe-recency-fail-blocks`");
+        return Err(DoctorArgsError::SafeRecencyWarnMustBeLessThanFail {
+            warn_blocks: args.safe_recency_warn_blocks,
+            fail_blocks: args.safe_recency_fail_blocks,
+        });
     }
     Ok(())
 }
@@ -194,7 +200,7 @@ fn is_empty_value(value: &serde_json::Value) -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use basectl_cli::{DoctorCheck, DoctorStatus};
+    use basectl_cli::{DoctorArgsError, DoctorCheck, DoctorStatus};
     use serde_json::json;
     use url::Url;
 
@@ -268,7 +274,10 @@ mod tests {
 
         let err = validate_thresholds(&args).unwrap_err();
 
-        assert!(err.to_string().contains("--head-lag-warn-blocks"));
+        assert!(matches!(
+            err,
+            DoctorArgsError::HeadLagWarnMustBeLessThanFail { warn_blocks: 30, fail_blocks: 10 }
+        ));
     }
 
     #[test]
@@ -280,7 +289,13 @@ mod tests {
 
         let err = validate_thresholds(&args).unwrap_err();
 
-        assert!(err.to_string().contains("--safe-recency-warn-blocks"));
+        assert!(matches!(
+            err,
+            DoctorArgsError::SafeRecencyWarnMustBeLessThanFail {
+                warn_blocks: 300,
+                fail_blocks: 300,
+            }
+        ));
     }
 
     fn test_args(update: impl FnOnce(&mut DoctorArgs)) -> DoctorArgs {

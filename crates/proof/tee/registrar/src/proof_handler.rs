@@ -233,9 +233,7 @@ where
                 "registration transaction reverted onchain",
             );
             self.proof_provider.block_recovery_for_signer(signer_address);
-            return Err(RegistrarError::Transaction(
-                format!("registration transaction {} reverted", receipt.transaction_hash).into(),
-            ));
+            return Err(RegistrarError::ReceiptReverted { tx_hash: receipt.transaction_hash });
         }
 
         info!(
@@ -257,8 +255,6 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{B256, Bloom};
     use alloy_rpc_types_eth::TransactionReceipt;
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
@@ -267,7 +263,10 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{InstanceHealthStatus, RegistryClient};
+    use crate::{
+        InstanceHealthStatus, RegistryClient,
+        test_utils::{stub_receipt, stub_receipt_with_status},
+    };
 
     const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
     const TEST_SIGNER: Address = Address::repeat_byte(0x02);
@@ -280,35 +279,6 @@ mod tests {
             endpoint: Url::parse("http://10.0.0.1:8000").unwrap(),
             health_status: InstanceHealthStatus::Healthy,
             launch_time: None,
-        }
-    }
-
-    fn stub_receipt() -> TransactionReceipt {
-        stub_receipt_with_status(true)
-    }
-
-    fn stub_receipt_with_status(success: bool) -> TransactionReceipt {
-        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-            receipt: Receipt {
-                status: Eip658Value::Eip658(success),
-                cumulative_gas_used: 21_000,
-                logs: vec![],
-            },
-            logs_bloom: Bloom::ZERO,
-        });
-        TransactionReceipt {
-            inner,
-            transaction_hash: B256::ZERO,
-            transaction_index: Some(0),
-            block_hash: Some(B256::ZERO),
-            block_number: Some(1),
-            gas_used: 21_000,
-            effective_gas_price: 1_000_000_000,
-            blob_gas_used: None,
-            blob_gas_price: None,
-            from: Address::ZERO,
-            to: Some(Address::ZERO),
-            contract_address: None,
         }
     }
 
@@ -601,7 +571,10 @@ mod tests {
 
         let result = handle_proof(&harness, &CancellationToken::new()).await;
 
-        assert!(result.is_err(), "reverted receipt should fail registration");
+        assert!(
+            matches!(result, Err(RegistrarError::ReceiptReverted { tx_hash }) if tx_hash == tx.receipt.transaction_hash),
+            "reverted receipt should fail with ReceiptReverted: {result:?}"
+        );
         assert_eq!(tx.send_count(), 1, "should submit exactly one tx");
         assert_eq!(harness.proof_provider.blocked_signers(), vec![TEST_SIGNER]);
     }

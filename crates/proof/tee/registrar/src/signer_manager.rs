@@ -5,15 +5,16 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt,
     future::Future,
     sync::Arc,
     time::Duration,
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
+use alloy_sol_types::SolCall;
+use base_proof_contracts::ITEEProverRegistry;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
-use base_tx_manager::TxManager;
+use base_tx_manager::{TxCandidate, TxManager};
 use tokio::{
     sync::Semaphore,
     task::{self, JoinError, JoinSet},
@@ -22,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    DeregistrationManager, DiscoveryResolution, ProofHandlerConfig, ProverInstance,
-    RegistrarMetrics, RegistrationManager, RegistryClient, Result,
+    DiscoveryResolution, ProofHandlerConfig, RegistrarMetrics, RegistrationManager, RegistryClient,
+    Result,
 };
 
 /// Default maximum number of transaction submission retries for transient
@@ -63,28 +64,14 @@ pub struct PendingRegistration {
     pub cancelled_by_reconcile: bool,
 }
 
-/// Terminal outcome returned by a spawned signer proof task.
-#[derive(Debug)]
-pub struct ProofTaskOutcome {
-    /// Signer address the task attempted to register.
-    pub signer: Address,
-    /// Result of the signer registration attempt.
-    pub result: Result<()>,
-}
-
 /// Coordinates signer registration and orphan signer deregistration.
+#[derive(Debug)]
 pub struct SignerManager<P, R, T> {
     proof_provider: P,
     registry: R,
     tx_manager: T,
     proof_semaphore: Semaphore,
     config: SignerManagerConfig,
-}
-
-impl<P, R, T> fmt::Debug for SignerManager<P, R, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SignerManager").field("config", &self.config).finish_non_exhaustive()
-    }
 }
 
 impl<P, R, T> SignerManager<P, R, T> {
@@ -96,18 +83,10 @@ impl<P, R, T> SignerManager<P, R, T> {
 }
 
 /// Driver-owned set of in-flight proof-generation tasks.
+#[derive(Debug, Default)]
 pub struct ProofTaskSet {
-    tasks: JoinSet<ProofTaskOutcome>,
+    tasks: JoinSet<(Address, Result<()>)>,
     pending: HashMap<Address, PendingRegistration>,
-}
-
-impl fmt::Debug for ProofTaskSet {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProofTaskSet")
-            .field("tasks", &self.tasks.len())
-            .field("pending", &self.pending.len())
-            .finish()
-    }
 }
 
 impl ProofTaskSet {
@@ -121,14 +100,9 @@ impl ProofTaskSet {
         self.pending.len()
     }
 
-    /// Builds the protected-signer set for orphan deregistration.
-    ///
-    /// Includes both fetched prover signers and pending proof tasks so a signer
-    /// that registers mid-pass is not immediately deregistered.
-    pub fn protected_signers(&self, resolution: &DiscoveryResolution) -> HashSet<Address> {
-        let mut protected = resolution.active_signers.clone();
-        protected.extend(self.pending.keys().copied());
-        protected
+    /// Returns true when a signer has a pending proof task.
+    pub fn has_pending_signer(&self, signer: &Address) -> bool {
+        self.pending.contains_key(signer)
     }
 
     /// Spawns a proof task and tracks its pending registration state.
@@ -139,7 +113,7 @@ impl ProofTaskSet {
         cancel: CancellationToken,
         task: F,
     ) where
-        F: Future<Output = ProofTaskOutcome> + Send + 'static,
+        F: Future<Output = (Address, Result<()>)> + Send + 'static,
     {
         let handle = self.tasks.spawn(task);
         self.pending.insert(
@@ -164,23 +138,23 @@ impl ProofTaskSet {
     /// Consumes one `JoinSet` outcome and updates `pending` plus metrics.
     pub fn apply_join_outcome(
         &mut self,
-        joined: std::result::Result<(task::Id, ProofTaskOutcome), JoinError>,
+        joined: std::result::Result<(task::Id, (Address, Result<()>)), JoinError>,
     ) {
         RegistrarMetrics::proof_tasks_completed().increment(1);
         match joined {
-            Ok((id, outcome)) => {
-                let removed = match self.pending.get(&outcome.signer) {
-                    Some(entry) if entry.task_id == id => self.pending.remove(&outcome.signer),
+            Ok((id, (signer, result))) => {
+                let removed = match self.pending.get(&signer) {
+                    Some(entry) if entry.task_id == id => self.pending.remove(&signer),
                     _ => None,
                 };
                 let instance_id =
                     removed.as_ref().map_or("superseded", |entry| entry.instance_id.as_str());
 
-                match outcome.result {
+                match result {
                     Ok(()) => {
                         debug!(
                             task_id = ?id,
-                            signer = %outcome.signer,
+                            signer = %signer,
                             instance = %instance_id,
                             pending_entry_found = removed.is_some(),
                             superseded = removed.is_none(),
@@ -191,7 +165,7 @@ impl ProofTaskSet {
                         warn!(
                             task_id = ?id,
                             error = %e,
-                            signer = %outcome.signer,
+                            signer = %signer,
                             instance = %instance_id,
                             pending_entry_found = removed.is_some(),
                             superseded = removed.is_none(),
@@ -224,7 +198,7 @@ impl ProofTaskSet {
 
     /// Cancels every pending task cooperatively and awaits natural completion.
     pub async fn drain_proof_tasks(&mut self) {
-        for task in self.pending.values() {
+        for task in self.pending.values_mut() {
             if !task.cancelled_by_reconcile {
                 task.cancel.cancel();
                 RegistrarMetrics::proof_tasks_cancelled().increment(1);
@@ -237,9 +211,122 @@ impl ProofTaskSet {
     }
 }
 
-impl Default for ProofTaskSet {
-    fn default() -> Self {
-        Self::new()
+impl<P, R, T> SignerManager<P, R, T>
+where
+    R: RegistryClient,
+    T: TxManager,
+{
+    /// Queries onchain signers and deregisters orphans.
+    pub async fn run_orphan_dereg(
+        &self,
+        protected_signer: impl Fn(&Address) -> bool,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
+        let registered_signers = tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                debug!("cancelled before loading registered signers for orphan dereg");
+                return Ok(());
+            }
+            res = self.registry.get_registered_signers() => res?,
+        };
+
+        let mut deregistered = 0usize;
+        for signer in registered_signers.into_iter().filter(|addr| !protected_signer(addr)) {
+            if cancel.is_cancelled() {
+                debug!("shutdown requested, stopping orphan deregistration");
+                break;
+            }
+
+            if self.deregister_orphan(signer, cancel).await {
+                RegistrarMetrics::deregistrations_total().increment(1);
+                deregistered += 1;
+            }
+        }
+
+        if deregistered > 0 {
+            info!(count = deregistered, "orphan signers deregistered");
+        }
+
+        Ok(())
+    }
+
+    /// Deregisters one orphan signer if it is still registered onchain.
+    ///
+    /// Checks `isRegisteredSigner` before submitting a transaction so stale
+    /// `getRegisteredSigners()` entries do not loop forever.
+    pub async fn deregister_orphan(&self, signer: Address, cancel: &CancellationToken) -> bool {
+        let registered = tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                debug!("shutdown requested while verifying orphan signer");
+                return false;
+            }
+            res = self.registry.is_registered(signer) => res,
+        };
+
+        match registered {
+            Ok(false) => {
+                warn!(
+                    signer = %signer,
+                    "signer appears in getRegisteredSigners but isRegisteredSigner is false, \
+                     skipping (possible EnumerableSet ghost entry)"
+                );
+                false
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    signer = %signer,
+                    "failed to verify signer registration status, skipping deregistration"
+                );
+                false
+            }
+            Ok(true) if cancel.is_cancelled() => {
+                debug!(signer = %signer, "shutdown requested before submitting orphan deregistration");
+                false
+            }
+            Ok(true) => {
+                let candidate = TxCandidate {
+                    tx_data: Bytes::from(
+                        ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode(),
+                    ),
+                    to: Some(self.config.registry_address),
+                    ..Default::default()
+                };
+                info!(
+                    signer = %signer,
+                    registry = %self.config.registry_address,
+                    tx = ?candidate,
+                    "sending deregistration tx candidate",
+                );
+
+                match self.tx_manager.send(candidate).await {
+                    Ok(receipt) => {
+                        if !receipt.inner.status() {
+                            warn!(
+                                signer = %signer,
+                                tx_hash = %receipt.transaction_hash,
+                                "deregistration transaction reverted onchain",
+                            );
+                            RegistrarMetrics::processing_errors_total().increment(1);
+                            return false;
+                        }
+                        info!(
+                            signer = %signer,
+                            tx_hash = %receipt.transaction_hash,
+                            "signer deregistered"
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        warn!(error = %e, signer = %signer, "failed to deregister signer");
+                        RegistrarMetrics::processing_errors_total().increment(1);
+                        false
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -264,7 +351,6 @@ where
             return;
         }
 
-        let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
         let mut live_signers = HashSet::new();
 
         for (signer, task) in &mut proof_tasks.pending {
@@ -272,7 +358,7 @@ where
                 continue;
             }
 
-            if wanted.contains(signer) {
+            if resolution.registerable.iter().any(|entry| entry.signer == *signer) {
                 live_signers.insert(*signer);
                 continue;
             }
@@ -310,52 +396,29 @@ where
             let enclave_index = entry.enclave_index;
 
             proof_tasks.spawn_task(signer, instance_id, signer_cancel, async move {
-                let result = manager
-                    .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
+                let registration_manager = RegistrationManager::new(
+                    &manager.proof_provider,
+                    &manager.registry,
+                    &manager.tx_manager,
+                    &manager.proof_semaphore,
+                    ProofHandlerConfig {
+                        registry_address: manager.config.registry_address,
+                        max_tx_retries: manager.config.max_tx_retries,
+                        tx_retry_delay: manager.config.tx_retry_delay,
+                    },
+                );
+                let result = registration_manager
+                    .register_signer(
+                        &instance_owned,
+                        signer,
+                        enclave_index,
+                        &attestation,
+                        &task_cancel,
+                    )
                     .await;
-                ProofTaskOutcome { signer, result }
+                (signer, result)
             });
         }
-    }
-
-    /// Runs a signer registration through [`RegistrationManager`].
-    pub async fn run_proof_task(
-        self: Arc<Self>,
-        instance: ProverInstance,
-        signer: Address,
-        enclave_index: usize,
-        attestation_bytes: Vec<u8>,
-        signer_cancel: CancellationToken,
-    ) -> Result<()> {
-        let registration_manager = RegistrationManager::new(
-            &self.proof_provider,
-            &self.registry,
-            &self.tx_manager,
-            &self.proof_semaphore,
-            ProofHandlerConfig {
-                registry_address: self.config.registry_address,
-                max_tx_retries: self.config.max_tx_retries,
-                tx_retry_delay: self.config.tx_retry_delay,
-            },
-        );
-        registration_manager
-            .register_signer(&instance, signer, enclave_index, &attestation_bytes, &signer_cancel)
-            .await
-    }
-
-    /// Queries onchain signers and deregisters orphans.
-    pub async fn run_orphan_dereg(
-        &self,
-        protected_signers: &HashSet<Address>,
-        cancel: &CancellationToken,
-    ) -> Result<()> {
-        let deregistration_manager = DeregistrationManager::new(
-            self.config.registry_address,
-            &self.registry,
-            &self.tx_manager,
-        );
-
-        deregistration_manager.run_orphan_dereg(protected_signers, cancel).await
     }
 }
 
@@ -370,7 +433,9 @@ mod tests {
     use alloy_primitives::Address;
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
+    use base_tx_manager::SendHandle;
     use rstest::rstest;
+    use tokio::sync::{Notify, mpsc};
 
     use super::*;
     use crate::{
@@ -378,39 +443,116 @@ mod tests {
         RegisterableSigner, RegistrarError,
         test_utils::{
             EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, NoopTxManager, TEST_REGISTRY_ADDRESS,
-            healthy_prover_instance, signer_from_private_key,
+            healthy_prover_instance, signer_from_private_key, stub_receipt,
         },
     };
 
     const TEST_PENDING_INSTANCE_ID: &str = "i-pending-test";
     const GATED_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
     const REAP_POLL_INTERVAL: Duration = Duration::from_millis(1);
+    const SIGNER_A: Address = Address::new([0xAA; 20]);
+    const SIGNER_B: Address = Address::new([0xBB; 20]);
+    const SIGNER_C: Address = Address::new([0xCC; 20]);
 
     type TestSignerManager =
         Arc<SignerManager<RecordingProofProvider, MockRegistry, NoopTxManager>>;
 
-    #[derive(Debug)]
-    struct MockRegistry;
+    #[derive(Debug, Default)]
+    struct MockRegistry {
+        signers: Vec<Address>,
+        true_signers: HashSet<Address>,
+    }
+
+    impl MockRegistry {
+        fn with_enumerated_and_true_signers(
+            enumerated_signers: Vec<Address>,
+            true_signers: Vec<Address>,
+        ) -> Self {
+            Self { signers: enumerated_signers, true_signers: true_signers.into_iter().collect() }
+        }
+    }
 
     #[async_trait]
     impl RegistryClient for MockRegistry {
+        async fn is_registered(&self, signer: Address) -> Result<bool> {
+            Ok(self.true_signers.contains(&signer))
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            Ok(self.signers.clone())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingTxManager {
+        sent: Mutex<Vec<(Option<Address>, Bytes)>>,
+    }
+
+    impl RecordingTxManager {
+        fn take_sent(&self) -> Vec<(Option<Address>, Bytes)> {
+            std::mem::take(&mut *self.sent.lock().unwrap())
+        }
+    }
+
+    impl TxManager for RecordingTxManager {
+        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            self.sent.lock().unwrap().push((candidate.to, candidate.tx_data));
+            Ok(stub_receipt())
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+            unreachable!("signer manager orphan dereg tests use synchronous send")
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct StallingRegistry {
+        get_registered_signers_started: Notify,
+    }
+
+    #[async_trait]
+    impl RegistryClient for StallingRegistry {
         async fn is_registered(&self, _signer: Address) -> Result<bool> {
             Ok(false)
         }
 
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-            unreachable!("signer manager unit tests do not run orphan deregistration")
+            self.get_registered_signers_started.notify_waiters();
+            std::future::pending::<()>().await;
+            Ok(vec![])
         }
     }
 
-    #[derive(Debug, Clone, Default)]
-    struct RecordingProofProvider {
-        recorded: Arc<Mutex<HashMap<Address, Vec<u8>>>>,
+    #[derive(Debug)]
+    struct CancellingRegistry {
+        cancel: CancellationToken,
     }
 
-    impl RecordingProofProvider {
-        fn snapshot(&self) -> HashMap<Address, Vec<u8>> {
-            self.recorded.lock().unwrap().clone()
+    #[async_trait]
+    impl RegistryClient for CancellingRegistry {
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            self.cancel.cancel();
+            Ok(true)
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            Ok(vec![SIGNER_A])
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct RecordingProofProvider {
+        recorded: mpsc::UnboundedSender<(Address, Vec<u8>)>,
+    }
+
+    impl Default for RecordingProofProvider {
+        fn default() -> Self {
+            let (recorded, _) = mpsc::unbounded_channel();
+            Self { recorded }
         }
     }
 
@@ -430,7 +572,7 @@ mod tests {
             signer_address: Address,
             _cancel: &CancellationToken,
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            self.recorded.lock().unwrap().insert(signer_address, attestation_bytes.to_vec());
+            let _ = self.recorded.send((signer_address, attestation_bytes.to_vec()));
             Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
                 "RecordingProofProvider exits after capturing attestation".into(),
             ))
@@ -447,7 +589,12 @@ mod tests {
     }
 
     fn manager(proof_provider: RecordingProofProvider) -> TestSignerManager {
-        Arc::new(SignerManager::new(proof_provider, MockRegistry, NoopTxManager, config()))
+        Arc::new(SignerManager::new(
+            proof_provider,
+            MockRegistry::default(),
+            NoopTxManager,
+            config(),
+        ))
     }
 
     fn reconcile(
@@ -484,28 +631,15 @@ mod tests {
         proof_tasks: &mut ProofTaskSet,
         signer: Address,
         instance_id: &str,
-        cancelled_by_reconcile: bool,
     ) -> (tokio::task::Id, CancellationToken) {
         let cancel = CancellationToken::new();
         let cancel_inner = cancel.clone();
         proof_tasks.spawn_task(signer, instance_id.to_string(), cancel.clone(), async move {
             cancel_inner.cancelled().await;
-            ProofTaskOutcome { signer, result: Ok(()) }
+            (signer, Ok(()))
         });
-        let entry = proof_tasks.pending.get_mut(&signer).expect("spawned task is pending");
-        entry.cancelled_by_reconcile = cancelled_by_reconcile;
-        let task_id = entry.task_id;
+        let task_id = proof_tasks.pending.get(&signer).expect("spawned task is pending").task_id;
         (task_id, cancel)
-    }
-
-    async fn wait_for(label: &str, predicate: impl Fn() -> bool) {
-        let started = std::time::Instant::now();
-        while !predicate() {
-            if started.elapsed() > GATED_WAIT_TIMEOUT {
-                panic!("timed out waiting for: {label}");
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
     }
 
     async fn drain_test_tasks(proof_tasks: &mut ProofTaskSet) {
@@ -546,12 +680,8 @@ mod tests {
 
         for (_, key) in pre_existing {
             let signer = signer_from_private_key(key);
-            let (_, task_cancel) = spawn_pending_success_task(
-                &mut proof_tasks,
-                signer,
-                TEST_PENDING_INSTANCE_ID,
-                false,
-            );
+            let (_, task_cancel) =
+                spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID);
             seeded_cancels.push(task_cancel);
         }
 
@@ -579,7 +709,7 @@ mod tests {
         let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
         let (stale_task_id, stale_cancel) =
-            spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
+            spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID);
 
         reconcile(&manager, &resolution_from_registerable(&[]), &mut proof_tasks);
         assert!(stale_cancel.is_cancelled(), "stale task must be cancelled by reconcile");
@@ -610,7 +740,7 @@ mod tests {
         let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
         let (_, task_cancel) =
-            spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
+            spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID);
 
         let resolution = DiscoveryResolution {
             registerable: Vec::new(),
@@ -678,7 +808,8 @@ mod tests {
 
         let att_a: Vec<u8> = b"attestation-aligned-to-A".to_vec();
         let att_b: Vec<u8> = b"attestation-aligned-to-B".to_vec();
-        let proof_provider = RecordingProofProvider::default();
+        let (recorded, mut records) = mpsc::unbounded_channel();
+        let proof_provider = RecordingProofProvider { recorded };
         let manager = manager(proof_provider.clone());
         let resolution = DiscoveryResolution {
             registerable: vec![
@@ -702,13 +833,16 @@ mod tests {
 
         reconcile(&manager, &resolution, &mut proof_tasks);
 
-        wait_for("both signers recorded their attestations", || {
-            proof_provider.snapshot().len() == 2
-        })
-        .await;
+        let mut snap = HashMap::new();
+        for _ in 0..2 {
+            let (signer, attestation) = tokio::time::timeout(GATED_WAIT_TIMEOUT, records.recv())
+                .await
+                .expect("timed out waiting for proof record")
+                .expect("proof record channel closed");
+            snap.insert(signer, attestation);
+        }
         drain_test_tasks(&mut proof_tasks).await;
 
-        let snap = proof_provider.snapshot();
         assert_eq!(snap.get(&signer_a), Some(&att_a), "signer A got A attestation");
         assert_eq!(snap.get(&signer_b), Some(&att_b), "signer B got B attestation");
     }
@@ -722,7 +856,7 @@ mod tests {
             signer,
             TEST_PENDING_INSTANCE_ID.to_string(),
             CancellationToken::new(),
-            async move { ProofTaskOutcome { signer, result: Ok(()) } },
+            async move { (signer, Ok(())) },
         );
 
         reap_until_pending_empty(&mut proof_tasks).await;
@@ -736,7 +870,7 @@ mod tests {
         let mut proof_tasks = ProofTaskSet::new();
         let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
-        spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
+        spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID);
 
         proof_tasks.reap_finished_tasks();
 
@@ -771,28 +905,20 @@ mod tests {
         let signer = signer_from_private_key(&HARDHAT_KEY_0);
 
         let stale_handle = proof_tasks.tasks.spawn(async move {
-            ProofTaskOutcome {
-                signer,
-                result: Err(RegistrarError::Config("synthetic stale proof failure".to_string())),
-            }
+            (signer, Err(RegistrarError::Config("synthetic stale proof failure".to_string())))
         });
         let stale_task_id = stale_handle.id();
 
         let (fresh_task_id, _) =
-            spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID, false);
+            spawn_pending_success_task(&mut proof_tasks, signer, TEST_PENDING_INSTANCE_ID);
         assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
 
-        let started = std::time::Instant::now();
-        loop {
-            if let Some(joined) = proof_tasks.tasks.try_join_next_with_id() {
-                proof_tasks.apply_join_outcome(joined);
-                break;
-            }
-            if started.elapsed() > GATED_WAIT_TIMEOUT {
-                panic!("stale task never resolved");
-            }
-            tokio::time::sleep(REAP_POLL_INTERVAL).await;
-        }
+        let joined =
+            tokio::time::timeout(GATED_WAIT_TIMEOUT, proof_tasks.tasks.join_next_with_id())
+                .await
+                .expect("stale task never resolved")
+                .expect("JoinSet should contain stale task");
+        proof_tasks.apply_join_outcome(joined);
 
         assert_eq!(proof_tasks.pending_len(), 1, "fresh entry must survive stale task");
         let entry = proof_tasks.pending.get(&signer).expect("fresh entry still keyed by signer");
@@ -802,32 +928,106 @@ mod tests {
         drain_test_tasks(&mut proof_tasks).await;
     }
 
+    #[rstest]
+    #[case::no_orphans(vec![SIGNER_A, SIGNER_B], vec![SIGNER_A, SIGNER_B], vec![SIGNER_A, SIGNER_B], vec![])]
+    #[case::one_orphan(vec![SIGNER_A, SIGNER_B], vec![SIGNER_A, SIGNER_B], vec![SIGNER_A], vec![SIGNER_B])]
+    #[case::all_orphans(vec![SIGNER_A, SIGNER_B], vec![SIGNER_A, SIGNER_B], vec![], vec![SIGNER_A, SIGNER_B])]
+    #[case::one_true_signer(vec![SIGNER_A, SIGNER_B], vec![SIGNER_B], vec![], vec![SIGNER_B])]
+    #[case::all_ghosts(vec![SIGNER_A, SIGNER_B, SIGNER_C], vec![], vec![], vec![])]
     #[tokio::test]
-    async fn protected_signers_unions_active_and_pending_signers() {
-        let active_signer = signer_from_private_key(&HARDHAT_KEY_0);
-        let pending_signer = signer_from_private_key(&HARDHAT_KEY_1);
-        assert_ne!(active_signer, pending_signer, "test setup: distinct signers");
+    async fn deregister_orphans_submits_expected_signers(
+        #[case] enumerated_signers: Vec<Address>,
+        #[case] true_signers: Vec<Address>,
+        #[case] protected_signers: Vec<Address>,
+        #[case] expected_signers: Vec<Address>,
+    ) {
+        let manager = SignerManager::new(
+            RecordingProofProvider::default(),
+            MockRegistry::with_enumerated_and_true_signers(enumerated_signers, true_signers),
+            RecordingTxManager::default(),
+            config(),
+        );
+        let protected_signers: HashSet<Address> = protected_signers.into_iter().collect();
 
-        let mut proof_tasks = ProofTaskSet::new();
-        spawn_pending_success_task(
-            &mut proof_tasks,
-            pending_signer,
-            TEST_PENDING_INSTANCE_ID,
-            false,
+        manager
+            .run_orphan_dereg(
+                |signer| protected_signers.contains(signer),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+
+        assert_sent_signers(manager.tx_manager.take_sent(), expected_signers);
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_respects_cancellation() {
+        let manager = SignerManager::new(
+            RecordingProofProvider::default(),
+            MockRegistry::with_enumerated_and_true_signers(vec![SIGNER_A], vec![SIGNER_A]),
+            RecordingTxManager::default(),
+            config(),
+        );
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        manager.run_orphan_dereg(|_| false, &cancel).await.unwrap();
+
+        assert!(manager.tx_manager.take_sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_orphan_dereg_respects_cancellation_while_loading_signers() {
+        let manager = SignerManager::new(
+            RecordingProofProvider::default(),
+            StallingRegistry::default(),
+            RecordingTxManager::default(),
+            config(),
+        );
+        let cancel = CancellationToken::new();
+        let run = manager.run_orphan_dereg(|_| false, &cancel);
+        tokio::pin!(run);
+
+        let notified = manager.registry.get_registered_signers_started.notified();
+        tokio::pin!(notified);
+        tokio::select! {
+            () = &mut notified => {}
+            result = &mut run => panic!("run_orphan_dereg completed before cancellation: {result:?}"),
+        }
+
+        cancel.cancel();
+
+        tokio::time::timeout(Duration::from_secs(1), run)
+            .await
+            .expect("run_orphan_dereg should stop promptly after cancellation")
+            .unwrap();
+        assert!(manager.tx_manager.take_sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_orphan_dereg_respects_cancellation_after_verifying_signer() {
+        let cancel = CancellationToken::new();
+        let manager = SignerManager::new(
+            RecordingProofProvider::default(),
+            CancellingRegistry { cancel: cancel.clone() },
+            RecordingTxManager::default(),
+            config(),
         );
 
-        let resolution = DiscoveryResolution {
-            registerable: Vec::new(),
-            active_signers: HashSet::from([active_signer]),
-            unresolved_instance_ids: HashSet::new(),
-        };
-        let protected = proof_tasks.protected_signers(&resolution);
-        assert_eq!(protected, HashSet::from([active_signer, pending_signer]));
+        manager.run_orphan_dereg(|_| false, &cancel).await.unwrap();
 
-        drain_test_tasks(&mut proof_tasks).await;
+        assert!(manager.tx_manager.take_sent().is_empty());
+    }
 
-        let protected_after_drain = proof_tasks.protected_signers(&resolution);
-        assert_eq!(protected_after_drain, HashSet::from([active_signer]));
+    fn assert_sent_signers(sent: Vec<(Option<Address>, Bytes)>, expected_signers: Vec<Address>) {
+        assert_eq!(sent.len(), expected_signers.len());
+        for ((to, tx_data), signer) in sent.into_iter().zip(expected_signers) {
+            assert_eq!(to, Some(TEST_REGISTRY_ADDRESS));
+            assert_eq!(
+                tx_data,
+                Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode())
+            );
+        }
     }
 
     #[cfg(feature = "metrics")]
@@ -838,7 +1038,7 @@ mod tests {
         use crate::test_utils::HARDHAT_KEY_2;
 
         #[test]
-        fn drain_counts_only_tasks_not_already_cancelled_by_reconcile() {
+        fn drain_counts_shutdown_cancelled_tasks_once() {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
             let recorder = PrometheusBuilder::new().build_recorder();
             let handle = recorder.handle();
@@ -846,20 +1046,24 @@ mod tests {
             metrics::with_local_recorder(&recorder, || {
                 rt.block_on(async {
                     let mut proof_tasks = ProofTaskSet::new();
-                    let seed: &[(&[u8; 32], bool)] =
-                        &[(&HARDHAT_KEY_0, true), (&HARDHAT_KEY_1, false), (&HARDHAT_KEY_2, false)];
+                    let seed: &[(&[u8; 32], bool, bool)] = &[
+                        (&HARDHAT_KEY_0, true, true),
+                        (&HARDHAT_KEY_1, true, false),
+                        (&HARDHAT_KEY_2, false, false),
+                    ];
 
-                    for (key, flagged) in seed {
+                    for (key, cancelled_before_drain, cancelled_by_reconcile) in seed {
                         let signer = signer_from_private_key(key);
                         let (_, cancel) = spawn_pending_success_task(
                             &mut proof_tasks,
                             signer,
                             TEST_PENDING_INSTANCE_ID,
-                            *flagged,
                         );
-                        if *flagged {
+                        if *cancelled_before_drain {
                             cancel.cancel();
                         }
+                        proof_tasks.pending.get_mut(&signer).unwrap().cancelled_by_reconcile =
+                            *cancelled_by_reconcile;
                     }
 
                     proof_tasks.drain_proof_tasks().await;
@@ -869,7 +1073,7 @@ mod tests {
             let rendered = handle.render();
             assert!(
                 rendered.contains("base_registrar_proof_tasks_cancelled 2"),
-                "drain must count only the unflagged tasks once each. Got:\n{rendered}",
+                "drain must count shutdown and live task cancellations once each. Got:\n{rendered}",
             );
         }
     }

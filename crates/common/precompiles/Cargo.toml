@@ -20,6 +20,7 @@ alloy-primitives.workspace = true
 
 # base
 base-common-chains.workspace = true
+base-common-genesis.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 
@@ -44,6 +45,7 @@ std = [
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"base-common-chains/std",
+	"base-common-genesis/std",
 	"base-precompile-storage/std",
 	"revm/std",
 ]

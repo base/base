@@ -3,13 +3,11 @@
 //! Wraps [`TEEProverRegistryContractClient`] from `base-proof-contracts` with
 //! registrar-specific error types. The [`RegistryClient`] trait uses
 //! [`RegistrarError`] to integrate with the registrar's error handling,
-//! while the underlying contract bindings use [`ContractError`].
+//! while the underlying contract bindings use their own error types.
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_proof_contracts::{
-    ContractError, TEEProverRegistryClient as _, TEEProverRegistryContractClient,
-};
+use base_proof_contracts::{TEEProverRegistryClient as _, TEEProverRegistryContractClient};
 use url::Url;
 
 use crate::{RegistrarError, Result};
@@ -42,18 +40,19 @@ impl RegistryContractClient {
     }
 }
 
-/// Converts a [`ContractError`] into a [`RegistrarError::RegistryCall`].
-fn map_contract_error(e: ContractError) -> RegistrarError {
-    RegistrarError::RegistryCall { context: e.to_string(), source: Box::new(e) }
-}
-
 #[async_trait]
 impl RegistryClient for RegistryContractClient {
     async fn is_registered(&self, signer: Address) -> Result<bool> {
-        self.inner.is_registered_signer(signer).await.map_err(map_contract_error)
+        self.inner.is_registered_signer(signer).await.map_err(|e| RegistrarError::ContractCall {
+            context: format!("registry.isRegisteredSigner({signer})"),
+            source: Box::new(e),
+        })
     }
 
     async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-        self.inner.get_registered_signers().await.map_err(map_contract_error)
+        self.inner.get_registered_signers().await.map_err(|e| RegistrarError::ContractCall {
+            context: "registry.getRegisteredSigners()".into(),
+            source: Box::new(e),
+        })
     }
 }

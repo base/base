@@ -4,9 +4,9 @@ use std::io::{self, Write};
 
 use anyhow::Result;
 use basectl_cli::{
-    ConductorClusterSnapshot, ConductorControl, ConductorFanoutReport, ConductorNodeConfig,
-    ConductorNodeFailure, ConductorNodeStatus, ConductorSource, JsonOutput, KeyValueTable,
-    MonitoringConfig,
+    ConductorClusterSnapshot, ConductorCommandError, ConductorControl, ConductorFanoutReport,
+    ConductorNodeConfig, ConductorNodeFailure, ConductorNodeStatus, ConductorSource, JsonOutput,
+    KeyValueTable, MonitoringConfig,
 };
 use serde::Serialize;
 use tracing::warn;
@@ -18,7 +18,9 @@ use crate::{
         ConductorNodeActionArgs, ConductorStatusArgs,
     },
     confirm::{confirm_or_abort, confirm_typed_or_abort},
-    helpers::{CommandOutcome, find_node, fmt_bool, fmt_u32, fmt_u64, resolve_source},
+    helpers::{
+        CommandOutcome, find_conductor_node, fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source,
+    },
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -86,7 +88,8 @@ pub(crate) async fn run(
     conductor_rpc: Option<Url>,
     command: ConductorCommands,
 ) -> Result<CommandOutcome> {
-    let source = resolve_source(&config, conductor_rpc, "conductor")?;
+    let source =
+        resolve_conductor_source(&config, conductor_rpc).map_err(ConductorCommandError::from)?;
     match command {
         ConductorCommands::Status(args) => run_status(config, source, args).await,
         ConductorCommands::TransferLeader(args) => run_transfer_leader(config, source, args).await,
@@ -129,7 +132,7 @@ async fn run_transfer_leader(
     if let Some(target) = args.target.as_deref() {
         // Validate before prompting so a typo does not ask for confirmation and only
         // fail after the operator already answered yes.
-        find_node(&nodes, target, "conductor")?;
+        find_conductor_node(&nodes, target).map_err(ConductorCommandError::from)?;
     }
 
     let prompt = args.target.as_deref().map_or_else(
@@ -165,7 +168,7 @@ async fn run_node_action(
     action: NodeActionKind,
 ) -> Result<CommandOutcome> {
     let nodes = current_nodes_for_action(&source).await?;
-    let node = find_node(&nodes, &args.node, "conductor")?;
+    let node = find_conductor_node(&nodes, &args.node).map_err(ConductorCommandError::from)?;
     let json_action = action.action();
     let prompt = format!(
         "{} conductor control loop on {} ({})? [y/N] ",
@@ -217,7 +220,7 @@ async fn run_cluster_action(
         &ConductorFanoutJson::from_report(&config.name, json_action, &report),
         args.json,
     )?;
-    Ok(fanout_outcome(&report))
+    Ok(CommandOutcome::from_failures(fanout_requires_failure_exit(&report)))
 }
 
 async fn current_nodes_for_action(source: &ConductorSource) -> Result<Vec<ConductorNodeConfig>> {
@@ -260,12 +263,8 @@ async fn current_nodes_for_cluster_action(
     }
 }
 
-/// Maps a fanout report onto the process-exit outcome.
-///
-/// An empty fanout (no nodes targeted) is treated as a failure so operators
-/// notice when a bulk action silently matched nothing.
-const fn fanout_outcome(report: &ConductorFanoutReport) -> CommandOutcome {
-    CommandOutcome::from_failures(!report.is_success())
+const fn fanout_requires_failure_exit(report: &ConductorFanoutReport) -> bool {
+    !report.is_success()
 }
 
 fn print_status_pretty(status: &ConductorStatusJson) -> Result<()> {
@@ -559,14 +558,17 @@ impl ConductorNodeJson {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use basectl_cli::{ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeFailure};
+    use basectl_cli::{
+        ConductorClusterSnapshot, ConductorCommandError, ConductorNodeConfig, ConductorNodeFailure,
+    };
     use serde_json::json;
     use url::Url;
 
     use super::{
         ConductorAction, ConductorActionJson, ConductorFanoutJson, ConductorNodeJson,
-        ConductorStatusJson, fanout_outcome, find_node,
+        ConductorStatusJson, fanout_requires_failure_exit,
     };
+    use crate::helpers::{CommandOutcome, find_conductor_node};
 
     fn node(name: &str) -> ConductorNodeConfig {
         ConductorNodeConfig {
@@ -680,9 +682,18 @@ mod tests {
             failures: Vec::new(),
         };
 
-        assert!(!fanout_outcome(&success).has_failures());
-        assert!(fanout_outcome(&partial_failure).has_failures());
-        assert!(fanout_outcome(&empty).has_failures());
+        assert_eq!(
+            CommandOutcome::from_failures(fanout_requires_failure_exit(&success)),
+            CommandOutcome::Success
+        );
+        assert_eq!(
+            CommandOutcome::from_failures(fanout_requires_failure_exit(&partial_failure)),
+            CommandOutcome::HasFailures
+        );
+        assert_eq!(
+            CommandOutcome::from_failures(fanout_requires_failure_exit(&empty)),
+            CommandOutcome::HasFailures
+        );
     }
 
     #[test]
@@ -759,10 +770,17 @@ mod tests {
     fn find_node_reports_missing_name() {
         let nodes = vec![node("op-conductor-0")];
 
-        let err = find_node(&nodes, "op-conductor-1", "conductor")
+        let err = find_conductor_node(&nodes, "op-conductor-1")
+            .map_err(ConductorCommandError::from)
             .expect_err("missing node should error");
 
-        assert!(err.to_string().contains("op-conductor-1"));
-        assert!(err.to_string().contains("op-conductor-0"));
+        assert!(matches!(
+            err,
+            ConductorCommandError::MissingNode {
+                requested_node,
+                available_nodes,
+            } if requested_node == "op-conductor-1"
+                && available_nodes == vec!["op-conductor-0".to_string()]
+        ));
     }
 }

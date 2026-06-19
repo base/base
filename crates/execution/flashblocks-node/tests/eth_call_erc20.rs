@@ -90,7 +90,7 @@ impl Erc20TestSetup {
                 transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX],
                 ..Default::default()
             },
-            metadata: Metadata { block_number: 1 },
+            metadata: Metadata::new(1),
         }
     }
 
@@ -116,7 +116,7 @@ impl Erc20TestSetup {
                 logs_bloom: Default::default(),
                 withdrawals_root: Default::default(),
             },
-            metadata: Metadata { block_number: 1 },
+            metadata: Metadata::new(1),
         }
     }
 
@@ -137,7 +137,7 @@ impl Erc20TestSetup {
                 logs_bloom: Default::default(),
                 withdrawals_root: Default::default(),
             },
-            metadata: Metadata { block_number: 1 },
+            metadata: Metadata::new(1),
         }
     }
 

@@ -1,7 +1,14 @@
 # base-proof-zk-host
 
-Host-side ZK proving primitives for prover-service workers.
+Host-side ZK proving worker for the prover service.
 
-The `ZkProver` trait captures the backend proving step independently from worker
-job discovery and submission. Concrete backends implement this trait so worker
-hosts can submit, poll, and download proofs through a common interface.
+This crate adapts the shared worker machinery for ZK proving jobs. It provides
+[`ProofGenerator`], which claims a ZK job, drives a [`ZkProver`] backend to
+completion, and hands the proof result to `base_proof_worker::ProofSubmitter`.
+
+The concrete SP1 backend is wired separately. [`UnimplementedZkProver`] is a
+placeholder for early host wiring.
+
+[`ProofGenerator`]: crate::ProofGenerator
+[`ZkProver`]: crate::ZkProver
+[`UnimplementedZkProver`]: crate::UnimplementedZkProver

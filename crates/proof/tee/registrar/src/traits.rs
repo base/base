@@ -1,6 +1,7 @@
 //! Abstraction traits for the registration driver.
 
-use async_trait::async_trait;
+use std::future::Future;
+
 use url::Url;
 
 use crate::{ProverInstance, Result};
@@ -11,10 +12,9 @@ use crate::{ProverInstance, Result};
 /// [`AwsTargetGroupDiscovery`](crate::AwsTargetGroupDiscovery), which queries
 /// an ALB target group via the AWS SDK. Other implementations (e.g., a static
 /// list for local testing) can be substituted.
-#[async_trait]
 pub trait InstanceDiscovery: Send + Sync {
     /// Return the current set of prover instances with their health status.
-    async fn discover_instances(&self) -> Result<Vec<ProverInstance>>;
+    fn discover_instances(&self) -> impl Future<Output = Result<Vec<ProverInstance>>> + Send + '_;
 }
 
 /// Fetches signer identity data from a prover instance endpoint.
@@ -25,19 +25,21 @@ pub trait InstanceDiscovery: Send + Sync {
 /// to avoid real HTTP calls.
 ///
 /// The `endpoint` parameter is a [`Url`] (e.g. `http://10.0.1.5:8000/`).
-#[async_trait]
 pub trait SignerClient: Send + Sync {
     /// Fetches the SEC1-encoded public key for each enclave signer at the given endpoint.
-    async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>>;
+    fn signer_public_key<'a>(
+        &'a self,
+        endpoint: &'a Url,
+    ) -> impl Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a;
 
     /// Fetches the raw Nitro attestation document for each enclave signer at the given endpoint.
     ///
     /// Optional `user_data` and `nonce` bind the attestation to a specific
     /// request (e.g. a random nonce for replay protection).
-    async fn signer_attestation(
-        &self,
-        endpoint: &Url,
+    fn signer_attestation<'a>(
+        &'a self,
+        endpoint: &'a Url,
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
-    ) -> Result<Vec<Vec<u8>>>;
+    ) -> impl Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a;
 }

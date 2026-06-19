@@ -2,7 +2,8 @@ use alloc::string::String;
 
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
-use base_common_chains::BaseUpgrade;
+use base_common_chains::BaseUpgradeExt;
+use base_common_genesis::BaseUpgrade;
 use revm::{
     context::Cfg,
     context_interface::ContextTr,
@@ -37,9 +38,12 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Bedrock
             | BaseUpgrade::Regolith
             | BaseUpgrade::Canyon
+            | BaseUpgrade::Delta
             | BaseUpgrade::Ecotone => Precompiles::new(Self::eth_spec(spec.upgrade()).into()),
             BaseUpgrade::Fjord => Self::fjord(),
-            BaseUpgrade::Granite | BaseUpgrade::Holocene => Self::granite(),
+            BaseUpgrade::Granite | BaseUpgrade::Holocene | BaseUpgrade::PectraBlobSchedule => {
+                Self::granite()
+            }
             BaseUpgrade::Isthmus => Self::isthmus(),
             BaseUpgrade::Jovian => Self::jovian(),
             BaseUpgrade::Azul => Self::azul(),
@@ -71,7 +75,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     }
 
     /// Converts a Base upgrade into its Ethereum precompile spec.
-    pub const fn eth_spec(upgrade: BaseUpgrade) -> SpecId {
+    pub fn eth_spec(upgrade: BaseUpgrade) -> SpecId {
         upgrade.into_eth_spec()
     }
 
@@ -263,7 +267,7 @@ mod tests {
     use std::vec;
 
     use alloy_primitives::{Address, B256};
-    use base_common_chains::BaseUpgrade;
+    use base_common_genesis::BaseUpgrade;
     use revm::{
         precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,

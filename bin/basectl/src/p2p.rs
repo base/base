@@ -2,12 +2,13 @@
 
 use std::io::{self, Write};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::Result;
 use base_consensus_peers::BootNode;
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, NodeEndpoint, PeerListReport, PeerStatsReport,
-    PeerSummary, add_peer, ban_peer, connect_peer, disconnect_peer, fetch_connected_peers,
-    fetch_info, fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_peer,
+    JsonOutput, KeyValueTable, MonitoringConfig, NodeEndpoint, P2pCommandError, P2pTargetError,
+    PeerListReport, PeerStatsReport, PeerSummary, add_peer, ban_peer, connect_peer,
+    disconnect_peer, fetch_connected_peers, fetch_info, fetch_raw_info, fetch_raw_peers,
+    list_banned_peers, remove_peer, unban_peer,
 };
 use serde::Serialize;
 use url::Url;
@@ -38,7 +39,10 @@ async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
     let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p peers")?;
 
     match (json, raw) {
-        (true, true) => JsonOutput::print(&fetch_raw_peers(&el_rpc, &cl_rpc).await?)?,
+        (true, true) => {
+            let report = fetch_raw_peers(&el_rpc, &cl_rpc).await?;
+            JsonOutput::print(&report)?;
+        }
         (true, false) => {
             let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
             JsonOutput::print(&PeersJson::from_report(&config.name, &report))?;
@@ -221,8 +225,13 @@ async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) ->
     let action = PeerActionJson::cl_bulk(&config.name, PeerAction::UnbanAll, results);
     let failed = action.failed_count();
     print_peer_action(&action, json)?;
+    fail_unban_all_if_partial(failed)?;
+    Ok(())
+}
+
+const fn fail_unban_all_if_partial(failed: usize) -> Result<(), P2pCommandError> {
     if failed > 0 {
-        bail!("failed to unban {failed} CL peer(s)");
+        return Err(P2pCommandError::UnbanAllPartialFailure { failed });
     }
     Ok(())
 }
@@ -233,7 +242,10 @@ async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
     let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p info")?;
 
     match (json, raw) {
-        (true, true) => JsonOutput::print(&fetch_raw_info(&el_rpc, &cl_rpc).await?)?,
+        (true, true) => {
+            let report = fetch_raw_info(&el_rpc, &cl_rpc).await?;
+            JsonOutput::print(&report)?;
+        }
         (true, false) => {
             let (node_info, peer_stats) = fetch_info(&el_rpc, &cl_rpc).await?;
             JsonOutput::print(&InfoJson::from_report(&config.name, &node_info, &peer_stats))?;
@@ -251,17 +263,13 @@ fn resolve_cl_rpc(
     config: &MonitoringConfig,
     override_url: Option<&Url>,
     command_name: &str,
-) -> Result<Url> {
+) -> Result<Url, P2pCommandError> {
     if let Some(u) = override_url {
         return Ok(u.clone());
     }
-    config.consensus_node_rpc.clone().ok_or_else(|| {
-        anyhow!(
-            "{command_name} needs a consensus-node RPC URL.\n\
-             The '{}' config does not set `consensus_node_rpc`.\n\
-             Override with `--cl-rpc <url>` or set `consensus_node_rpc` in your YAML config.",
-            config.name
-        )
+    config.consensus_node_rpc.clone().ok_or_else(|| P2pCommandError::MissingConsensusRpc {
+        config_name: config.name.clone(),
+        command_name: command_name.to_string(),
     })
 }
 
@@ -291,85 +299,84 @@ enum RemoveTarget {
     PeerId(String),
 }
 
-fn parse_add_target(raw: &str) -> Result<AddTarget> {
+fn parse_add_target(raw: &str) -> Result<AddTarget, P2pTargetError> {
     let target = raw.trim();
     if target.is_empty() {
-        bail!("peer target cannot be empty");
+        return Err(P2pTargetError::EmptyTarget);
     }
     if target.starts_with('/') {
         if !target.contains("/p2p/") {
-            bail!("multiaddr target must include a `/p2p/<peer-id>` component");
+            return Err(P2pTargetError::MultiaddrMissingPeerId { target: target.to_string() });
         }
         return Ok(AddTarget::Multiaddr(target.to_string()));
     }
 
-    let bootnode = BootNode::parse_bootnode(target)
-        .with_context(|| format!("parsing peer target `{target}` as enode or ENR"))?;
+    let bootnode = BootNode::parse_bootnode(target).map_err(|error| {
+        P2pTargetError::InvalidBootnode { target: target.to_string(), message: error.to_string() }
+    })?;
     match &bootnode {
         BootNode::Enode(_) => Ok(AddTarget::Enode(target.to_string())),
         BootNode::Enr(_) => {
             let multiaddr = bootnode.to_multiaddr().ok_or_else(|| {
-                anyhow!(
-                    "ENR target `{target}` does not include enough information to derive a libp2p multiaddr"
-                )
+                P2pTargetError::EnrMissingMultiaddr { target: target.to_string() }
             })?;
             Ok(AddTarget::Multiaddr(multiaddr.to_string()))
         }
     }
 }
 
-fn parse_remove_target(raw: &str) -> Result<RemoveTarget> {
+fn parse_remove_target(raw: &str) -> Result<RemoveTarget, P2pTargetError> {
     let target = raw.trim();
     if target.is_empty() {
-        bail!("peer target cannot be empty");
+        return Err(P2pTargetError::EmptyTarget);
     }
     if target.starts_with("enr:") {
-        bail!(
-            "remove-peer needs a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
-        );
+        return Err(P2pTargetError::RemoveEnrTarget { target: target.to_string() });
     }
     if target.split_whitespace().count() != 1 {
-        bail!("peer target must not contain whitespace");
+        return Err(P2pTargetError::TargetContainsWhitespace { target: target.to_string() });
     }
 
     if target.starts_with("enode://") {
-        let bootnode = BootNode::parse_bootnode(target)
-            .with_context(|| format!("parsing remove-peer target `{target}` as an enode"))?;
+        let bootnode =
+            BootNode::parse_bootnode(target).map_err(|error| P2pTargetError::InvalidBootnode {
+                target: target.to_string(),
+                message: error.to_string(),
+            })?;
         if !matches!(bootnode, BootNode::Enode(_)) {
-            bail!("remove-peer EL targets must be `enode://` records");
+            return Err(P2pTargetError::RemoveElTargetNotEnode { target: target.to_string() });
         }
         return Ok(RemoveTarget::Enode(target.to_string()));
     }
     if target.contains(':') || target.contains('/') {
-        bail!("remove-peer needs a bare libp2p peer ID for CL targets, not a URL or multiaddr");
+        return Err(P2pTargetError::RemoveClTargetNotBarePeerId { target: target.to_string() });
     }
 
     Ok(RemoveTarget::PeerId(parse_cl_peer_id(target)?))
 }
 
-fn parse_cl_peer_id(raw: &str) -> Result<String> {
+fn parse_cl_peer_id(raw: &str) -> Result<String, P2pTargetError> {
     let target = raw.trim();
     if target.is_empty() {
-        bail!("CL peer ID cannot be empty");
+        return Err(P2pTargetError::EmptyClPeerId);
     }
     if target.starts_with("enode://") {
-        bail!("CL peer actions need a bare libp2p peer ID, not an enode record");
+        return Err(P2pTargetError::ClPeerIdIsEnode { target: target.to_string() });
     }
     if target.starts_with("enr:") {
-        bail!(
-            "CL peer actions need a bare libp2p peer ID; ENR records are only accepted by add-peer"
-        );
+        return Err(P2pTargetError::ClPeerIdIsEnr { target: target.to_string() });
     }
     if target.split_whitespace().count() != 1 {
-        bail!("CL peer ID must not contain whitespace");
+        return Err(P2pTargetError::ClPeerIdContainsWhitespace { target: target.to_string() });
     }
     if target.contains(':') || target.contains('/') {
-        bail!("CL peer actions need a bare libp2p peer ID, not a URL or multiaddr");
+        return Err(P2pTargetError::ClPeerIdNotBare { target: target.to_string() });
     }
     if target.len() < MIN_LIBP2P_PEER_ID_LEN {
-        bail!(
-            "CL peer ID `{target}` looks too short to be a valid libp2p peer ID; expected a base58-encoded string (e.g. 16Uiu2HAm...)"
-        );
+        return Err(P2pTargetError::ClPeerIdTooShort {
+            target: target.to_string(),
+            min_len: MIN_LIBP2P_PEER_ID_LEN,
+        });
     }
 
     Ok(target.to_string())
@@ -555,7 +562,9 @@ fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
             }
         }
         PeerActionJson::El { action, .. } | PeerActionJson::Cl { action, .. } => {
-            bail!("unsupported peer action for pretty output: {action:?}");
+            return Err(
+                P2pCommandError::UnsupportedPrettyAction { action: format!("{action:?}") }.into()
+            );
         }
     }
     Ok(())
@@ -762,12 +771,14 @@ fn unavailable_cl_peer_stats() -> String {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use basectl_cli::{P2pCommandError, P2pTargetError};
     use serde_json::json;
     use url::Url;
 
     use super::{
         AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, RemoveTarget,
-        parse_add_target, parse_cl_peer_id, parse_remove_target, resolve_cl_rpc,
+        fail_unban_all_if_partial, parse_add_target, parse_cl_peer_id, parse_remove_target,
+        resolve_cl_rpc,
     };
 
     const VALID_ENODE: &str = "enode://d7dfaea49c7ef37701e668652bcf1bc63d3abb2ae97593374a949e175e4ff128730a2f35199f3462a56298b981dfc395a5abebd2d6f0284ffe5bdc3d8e258b86@127.0.0.1:30304?discport=30301";
@@ -816,7 +827,14 @@ mod tests {
     fn resolve_cl_rpc_errors_without_config() {
         let config = test_config(None);
 
-        assert!(resolve_cl_rpc(&config, None, "p2p info").is_err());
+        assert!(matches!(
+            resolve_cl_rpc(&config, None, "p2p info").unwrap_err(),
+            P2pCommandError::MissingConsensusRpc {
+                config_name,
+                command_name,
+                ..
+            } if config_name == "devnet" && command_name == "p2p info"
+        ));
     }
 
     #[test]
@@ -839,7 +857,10 @@ mod tests {
 
     #[test]
     fn parse_add_target_rejects_garbage() {
-        assert!(parse_add_target("not-a-peer").is_err());
+        assert!(matches!(
+            parse_add_target("not-a-peer").unwrap_err(),
+            P2pTargetError::InvalidBootnode { target, .. } if target == "not-a-peer"
+        ));
     }
 
     #[test]
@@ -857,9 +878,11 @@ mod tests {
         let err = parse_add_target("/ip4/127.0.0.1/tcp/9000")
             .expect_err("multiaddr without peer ID should be rejected");
 
-        assert!(
-            err.to_string().contains("multiaddr target must include a `/p2p/<peer-id>` component")
-        );
+        assert!(matches!(
+            err,
+            P2pTargetError::MultiaddrMissingPeerId { target }
+                if target == "/ip4/127.0.0.1/tcp/9000"
+        ));
     }
 
     #[test]
@@ -882,24 +905,38 @@ mod tests {
 
     #[test]
     fn parse_remove_target_rejects_enr() {
-        assert!(parse_remove_target(VALID_ENR).is_err());
+        assert!(matches!(
+            parse_remove_target(VALID_ENR).unwrap_err(),
+            P2pTargetError::RemoveEnrTarget { target } if target == VALID_ENR
+        ));
     }
 
     #[test]
     fn parse_remove_target_rejects_multiaddr() {
-        assert!(parse_remove_target("/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample").is_err());
+        assert!(matches!(
+            parse_remove_target("/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample").unwrap_err(),
+            P2pTargetError::RemoveClTargetNotBarePeerId { .. }
+        ));
     }
 
     #[test]
     fn parse_remove_target_rejects_url_like_target() {
-        assert!(parse_remove_target("https://example.com").is_err());
+        assert!(matches!(
+            parse_remove_target("https://example.com").unwrap_err(),
+            P2pTargetError::RemoveClTargetNotBarePeerId { target }
+                if target == "https://example.com"
+        ));
     }
 
     #[test]
     fn parse_remove_target_rejects_obviously_short_peer_id() {
         let err = parse_remove_target("hello").expect_err("short peer ID should be rejected");
 
-        assert!(err.to_string().contains("looks too short to be a valid libp2p peer ID"));
+        assert!(matches!(
+            err,
+            P2pTargetError::ClPeerIdTooShort { target, min_len }
+                if target == "hello" && min_len == super::MIN_LIBP2P_PEER_ID_LEN
+        ));
     }
 
     #[test]
@@ -922,6 +959,15 @@ mod tests {
         ] {
             assert!(parse_cl_peer_id(target).is_err(), "target should be rejected: {target}");
         }
+    }
+
+    #[test]
+    fn unban_all_partial_failure_is_typed() {
+        assert!(fail_unban_all_if_partial(0).is_ok());
+        assert!(matches!(
+            fail_unban_all_if_partial(2).unwrap_err(),
+            P2pCommandError::UnbanAllPartialFailure { failed: 2 }
+        ));
     }
 
     #[test]

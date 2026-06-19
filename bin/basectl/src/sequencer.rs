@@ -8,11 +8,11 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::Result;
 use basectl_cli::{
     ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig, ConductorNodeStatus,
-    ConductorSource, JsonOutput, KeyValueTable, MonitoringConfig, fetch_sequencer_active,
-    start_sequencer, stop_sequencer,
+    ConductorSource, JsonOutput, KeyValueTable, MonitoringConfig, SequencerCommandError,
+    StateConvergenceTimeoutError, fetch_sequencer_active, start_sequencer, stop_sequencer,
 };
 use serde::Serialize;
 use tokio::time::{Instant, sleep, timeout};
@@ -22,7 +22,9 @@ use url::Url;
 use crate::{
     cli::{SequencerCommands, SequencerNodeActionArgs, SequencerStartArgs, SequencerStatusArgs},
     confirm::confirm_or_abort,
-    helpers::{CommandOutcome, find_node, fmt_bool, fmt_u32, fmt_u64, resolve_source},
+    helpers::{
+        CommandOutcome, find_conductor_node, fmt_bool, fmt_u32, fmt_u64, resolve_conductor_source,
+    },
 };
 
 // Allow two full `admin_sequencerActive` polls plus the stabilization sleep,
@@ -31,18 +33,20 @@ const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(12);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REQUIRED_OBSERVATIONS: usize = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeadershipStatus {
+    ConfirmedLeader,
+    Unknown,
+}
+
 /// Runs the `basectl sequencer` command group.
-///
-/// Mirrors [`crate::conductor::run`] by returning a [`CommandOutcome`] so `main`
-/// can treat sibling command groups uniformly. Sequencer actions target a single
-/// node and surface failures as `Err`, so the success paths always report
-/// [`CommandOutcome::Success`].
 pub(crate) async fn run(
     config: MonitoringConfig,
     conductor_rpc: Option<Url>,
     command: SequencerCommands,
 ) -> Result<CommandOutcome> {
-    let source = resolve_source(&config, conductor_rpc, "sequencer")?;
+    let source =
+        resolve_conductor_source(&config, conductor_rpc).map_err(SequencerCommandError::from)?;
     match command {
         SequencerCommands::Status(args) => run_status(config, source, args).await,
         SequencerCommands::Start(args) => run_start(config, source, args).await,
@@ -91,7 +95,8 @@ async fn run_start(
         "running sequencer start command"
     );
     let snapshot = ConductorControl::snapshot(source).await?;
-    let node = find_node(&snapshot.nodes, &args.node, "sequencer")?;
+    let node =
+        find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
     debug!(
         node = %node.name,
@@ -100,8 +105,8 @@ async fn run_start(
         sequencer_active = ?status.and_then(|status| status.sequencer_active),
         "resolved sequencer start target"
     );
-    let leader_check = match ensure_start_allowed(&snapshot, node, status) {
-        Ok(outcome) => outcome,
+    let leadership_status = match ensure_start_allowed(&snapshot, node, status) {
+        Ok(leadership_status) => leadership_status,
         Err(error) => {
             warn!(
                 error = %error,
@@ -109,12 +114,10 @@ async fn run_start(
                 cl_rpc = %node.cl_rpc,
                 "sequencer start preflight failed"
             );
-            return Err(error);
+            return Err(error.into());
         }
     };
-    // No node currently reports itself as leader, and the target is not known
-    // to be a follower, so defer the final leader check to the RPC.
-    if leader_check == LeaderCheckOutcome::LeadershipUnknown {
+    if matches!(leadership_status, LeadershipStatus::Unknown) {
         warn!(
             node = %node.name,
             cl_rpc = %node.cl_rpc,
@@ -131,7 +134,7 @@ async fn run_start(
                     cl_rpc = %node.cl_rpc,
                     "failed to resolve sequencer start unsafe head"
                 );
-                return Err(error);
+                return Err(error.into());
             }
         };
     if let Err(error) =
@@ -145,7 +148,7 @@ async fn run_start(
             unsafe_head_source = %unsafe_head_source.as_str(),
             "sequencer start unsafe head validation failed"
         );
-        return Err(error);
+        return Err(error.into());
     }
     let prompt =
         format!("Start sequencer on {} ({}) at {}? [y/N] ", node.name, node.cl_rpc, unsafe_head);
@@ -162,9 +165,7 @@ async fn run_start(
         unsafe_head_source = %unsafe_head_source.as_str(),
         "calling admin_startSequencer"
     );
-    start_sequencer(&node.cl_rpc, unsafe_head)
-        .await
-        .with_context(|| format!("starting sequencer on {} via {}", node.name, node.cl_rpc))?;
+    start_sequencer(&node.cl_rpc, unsafe_head).await?;
     wait_for_expected_state(node, SequencerAction::Start, Some(unsafe_head)).await?;
     info!(
         network = %config.name,
@@ -179,7 +180,8 @@ async fn run_start(
     print_action(
         &SequencerActionJson::start(&config.name, node, unsafe_head, unsafe_head_source, message),
         args.json,
-    )
+    )?;
+    Ok(())
 }
 
 async fn run_stop(
@@ -193,7 +195,8 @@ async fn run_stop(
         "running sequencer stop command"
     );
     let snapshot = ConductorControl::snapshot(source).await?;
-    let node = find_node(&snapshot.nodes, &args.node, "sequencer")?;
+    let node =
+        find_conductor_node(&snapshot.nodes, &args.node).map_err(SequencerCommandError::from)?;
     let status = snapshot_node_status(&snapshot, &node.name);
     debug!(
         node = %node.name,
@@ -209,7 +212,7 @@ async fn run_stop(
             cl_rpc = %node.cl_rpc,
             "sequencer stop preflight failed"
         );
-        return Err(error);
+        return Err(error.into());
     }
     let prompt = format!("Stop sequencer on {} ({})? [y/N] ", node.name, node.cl_rpc);
     if !confirm_or_abort(&prompt, args.yes)? {
@@ -223,11 +226,9 @@ async fn run_stop(
         cl_rpc = %node.cl_rpc,
         "calling admin_stopSequencer"
     );
-    let unsafe_head = stop_sequencer(&node.cl_rpc)
-        .await
-        .with_context(|| format!("stopping sequencer on {} via {}", node.name, node.cl_rpc))?;
-    // A zero head means the sequencer stopped but the captured head is
-    // unavailable; treat it as absent rather than a valid restart point.
+    let unsafe_head = stop_sequencer(&node.cl_rpc).await?;
+    // A zero head means the sequencer stopped but the captured head is unavailable,
+    // so do not surface it as a valid restart point.
     let captured_head = (unsafe_head != B256::ZERO).then_some(unsafe_head);
     wait_for_expected_state(node, SequencerAction::Stop, captured_head).await?;
     info!(
@@ -242,25 +243,26 @@ async fn run_stop(
         || format!("sequencer stopped on {} (unsafe head unavailable)", node.name),
         |unsafe_head| format!("sequencer stopped on {} at {unsafe_head}", node.name),
     );
-    print_action(&SequencerActionJson::stop(&config.name, node, captured_head, message), args.json)
+    print_action(
+        &SequencerActionJson::stop(&config.name, node, captured_head, message),
+        args.json,
+    )?;
+    Ok(())
 }
 
 fn resolve_start_hash(
     snapshot: &ConductorClusterSnapshot,
     node: &ConductorNodeConfig,
     unsafe_head: Option<&str>,
-) -> Result<(B256, UnsafeHeadSource)> {
+) -> Result<(B256, UnsafeHeadSource), SequencerCommandError> {
     match unsafe_head {
         Some(unsafe_head) => Ok((parse_unsafe_head(unsafe_head)?, UnsafeHeadSource::Explicit)),
         None => {
             let hash = snapshot_node_status(snapshot, &node.name)
                 .and_then(|status| status.unsafe_l2_hash)
                 .filter(|hash| *hash != B256::ZERO)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "could not determine unsafe head for {}; pass an explicit 32-byte hash or restore CL reachability",
-                        node.name
-                    )
+                .ok_or_else(|| SequencerCommandError::MissingUnsafeHead {
+                    node: node.name.clone(),
                 })?;
             Ok((hash, UnsafeHeadSource::Observed))
         }
@@ -274,27 +276,13 @@ fn snapshot_node_status<'a>(
     snapshot.statuses.iter().find(|status| status.name == name)
 }
 
-/// Outcome of a successful conductor-leader preflight check.
-///
-/// Distinguishes a positively confirmed leader from the case where no node
-/// reports leadership yet, so callers can decide whether to warn about deferred
-/// validation without re-deriving leadership state from the snapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LeaderCheckOutcome {
-    /// A node reported `is_leader == Some(true)` and it matches the target.
-    ConfirmedLeader,
-    /// No node reports leadership and the target is not a known follower, so the
-    /// final leader check is deferred to the server-side RPC.
-    LeadershipUnknown,
-}
-
 fn ensure_start_allowed(
     snapshot: &ConductorClusterSnapshot,
     node: &ConductorNodeConfig,
     status: Option<&ConductorNodeStatus>,
-) -> Result<LeaderCheckOutcome> {
+) -> Result<LeadershipStatus, SequencerCommandError> {
     if status.and_then(|status| status.sequencer_active) == Some(true) {
-        bail!("sequencer already active on {}; stop it before starting again", node.name,);
+        return Err(SequencerCommandError::AlreadyActive { node: node.name.clone() });
     }
     ensure_leader_target(snapshot, node, status, SequencerAction::Start)
 }
@@ -302,9 +290,9 @@ fn ensure_start_allowed(
 fn ensure_stop_allowed(
     node: &ConductorNodeConfig,
     status: Option<&ConductorNodeStatus>,
-) -> Result<()> {
+) -> Result<(), SequencerCommandError> {
     if status.and_then(|status| status.sequencer_active) == Some(false) {
-        bail!("sequencer already stopped on {}", node.name);
+        return Err(SequencerCommandError::AlreadyStopped { node: node.name.clone() });
     }
     Ok(())
 }
@@ -314,7 +302,7 @@ fn ensure_leader_target(
     node: &ConductorNodeConfig,
     status: Option<&ConductorNodeStatus>,
     action: SequencerAction,
-) -> Result<LeaderCheckOutcome> {
+) -> Result<LeadershipStatus, SequencerCommandError> {
     let leader = snapshot
         .statuses
         .iter()
@@ -322,29 +310,28 @@ fn ensure_leader_target(
         .map(|status| status.name.as_str());
     if let Some(leader) = leader {
         if leader == node.name {
-            return Ok(LeaderCheckOutcome::ConfirmedLeader);
+            return Ok(LeadershipStatus::ConfirmedLeader);
         }
-        bail!(
-            "Node is not the conductor leader. Current leader: {leader}. `basectl sequencer {}` must target the leader instead of {}.",
-            action.infinitive(),
-            node.name,
-        );
+        return Err(SequencerCommandError::NotCurrentLeader {
+            requested_node: node.name.clone(),
+            current_leader: leader.to_string(),
+            action: action.infinitive().to_string(),
+        });
     }
     if status.and_then(|status| status.is_leader) == Some(false) {
-        bail!(
-            "Node is not the conductor leader. `basectl sequencer {}` must target the current leader instead of {}.",
-            action.infinitive(),
-            node.name,
-        );
+        return Err(SequencerCommandError::NotLeader {
+            requested_node: node.name.clone(),
+            action: action.infinitive().to_string(),
+        });
     }
-    Ok(LeaderCheckOutcome::LeadershipUnknown)
+    Ok(LeadershipStatus::Unknown)
 }
 
 fn ensure_start_request_matches_observed_head(
     status: Option<&ConductorNodeStatus>,
     unsafe_head: B256,
     unsafe_head_source: UnsafeHeadSource,
-) -> Result<()> {
+) -> Result<(), SequencerCommandError> {
     if !matches!(unsafe_head_source, UnsafeHeadSource::Explicit) {
         return Ok(());
     }
@@ -353,32 +340,37 @@ fn ensure_start_request_matches_observed_head(
         return Ok(());
     };
     if observed_head == B256::ZERO {
-        bail!("no prestate: engine unsafe head is uninitialized, cannot safely start sequencer");
+        return Err(SequencerCommandError::UninitializedUnsafeHead);
     }
     if observed_head != unsafe_head {
-        bail!(
-            "block hash mismatch: engine unsafe head is {observed_head}, caller requested {unsafe_head}"
-        );
+        return Err(SequencerCommandError::UnsafeHeadMismatch {
+            observed_hash: observed_head,
+            requested_hash: unsafe_head,
+        });
     }
     Ok(())
 }
 
-fn parse_unsafe_head(raw: &str) -> Result<B256> {
+fn parse_unsafe_head(raw: &str) -> Result<B256, SequencerCommandError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        bail!("unsafe head hash cannot be empty");
+        return Err(SequencerCommandError::EmptyUnsafeHead);
     }
 
-    let hash = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
-        B256::from_str(trimmed)
+    let normalized = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+        trimmed.to_string()
     } else if trimmed.len() == 64 && trimmed.chars().all(|char| char.is_ascii_hexdigit()) {
-        B256::from_str(&format!("0x{trimmed}"))
+        format!("0x{trimmed}")
     } else {
-        B256::from_str(trimmed)
-    }
-    .with_context(|| format!("parsing unsafe head hash `{trimmed}`"))?;
+        trimmed.to_string()
+    };
+    let hash =
+        B256::from_str(&normalized).map_err(|error| SequencerCommandError::InvalidUnsafeHead {
+            raw: trimmed.to_string(),
+            message: error.to_string(),
+        })?;
     if hash == B256::ZERO {
-        bail!("unsafe head hash must not be zero");
+        return Err(SequencerCommandError::ZeroUnsafeHead { requested_hash: hash });
     }
     Ok(hash)
 }
@@ -387,7 +379,7 @@ async fn wait_for_expected_state(
     node: &ConductorNodeConfig,
     action: SequencerAction,
     unsafe_head: Option<B256>,
-) -> Result<()> {
+) -> Result<(), SequencerCommandError> {
     wait_for_expected_state_with_fetch(
         node,
         action,
@@ -406,7 +398,7 @@ async fn wait_for_expected_state_with_fetch<F, Fut>(
     observation_timeout: Duration,
     poll_interval: Duration,
     mut fetch: F,
-) -> Result<()>
+) -> Result<(), SequencerCommandError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<bool>>,
@@ -436,7 +428,7 @@ where
         match timeout(remaining, fetch()).await {
             Ok(Ok(is_active)) => {
                 last_observed = Some(is_active);
-                last_error.take();
+                let _ = last_error.take();
                 let next_matching_observations =
                     if is_active == expected_active { matching_observations + 1 } else { 0 };
                 debug!(
@@ -501,13 +493,7 @@ where
         last_error = ?last_error,
         "sequencer state did not converge after successful RPC"
     );
-    bail!(action.timeout_message(
-        node,
-        unsafe_head,
-        observation_timeout,
-        last_observed,
-        last_error.as_deref(),
-    ))
+    Err(action.timeout_error(node, unsafe_head, observation_timeout, last_observed, last_error))
 }
 
 fn print_status_pretty(status: &SequencerStatusJson) -> Result<()> {
@@ -566,35 +552,24 @@ impl SequencerAction {
         }
     }
 
-    fn timeout_message(
+    fn timeout_error(
         self,
         node: &ConductorNodeConfig,
         unsafe_head: Option<B256>,
         observation_timeout: Duration,
         last_observed: Option<bool>,
-        last_error: Option<&str>,
-    ) -> String {
-        let unsafe_head_suffix =
-            unsafe_head.map_or_else(String::new, |unsafe_head| format!(" at {unsafe_head}"));
-        let observed_suffix = match (last_observed, last_error) {
-            (Some(observed), Some(error)) => {
-                format!(" (last observed `sequencer_active={observed}`; last poll error: {error})")
-            }
-            (Some(observed), None) => format!(" (last observed `sequencer_active={observed}`)"),
-            (None, Some(error)) => format!(" (last poll error: {error})"),
-            (None, None) => String::new(),
-        };
-
-        format!(
-            "{} RPC succeeded on {} ({}){}, but `sequencer_active={}` was not observed within {:?}{}",
-            self.infinitive(),
-            node.name,
-            node.cl_rpc,
-            unsafe_head_suffix,
-            self.expected_active(),
-            observation_timeout,
-            observed_suffix,
-        )
+        last_error: Option<String>,
+    ) -> SequencerCommandError {
+        SequencerCommandError::StateConvergenceTimeout(Box::new(StateConvergenceTimeoutError {
+            action: self.infinitive(),
+            node: node.name.clone(),
+            cl_rpc: node.cl_rpc.to_string(),
+            unsafe_head,
+            expected_active: self.expected_active(),
+            timeout: observation_timeout,
+            last_observed,
+            last_error,
+        }))
     }
 }
 
@@ -685,9 +660,10 @@ impl SequencerStatusJson {
         network: &str,
         snapshot: &ConductorClusterSnapshot,
         selected_node: Option<&str>,
-    ) -> Result<Self> {
+    ) -> Result<Self, SequencerCommandError> {
         if let Some(selected_node) = selected_node {
-            find_node(&snapshot.nodes, selected_node, "sequencer")?;
+            find_conductor_node(&snapshot.nodes, selected_node)
+                .map_err(SequencerCommandError::from)?;
         }
 
         let nodes = snapshot
@@ -823,18 +799,20 @@ mod tests {
     use alloy_primitives::B256;
     use basectl_cli::{
         ConductorClusterSnapshot, ConductorNodeConfig, ConductorNodeStatus,
-        SEQUENCER_ACTIVE_RPC_TIMEOUT,
+        SEQUENCER_ACTIVE_RPC_TIMEOUT, SequencerCommandError,
     };
     use serde_json::json;
     use tokio::time::{Duration, Instant};
     use url::Url;
 
     use super::{
-        LeaderCheckOutcome, OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS,
+        LeadershipStatus, OBSERVATION_TIMEOUT, POLL_INTERVAL, REQUIRED_OBSERVATIONS,
         SequencerAction, SequencerActionJson, SequencerStatusJson, UnsafeHeadSource,
         ensure_leader_target, ensure_start_allowed, ensure_start_request_matches_observed_head,
-        ensure_stop_allowed, find_node, parse_unsafe_head, wait_for_expected_state_with_fetch,
+        ensure_stop_allowed, parse_unsafe_head, resolve_start_hash,
+        wait_for_expected_state_with_fetch,
     };
+    use crate::helpers::find_conductor_node;
 
     fn node(name: &str) -> ConductorNodeConfig {
         ConductorNodeConfig {
@@ -892,7 +870,12 @@ mod tests {
             parse_unsafe_head("0x0000000000000000000000000000000000000000000000000000000000000000")
                 .expect_err("zero hash should error");
 
-        assert!(err.to_string().contains("must not be zero"));
+        assert!(matches!(
+            err,
+            SequencerCommandError::ZeroUnsafeHead {
+                requested_hash,
+            } if requested_hash == B256::ZERO
+        ));
     }
 
     #[test]
@@ -904,10 +887,50 @@ mod tests {
         )
         .expect_err("mismatched explicit hash should error");
 
-        assert_eq!(
-            err.to_string(),
-            "block hash mismatch: engine unsafe head is 0x0000000000000000000000000000000000000000000000000000000000000001, caller requested 0x0000000000000000000000000000000000000000000000000000000000000009"
-        );
+        assert!(matches!(
+            err,
+            SequencerCommandError::UnsafeHeadMismatch {
+                observed_hash,
+                requested_hash,
+            } if observed_hash == B256::with_last_byte(1)
+                && requested_hash == B256::with_last_byte(9)
+        ));
+    }
+
+    #[test]
+    fn explicit_start_hash_rejects_uninitialized_observed_head() {
+        let mut observed = status("op-conductor-0", true, false);
+        observed.unsafe_l2_hash = Some(B256::ZERO);
+
+        let err = ensure_start_request_matches_observed_head(
+            Some(&observed),
+            B256::with_last_byte(9),
+            UnsafeHeadSource::Explicit,
+        )
+        .expect_err("zero observed hash should error");
+
+        assert!(matches!(err, SequencerCommandError::UninitializedUnsafeHead));
+    }
+
+    #[test]
+    fn resolve_start_hash_errors_when_observed_head_is_missing() {
+        let mut observed = status("op-conductor-0", true, false);
+        observed.unsafe_l2_hash = None;
+        let snapshot = ConductorClusterSnapshot {
+            nodes: vec![node("op-conductor-0")],
+            statuses: vec![observed],
+            membership: None,
+            membership_error: None,
+            discovered: false,
+        };
+
+        let err = resolve_start_hash(&snapshot, &snapshot.nodes[0], None)
+            .expect_err("missing observed hash should error");
+
+        assert!(matches!(
+            err,
+            SequencerCommandError::MissingUnsafeHead { node } if node == "op-conductor-0"
+        ));
     }
 
     #[test]
@@ -923,10 +946,10 @@ mod tests {
         let err = ensure_start_allowed(&snapshot, &snapshot.nodes[0], Some(&snapshot.statuses[0]))
             .expect_err("active node should reject start");
 
-        assert_eq!(
-            err.to_string(),
-            "sequencer already active on op-conductor-0; stop it before starting again"
-        );
+        assert!(matches!(
+            err,
+            SequencerCommandError::AlreadyActive { node } if node == "op-conductor-0"
+        ));
     }
 
     #[test]
@@ -950,10 +973,16 @@ mod tests {
         )
         .expect_err("follower target should error");
 
-        assert_eq!(
-            err.to_string(),
-            "Node is not the conductor leader. Current leader: op-conductor-0. `basectl sequencer start` must target the leader instead of op-conductor-1."
-        );
+        assert!(matches!(
+            err,
+            SequencerCommandError::NotCurrentLeader {
+                requested_node,
+                current_leader,
+                action,
+            } if requested_node == "op-conductor-1"
+                && current_leader == "op-conductor-0"
+                && action == "start"
+        ));
     }
 
     #[test]
@@ -969,43 +998,35 @@ mod tests {
         let err = ensure_start_allowed(&snapshot, &snapshot.nodes[1], None)
             .expect_err("target should still reject when another leader is known");
 
-        assert_eq!(
-            err.to_string(),
-            "Node is not the conductor leader. Current leader: op-conductor-0. `basectl sequencer start` must target the leader instead of op-conductor-1."
-        );
+        assert!(matches!(
+            err,
+            SequencerCommandError::NotCurrentLeader {
+                requested_node,
+                current_leader,
+                action,
+            } if requested_node == "op-conductor-1"
+                && current_leader == "op-conductor-0"
+                && action == "start"
+        ));
     }
 
     #[test]
-    fn start_confirms_leader_when_target_reports_leadership() {
+    fn start_allows_unknown_leadership_with_status_signal() {
         let snapshot = ConductorClusterSnapshot {
             nodes: vec![node("op-conductor-0")],
-            statuses: vec![status("op-conductor-0", true, false)],
+            statuses: vec![status("op-conductor-0", false, false)],
             membership: None,
             membership_error: None,
             discovered: false,
         };
+        let mut unknown_status = snapshot.statuses[0].clone();
+        unknown_status.is_leader = None;
 
-        let outcome =
-            ensure_start_allowed(&snapshot, &snapshot.nodes[0], Some(&snapshot.statuses[0]))
-                .expect("leader target should be allowed");
+        let leadership_status =
+            ensure_start_allowed(&snapshot, &snapshot.nodes[0], Some(&unknown_status))
+                .expect("unknown leadership should defer to server-side RPC");
 
-        assert_eq!(outcome, LeaderCheckOutcome::ConfirmedLeader);
-    }
-
-    #[test]
-    fn start_reports_unknown_leadership_when_no_node_claims_leader() {
-        let snapshot = ConductorClusterSnapshot {
-            nodes: vec![node("op-conductor-0")],
-            statuses: Vec::new(),
-            membership: None,
-            membership_error: None,
-            discovered: false,
-        };
-
-        let outcome = ensure_start_allowed(&snapshot, &snapshot.nodes[0], None)
-            .expect("unknown leadership should defer to the server-side RPC");
-
-        assert_eq!(outcome, LeaderCheckOutcome::LeadershipUnknown);
+        assert_eq!(leadership_status, LeadershipStatus::Unknown);
     }
 
     #[test]
@@ -1024,7 +1045,10 @@ mod tests {
         )
         .expect_err("inactive node should reject stop");
 
-        assert_eq!(err.to_string(), "sequencer already stopped on op-conductor-0");
+        assert!(matches!(
+            err,
+            SequencerCommandError::AlreadyStopped { node } if node == "op-conductor-0"
+        ));
     }
 
     #[tokio::test]
@@ -1040,15 +1064,25 @@ mod tests {
             Duration::from_millis(5),
             || async {
                 tokio::time::sleep(Duration::from_millis(200)).await;
-                Ok(false)
+                Ok::<bool, anyhow::Error>(false)
             },
         )
         .await
         .expect_err("hung fetch should time out");
 
         assert!(start.elapsed() < Duration::from_millis(120));
-        assert!(err.to_string().contains("timed out waiting for admin_sequencerActive"));
-        assert!(err.to_string().contains("within 40ms"));
+        assert!(matches!(
+            err,
+            SequencerCommandError::StateConvergenceTimeout(error)
+                if error.action == "start"
+                && error.node == "op-conductor-0"
+                && error.unsafe_head == Some(B256::with_last_byte(1))
+                && error.expected_active
+                && error.timeout == Duration::from_millis(40)
+                && error.last_observed.is_none()
+                && error.last_error.as_deref()
+                    == Some("timed out waiting for admin_sequencerActive")
+        ));
     }
 
     #[test]
@@ -1086,6 +1120,28 @@ mod tests {
                 "unsafeHead": "0x0000000000000000000000000000000000000000000000000000000000000009",
                 "unsafeHeadSource": "observed",
                 "message": "sequencer started on op-conductor-0 at 0x09",
+            })
+        );
+    }
+
+    #[test]
+    fn sequencer_stop_json_omits_missing_unsafe_head() {
+        let value = serde_json::to_value(SequencerActionJson::stop(
+            "devnet",
+            &node("op-conductor-0"),
+            None,
+            "sequencer stopped on op-conductor-0 (unsafe head unavailable)".to_string(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            value,
+            json!({
+                "network": "devnet",
+                "action": "stop",
+                "node": "op-conductor-0",
+                "clRpc": "http://127.0.0.1:7545/",
+                "message": "sequencer stopped on op-conductor-0 (unsafe head unavailable)",
             })
         );
     }
@@ -1138,10 +1194,17 @@ mod tests {
     fn find_node_reports_missing_name() {
         let nodes = vec![node("op-conductor-0")];
 
-        let err = find_node(&nodes, "op-conductor-1", "sequencer")
+        let err = find_conductor_node(&nodes, "op-conductor-1")
+            .map_err(SequencerCommandError::from)
             .expect_err("missing node should error");
 
-        assert!(err.to_string().contains("op-conductor-1"));
-        assert!(err.to_string().contains("op-conductor-0"));
+        assert!(matches!(
+            err,
+            SequencerCommandError::MissingNode {
+                requested_node,
+                available_nodes,
+            } if requested_node == "op-conductor-1"
+                && available_nodes == vec!["op-conductor-0".to_string()]
+        ));
     }
 }

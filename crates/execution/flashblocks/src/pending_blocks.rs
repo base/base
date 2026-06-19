@@ -893,7 +893,7 @@ mod tests {
                 withdrawals_root: B256::ZERO,
                 blob_gas_used: None,
             },
-            metadata: Metadata { block_number },
+            metadata: Metadata::new(block_number),
         }
     }
 

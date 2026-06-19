@@ -3690,7 +3690,6 @@ dependencies = [
  "auto_impl",
  "base-common-genesis",
  "revm",
- "serde",
  "spin 0.10.0",
 ]
 
@@ -3739,6 +3738,7 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-flz",
+ "base-common-genesis",
  "base-common-precompiles",
  "base-metrics",
  "metrics",
@@ -3791,6 +3791,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "spin 0.10.0",
  "thiserror 2.0.18",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
@@ -3822,6 +3823,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base-common-chains",
+ "base-common-genesis",
  "base-precompile-macros",
  "base-precompile-storage",
  "criterion",
@@ -4379,6 +4381,7 @@ dependencies = [
  "alloy-primitives",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-genesis",
  "base-common-rpc-types",
  "derive_more 2.1.1",
  "reth-chainspec",
@@ -4462,6 +4465,7 @@ dependencies = [
  "alloy-trie",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-genesis",
  "base-execution-chainspec",
  "base-node-core",
  "reth-chainspec",
@@ -4512,6 +4516,7 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
+ "base-common-genesis",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
  "base-execution-consensus",
@@ -4668,6 +4673,7 @@ dependencies = [
  "base-metrics",
  "bincode 2.0.1",
  "bytes",
+ "criterion",
  "derive_more 2.1.1",
  "eyre",
  "metrics",
@@ -5451,6 +5457,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-submission"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.0.5",
+ "alloy-primitives",
+ "alloy-rpc-types-eth 2.0.5",
+ "base-proof-contracts",
+ "base-tx-manager",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "base-proof-succinct-build-utils"
 version = "0.0.0"
 dependencies = [
@@ -5880,16 +5899,24 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "async-trait",
+ "backoff",
  "base-l1-head",
  "base-proof-succinct-client-utils",
+ "base-proof-succinct-elfs",
  "base-proof-succinct-ethereum-host-utils",
  "base-proof-succinct-host-utils",
+ "base-proof-succinct-proof-utils",
  "base-proof-zk-host",
  "base-prover-service-protocol",
  "bincode 2.0.1",
+ "serde",
+ "serde_json",
+ "sp1-cluster-common",
+ "sp1-prover-types",
  "sp1-sdk",
  "thiserror 2.0.18",
  "tokio",
+ "tonic 0.14.6",
  "tracing",
 ]
 
@@ -5897,10 +5924,16 @@ dependencies = [
 name = "base-proof-zk-host"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "async-trait",
+ "base-proof-primitives",
+ "base-proof-worker",
+ "base-prover-service-client",
  "base-prover-service-protocol",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -5943,6 +5976,7 @@ dependencies = [
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
+ "base-proof-submission",
  "base-prover-service-client",
  "base-prover-service-protocol",
  "base-retry",
@@ -6434,6 +6468,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-upgrade-signal"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-types-eth 2.0.5",
+ "alloy-sol-types",
+ "base-common-genesis",
+ "base-metrics",
+ "clap",
+ "futures",
+ "metrics",
+ "rstest",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-witness-diff"
 version = "0.0.0"
 dependencies = [
@@ -6653,6 +6708,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "toml 1.1.2+spec-1.1.0",

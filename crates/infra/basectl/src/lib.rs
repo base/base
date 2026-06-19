@@ -33,6 +33,12 @@ pub use doctor::{
     DoctorThresholds, LayerEndpointSanity, RethLimitSection, RethLimits, RethToml,
 };
 
+mod errors;
+pub use errors::{
+    BlockRefParseError, ConductorCommandError, DoctorArgsError, NodeLookupError, P2pCommandError,
+    P2pTargetError, SequencerCommandError, StateConvergenceTimeoutError, SyncStatusCommandError,
+};
+
 mod rpc;
 pub use rpc::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, ClInfoReport,

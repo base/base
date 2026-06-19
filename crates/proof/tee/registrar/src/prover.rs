@@ -4,7 +4,6 @@ use std::{collections::HashMap, sync::Mutex, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_signer::utils::public_key_to_address;
-use async_trait::async_trait;
 use base_proof_primitives::EnclaveApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use k256::ecdsa::VerifyingKey;
@@ -81,7 +80,6 @@ impl ProverClient {
     }
 }
 
-#[async_trait]
 impl SignerClient for ProverClient {
     async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
         debug!(endpoint = %endpoint, "fetching signer public keys");

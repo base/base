@@ -44,9 +44,9 @@ pub async fn start_sequencer(cl_rpc: &Url, unsafe_head: B256) -> Result<()> {
 /// Returns the unsafe head hash captured at the moment the sequencer stopped.
 /// A returned [`B256::ZERO`] means the sequencer was stopped but the captured
 /// head is unavailable; it is not a valid restart point and must not be reused.
-/// Because the RPC has already taken effect by the time this returns, an
-/// unexpected zero head is surfaced as a warning rather than an error so callers
-/// do not treat a successful stop as a failure and retry it.
+/// Because the RPC has already taken effect by the time this returns, surface
+/// the missing head as a warning rather than an error so callers do not retry a
+/// successful stop.
 pub async fn stop_sequencer(cl_rpc: &Url) -> Result<B256> {
     // `admin_stopSequencer` may defer its response until the seal pipeline
     // finishes and the final unsafe head is known.

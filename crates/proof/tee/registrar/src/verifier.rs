@@ -47,8 +47,8 @@ impl NitroVerifierClient for NitroVerifierContractClient {
     }
 
     async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool> {
-        self.inner.is_revoked(cert_hash).await.map_err(|e| RegistrarError::NitroVerifierCall {
-            context: format!("revokedCerts({cert_hash:#x})"),
+        self.inner.is_revoked(cert_hash).await.map_err(|e| RegistrarError::ContractCall {
+            context: format!("nitro_verifier.revokedCerts({cert_hash:#x})"),
             source: Box::new(e),
         })
     }

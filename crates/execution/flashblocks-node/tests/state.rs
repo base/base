@@ -752,7 +752,7 @@ async fn test_progress_canonical_blocks_without_flashblocks() {
 
     let block_one = test.node.latest_block();
     assert_eq!(block_one.number, 1);
-    assert_eq!(block_one.transaction_count(), 2);
+    assert_eq!(block_one.transaction_count(), 1);
     assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 
     test.new_canonical_block(vec![
@@ -763,7 +763,7 @@ async fn test_progress_canonical_blocks_without_flashblocks() {
 
     let block_two = test.node.latest_block();
     assert_eq!(block_two.number, 2);
-    assert_eq!(block_two.transaction_count(), 3);
+    assert_eq!(block_two.transaction_count(), 2);
     assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 }
 

@@ -18,5 +18,5 @@ pub use genesis::{
 mod contracts;
 pub use contracts::{
     AccessListContract, ContractFactory, DoubleCounter, Logic, Logic2, Minimal7702Account,
-    MockERC20, Proxy, SimpleStorage, TransparentUpgradeableProxy,
+    MockERC20, ParentBlockhashGuard, Proxy, SimpleStorage, TransparentUpgradeableProxy,
 };

@@ -23,6 +23,7 @@ alloy-hardforks.workspace = true
 alloy-primitives.workspace = true
 
 # Misc
+spin.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 derive_more = { workspace = true, features = ["display", "from", "try_from"] }

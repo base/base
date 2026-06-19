@@ -22,10 +22,12 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, CertManager, DEFAULT_CRL_FETCH_TIMEOUT_SECS, DriverConfig,
-    NitroVerifierContractClient, ProverClient, RegistrarError, RegistrarMetrics,
-    RegistrationDriver, RegistryContractClient, Result, SignerManager, SignerManagerConfig,
+    AwsTargetGroupDiscovery, CertManager, DriverConfig, NitroVerifierContractClient, ProverClient,
+    RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient, Result,
+    SignerManager, SignerManagerConfig,
 };
+
+const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Configuration needed to run the registrar service.
 pub struct RegistrarConfig {
@@ -197,12 +199,8 @@ impl RegistrarConfig {
             .region(aws_config::Region::new(self.aws_region))
             .load()
             .await;
-        let discovery = AwsTargetGroupDiscovery::new(
-            aws_sdk_elasticloadbalancingv2::Client::new(&aws_config),
-            aws_sdk_ec2::Client::new(&aws_config),
-            self.target_group_arn,
-            self.prover_port,
-        );
+        let discovery =
+            AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arn, self.prover_port);
 
         let registry =
             RegistryContractClient::new(self.tee_prover_registry_address, self.l1_rpc_url.clone());
@@ -224,7 +222,7 @@ impl RegistrarConfig {
         ));
         let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             Some(CertManager::new(
-                Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS),
+                CRL_FETCH_TIMEOUT,
                 Box::new(NitroVerifierContractClient::new(nitro_verifier_address, self.l1_rpc_url)),
                 tx_manager,
             )?)

@@ -5,13 +5,7 @@ mod cert_manager;
 pub use cert_manager::CertManager;
 
 mod crl;
-pub use crl::{
-    CertCrlInfo, CrlError, DEFAULT_CRL_FETCH_TIMEOUT_SECS, RevokedCertInfo, build_crl_http_client,
-    check_chain_against_crls,
-};
-
-mod deregistration_manager;
-pub use deregistration_manager::DeregistrationManager;
+pub use crl::{CertCrlInfo, CrlError, check_chain_against_crls};
 
 mod discovery;
 pub use discovery::AwsTargetGroupDiscovery;
@@ -42,8 +36,8 @@ pub use registry::{RegistryClient, RegistryContractClient};
 
 mod signer_manager;
 pub use signer_manager::{
-    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration, ProofTaskOutcome,
-    ProofTaskSet, SignerManager, SignerManagerConfig,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration, ProofTaskSet,
+    SignerManager, SignerManagerConfig,
 };
 
 mod service;

@@ -5,8 +5,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use async_trait::async_trait;
-use aws_sdk_ec2::Client as Ec2Client;
+use aws_sdk_ec2::{Client as Ec2Client, types::Reservation};
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
 use tracing::{debug, warn};
 use url::Url;
@@ -28,85 +27,57 @@ pub struct AwsTargetGroupDiscovery {
 }
 
 impl AwsTargetGroupDiscovery {
-    /// Creates a new `AwsTargetGroupDiscovery` with the given AWS clients.
-    pub const fn new(
-        elb_client: ElbClient,
-        ec2_client: Ec2Client,
-        target_group_arn: String,
-        port: u16,
-    ) -> Self {
+    /// Creates a new `AwsTargetGroupDiscovery` with the given AWS config.
+    pub fn new(aws_config: &aws_config::SdkConfig, target_group_arn: String, port: u16) -> Self {
+        let elb_client = ElbClient::new(aws_config);
+        let ec2_client = Ec2Client::new(aws_config);
         Self { elb_client, ec2_client, target_group_arn, port }
     }
 
-    /// Assembles [`ProverInstance`] objects from ELB target data and EC2 instance
-    /// data.
-    ///
-    /// Returns **all** discovered instances regardless of health status.
-    /// The caller (registration driver) decides which instances to act on based on
-    /// [`InstanceHealthStatus::should_register`].
-    ///
-    /// Targets with no matching entry in `instance_data` are silently dropped
-    /// (this can happen if an instance was terminated between the ELB and EC2
-    /// calls).
-    ///
-    /// This function is a pure transformation — no AWS SDK calls are made — which
-    /// makes it straightforwardly unit-testable without SDK mocks.
+    /// Builds prover instances from EC2 reservations and removes matched IDs from `health_map`.
     pub fn assemble_prover_instances(
-        targets: &[(String, InstanceHealthStatus)],
-        instance_data: &HashMap<String, (String, Option<SystemTime>)>,
+        reservations: &[Reservation],
+        health_map: &mut HashMap<String, InstanceHealthStatus>,
         port: u16,
-    ) -> Vec<ProverInstance> {
-        targets
-            .iter()
-            .filter_map(|(instance_id, health_status)| {
-                let (private_ip, launch_time) = instance_data.get(instance_id)?;
-                let raw = format!("http://{private_ip}:{port}");
-                let endpoint = match Url::parse(&raw) {
-                    Ok(url) => url,
-                    Err(e) => {
-                        warn!(
-                            instance_id = %instance_id,
-                            url = %raw,
-                            error = %e,
-                            "failed to parse prover endpoint URL, skipping"
-                        );
-                        return None;
-                    }
-                };
-                debug!(
-                    instance_id = %instance_id,
-                    endpoint = %endpoint,
-                    health = ?health_status,
-                    launch_time = ?launch_time,
-                    "discovered AWS prover instance"
-                );
-                Some(ProverInstance {
-                    instance_id: instance_id.clone(),
-                    endpoint,
-                    health_status: *health_status,
-                    launch_time: *launch_time,
-                })
-            })
-            .collect()
-    }
-
-    /// Returns ELB target IDs that were not resolved to enough EC2 data to
-    /// build a prover endpoint.
-    fn missing_target_ids<'a>(
-        targets: &'a [(String, InstanceHealthStatus)],
-        instance_data: &HashMap<String, (String, Option<SystemTime>)>,
-    ) -> Vec<&'a str> {
-        targets
-            .iter()
-            .filter_map(|(id, _)| (!instance_data.contains_key(id)).then_some(id.as_str()))
-            .collect()
+    ) -> Result<Vec<ProverInstance>> {
+        let mut instances = Vec::with_capacity(health_map.len());
+        for instance in reservations.iter().flat_map(|r| r.instances()) {
+            let Some(instance_id) = instance.instance_id() else {
+                continue;
+            };
+            let Some(private_ip) = instance.private_ip_address() else {
+                warn!(instance_id = %instance_id, "EC2 instance present but missing private IP");
+                continue;
+            };
+            let Some(health_status) = health_map.remove(instance_id) else {
+                continue;
+            };
+            let launch_time = instance
+                .launch_time()
+                .and_then(|dt| u64::try_from(dt.secs()).ok())
+                .map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
+            let endpoint = Url::parse(&format!("http://{private_ip}:{port}"))
+                .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+            debug!(
+                instance_id = %instance_id,
+                endpoint = %endpoint,
+                health = ?health_status,
+                launch_time = ?launch_time,
+                "discovered AWS prover instance"
+            );
+            instances.push(ProverInstance {
+                instance_id: instance_id.to_string(),
+                endpoint,
+                health_status,
+                launch_time,
+            });
+        }
+        Ok(instances)
     }
 }
 
-#[async_trait]
 impl InstanceDiscovery for AwsTargetGroupDiscovery {
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
-        // Query ELB for current target health.
         let elb_resp = self
             .elb_client
             .describe_target_health()
@@ -115,9 +86,6 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             .await
             .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
 
-        // Extract (instance_id, health_status) pairs from the ELB response.
-        // Validates that targets are instance-type (id starts with "i-") and
-        // deduplicates instances registered on multiple ports (first-seen wins).
         let mut health_map: HashMap<String, InstanceHealthStatus> = HashMap::new();
         for desc in elb_resp.target_health_descriptions() {
             let Some(instance_id) = desc.target().and_then(|t| t.id()) else {
@@ -138,175 +106,142 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
                 .map(|s| InstanceHealthStatus::from_aws_state(s.as_str()))
                 .unwrap_or(InstanceHealthStatus::Unhealthy);
 
-            if let std::collections::hash_map::Entry::Vacant(e) =
-                health_map.entry(instance_id.to_string())
-            {
-                e.insert(health_status);
-            } else {
-                debug!(
-                    instance_id = %instance_id,
-                    "instance registered on multiple ports; keeping first-seen health status"
-                );
-            }
+            health_map.entry(instance_id.to_string()).or_insert(health_status);
         }
 
-        let mut targets: Vec<(String, InstanceHealthStatus)> = health_map.into_iter().collect();
-        targets.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-        if targets.is_empty() {
+        if health_map.is_empty() {
             return Ok(vec![]);
         }
 
-        // Collect all instance IDs for EC2 lookup (not just registerable ones),
-        // so that discover_instances returns the full set.
-        let all_ids: Vec<String> = targets.iter().map(|(id, _)| id.clone()).collect();
-
-        // Resolve private IPs for all instances in a single EC2 call.
         let ec2_resp = self
             .ec2_client
             .describe_instances()
-            .set_instance_ids(Some(all_ids))
+            .set_instance_ids(Some(health_map.keys().cloned().collect()))
             .send()
             .await
             .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
 
-        let instance_data: HashMap<String, (String, Option<SystemTime>)> = ec2_resp
-            .reservations()
-            .iter()
-            .flat_map(|r| r.instances())
-            .filter_map(|i| {
-                let id = i.instance_id()?.to_string();
-                let ip = i.private_ip_address()?.to_string();
-                let launch_time = i
-                    .launch_time()
-                    .and_then(|dt| u64::try_from(dt.secs()).ok())
-                    .map(|secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
-                Some((id, (ip, launch_time)))
-            })
-            .collect();
+        let instances =
+            Self::assemble_prover_instances(ec2_resp.reservations(), &mut health_map, self.port)?;
 
-        // Treat missing EC2 data as an inconclusive discovery cycle rather
-        // than silently shrinking the fleet. A target can disappear between
-        // the ELB and EC2 calls during a legitimate termination; the next
-        // cycle will then observe the authoritative ELB target set. Failing
-        // this cycle prevents a transient or partial EC2 response from
-        // making the orphan sweep deregister a signer whose target was still
-        // present in ELB.
-        let missing_ids = Self::missing_target_ids(&targets, &instance_data);
-        for id in &missing_ids {
-            warn!(instance_id = %id, "instance missing from EC2 response");
-        }
+        let mut missing_ids: Vec<_> = health_map.into_keys().collect();
+        missing_ids.sort();
         if !missing_ids.is_empty() {
+            for instance_id in &missing_ids {
+                warn!(instance_id = %instance_id, "EC2 response missing or incomplete data for ELB target");
+            }
             return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
-                "EC2 response missing data for ELB target(s): {}",
+                "EC2 response missing or incomplete data for ELB target(s): {}",
                 missing_ids.join(",")
             )))));
         }
 
-        Ok(Self::assemble_prover_instances(&targets, &instance_data, self.port))
+        Ok(instances)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
+    use aws_sdk_ec2::{
+        primitives::DateTime,
+        types::{Instance, Reservation},
+    };
+    use url::Url;
 
     use super::*;
 
-    fn make_instance_data(pairs: &[(&str, &str)]) -> HashMap<String, (String, Option<SystemTime>)> {
-        pairs.iter().map(|(id, ip)| (id.to_string(), (ip.to_string(), None))).collect()
+    fn reservation(instances: Vec<Instance>) -> Reservation {
+        Reservation::builder().set_instances(Some(instances)).build()
     }
 
-    fn make_targets(pairs: &[(&str, InstanceHealthStatus)]) -> Vec<(String, InstanceHealthStatus)> {
-        pairs.iter().map(|(id, s)| (id.to_string(), *s)).collect()
-    }
-
-    fn expected_url(ip: &str, port: u16) -> Url {
-        Url::parse(&format!("http://{ip}:{port}")).unwrap()
-    }
-
-    #[rstest]
-    #[case::healthy("i-001", "10.0.0.1", InstanceHealthStatus::Healthy)]
-    #[case::initial("i-002", "10.0.0.2", InstanceHealthStatus::Initial)]
-    #[case::unhealthy("i-003", "10.0.0.3", InstanceHealthStatus::Unhealthy)]
-    #[case::draining("i-004", "10.0.0.4", InstanceHealthStatus::Draining)]
-    fn assemble_single_instance_preserves_status(
-        #[case] id: &str,
-        #[case] ip: &str,
-        #[case] status: InstanceHealthStatus,
-    ) {
-        let targets = make_targets(&[(id, status)]);
-        let data = make_instance_data(&[(id, ip)]);
-        let instances = AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &data, 8000);
-        assert_eq!(instances.len(), 1);
-        assert_eq!(instances[0].instance_id, id);
-        assert_eq!(instances[0].endpoint, expected_url(ip, 8000));
-        assert_eq!(instances[0].health_status, status);
-        assert!(instances[0].launch_time.is_none());
+    fn instance(id: &str, private_ip: Option<&str>, launch_time_secs: Option<i64>) -> Instance {
+        Instance::builder()
+            .instance_id(id)
+            .set_private_ip_address(private_ip.map(str::to_string))
+            .set_launch_time(launch_time_secs.map(DateTime::from_secs))
+            .build()
     }
 
     #[test]
-    fn assemble_drops_instance_missing_from_data_map() {
-        let targets = make_targets(&[("i-005", InstanceHealthStatus::Healthy)]);
-        let data = HashMap::new();
-        let instances = AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &data, 8000);
-        assert!(instances.is_empty());
-    }
-
-    #[test]
-    fn missing_target_ids_reports_targets_without_ec2_data() {
-        let targets = make_targets(&[
-            ("i-001", InstanceHealthStatus::Healthy),
-            ("i-002", InstanceHealthStatus::Healthy),
-            ("i-003", InstanceHealthStatus::Healthy),
+    fn assemble_prover_instances_preserves_ec2_and_elb_data() {
+        let launch_secs = 1_700_000_000;
+        let launch_time = SystemTime::UNIX_EPOCH + Duration::from_secs(launch_secs as u64);
+        let reservations = vec![reservation(vec![
+            instance("i-001", Some("10.0.0.1"), Some(launch_secs)),
+            instance("i-002", Some("10.0.0.2"), None),
+            instance("i-003", Some("10.0.0.3"), None),
+            instance("i-004", Some("10.0.0.4"), None),
+        ])];
+        let mut health_map = HashMap::from([
+            ("i-001".to_string(), InstanceHealthStatus::Healthy),
+            ("i-002".to_string(), InstanceHealthStatus::Initial),
+            ("i-003".to_string(), InstanceHealthStatus::Unhealthy),
+            ("i-004".to_string(), InstanceHealthStatus::Draining),
         ]);
-        let data = make_instance_data(&[("i-001", "10.0.0.1"), ("i-003", "10.0.0.3")]);
 
-        let missing = AwsTargetGroupDiscovery::missing_target_ids(&targets, &data);
+        let instances = AwsTargetGroupDiscovery::assemble_prover_instances(
+            &reservations,
+            &mut health_map,
+            9000,
+        )
+        .unwrap();
 
-        assert_eq!(missing, vec!["i-002"]);
-    }
-
-    #[test]
-    fn assemble_empty_targets_returns_empty() {
-        let instances =
-            AwsTargetGroupDiscovery::assemble_prover_instances(&[], &HashMap::new(), 8000);
-        assert!(instances.is_empty());
-    }
-
-    #[test]
-    fn assemble_port_appears_in_endpoint() {
-        let targets = make_targets(&[("i-006", InstanceHealthStatus::Healthy)]);
-        let data = make_instance_data(&[("i-006", "10.0.0.6")]);
-        let instances = AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &data, 9999);
-        assert_eq!(instances[0].endpoint, expected_url("10.0.0.6", 9999));
-    }
-
-    #[test]
-    fn assemble_returns_all_statuses() {
-        let targets = make_targets(&[
-            ("i-010", InstanceHealthStatus::Healthy),
-            ("i-011", InstanceHealthStatus::Initial),
-            ("i-012", InstanceHealthStatus::Unhealthy),
-            ("i-013", InstanceHealthStatus::Draining),
-        ]);
-        let data = make_instance_data(&[
-            ("i-010", "10.0.1.0"),
-            ("i-011", "10.0.1.1"),
-            ("i-012", "10.0.1.2"),
-            ("i-013", "10.0.1.3"),
-        ]);
-        let instances = AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &data, 8000);
+        assert!(health_map.is_empty());
         assert_eq!(instances.len(), 4);
+        assert_eq!(instances[0].instance_id, "i-001");
+        assert_eq!(instances[0].endpoint, Url::parse("http://10.0.0.1:9000").unwrap());
+        assert_eq!(instances[0].health_status, InstanceHealthStatus::Healthy);
+        assert_eq!(instances[0].launch_time, Some(launch_time));
+        assert_eq!(instances[1].instance_id, "i-002");
+        assert_eq!(instances[1].endpoint, Url::parse("http://10.0.0.2:9000").unwrap());
+        assert_eq!(instances[1].health_status, InstanceHealthStatus::Initial);
+        assert_eq!(instances[1].launch_time, None);
+        assert_eq!(instances[2].health_status, InstanceHealthStatus::Unhealthy);
+        assert_eq!(instances[3].health_status, InstanceHealthStatus::Draining);
     }
 
     #[test]
-    fn assemble_preserves_launch_time() {
-        let launch = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let targets = make_targets(&[("i-020", InstanceHealthStatus::Healthy)]);
-        let data = HashMap::from([("i-020".to_string(), ("10.0.2.0".to_string(), Some(launch)))]);
-        let instances = AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &data, 8000);
+    fn assemble_prover_instances_returns_url_parse_error() {
+        let reservations = vec![reservation(vec![instance("i-001", Some("bad host"), None)])];
+        let mut health_map = HashMap::from([("i-001".to_string(), InstanceHealthStatus::Healthy)]);
+
+        let err = AwsTargetGroupDiscovery::assemble_prover_instances(
+            &reservations,
+            &mut health_map,
+            9000,
+        )
+        .unwrap_err();
+
+        let RegistrarError::Discovery(source) = err else {
+            panic!("expected discovery error");
+        };
+        assert!(source.downcast_ref::<url::ParseError>().is_some());
+    }
+
+    #[test]
+    fn assemble_prover_instances_leaves_missing_ec2_data_in_health_map() {
+        let reservations = vec![reservation(vec![
+            instance("i-001", Some("10.0.0.1"), None),
+            instance("i-002", None, None),
+            instance("i-999", Some("10.0.0.9"), None),
+        ])];
+        let mut health_map = HashMap::from([
+            ("i-001".to_string(), InstanceHealthStatus::Healthy),
+            ("i-002".to_string(), InstanceHealthStatus::Initial),
+            ("i-003".to_string(), InstanceHealthStatus::Draining),
+        ]);
+
+        let instances = AwsTargetGroupDiscovery::assemble_prover_instances(
+            &reservations,
+            &mut health_map,
+            8000,
+        )
+        .unwrap();
+        let mut missing_ids: Vec<_> = health_map.into_keys().collect();
+        missing_ids.sort();
+
         assert_eq!(instances.len(), 1);
-        assert_eq!(instances[0].launch_time, Some(launch));
+        assert_eq!(instances[0].instance_id, "i-001");
+        assert_eq!(missing_ids, vec!["i-002", "i-003"]);
     }
 }

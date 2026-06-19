@@ -1,8 +1,8 @@
 //! Handler related to Base chain
 use alloc::{boxed::Box, vec::Vec};
 
-use base_common_chains::BaseUpgrade;
 use base_common_consensus::Predeploys;
+use base_common_genesis::BaseUpgrade;
 use revm::{
     context::{
         LocalContextTr,
