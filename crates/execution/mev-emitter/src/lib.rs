@@ -32,6 +32,11 @@ pub type Selector = FixedBytes<4>;
 /// Pure logic (no revm), unit-tested directly.
 pub mod state_diff;
 
+/// C-2 wiring: bridge revm per-tx `EvmState` to [`StateDiffEvent`]s. Behind the
+/// `node` feature (pulls revm).
+#[cfg(feature = "node")]
+pub mod revm_bridge;
+
 /// Node-integration ExEx + extension (C-1+). Behind the `node` feature so the
 /// default crate stays wire-only.
 #[cfg(feature = "node")]

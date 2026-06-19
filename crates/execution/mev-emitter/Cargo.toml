@@ -21,10 +21,11 @@ serde_json = { workspace = true, features = ["std"] }
 # fast conformance tests) and only the node binary pulls the reth graph.
 reth-exex = { workspace = true, optional = true }
 base-node-runner = { workspace = true, optional = true }
+revm = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 eyre = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
 [features]
-# Pulls the reth/node dependency graph and enables the `exex` module.
-node = ["dep:reth-exex", "dep:base-node-runner", "dep:futures", "dep:eyre", "dep:tracing"]
+# Pulls the reth/node dependency graph and enables the `exex` + `revm_bridge` modules.
+node = ["dep:reth-exex", "dep:base-node-runner", "dep:revm", "dep:futures", "dep:eyre", "dep:tracing"]

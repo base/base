@@ -81,13 +81,14 @@ impl BalanceSlotRegistry {
 }
 
 /// The storage slot holding `holder`'s balance in a `mapping(address => uint256)`
-/// at `slot_index`: `keccak256(pad32(holder) ++ pad32(slot_index))`.
-pub fn balance_slot_key(holder: &Address, slot_index: u64) -> B256 {
+/// at `slot_index`: `keccak256(pad32(holder) ++ pad32(slot_index))`, as a `U256`
+/// (revm keys storage by `U256`).
+pub fn balance_slot_key(holder: &Address, slot_index: u64) -> U256 {
     let mut preimage = [0u8; 64];
     // 32-byte left-padded holder, then 32-byte big-endian slot index.
     preimage[12..32].copy_from_slice(holder.as_slice());
     preimage[32..64].copy_from_slice(&U256::from(slot_index).to_be_bytes::<32>());
-    keccak256(preimage)
+    U256::from_be_bytes(keccak256(preimage).0)
 }
 
 /// Net signed delta of `new - old` as an `I256`, or `None` if the magnitude
@@ -121,7 +122,7 @@ impl<'a> TxStateDiffAccumulator<'a> {
     pub fn record_sstore(
         &mut self,
         contract: &Address,
-        slot: B256,
+        slot: U256,
         old: U256,
         new: U256,
         candidate_holders: &[Address],
@@ -202,7 +203,7 @@ mod tests {
         preimage.extend_from_slice(&[0u8; 12]);
         preimage.extend_from_slice(h.as_slice());
         preimage.extend_from_slice(&U256::from(3u64).to_be_bytes::<32>());
-        assert_eq!(key, keccak256(&preimage));
+        assert_eq!(key, U256::from_be_bytes(keccak256(&preimage).0));
     }
 
     #[test]
@@ -255,7 +256,7 @@ mod tests {
         // untrusted token contract -> ignored even with a plausible slot
         acc.record_sstore(&untrusted, balance_slot_key(&h, 3), U256::ZERO, U256::from(1), &[h]);
         // trusted token but slot does not reverse-map to any candidate holder
-        acc.record_sstore(&weth, B256::from([0x99; 32]), U256::ZERO, U256::from(1), &[h]);
+        acc.record_sstore(&weth, U256::from(99u64), U256::ZERO, U256::from(1), &[h]);
         let events = acc.into_events(B256::ZERO, 1, 0, "0x04".into());
         assert!(events.is_empty());
     }
