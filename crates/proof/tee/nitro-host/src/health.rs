@@ -12,7 +12,7 @@ use jsonrpsee::core::{RpcResult, async_trait};
 use super::registration::RegistrationChecker;
 
 /// Configuration for registration-gated health checks.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RegistrationHealthConfig {
     /// `TEEProverRegistry` contract address on L1.
     pub registry_address: Address,

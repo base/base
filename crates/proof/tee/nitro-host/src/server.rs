@@ -125,42 +125,34 @@ impl NitroProverServer {
 
         Ok(server.start(module))
     }
-}
 
-/// Start the registrar-facing signer API without exposing proof execution.
-pub async fn run_registrar_rpc_server(
-    addr: SocketAddr,
-    transports: Vec<Arc<NitroTransport>>,
-    registration_health: Option<RegistrationHealthConfig>,
-) -> eyre::Result<ServerHandle> {
-    let middleware =
-        tower::ServiceBuilder::new().layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
-    let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
-    let addr = server.local_addr()?;
-    info!(addr = %addr, "nitro registrar rpc server started");
+    /// Start the registrar-facing signer API without exposing proof execution.
+    pub async fn run_registrar_rpc_server(
+        addr: SocketAddr,
+        transports: Vec<Arc<NitroTransport>>,
+        registration_checker: Option<Arc<RegistrationChecker>>,
+    ) -> eyre::Result<ServerHandle> {
+        let middleware = tower::ServiceBuilder::new()
+            .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
+        let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
+        let addr = server.local_addr()?;
+        info!(addr = %addr, "nitro registrar rpc server started");
 
-    let mut module = RpcModule::new(());
-    match registration_health {
-        Some(config) => {
-            info!(
-                registry = %config.registry_address,
-                "registration-gated registrar health enabled"
-            );
-            let checker = Arc::new(
-                RegistrationChecker::from_health_config(transports.clone(), &config)
-                    .map_err(|e| eyre::eyre!("registration checker init failed: {e}"))?,
-            );
-            module.merge(
-                RegistrationHealthzRpc::new(env!("CARGO_PKG_VERSION"), checker).into_rpc(),
-            )?;
+        let mut module = RpcModule::new(());
+        match registration_checker {
+            Some(checker) => {
+                module.merge(
+                    RegistrationHealthzRpc::new(env!("CARGO_PKG_VERSION"), checker).into_rpc(),
+                )?;
+            }
+            None => {
+                module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
+            }
         }
-        None => {
-            module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
-        }
+        module.merge(NitroSignerRpc { transports }.into_rpc())?;
+
+        Ok(server.start(module))
     }
-    module.merge(NitroSignerRpc { transports }.into_rpc())?;
-
-    Ok(server.start(module))
 }
 
 /// Inner RPC handler for `prover_*` methods.
@@ -252,11 +244,14 @@ impl EnclaveApiServer for NitroSignerRpc {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+
     use base_proof_primitives::EnclaveApiServer;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use jsonrpsee::core::client::ClientT as _;
 
     use super::*;
+    use crate::test_utils::MockRegistry;
 
     #[tokio::test]
     async fn signer_public_key_routed_to_transport() {
@@ -288,7 +283,8 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         drop(listener);
 
-        let handle = run_registrar_rpc_server(addr, vec![transport], None).await.unwrap();
+        let handle =
+            NitroProverServer::run_registrar_rpc_server(addr, vec![transport], None).await.unwrap();
         let client = jsonrpsee::http_client::HttpClientBuilder::default()
             .build(format!("http://{addr}"))
             .unwrap();
@@ -296,6 +292,39 @@ mod tests {
         let result: Vec<Vec<u8>> =
             client.request("enclave_signerPublicKey", jsonrpsee::rpc_params![]).await.unwrap();
         assert_eq!(result, vec![expected]);
+        handle.stop().unwrap();
+    }
+
+    #[tokio::test]
+    async fn registrar_rpc_server_uses_shared_registration_checker() {
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let registry = MockRegistry::new(true);
+        let call_count = Arc::clone(&registry.call_count);
+        let checker = Arc::new(
+            RegistrationChecker::new(vec![Arc::clone(&transport)], registry.clone()).unwrap(),
+        );
+        assert!(checker.check_health().await.unwrap());
+        registry.should_fail.store(true, Ordering::Relaxed);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let handle = NitroProverServer::run_registrar_rpc_server(
+            addr,
+            vec![transport],
+            Some(Arc::clone(&checker)),
+        )
+        .await
+        .unwrap();
+        let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .build(format!("http://{addr}"))
+            .unwrap();
+
+        let result: base_health::HealthzResponse =
+            client.request("healthz", jsonrpsee::rpc_params![]).await.unwrap();
+        assert_eq!(result.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(call_count.load(Ordering::Relaxed), 1);
         handle.stop().unwrap();
     }
 

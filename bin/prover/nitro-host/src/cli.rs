@@ -26,8 +26,8 @@ use base_proof_tee_nitro_host::NitroProverServer;
 use base_proof_tee_nitro_host::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS, JobDiscovery, JobDiscoveryConfig,
-    NitroEnclavePool, ProofGenerator, ProofGeneratorHeartbeatConfig, ProofSubmitter,
-    RegistrationChecker, run_registrar_rpc_server,
+    NitroEnclavePool, NitroProverServer, ProofGenerator, ProofGeneratorHeartbeatConfig,
+    ProofSubmitter, RegistrationChecker,
 };
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::{NitroTransport, RegistrationHealthConfig};
@@ -433,13 +433,17 @@ async fn run_worker(
     }
 
     let mut pool = NitroEnclavePool::new_multi(config, transports);
-    if let Some(registration_health) = &registration_health {
-        let checker = Arc::new(
+    let registration_checker = if let Some(registration_health) = &registration_health {
+        Some(Arc::new(
             RegistrationChecker::from_health_config(pool.transports(), registration_health)
                 .map_err(|e| eyre!("registration checker init failed: {e}"))?,
-        );
+        ))
+    } else {
+        None
+    };
+    if let Some(checker) = &registration_checker {
         pool = pool
-            .with_registration_checker(checker)
+            .with_registration_checker(Arc::clone(checker))
             .map_err(|e| eyre!("registration checker init failed: {e}"))?;
     }
     let registrar_transports = pool.transports();
@@ -462,8 +466,12 @@ async fn run_worker(
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
     let registrar_handle = if let Some(addr) = registrar_listen_addr {
         Some(
-            run_registrar_rpc_server(addr, registrar_transports, registration_health.clone())
-                .await?,
+            NitroProverServer::run_registrar_rpc_server(
+                addr,
+                registrar_transports,
+                registration_checker,
+            )
+            .await?,
         )
     } else {
         None
