@@ -24,7 +24,7 @@ use url::Url;
 use crate::{
     AwsTargetGroupDiscovery, CertManager, DriverConfig, NitroVerifierContractClient, ProverClient,
     RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient, Result,
-    SignerManager, SignerManagerConfig,
+    SignerManager,
 };
 
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -213,12 +213,10 @@ impl RegistrarConfig {
             self.boundless_prover,
             registry,
             tx_manager.clone(),
-            SignerManagerConfig {
-                registry_address: self.tee_prover_registry_address,
-                max_concurrency: self.max_concurrency,
-                max_tx_retries: self.max_tx_retries,
-                tx_retry_delay: self.tx_retry_delay,
-            },
+            self.tee_prover_registry_address,
+            self.max_concurrency,
+            self.max_tx_retries,
+            self.tx_retry_delay,
         ));
         let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             Some(CertManager::new(

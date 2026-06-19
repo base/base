@@ -66,8 +66,6 @@ pub struct RegisterableSigner {
     pub signer: Address,
     /// Pre-fetched attestation blob for the signer.
     pub attestation: Vec<u8>,
-    /// Zero-based enclave index on the source instance.
-    pub enclave_index: usize,
 }
 
 /// Per-cycle discovery snapshot consumed by signer reconciliation.
@@ -133,7 +131,7 @@ where
             "starting registration driver"
         );
 
-        let mut proof_tasks = ProofTaskSet::new();
+        let mut proof_tasks = ProofTaskSet::default();
 
         loop {
             let discovery = self.discover_and_resolve().await;
@@ -151,16 +149,11 @@ where
                     );
 
                     if resolution.unresolved_instance_ids.is_empty() {
-                        let active_signers = &resolution.active_signers;
+                        let mut protected_signers = resolution.active_signers.clone();
+                        protected_signers.extend(proof_tasks.pending.keys().copied());
                         if let Err(e) = self
                             .signer_manager
-                            .run_orphan_dereg(
-                                |signer| {
-                                    active_signers.contains(signer)
-                                        || proof_tasks.has_pending_signer(signer)
-                                },
-                                &self.config.cancel,
-                            )
+                            .run_orphan_dereg(&protected_signers, &self.config.cancel)
                             .await
                         {
                             warn!(error = %e, "orphan deregistration pass failed");
@@ -174,13 +167,13 @@ where
                 }
             }
 
-            RegistrarMetrics::proof_tasks_pending().set(proof_tasks.pending_len() as f64);
+            RegistrarMetrics::proof_tasks_pending().set(proof_tasks.pending.len() as f64);
 
             tokio::select! {
                 biased;
                 () = self.config.cancel.cancelled() => {
                     info!(
-                        pending = proof_tasks.pending_len(),
+                        pending = proof_tasks.pending.len(),
                         "registration driver received shutdown signal"
                     );
                     break;
@@ -302,12 +295,11 @@ where
             }
         }
 
-        outcome.registerable.extend(addresses.into_iter().zip(all_attestations).enumerate().map(
-            |(enclave_index, (signer, attestation))| RegisterableSigner {
+        outcome.registerable.extend(addresses.into_iter().zip(all_attestations).map(
+            |(signer, attestation)| RegisterableSigner {
                 instance: instance.clone(),
                 signer,
                 attestation,
-                enclave_index,
             },
         ));
         Ok(outcome)
@@ -376,8 +368,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, InstanceHealthStatus, RegistrarError,
-        Result, SignerClient, SignerManagerConfig,
+        DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY, InstanceHealthStatus, RegistrarError,
+        Result, SignerClient,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
             TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
@@ -462,12 +454,10 @@ mod tests {
             signer_client.clone(),
             (),
             NoopTxManager,
-            SignerManagerConfig {
-                registry_address: TEST_REGISTRY_ADDRESS,
-                max_concurrency: DEFAULT_MAX_CONCURRENCY,
-                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
-                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-            },
+            TEST_REGISTRY_ADDRESS,
+            DEFAULT_MAX_CONCURRENCY,
+            DEFAULT_MAX_TX_RETRIES,
+            DEFAULT_TX_RETRY_DELAY,
         ));
 
         RegistrationDriver::new(

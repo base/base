@@ -25,19 +25,13 @@ pub use metrics::RegistrarMetrics;
 mod prover;
 pub use prover::ProverClient;
 
-mod proof_handler;
-pub use proof_handler::{ProofHandler, ProofHandlerConfig};
-
-mod registration_manager;
-pub use registration_manager::RegistrationManager;
-
 mod registry;
 pub use registry::{RegistryClient, RegistryContractClient};
 
 mod signer_manager;
 pub use signer_manager::{
-    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration, ProofTaskSet,
-    SignerManager, SignerManagerConfig,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY, PendingRegistration, ProofTaskSet,
+    SignerManager,
 };
 
 mod service;
