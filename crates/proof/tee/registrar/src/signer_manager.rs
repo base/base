@@ -393,6 +393,10 @@ where
                 debug!(signer = %signer, "orphan signer is no longer registered, skipping");
                 continue;
             }
+            if cancel.is_cancelled() {
+                debug!(signer = %signer, "shutdown requested, skipping orphan deregistration");
+                break;
+            }
 
             let candidate = TxCandidate {
                 tx_data: Bytes::from(
@@ -542,6 +546,7 @@ mod tests {
     enum RegistryMode {
         #[default]
         Static,
+        CancelAfterIsRegistered(CancellationToken),
         RegisteredAfterFirstProbe(AtomicBool),
         StallIsRegistered,
         StallGetRegisteredSigners,
@@ -567,6 +572,10 @@ mod tests {
         async fn is_registered(&self, signer: Address) -> Result<bool> {
             match &self.mode {
                 RegistryMode::Static | RegistryMode::StallGetRegisteredSigners => {
+                    Ok(self.registered.contains(&signer))
+                }
+                RegistryMode::CancelAfterIsRegistered(cancel) => {
+                    cancel.cancel();
                     Ok(self.registered.contains(&signer))
                 }
                 RegistryMode::RegisteredAfterFirstProbe(registered) => {
@@ -1309,6 +1318,25 @@ mod tests {
         let protected_signers = HashSet::new();
 
         manager.run_orphan_dereg(&protected_signers, &cancel).await.unwrap();
+
+        assert!(manager.tx_manager.take_sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_respects_cancellation_after_registration_probe() {
+        let cancel = CancellationToken::new();
+        let manager = manager_with(
+            RecordingProofProvider::default(),
+            MockRegistry {
+                signers: vec![SIGNER_A],
+                registered: HashSet::from([SIGNER_A]),
+                mode: RegistryMode::CancelAfterIsRegistered(cancel.clone()),
+                ..Default::default()
+            },
+            RecordingTxManager::default(),
+        );
+
+        manager.run_orphan_dereg(&HashSet::new(), &cancel).await.unwrap();
 
         assert!(manager.tx_manager.take_sent().is_empty());
     }
