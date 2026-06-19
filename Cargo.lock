@@ -4799,6 +4799,7 @@ dependencies = [
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
+ "base-execution-eip8130-rpc",
  "base-execution-evm",
  "base-execution-rpc",
  "base-metrics",

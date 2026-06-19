@@ -62,6 +62,7 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::{Filter, Log};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_execution_eip8130_rpc::ChannelNonceReader;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -111,6 +112,7 @@ pub trait EthApiOverride {
         &self,
         address: Address,
         block_number: Option<BlockId>,
+        nonce_key: Option<U256>,
     ) -> RpcResult<U256>;
 
     /// Returns transaction by hash, checking flashblocks first.
@@ -264,13 +266,45 @@ where
         &self,
         address: Address,
         block_number: Option<BlockId>,
+        nonce_key: Option<U256>,
     ) -> RpcResult<U256> {
         debug!(
             message = "rpc::get_transaction_count",
             address = %address,
+            nonce_key = ?nonce_key,
         );
 
         let block_id = block_number.unwrap_or_default();
+
+        // 2D channel path. `nonce_key == 0` is the protocol nonce and
+        // semantically identical to omitting the parameter, so fall through to
+        // the legacy path for that case (flashblocks tracks the protocol
+        // nonce's pending delta but does not track per-channel deltas).
+        if let Some(key) = nonce_key
+            && key != U256::ZERO
+        {
+            Metrics::rpc_get_transaction_count().increment(1);
+            let (resolved_block, overrides) = if block_id.is_pending() {
+                let pending_blocks = self.flashblocks_state.get_pending_blocks();
+                (
+                    pending_blocks.get_canonical_block_number().into(),
+                    pending_blocks.get_state_overrides(),
+                )
+            } else {
+                (block_id, None)
+            };
+            return ChannelNonceReader::read(
+                &self.eth_api,
+                address,
+                key,
+                resolved_block,
+                overrides.as_ref(),
+            )
+            .await;
+        }
+
+        // Protocol nonce path. `canon + flashblock_delta` on pending,
+        // standard resolution otherwise.
         if block_id.is_pending() {
             Metrics::rpc_get_transaction_count().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
