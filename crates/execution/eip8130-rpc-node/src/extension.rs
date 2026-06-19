@@ -5,9 +5,20 @@ use base_execution_eip8130_rpc::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tracing::info;
 
+/// Whether [`Eip8130RpcExtension`] should register the standalone EIP-8130
+/// `eth_getTransactionCount` override, or defer to another extension
+/// (flashblocks) that owns the same RPC method.
+///
+/// Both this extension and the flashblocks extension call
+/// `ctx.modules.replace_configured` on `eth_getTransactionCount`, and
+/// `replace_configured` is overwrite, so the node-assembly site must
+/// designate exactly one owner via this mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Eip8130RpcMode {
+    /// Register the standalone override. Use on nodes without flashblocks.
     Register,
+    /// Skip registration. Use on nodes where flashblocks is registering
+    /// `eth_getTransactionCount` and thereby owning the EIP-8130 RPC surface.
     Defer,
 }
 
