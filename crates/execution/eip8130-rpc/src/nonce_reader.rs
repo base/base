@@ -72,8 +72,13 @@ impl ChannelNonceReader {
 
         // Real 2D channel. Derive slot, consult overrides, then fall back to
         // the canonical state at `block_id`.
-        let slot = NonceManagerStorage::nonce_slot(address, nonce_key)
-            .expect("nonce_key checked non-zero above");
+        let slot = NonceManagerStorage::nonce_slot(address, nonce_key).map_err(|err| {
+            ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                format!("failed to derive nonce slot for nonce_key: {err}"),
+                None::<()>,
+            )
+        })?;
         let slot_b256 = B256::from(slot);
 
         if let Some(value) =

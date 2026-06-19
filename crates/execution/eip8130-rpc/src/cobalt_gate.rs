@@ -4,10 +4,14 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use base_common_chains::Upgrades;
 use base_common_network::Base;
-use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
+use jsonrpsee_types::{
+    ErrorObjectOwned,
+    error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
+};
 use reth_chainspec::ChainSpecProvider;
 use reth_rpc_eth_api::{RpcNodeCore, helpers::FullEthApi};
 use reth_storage_api::BlockReaderIdExt;
+use tracing::warn;
 
 /// Rejects EIP-8130 RPC reads issued before the Cobalt hard fork has
 /// activated at the requested block.
@@ -60,11 +64,12 @@ impl Eip8130CobaltGate {
             BlockId::Hash(hash) => provider.sealed_header_by_hash(hash.block_hash),
         }
         .map_err(|err| {
-            ErrorObjectOwned::owned(
-                INVALID_PARAMS_CODE,
-                format!("failed to resolve block: {err}"),
-                None::<()>,
-            )
+            warn!(
+                error = %err,
+                block_id = ?block_id,
+                "cobalt gate: failed to resolve block header"
+            );
+            ErrorObjectOwned::owned(INTERNAL_ERROR_CODE, "failed to resolve block", None::<()>)
         })?
         .ok_or_else(|| {
             ErrorObjectOwned::owned(
