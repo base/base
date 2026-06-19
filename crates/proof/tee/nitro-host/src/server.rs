@@ -254,6 +254,7 @@ impl EnclaveApiServer for NitroSignerRpc {
 mod tests {
     use base_proof_primitives::EnclaveApiServer;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
+    use jsonrpsee::core::client::ClientT as _;
 
     use super::*;
 
@@ -280,8 +281,6 @@ mod tests {
 
     #[tokio::test]
     async fn registrar_rpc_server_exposes_signer_api() {
-        use jsonrpsee::core::client::ClientT as _;
-
         let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
         let expected = server.signer_public_key();
