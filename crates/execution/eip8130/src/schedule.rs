@@ -41,9 +41,13 @@ impl Eip8130GasSchedule {
     // ── EIP-8130 table values ────────────────────────────────────────────────
     /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`).
     pub const AA_BASE_COST: u64 = Eip8130Constants::EIP8130_BASE_COST;
-    /// `nonce_key_cost` for nonce-free (`NONCE_KEY_MAX`) transactions: the
-    /// expiring-nonce replay-protection state (2 cold SLOADs + 1 warm SLOAD + 3
-    /// warm SSTORE resets).
+    /// `nonce_key_cost` for nonce-free (`NONCE_KEY_MAX`) transactions. A flat,
+    /// amortized charge for the enshrined expiring-nonce circular-buffer replay
+    /// set: a replay-check SLOAD, the ring pointer + ring-slot reads, reclaiming
+    /// one expired entry, recording the new entry, and advancing the pointer. The
+    /// raw per-op SSTORE cost is far higher (an `SSTORE_SET` per insert) but is
+    /// amortized by the ring reclaiming a slot on each write, so EIP-8130 prices
+    /// it as a fixed value rather than metering the individual accesses.
     pub const NONCE_FREE_COST: u64 = 14_000;
     /// `nonce_key_cost` for the first use of a sequence nonce key (cold SLOAD +
     /// SSTORE set).
