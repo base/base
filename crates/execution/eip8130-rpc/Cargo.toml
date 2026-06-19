@@ -30,7 +30,11 @@ alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
 
 # rpc
+jsonrpsee.workspace = true
 jsonrpsee-types.workspace = true
+
+# misc
+tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 alloy-rpc-types = { workspace = true }

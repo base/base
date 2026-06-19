@@ -4518,10 +4518,12 @@ dependencies = [
  "base-common-consensus",
  "base-common-network",
  "base-common-precompiles",
+ "jsonrpsee",
  "jsonrpsee-types",
  "reth-provider",
  "reth-rpc-eth-api",
  "reth-rpc-eth-types",
+ "tracing",
 ]
 
 [[package]]
