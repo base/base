@@ -5,9 +5,10 @@ Shared proof submission helpers for Base dispute games.
 ## Overview
 
 This crate contains the reusable pieces needed to attach proof bytes to an
-existing `AggregateVerifier` dispute game:
+existing dispute game:
 
 - Submitting `AggregateVerifier.verifyProposalProof(bytes)` through the shared transaction manager.
+- Submitting proof-bearing `challenge()` and `nullify()` transactions.
 - Classifying known non-retryable revert selectors into structured errors.
 
 Proof byte encoding lives in `base-proof-primitives::ProofEncoder` so callers can

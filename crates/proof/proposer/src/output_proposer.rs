@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{encode_create_calldata, encode_extra_data};
 use base_proof_primitives::{ProofEncoder, Proposal};
-use base_proof_submission::{AggregateProofSubmitter, KnownRevert};
+use base_proof_submission::{AggregateProofSubmitter, KnownRevert, VerifyProposalProofSubmission};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::info;
 
@@ -164,7 +164,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         );
 
         let receipt = AggregateProofSubmitter::new(&self.tx_manager)
-            .verify_proposal_proof(game_address, proof_bytes)
+            .verify_proposal_proof(VerifyProposalProofSubmission::new(game_address, proof_bytes))
             .await?;
         let tx_hash = receipt.transaction_hash;
 

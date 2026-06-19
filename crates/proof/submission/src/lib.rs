@@ -12,5 +12,10 @@ pub use error::ProofSubmissionError;
 mod classifier;
 pub use classifier::KnownRevert;
 
+mod submission;
+pub use submission::{
+    ChallengeProofSubmission, NullifyProofSubmission, VerifyProposalProofSubmission,
+};
+
 mod submitter;
 pub use submitter::AggregateProofSubmitter;
