@@ -4408,6 +4408,7 @@ dependencies = [
  "base-flashblocks",
  "base-flashblocks-node",
  "base-metering",
+ "base-mev-emitter",
  "base-node-core",
  "base-node-runner",
  "base-proofs-extension",
@@ -4996,6 +4997,27 @@ dependencies = [
  "metrics",
  "metrics-util",
  "ordered-float 5.3.0",
+]
+
+[[package]]
+name = "base-mev-emitter"
+version = "1.1.0"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "base-execution-evm",
+ "base-node-runner",
+ "eyre",
+ "futures",
+ "reth-chainspec",
+ "reth-evm",
+ "reth-exex",
+ "reth-provider",
+ "reth-revm",
+ "revm",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

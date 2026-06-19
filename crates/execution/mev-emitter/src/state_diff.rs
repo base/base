@@ -60,8 +60,8 @@ impl BalanceSlotRegistry {
             }, // cbBTC
             BalanceSlotEntry {
                 token: addr("0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22"),
-                balance_slot: 9,
-            }, // cbETH
+                balance_slot: 51,
+            }, // cbETH (OZ upgradeable: _balances at slot 51, verified live)
             BalanceSlotEntry {
                 token: addr("0x940181a94a35a4569e4529a3cdfb74e38fd98631"),
                 balance_slot: 0,
