@@ -81,6 +81,16 @@ impl FlashblockIndex {
         while map.len() > MAX_TRACKED_BLOCKS {
             let Some((&oldest, _)) = map.iter().next() else { break };
             map.remove(&oldest);
+            // Eviction here means canonical commits stalled (prune_below stopped
+            // advancing) while the ws kept delivering: the evicted block's txs
+            // will fall back to the placeholder. Surface it so operators can spot
+            // attribution degradation rather than it happening silently.
+            tracing::debug!(
+                target: "base::mev_emitter",
+                evicted_block = oldest,
+                tracked = map.len(),
+                "flashblock index at capacity; evicted oldest block (commit stall?)",
+            );
         }
     }
 

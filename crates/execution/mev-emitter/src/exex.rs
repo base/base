@@ -100,7 +100,14 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
             // Count txs whose payloadId came from the flashblock index (real
             // attribution) vs the block-hash placeholder.
             let mut total_fb_attributed = 0usize;
+            // Count events ACTUALLY streamed out (incremented at the send site),
+            // so it stays accurate even when a block fails re-execution partway
+            // and its diff counts are discarded.
+            let mut total_events_sent = 0usize;
             for (&block_number, block) in committed.blocks() {
+                // Events written to the wire for THIS block — tracked outside the
+                // closure's return so a mid-block failure can't lose the count.
+                let mut sent_this_block = 0usize;
                 // Re-execution is isolated per block: any failure is logged and
                 // skipped, NEVER propagated — an ExEx error would otherwise crash
                 // the whole node (ExEx is a critical task). The emitter must never
@@ -161,11 +168,15 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                         // safe inside the critical ExEx task.
                         for ev in &events {
                             sink.send_event(&crate::NodeEvent::StateDiff(ev.clone()));
+                            sent_this_block += 1;
                         }
                         evm.db_mut().commit(out.state);
                     }
                     Ok((diffs, cands, trusted, attributed))
                 })();
+                // Accumulate AFTER the closure regardless of Ok/Err: events sent
+                // before a mid-block failure still went out on the wire.
+                total_events_sent += sent_this_block;
                 match block_result {
                     Ok((d, c, t, a)) => {
                         total_diffs += d;
@@ -190,15 +201,26 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                 number = tip.number,
                 blocks = committed.blocks().len(),
                 state_diffs = total_diffs,
-                // C-4: every produced state-diff event is streamed out, so
-                // events_sent == total_diffs (one Message::Text per event).
-                events_sent = total_diffs,
+                // C-4: events actually streamed out (one Message::Text each).
+                // Equals state_diffs on fully-successful chains; can exceed it
+                // if a block failed re-execution after sending some events.
+                events_sent = total_events_sent,
                 candidates = total_cands,
                 trusted_touched = total_trusted,
                 fb_attributed = total_fb_attributed,
                 "chain committed",
             );
-            ctx.events.send(ExExEvent::FinishedHeight(tip))?;
+            // Report progress so the node can prune ExEx-held data. Don't `?`:
+            // a send error only happens when the ExEx manager receiver is gone
+            // (node shutting down), and we must never propagate an error out of
+            // this critical task on the hot path. Log and continue.
+            if let Err(e) = ctx.events.send(ExExEvent::FinishedHeight(tip)) {
+                warn!(
+                    target: "base::mev_emitter",
+                    error = %e,
+                    "FinishedHeight send failed (manager gone; node likely stopping)",
+                );
+            }
         }
     }
     Ok(())
