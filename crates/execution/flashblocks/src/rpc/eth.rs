@@ -62,7 +62,7 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::{Filter, Log};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_execution_eip8130_rpc::ChannelNonceReader;
+use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130CobaltGate};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -186,6 +186,10 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
     Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
+    <Eth as reth_rpc_eth_api::RpcNodeCore>::Provider:
+        reth_chainspec::ChainSpecProvider + reth_provider::BlockReaderIdExt,
+    <<Eth as reth_rpc_eth_api::RpcNodeCore>::Provider as reth_chainspec::ChainSpecProvider>::ChainSpec:
+        base_common_chains::Upgrades,
     FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
@@ -276,31 +280,37 @@ where
 
         let block_id = block_number.unwrap_or_default();
 
-        // 2D channel path. `nonce_key == 0` is the protocol nonce and
-        // semantically identical to omitting the parameter, so fall through to
-        // the legacy path for that case (flashblocks tracks the protocol
-        // nonce's pending delta but does not track per-channel deltas).
-        if let Some(key) = nonce_key
-            && key != U256::ZERO
-        {
-            Metrics::rpc_get_transaction_count().increment(1);
-            let (resolved_block, overrides) = if block_id.is_pending() {
-                let pending_blocks = self.flashblocks_state.get_pending_blocks();
-                (
-                    pending_blocks.get_canonical_block_number().into(),
-                    pending_blocks.get_state_overrides(),
+        // EIP-8130 surface. Any `nonce_key` (including `Some(0)`) is the
+        // client using the EIP-8130 RPC extension, so we gate the whole
+        // surface on Cobalt. Mirrors the txpool's `TxTypeNotSupported`
+        // rejection of EIP-8130 transactions pre-activation.
+        if let Some(key) = nonce_key {
+            Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+
+            // Post-Cobalt: `Some(0)` is the protocol nonce by EIP-8130's
+            // reservation. Fall through to the legacy path so the
+            // flashblock pending delta is added (flashblocks does not
+            // track per-channel deltas).
+            if key != U256::ZERO {
+                Metrics::rpc_get_transaction_count().increment(1);
+                let (resolved_block, overrides) = if block_id.is_pending() {
+                    let pending_blocks = self.flashblocks_state.get_pending_blocks();
+                    (
+                        pending_blocks.get_canonical_block_number().into(),
+                        pending_blocks.get_state_overrides(),
+                    )
+                } else {
+                    (block_id, None)
+                };
+                return ChannelNonceReader::read(
+                    &self.eth_api,
+                    address,
+                    key,
+                    resolved_block,
+                    overrides.as_ref(),
                 )
-            } else {
-                (block_id, None)
-            };
-            return ChannelNonceReader::read(
-                &self.eth_api,
-                address,
-                key,
-                resolved_block,
-                overrides.as_ref(),
-            )
-            .await;
+                .await;
+            }
         }
 
         // Protocol nonce path. `canon + flashblock_delta` on pending,

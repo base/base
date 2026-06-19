@@ -4513,17 +4513,21 @@ dependencies = [
 name = "base-execution-eip8130-rpc"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
  "alloy-primitives",
  "alloy-rpc-types 2.0.5",
+ "base-common-chains",
  "base-common-consensus",
  "base-common-network",
  "base-common-precompiles",
  "jsonrpsee",
  "jsonrpsee-types",
+ "reth-chainspec",
  "reth-provider",
  "reth-rpc-eth-api",
  "reth-rpc-eth-types",
+ "reth-storage-api",
  "tracing",
 ]
 

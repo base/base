@@ -3,18 +3,21 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, U256};
+use base_common_chains::Upgrades;
 use base_common_network::Base;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
+use reth_chainspec::ChainSpecProvider;
 use reth_rpc_eth_api::{
-    EthApiTypes,
+    EthApiTypes, RpcNodeCore,
     helpers::{EthState, FullEthApi},
 };
+use reth_storage_api::BlockReaderIdExt;
 use tracing::debug;
 
-use crate::ChannelNonceReader;
+use crate::{ChannelNonceReader, Eip8130CobaltGate};
 
 /// Eth API override trait that adds EIP-8130 `nonce_key` support to
 /// `eth_getTransactionCount`.
@@ -62,6 +65,8 @@ impl<Eth: EthApiTypes> Eip8130EthApiExt<Eth> {
 impl<Eth> Eip8130EthApiOverrideServer for Eip8130EthApiExt<Eth>
 where
     Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
+    <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
+    <<Eth as RpcNodeCore>::Provider as ChainSpecProvider>::ChainSpec: Upgrades,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn get_transaction_count(
@@ -76,20 +81,20 @@ where
             nonce_key = ?nonce_key,
         );
 
-        // 2D channel path. `Some(0)` is the protocol nonce by EIP-8130's
-        // reservation and is semantically identical to omitting the param,
-        // so fall through to the standard resolution for that case.
-        if let Some(key) = nonce_key
-            && key != U256::ZERO
-        {
-            return ChannelNonceReader::read(
-                &self.eth_api,
-                address,
-                key,
-                block_number.unwrap_or_default(),
-                None,
-            )
-            .await;
+        let block_id = block_number.unwrap_or_default();
+
+        // EIP-8130 surface. Any `nonce_key` (including `Some(0)`) is the
+        // client using the EIP-8130 RPC extension, so we gate the whole
+        // surface on Cobalt. Mirrors the txpool's `TxTypeNotSupported`
+        // rejection of EIP-8130 transactions pre-activation.
+        if let Some(key) = nonce_key {
+            Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+
+            // Post-Cobalt: `Some(0)` is the protocol nonce by EIP-8130's
+            // reservation. Fall through to the standard resolution.
+            if key != U256::ZERO {
+                return ChannelNonceReader::read(&self.eth_api, address, key, block_id, None).await;
+            }
         }
 
         // Protocol nonce path. Standard reth resolution against
