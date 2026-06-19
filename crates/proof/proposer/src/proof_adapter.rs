@@ -78,11 +78,19 @@ impl ProofRequesterDispatcher {
         &self,
         request: ProveBlockRangeRequest,
     ) -> Result<DispatchedProof, ProposerError> {
-        let response = self
-            .requester
-            .prove_block_range(request)
-            .await
-            .map_err(|e| ProposerError::Prover(e.to_string()))?;
+        let session_id = request.proof.session_id.clone();
+        let response = match self.requester.prove_block_range(request).await {
+            Ok(response) => response,
+            Err(e) if e.is_l1_head_conflict_for_session(&session_id) => {
+                debug!(
+                    session_id = %session_id,
+                    tee_kind = ?self.tee_kind,
+                    "prover-service already has this TEE proof session with a different l1_head"
+                );
+                return Ok(DispatchedProof { session_id });
+            }
+            Err(e) => return Err(ProposerError::Prover(e.to_string())),
+        };
         debug!(
             session_id = %response.session_id,
             tee_kind = ?self.tee_kind,
@@ -209,6 +217,7 @@ mod tests {
         GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequestKind,
         ProofResult, ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
     };
+    use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
     use super::{ProofRequesterDispatcher, ProposerProofAdapter};
 
@@ -227,6 +236,38 @@ mod tests {
             let session_id = request.proof.session_id.clone();
             self.prove_requests.lock().unwrap().push(request);
             Ok(ProveBlockRangeResponse { session_id })
+        }
+
+        async fn get_proof(
+            &self,
+            _request: GetProofRequest,
+        ) -> Result<GetProofResponse, ProverServiceClientError> {
+            unimplemented!("tests do not poll proofs")
+        }
+
+        async fn list_proofs(
+            &self,
+            _request: ListProofsRequest,
+        ) -> Result<ListProofsResponse, ProverServiceClientError> {
+            unimplemented!("tests do not list proofs")
+        }
+    }
+
+    #[derive(Debug)]
+    struct L1HeadConflictRequester;
+
+    #[async_trait]
+    impl ProofRequesterProvider for L1HeadConflictRequester {
+        async fn prove_block_range(
+            &self,
+            request: ProveBlockRangeRequest,
+        ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+            let session_id = request.proof.session_id;
+            Err(ProverServiceClientError::from(JsonRpcClientError::Call(ErrorObjectOwned::owned(
+                ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+                format!("session_id {session_id} already exists with a different l1_head"),
+                None::<()>,
+            ))))
         }
 
         async fn get_proof(
@@ -422,5 +463,17 @@ mod tests {
         // Both calls carry the same session id and identical TEE proof payload.
         assert_eq!(prove_requests[0].proof.session_id, expected_session_id);
         assert_eq!(prove_requests[1].proof.session_id, expected_session_id);
+    }
+
+    #[tokio::test]
+    async fn proof_requester_dispatcher_accepts_existing_l1_head_conflict() {
+        let dispatcher =
+            ProofRequesterDispatcher::aws_nitro(std::sync::Arc::new(L1HeadConflictRequester));
+        let request = test_request(B256::repeat_byte(0xaa));
+        let expected_session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+
+        let dispatched = dispatcher.dispatch_tee(request).await.unwrap();
+
+        assert_eq!(dispatched.session_id, expected_session_id);
     }
 }

@@ -75,6 +75,16 @@ impl ProverServiceClientError {
         call.code() == Self::ERROR_NOT_FOUND && call.message() == PROOF_REQUEST_NOT_FOUND_MESSAGE
     }
 
+    /// Returns `true` when prover-service rejected a replay because the same
+    /// session id is already bound to a request with a different L1 head.
+    #[must_use]
+    pub fn is_l1_head_conflict_for_session(&self, session_id: &str) -> bool {
+        let Self::RpcTransport(JsonRpcClientError::Call(call)) = self else { return false };
+        call.code() == Self::ERROR_FAILED_PRECONDITION
+            && call.message()
+                == format!("session_id {session_id} already exists with a different l1_head")
+    }
+
     /// Returns `true` when the JSON-RPC error is classified as transient.
     #[must_use]
     pub fn is_retryable_rpc_error(err: &JsonRpcClientError) -> bool {
@@ -184,5 +194,21 @@ mod tests {
 
         let timeout = ProverServiceClientError::Timeout("not ready".into());
         assert!(!timeout.is_not_found());
+    }
+
+    #[test]
+    fn is_l1_head_conflict_matches_only_exact_session_conflict() {
+        let session_id = "e89da79a-8b92-5274-ba97-54a90170cee7";
+        let conflict = rpc_call_error(
+            ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+            &format!("session_id {session_id} already exists with a different l1_head"),
+        );
+
+        assert!(conflict.is_l1_head_conflict_for_session(session_id));
+        assert!(!conflict.is_l1_head_conflict_for_session("other-session"));
+
+        let other_precondition =
+            rpc_call_error(ProverServiceClientError::ERROR_FAILED_PRECONDITION, "lease mismatch");
+        assert!(!other_precondition.is_l1_head_conflict_for_session(session_id));
     }
 }
