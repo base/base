@@ -384,13 +384,19 @@ where
                 break;
             }
 
-            let Some(is_registered) = cancel
-                .run_until_cancelled(self.registry.is_registered(signer))
-                .await
-                .transpose()?
-            else {
-                return Ok(());
-            };
+            let is_registered =
+                match cancel.run_until_cancelled(self.registry.is_registered(signer)).await {
+                    Some(Ok(is_registered)) => is_registered,
+                    Some(Err(e)) => {
+                        warn!(
+                            error = %e,
+                            signer = %signer,
+                            "failed to verify signer registration status, skipping deregistration"
+                        );
+                        continue;
+                    }
+                    None => return Ok(()),
+                };
             if !is_registered {
                 debug!(signer = %signer, "orphan signer is no longer registered, skipping");
                 continue;
@@ -551,6 +557,7 @@ mod tests {
         #[default]
         Static,
         CancelAfterIsRegistered(CancellationToken),
+        ErrorForSigner(Address),
         RegisteredAfterFirstProbe(AtomicBool),
         StallIsRegistered,
         StallGetRegisteredSigners,
@@ -582,6 +589,10 @@ mod tests {
                     cancel.cancel();
                     Ok(self.registered.contains(&signer))
                 }
+                RegistryMode::ErrorForSigner(failing_signer) if signer == *failing_signer => {
+                    Err(RegistrarError::Config("simulated registry error".into()))
+                }
+                RegistryMode::ErrorForSigner(_) => Ok(self.registered.contains(&signer)),
                 RegistryMode::RegisteredAfterFirstProbe(registered) => {
                     Ok(registered.swap(true, Ordering::SeqCst))
                 }
@@ -1307,6 +1318,28 @@ mod tests {
         let expected =
             Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer: SIGNER_A }.abi_encode());
         assert_eq!(sent[0], (Some(TEST_REGISTRY_ADDRESS), expected));
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_skips_signers_with_registration_probe_errors() {
+        let manager = manager_with(
+            RecordingProofProvider::default(),
+            MockRegistry {
+                signers: vec![SIGNER_A, SIGNER_B],
+                registered: HashSet::from([SIGNER_A, SIGNER_B]),
+                mode: RegistryMode::ErrorForSigner(SIGNER_A),
+                ..Default::default()
+            },
+            RecordingTxManager::default(),
+        );
+
+        manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await.unwrap();
+
+        let sent = manager.tx_manager.take_sent();
+        let expected = Bytes::from(
+            ITEEProverRegistry::deregisterSignerCall { signer: SIGNER_B }.abi_encode(),
+        );
+        assert_eq!(sent, vec![(Some(TEST_REGISTRY_ADDRESS), expected)]);
     }
 
     #[tokio::test]
