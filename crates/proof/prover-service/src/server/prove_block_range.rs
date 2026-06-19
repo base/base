@@ -136,8 +136,7 @@ fn validate_intermediate_root_interval(
         }
         if !number_of_blocks_to_prove.is_multiple_of(interval) {
             return Err(invalid_argument(format!(
-                "Invalid number_of_blocks_to_prove ({}): must be a multiple of intermediate_root_interval ({})",
-                number_of_blocks_to_prove, interval,
+                "Invalid number_of_blocks_to_prove ({number_of_blocks_to_prove}): must be a multiple of intermediate_root_interval ({interval})",
             )));
         }
     }
