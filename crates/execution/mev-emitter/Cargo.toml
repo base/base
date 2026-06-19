@@ -32,6 +32,13 @@ futures = { workspace = true, optional = true }
 eyre = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
+# C-3 flashblock attribution: websocket subscriber + flashblock types + tx
+# decode (BaseTxEnvelope::decode_2718_exact / tx_hash via alloy-eips Decodable2718).
+base-common-flashblocks = { workspace = true, optional = true }
+base-flashblocks = { workspace = true, optional = true }
+base-common-consensus = { workspace = true, optional = true, default-features = false, features = ["std"] }
+alloy-eips = { workspace = true, optional = true }
+
 [features]
 # Pulls the reth/node dependency graph and enables the `exex` + `revm_bridge` modules.
 node = [
@@ -47,4 +54,8 @@ node = [
     "dep:futures",
     "dep:eyre",
     "dep:tracing",
+    "dep:base-common-flashblocks",
+    "dep:base-flashblocks",
+    "dep:base-common-consensus",
+    "dep:alloy-eips",
 ]

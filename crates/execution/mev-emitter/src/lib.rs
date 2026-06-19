@@ -41,6 +41,12 @@ pub mod candidates;
 #[cfg(feature = "node")]
 pub mod revm_bridge;
 
+/// C-3: Flashblocks payloadId/index attribution index + websocket receiver.
+/// Behind the `node` feature (pulls the flashblocks subscriber + consensus tx
+/// decode).
+#[cfg(feature = "node")]
+pub mod flashblocks;
+
 /// Node-integration ExEx + extension (C-1+). Behind the `node` feature so the
 /// default crate stays wire-only.
 #[cfg(feature = "node")]
