@@ -19,7 +19,7 @@ use reth_provider::StateProviderFactory;
 use reth_revm::database::StateProviderDatabase;
 use revm::database::State;
 use revm::DatabaseCommit;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// `ExEx` run loop: drain canonical-chain notifications, report `FinishedHeight`.
 pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre::Result<()> {
@@ -32,47 +32,66 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
     ctx.notifications.set_without_head();
     while let Some(notification) = ctx.notifications.try_next().await? {
         if let Some(committed) = notification.committed_chain() {
+            let mut total_diffs = 0usize;
             for (&block_number, block) in committed.blocks() {
-                // C-2 ②: the parent state to re-execute this block's txs against.
-                let parent = block_number.saturating_sub(1);
-                let state_provider = ctx.provider().history_by_block_number(parent)?;
-                let db = StateProviderDatabase::new(state_provider);
-                // C-2 ③④: a commit-capable revm State over that DB, and the Base
-                // EVM configured for this block's environment.
-                let state = State::builder().with_database(db).with_bundle_update().build();
-                let evm_env = evm_config.evm_env(block.header())?;
-                let mut evm = evm_config.evm_with_env(state, evm_env);
-                // Canonical blocks carry no flashblock payloadId (that arrives via
-                // C-3); use the block hash as a stable placeholder until C-3 maps
-                // the real payloadId.
-                let payload_id = format!("{:#x}", block.hash());
-                // C-2 ⑤: re-execute each tx, derive per-tx StateDiffEvents from its
-                // EvmState + Transfer-log candidates, committing state between txs.
-                for tx in block.transactions_recovered() {
-                    let tx_env = evm_config.tx_env(tx);
-                    let out = evm.transact(tx_env)?;
-                    let candidates = crate::candidates::transfer_candidates(
-                        out.result.logs().iter().map(|l| l.topics()),
+                // Re-execution is isolated per block: any failure is logged and
+                // skipped, NEVER propagated — an ExEx error would otherwise crash
+                // the whole node (ExEx is a critical task). The emitter must never
+                // be able to take the node down.
+                let block_result: eyre::Result<usize> = (|| {
+                    // C-2 ②: the parent state to re-execute this block's txs against.
+                    let parent = block_number.saturating_sub(1);
+                    let db = StateProviderDatabase::new(
+                        ctx.provider().history_by_block_number(parent)?,
                     );
-                    let _events = crate::revm_bridge::state_diffs_from_evm_state(
-                        &out.state,
-                        &registry,
-                        &candidates,
-                        tx.tx_hash(),
-                        block_number,
-                        0,
-                        payload_id.clone(),
-                    );
-                    // TODO(C-4): emit `_events` over the outbound transport.
-                    evm.db_mut().commit(out.state);
+                    // C-2 ③④: a commit-capable revm State over that DB + the Base
+                    // EVM configured for this block's environment.
+                    let state =
+                        State::builder().with_database(db).with_bundle_update().build();
+                    let evm_env = evm_config.evm_env(block.header())?;
+                    let mut evm = evm_config.evm_with_env(state, evm_env);
+                    // Canonical blocks carry no flashblock payloadId (that arrives
+                    // via C-3); use the block hash as a stable placeholder.
+                    let payload_id = format!("{:#x}", block.hash());
+                    // C-2 ⑤: re-execute each tx; derive per-tx StateDiffEvents from
+                    // its EvmState + Transfer-log candidates, committing between txs.
+                    let mut diffs = 0usize;
+                    for tx in block.transactions_recovered() {
+                        let out = evm.transact(evm_config.tx_env(tx))?;
+                        let candidates = crate::candidates::transfer_candidates(
+                            out.result.logs().iter().map(|l| l.topics()),
+                        );
+                        let events = crate::revm_bridge::state_diffs_from_evm_state(
+                            &out.state,
+                            &registry,
+                            &candidates,
+                            tx.tx_hash(),
+                            block_number,
+                            0,
+                            payload_id.clone(),
+                        );
+                        diffs += events.len();
+                        // TODO(C-4): emit `events` over the outbound transport.
+                        evm.db_mut().commit(out.state);
+                    }
+                    Ok(diffs)
+                })();
+                match block_result {
+                    Ok(n) => total_diffs += n,
+                    Err(e) => warn!(
+                        target: "base::mev_emitter",
+                        block = block_number,
+                        error = %e,
+                        "block re-execution failed; skipped (node unaffected)",
+                    ),
                 }
             }
             let tip = committed.tip().num_hash();
             debug!(
                 target: "base::mev_emitter",
                 number = tip.number,
-                hash = ?tip.hash,
                 blocks = committed.blocks().len(),
+                state_diffs = total_diffs,
                 "chain committed",
             );
             ctx.events.send(ExExEvent::FinishedHeight(tip))?;
