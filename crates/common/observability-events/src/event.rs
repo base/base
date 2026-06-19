@@ -150,6 +150,9 @@ pub enum TransactionEventType {
     /// Txpool dropped a queued builder forward for a transaction.
     #[serde(rename = "TXPOOL_BUILDER_FORWARD_DROPPED")]
     TxpoolBuilderForwardDropped,
+    /// Txpool consumed a transaction from the best-txs iterator for builder forwarding.
+    #[serde(rename = "TXPOOL_BUILDER_CONSUMED")]
+    TxpoolBuilderConsumed,
     /// A validated txpool insert accepted a transaction.
     #[serde(rename = "TXPOOL_VALIDATED_INSERT_ACCEPTED")]
     TxpoolValidatedInsertAccepted,
@@ -219,6 +222,7 @@ impl fmt::Display for TransactionEventType {
             Self::TxpoolBuilderForwardSuccess => "TXPOOL_BUILDER_FORWARD_SUCCESS",
             Self::TxpoolBuilderForwardFailure => "TXPOOL_BUILDER_FORWARD_FAILURE",
             Self::TxpoolBuilderForwardDropped => "TXPOOL_BUILDER_FORWARD_DROPPED",
+            Self::TxpoolBuilderConsumed => "TXPOOL_BUILDER_CONSUMED",
             Self::TxpoolValidatedInsertAccepted => "TXPOOL_VALIDATED_INSERT_ACCEPTED",
             Self::TxpoolValidatedInsertRejected => "TXPOOL_VALIDATED_INSERT_REJECTED",
             Self::BuilderConsidered => "BUILDER_CONSIDERED",
