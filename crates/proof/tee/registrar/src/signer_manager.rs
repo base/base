@@ -277,6 +277,8 @@ where
                 return Ok(());
             }
 
+            // Do not wrap send in run_until_cancelled: dropping it after nonce
+            // acquisition can leave a nonce gap.
             match self.tx_manager.send(candidate.clone()).await {
                 Ok(receipt) => break receipt,
                 Err(e) => {
