@@ -368,7 +368,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY, InstanceHealthStatus, RegistrarError,
+        DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, InstanceHealthStatus, RegistrarError,
         Result, SignerClient,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
@@ -457,7 +457,7 @@ mod tests {
             TEST_REGISTRY_ADDRESS,
             DEFAULT_MAX_CONCURRENCY,
             DEFAULT_MAX_TX_RETRIES,
-            DEFAULT_TX_RETRY_DELAY,
+            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
         ));
 
         RegistrationDriver::new(

@@ -28,7 +28,7 @@ use crate::{DiscoveryResolution, RegistrarError, RegistrarMetrics, RegistryClien
 pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
 
 /// Default delay between transaction submission retries.
-pub const DEFAULT_TX_RETRY_DELAY: Duration = Duration::from_secs(5);
+pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 
 /// State for a proof-generation task currently in-flight.
 ///
@@ -499,7 +499,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY,
+        DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
         RegisterableSigner, RegistrarError,
         test_utils::{
             EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
@@ -660,7 +660,7 @@ mod tests {
             TEST_REGISTRY_ADDRESS,
             DEFAULT_MAX_CONCURRENCY,
             DEFAULT_MAX_TX_RETRIES,
-            DEFAULT_TX_RETRY_DELAY,
+            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
         )
     }
 

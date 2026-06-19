@@ -30,7 +30,7 @@ pub use registry::{RegistryClient, RegistryContractClient};
 
 mod signer_manager;
 pub use signer_manager::{
-    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY, PendingRegistration, ProofTaskSet,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration, ProofTaskSet,
     SignerManager,
 };
 
