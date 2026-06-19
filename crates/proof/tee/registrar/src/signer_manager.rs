@@ -543,6 +543,8 @@ mod tests {
 
     type TestSignerManager =
         Arc<SignerManager<RecordingProofProvider, MockRegistry, RecordingTxManager>>;
+    type RecordedProof = (Address, Vec<u8>);
+    type RecordedProofs = Arc<Mutex<Vec<RecordedProof>>>;
 
     #[derive(Debug, Default)]
     enum RegistryMode {
@@ -650,7 +652,7 @@ mod tests {
         proof: AttestationProof,
         cancel_then_error: bool,
         blocked_signers: Arc<Mutex<Vec<Address>>>,
-        records: Arc<Mutex<Vec<(Address, Vec<u8>)>>>,
+        records: RecordedProofs,
     }
 
     impl Default for RecordingProofProvider {
