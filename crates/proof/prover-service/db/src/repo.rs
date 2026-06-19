@@ -2295,17 +2295,16 @@ fn payload_without_l1_head_fields(value: &serde_json::Value) -> serde_json::Valu
 }
 
 fn remove_l1_head_fields(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            map.remove("l1_head");
-            map.remove("l1_head_number");
-            map.values_mut().for_each(remove_l1_head_fields);
-        }
-        serde_json::Value::Array(values) => values.iter_mut().for_each(remove_l1_head_fields),
-        serde_json::Value::Null
-        | serde_json::Value::Bool(_)
-        | serde_json::Value::Number(_)
-        | serde_json::Value::String(_) => {}
+    if let Some(map) =
+        value.pointer_mut("/request/payload").and_then(serde_json::Value::as_object_mut)
+    {
+        map.remove("l1_head");
+    }
+    if let Some(map) =
+        value.pointer_mut("/request/payload/proof").and_then(serde_json::Value::as_object_mut)
+    {
+        map.remove("l1_head");
+        map.remove("l1_head_number");
     }
 }
 
@@ -2469,15 +2468,28 @@ mod tests {
         let old = prepared_payload(old);
         let new_l1_head = prepared_payload(new_l1_head);
         let new_image_hash = prepared_payload(new_image_hash);
+        let mut old_unrelated_l1_head = old.clone();
+        let mut new_unrelated_l1_head = new_l1_head.clone();
+
+        old_unrelated_l1_head["request"]["payload"]["metadata"] =
+            serde_json::json!({ "l1_head": "old" });
+        new_unrelated_l1_head["request"]["payload"]["metadata"] =
+            serde_json::json!({ "l1_head": "new" });
 
         assert!(request_payload_matches(
             &old,
             &new_l1_head,
             RequestMismatchMode::AllowL1HeadReplacement,
         ));
+        assert!(!request_payload_matches(&old, &new_l1_head, RequestMismatchMode::Strict,));
         assert!(!request_payload_matches(
             &old,
             &new_image_hash,
+            RequestMismatchMode::AllowL1HeadReplacement,
+        ));
+        assert!(!request_payload_matches(
+            &old_unrelated_l1_head,
+            &new_unrelated_l1_head,
             RequestMismatchMode::AllowL1HeadReplacement,
         ));
     }
