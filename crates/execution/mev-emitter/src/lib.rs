@@ -28,6 +28,10 @@ pub const EXPECTED_FLASHBLOCKS_PER_BLOCK: u32 = 10;
 /// 4-byte function selector; lowercased `0x` + 8 hex on the wire.
 pub type Selector = FixedBytes<4>;
 
+/// C-2 core: trusted balance-slot reverse-mapping + net per-tx token deltas.
+/// Pure logic (no revm), unit-tested directly.
+pub mod state_diff;
+
 /// Node-integration ExEx + extension (C-1+). Behind the `node` feature so the
 /// default crate stays wire-only.
 #[cfg(feature = "node")]
