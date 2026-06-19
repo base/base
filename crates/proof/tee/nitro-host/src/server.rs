@@ -127,6 +127,42 @@ impl NitroProverServer {
     }
 }
 
+/// Start the registrar-facing signer API without exposing proof execution.
+pub async fn run_registrar_rpc_server(
+    addr: SocketAddr,
+    transports: Vec<Arc<NitroTransport>>,
+    registration_health: Option<RegistrationHealthConfig>,
+) -> eyre::Result<ServerHandle> {
+    let middleware =
+        tower::ServiceBuilder::new().layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
+    let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
+    let addr = server.local_addr()?;
+    info!(addr = %addr, "nitro registrar rpc server started");
+
+    let mut module = RpcModule::new(());
+    match registration_health {
+        Some(config) => {
+            info!(
+                registry = %config.registry_address,
+                "registration-gated registrar health enabled"
+            );
+            let checker = Arc::new(
+                RegistrationChecker::from_health_config(transports.clone(), &config)
+                    .map_err(|e| eyre::eyre!("registration checker init failed: {e}"))?,
+            );
+            module.merge(
+                RegistrationHealthzRpc::new(env!("CARGO_PKG_VERSION"), checker).into_rpc(),
+            )?;
+        }
+        None => {
+            module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
+        }
+    }
+    module.merge(NitroSignerRpc { transports }.into_rpc())?;
+
+    Ok(server.start(module))
+}
+
 /// Inner RPC handler for `prover_*` methods.
 struct NitroProverRpc {
     pool: Arc<NitroEnclavePool>,
@@ -143,7 +179,7 @@ impl ProverApiServer for NitroProverRpc {
 ///
 /// All-or-nothing: both `signer_public_key` and `signer_attestation` fail if
 /// **any** transport is unreachable.  Callers need the complete set of keys /
-/// attestations (one per enclave) to register all signers on-chain, so a
+/// attestations (one per enclave) to register all signers onchain, so a
 /// partial response would be unusable.
 struct NitroSignerRpc {
     transports: Vec<Arc<NitroTransport>>,
@@ -240,6 +276,28 @@ mod tests {
         let rpc = HealthzRpc::new(env!("CARGO_PKG_VERSION"));
         let result = HealthzApiServer::healthz(&rpc).await.unwrap();
         assert_eq!(result.version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
+    async fn registrar_rpc_server_exposes_signer_api() {
+        use jsonrpsee::core::client::ClientT as _;
+
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
+        let expected = server.signer_public_key();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let handle = run_registrar_rpc_server(addr, vec![transport], None).await.unwrap();
+        let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .build(format!("http://{addr}"))
+            .unwrap();
+
+        let result: Vec<Vec<u8>> =
+            client.request("enclave_signerPublicKey", jsonrpsee::rpc_params![]).await.unwrap();
+        assert_eq!(result, vec![expected]);
+        handle.stop().unwrap();
     }
 
     #[tokio::test]

@@ -39,7 +39,7 @@ mod health;
 pub use health::{RegistrationHealthConfig, RegistrationHealthzRpc};
 
 mod server;
-pub use server::NitroProverServer;
+pub use server::{NitroProverServer, run_registrar_rpc_server};
 
 mod transport;
 pub use transport::NitroTransport;
