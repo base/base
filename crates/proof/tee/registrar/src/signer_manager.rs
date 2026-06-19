@@ -1336,9 +1336,8 @@ mod tests {
         manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await.unwrap();
 
         let sent = manager.tx_manager.take_sent();
-        let expected = Bytes::from(
-            ITEEProverRegistry::deregisterSignerCall { signer: SIGNER_B }.abi_encode(),
-        );
+        let expected =
+            Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer: SIGNER_B }.abi_encode());
         assert_eq!(sent, vec![(Some(TEST_REGISTRY_ADDRESS), expected)]);
     }
 
