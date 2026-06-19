@@ -214,8 +214,9 @@ mod tests {
     use base_proof_primitives::Proposal;
     use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
     use base_prover_service_protocol::{
-        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequestKind,
-        ProofResult, ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+        ProofRequestIdCollisionMessage, ProofRequestKind, ProofResult, ProveBlockRangeRequest,
+        ProveBlockRangeResponse, TeeKind, TeeProofResult,
     };
     use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
@@ -265,7 +266,7 @@ mod tests {
             let session_id = request.proof.session_id;
             Err(ProverServiceClientError::from(JsonRpcClientError::Call(ErrorObjectOwned::owned(
                 ProverServiceClientError::ERROR_FAILED_PRECONDITION,
-                format!("session_id {session_id} already exists with a different l1_head"),
+                ProofRequestIdCollisionMessage::for_field(session_id, "l1_head"),
                 None::<()>,
             ))))
         }

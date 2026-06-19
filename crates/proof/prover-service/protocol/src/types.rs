@@ -4,9 +4,21 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// JSON-RPC error message returned when a proof request session cannot be found.
 pub const PROOF_REQUEST_NOT_FOUND_MESSAGE: &str = "Proof request not found";
+
+/// JSON-RPC error message returned when a session id is reused for a different request.
+#[derive(Debug, Clone, Copy)]
+pub struct ProofRequestIdCollisionMessage;
+
+impl ProofRequestIdCollisionMessage {
+    /// Builds the proof request id collision message for the mismatched field.
+    pub fn for_field(session_id: impl fmt::Display, field: &str) -> String {
+        format!("session_id {session_id} already exists with a different {field}")
+    }
+}
 
 /// Type of proof requested from the prover service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

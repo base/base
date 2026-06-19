@@ -1,6 +1,8 @@
 //! Shared prover-service client error types.
 
-use base_prover_service_protocol::PROOF_REQUEST_NOT_FOUND_MESSAGE;
+use base_prover_service_protocol::{
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestIdCollisionMessage,
+};
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorCode};
 use thiserror::Error;
 
@@ -81,8 +83,7 @@ impl ProverServiceClientError {
     pub fn is_l1_head_conflict_for_session(&self, session_id: &str) -> bool {
         let Self::RpcTransport(JsonRpcClientError::Call(call)) = self else { return false };
         call.code() == Self::ERROR_FAILED_PRECONDITION
-            && call.message()
-                == format!("session_id {session_id} already exists with a different l1_head")
+            && call.message() == ProofRequestIdCollisionMessage::for_field(session_id, "l1_head")
     }
 
     /// Returns `true` when the JSON-RPC error is classified as transient.
@@ -201,7 +202,7 @@ mod tests {
         let session_id = "e89da79a-8b92-5274-ba97-54a90170cee7";
         let conflict = rpc_call_error(
             ProverServiceClientError::ERROR_FAILED_PRECONDITION,
-            &format!("session_id {session_id} already exists with a different l1_head"),
+            &ProofRequestIdCollisionMessage::for_field(session_id, "l1_head"),
         );
 
         assert!(conflict.is_l1_head_conflict_for_session(session_id));
