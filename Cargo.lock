@@ -5987,7 +5987,6 @@ dependencies = [
  "jsonrpsee",
  "metrics",
  "metrics-util",
- "reqwest 0.13.4",
  "rstest",
  "rustls 0.23.40",
  "serde",

@@ -93,7 +93,7 @@ pub struct RecoveredState {
 /// This is the type-erased interface consumed by the admin JSON-RPC server.
 /// [`PipelineHandle`] is the concrete implementation.
 #[async_trait]
-pub trait ProposerDriverControl: Send + Sync {
+pub trait ProposerDriverControl: std::fmt::Debug + Send + Sync {
     /// Start the proving pipeline.
     async fn start_proposer(&self) -> Result<(), String>;
     /// Stop the proving pipeline.

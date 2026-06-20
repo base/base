@@ -248,7 +248,7 @@ impl ProposerService {
         let admin_server = if let Some(admin_addr) = config.admin_addr {
             info!("Admin RPC enabled");
             let driver = Arc::clone(&driver_handle);
-            Some(crate::admin::AdminServer::spawn(admin_addr, driver).await?)
+            Some(crate::admin::ProposerAdminApiServerImpl::spawn(admin_addr, driver).await?)
         } else {
             None
         };
@@ -279,7 +279,8 @@ impl ProposerService {
         }
 
         if let Some(admin_server) = admin_server {
-            admin_server.shutdown().await;
+            let _ = admin_server.stop();
+            admin_server.stopped().await;
         }
 
         match health_handle.await {

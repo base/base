@@ -59,7 +59,7 @@ mod error;
 pub use error::{ProposerError, ProposerResult};
 
 mod admin;
-pub use admin::{AdminServer, ProposerAdminApiServer, ProposerAdminApiServerImpl};
+pub use admin::ProposerAdminApiServerImpl;
 
 mod metrics;
 pub use metrics::Metrics;
