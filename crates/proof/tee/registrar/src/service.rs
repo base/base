@@ -15,7 +15,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
-use base_proof_contracts::TEEProverRegistryContractClient;
+use base_proof_contracts::{NitroEnclaveVerifierContractClient, TEEProverRegistryContractClient};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use tokio_util::sync::CancellationToken;
@@ -23,8 +23,8 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, CertManager, DriverConfig, NitroVerifierContractClient, ProverClient,
-    RegistrarError, RegistrarMetrics, RegistrationDriver, Result, SignerManager,
+    AwsTargetGroupDiscovery, CertManager, DriverConfig, ProverClient, RegistrarError,
+    RegistrarMetrics, RegistrationDriver, Result, SignerManager,
 };
 
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -223,7 +223,10 @@ impl RegistrarConfig {
         let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             Some(CertManager::new(
                 CRL_FETCH_TIMEOUT,
-                Box::new(NitroVerifierContractClient::new(nitro_verifier_address, self.l1_rpc_url)),
+                Box::new(NitroEnclaveVerifierContractClient::new(
+                    nitro_verifier_address,
+                    self.l1_rpc_url,
+                )),
                 tx_manager,
             )?)
         } else {
