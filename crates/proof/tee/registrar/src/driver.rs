@@ -8,6 +8,7 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, hex};
+use base_proof_contracts::TEEProverRegistryClient;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
@@ -17,7 +18,7 @@ use tracing::{Instrument, debug, info, warn};
 
 use crate::{
     CertManager, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
-    ProverInstance, RegistrarMetrics, RegistryClient, Result, SignerClient, SignerManager,
+    ProverInstance, RegistrarMetrics, Result, SignerClient, SignerManager,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -122,7 +123,7 @@ where
         D: 'static,
         S: 'static,
         P: AttestationProofProvider + 'static,
-        R: RegistryClient + 'static,
+        R: TEEProverRegistryClient + 'static,
         T: 'static,
     {
         info!(
@@ -368,7 +369,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, InstanceHealthStatus, RegistrarError,
+        DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY, InstanceHealthStatus, RegistrarError,
         Result, SignerClient,
         test_utils::{
             EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
@@ -457,7 +458,7 @@ mod tests {
             TEST_REGISTRY_ADDRESS,
             DEFAULT_MAX_CONCURRENCY,
             DEFAULT_MAX_TX_RETRIES,
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            DEFAULT_TX_RETRY_DELAY,
         ));
 
         RegistrationDriver::new(

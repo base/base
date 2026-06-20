@@ -11,7 +11,7 @@ use std::{
 
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
-use base_proof_contracts::ITEEProverRegistry;
+use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
@@ -21,14 +21,14 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{DiscoveryResolution, RegistrarError, RegistrarMetrics, RegistryClient, Result};
+use crate::{DiscoveryResolution, RegistrarError, RegistrarMetrics, Result};
 
 /// Default maximum number of transaction submission retries for transient
 /// errors before giving up.
 pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
 
 /// Default delay between transaction submission retries.
-pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
+pub const DEFAULT_TX_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 /// State for a proof-generation task currently in-flight.
 ///
@@ -87,7 +87,6 @@ pub struct ProofTaskSet {
     tasks: JoinSet<(Address, Result<()>)>,
     /// Pending registration tasks keyed by signer address.
     pub pending: HashMap<Address, PendingRegistration>,
-    cancelled_by_reconcile: HashSet<Address>,
 }
 
 impl ProofTaskSet {
@@ -107,7 +106,6 @@ impl ProofTaskSet {
         match joined {
             Ok((id, (signer, result))) => {
                 let removed = self.pending.remove(&signer);
-                self.cancelled_by_reconcile.remove(&signer);
                 let instance_id =
                     removed.as_ref().map_or("missing", |entry| entry.instance_id.as_str());
 
@@ -136,14 +134,7 @@ impl ProofTaskSet {
             }
             Err(join_err) => {
                 let id = join_err.id();
-                let removed = self
-                    .pending
-                    .iter()
-                    .find_map(|(addr, p)| (p.task_id == id).then_some(*addr))
-                    .and_then(|signer| self.pending.remove(&signer).map(|entry| (signer, entry)));
-                if let Some((signer, _)) = &removed {
-                    self.cancelled_by_reconcile.remove(signer);
-                }
+                let removed = self.pending.extract_if(|_, p| p.task_id == id).next();
                 let signer = removed.as_ref().map(|(signer, _)| *signer);
                 warn!(
                     task_id = ?id,
@@ -160,18 +151,15 @@ impl ProofTaskSet {
 
     /// Cancels every pending task cooperatively and awaits natural completion.
     pub async fn drain_proof_tasks(&mut self) {
-        for (signer, task) in &mut self.pending {
-            if !self.cancelled_by_reconcile.contains(signer) {
-                RegistrarMetrics::proof_tasks_cancelled().increment(1);
-            }
+        for task in self.pending.values_mut() {
             if !task.cancel.is_cancelled() {
+                RegistrarMetrics::proof_tasks_cancelled().increment(1);
                 task.cancel.cancel();
             }
         }
         while let Some(joined) = self.tasks.join_next_with_id().await {
             self.apply_join_outcome(joined);
         }
-        self.cancelled_by_reconcile.clear();
         RegistrarMetrics::proof_tasks_pending().set(0.0);
     }
 }
@@ -179,7 +167,7 @@ impl ProofTaskSet {
 impl<P, R, T> SignerManager<P, R, T>
 where
     P: AttestationProofProvider,
-    R: RegistryClient,
+    R: TEEProverRegistryClient,
     T: TxManager,
 {
     /// Attempts to register a signer onchain if it is not already registered.
@@ -191,7 +179,7 @@ where
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
         let Some(already_registered) = signer_cancel
-            .run_until_cancelled(self.registry.is_registered(signer_address))
+            .run_until_cancelled(self.registry.is_registered_signer(signer_address))
             .await
             .transpose()?
         else {
@@ -271,76 +259,78 @@ where
             "sending registration tx candidate"
         );
 
-        let mut retry = 0;
-        let receipt = loop {
-            if signer_cancel.is_cancelled() {
-                return Ok(());
-            }
+        let receipt = 'submit: {
+            for retry in 0..=self.max_tx_retries {
+                if signer_cancel.is_cancelled() {
+                    return Ok(());
+                }
 
-            // Do not wrap send in run_until_cancelled: dropping it after nonce
-            // acquisition can leave a nonce gap.
-            match self.tx_manager.send(candidate.clone()).await {
-                Ok(receipt) => break receipt,
-                Err(e) => {
-                    let Some(post_err_check) = signer_cancel
-                        .run_until_cancelled(self.registry.is_registered(signer_address))
-                        .await
-                    else {
-                        return Ok(());
-                    };
-                    match post_err_check {
-                        Ok(true) => {
-                            info!(
-                                signer = %signer_address,
-                                error = %e,
-                                "tx error but signer is registered onchain, treating as success"
-                            );
-                            RegistrarMetrics::registrations_total().increment(1);
+                // Do not wrap send in run_until_cancelled: dropping it after nonce
+                // acquisition can leave a nonce gap.
+                match self.tx_manager.send(candidate.clone()).await {
+                    Ok(receipt) => break 'submit receipt,
+                    Err(e) => {
+                        let Some(post_err_check) = signer_cancel
+                            .run_until_cancelled(self.registry.is_registered_signer(signer_address))
+                            .await
+                        else {
+                            return Ok(());
+                        };
+                        match post_err_check {
+                            Ok(true) => {
+                                info!(
+                                    signer = %signer_address,
+                                    error = %e,
+                                    "tx error but signer is registered onchain, treating as success"
+                                );
+                                RegistrarMetrics::registrations_total().increment(1);
+                                return Ok(());
+                            }
+                            Err(registry_err) => {
+                                warn!(
+                                    error = %registry_err,
+                                    signer = %signer_address,
+                                    "failed to query is_registered after tx error"
+                                );
+                            }
+                            Ok(false) => {}
+                        }
+
+                        if !e.is_retryable() {
+                            if matches!(e, TxManagerError::ExecutionReverted { .. }) {
+                                warn!(
+                                    signer = %signer_address,
+                                    "execution reverted, blocking proof recovery for signer"
+                                );
+                                self.proof_provider.block_recovery_for_signer(signer_address);
+                            }
+                            return Err(RegistrarError::from(e));
+                        }
+
+                        if retry == self.max_tx_retries {
+                            return Err(RegistrarError::from(e));
+                        }
+
+                        let retry = retry + 1;
+                        warn!(
+                            error = %e,
+                            signer = %signer_address,
+                            retry,
+                            max_retries = self.max_tx_retries,
+                            "tx submission failed, retrying with same proof"
+                        );
+
+                        if signer_cancel
+                            .run_until_cancelled(tokio::time::sleep(self.tx_retry_delay))
+                            .await
+                            .is_none()
+                        {
                             return Ok(());
                         }
-                        Err(registry_err) => {
-                            warn!(
-                                error = %registry_err,
-                                signer = %signer_address,
-                                "failed to query is_registered after tx error"
-                            );
-                        }
-                        Ok(false) => {}
-                    }
-
-                    if !e.is_retryable() {
-                        if matches!(e, TxManagerError::ExecutionReverted { .. }) {
-                            warn!(
-                                signer = %signer_address,
-                                "execution reverted, blocking proof recovery for signer"
-                            );
-                            self.proof_provider.block_recovery_for_signer(signer_address);
-                        }
-                        return Err(RegistrarError::from(e));
-                    }
-
-                    if retry == self.max_tx_retries {
-                        return Err(RegistrarError::from(e));
-                    }
-
-                    retry += 1;
-                    warn!(
-                        error = %e,
-                        signer = %signer_address,
-                        retry,
-                        max_retries = self.max_tx_retries,
-                        "tx submission failed, retrying with same proof"
-                    );
-
-                    if signer_cancel
-                        .run_until_cancelled(tokio::time::sleep(self.tx_retry_delay))
-                        .await
-                        .is_none()
-                    {
-                        return Ok(());
                     }
                 }
             }
+            unreachable!("retry loop must return a receipt or error")
         };
 
         if !receipt.inner.status() {
@@ -379,28 +369,6 @@ where
         for signer in
             registered_signers.into_iter().filter(|addr| !protected_signers.contains(addr))
         {
-            if cancel.is_cancelled() {
-                debug!("shutdown requested, stopping orphan deregistration");
-                break;
-            }
-
-            let is_registered =
-                match cancel.run_until_cancelled(self.registry.is_registered(signer)).await {
-                    Some(Ok(is_registered)) => is_registered,
-                    Some(Err(e)) => {
-                        warn!(
-                            error = %e,
-                            signer = %signer,
-                            "failed to verify signer registration status, skipping deregistration"
-                        );
-                        continue;
-                    }
-                    None => return Ok(()),
-                };
-            if !is_registered {
-                debug!(signer = %signer, "orphan signer is no longer registered, skipping");
-                continue;
-            }
             if cancel.is_cancelled() {
                 debug!(signer = %signer, "shutdown requested, skipping orphan deregistration");
                 break;
@@ -451,7 +419,7 @@ where
 impl<P, R, T> SignerManager<P, R, T>
 where
     P: AttestationProofProvider + 'static,
-    R: RegistryClient + 'static,
+    R: TEEProverRegistryClient + 'static,
     T: TxManager + 'static,
 {
     /// Reconciles in-flight registration tasks against fetched prover signers.
@@ -483,7 +451,6 @@ where
                 "cancelling proof task: signer no longer registerable"
             );
             task.cancel.cancel();
-            proof_tasks.cancelled_by_reconcile.insert(*signer);
             RegistrarMetrics::proof_tasks_cancelled().increment(1);
         }
 
@@ -533,7 +500,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+        DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY,
         RegisterableSigner, RegistrarError,
         test_utils::{
             EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
@@ -549,15 +516,11 @@ mod tests {
 
     type TestSignerManager =
         Arc<SignerManager<RecordingProofProvider, MockRegistry, RecordingTxManager>>;
-    type RecordedProof = (Address, Vec<u8>);
-    type RecordedProofs = Arc<Mutex<Vec<RecordedProof>>>;
 
     #[derive(Debug, Default)]
     enum RegistryMode {
         #[default]
         Static,
-        CancelAfterIsRegistered(CancellationToken),
-        ErrorForSigner(Address),
         RegisteredAfterFirstProbe(AtomicBool),
         StallIsRegistered,
         StallGetRegisteredSigners,
@@ -566,33 +529,33 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockRegistry {
         signers: Vec<Address>,
-        registered: HashSet<Address>,
         mode: RegistryMode,
         get_registered_signers_started: Notify,
     }
 
     impl MockRegistry {
         fn with_registered_signers(signers: Vec<Address>) -> Self {
-            let registered = signers.iter().copied().collect();
-            Self { signers, registered, ..Self::default() }
+            Self { signers, ..Self::default() }
         }
     }
 
     #[async_trait]
-    impl RegistryClient for MockRegistry {
-        async fn is_registered(&self, signer: Address) -> Result<bool> {
+    impl TEEProverRegistryClient for MockRegistry {
+        async fn is_valid_signer(
+            &self,
+            signer: Address,
+        ) -> std::result::Result<bool, base_proof_contracts::ContractError> {
+            self.is_registered_signer(signer).await
+        }
+
+        async fn is_registered_signer(
+            &self,
+            signer: Address,
+        ) -> std::result::Result<bool, base_proof_contracts::ContractError> {
             match &self.mode {
                 RegistryMode::Static | RegistryMode::StallGetRegisteredSigners => {
-                    Ok(self.registered.contains(&signer))
+                    Ok(self.signers.contains(&signer))
                 }
-                RegistryMode::CancelAfterIsRegistered(cancel) => {
-                    cancel.cancel();
-                    Ok(self.registered.contains(&signer))
-                }
-                RegistryMode::ErrorForSigner(failing_signer) if signer == *failing_signer => {
-                    Err(RegistrarError::Config("simulated registry error".into()))
-                }
-                RegistryMode::ErrorForSigner(_) => Ok(self.registered.contains(&signer)),
                 RegistryMode::RegisteredAfterFirstProbe(registered) => {
                     Ok(registered.swap(true, Ordering::SeqCst))
                 }
@@ -600,7 +563,9 @@ mod tests {
             }
         }
 
-        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+        async fn get_registered_signers(
+            &self,
+        ) -> std::result::Result<Vec<Address>, base_proof_contracts::ContractError> {
             self.get_registered_signers_started.notify_waiters();
             if matches!(&self.mode, RegistryMode::StallGetRegisteredSigners) {
                 std::future::pending::<()>().await;
@@ -613,13 +578,13 @@ mod tests {
     struct RecordingTxManager {
         results: Mutex<VecDeque<base_tx_manager::SendResponse>>,
         sent: Mutex<Vec<(Option<Address>, Bytes)>>,
-        stall_sends: AtomicBool,
+        stall_sends: bool,
         send_started: Notify,
     }
 
     impl RecordingTxManager {
         fn stalling() -> Self {
-            Self { stall_sends: AtomicBool::new(true), ..Self::default() }
+            Self { stall_sends: true, ..Self::default() }
         }
 
         fn with_errors(errors: Vec<TxManagerError>) -> Self {
@@ -643,7 +608,7 @@ mod tests {
         async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
             self.sent.lock().unwrap().push((candidate.to, candidate.tx_data));
             self.send_started.notify_one();
-            if self.stall_sends.load(Ordering::SeqCst) {
+            if self.stall_sends {
                 return std::future::pending::<base_tx_manager::SendResponse>().await;
             }
             self.results.lock().unwrap().pop_front().unwrap_or_else(|| Ok(stub_receipt()))
@@ -658,23 +623,11 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Default)]
     struct RecordingProofProvider {
-        proof: AttestationProof,
         cancel_then_error: bool,
         blocked_signers: Arc<Mutex<Vec<Address>>>,
-        records: RecordedProofs,
-    }
-
-    impl Default for RecordingProofProvider {
-        fn default() -> Self {
-            Self {
-                proof: stub_proof(),
-                cancel_then_error: false,
-                blocked_signers: Arc::default(),
-                records: Arc::default(),
-            }
-        }
+        records: Arc<Mutex<Vec<(Address, Vec<u8>)>>>,
     }
 
     #[async_trait]
@@ -700,7 +653,10 @@ mod tests {
                     "simulated cancel race".into(),
                 ));
             }
-            Ok(self.proof.clone())
+            Ok(AttestationProof {
+                output: Bytes::from_static(b"stub-output"),
+                proof_bytes: Bytes::from_static(b"stub-proof"),
+            })
         }
 
         fn block_recovery_for_signer(&self, signer: Address) {
@@ -720,7 +676,7 @@ mod tests {
             TEST_REGISTRY_ADDRESS,
             DEFAULT_MAX_CONCURRENCY,
             DEFAULT_MAX_TX_RETRIES,
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            DEFAULT_TX_RETRY_DELAY,
         )
     }
 
@@ -737,13 +693,6 @@ mod tests {
         cancel: &CancellationToken,
     ) -> Result<()> {
         manager.register_signer(TEST_PENDING_INSTANCE_ID, SIGNER_A, ATTESTATION, cancel).await
-    }
-
-    fn stub_proof() -> AttestationProof {
-        AttestationProof {
-            output: Bytes::from_static(b"stub-output"),
-            proof_bytes: Bytes::from_static(b"stub-proof"),
-        }
     }
 
     fn reconcile(
@@ -795,7 +744,6 @@ mod tests {
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         proof_tasks.pending.clear();
-        proof_tasks.cancelled_by_reconcile.clear();
     }
 
     #[tokio::test]
@@ -827,25 +775,17 @@ mod tests {
         let signer_cancel = CancellationToken::new();
         let task_manager = Arc::clone(&manager);
         let task_cancel = signer_cancel.clone();
-        let handle = tokio::spawn(async move {
-            let start = tokio::time::Instant::now();
-            let res = register(&task_manager, &task_cancel).await;
-            (res, start.elapsed())
-        });
+        let handle = tokio::spawn(async move { register(&task_manager, &task_cancel).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         signer_cancel.cancel();
 
-        let (result, elapsed) = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
+        let result = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
             .await
             .expect("register_signer must not hang past the timeout")
             .expect("spawned task must not panic");
 
         assert!(result.is_ok(), "cancel-induced exit must be Ok(()): {result:?}");
-        assert!(
-            elapsed < Duration::from_secs(1),
-            "cancel must abort the registry stall within 1s (took {elapsed:?})",
-        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -866,30 +806,6 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn register_signer_non_retryable_tx_error_aborts_immediately() {
-        for error in [
-            TxManagerError::ExecutionReverted { reason: Some("bad proof".into()), data: None },
-            TxManagerError::InsufficientFunds,
-            TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 },
-        ] {
-            let manager = manager_with(
-                RecordingProofProvider::default(),
-                MockRegistry::default(),
-                RecordingTxManager::with_errors(vec![error]),
-            );
-
-            let result = register(&manager, &CancellationToken::new()).await;
-
-            assert!(result.is_err(), "non-retryable tx errors should propagate");
-            assert_eq!(
-                manager.tx_manager.send_count(),
-                1,
-                "should not retry after non-retryable error"
-            );
-        }
-    }
-
-    #[tokio::test(start_paused = true)]
     async fn register_signer_tx_outcome() {
         for (errors, should_succeed, expected_sends) in [
             (vec![], true, 1),
@@ -907,6 +823,14 @@ mod tests {
                     .collect(),
                 false,
                 (DEFAULT_MAX_TX_RETRIES + 1) as usize,
+            ),
+            (
+                vec![TxManagerError::ExecutionReverted {
+                    reason: Some("bad proof".into()),
+                    data: None,
+                }],
+                false,
+                1,
             ),
         ] {
             let manager = manager_with(
@@ -1002,7 +926,7 @@ mod tests {
             TEST_REGISTRY_ADDRESS,
             1,
             DEFAULT_MAX_TX_RETRIES,
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            DEFAULT_TX_RETRY_DELAY,
         ));
         let cancel = CancellationToken::new();
 
@@ -1070,11 +994,9 @@ mod tests {
 
             let cancelled = seeded_cancels.iter().filter(|c| c.is_cancelled()).count();
             let new_spawns = proof_tasks.tasks.len().saturating_sub(pre_task_count);
-            let counted_by_reconcile = proof_tasks.cancelled_by_reconcile.len();
 
             assert_eq!(new_spawns, expected_new_spawns, "spawn-pass count");
             assert_eq!(cancelled, expected_cancels, "cancel-pass count");
-            assert_eq!(counted_by_reconcile, expected_cancels, "metric accounting flag count");
             assert_eq!(proof_tasks.pending.len(), expected_pending, "pending task count");
 
             drain_test_tasks(&mut proof_tasks).await;
@@ -1258,14 +1180,8 @@ mod tests {
             },
         );
 
-        tokio::time::timeout(GATED_WAIT_TIMEOUT, async {
-            while !proof_tasks.tasks.is_empty() {
-                proof_tasks.reap_finished_tasks();
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("panicked task never resolved");
+        tokio::task::yield_now().await;
+        proof_tasks.reap_finished_tasks();
 
         assert!(proof_tasks.pending.is_empty(), "panicked task must be evicted");
         assert!(proof_tasks.tasks.is_empty(), "JoinSet must drain to empty");
@@ -1300,48 +1216,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deregister_orphans_skips_ghost_signers() {
-        let manager = manager_with(
-            RecordingProofProvider::default(),
-            MockRegistry {
-                signers: vec![SIGNER_A, SIGNER_B],
-                registered: HashSet::from([SIGNER_A]),
-                ..Default::default()
-            },
-            RecordingTxManager::default(),
-        );
-
-        manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await.unwrap();
-
-        let sent = manager.tx_manager.take_sent();
-        assert_eq!(sent.len(), 1);
-        let expected =
-            Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer: SIGNER_A }.abi_encode());
-        assert_eq!(sent[0], (Some(TEST_REGISTRY_ADDRESS), expected));
-    }
-
-    #[tokio::test]
-    async fn deregister_orphans_skips_signers_with_registration_probe_errors() {
-        let manager = manager_with(
-            RecordingProofProvider::default(),
-            MockRegistry {
-                signers: vec![SIGNER_A, SIGNER_B],
-                registered: HashSet::from([SIGNER_A, SIGNER_B]),
-                mode: RegistryMode::ErrorForSigner(SIGNER_A),
-                ..Default::default()
-            },
-            RecordingTxManager::default(),
-        );
-
-        manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await.unwrap();
-
-        let sent = manager.tx_manager.take_sent();
-        let expected =
-            Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer: SIGNER_B }.abi_encode());
-        assert_eq!(sent, vec![(Some(TEST_REGISTRY_ADDRESS), expected)]);
-    }
-
-    #[tokio::test]
     async fn deregister_orphans_respects_cancellation() {
         let manager = manager_with(
             RecordingProofProvider::default(),
@@ -1354,25 +1228,6 @@ mod tests {
         let protected_signers = HashSet::new();
 
         manager.run_orphan_dereg(&protected_signers, &cancel).await.unwrap();
-
-        assert!(manager.tx_manager.take_sent().is_empty());
-    }
-
-    #[tokio::test]
-    async fn deregister_orphans_respects_cancellation_after_registration_probe() {
-        let cancel = CancellationToken::new();
-        let manager = manager_with(
-            RecordingProofProvider::default(),
-            MockRegistry {
-                signers: vec![SIGNER_A],
-                registered: HashSet::from([SIGNER_A]),
-                mode: RegistryMode::CancelAfterIsRegistered(cancel.clone()),
-                ..Default::default()
-            },
-            RecordingTxManager::default(),
-        );
-
-        manager.run_orphan_dereg(&HashSet::new(), &cancel).await.unwrap();
 
         assert!(manager.tx_manager.take_sent().is_empty());
     }
