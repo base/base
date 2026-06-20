@@ -1,5 +1,7 @@
 //! Optional admin JSON-RPC handler.
 //!
+//! Provides `admin_startProposer`, `admin_stopProposer`, and `admin_proposerRunning` JSON-RPC
+//! methods for controlling the proposer driver at runtime.
 
 use std::{net::SocketAddr, sync::Arc};
 
