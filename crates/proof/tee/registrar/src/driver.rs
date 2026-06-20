@@ -372,7 +372,7 @@ mod tests {
         DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, InstanceHealthStatus, RegistrarError,
         Result, SignerClient,
         test_utils::{
-            EP1, EP2, EP3, EP4, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
+            EP1, EP2, EP3, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
             TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
             public_key_from_private, signer_from_private_key,
         },
@@ -511,7 +511,7 @@ mod tests {
 
     #[tokio::test]
     async fn discover_and_resolve_includes_all_reachable_when_one_instance_is_unreachable() {
-        let unreachable = healthy_prover_instance(EP4);
+        let unreachable = healthy_prover_instance("10.0.0.4:8000");
         let instances = vec![
             unreachable.clone(),
             healthy_prover_instance(EP1),

@@ -156,7 +156,7 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
-    use crate::test_utils::{EP1, NoopNitroVerifier, NoopTxManager, healthy_prover_instance};
+    use crate::test_utils::{EP1, NoopTxManager, healthy_prover_instance};
 
     #[derive(Debug)]
     struct TestNitroVerifier {
@@ -196,7 +196,11 @@ mod tests {
 
     #[tokio::test]
     async fn parse_failure_includes_instance_endpoint() {
-        let manager = manager(Box::new(NoopNitroVerifier));
+        let manager = manager(Box::new(TestNitroVerifier {
+            revoked: None,
+            fails: false,
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }));
 
         let err = manager
             .check_and_revoke_crls(b"not a cose attestation", &healthy_prover_instance(EP1))

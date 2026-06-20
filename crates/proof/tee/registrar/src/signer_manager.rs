@@ -504,7 +504,7 @@ mod tests {
         RegisterableSigner, RegistrarError,
         test_utils::{
             EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
-            signer_from_private_key, stub_receipt, stub_receipt_with_status,
+            signer_from_private_key, stub_receipt_with_status,
         },
     };
 
@@ -612,7 +612,11 @@ mod tests {
             if self.stall_sends {
                 return std::future::pending::<base_tx_manager::SendResponse>().await;
             }
-            self.results.lock().unwrap().pop_front().unwrap_or_else(|| Ok(stub_receipt()))
+            self.results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Ok(stub_receipt_with_status(true)))
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
