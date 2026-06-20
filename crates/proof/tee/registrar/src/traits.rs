@@ -34,12 +34,10 @@ pub trait SignerClient: Send + Sync {
 
     /// Fetches the raw Nitro attestation document for each enclave signer at the given endpoint.
     ///
-    /// Optional `user_data` and `nonce` bind the attestation to a specific
-    /// request (e.g. a random nonce for replay protection).
+    /// The optional nonce binds the attestation to a specific request for replay protection.
     fn signer_attestation<'a>(
         &'a self,
         endpoint: &'a Url,
-        user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
     ) -> impl Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a;
 }

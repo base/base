@@ -242,7 +242,7 @@ where
         );
         let all_attestations = match self
             .signer_client
-            .signer_attestation(&instance.endpoint, None, Some(nonce.to_vec()))
+            .signer_attestation(&instance.endpoint, Some(nonce.to_vec()))
             .await
         {
             Ok(attestations) => attestations,
@@ -417,7 +417,6 @@ mod tests {
         async fn signer_attestation(
             &self,
             endpoint: &Url,
-            _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
         ) -> Result<Vec<Vec<u8>>> {
             if self.fail_attestation.contains(endpoint) {

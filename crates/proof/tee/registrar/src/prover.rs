@@ -65,13 +65,13 @@ impl SignerClient for ProverClient {
     async fn signer_attestation(
         &self,
         endpoint: &Url,
-        user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
     ) -> Result<Vec<Vec<u8>>> {
         debug!(endpoint = %endpoint, "fetching signer attestations");
         let client = self.build_client(endpoint)?;
-        client.signer_attestation(user_data, nonce).await.map_err(|e| {
-            RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }
+        client.signer_attestation(None, nonce).await.map_err(|e| RegistrarError::ProverClient {
+            instance: endpoint.to_string(),
+            source: Box::new(e),
         })
     }
 }
