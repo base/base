@@ -44,7 +44,7 @@ mod proof_submitter;
 pub use proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction};
 
 mod driver;
-pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};
+pub use driver::{DriverConfig, PipelineHandle, RecoveredState};
 
 mod pipeline;
 pub use pipeline::{PipelineConfig, ProvingPipeline};

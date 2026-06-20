@@ -5,6 +5,8 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
+use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
+use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use eyre::Context;
 use jsonrpsee::{
     core::RpcResult,
@@ -13,18 +15,25 @@ use jsonrpsee::{
 };
 use tracing::info;
 
-use crate::driver::ProposerDriverControl;
+use crate::driver::PipelineHandle;
 
-/// Admin JSON-RPC server backed by a [`ProposerDriverControl`] handle.
+/// Admin JSON-RPC server backed by a [`PipelineHandle`].
 #[derive(Debug)]
 pub struct ProposerAdminApiServerImpl;
 
 impl ProposerAdminApiServerImpl {
     /// Bind and start the admin server on the given socket address.
-    pub async fn spawn(
+    pub async fn spawn<L1, L2, R, ASR, F>(
         addr: SocketAddr,
-        driver: Arc<dyn ProposerDriverControl>,
-    ) -> eyre::Result<ServerHandle> {
+        driver: Arc<PipelineHandle<L1, L2, R, ASR, F>>,
+    ) -> eyre::Result<ServerHandle>
+    where
+        L1: L1Provider + 'static,
+        L2: L2Provider + 'static,
+        R: RollupProvider + 'static,
+        ASR: AnchorStateRegistryClient + 'static,
+        F: DisputeGameFactoryClient + 'static,
+    {
         let server =
             Server::builder().build(addr).await.wrap_err("failed to bind admin RPC server")?;
         let local_addr =
@@ -35,7 +44,16 @@ impl ProposerAdminApiServerImpl {
     }
 
     /// Build the admin RPC module.
-    pub fn module(driver: Arc<dyn ProposerDriverControl>) -> eyre::Result<RpcModule<()>> {
+    pub fn module<L1, L2, R, ASR, F>(
+        driver: Arc<PipelineHandle<L1, L2, R, ASR, F>>,
+    ) -> eyre::Result<RpcModule<()>>
+    where
+        L1: L1Provider + 'static,
+        L2: L2Provider + 'static,
+        R: RollupProvider + 'static,
+        ASR: AnchorStateRegistryClient + 'static,
+        F: DisputeGameFactoryClient + 'static,
+    {
         let mut module = RpcModule::new(());
 
         let start_driver = Arc::clone(&driver);
@@ -55,8 +73,9 @@ impl ProposerAdminApiServerImpl {
             .wrap_err("failed to register admin_stopProposer")?;
 
         module
-            .register_method("admin_proposerRunning", move |_, _, _| {
-                RpcResult::Ok(driver.is_running())
+            .register_async_method("admin_proposerRunning", move |_, _, _| {
+                let driver = Arc::clone(&driver);
+                async move { RpcResult::Ok(driver.is_running().await) }
             })
             .wrap_err("failed to register admin_proposerRunning")?;
 
@@ -64,59 +83,7 @@ impl ProposerAdminApiServerImpl {
     }
 
     /// Convert a driver control error into a JSON-RPC error object.
-    pub fn rpc_error(msg: String) -> ErrorObjectOwned {
+    pub fn rpc_error(msg: &'static str) -> ErrorObjectOwned {
         ErrorObjectOwned::owned(-32000, msg, None::<()>)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
-
-    use async_trait::async_trait;
-
-    use super::*;
-
-    #[derive(Debug, Default)]
-    struct MockDriver {
-        running: AtomicBool,
-    }
-
-    #[async_trait]
-    impl ProposerDriverControl for MockDriver {
-        async fn start_proposer(&self) -> Result<(), String> {
-            self.running.store(true, Ordering::Release);
-            Ok(())
-        }
-
-        async fn stop_proposer(&self) -> Result<(), String> {
-            self.running.store(false, Ordering::Release);
-            Ok(())
-        }
-
-        fn is_running(&self) -> bool {
-            self.running.load(Ordering::Acquire)
-        }
-    }
-
-    #[tokio::test]
-    async fn module_registers_admin_methods() {
-        let driver: Arc<dyn ProposerDriverControl> = Arc::new(MockDriver::default());
-        let module = ProposerAdminApiServerImpl::module(driver).unwrap();
-        let params = Vec::<()>::new();
-
-        let running: bool = module.call("admin_proposerRunning", params.clone()).await.unwrap();
-        assert!(!running);
-
-        let _: () = module.call("admin_startProposer", params.clone()).await.unwrap();
-        let running: bool = module.call("admin_proposerRunning", params.clone()).await.unwrap();
-        assert!(running);
-
-        let _: () = module.call("admin_stopProposer", params.clone()).await.unwrap();
-        let running: bool = module.call("admin_proposerRunning", params).await.unwrap();
-        assert!(!running);
     }
 }

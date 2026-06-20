@@ -32,7 +32,7 @@ use tracing::{info, warn};
 use crate::{
     Metrics,
     config::ProposerConfig,
-    driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
+    driver::{DriverConfig, PipelineHandle},
     output_proposer::ProposalSubmitter,
     pipeline::{PipelineConfig, ProvingPipeline},
 };
@@ -243,8 +243,7 @@ impl ProposerService {
             cancel.child_token(),
         );
         info!("Proving pipeline initialized");
-        let driver_handle: Arc<dyn ProposerDriverControl> =
-            Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
+        let driver_handle = Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
 
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle: JoinHandle<Result<()>> = {
@@ -281,7 +280,7 @@ impl ProposerService {
 
         ready.store(false, Ordering::SeqCst);
 
-        if driver_handle.is_running()
+        if driver_handle.is_running().await
             && let Err(e) = driver_handle.stop_proposer().await
         {
             warn!(error = %e, "Error stopping proposer driver");

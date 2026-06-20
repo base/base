@@ -2,19 +2,11 @@
 //!
 //! Contains configuration types ([`DriverConfig`], [`RecoveredState`]) shared
 //! by the [`crate::ProvingPipeline`], and the [`PipelineHandle`] that wraps a
-//! pipeline with start/stop/is-running semantics exposed through the
-//! [`ProposerDriverControl`] trait for the admin JSON-RPC server.
+//! pipeline with start/stop/is-running semantics for the admin JSON-RPC server.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
-use async_trait::async_trait;
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use eyre::Result;
@@ -23,10 +15,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::pipeline::ProvingPipeline;
-
-// ---------------------------------------------------------------------------
-// Core types
-// ---------------------------------------------------------------------------
 
 /// Driver configuration.
 #[derive(Debug, Clone)]
@@ -42,7 +30,7 @@ pub struct DriverConfig {
     /// If true, use `safe_l2` (derived from L1 but L1 not yet finalized).
     /// If false (default), use `finalized_l2` (derived from finalized L1).
     pub allow_non_finalized: bool,
-    /// Address of the proposer that submits proof transactions on-chain.
+    /// Address of the proposer that submits proof transactions onchain.
     /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
     pub proposer_address: Address,
     /// Keccak256 hash of the expected enclave PCR0 measurement.
@@ -69,7 +57,7 @@ impl Default for DriverConfig {
     }
 }
 
-/// On-chain state recovered by the pipeline.
+/// Onchain state recovered by the pipeline.
 ///
 /// This is either a game found in the `DisputeGameFactory` or the
 /// anchor root from the `AnchorStateRegistry` when no games exist.
@@ -84,33 +72,9 @@ pub struct RecoveredState {
     pub l2_block_number: u64,
 }
 
-// ---------------------------------------------------------------------------
-// Lifecycle management
-// ---------------------------------------------------------------------------
-
-/// Trait for controlling the proposer at runtime.
-///
-/// This is the type-erased interface consumed by the admin JSON-RPC server.
-/// [`PipelineHandle`] is the concrete implementation.
-#[async_trait]
-pub trait ProposerDriverControl: Send + Sync {
-    /// Start the proving pipeline.
-    async fn start_proposer(&self) -> Result<(), String>;
-    /// Stop the proving pipeline.
-    async fn stop_proposer(&self) -> Result<(), String>;
-    /// Returns whether the proving pipeline is currently running.
-    fn is_running(&self) -> bool;
-}
-
-/// Active session state: the cancellation token and spawned task for a running
-/// pipeline.
-struct Session {
-    cancel: CancellationToken,
-    task: Option<JoinHandle<Result<()>>>,
-}
-
 /// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
 /// and stopped at runtime (e.g. via the admin RPC).
+#[derive(Debug)]
 pub struct PipelineHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
@@ -120,24 +84,8 @@ where
     F: DisputeGameFactoryClient + 'static,
 {
     pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
-    session: TokioMutex<Session>,
+    session: TokioMutex<Option<(CancellationToken, JoinHandle<Result<()>>)>>,
     global_cancel: CancellationToken,
-    running: Arc<AtomicBool>,
-}
-
-impl<L1, L2, R, ASR, F> std::fmt::Debug for PipelineHandle<L1, L2, R, ASR, F>
-where
-    L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
-    R: RollupProvider + 'static,
-    ASR: AnchorStateRegistryClient + 'static,
-    F: DisputeGameFactoryClient + 'static,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PipelineHandle")
-            .field("running", &self.running.load(Ordering::Relaxed))
-            .finish_non_exhaustive()
-    }
 }
 
 impl<L1, L2, R, ASR, F> PipelineHandle<L1, L2, R, ASR, F>
@@ -153,35 +101,20 @@ where
         pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
         global_cancel: CancellationToken,
     ) -> Self {
-        let session = Session { cancel: global_cancel.child_token(), task: None };
-        Self {
-            pipeline,
-            session: TokioMutex::new(session),
-            global_cancel,
-            running: Arc::new(AtomicBool::new(false)),
-        }
+        Self { pipeline, session: TokioMutex::new(None), global_cancel }
     }
-}
 
-#[async_trait]
-impl<L1, L2, R, ASR, F> ProposerDriverControl for PipelineHandle<L1, L2, R, ASR, F>
-where
-    L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
-    R: RollupProvider + 'static,
-    ASR: AnchorStateRegistryClient + 'static,
-    F: DisputeGameFactoryClient + 'static,
-{
-    async fn start_proposer(&self) -> Result<(), String> {
+    /// Start the proving pipeline.
+    pub async fn start_proposer(&self) -> std::result::Result<(), &'static str> {
         let mut session = self.session.lock().await;
 
-        if self.running.load(Ordering::Acquire) {
-            return Err("proposer is already running".into());
+        if session.as_ref().is_some_and(|(_, task)| !task.is_finished()) {
+            return Err("proposer is already running");
         }
 
         // Drain any stale task from a self-terminated pipeline run so panics
         // are surfaced and the JoinHandle resources are properly reclaimed.
-        if let Some(task) = session.task.take() {
+        if let Some((_, task)) = session.take() {
             match task.await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => warn!(error = %e, "previous pipeline run exited with error"),
@@ -189,36 +122,28 @@ where
             }
         }
 
-        self.running.store(true, Ordering::Release);
-
         let cancel = self.global_cancel.child_token();
         let mut pipeline = self.pipeline.clone();
         pipeline.set_cancel(cancel.clone());
 
-        let running = Arc::clone(&self.running);
-        let handle = tokio::spawn(async move {
-            let result = pipeline.run().await;
-            running.store(false, Ordering::Release);
-            result
-        });
+        let handle = tokio::spawn(async move { pipeline.run().await });
 
-        session.cancel = cancel;
-        session.task = Some(handle);
+        *session = Some((cancel, handle));
 
         info!("proving pipeline started");
         Ok(())
     }
 
-    async fn stop_proposer(&self) -> Result<(), String> {
+    /// Stop the proving pipeline.
+    pub async fn stop_proposer(&self) -> std::result::Result<(), &'static str> {
         let mut session = self.session.lock().await;
 
-        if !self.running.load(Ordering::Acquire) {
-            return Err("proposer is not running".into());
+        if !session.as_ref().is_some_and(|(_, task)| !task.is_finished()) {
+            return Err("proposer is not running");
         }
 
-        session.cancel.cancel();
-
-        if let Some(task) = session.task.take() {
+        if let Some((cancel, task)) = session.take() {
+            cancel.cancel();
             match task.await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => warn!(error = %e, "proving pipeline exited with error"),
@@ -226,13 +151,13 @@ where
             }
         }
 
-        self.running.store(false, Ordering::Release);
         info!("proving pipeline stopped");
         Ok(())
     }
 
-    fn is_running(&self) -> bool {
-        self.running.load(Ordering::Acquire)
+    /// Returns whether the proving pipeline is currently running.
+    pub async fn is_running(&self) -> bool {
+        self.session.lock().await.as_ref().is_some_and(|(_, task)| !task.is_finished())
     }
 }
 
@@ -283,8 +208,6 @@ mod tests {
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_secs(3600),
-                    block_interval: 512,
-                    intermediate_block_interval: 512,
                     ..Default::default()
                 },
             },
@@ -302,26 +225,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_pipeline_handle_start_stop() {
-        let cancel = CancellationToken::new();
-        let handle = test_pipeline_handle(cancel);
-
-        assert!(!handle.is_running());
-        handle.start_proposer().await.unwrap();
-        assert!(handle.is_running());
-        handle.stop_proposer().await.unwrap();
-        assert!(!handle.is_running());
-    }
-
-    #[tokio::test]
     async fn test_pipeline_handle_double_start_errors() {
         let cancel = CancellationToken::new();
         let handle = test_pipeline_handle(cancel);
 
         handle.start_proposer().await.unwrap();
-        let result = handle.start_proposer().await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("already running"));
+        assert!(handle.start_proposer().await.unwrap_err().contains("already running"));
         handle.stop_proposer().await.unwrap();
     }
 
@@ -330,9 +239,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let handle = test_pipeline_handle(cancel);
 
-        let result = handle.stop_proposer().await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not running"));
+        assert!(handle.stop_proposer().await.unwrap_err().contains("not running"));
     }
 
     #[tokio::test]
@@ -340,12 +247,13 @@ mod tests {
         let cancel = CancellationToken::new();
         let handle = test_pipeline_handle(cancel);
 
+        assert!(!handle.is_running().await);
         handle.start_proposer().await.unwrap();
         handle.stop_proposer().await.unwrap();
         handle.start_proposer().await.unwrap();
-        assert!(handle.is_running());
+        assert!(handle.is_running().await);
         handle.stop_proposer().await.unwrap();
-        assert!(!handle.is_running());
+        assert!(!handle.is_running().await);
     }
 
     #[tokio::test]
@@ -354,20 +262,10 @@ mod tests {
         let handle = test_pipeline_handle(cancel.clone());
 
         handle.start_proposer().await.unwrap();
-        assert!(handle.is_running());
+        assert!(handle.is_running().await);
 
         cancel.cancel();
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(!handle.is_running());
-    }
-
-    #[tokio::test]
-    async fn test_pipeline_handle_debug() {
-        let cancel = CancellationToken::new();
-        let handle = test_pipeline_handle(cancel);
-
-        let debug = format!("{handle:?}");
-        assert!(debug.contains("PipelineHandle"));
-        assert!(debug.contains("running"));
+        assert!(!handle.is_running().await);
     }
 }
