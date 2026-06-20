@@ -1207,23 +1207,19 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_min_price_without_max_price() {
-        let mut config = prover_config();
-        config.offer_min_price = Some(eth_amount(TEST_MIN_PRICE_ETH));
+    fn new_rejects_unpaired_offer_prices() {
+        for (min_price, max_price) in [
+            (Some(eth_amount(TEST_MIN_PRICE_ETH)), None),
+            (None, Some(eth_amount(TEST_MAX_PRICE_ETH))),
+        ] {
+            let mut config = prover_config();
+            config.offer_min_price = min_price;
+            config.offer_max_price = max_price;
 
-        let error = BoundlessProver::new(config).unwrap_err();
+            let error = BoundlessProver::new(config).unwrap_err();
 
-        assert_config_error(error, "offer_min_price and offer_max_price must be set together");
-    }
-
-    #[test]
-    fn new_rejects_max_price_without_min_price() {
-        let mut config = prover_config();
-        config.offer_max_price = Some(eth_amount(TEST_MAX_PRICE_ETH));
-
-        let error = BoundlessProver::new(config).unwrap_err();
-
-        assert_config_error(error, "offer_min_price and offer_max_price must be set together");
+            assert_config_error(error, "offer_min_price and offer_max_price must be set together");
+        }
     }
 
     #[test]
