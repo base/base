@@ -25,8 +25,10 @@ impl ProposerAdminApiServerImpl {
     ) -> eyre::Result<ServerHandle> {
         let server =
             Server::builder().build(addr).await.wrap_err("failed to bind admin RPC server")?;
+        let local_addr =
+            server.local_addr().wrap_err("failed to get admin server local address")?;
         let module = Self::module(driver)?;
-        info!(addr = %addr, "admin RPC server listening");
+        info!(addr = %local_addr, "admin RPC server listening");
         Ok(server.start(module))
     }
 
