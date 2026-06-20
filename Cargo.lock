@@ -5847,7 +5847,6 @@ dependencies = [
  "metrics",
  "rand 0.9.4",
  "reqwest 0.13.4",
- "rstest",
  "rustls 0.23.40",
  "thiserror 2.0.18",
  "tokio",

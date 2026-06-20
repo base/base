@@ -103,7 +103,12 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             let health_status = desc
                 .target_health()
                 .and_then(|h| h.state())
-                .map(|s| InstanceHealthStatus::from_aws_state(s.as_str()))
+                .map(|s| match s.as_str() {
+                    "initial" => InstanceHealthStatus::Initial,
+                    "healthy" => InstanceHealthStatus::Healthy,
+                    "draining" => InstanceHealthStatus::Draining,
+                    _ => InstanceHealthStatus::Unhealthy,
+                })
                 .unwrap_or(InstanceHealthStatus::Unhealthy);
 
             health_map.entry(instance_id.to_string()).or_insert(health_status);

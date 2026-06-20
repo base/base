@@ -213,7 +213,11 @@ where
                 lt.elapsed()
                     .is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
             });
-        if !instance.health_status.should_register() && !recently_launched_unhealthy {
+        if !matches!(
+            instance.health_status,
+            InstanceHealthStatus::Initial | InstanceHealthStatus::Healthy
+        ) && !recently_launched_unhealthy
+        {
             debug!(
                 status = ?instance.health_status,
                 instance = %instance.instance_id,

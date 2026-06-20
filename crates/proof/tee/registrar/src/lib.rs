@@ -38,7 +38,7 @@ mod traits;
 pub use traits::{InstanceDiscovery, SignerClient};
 
 mod types;
-pub use types::{InstanceHealthStatus, ProverInstance, RegisteredSigner};
+pub use types::{InstanceHealthStatus, ProverInstance};
 
 mod verifier;
 pub use verifier::{NitroVerifierClient, NitroVerifierContractClient};
