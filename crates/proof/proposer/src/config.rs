@@ -40,7 +40,7 @@ pub enum ConfigError {
 /// Validated proposer configuration.
 #[derive(Debug)]
 pub struct ProposerConfig {
-    /// Dry-run mode: source proofs but do not submit transactions on-chain.
+    /// Dry-run mode: source proofs but do not submit transactions onchain.
     pub dry_run: bool,
     /// Allow proposals based on non-finalized L1 data.
     pub allow_non_finalized: bool,
@@ -87,7 +87,7 @@ pub struct ProposerConfig {
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
     /// Optional address of the `TEEProverRegistry` contract on L1.
-    /// When set, the proposer validates signers before on-chain submission.
+    /// When set, the proposer validates signers before onchain submission.
     pub tee_prover_registry_address: Option<Address>,
 }
 
@@ -100,14 +100,6 @@ impl ProposerConfig {
         validate_url(&proposer.l1_eth_rpc, "l1-eth-rpc")?;
         validate_url(&proposer.l2_eth_rpc, "l2-eth-rpc")?;
         validate_url(&proposer.rollup_rpc, "rollup-rpc")?;
-
-        if proposer.recovery_scan_concurrency == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "recovery-scan-concurrency",
-                constraint: "at least 1",
-                value: "0",
-            });
-        }
 
         // A zero address would be indistinguishable from an unconfigured value,
         // and is used as the "no parent" sentinel for the first game from anchor state.
@@ -151,7 +143,7 @@ impl ProposerConfig {
             });
         }
 
-        if admin.enabled && admin.port == 0 {
+        if admin.admin_enabled && admin.admin_port == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "admin-port",
                 constraint: "non-zero when admin is enabled",
@@ -189,11 +181,13 @@ impl ProposerConfig {
             log: LogConfig::from(logging),
             metrics: metrics.into(),
             health_addr: health.socket_addr(),
-            admin_addr: admin.enabled.then(|| admin.socket_addr()),
+            admin_addr: admin
+                .admin_enabled
+                .then(|| SocketAddr::new(admin.admin_addr, admin.admin_port)),
             retry,
             signing,
             tx_manager,
-            recovery_scan_concurrency: proposer.recovery_scan_concurrency,
+            recovery_scan_concurrency: proposer.recovery_scan_concurrency.get(),
             tee_prover_registry_address: proposer.tee_prover_registry_address,
         })
     }
@@ -219,6 +213,8 @@ impl From<&ProposerArgs> for RetryConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use base_cli_utils::LogFormat;
 
     use super::*;
@@ -261,7 +257,7 @@ mod tests {
                     signer_endpoint: None,
                     signer_address: None,
                 },
-                recovery_scan_concurrency: 8,
+                recovery_scan_concurrency: NonZeroUsize::new(8).unwrap(),
                 tee_prover_registry_address: None,
                 tx_manager: TxManagerCli::default(),
             },
@@ -278,7 +274,11 @@ mod tests {
                 ..Default::default()
             },
             health: HealthArgs::default(),
-            admin: AdminArgs::default(),
+            admin: AdminArgs {
+                admin_enabled: false,
+                admin_addr: "127.0.0.1".parse().unwrap(),
+                admin_port: 8545,
+            },
         }
     }
 
@@ -350,8 +350,8 @@ mod tests {
     #[test]
     fn test_admin_port_zero_when_admin_enabled() {
         let mut cli = minimal_cli();
-        cli.admin.enabled = true;
-        cli.admin.port = 0;
+        cli.admin.admin_enabled = true;
+        cli.admin.admin_port = 0;
         let result = ProposerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::OutOfRange { field: "admin-port", .. })));
     }
@@ -359,8 +359,8 @@ mod tests {
     #[test]
     fn test_admin_port_zero_when_admin_disabled() {
         let mut cli = minimal_cli();
-        cli.admin.enabled = false;
-        cli.admin.port = 0;
+        cli.admin.admin_enabled = false;
+        cli.admin.admin_port = 0;
         // Should be fine since admin is disabled
         let result = ProposerConfig::from_cli(cli);
         assert!(result.is_ok());
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn test_admin_addr_some_when_enabled() {
         let mut cli = minimal_cli();
-        cli.admin.enabled = true;
+        cli.admin.admin_enabled = true;
         let config = ProposerConfig::from_cli(cli).unwrap();
         assert!(config.admin_addr.is_some());
         let addr = config.admin_addr.unwrap();
@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn test_admin_addr_none_when_disabled() {
         let mut cli = minimal_cli();
-        cli.admin.enabled = false;
+        cli.admin.admin_enabled = false;
         let config = ProposerConfig::from_cli(cli).unwrap();
         assert!(config.admin_addr.is_none());
     }
@@ -443,20 +443,9 @@ mod tests {
     }
 
     #[test]
-    fn test_recovery_scan_concurrency_zero_rejected() {
-        let mut cli = minimal_cli();
-        cli.proposer.recovery_scan_concurrency = 0;
-        let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "recovery-scan-concurrency", .. })
-        ));
-    }
-
-    #[test]
     fn test_recovery_scan_concurrency_custom() {
         let mut cli = minimal_cli();
-        cli.proposer.recovery_scan_concurrency = 4;
+        cli.proposer.recovery_scan_concurrency = NonZeroUsize::new(4).unwrap();
         let config = ProposerConfig::from_cli(cli).unwrap();
         assert_eq!(config.recovery_scan_concurrency, 4);
     }
