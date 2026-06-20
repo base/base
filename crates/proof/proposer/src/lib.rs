@@ -50,7 +50,7 @@ mod pipeline;
 pub use pipeline::{PipelineConfig, ProvingPipeline};
 
 mod error;
-pub use error::{ProposerError, ProposerResult};
+pub use error::ProposerError;
 
 mod admin;
 pub use admin::ProposerAdminApiServerImpl;

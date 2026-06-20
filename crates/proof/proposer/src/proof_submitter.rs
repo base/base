@@ -29,6 +29,7 @@ use base_proof_contracts::{
 };
 use base_proof_primitives::{ProofJournal, ProofResult, Proposal};
 use base_proof_rpc::{L1Provider, RollupProvider};
+use base_proof_submission::ProofSubmissionError;
 use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 
@@ -313,7 +314,7 @@ where
                 Ok(())
             }
             Err(e) => {
-                if e.is_game_already_exists() {
+                if matches!(e, ProposerError::Submission(ProofSubmissionError::GameAlreadyExists)) {
                     drop(propose_timer);
                     info!(target_block, "Game already exists, checking fresh state from chain");
                     let raced_game = self
@@ -340,7 +341,10 @@ where
                         "Game already exists, next tick will load fresh state from chain"
                     );
                     Err(SubmitAction::GameAlreadyExists)
-                } else if e.is_l1_origin_too_old() {
+                } else if matches!(
+                    e,
+                    ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)
+                ) {
                     propose_timer.disarm();
                     warn!(
                         error = %e,
@@ -348,7 +352,10 @@ where
                         "Proof L1 origin is too old, discarding proof to re-prove"
                     );
                     Err(SubmitAction::Discard(e))
-                } else if e.is_invalid_signer() {
+                } else if matches!(
+                    e,
+                    ProposerError::Submission(ProofSubmissionError::InvalidSigner)
+                ) {
                     propose_timer.disarm();
                     warn!(
                         error = %e,
@@ -402,7 +409,12 @@ where
                 Metrics::l2_output_proposals_total().increment(1);
                 Ok(())
             }
-            Err(e) if e.is_proof_already_verified() => {
+            Err(e)
+                if matches!(
+                    e,
+                    ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified)
+                ) =>
+            {
                 drop(attach_timer);
                 info!(
                     target_block,
@@ -411,7 +423,9 @@ where
                 );
                 Ok(())
             }
-            Err(e) if e.is_l1_origin_too_old() => {
+            Err(e)
+                if matches!(e, ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)) =>
+            {
                 attach_timer.disarm();
                 warn!(
                     error = %e,
@@ -421,7 +435,9 @@ where
                 );
                 Err(SubmitAction::Discard(e))
             }
-            Err(e) if e.is_invalid_signer() => {
+            Err(e)
+                if matches!(e, ProposerError::Submission(ProofSubmissionError::InvalidSigner)) =>
+            {
                 attach_timer.disarm();
                 warn!(
                     error = %e,
@@ -731,7 +747,8 @@ mod tests {
     async fn submit_attaches_proof_after_game_already_exists_race() {
         let game_address = Address::repeat_byte(0xAA);
         let output = Arc::new(RecordingOutputProposer::default());
-        *output.create_error.lock().unwrap() = Some(ProposerError::GameAlreadyExists);
+        *output.create_error.lock().unwrap() =
+            Some(ProposerError::Submission(ProofSubmissionError::GameAlreadyExists));
         let submitter = submitter_with_factory(
             Arc::clone(&output),
             Arc::new(SequentialGameFactory::new([Address::ZERO, game_address])),
@@ -773,16 +790,16 @@ mod tests {
 
     #[rstest]
     #[case::already_verified(
-        ProposerError::ProofAlreadyVerified,
+        ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified),
         ExpectedAttachErrorAction::Success
     )]
     #[case::l1_origin_too_old(
-        ProposerError::L1OriginTooOld,
-        ExpectedAttachErrorAction::Discard(ProposerError::ERROR_TYPE_L1_ORIGIN_TOO_OLD)
+        ProposerError::Submission(ProofSubmissionError::L1OriginTooOld),
+        ExpectedAttachErrorAction::Discard("l1_origin_too_old")
     )]
     #[case::invalid_signer(
-        ProposerError::InvalidSigner,
-        ExpectedAttachErrorAction::Discard(ProposerError::ERROR_TYPE_INVALID_SIGNER)
+        ProposerError::Submission(ProofSubmissionError::InvalidSigner),
+        ExpectedAttachErrorAction::Discard("invalid_signer")
     )]
     #[tokio::test]
     async fn submit_handles_existing_game_attach_error(

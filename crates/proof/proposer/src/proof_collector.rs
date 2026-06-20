@@ -19,6 +19,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use alloy_primitives::B256;
 use base_proof_primitives::ProofResult;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
+use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{GetProofRequest, GetProofResponse, ProofStatus, TeeKind};
 use futures::{StreamExt, stream};
@@ -1070,7 +1071,10 @@ where
             Ok(Err(SubmitAction::Failed(error))) => {
                 submit_timer.disarm();
                 Metrics::errors_total(error.metric_label()).increment(1);
-                if error.is_invalid_parent_game() {
+                if matches!(
+                    error,
+                    ProposerError::Submission(ProofSubmissionError::InvalidParentGame)
+                ) {
                     warn!(
                         target_block,
                         error = %error,
@@ -1348,7 +1352,7 @@ mod tests {
             _parent_address: Address,
             _intermediate_roots: &[B256],
         ) -> Result<(), ProposerError> {
-            Err(ProposerError::L1OriginTooOld)
+            Err(ProposerError::Submission(ProofSubmissionError::L1OriginTooOld))
         }
     }
 

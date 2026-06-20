@@ -8,7 +8,9 @@ use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{encode_create_calldata, encode_extra_data};
 use base_proof_primitives::{ProofEncoder, Proposal};
-use base_proof_submission::{AggregateProofSubmitter, KnownRevert, VerifyProposalProofSubmission};
+use base_proof_submission::{
+    AggregateProofSubmitter, ProofSubmissionError, VerifyProposalProofSubmission,
+};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::info;
 
@@ -127,15 +129,17 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             "Creating dispute game"
         );
 
-        let receipt = self.tx_manager.send(candidate).await.map_err(|err| {
-            KnownRevert::from_tx_manager_error(&err)
-                .map_or_else(|| ProposerError::TxManager(err), ProposerError::from)
-        })?;
+        let receipt = self
+            .tx_manager
+            .send(candidate)
+            .await
+            .map_err(ProofSubmissionError::from)
+            .map_err(ProposerError::from)?;
 
         let tx_hash = receipt.transaction_hash;
 
         if !receipt.inner.status() {
-            return Err(ProposerError::TxReverted(format!("transaction {tx_hash} reverted")));
+            return Err(ProofSubmissionError::TxReverted(tx_hash).into());
         }
 
         info!(
@@ -349,7 +353,7 @@ mod tests {
         let tx_hash = B256::repeat_byte(0xBB);
         let submitter = test_submitter(Ok(receipt_with_status(false, tx_hash)));
         let err = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await.unwrap_err();
-        assert!(matches!(err, ProposerError::TxReverted(_)));
+        assert!(matches!(err, ProposerError::Submission(ProofSubmissionError::TxReverted(_))));
     }
 
     #[tokio::test]
@@ -357,40 +361,13 @@ mod tests {
         let submitter = test_submitter(Err(TxManagerError::NonceTooLow));
         let err = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await.unwrap_err();
         assert!(
-            matches!(err, ProposerError::TxManager(TxManagerError::NonceTooLow)),
+            matches!(
+                err,
+                ProposerError::Submission(ProofSubmissionError::TxManager(
+                    TxManagerError::NonceTooLow
+                ))
+            ),
             "expected TxManager(NonceTooLow), got {err:?}",
         );
-    }
-
-    #[rstest]
-    #[case::game_already_exists(ProposerError::GameAlreadyExists, true)]
-    #[case::other_error(ProposerError::Contract("other".into()), false)]
-    fn test_is_game_already_exists(#[case] err: ProposerError, #[case] expected: bool) {
-        assert_eq!(err.is_game_already_exists(), expected);
-    }
-
-    #[rstest]
-    #[case::l1_origin_too_old(ProposerError::L1OriginTooOld, true)]
-    #[case::other_error(ProposerError::Contract("other".into()), false)]
-    fn test_is_l1_origin_too_old(#[case] err: ProposerError, #[case] expected: bool) {
-        assert_eq!(err.is_l1_origin_too_old(), expected);
-    }
-
-    #[rstest]
-    #[case::invalid_parent_game(ProposerError::InvalidParentGame, true)]
-    #[case::game_already_exists(ProposerError::GameAlreadyExists, false)]
-    #[case::l1_origin_too_old(ProposerError::L1OriginTooOld, false)]
-    #[case::other_error(ProposerError::Contract("other".into()), false)]
-    fn test_is_invalid_parent_game(#[case] err: ProposerError, #[case] expected: bool) {
-        assert_eq!(err.is_invalid_parent_game(), expected);
-    }
-
-    #[rstest]
-    #[case::invalid_signer(ProposerError::InvalidSigner, true)]
-    #[case::invalid_parent_game(ProposerError::InvalidParentGame, false)]
-    #[case::l1_origin_too_old(ProposerError::L1OriginTooOld, false)]
-    #[case::other_error(ProposerError::Contract("other".into()), false)]
-    fn test_is_invalid_signer(#[case] err: ProposerError, #[case] expected: bool) {
-        assert_eq!(err.is_invalid_signer(), expected);
     }
 }

@@ -503,7 +503,7 @@ where
     /// counter, and refreshes the recovery cache
     /// incrementally. Submit failures are transient by default — they do not
     /// count against the per-target retry budget — except `RootMismatch` and
-    /// `Failed { is_invalid_parent_game }`, which drop the cached recovery
+    /// `InvalidParentGame` failures, which drop the cached recovery
     /// so the next iteration re-walks the chain.
     #[cfg(test)]
     async fn submit_inline(
@@ -708,6 +708,7 @@ mod tests {
     use async_trait::async_trait;
     use base_proof_primitives::{ProofResult, Proposal};
     use base_proof_rpc::RpcError;
+    use base_proof_submission::ProofSubmissionError;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
         GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofStatus,
@@ -922,7 +923,7 @@ mod tests {
             _parent_address: Address,
             _intermediate_roots: &[B256],
         ) -> Result<(), ProposerError> {
-            Err(ProposerError::L1OriginTooOld)
+            Err(ProposerError::Submission(ProofSubmissionError::L1OriginTooOld))
         }
     }
 
@@ -937,7 +938,7 @@ mod tests {
             _parent_address: Address,
             _intermediate_roots: &[B256],
         ) -> Result<(), ProposerError> {
-            Err(ProposerError::InvalidSigner)
+            Err(ProposerError::Submission(ProofSubmissionError::InvalidSigner))
         }
     }
 
@@ -992,7 +993,12 @@ mod tests {
             pipeline.validate_and_submit(&proof_result, SUBMIT_BLOCK_INTERVAL, Address::ZERO).await;
 
         assert!(
-            matches!(result, Err(SubmitAction::Discard(ProposerError::L1OriginTooOld))),
+            matches!(
+                result,
+                Err(SubmitAction::Discard(ProposerError::Submission(
+                    ProofSubmissionError::L1OriginTooOld
+                )))
+            ),
             "stale L1 origin should discard the proof, got {result:?}"
         );
     }
@@ -1013,7 +1019,12 @@ mod tests {
             pipeline.validate_and_submit(&proof_result, SUBMIT_BLOCK_INTERVAL, Address::ZERO).await;
 
         assert!(
-            matches!(result, Err(SubmitAction::Discard(ProposerError::InvalidSigner))),
+            matches!(
+                result,
+                Err(SubmitAction::Discard(ProposerError::Submission(
+                    ProofSubmissionError::InvalidSigner
+                )))
+            ),
             "invalid signer should discard the proof, got {result:?}"
         );
     }
@@ -1127,7 +1138,7 @@ mod tests {
             _: Address,
             _: &[B256],
         ) -> Result<(), ProposerError> {
-            Err(ProposerError::InvalidParentGame)
+            Err(ProposerError::Submission(ProofSubmissionError::InvalidParentGame))
         }
     }
 
