@@ -364,6 +364,12 @@ where
                     resolution.unresolved_instance_ids.extend(outcome.unresolved_instance_ids);
                 }
                 Err(e) => {
+                    // Resolution failures are handled by `unresolved_instance_ids` for this
+                    // cycle; the last-known cache only ages while discovery omits the instance.
+                    let cache_entry = last_known_active.get_mut(&instance.instance_id);
+                    if let Some((_, ttl_cycles)) = cache_entry {
+                        *ttl_cycles = 0;
+                    }
                     warn!(
                         error = %e,
                         instance = %instance.instance_id,
@@ -754,5 +760,33 @@ mod tests {
 
         assert!(expired_resolution.active_signers.is_empty());
         assert!(expired_resolution.unresolved_instance_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_resolve_error_resets_cached_instance_ttl() {
+        let inst = healthy_prover_instance(EP1);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let present_cycle =
+            cycle_driver(vec![inst.clone()], signer_client.clone(), CancellationToken::new());
+        let missing_cycle = cycle_driver(vec![], signer_client, CancellationToken::new());
+        let failing_cycle = cycle_driver(
+            vec![inst.clone()],
+            MockSignerClient::from_keys(&[]),
+            CancellationToken::new(),
+        );
+        let mut last_known_active = HashMap::new();
+
+        present_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+        missing_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+        assert_eq!(last_known_active.get(&inst.instance_id).map(|(_, ttl)| *ttl), Some(1));
+
+        let failing_resolution =
+            failing_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
+
+        assert_eq!(
+            failing_resolution.unresolved_instance_ids,
+            HashSet::from([inst.instance_id.clone()])
+        );
+        assert_eq!(last_known_active.get(&inst.instance_id).map(|(_, ttl)| *ttl), Some(0));
     }
 }
