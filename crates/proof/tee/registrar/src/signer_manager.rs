@@ -12,7 +12,8 @@ use std::{
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
-use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
+use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
+use base_proof_tee_nitro_verifier::VerifierJournal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
     sync::Semaphore,
@@ -176,6 +177,7 @@ where
         instance_id: &str,
         signer_address: Address,
         attestation_bytes: &[u8],
+        requested_nonce: &[u8],
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
         let Some(already_registered) = signer_cancel
@@ -235,6 +237,11 @@ where
             }
             Err(e) => return Err(e.into()),
         };
+
+        if let Err(e) = Self::ensure_proof_nonce(signer_address, &proof, requested_nonce) {
+            self.proof_provider.block_recovery_for_signer(signer_address);
+            return Err(e);
+        }
         drop(proof_permit);
 
         let calldata = Bytes::from(
@@ -353,6 +360,29 @@ where
         Ok(())
     }
 
+    fn ensure_proof_nonce(
+        signer: Address,
+        proof: &AttestationProof,
+        requested_nonce: &[u8],
+    ) -> Result<()> {
+        let journal = VerifierJournal::decode(&proof.output)
+            .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
+
+        if journal.nonce.as_ref() != requested_nonce {
+            return Err(RegistrarError::AttestationNonceMismatch {
+                signer,
+                expected_hex: format!("0x{}", hex::encode(requested_nonce)),
+                actual_hex: if journal.nonce.is_empty() {
+                    "<missing>".to_string()
+                } else {
+                    format!("0x{}", hex::encode(journal.nonce))
+                },
+            });
+        }
+
+        Ok(())
+    }
+
     /// Queries onchain signers and deregisters orphans.
     pub async fn run_orphan_dereg(
         &self,
@@ -463,12 +493,19 @@ where
             let instance_id = entry.instance.instance_id.clone();
             let task_instance_id = instance_id.clone();
             let attestation = entry.attestation.clone();
+            let requested_nonce = entry.requested_nonce.clone();
             let task_cancel = signer_cancel.clone();
             let signer = entry.signer;
 
             let handle = proof_tasks.tasks.spawn(async move {
                 let result = manager
-                    .register_signer(&task_instance_id, signer, &attestation, &task_cancel)
+                    .register_signer(
+                        &task_instance_id,
+                        signer,
+                        &attestation,
+                        &requested_nonce,
+                        &task_cancel,
+                    )
                     .await;
                 (signer, result)
             });
@@ -495,6 +532,7 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
+    use base_proof_tee_nitro_verifier::VerificationResult;
     use base_tx_manager::{SendHandle, TxManagerError};
     use tokio::sync::Notify;
 
@@ -511,6 +549,7 @@ mod tests {
     const TEST_PENDING_INSTANCE_ID: &str = "i-pending-test";
     const GATED_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
     const ATTESTATION: &[u8] = b"stub-attestation";
+    const REQUESTED_NONCE: &[u8] = b"requested-nonce";
     const SIGNER_A: Address = Address::new([0xAA; 20]);
     const SIGNER_B: Address = Address::new([0xBB; 20]);
 
@@ -632,7 +671,27 @@ mod tests {
     struct RecordingProofProvider {
         cancel_then_error: bool,
         blocked_signers: Arc<Mutex<Vec<Address>>>,
+        proof_output: Option<Bytes>,
+        proof_nonce: Option<Vec<u8>>,
         records: ProofRecords,
+    }
+
+    fn proof_output_with_nonce(nonce: &[u8]) -> Bytes {
+        Bytes::from(
+            VerifierJournal {
+                result: VerificationResult::Success,
+                trustedCertsPrefixLen: 1,
+                timestamp: 1_700_000_000_000,
+                certs: Vec::new(),
+                certExpiries: Vec::new(),
+                userData: Bytes::new(),
+                nonce: Bytes::copy_from_slice(nonce),
+                publicKey: Bytes::new(),
+                pcrs: Vec::new(),
+                moduleId: "test-module".to_string(),
+            }
+            .encode(),
+        )
     }
 
     #[async_trait]
@@ -659,7 +718,9 @@ mod tests {
                 ));
             }
             Ok(AttestationProof {
-                output: Bytes::from_static(b"stub-output"),
+                output: self.proof_output.clone().unwrap_or_else(|| {
+                    proof_output_with_nonce(self.proof_nonce.as_deref().unwrap_or(REQUESTED_NONCE))
+                }),
                 proof_bytes: Bytes::from_static(b"stub-proof"),
             })
         }
@@ -697,7 +758,15 @@ mod tests {
         manager: &SignerManager<RecordingProofProvider, MockRegistry, RecordingTxManager>,
         cancel: &CancellationToken,
     ) -> Result<()> {
-        manager.register_signer(TEST_PENDING_INSTANCE_ID, SIGNER_A, ATTESTATION, cancel).await
+        manager
+            .register_signer(
+                TEST_PENDING_INSTANCE_ID,
+                SIGNER_A,
+                ATTESTATION,
+                REQUESTED_NONCE,
+                cancel,
+            )
+            .await
     }
 
     fn reconcile(
@@ -716,6 +785,7 @@ mod tests {
                 instance: healthy_prover_instance(ep),
                 signer: signer_from_private_key(key),
                 attestation: b"gated-attestation".to_vec(),
+                requested_nonce: REQUESTED_NONCE.to_vec(),
             })
             .collect();
         DiscoveryResolution {
@@ -877,6 +947,70 @@ mod tests {
         assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
     }
 
+    #[tokio::test]
+    async fn register_signer_rejects_nonce_mismatch_before_tx() {
+        let proof_provider = RecordingProofProvider {
+            proof_nonce: Some(b"old-nonce".to_vec()),
+            ..Default::default()
+        };
+        let manager = manager_with(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::default(),
+        );
+
+        let result = register(&manager, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::AttestationNonceMismatch { signer, .. }) if signer == SIGNER_A),
+            "mismatched nonce should fail before submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 0, "nonce mismatch must not submit a tx");
+        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+    }
+
+    #[tokio::test]
+    async fn register_signer_rejects_missing_nonce_before_tx() {
+        let proof_provider =
+            RecordingProofProvider { proof_nonce: Some(Vec::new()), ..Default::default() };
+        let manager = manager_with(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::default(),
+        );
+
+        let result = register(&manager, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::AttestationNonceMismatch { ref actual_hex, .. }) if actual_hex == "<missing>"),
+            "missing nonce should fail before submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 0, "missing nonce must not submit a tx");
+        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+    }
+
+    #[tokio::test]
+    async fn register_signer_rejects_invalid_proof_journal_before_tx() {
+        let proof_provider = RecordingProofProvider {
+            proof_output: Some(Bytes::from_static(b"not-an-abi-journal")),
+            ..Default::default()
+        };
+        let manager = manager_with(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::default(),
+        );
+
+        let result = register(&manager, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::InvalidProofJournal { .. })),
+            "invalid proof journal should fail before submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 0, "invalid proof must not submit a tx");
+        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn register_signer_cancellation_during_retry_sleep_aborts() {
         let manager = manager_with(
@@ -939,14 +1073,26 @@ mod tests {
         let first_cancel = cancel.clone();
         let first = tokio::spawn(async move {
             first_manager
-                .register_signer(TEST_PENDING_INSTANCE_ID, SIGNER_A, ATTESTATION, &first_cancel)
+                .register_signer(
+                    TEST_PENDING_INSTANCE_ID,
+                    SIGNER_A,
+                    ATTESTATION,
+                    REQUESTED_NONCE,
+                    &first_cancel,
+                )
                 .await
         });
         let second_manager = Arc::clone(&manager);
         let second_cancel = cancel.clone();
         let second = tokio::spawn(async move {
             second_manager
-                .register_signer("i-pending-test-2", SIGNER_B, ATTESTATION, &second_cancel)
+                .register_signer(
+                    "i-pending-test-2",
+                    SIGNER_B,
+                    ATTESTATION,
+                    REQUESTED_NONCE,
+                    &second_cancel,
+                )
                 .await
         });
 
@@ -1076,11 +1222,13 @@ mod tests {
                     instance: healthy_prover_instance(EP1),
                     signer,
                     attestation: b"attestation-from-instance-a".to_vec(),
+                    requested_nonce: REQUESTED_NONCE.to_vec(),
                 },
                 RegisterableSigner {
                     instance: healthy_prover_instance(EP2),
                     signer,
                     attestation: b"attestation-from-instance-b".to_vec(),
+                    requested_nonce: REQUESTED_NONCE.to_vec(),
                 },
             ],
             active_signers: HashSet::new(),
@@ -1113,11 +1261,13 @@ mod tests {
                     instance: healthy_prover_instance(EP1),
                     signer: signer_a,
                     attestation: att_a.clone(),
+                    requested_nonce: REQUESTED_NONCE.to_vec(),
                 },
                 RegisterableSigner {
                     instance: healthy_prover_instance(EP2),
                     signer: signer_b,
                     attestation: att_b.clone(),
+                    requested_nonce: REQUESTED_NONCE.to_vec(),
                 },
             ],
             active_signers: HashSet::new(),

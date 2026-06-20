@@ -67,6 +67,8 @@ pub struct RegisterableSigner {
     pub signer: Address,
     /// Pre-fetched attestation blob for the signer.
     pub attestation: Vec<u8>,
+    /// Nonce requested from the prover when fetching this attestation.
+    pub requested_nonce: Vec<u8>,
 }
 
 /// Per-cycle discovery snapshot consumed by signer reconciliation.
@@ -305,6 +307,7 @@ where
                 instance: instance.clone(),
                 signer,
                 attestation,
+                requested_nonce: nonce.to_vec(),
             },
         ));
         Ok(outcome)

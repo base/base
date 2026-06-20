@@ -1,4 +1,4 @@
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::ContractError;
 use base_proof_tee_nitro_attestation_prover::ProverError;
 use base_tx_manager::TxManagerError;
@@ -42,6 +42,26 @@ pub enum RegistrarError {
     ReceiptReverted {
         /// Hash of the reverted transaction.
         tx_hash: B256,
+    },
+
+    /// Generated proof journal could not be decoded before submission.
+    #[error("proof journal could not be decoded: {reason}")]
+    InvalidProofJournal {
+        /// Decode failure details.
+        reason: String,
+    },
+
+    /// Generated proof did not contain the nonce requested by the registrar.
+    #[error(
+        "attestation nonce mismatch for signer {signer}: expected {expected_hex}, got {actual_hex}"
+    )]
+    AttestationNonceMismatch {
+        /// Signer whose proof carried a mismatched nonce.
+        signer: Address,
+        /// Expected nonce as hex.
+        expected_hex: String,
+        /// Actual nonce as hex, or `<missing>`.
+        actual_hex: String,
     },
 
     /// Configuration is invalid.
