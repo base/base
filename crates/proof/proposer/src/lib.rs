@@ -12,7 +12,7 @@ pub use cli::{
 };
 
 mod config;
-pub use config::{ConfigError, ProposerConfig};
+pub use config::ProposerConfig;
 
 mod constants;
 pub use constants::{

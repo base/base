@@ -46,9 +46,11 @@ impl ProposerService {
         // Required by rustls 0.23+ when custom TLS configs are used (e.g. skip_tls_verify).
         let _ = rustls::crypto::ring::default_provider().install_default();
 
+        let dry_run = config.signing.is_none();
+
         info!(version = env!("CARGO_PKG_VERSION"), "Proposer starting");
         info!(
-            dry_run = config.dry_run,
+            dry_run,
             allow_non_finalized = config.allow_non_finalized,
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
@@ -138,7 +140,7 @@ impl ProposerService {
             init_bond = %init_bond,
             impl_address = %impl_address,
             game_type = config.game_type,
-            "Read on-chain config from AggregateVerifier and DisputeGameFactory"
+            "Read onchain config from AggregateVerifier and DisputeGameFactory"
         );
 
         let factory_client = Arc::new(factory_client);
@@ -149,8 +151,8 @@ impl ProposerService {
         });
 
         let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
-            if config.dry_run {
-                info!("Dry-run mode enabled — proofs will be sourced but NOT submitted on-chain");
+            if dry_run {
+                info!("Dry-run mode enabled - proofs will be sourced but NOT submitted onchain");
                 (Arc::new(crate::DryRunProposer), None)
             } else {
                 let signing = config.signing.ok_or_else(|| {
