@@ -86,3 +86,36 @@ impl ProposerAdminApiServerImpl {
         ErrorObjectOwned::owned(-32000, msg, None::<()>)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::test_utils::test_pipeline_handle;
+
+    #[tokio::test]
+    async fn module_registers_admin_methods() {
+        let cancel = CancellationToken::new();
+        let driver = Arc::new(test_pipeline_handle(cancel));
+        let module = ProposerAdminApiServerImpl::module(Arc::clone(&driver)).unwrap();
+        let methods = module.method_names().collect::<Vec<_>>();
+
+        assert!(methods.contains(&"admin_startProposer"));
+        assert!(methods.contains(&"admin_stopProposer"));
+        assert!(methods.contains(&"admin_proposerRunning"));
+
+        let running: bool = module.call("admin_proposerRunning", Vec::<()>::new()).await.unwrap();
+        assert!(!running);
+
+        module.call::<_, ()>("admin_startProposer", Vec::<()>::new()).await.unwrap();
+        let running: bool = module.call("admin_proposerRunning", Vec::<()>::new()).await.unwrap();
+        assert!(running);
+
+        module.call::<_, ()>("admin_stopProposer", Vec::<()>::new()).await.unwrap();
+        let running: bool = module.call("admin_proposerRunning", Vec::<()>::new()).await.unwrap();
+        assert!(!running);
+    }
+}

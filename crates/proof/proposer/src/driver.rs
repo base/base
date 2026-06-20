@@ -184,66 +184,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::time::Duration;
 
-    use alloy_primitives::B256;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::{
-        pipeline::PipelineConfig,
-        test_utils::{
-            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
-            test_sync_status,
-        },
-    };
-
-    fn test_pipeline_handle(
-        global_cancel: CancellationToken,
-    ) -> PipelineHandle<
-        MockL1,
-        MockL2,
-        MockRollupClient,
-        MockAnchorStateRegistry,
-        MockDisputeGameFactory,
-    > {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(200, B256::ZERO),
-            output_roots: HashMap::new(),
-            max_safe_block: None,
-        });
-        let anchor_registry = Arc::new(MockAnchorStateRegistry {
-            anchor_root: test_anchor_root(0),
-            anchor_game: Address::ZERO,
-        });
-        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
-
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
-                submit_timeout: Some(std::time::Duration::from_secs(60)),
-                max_retries: 3,
-                recovery_scan_concurrency: 8,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    poll_interval: Duration::from_secs(3600),
-                    ..Default::default()
-                },
-            },
-            Arc::new(MockProofRequester::default()),
-            l1,
-            l2,
-            rollup,
-            anchor_registry,
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
-            global_cancel.child_token(),
-        );
-        PipelineHandle::new(pipeline, global_cancel)
-    }
+    use crate::test_utils::test_pipeline_handle;
 
     #[tokio::test]
     async fn test_pipeline_handle_double_start_errors() {

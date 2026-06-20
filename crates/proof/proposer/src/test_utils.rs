@@ -6,6 +6,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 
 use alloy_eips::BlockNumberOrTag;
@@ -29,8 +30,14 @@ use base_prover_service_protocol::{
     TeeKind, TeeProofResult,
 };
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
+use tokio_util::sync::CancellationToken;
 
-use crate::{error::ProposerError, output_proposer::OutputProposer};
+use crate::{
+    driver::{DriverConfig, PipelineHandle},
+    error::ProposerError,
+    output_proposer::OutputProposer,
+    pipeline::{PipelineConfig, ProvingPipeline},
+};
 
 /// Mock L1 provider for tests.
 #[derive(Debug)]
@@ -515,4 +522,43 @@ impl OutputProposer for MockOutputProposer {
     ) -> Result<(), ProposerError> {
         Ok(())
     }
+}
+
+/// Creates a test pipeline handle with a long poll interval.
+pub fn test_pipeline_handle(
+    global_cancel: CancellationToken,
+) -> PipelineHandle<MockL1, MockL2, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
+{
+    let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+    let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+    let rollup = Arc::new(MockRollupClient {
+        sync_status: test_sync_status(200, B256::ZERO),
+        output_roots: HashMap::new(),
+        max_safe_block: None,
+    });
+    let anchor_registry = Arc::new(MockAnchorStateRegistry {
+        anchor_root: test_anchor_root(0),
+        anchor_game: Address::ZERO,
+    });
+    let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
+
+    let pipeline = ProvingPipeline::new(
+        PipelineConfig {
+            submit_timeout: Some(Duration::from_secs(60)),
+            max_retries: 3,
+            recovery_scan_concurrency: 8,
+            tee_prover_registry_address: None,
+            driver: DriverConfig { poll_interval: Duration::from_secs(3600), ..Default::default() },
+        },
+        Arc::new(MockProofRequester::default()),
+        l1,
+        l2,
+        rollup,
+        anchor_registry,
+        factory,
+        Arc::new(MockAggregateVerifier::default()),
+        Arc::new(MockOutputProposer),
+        global_cancel.child_token(),
+    );
+    PipelineHandle::new(pipeline, global_cancel)
 }
