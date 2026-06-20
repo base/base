@@ -405,7 +405,11 @@ impl base_batcher_core::AltDaClient for AltDaClientAdapter {
         &self,
         body: alloy_primitives::Bytes,
     ) -> Result<base_batcher_core::GenericCommitment, base_batcher_core::AltDaError> {
-        self.0.put(body.as_ref()).await.map_err(|error| base_batcher_core::AltDaError(error.into()))
+        self.0
+            .put(body.as_ref())
+            .await
+            .map(base_batcher_core::GenericCommitment::new)
+            .map_err(|error| base_batcher_core::AltDaError(error.into()))
     }
 }
 

@@ -10,7 +10,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::{sync::Semaphore, task::JoinSet};
 use tracing::{info, warn};
 
-use crate::{DynAltDaClient, TxOutcome, encode_commitment_tx_data};
+use crate::{DynAltDaClient, TxOutcome};
 
 /// Max concurrent alt-DA shadow writes detached from the primary submission semaphore.
 const ALT_DA_MAX_IN_FLIGHT: usize = 2;
@@ -197,20 +197,19 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                 });
             self.in_flight.push(fut);
 
-            if let Some(body) = alt_da_body
-                && let Some(alt_da) = self.alt_da.clone()
-            {
-                    let shadow_ids = shadow_ids.expect("shadow ids when alt-da body present");
-                    let alt_da_semaphore = self
-                        .alt_da_semaphore
-                        .as_ref()
-                        .expect("shadow semaphore when alt-da enabled");
-                    if let Ok(alt_da_permit) = Arc::clone(alt_da_semaphore).try_acquire_owned() {
-                        let tx_manager = Arc::clone(&self.tx_manager);
-                        let inbox = self.inbox;
-                        // Reap finished shadow tasks so the JoinSet stays bounded.
-                        while self.alt_da_tasks.try_join_next().is_some() {}
-                        self.alt_da_tasks.spawn(async move {
+            if let Some(body) = alt_da_body {
+                // alt_da_body is only Some when self.alt_da.is_some(); surface the invariant
+                // rather than silently dropping the shadow write if that ever changes.
+                let alt_da = self.alt_da.clone().expect("alt_da present when alt_da_body is Some");
+                let shadow_ids = shadow_ids.expect("shadow ids when alt-da body present");
+                let alt_da_semaphore =
+                    self.alt_da_semaphore.as_ref().expect("shadow semaphore when alt-da enabled");
+                if let Ok(alt_da_permit) = Arc::clone(alt_da_semaphore).try_acquire_owned() {
+                    let tx_manager = Arc::clone(&self.tx_manager);
+                    let inbox = self.inbox;
+                    // Reap finished shadow tasks so the JoinSet stays bounded.
+                    while self.alt_da_tasks.try_join_next().is_some() {}
+                    self.alt_da_tasks.spawn(async move {
                         let _alt_da_permit = alt_da_permit;
                         let commitment = match alt_da.put(body).await {
                             Ok(commitment) => commitment,
@@ -227,7 +226,7 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                             }
                         };
 
-                        let tx_data = encode_commitment_tx_data(commitment);
+                        let tx_data = commitment.encode_tx_data();
                         info!(
                             submission_ids = ?shadow_ids,
                             commitment_bytes = %tx_data.len(),
@@ -241,7 +240,11 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                             blobs: vec![].into(),
                         };
 
-                        // Shadow commitments share the primary TxManager nonce pool today.
+                        // Shadow commitments share the primary TxManager signer + nonce pool today:
+                        // a slow PUT/commitment can stall primary submissions, and an abort_all
+                        // between these two awaits can leave a reserved nonce unconfirmed. Accepted
+                        // for the calldata-primary shadow phase; a separate shadow signer is the
+                        // S3-only cutover follow-up (PRIV-1972).
                         match tx_manager.send_async(candidate).await.await {
                             Ok(receipt) => {
                                 let l1_block = receipt.block_number.unwrap_or_else(|| {
@@ -274,11 +277,14 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                             }
                         }
                     });
-                    } else {
-                        warn!("alt-da shadow write skipped: shadow capacity exhausted");
-                        BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_SKIPPED)
-                            .increment(1);
-                    }
+                } else {
+                    warn!(
+                        submission_ids = ?shadow_ids,
+                        "alt-da shadow write skipped: shadow capacity exhausted"
+                    );
+                    BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_SKIPPED)
+                        .increment(1);
+                }
             }
         }
     }
@@ -453,7 +459,7 @@ mod tests {
         commitment[0] = GENERIC_COMMITMENT_TYPE;
         commitment[1] = GENERIC_COMMITMENT_SENTINEL;
         commitment[2..].copy_from_slice(&[0xab; 32]);
-        commitment
+        GenericCommitment::new(commitment)
     }
 
     #[derive(Debug)]
