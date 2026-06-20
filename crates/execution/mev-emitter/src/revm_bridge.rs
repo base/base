@@ -10,11 +10,12 @@
 //! The block-re-execution loop that produces the `EvmState` per tx (running each
 //! tx with the Base EVM inside the `ExEx`) is the remaining integration step.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, U256, B256};
 use revm::state::EvmState;
+use revm::Database;
 
-use crate::state_diff::{BalanceSlotRegistry, TxStateDiffAccumulator};
-use crate::StateDiffEvent;
+use crate::state_diff::{signed_delta, BalanceSlotRegistry, TxStateDiffAccumulator};
+use crate::{StateDiffEvent, NATIVE_SENTINEL};
 
 /// Convert a single transaction's revm [`EvmState`] into net [`StateDiffEvent`]s.
 ///
@@ -45,6 +46,63 @@ pub fn state_diffs_from_evm_state(
         }
     }
     acc.into_events(tx_hash, block_number, flashblock_index, payload_id)
+}
+
+/// Convert a single transaction's revm [`EvmState`] into native-ETH
+/// [`StateDiffEvent`]s — one per touched account whose native balance moved,
+/// tagged with [`NATIVE_SENTINEL`] as the token.
+///
+/// This is the native sibling of [`state_diffs_from_evm_state`]. Unlike the
+/// ERC-20 path (which reverse-maps trusted-token storage against a Transfer-log
+/// candidate slice), native value moves leave NO Transfer log, so we scan the
+/// FULL touched set (`out.state`) — coinbase bribes are native-only and would
+/// otherwise be missed. The emitter does NOT know arb classification, so it does
+/// NO participant/fee filtering: it emits RAW deltas and the TS consumer
+/// classifies them later.
+///
+/// For each touched account the delta is `post − pre`:
+/// - `post` = `state[addr].info.balance` (present, after this tx executed);
+/// - `pre`  = `db.basic(addr)?.balance`, defaulting to `U256::ZERO` for a fresh
+///   account the db has never seen (`None`).
+///
+/// COMMIT-ORDERING PRECONDITION: `db` MUST still hold the PRE-tx state — i.e.
+/// this is called BEFORE `db.commit(out.state)` for this tx. `db.basic()` reads
+/// the committed (prior-tx) balance, which is the correct pre-tx baseline;
+/// `Account::original_info()` is NOT usable here (private / BAL-only). Net-zero
+/// deltas are dropped. `internal_calls` is always `None`.
+pub fn native_balance_diffs_from_evm_state<DB: Database>(
+    state: &EvmState,
+    db: &mut DB,
+    tx_hash: B256,
+    block_number: u64,
+    flashblock_index: u32,
+    payload_id: String,
+) -> Result<Vec<StateDiffEvent>, DB::Error> {
+    let mut events = Vec::new();
+    for (addr, account) in state {
+        let post = account.info.balance;
+        // PRE-tx baseline: db still holds the prior-commit state at the call
+        // site (precondition above). A fresh account the db never saw ⇒ ZERO.
+        let pre = db.basic(*addr)?.map_or(U256::ZERO, |info| info.balance);
+        let Some(delta) = signed_delta(pre, post) else {
+            continue; // magnitude overflow — not expected for real balances
+        };
+        if delta.is_zero() {
+            continue; // net-zero native move — drop
+        }
+        events.push(StateDiffEvent {
+            protocol_version: crate::PROTOCOL_VERSION,
+            tx_hash,
+            block_number,
+            flashblock_index,
+            payload_id: payload_id.clone(),
+            account: *addr,
+            token: NATIVE_SENTINEL,
+            balance_delta_raw: delta,
+            internal_calls: None,
+        });
+    }
+    Ok(events)
 }
 
 #[cfg(test)]
@@ -100,5 +158,207 @@ mod tests {
         let events =
             state_diffs_from_evm_state(&state, &reg, &[holder], B256::ZERO, 1, 0, "0x04".into());
         assert!(events.is_empty());
+    }
+
+    // --- WS-E E1: native-ETH balance diffs ----------------------------------
+
+    use std::collections::HashMap;
+    use std::convert::Infallible;
+
+    use revm::primitives::{AddressMap, StorageKey, StorageValue};
+    use revm::state::{AccountInfo, Bytecode};
+    use revm::{Database, DatabaseCommit};
+
+    /// In-memory `Database` mock holding only per-account native balances. It is
+    /// the PRE-tx baseline source: `basic()` returns the currently committed
+    /// balance, and `commit()` advances those balances from `info.balance`, so a
+    /// sequence of (`compute-native-diff` → `commit`) calls mirrors the emitter
+    /// tx loop.
+    #[derive(Default)]
+    struct BalanceDb {
+        balances: HashMap<Address, U256>,
+        /// Counts `basic()` lookups so a test can assert the emit-only invariant
+        /// (one lookup per touched account, no extra EVM execution pass).
+        basic_calls: std::cell::Cell<usize>,
+    }
+
+    impl BalanceDb {
+        fn with(addr: Address, bal: u64) -> Self {
+            let mut db = Self::default();
+            db.balances.insert(addr, U256::from(bal));
+            db
+        }
+    }
+
+    impl Database for BalanceDb {
+        type Error = Infallible;
+
+        fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            self.basic_calls.set(self.basic_calls.get() + 1);
+            Ok(self.balances.get(&address).map(|b| AccountInfo::from_balance(*b)))
+        }
+
+        fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Ok(Bytecode::default())
+        }
+
+        fn storage(
+            &mut self,
+            _address: Address,
+            _index: StorageKey,
+        ) -> Result<StorageValue, Self::Error> {
+            Ok(U256::ZERO)
+        }
+
+        fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
+            Ok(B256::ZERO)
+        }
+    }
+
+    impl DatabaseCommit for BalanceDb {
+        fn commit(&mut self, changes: AddressMap<Account>) {
+            for (addr, account) in changes {
+                self.balances.insert(addr, account.info.balance);
+            }
+        }
+    }
+
+    /// Build an `EvmState` whose single account reports `post` as its post-tx
+    /// native balance (everything else default).
+    fn state_with_balance(addr: Address, post: u64) -> EvmState {
+        let mut account = Account::default();
+        account.info = AccountInfo::from_balance(U256::from(post));
+        let mut state = EvmState::default();
+        state.insert(addr, account);
+        state
+    }
+
+    #[test]
+    fn pre_tx_baseline_uses_db_basic_not_zero() {
+        // Account already holds 100 wei pre-tx; tx ends it at 175 → +75 delta,
+        // proving the baseline is `db.basic()` (100), NOT a 0 baseline (which
+        // would yield +175). `Account::original_info()` is private/BAL-only and
+        // is not consulted here.
+        let acct = Address::from([0x11; 20]);
+        let mut db = BalanceDb::with(acct, 100);
+        let state = state_with_balance(acct, 175);
+
+        let events = native_balance_diffs_from_evm_state(
+            &state,
+            &mut db,
+            B256::from([0x22; 32]),
+            1,
+            0,
+            "0x04".into(),
+        )
+        .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].account, acct);
+        assert_eq!(events[0].token, NATIVE_SENTINEL);
+        assert_eq!(events[0].balance_delta_raw, I256::try_from(75).unwrap());
+        assert!(events[0].internal_calls.is_none());
+    }
+
+    #[test]
+    fn sequential_txs_baseline_is_prior_commit() {
+        // tx1: 100 → 150 (+50), THEN commit advances the db to 150. tx2's
+        // baseline MUST be the post-tx1-commit balance (150), so 150 → 220 = +70
+        // (NOT 220−100=+120). This pins the commit-ordering precondition: the
+        // native read happens BEFORE each commit.
+        let acct = Address::from([0x11; 20]);
+        let mut db = BalanceDb::with(acct, 100);
+
+        let s1 = state_with_balance(acct, 150);
+        let e1 = native_balance_diffs_from_evm_state(&s1, &mut db, B256::ZERO, 1, 0, "0x04".into())
+            .unwrap();
+        assert_eq!(e1[0].balance_delta_raw, I256::try_from(50).unwrap());
+        db.commit(s1); // advance to post-tx1 state (mirrors exex commit)
+
+        let s2 = state_with_balance(acct, 220);
+        let e2 = native_balance_diffs_from_evm_state(&s2, &mut db, B256::ZERO, 1, 0, "0x04".into())
+            .unwrap();
+        assert_eq!(e2[0].balance_delta_raw, I256::try_from(70).unwrap());
+    }
+
+    #[test]
+    fn full_touched_set_captures_native_only_account() {
+        // A coinbase-bribe recipient that moved native ETH with NO ERC-20
+        // Transfer log still yields a native sentinel row. The fresh account is
+        // unknown to the db (basic → None ⇒ ZERO baseline), gaining 1_000 wei.
+        let bribe_recipient = Address::from([0xC0; 20]);
+        let mut db = BalanceDb::default(); // recipient unseen → pre = ZERO
+        let state = state_with_balance(bribe_recipient, 1_000);
+
+        let events =
+            native_balance_diffs_from_evm_state(&state, &mut db, B256::ZERO, 1, 0, "0x04".into())
+                .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].account, bribe_recipient);
+        assert_eq!(events[0].token, NATIVE_SENTINEL);
+        assert_eq!(events[0].balance_delta_raw, I256::try_from(1_000).unwrap());
+    }
+
+    #[test]
+    fn net_zero_native_delta_dropped() {
+        // Balance unchanged across the tx (100 → 100) → no row.
+        let acct = Address::from([0x11; 20]);
+        let mut db = BalanceDb::with(acct, 100);
+        let state = state_with_balance(acct, 100);
+
+        let events =
+            native_balance_diffs_from_evm_state(&state, &mut db, B256::ZERO, 1, 0, "0x04".into())
+                .unwrap();
+        assert!(events.is_empty(), "net-zero native delta must be dropped");
+    }
+
+    #[test]
+    fn negative_native_delta_when_balance_decreases() {
+        // A sender that paid out native ETH yields a negative delta.
+        let acct = Address::from([0x11; 20]);
+        let mut db = BalanceDb::with(acct, 500);
+        let state = state_with_balance(acct, 200);
+
+        let events =
+            native_balance_diffs_from_evm_state(&state, &mut db, B256::ZERO, 1, 0, "0x04".into())
+                .unwrap();
+        assert_eq!(events[0].balance_delta_raw, I256::try_from(-300).unwrap());
+    }
+
+    #[test]
+    fn emit_only_one_db_lookup_per_touched_account() {
+        // Emit-only invariant: exactly one `db.basic()` per touched account and
+        // NO new EVM execution pass (the fn never calls `transact`; it only reads
+        // the supplied `out.state` + one baseline lookup per account).
+        let a = Address::from([0x11; 20]);
+        let b = Address::from([0x22; 20]);
+        let mut db = BalanceDb::with(a, 10);
+        db.balances.insert(b, U256::from(20));
+        let mut state = state_with_balance(a, 15);
+        state.insert(b, {
+            let mut acct = Account::default();
+            acct.info = AccountInfo::from_balance(U256::from(25));
+            acct
+        });
+
+        let events =
+            native_balance_diffs_from_evm_state(&state, &mut db, B256::ZERO, 1, 0, "0x04".into())
+                .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(db.basic_calls.get(), 2, "exactly one basic() per touched account");
+    }
+
+    #[test]
+    fn native_sentinel_matches_ts_literal() {
+        // The on-wire token for native rows is byte-identical to the TS
+        // NATIVE_SENTINEL (lowercased) in packages/node-protocol/src/index.ts.
+        let acct = Address::from([0x11; 20]);
+        let mut db = BalanceDb::with(acct, 1);
+        let state = state_with_balance(acct, 2);
+        let events =
+            native_balance_diffs_from_evm_state(&state, &mut db, B256::ZERO, 1, 0, "0x04".into())
+                .unwrap();
+        let ev = crate::NodeEvent::StateDiff(events[0].clone());
+        assert!(crate::encode_event(&ev)
+            .contains(r#""token":"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee""#));
     }
 }

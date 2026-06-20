@@ -17,13 +17,21 @@
 //! locked down (and unit-tested against the TS encoding) before the inspector /
 //! `ExEx` increments build on it.
 
-use alloy_primitives::{Address, FixedBytes, I256, B256};
+use alloy_primitives::{address, Address, FixedBytes, I256, B256};
 use serde::{Deserialize, Serialize};
 
 /// Protocol version embedded in every event (mirrors `PROTOCOL_VERSION`).
 pub const PROTOCOL_VERSION: u32 = 1;
 /// SOFT expectation only — NOT a validation bound (index 10/11+ are valid).
 pub const EXPECTED_FLASHBLOCKS_PER_BLOCK: u32 = 10;
+
+/// Sentinel pseudo-address marking a native-ETH balance delta — no ERC-20 token
+/// contract exists for native value. Serialized lowercased by alloy serde, so on
+/// the wire it is exactly `0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`, matching
+/// the TS `NATIVE_SENTINEL` (`packages/node-protocol/src/index.ts`) and its
+/// `isNativeSentinel` router. The emitter is the source of truth on the Rust
+/// side; the TS consumer classifies these RAW rows (force-trust + reconcile).
+pub const NATIVE_SENTINEL: Address = address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
 
 /// 4-byte function selector; lowercased `0x` + 8 hex on the wire.
 pub type Selector = FixedBytes<4>;

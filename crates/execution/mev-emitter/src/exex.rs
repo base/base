@@ -182,6 +182,21 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                                 flashblocks.push((payload_id.clone(), (vec![tx_hash], fb_index)));
                             }
                         }
+                        // WS-E E1: RAW native-ETH deltas for the FULL touched set
+                        // (coinbase bribes are native-only with no Transfer log).
+                        // COMMIT-ORDERING PRECONDITION: this MUST run BEFORE the
+                        // `evm.db_mut().commit(out.state)` below — `db.basic(addr)`
+                        // reads the prior-commit (pre-tx) balance as the baseline.
+                        // Reordering/batching the commit would corrupt the baseline
+                        // and TRIP `revm_bridge::tests` (the pre-tx baseline test).
+                        let native_events = crate::revm_bridge::native_balance_diffs_from_evm_state(
+                            &out.state,
+                            evm.db_mut(),
+                            tx_hash,
+                            block_number,
+                            fb_index,
+                            payload_id.clone(),
+                        )?;
                         let events = crate::revm_bridge::state_diffs_from_evm_state(
                             &out.state,
                             &registry,
@@ -191,15 +206,18 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                             fb_index,
                             payload_id,
                         );
-                        diffs += events.len();
+                        diffs += events.len() + native_events.len();
                         // C-4: stream each per-tx event out over the WebSocket
                         // transport — one `Message::Text` per `encode_event`
                         // string. `send_event` never blocks/panics, so this is
-                        // safe inside the critical ExEx task.
-                        for ev in &events {
+                        // safe inside the critical ExEx task. ERC-20 then native
+                        // sentinel rows (both ride the v1 StateDiffEvent shape).
+                        for ev in events.iter().chain(native_events.iter()) {
                             sink.send_event(&crate::NodeEvent::StateDiff(ev.clone()));
                             sent_this_block += 1;
                         }
+                        // COMMIT (precondition anchor): advances db to POST-tx state.
+                        // Native baseline read above relies on this happening AFTER.
                         evm.db_mut().commit(out.state);
                     }
                     // C-5: the tx loop completed successfully — emit, per payloadId

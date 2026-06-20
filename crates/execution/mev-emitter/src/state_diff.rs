@@ -92,8 +92,10 @@ pub fn balance_slot_key(holder: &Address, slot_index: u64) -> U256 {
 }
 
 /// Net signed delta of `new - old` as an `I256`, or `None` if the magnitude
-/// overflows `I256` (not expected for real balances).
-fn signed_delta(old: U256, new: U256) -> Option<I256> {
+/// overflows `I256` (not expected for real balances). `pub(crate)` so the
+/// native-ETH bridge ([`crate::revm_bridge::native_balance_diffs_from_evm_state`])
+/// reuses the SAME signed-delta arithmetic as the ERC-20 storage path.
+pub(crate) fn signed_delta(old: U256, new: U256) -> Option<I256> {
     let (mag, neg) = if new >= old { (new - old, false) } else { (old - new, true) };
     let signed = I256::try_from(mag).ok()?;
     Some(if neg { -signed } else { signed })
