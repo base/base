@@ -462,6 +462,7 @@ mod tests {
             DEFAULT_MAX_CONCURRENCY,
             DEFAULT_MAX_TX_RETRIES,
             Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            Duration::from_secs(3300),
         ));
 
         RegistrationDriver::new(

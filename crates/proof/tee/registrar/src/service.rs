@@ -211,6 +211,7 @@ impl RegistrarConfig {
         let health_handle =
             tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
 
+        let max_attestation_age = self.boundless_prover.max_attestation_age;
         let signer_manager = Arc::new(SignerManager::new(
             self.boundless_prover,
             registry,
@@ -219,6 +220,7 @@ impl RegistrarConfig {
             self.max_concurrency,
             self.max_tx_retries,
             self.tx_retry_delay,
+            max_attestation_age,
         ));
         let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             Some(CertManager::new(
