@@ -367,8 +367,9 @@ where
                     // Resolution failures are handled by `unresolved_instance_ids` for this
                     // cycle; the last-known cache only ages while discovery omits the instance.
                     let cache_entry = last_known_active.get_mut(&instance.instance_id);
-                    if let Some((_, ttl_cycles)) = cache_entry {
+                    if let Some((cached_signers, ttl_cycles)) = cache_entry {
                         *ttl_cycles = 0;
+                        resolution.active_signers.extend(cached_signers.iter().copied());
                     }
                     warn!(
                         error = %e,
@@ -764,6 +765,7 @@ mod tests {
 
     #[tokio::test]
     async fn discover_and_resolve_resolve_error_resets_cached_instance_ttl() {
+        let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
         let inst = healthy_prover_instance(EP1);
         let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let present_cycle =
@@ -787,6 +789,7 @@ mod tests {
             failing_resolution.unresolved_instance_ids,
             HashSet::from([inst.instance_id.clone()])
         );
+        assert!(failing_resolution.active_signers.contains(&signer_addr));
         assert_eq!(last_known_active.get(&inst.instance_id).map(|(_, ttl)| *ttl), Some(0));
     }
 }
