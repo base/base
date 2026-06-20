@@ -315,7 +315,8 @@ mod tests {
                 offer_ramp_up_period_secs: None,
                 offer_lock_timeout_secs: None,
                 offer_bidding_start_delay_secs: 0,
-            }),
+            })
+            .unwrap(),
             poll_interval: Duration::from_secs(1),
             prover_timeout: Duration::from_secs(1),
             max_concurrency: 1,
