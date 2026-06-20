@@ -159,6 +159,8 @@ mod tests {
     use super::*;
     use crate::cli::{Cli, SignerCli};
 
+    type InvalidCase = (fn(&mut Cli), &'static str);
+
     fn minimal_cli() -> Cli {
         Cli::try_parse_from([
             "proposer",
@@ -192,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_invalid_values() {
-        let cases: [(fn(&mut Cli), &str); 6] = [
+        let cases: [InvalidCase; 6] = [
             (
                 |cli| cli.proposer.prover_timeout = Duration::ZERO,
                 "prover-timeout must be greater than 0",
