@@ -1,10 +1,12 @@
 //! Full proposer service lifecycle.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
-use std::time::Duration;
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
