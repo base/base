@@ -230,4 +230,31 @@ mod tests {
         assert_eq!(cli.proposer.rpc_retry_initial_delay, Duration::from_millis(100));
         assert_eq!(cli.proposer.rpc_retry_max_delay, Duration::from_secs(10));
     }
+
+    #[test]
+    fn test_recovery_scan_concurrency_zero_rejected() {
+        let result = Cli::try_parse_from([
+            "proposer",
+            "--prover-rpc",
+            "http://localhost:8080",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l2-eth-rpc",
+            "http://localhost:9545",
+            "--anchor-state-registry-addr",
+            "0x1234567890123456789012345678901234567890",
+            "--dispute-game-factory-addr",
+            "0x2234567890123456789012345678901234567890",
+            "--game-type",
+            "1",
+            "--tee-image-hash",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "--rollup-rpc",
+            "http://localhost:7545",
+            "--recovery-scan-concurrency",
+            "0",
+        ]);
+
+        assert!(result.is_err());
+    }
 }
