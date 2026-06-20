@@ -35,6 +35,7 @@ pub use dispute_game_factory::{
 mod tee_prover_registry;
 pub use tee_prover_registry::{
     ITEEProverRegistry, TEEProverRegistryClient, TEEProverRegistryContractClient,
+    decode_tee_prover_registry_revert,
 };
 
 mod nitro_enclave_verifier;

@@ -5,7 +5,7 @@
 
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolError, sol};
 use async_trait::async_trait;
 
 use crate::ContractError;
@@ -16,6 +16,27 @@ sol! {
     /// `TEEProverRegistry` contract interface.
     #[sol(rpc)]
     interface ITEEProverRegistry {
+        /// Thrown when the attestation document is too old.
+        error AttestationTooOld();
+
+        /// Thrown when the ZK attestation verification fails.
+        error AttestationVerificationFailed();
+
+        /// Thrown when the attestation's public key is malformed.
+        error InvalidPublicKey();
+
+        /// Thrown when PCR0 is not found in the attestation's PCR list.
+        error PCR0NotFound();
+
+        /// Thrown when the dispute game factory is not configured.
+        error DisputeGameFactoryNotSet();
+
+        /// Thrown when reading TEE_IMAGE_HASH from the AggregateVerifier fails.
+        error ImageHashReadFailed();
+
+        /// Thrown when the selected game type has no TEE_IMAGE_HASH.
+        error InvalidGameType();
+
         /// Registers a signer using a ZK-proven AWS Nitro attestation.
         function registerSigner(bytes calldata output, bytes calldata proofBytes) external;
 
@@ -32,6 +53,26 @@ sol! {
 
         /// Returns all currently registered signer addresses.
         function getRegisteredSigners() external view returns (address[]);
+    }
+}
+
+/// Returns a human-readable name for known `TEEProverRegistry` custom-error
+/// revert data.
+pub fn decode_tee_prover_registry_revert(data: &[u8]) -> Option<&'static str> {
+    let selector = data.get(..4)?;
+    match selector {
+        s if s == ITEEProverRegistry::AttestationTooOld::SELECTOR => Some("AttestationTooOld"),
+        s if s == ITEEProverRegistry::AttestationVerificationFailed::SELECTOR => {
+            Some("AttestationVerificationFailed")
+        }
+        s if s == ITEEProverRegistry::InvalidPublicKey::SELECTOR => Some("InvalidPublicKey"),
+        s if s == ITEEProverRegistry::PCR0NotFound::SELECTOR => Some("PCR0NotFound"),
+        s if s == ITEEProverRegistry::DisputeGameFactoryNotSet::SELECTOR => {
+            Some("DisputeGameFactoryNotSet")
+        }
+        s if s == ITEEProverRegistry::ImageHashReadFailed::SELECTOR => Some("ImageHashReadFailed"),
+        s if s == ITEEProverRegistry::InvalidGameType::SELECTOR => Some("InvalidGameType"),
+        _ => None,
     }
 }
 
@@ -89,7 +130,7 @@ impl TEEProverRegistryClient for TEEProverRegistryContractClient {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes};
-    use alloy_sol_types::SolCall;
+    use alloy_sol_types::{SolCall, SolError};
 
     use super::*;
 
@@ -121,5 +162,34 @@ mod tests {
         assert_ne!(ITEEProverRegistry::isValidSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isRegisteredSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::getRegisteredSignersCall::SELECTOR, [0u8; 4]);
+    }
+
+    #[test]
+    fn known_custom_errors_decode() {
+        for (selector, name) in [
+            (ITEEProverRegistry::AttestationTooOld::SELECTOR, "AttestationTooOld"),
+            (
+                ITEEProverRegistry::AttestationVerificationFailed::SELECTOR,
+                "AttestationVerificationFailed",
+            ),
+            (ITEEProverRegistry::InvalidPublicKey::SELECTOR, "InvalidPublicKey"),
+            (ITEEProverRegistry::PCR0NotFound::SELECTOR, "PCR0NotFound"),
+            (ITEEProverRegistry::DisputeGameFactoryNotSet::SELECTOR, "DisputeGameFactoryNotSet"),
+            (ITEEProverRegistry::ImageHashReadFailed::SELECTOR, "ImageHashReadFailed"),
+            (ITEEProverRegistry::InvalidGameType::SELECTOR, "InvalidGameType"),
+        ] {
+            assert_eq!(decode_tee_prover_registry_revert(&selector), Some(name));
+
+            let mut data = selector.to_vec();
+            data.extend_from_slice(&[0xAA; 32]);
+            assert_eq!(decode_tee_prover_registry_revert(&data), Some(name));
+        }
+    }
+
+    #[test]
+    fn unknown_custom_errors_do_not_decode() {
+        assert_eq!(decode_tee_prover_registry_revert(&[]), None);
+        assert_eq!(decode_tee_prover_registry_revert(&[0x00, 0x01, 0x02]), None);
+        assert_eq!(decode_tee_prover_registry_revert(&[0xFF; 4]), None);
     }
 }
