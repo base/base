@@ -26,7 +26,7 @@ pub struct ProverClient {
 
 impl ProverClient {
     /// Creates a new client with the given request timeout.
-    pub fn new(timeout: Duration) -> Self {
+    pub const fn new(timeout: Duration) -> Self {
         Self { timeout }
     }
 
@@ -106,5 +106,4 @@ mod tests {
             assert!(ProverClient::derive_address(&key).is_err());
         }
     }
-
 }
