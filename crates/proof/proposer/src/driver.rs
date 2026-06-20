@@ -4,7 +4,13 @@
 //! by the [`crate::ProvingPipeline`], and the [`PipelineHandle`] that wraps a
 //! pipeline with start/stop/is-running semantics for the admin JSON-RPC server.
 
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
@@ -86,6 +92,7 @@ where
     pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
     session: TokioMutex<Option<(CancellationToken, JoinHandle<Result<()>>)>>,
     global_cancel: CancellationToken,
+    running: Arc<AtomicBool>,
 }
 
 impl<L1, L2, R, ASR, F> PipelineHandle<L1, L2, R, ASR, F>
@@ -101,14 +108,21 @@ where
         pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
         global_cancel: CancellationToken,
     ) -> Self {
-        Self { pipeline, session: TokioMutex::new(None), global_cancel }
+        Self {
+            pipeline,
+            session: TokioMutex::new(None),
+            global_cancel,
+            running: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     /// Start the proving pipeline.
     pub async fn start_proposer(&self) -> std::result::Result<(), &'static str> {
         let mut session = self.session.lock().await;
 
-        if session.as_ref().is_some_and(|(_, task)| !task.is_finished()) {
+        if self.running.load(Ordering::Acquire)
+            || session.as_ref().is_some_and(|(_, task)| !task.is_finished())
+        {
             return Err("proposer is already running");
         }
 
@@ -126,7 +140,13 @@ where
         let mut pipeline = self.pipeline.clone();
         pipeline.set_cancel(cancel.clone());
 
-        let handle = tokio::spawn(async move { pipeline.run().await });
+        self.running.store(true, Ordering::Release);
+        let running = Arc::clone(&self.running);
+        let handle = tokio::spawn(async move {
+            let result = pipeline.run().await;
+            running.store(false, Ordering::Release);
+            result
+        });
 
         *session = Some((cancel, handle));
 
@@ -138,7 +158,9 @@ where
     pub async fn stop_proposer(&self) -> std::result::Result<(), &'static str> {
         let mut session = self.session.lock().await;
 
-        if !session.as_ref().is_some_and(|(_, task)| !task.is_finished()) {
+        if !self.running.load(Ordering::Acquire)
+            || !session.as_ref().is_some_and(|(_, task)| !task.is_finished())
+        {
             return Err("proposer is not running");
         }
 
@@ -151,13 +173,14 @@ where
             }
         }
 
+        self.running.store(false, Ordering::Release);
         info!("proving pipeline stopped");
         Ok(())
     }
 
     /// Returns whether the proving pipeline is currently running.
     pub async fn is_running(&self) -> bool {
-        self.session.lock().await.as_ref().is_some_and(|(_, task)| !task.is_finished())
+        self.running.load(Ordering::Acquire)
     }
 }
 
@@ -267,5 +290,21 @@ mod tests {
         cancel.cancel();
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!handle.is_running().await);
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_handle_running_check_does_not_wait_on_session_lock() {
+        let cancel = CancellationToken::new();
+        let handle = test_pipeline_handle(cancel);
+
+        handle.start_proposer().await.unwrap();
+        let session = handle.session.lock().await;
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), handle.is_running()).await.unwrap()
+        );
+
+        drop(session);
+        handle.stop_proposer().await.unwrap();
     }
 }
