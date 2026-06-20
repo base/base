@@ -38,7 +38,9 @@ use crate::{
 };
 
 const SUBMIT_TIMEOUT_SLACK: Duration = Duration::from_mins(2);
-const DEFAULT_SUBMIT_TIMEOUT: Duration = Duration::from_mins(12);
+const DEFAULT_TX_SEND_TIMEOUT: Duration = Duration::from_mins(10);
+const DEFAULT_SUBMIT_TIMEOUT: Duration =
+    Duration::from_secs(DEFAULT_TX_SEND_TIMEOUT.as_secs() + SUBMIT_TIMEOUT_SLACK.as_secs());
 const MAX_PROOF_RETRIES: u32 = 8;
 
 /// Top-level proposer service.
