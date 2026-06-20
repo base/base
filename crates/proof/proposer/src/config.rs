@@ -13,6 +13,8 @@ use crate::cli::Cli;
 /// Validated proposer configuration.
 #[derive(Debug)]
 pub struct ProposerConfig {
+    /// Dry-run mode: source proofs but do not submit transactions onchain.
+    pub dry_run: bool,
     /// Allow proposals based on non-finalized L1 data.
     pub allow_non_finalized: bool,
     /// URL of the prover RPC endpoint.
@@ -120,6 +122,7 @@ impl ProposerConfig {
         };
 
         Ok(Self {
+            dry_run: proposer.dry_run,
             allow_non_finalized: proposer.allow_non_finalized,
             prover_rpc: proposer.prover_rpc,
             prover_timeout: proposer.prover_timeout,
@@ -193,6 +196,26 @@ mod tests {
     }
 
     #[test]
+    fn test_valid_config_maps_cli_fields() {
+        let mut cli = minimal_cli();
+        cli.proposer.allow_non_finalized = true;
+        cli.proposer.rpc_max_retries = 7;
+        cli.proposer.recovery_scan_concurrency = 4.try_into().unwrap();
+        cli.admin.admin_enabled = true;
+
+        let config = ProposerConfig::from_cli(cli).unwrap();
+
+        assert!(!config.dry_run);
+        assert!(config.allow_non_finalized);
+        assert_eq!(config.game_type, 1);
+        assert_eq!(config.retry.max_attempts, Some(7));
+        assert_eq!(config.recovery_scan_concurrency, 4);
+        assert_eq!(config.admin_addr.unwrap().port(), 8545);
+        assert!(matches!(config.signing, Some(base_tx_manager::SignerConfig::Local { .. })));
+        assert!(config.tx_manager.is_some());
+    }
+
+    #[test]
     fn test_invalid_values() {
         let cases: [InvalidCase; 6] = [
             (
@@ -263,6 +286,7 @@ mod tests {
         cli.proposer.signer =
             SignerCli { private_key: None, signer_endpoint: None, signer_address: None };
         let config = ProposerConfig::from_cli(cli).unwrap();
+        assert!(config.dry_run);
         assert!(config.signing.is_none());
         assert!(config.tx_manager.is_none());
     }
