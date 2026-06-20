@@ -516,6 +516,7 @@ mod tests {
 
     type TestSignerManager =
         Arc<SignerManager<RecordingProofProvider, MockRegistry, RecordingTxManager>>;
+    type ProofRecords = Arc<Mutex<Vec<(Address, Vec<u8>)>>>;
 
     #[derive(Debug, Default)]
     enum RegistryMode {
@@ -627,7 +628,7 @@ mod tests {
     struct RecordingProofProvider {
         cancel_then_error: bool,
         blocked_signers: Arc<Mutex<Vec<Address>>>,
-        records: Arc<Mutex<Vec<(Address, Vec<u8>)>>>,
+        records: ProofRecords,
     }
 
     #[async_trait]

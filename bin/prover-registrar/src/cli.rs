@@ -215,7 +215,7 @@ fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
 }
 
 impl Cli {
-    pub(crate) fn config(self) -> Result<RegistrarConfig, RegistrarError> {
+    pub(crate) fn config(self) -> Result<RegistrarConfig, Box<RegistrarError>> {
         validate_health_port(self.health.port)?;
         validate_boundless_offer_prices(
             &self.boundless_min_price_eth,
@@ -229,9 +229,9 @@ impl Cli {
             aws_region: self.aws_region,
             prover_port: self.prover_port,
             signing: SignerConfig::try_from(self.signer)
-                .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?,
+                .map_err(|e| Box::new(RegistrarError::Config(format!("signer: {e}"))))?,
             tx_manager_config: TxManagerConfig::try_from(self.tx_manager)
-                .map_err(|e| RegistrarError::Config(format!("tx-manager: {e}")))?,
+                .map_err(|e| Box::new(RegistrarError::Config(format!("tx-manager: {e}"))))?,
             boundless_prover: BoundlessProver::new(BoundlessProverConfig {
                 rpc_url: self.boundless_rpc_url,
                 signer: self.boundless_fee_private_key,
@@ -261,9 +261,9 @@ impl Cli {
     }
 }
 
-fn validate_health_port(port: u16) -> Result<(), RegistrarError> {
+fn validate_health_port(port: u16) -> Result<(), Box<RegistrarError>> {
     if port == 0 {
-        return Err(RegistrarError::Config("health server port must be non-zero".into()));
+        return Err(Box::new(RegistrarError::Config("health server port must be non-zero".into())));
     }
 
     Ok(())
@@ -272,19 +272,19 @@ fn validate_health_port(port: u16) -> Result<(), RegistrarError> {
 fn validate_boundless_offer_prices(
     min_price: &Option<Amount>,
     max_price: &Option<Amount>,
-) -> Result<(), RegistrarError> {
+) -> Result<(), Box<RegistrarError>> {
     match (min_price, max_price) {
         (Some(min_price), Some(max_price)) if max_price.value < min_price.value => {
-            return Err(RegistrarError::Config(
+            return Err(Box::new(RegistrarError::Config(
                 "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
                     .into(),
-            ));
+            )));
         }
         (Some(_), None) | (None, Some(_)) => {
-            return Err(RegistrarError::Config(
+            return Err(Box::new(RegistrarError::Config(
                 "--boundless-min-price-eth and --boundless-max-price-eth must be set together"
                     .into(),
-            ));
+            )));
         }
         _ => {}
     }
