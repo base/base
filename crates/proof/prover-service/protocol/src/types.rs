@@ -1,10 +1,11 @@
 //! JSON-RPC request and response types for the shared prover service protocol.
 
+use std::fmt;
+
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 /// JSON-RPC error message returned when a proof request session cannot be found.
 pub const PROOF_REQUEST_NOT_FOUND_MESSAGE: &str = "Proof request not found";
