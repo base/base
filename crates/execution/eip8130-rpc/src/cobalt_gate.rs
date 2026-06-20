@@ -74,7 +74,7 @@ impl Eip8130CobaltGate {
         .ok_or_else(|| {
             ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,
-                format!("block not found: {block_id:?}"),
+                format!("block not found: {block_id}"),
                 None::<()>,
             )
         })?;
