@@ -7,14 +7,14 @@ use base_cli_utils::CliStyles;
 use clap::{Args, Parser};
 use url::Url;
 
-use crate::constants::RECOVERY_SCAN_CONCURRENCY;
-
 base_cli_utils::define_cli_env!("BASE_PROPOSER");
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
 base_cli_utils::define_health_args!("BASE_PROPOSER", 8080);
 base_tx_manager::define_signer_cli!("BASE_PROPOSER");
 base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER", tx_send_timeout_default = "10m");
+
+const DEFAULT_RECOVERY_SCAN_CONCURRENCY: usize = 8;
 
 /// Proposer - TEE-based output proposal generation for Base.
 #[derive(Debug, Parser)]
@@ -148,7 +148,7 @@ pub struct ProposerArgs {
     #[arg(
         long = "recovery-scan-concurrency",
         env = cli_env!("RECOVERY_SCAN_CONCURRENCY"),
-        default_value_t = NonZeroUsize::new(RECOVERY_SCAN_CONCURRENCY).unwrap(),
+        default_value_t = NonZeroUsize::new(DEFAULT_RECOVERY_SCAN_CONCURRENCY).unwrap(),
         value_parser = clap::value_parser!(NonZeroUsize)
     )]
     pub recovery_scan_concurrency: NonZeroUsize,
