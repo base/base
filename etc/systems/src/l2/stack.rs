@@ -6,10 +6,16 @@
 //! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
+use std::{fs, path::PathBuf};
+
+use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
+use base_common_network::Base;
 use base_consensus_node::NodeMode;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
@@ -29,6 +35,8 @@ pub struct L2StackConfig {
     pub l2_genesis: Vec<u8>,
     /// Rollup configuration JSON.
     pub rollup_config: Vec<u8>,
+    /// Optional path for persisting rollup configuration updates.
+    pub rollup_config_path: Option<PathBuf>,
     /// L1 genesis JSON (for consensus chain spec).
     pub l1_genesis: Vec<u8>,
     /// JWT secret for Engine API authentication.
@@ -93,7 +101,7 @@ impl L2Stack {
     /// # Errors
     ///
     /// Returns an error if any component fails to start.
-    pub async fn start(config: L2StackConfig) -> Result<Self> {
+    pub async fn start(mut config: L2StackConfig) -> Result<Self> {
         let container_config = config.container_config.as_ref();
 
         let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
@@ -117,6 +125,38 @@ impl L2Stack {
         let builder = InProcessBuilder::start(builder_config)
             .await
             .wrap_err("Failed to start in-process builder")?;
+
+        // Patch the L2 genesis hash in the rollup config if it's a zero placeholder.
+        // This happens when the devnet uses base/contracts forge scripts (which can't
+        // compute the genesis hash at deploy time). The real hash is only known after
+        // reth initializes from genesis.json.
+        let mut rollup_config = rollup_config;
+        let mut patched_rollup_config = false;
+        if rollup_config.genesis.l2.hash == B256::ZERO {
+            let client = RpcClient::builder().http(builder.rpc_url()?);
+            let provider = RootProvider::<Base>::new(client);
+            let block = provider
+                .get_block_by_number(BlockNumberOrTag::Earliest)
+                .await
+                .wrap_err("Failed to fetch L2 genesis block")?
+                .ok_or_else(|| eyre::eyre!("L2 genesis block not found"))?;
+            let hash = block.header.hash;
+            tracing::info!(hash = %hash, "Patched L2 genesis hash in rollup config");
+            rollup_config.genesis.l2.hash = hash;
+            patched_rollup_config = true;
+        }
+
+        // Re-serialize the patched rollup config so byte-level consumers see the real
+        // genesis hash instead of the zero placeholder.
+        config.rollup_config = serde_json::to_vec_pretty(&rollup_config)
+            .wrap_err("Failed to serialize patched rollup config")?;
+        if patched_rollup_config {
+            if let Some(path) = &config.rollup_config_path {
+                fs::write(path, &config.rollup_config).wrap_err_with(|| {
+                    format!("Failed to persist patched rollup config to {}", path.display())
+                })?;
+            }
+        }
 
         // 2. Start builder consensus (in-process CL, Sequencer mode).
         //    The sequencer starts in stopped mode so that blocks are not produced until the

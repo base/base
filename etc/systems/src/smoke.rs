@@ -298,14 +298,16 @@ impl SystemTestStackBuilder {
 
         let l2_genesis_bytes =
             std::fs::read(l2_deployment.genesis_path()).wrap_err("Failed to read L2 genesis")?;
-        let rollup_config_bytes = std::fs::read(l2_deployment.rollup_config_path())
-            .wrap_err("Failed to read rollup config")?;
+        let rollup_config_path = l2_deployment.rollup_config_path();
+        let rollup_config_bytes =
+            std::fs::read(&rollup_config_path).wrap_err("Failed to read rollup config")?;
         let l1_genesis_bytes =
             std::fs::read(l1_genesis.el_genesis_path()).wrap_err("Failed to read L1 genesis")?;
 
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
             rollup_config: rollup_config_bytes,
+            rollup_config_path: Some(rollup_config_path),
             l1_genesis: l1_genesis_bytes,
             jwt_secret,
             p2p_key: BUILDER.private_key,

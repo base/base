@@ -14,7 +14,3 @@ pub use l1_beacon::l1_beacon_config_yaml;
 mod l1_genesis;
 /// L1 execution layer genesis configuration generators.
 pub use l1_genesis::{l1_el_genesis, l1_el_genesis_json};
-
-mod l2_intent;
-/// L2 intent configuration generator for op-deployer.
-pub use l2_intent::l2_intent_toml;

@@ -7,7 +7,7 @@ x-rust-service-build: &rust-service-build
 
 services:
   setup-l1:
-    image: devnet-setup:local
+    image: system-test-setup:local
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
@@ -133,7 +133,7 @@ services:
     restart: unless-stopped
 
   setup-l2:
-    image: devnet-setup:local
+    image: system-test-setup:local
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
@@ -170,6 +170,22 @@ services:
       - L2_CL_BOOTNODE_P2P_KEY=${L2_CL_BOOTNODE_P2P_KEY}
       - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
+
+
+  patch-genesis-hash:
+    image: system-test-setup:local
+    container_name: patch-genesis-hash
+    depends_on:
+      base-builder:
+        condition: service_healthy
+      setup-l2:
+        condition: service_completed_successfully
+    volumes:
+      - ../../.devnet/l2/configs:/configs
+    environment:
+      - L2_RPC_URL=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - CONFIG_DIR=/configs
+    entrypoint: ["/usr/local/bin/patch-genesis-hash.sh"]
 
   base-el-bootnode:
     image: base-reth-node:local
@@ -213,6 +229,8 @@ services:
     container_name: base-cl-bootnode
     depends_on:
       setup-l2:
+        condition: service_completed_successfully
+      patch-genesis-hash:
         condition: service_completed_successfully
     ports:
       - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}"     # P2P TCP metadata
@@ -348,6 +366,8 @@ services:
         condition: service_healthy
       base-cl-bootnode:
         condition: service_healthy
+      patch-genesis-hash:
+        condition: service_completed_successfully
     ports:
       - "${L2_BUILDER_CL_RPC_PORT}:${L2_BUILDER_CL_RPC_PORT}"       # RPC
       - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # P2P TCP
@@ -543,6 +563,8 @@ services:
         condition: service_healthy
       base-cl-bootnode:
         condition: service_healthy
+      patch-genesis-hash:
+        condition: service_completed_successfully
     ports:
       - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
       - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # P2P TCP

@@ -42,6 +42,12 @@ pub const CL_BOOTNODE_P2P_KEY: &str =
     "2222222222222222222222222222222222222222222222222222222222222222";
 /// Consensus-layer bootnode ENR output path in the shared bootnode volume.
 pub const CL_BOOTNODE_ENR_PATH: &str = "/bootnodes/cl-bootnode.enr";
+/// First sequencer P2P private key.
+pub const SEQUENCER_1_P2P_KEY: &str =
+    "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
+/// Second sequencer P2P private key.
+pub const SEQUENCER_2_P2P_KEY: &str =
+    "47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a";
 
 /// Docker image used to generate system test genesis and deployment artifacts.
 #[derive(Debug, Clone, Copy)]
@@ -100,11 +106,21 @@ impl SetupImage {
 
             ensure!(dockerfile_path.exists(), "{SETUP_DOCKERFILE_PATH} not found");
 
-            let status = Command::new("docker")
-                .args(["build", "-t", SETUP_IMAGE_REFERENCE, "-f", SETUP_DOCKERFILE_PATH, "."])
-                .current_dir(&repo_root)
-                .status()
-                .wrap_err("Failed to run docker build")?;
+            let mut cmd = Command::new("docker");
+            cmd.args(["build", "-t", SETUP_IMAGE_REFERENCE, "-f", SETUP_DOCKERFILE_PATH]);
+
+            // Forward CONTRACTS_COMMIT so the image builds against the requested
+            // contracts revision instead of silently defaulting to latest main.
+            if let Ok(commit) = std::env::var("CONTRACTS_COMMIT") {
+                if !commit.is_empty() {
+                    cmd.args(["--build-arg", &format!("CONTRACTS_COMMIT={commit}")]);
+                }
+            }
+
+            cmd.arg(".");
+            cmd.current_dir(&repo_root);
+
+            let status = cmd.status().wrap_err("Failed to run docker build")?;
 
             ensure!(status.success(), "docker build failed");
 
@@ -366,7 +382,9 @@ impl SetupContainer {
             .with_env_var("L2_EL_BOOTNODE_ENODE_ID", EL_BOOTNODE_ENODE_ID)
             .with_env_var("L2_EL_BOOTNODE_ENODE", EL_BOOTNODE_ENODE)
             .with_env_var("L2_CL_BOOTNODE_P2P_KEY", CL_BOOTNODE_P2P_KEY)
-            .with_env_var("L2_CL_BOOTNODE_ENR_PATH", CL_BOOTNODE_ENR_PATH);
+            .with_env_var("L2_CL_BOOTNODE_ENR_PATH", CL_BOOTNODE_ENR_PATH)
+            .with_env_var("SEQ1_P2P_KEY", SEQUENCER_1_P2P_KEY)
+            .with_env_var("SEQ2_P2P_KEY", SEQUENCER_2_P2P_KEY);
 
         if let Some(block) = self.isthmus_activation_block {
             container = container.with_env_var("L2_ISTHMUS_BLOCK", block.to_string());

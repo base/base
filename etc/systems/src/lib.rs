@@ -18,7 +18,7 @@ pub use config::{
     ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
     ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, ANVIL_ACCOUNT_8, ANVIL_ACCOUNT_9, Account,
     BATCHER, BUILDER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER, TEST_MNEMONIC, anvil_addresses,
-    l1_beacon_config_yaml, l1_el_genesis, l1_el_genesis_json, l2_intent_toml,
+    l1_beacon_config_yaml, l1_el_genesis, l1_el_genesis_json,
 };
 
 mod containers;
@@ -37,7 +37,7 @@ mod host;
 pub use host::{host_address, with_host_port_if_needed};
 
 mod images;
-pub use images::{OP_DEPLOYER_IMAGE, RETH_IMAGE};
+pub use images::RETH_IMAGE;
 
 mod l1;
 pub use l1::{
@@ -61,8 +61,8 @@ pub use rpc::SystemTestRpcClient;
 mod setup;
 pub use setup::{
     BUILDER_ENODE_ID, CL_BOOTNODE_ENR_PATH, CL_BOOTNODE_P2P_KEY, EL_BOOTNODE_ENODE,
-    EL_BOOTNODE_ENODE_ID, EL_BOOTNODE_P2P_KEY, L1GenesisOutput, L2DeploymentOutput, SetupContainer,
-    SetupImage,
+    EL_BOOTNODE_ENODE_ID, EL_BOOTNODE_P2P_KEY, L1GenesisOutput, L2DeploymentOutput,
+    SEQUENCER_1_P2P_KEY, SEQUENCER_2_P2P_KEY, SetupContainer, SetupImage,
 };
 
 mod smoke;

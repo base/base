@@ -1,12 +1,12 @@
-//! op-deployer container wrapper.
+//! base-deployer container wrapper.
 
 use std::path::{Path, PathBuf};
 
 use alloy_primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
-use eyre::{Result, WrapErr, eyre};
+use eyre::{Result, WrapErr};
 use testcontainers::{
-    GenericImage, ImageExt,
+    ImageExt,
     core::{Mount, WaitFor, wait::ExitWaitStrategy},
     runners::SyncRunner,
 };
@@ -14,13 +14,11 @@ use url::Url;
 
 use super::artifacts::DeploymentArtifacts;
 use crate::{
-    config::{self, BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER},
-    images::OP_DEPLOYER_IMAGE,
+    config::{BATCHER, CHALLENGER, PROPOSER, SEQUENCER},
+    setup::{SEQUENCER_1_P2P_KEY, SEQUENCER_2_P2P_KEY, SetupImage},
 };
 
-const OUTPUT_DIR: &str = "/output";
-const WORKDIR: &str = "/op-deployer";
-const INTENT_PATH: &str = "/config/intent.toml";
+const OUTPUT_DIR: &str = "/output/l2";
 
 /// Role address configuration for the deployment.
 #[derive(Debug, Clone, Copy)]
@@ -58,7 +56,7 @@ impl Default for RoleAddresses {
     }
 }
 
-/// Container wrapper for L2 contract deployment via op-deployer.
+/// Container wrapper for L2 contract deployment via base-deployer.
 #[derive(Debug)]
 pub struct DeployerContainer {
     l1_rpc_url: Url,
@@ -66,6 +64,8 @@ pub struct DeployerContainer {
     l2_chain_id: u64,
     deployer_private_key: B256,
     roles: RoleAddresses,
+    sequencer_1_p2p_key: String,
+    sequencer_2_p2p_key: String,
     output_dir: PathBuf,
     network: Option<String>,
 }
@@ -85,6 +85,8 @@ impl DeployerContainer {
             l2_chain_id,
             deployer_private_key,
             roles,
+            sequencer_1_p2p_key: SEQUENCER_1_P2P_KEY.to_string(),
+            sequencer_2_p2p_key: SEQUENCER_2_P2P_KEY.to_string(),
             output_dir: default_output_dir(),
             network: None,
         }
@@ -102,14 +104,25 @@ impl DeployerContainer {
         self
     }
 
+    /// Overrides the sequencer P2P keys written into the deployment artifacts.
+    pub fn with_sequencer_p2p_keys(
+        mut self,
+        sequencer_1_p2p_key: impl Into<String>,
+        sequencer_2_p2p_key: impl Into<String>,
+    ) -> Self {
+        self.sequencer_1_p2p_key = sequencer_1_p2p_key.into();
+        self.sequencer_2_p2p_key = sequencer_2_p2p_key.into();
+        self
+    }
+
     /// Returns the host output directory for artifacts.
     pub fn output_dir(&self) -> &Path {
         &self.output_dir
     }
 
-    /// Runs op-deployer against the configured L1 and returns deployment artifacts.
+    /// Runs base-deployer against the configured L1 and returns deployment artifacts.
     ///
-    /// This is a blocking call that waits for op-deployer to finish. The deployment will
+    /// This is a blocking call that waits for base-deployer to finish. The deployment will
     /// only succeed when the L1 node is running and producing blocks.
     pub fn deploy(&self) -> Result<DeploymentArtifacts> {
         if DeploymentArtifacts::exists_in(&self.output_dir) {
@@ -118,32 +131,34 @@ impl DeployerContainer {
 
         std::fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output directory")?;
 
-        let intent_toml = self.intent_toml()?;
-        let script = deploy_script();
-        let (image_name, image_tag) = OP_DEPLOYER_IMAGE
-            .rsplit_once(':')
-            .ok_or_else(|| eyre!("op-deployer image tag is missing"))?;
+        SetupImage::ensure_built()?;
 
-        let image = GenericImage::new(image_name, image_tag)
-            .with_entrypoint("sh")
-            .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
+        let image = SetupImage::request()
+            .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
+            .with_startup_timeout(std::time::Duration::from_secs(600));
 
-        let cmd = vec!["-c".to_string(), script];
         let output_dir = self.output_dir.to_string_lossy().to_string();
         let mut request = image
-            .with_cmd(cmd)
+            .with_cmd(["/usr/local/bin/setup-l2.sh"])
             .with_env_var("L1_RPC_URL", self.l1_rpc_url.to_string())
             .with_env_var("L1_CHAIN_ID", self.l1_chain_id.to_string())
             .with_env_var("L2_CHAIN_ID", self.l2_chain_id.to_string())
             .with_env_var("DEPLOYER_KEY", self.deployer_key_hex())
-            .with_copy_to(INTENT_PATH, intent_toml.into_bytes())
+            .with_env_var("DEPLOYER_ADDR", format_address(self.deployer_address()?))
+            .with_env_var("SEQUENCER_ADDR", format_address(self.roles.sequencer))
+            .with_env_var("BATCHER_ADDR", format_address(self.roles.batcher))
+            .with_env_var("PROPOSER_ADDR", format_address(self.roles.proposer))
+            .with_env_var("CHALLENGER_ADDR", format_address(self.roles.challenger))
+            .with_env_var("SEQ1_P2P_KEY", self.sequencer_1_p2p_key.clone())
+            .with_env_var("SEQ2_P2P_KEY", self.sequencer_2_p2p_key.clone())
+            .with_env_var("OUTPUT_DIR", OUTPUT_DIR)
             .with_mount(Mount::bind_mount(output_dir, OUTPUT_DIR));
 
         if let Some(network) = &self.network {
             request = request.with_network(network.clone());
         }
 
-        let _container = request.start().wrap_err("Failed to run op-deployer container")?;
+        let _container = request.start().wrap_err("Failed to run base-deployer container")?;
 
         self.artifacts().wrap_err("Failed to load deployment artifacts")
     }
@@ -151,19 +166,6 @@ impl DeployerContainer {
     /// Loads deployment artifacts from the output directory.
     pub fn artifacts(&self) -> Result<DeploymentArtifacts> {
         DeploymentArtifacts::load_from_dir(&self.output_dir)
-    }
-
-    fn intent_toml(&self) -> Result<String> {
-        let mut intent = config::l2_intent_toml(self.l1_chain_id, self.l2_chain_id);
-        let deployer_address = self.deployer_address()?;
-
-        intent = replace_address(intent, DEPLOYER.address, deployer_address);
-        intent = replace_address(intent, SEQUENCER.address, self.roles.sequencer);
-        intent = replace_address(intent, BATCHER.address, self.roles.batcher);
-        intent = replace_address(intent, PROPOSER.address, self.roles.proposer);
-        intent = replace_address(intent, CHALLENGER.address, self.roles.challenger);
-
-        Ok(intent)
     }
 
     fn deployer_address(&self) -> Result<Address> {
@@ -177,62 +179,11 @@ impl DeployerContainer {
     }
 }
 
-fn deploy_script() -> String {
-    format!(
-        r#"set -e
-
-WORKDIR=\"{WORKDIR}\"
-OUTPUT_DIR=\"{OUTPUT_DIR}\"
-INTENT_PATH=\"{INTENT_PATH}\"
-
-mkdir -p \"$WORKDIR\" \"$OUTPUT_DIR\"
-
-if [ -f \"$OUTPUT_DIR/genesis.json\" ] && [ -f \"$OUTPUT_DIR/rollup.json\" ] && [ -f \"$OUTPUT_DIR/l1-addresses.json\" ]; then
-  echo \"Deployment artifacts already exist, skipping op-deployer\"
-  exit 0
-fi
-
-op-deployer init \
-  --l1-chain-id \"$L1_CHAIN_ID\" \
-  --l2-chain-ids \"$L2_CHAIN_ID\" \
-  --intent-type custom \
-  --workdir \"$WORKDIR\"
-
-cp \"$INTENT_PATH\" \"$WORKDIR/intent.toml\"
-
-op-deployer apply \
-  --workdir \"$WORKDIR\" \
-  --deployment-target live \
-  --l1-rpc-url \"$L1_RPC_URL\" \
-  --private-key \"$DEPLOYER_KEY\"
-
-op-deployer inspect genesis \
-  --workdir \"$WORKDIR\" \
-  \"$L2_CHAIN_ID\" \
-  > \"$OUTPUT_DIR/genesis.json\"
-
-op-deployer inspect rollup \
-  --workdir \"$WORKDIR\" \
-  \"$L2_CHAIN_ID\" \
-  > \"$OUTPUT_DIR/rollup.json\"
-
-op-deployer inspect l1 \
-  --workdir \"$WORKDIR\" \
-  \"$L2_CHAIN_ID\" \
-  > \"$OUTPUT_DIR/l1-addresses.json\"
-"#,
-    )
-}
-
-fn replace_address(input: String, from: Address, to: Address) -> String {
-    input.replace(&format_address(from), &format_address(to))
-}
-
 fn format_address(address: Address) -> String {
     format!("{address:#x}")
 }
 
 fn default_output_dir() -> PathBuf {
     let suffix: u64 = rand::random();
-    std::env::temp_dir().join(format!("op-deployer-{suffix}"))
+    std::env::temp_dir().join(format!("base-deployer-{suffix}"))
 }
