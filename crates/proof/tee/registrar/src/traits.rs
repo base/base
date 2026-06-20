@@ -20,12 +20,12 @@ pub trait InstanceDiscovery: Send + Sync {
 /// Fetches signer identity data from a prover instance endpoint.
 ///
 /// The primary implementation is [`ProverClient`](crate::ProverClient), which
-/// makes JSON-RPC calls to the prover's `enclave_signerPublicKey` and
-/// `enclave_signerAttestation` endpoints. Test code can substitute a mock
-/// to avoid real HTTP calls.
+/// adapts a discovered endpoint [`Url`] to the shared
+/// `base_proof_primitives::EnclaveApiClient` JSON-RPC surface. Test code can
+/// substitute a mock to avoid real HTTP calls.
 ///
 /// The `endpoint` parameter is a [`Url`] (e.g. `http://10.0.1.5:8000/`).
-pub trait SignerClient: Send + Sync {
+pub trait EnclaveEndpointClient: Send + Sync {
     /// Fetches the SEC1-encoded public key for each enclave signer at the given endpoint.
     fn signer_public_key<'a>(
         &'a self,
