@@ -158,9 +158,7 @@ where
     pub async fn stop_proposer(&self) -> std::result::Result<(), &'static str> {
         let mut session = self.session.lock().await;
 
-        let is_active = self.running.load(Ordering::Acquire)
-            && session.as_ref().is_some_and(|(_, task)| !task.is_finished());
-        if !is_active {
+        if session.is_none() {
             return Err("proposer is not running");
         }
 
@@ -277,6 +275,35 @@ mod tests {
         assert!(handle.is_running());
         handle.stop_proposer().await.unwrap();
         assert!(!handle.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_handle_stop_recovers_after_panic() {
+        let cancel = CancellationToken::new();
+        let handle = test_pipeline_handle(cancel);
+
+        {
+            let mut session = handle.session.lock().await;
+            let task: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async {
+                panic!("pipeline task panic");
+            });
+            handle.running.store(true, Ordering::Release);
+            *session = Some((CancellationToken::new(), task));
+        }
+
+        loop {
+            let session = handle.session.lock().await;
+            if session.as_ref().is_some_and(|(_, task)| task.is_finished()) {
+                break;
+            }
+            drop(session);
+            tokio::task::yield_now().await;
+        }
+
+        handle.stop_proposer().await.unwrap();
+        assert!(!handle.is_running());
+        handle.start_proposer().await.unwrap();
+        handle.stop_proposer().await.unwrap();
     }
 
     #[tokio::test]
