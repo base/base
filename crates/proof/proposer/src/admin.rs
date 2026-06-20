@@ -73,9 +73,8 @@ impl ProposerAdminApiServerImpl {
             .wrap_err("failed to register admin_stopProposer")?;
 
         module
-            .register_async_method("admin_proposerRunning", move |_, _, _| {
-                let driver = Arc::clone(&driver);
-                async move { RpcResult::Ok(driver.is_running().await) }
+            .register_method("admin_proposerRunning", move |_, _, _| {
+                RpcResult::Ok(driver.is_running())
             })
             .wrap_err("failed to register admin_proposerRunning")?;
 

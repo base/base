@@ -280,7 +280,7 @@ impl ProposerService {
 
         ready.store(false, Ordering::SeqCst);
 
-        if driver_handle.is_running().await
+        if driver_handle.is_running()
             && let Err(e) = driver_handle.stop_proposer().await
         {
             warn!(error = %e, "Error stopping proposer driver");
