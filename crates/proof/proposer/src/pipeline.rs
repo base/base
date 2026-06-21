@@ -17,8 +17,8 @@ use crate::{
 /// The proving pipeline.
 ///
 /// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
-/// Submit failures and dispatcher retry exhaustion restart both tasks from
-/// onchain state; cancellation stops them cleanly.
+/// Submit failures restart both tasks from onchain state; dispatcher retry
+/// exhaustion clears dispatcher recovery state without interrupting collection.
 #[derive(Debug)]
 pub struct ProvingPipeline<L1, L2, R>
 where
@@ -52,8 +52,8 @@ where
     ///
     /// Each session starts a dispatcher task and a collector task. The
     /// dispatcher can run ahead up to the safe head, while the collector
-    /// submits proofs in order. Submit failures and dispatcher retry
-    /// exhaustion restart both tasks from a fresh recovery walk.
+    /// submits proofs in order. Submit failures restart both tasks from a
+    /// fresh recovery walk.
     pub async fn run(&self, cancel: CancellationToken) {
         info!(
             block_interval = self.config.block_interval,
@@ -106,7 +106,7 @@ where
                         )
                         .await
                     {
-                        break;
+                        cache = None;
                     }
                 }
             }
@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatcher_retry_exhaustion_ends_dispatcher_loop() {
+    async fn dispatcher_retry_exhaustion_keeps_dispatcher_loop_running() {
         let requester = Arc::new(RejectingProofRequester::default());
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::<RejectingProofRequester>::clone(&requester);
@@ -299,9 +299,15 @@ mod tests {
         );
         let cancel = CancellationToken::new();
 
-        tokio::time::timeout(Duration::from_secs(1), pipeline.dispatcher_loop(&cancel))
-            .await
-            .expect("dispatcher retry exhaustion should end the dispatcher loop");
-        assert_eq!(requester.prove_count.load(Ordering::SeqCst), 1);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), pipeline.dispatcher_loop(&cancel))
+                .await
+                .is_err(),
+            "dispatcher retry exhaustion should not end the dispatcher loop"
+        );
+        assert!(
+            requester.prove_count.load(Ordering::SeqCst) > 1,
+            "dispatcher should keep recovering and retrying after exhaustion"
+        );
     }
 }
