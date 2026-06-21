@@ -1,8 +1,11 @@
 //! Full proposer service lifecycle.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use alloy_primitives::Address;
@@ -29,11 +32,16 @@ use tracing::{info, warn};
 use crate::{
     Metrics,
     config::ProposerConfig,
-    constants::{MAX_PROOF_RETRIES, SUBMIT_TIMEOUT, SUBMIT_TIMEOUT_SLACK},
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::ProposalSubmitter,
     pipeline::{PipelineConfig, ProvingPipeline},
 };
+
+const SUBMIT_TIMEOUT_SLACK: Duration = Duration::from_mins(2);
+const DEFAULT_TX_SEND_TIMEOUT: Duration = Duration::from_mins(10);
+const DEFAULT_SUBMIT_TIMEOUT: Duration =
+    Duration::from_secs(DEFAULT_TX_SEND_TIMEOUT.as_secs() + SUBMIT_TIMEOUT_SLACK.as_secs());
+const MAX_PROOF_RETRIES: u32 = 8;
 
 /// Top-level proposer service.
 #[derive(Debug)]
@@ -143,10 +151,11 @@ impl ProposerService {
 
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
-        let submit_timeout = config.tx_manager.as_ref().map_or(Some(SUBMIT_TIMEOUT), |tx| {
-            (!tx.tx_send_timeout.is_zero())
-                .then(|| tx.tx_send_timeout.saturating_add(SUBMIT_TIMEOUT_SLACK))
-        });
+        let submit_timeout =
+            config.tx_manager.as_ref().map_or(Some(DEFAULT_SUBMIT_TIMEOUT), |tx| {
+                (!tx.tx_send_timeout.is_zero())
+                    .then(|| tx.tx_send_timeout.saturating_add(SUBMIT_TIMEOUT_SLACK))
+            });
 
         let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
             if config.dry_run {

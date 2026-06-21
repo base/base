@@ -10,11 +10,11 @@ use k256::ecdsa::VerifyingKey;
 use tracing::debug;
 use url::Url;
 
-use crate::{RegistrarError, Result, SignerClient};
+use crate::{EnclaveEndpointClient, RegistrarError, Result};
 
 /// JSON-RPC client for prover instance signer endpoints.
 ///
-/// Implements [`SignerClient`] by making HTTP JSON-RPC calls to the prover's
+/// Implements [`EnclaveEndpointClient`] by making HTTP JSON-RPC calls to the prover's
 /// `enclave_signerPublicKey` and `enclave_signerAttestation` endpoints.
 ///
 /// The `timeout` is configured once at construction and applied to all requests.
@@ -52,7 +52,7 @@ impl ProverClient {
     }
 }
 
-impl SignerClient for ProverClient {
+impl EnclaveEndpointClient for ProverClient {
     async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
         debug!(endpoint = %endpoint, "fetching signer public keys");
         let client = self.build_client(endpoint)?;

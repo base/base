@@ -14,12 +14,6 @@ pub use cli::{
 mod config;
 pub use config::ProposerConfig;
 
-mod constants;
-pub use constants::{
-    MAX_PROOF_RETRIES, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY, SUBMIT_TIMEOUT,
-    SUBMIT_TIMEOUT_SLACK,
-};
-
 mod output_proposer;
 pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
 

@@ -875,6 +875,7 @@ mod tests {
     /// Shared block intervals for submission validation tests.
     const SUBMIT_BLOCK_INTERVAL: u64 = 4;
     const SUBMIT_INTERMEDIATE_INTERVAL: u64 = 2;
+    const DEFAULT_SUBMIT_TIMEOUT: Duration = Duration::from_mins(12);
 
     fn submit_pipeline(output_roots: HashMap<u64, B256>) -> TestPipeline {
         recovery_pipeline_full(
@@ -961,7 +962,7 @@ mod tests {
             SUBMIT_BLOCK_INTERVAL,
             SUBMIT_INTERMEDIATE_INTERVAL,
             Arc::new(DelayedOutputProposer {
-                delay: crate::constants::PROPOSAL_TIMEOUT + Duration::from_secs(1),
+                delay: DEFAULT_SUBMIT_TIMEOUT + Duration::from_secs(1),
             }),
         );
         let proof_result = submit_proof_result(SUBMIT_BLOCK_INTERVAL);

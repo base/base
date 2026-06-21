@@ -35,7 +35,7 @@ mod service;
 pub use service::RegistrarConfig;
 
 mod traits;
-pub use traits::{InstanceDiscovery, SignerClient};
+pub use traits::{EnclaveEndpointClient, InstanceDiscovery};
 
 mod types;
 pub use types::{InstanceHealthStatus, ProverInstance};
