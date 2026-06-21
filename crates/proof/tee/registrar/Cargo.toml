@@ -23,7 +23,6 @@ aws-sdk-ec2.workspace = true
 aws-sdk-elasticloadbalancingv2.workspace = true
 
 # Crypto
-rand.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 
 # X.509 / CRL
