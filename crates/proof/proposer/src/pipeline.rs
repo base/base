@@ -92,6 +92,7 @@ where
                     self.proof_recovery.try_recover_and_plan(&mut cache).await
                 {
                     Metrics::safe_head().set(safe_head as f64);
+                    Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
                     if self
                         .proof_dispatcher
@@ -126,6 +127,7 @@ where
                     self.proof_recovery.try_recover_and_plan(&mut cache).await
                 {
                     Metrics::safe_head().set(safe_head as f64);
+                    Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
                     self.proof_collector_orchestrator
                         .tick(&mut state, &mut cache, recovered, safe_head, cancel)
