@@ -99,10 +99,7 @@ impl<P, R, T> SignerManager<P, R, T> {
         input.extend_from_slice(registry_address.as_slice());
         input.extend_from_slice(signer.as_slice());
 
-        let hash = keccak256(input);
-        let mut nonce = [0u8; 32];
-        nonce.copy_from_slice(hash.as_slice());
-        nonce
+        *keccak256(input)
     }
 }
 

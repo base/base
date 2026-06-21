@@ -24,6 +24,10 @@ pub trait InstanceDiscovery: Send + Sync {
 /// `base_proof_primitives::EnclaveApiClient` JSON-RPC surface. Test code can
 /// substitute a mock to avoid real HTTP calls.
 ///
+/// Implementations must return public keys and attestations in the same stable
+/// signer order across calls for a given endpoint. The registrar pairs each
+/// attestation response with the public-key response by index.
+///
 /// The `endpoint` parameter is a [`Url`] (e.g. `http://10.0.1.5:8000/`).
 pub trait EnclaveEndpointClient: Send + Sync {
     /// Fetches the SEC1-encoded public key for each enclave signer at the given endpoint.
