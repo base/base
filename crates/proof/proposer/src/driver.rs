@@ -158,7 +158,9 @@ where
     pub async fn stop_proposer(&self) -> std::result::Result<(), &'static str> {
         let mut session = self.session.lock().await;
 
-        if session.is_none() {
+        if !self.running.load(Ordering::Acquire)
+            && session.as_ref().is_none_or(|(_, task)| task.is_finished())
+        {
             return Err("proposer is not running");
         }
 
@@ -263,5 +265,31 @@ mod tests {
         cancel.cancel();
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!handle.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_handle_stop_after_self_terminated_errors() {
+        let cancel = CancellationToken::new();
+        let handle = test_pipeline_handle(cancel.clone());
+
+        handle.start_proposer().await.unwrap();
+        cancel.cancel();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let task_finished = {
+                    let session = handle.session.lock().await;
+                    session.as_ref().is_some_and(|(_, task)| task.is_finished())
+                };
+                if !handle.is_running() && task_finished {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(handle.stop_proposer().await.unwrap_err().contains("not running"));
     }
 }
