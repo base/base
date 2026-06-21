@@ -674,7 +674,7 @@ mod tests {
     async fn discover_and_resolve_evicts_cached_missing_instance_after_ttl() {
         let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
         let inst = healthy_prover_instance(EP1);
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let first_cycle =
             cycle_driver(vec![inst.clone()], signer_client.clone(), CancellationToken::new());
         let missing_cycle = cycle_driver(vec![], signer_client, CancellationToken::new());
@@ -710,7 +710,7 @@ mod tests {
     async fn discover_and_resolve_refresh_resets_cached_missing_instance_ttl() {
         let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
         let inst = healthy_prover_instance(EP1);
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let present_cycle =
             cycle_driver(vec![inst.clone()], signer_client.clone(), CancellationToken::new());
         let missing_cycle = cycle_driver(vec![], signer_client, CancellationToken::new());
