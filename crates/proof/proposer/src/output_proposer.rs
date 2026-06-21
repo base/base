@@ -124,7 +124,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
 
         let receipt = self.tx_manager.send(candidate).await.map_err(ProofSubmissionError::from)?;
 
-        if !receipt.status() {
+        if !receipt.inner.status() {
             return Err(ProofSubmissionError::TxReverted(receipt.transaction_hash).into());
         }
 
