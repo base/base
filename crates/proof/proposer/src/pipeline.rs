@@ -63,6 +63,8 @@ where
         );
 
         loop {
+            // Dropping either loop mid-tick is safe: the next recovery walk
+            // rediscovers any already-broadcast L1 transaction from onchain state.
             let restart = tokio::select! {
                 biased;
                 () = cancel.cancelled() => false,
