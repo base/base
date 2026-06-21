@@ -125,6 +125,8 @@ where
                 if let Some((recovered, safe_head)) =
                     self.proof_recovery.try_recover_and_plan(&mut cache).await
                 {
+                    Metrics::safe_head().set(safe_head as f64);
+
                     self.proof_collector_orchestrator
                         .tick(&mut state, &mut cache, recovered, safe_head, cancel)
                         .await
