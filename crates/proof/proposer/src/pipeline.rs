@@ -63,6 +63,8 @@ where
         );
 
         loop {
+            // dispatcher_loop intentionally does not return; this branch keeps it
+            // polled while collector_loop remains the session restart signal.
             // Dropping either loop mid-tick is safe: the next recovery walk
             // rediscovers any already-broadcast L1 transaction from onchain state.
             let restart = tokio::select! {
