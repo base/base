@@ -246,15 +246,15 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::test_utils::{
-        MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-        MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
-        test_sync_status,
-    };
     use crate::{
         ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig, ProofDispatcher,
         ProofDispatcherConfig, ProofRecovery, ProofRecoveryConfig, ProofSubmitter,
         ProofSubmitterConfig,
+        test_utils::{
+            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
+            MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
+            test_sync_status,
+        },
     };
 
     fn test_pipeline_handle(
