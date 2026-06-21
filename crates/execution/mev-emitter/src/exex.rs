@@ -155,6 +155,13 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                             out.result.logs().iter().map(|l| l.topics()),
                         );
                         cands += candidates.len();
+                        // Pool-slot path: the POOL addresses that swapped this tx
+                        // (Swap-log emitters). Their changed storage slots carry the
+                        // mid-block PRICE state (slot0/liquidity/reserves) the
+                        // balance-delta path cannot represent.
+                        let pool_candidates = crate::candidates::swap_pool_candidates(
+                            out.result.logs().iter().map(|l| (l.address, l.topics())),
+                        );
                         // C-3: real (payload_id, flashblock_index) from the index,
                         // falling back to the block-hash placeholder at index 0.
                         let (payload_id, fb_index) =
@@ -197,6 +204,17 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                             fb_index,
                             payload_id.clone(),
                         )?;
+                        // Pool-slot events: RAW changed storage slots of the pools
+                        // that swapped. Computed BEFORE `payload_id` is moved into
+                        // `state_diffs_from_evm_state` below (mirrors native's clone).
+                        let pool_slot_events = crate::revm_bridge::pool_slot_diffs_from_evm_state(
+                            &out.state,
+                            &pool_candidates,
+                            tx_hash,
+                            block_number,
+                            fb_index,
+                            payload_id.clone(),
+                        );
                         let events = crate::revm_bridge::state_diffs_from_evm_state(
                             &out.state,
                             &registry,
@@ -214,6 +232,13 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                         // sentinel rows (both ride the v1 StateDiffEvent shape).
                         for ev in events.iter().chain(native_events.iter()) {
                             sink.send_event(&crate::NodeEvent::StateDiff(ev.clone()));
+                            sent_this_block += 1;
+                        }
+                        // Stream the mid-block pool-slot price signals (distinct
+                        // NodeEvent variant). Counted in events_sent via
+                        // sent_this_block (telemetry below).
+                        for ev in pool_slot_events.iter() {
+                            sink.send_event(&crate::NodeEvent::PoolSlotDiff(ev.clone()));
                             sent_this_block += 1;
                         }
                         // COMMIT (precondition anchor): advances db to POST-tx state.

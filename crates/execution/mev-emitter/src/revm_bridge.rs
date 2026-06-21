@@ -15,7 +15,7 @@ use revm::state::EvmState;
 use revm::Database;
 
 use crate::state_diff::{signed_delta, BalanceSlotRegistry, TxStateDiffAccumulator};
-use crate::{StateDiffEvent, NATIVE_SENTINEL};
+use crate::{PoolSlotDiffEvent, StateDiffEvent, NATIVE_SENTINEL};
 
 /// Convert a single transaction's revm [`EvmState`] into net [`StateDiffEvent`]s.
 ///
@@ -105,6 +105,52 @@ pub fn native_balance_diffs_from_evm_state<DB: Database>(
     Ok(events)
 }
 
+/// Convert a single transaction's revm [`EvmState`] into [`PoolSlotDiffEvent`]s —
+/// the RAW changed storage slots of every account in `candidate_pools` (the
+/// Swap-log emitters for this tx, from [`crate::candidates::swap_pool_candidates`]).
+///
+/// This is the pool-PRICE sibling of [`state_diffs_from_evm_state`]: a swap moves
+/// a pool's `slot0`/`liquidity` (UniV3) or `reserve0/1` (reserve pools), which are
+/// packed pool-contract storage words — NOT token-balance slots — so the balance
+/// reverse-mapping cannot recover them. The emitter has no pool-layout knowledge,
+/// so it emits the raw `(slot, post-value)` words and the TS consumer decodes them
+/// per protocol (mirrors the native-ETH RAW policy: emit truth, classify in TS).
+///
+/// Only genuinely-changed slots are emitted (`original != present`), in revm's
+/// storage iteration order. Accounts not in `candidate_pools` are skipped, so a
+/// router/token that merely had storage touched does not flood the stream.
+pub fn pool_slot_diffs_from_evm_state(
+    state: &EvmState,
+    candidate_pools: &[Address],
+    tx_hash: B256,
+    block_number: u64,
+    flashblock_index: u32,
+    payload_id: String,
+) -> Vec<PoolSlotDiffEvent> {
+    let mut events = Vec::new();
+    for (addr, account) in state {
+        if !candidate_pools.contains(addr) {
+            continue; // not a pool that swapped this tx
+        }
+        for (slot, change) in account.changed_storage_slots() {
+            if change.original_value == change.present_value {
+                continue; // unchanged — skip
+            }
+            events.push(PoolSlotDiffEvent {
+                protocol_version: crate::PROTOCOL_VERSION,
+                tx_hash,
+                block_number,
+                flashblock_index,
+                payload_id: payload_id.clone(),
+                pool: *addr,
+                slot: *slot,
+                value: change.present_value,
+            });
+        }
+    }
+    events
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +185,52 @@ mod tests {
         assert_eq!(events[0].account, holder);
         assert_eq!(events[0].token, weth);
         assert_eq!(events[0].balance_delta_raw, I256::try_from(75).unwrap());
+    }
+
+    #[test]
+    fn emits_changed_pool_slots_for_candidate_pools_only() {
+        let pool: Address = "0x6c561b446416e1a00e8e93e221854d6ea4171372".parse().unwrap();
+        let other = Address::from([0x99; 20]); // touched but NOT a swap candidate
+        let slot0 = U256::ZERO; // UniV3 slot0 storage index
+        let liq_slot = U256::from(4u64);
+
+        let mut pool_acct = Account::default();
+        pool_acct
+            .storage
+            .insert(slot0, EvmStorageSlot::new_changed(U256::from(1), U256::from(2), Default::default()));
+        pool_acct
+            .storage
+            .insert(liq_slot, EvmStorageSlot::new_changed(U256::from(10), U256::from(20), Default::default()));
+        // an unchanged slot must NOT be emitted
+        pool_acct
+            .storage
+            .insert(U256::from(7u64), EvmStorageSlot::new_changed(U256::from(5), U256::from(5), Default::default()));
+
+        let mut other_acct = Account::default();
+        other_acct
+            .storage
+            .insert(slot0, EvmStorageSlot::new_changed(U256::from(1), U256::from(2), Default::default()));
+
+        let mut state = EvmState::default();
+        state.insert(pool, pool_acct);
+        state.insert(other, other_acct);
+
+        let events = pool_slot_diffs_from_evm_state(
+            &state,
+            &[pool], // only `pool` is a swap candidate
+            B256::from([0x22; 32]),
+            47_620_296,
+            1,
+            "0x033ff020c315fa4a".into(),
+        );
+        // 2 changed slots from `pool`; `other` skipped; unchanged slot dropped.
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|e| e.pool == pool));
+        let by_slot: std::collections::HashMap<U256, U256> =
+            events.iter().map(|e| (e.slot, e.value)).collect();
+        assert_eq!(by_slot.get(&slot0), Some(&U256::from(2)));
+        assert_eq!(by_slot.get(&liq_slot), Some(&U256::from(20)));
+        assert!(!by_slot.contains_key(&U256::from(7u64)));
     }
 
     #[test]

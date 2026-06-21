@@ -17,7 +17,7 @@
 //! locked down (and unit-tested against the TS encoding) before the inspector /
 //! `ExEx` increments build on it.
 
-use alloy_primitives::{address, Address, FixedBytes, I256, B256};
+use alloy_primitives::{address, Address, FixedBytes, I256, U256, B256};
 use serde::{Deserialize, Serialize};
 
 /// Protocol version embedded in every event (mirrors `PROTOCOL_VERSION`).
@@ -97,6 +97,24 @@ mod dec_u64_opt {
     }
 }
 
+/// Unsigned `bigint` (uint256) <-> decimal-string codec for raw storage `slot`
+/// and `value` words. Matches the TS bigint-as-decimal-string convention so a
+/// 256-bit storage word round-trips losslessly (the TS consumer parses with
+/// `BigInt` and bit-unpacks, e.g. UniV3 `slot0` → sqrtPriceX96 + tick).
+mod dec_u256 {
+    use alloy_primitives::U256;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(crate) fn serialize<S: Serializer>(v: &U256, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&v.to_string())
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<U256, D::Error> {
+        let s = String::deserialize(d)?;
+        U256::from_str_radix(&s, 10).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Signed `bigint` (int256) <-> decimal-string codec for `balanceDeltaRaw`.
 mod dec_i256 {
     use alloy_primitives::I256;
@@ -150,6 +168,38 @@ pub struct StateDiffEvent {
     /// Optional forensic internal calls (omitted when absent).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub internal_calls: Option<Vec<InternalCall>>,
+}
+
+/// A raw CHANGED storage slot on an AMM POOL contract within a flashblock —
+/// the mid-block PRICE signal the balance-delta path cannot carry. One per
+/// `(tx, pool, slot)` whose value changed; `value` is the post-tx word. The TS
+/// consumer owns the per-protocol layout (UniV3 `slot0`/`liquidity`, reserve
+/// `reserve0/1`) and decodes `slot`→`PoolState` field, overlaying mid-block
+/// state onto a committed baseline for the scanner. Raw + un-decoded by design
+/// (the emitter has no pool-layout knowledge), mirroring the native-ETH RAW
+/// policy: emit truth, classify in TS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolSlotDiffEvent {
+    /// Protocol version ([`PROTOCOL_VERSION`]).
+    pub protocol_version: u32,
+    /// Transaction that produced the slot change.
+    pub tx_hash: B256,
+    /// L2 block number (decimal string on the wire).
+    #[serde(with = "dec_u64")]
+    pub block_number: u64,
+    /// Flashblock index within the block (no upper bound).
+    pub flashblock_index: u32,
+    /// Owning flashblock payload — REQUIRED (finalize/discard invariant).
+    pub payload_id: String,
+    /// The AMM pool contract whose storage changed (the Swap-log emitter).
+    pub pool: Address,
+    /// Changed storage slot key (uint256, decimal string on the wire).
+    #[serde(with = "dec_u256")]
+    pub slot: U256,
+    /// Post-tx storage word at `slot` (uint256, decimal string on the wire).
+    #[serde(with = "dec_u256")]
+    pub value: U256,
 }
 
 /// A flashblock preconfirmation frame. `payload_id` is the primary identity.
@@ -233,6 +283,8 @@ pub struct DiscardPreconfEvent {
 pub enum NodeEvent {
     /// A per-tx token state diff.
     StateDiff(StateDiffEvent),
+    /// A per-tx raw pool storage-slot change (mid-block price signal).
+    PoolSlotDiff(PoolSlotDiffEvent),
     /// A flashblock preconfirmation frame.
     Flashblock(FlashblockEvent),
     /// A canonical block boundary.
@@ -281,6 +333,34 @@ mod tests {
             r#""balanceDeltaRaw":"-1000"}"#
         );
         assert_eq!(encode_event(&ev), expected);
+    }
+
+    #[test]
+    fn pool_slot_diff_encodes_like_ts() {
+        let ev = NodeEvent::PoolSlotDiff(PoolSlotDiffEvent {
+            protocol_version: PROTOCOL_VERSION,
+            tx_hash: hash(0x22),
+            block_number: 47_620_296,
+            flashblock_index: 1,
+            payload_id: "0x033ff020c315fa4a".to_string(),
+            pool: addr(0x44),
+            slot: U256::ZERO, // UniV3 slot0 lives at storage slot 0
+            value: U256::from_str_radix("1461446703485210103287273052203988822378723970342", 10)
+                .unwrap(),
+        });
+        // kind first; bigints (blockNumber, slot, value) as decimal strings;
+        // flashblockIndex a JSON number; lowercase hex addresses.
+        let expected = concat!(
+            r#"{"kind":"pool_slot_diff","protocolVersion":1,"#,
+            r#""txHash":"0x2222222222222222222222222222222222222222222222222222222222222222","#,
+            r#""blockNumber":"47620296","flashblockIndex":1,"payloadId":"0x033ff020c315fa4a","#,
+            r#""pool":"0x4444444444444444444444444444444444444444","#,
+            r#""slot":"0","value":"1461446703485210103287273052203988822378723970342"}"#
+        );
+        assert_eq!(encode_event(&ev), expected);
+        // round-trips through decode
+        let back: NodeEvent = serde_json::from_str(&encode_event(&ev)).unwrap();
+        assert_eq!(back, ev);
     }
 
     #[test]
