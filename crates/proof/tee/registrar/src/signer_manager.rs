@@ -300,21 +300,15 @@ where
 
                         if !e.is_retryable() {
                             if let TxManagerError::ExecutionReverted { data, .. } = &e {
+                                let registry_error = data
+                                    .as_ref()
+                                    .and_then(|d| decode_tee_prover_registry_revert(d.as_ref()));
                                 warn!(
                                     signer = %signer_address,
+                                    registry_error = ?registry_error,
                                     "execution reverted, blocking proof recovery for signer"
                                 );
                                 self.proof_provider.block_recovery_for_signer(signer_address);
-                                if let Some(data) = data
-                                    && let Some(reason) =
-                                        decode_tee_prover_registry_revert(data.as_ref())
-                                {
-                                    warn!(
-                                        signer = %signer_address,
-                                        registry_error = reason,
-                                        "registration reverted with known TEEProverRegistry error"
-                                    );
-                                }
                             }
                             return Err(RegistrarError::from(e));
                         }
