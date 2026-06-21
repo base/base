@@ -31,10 +31,10 @@ sol! {
         /// Thrown when the dispute game factory is not configured.
         error DisputeGameFactoryNotSet();
 
-        /// Thrown when reading TEE_IMAGE_HASH from the AggregateVerifier fails.
+        /// Thrown when reading `TEE_IMAGE_HASH` from the `AggregateVerifier` fails.
         error ImageHashReadFailed();
 
-        /// Thrown when the selected game type has no TEE_IMAGE_HASH.
+        /// Thrown when the selected game type has no `TEE_IMAGE_HASH`.
         error InvalidGameType();
 
         /// Registers a signer using a ZK-proven AWS Nitro attestation.

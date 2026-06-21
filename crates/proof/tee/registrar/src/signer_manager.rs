@@ -305,20 +305,19 @@ where
                                     "execution reverted, blocking proof recovery for signer"
                                 );
                                 self.proof_provider.block_recovery_for_signer(signer_address);
-                                if let Some(data) = data {
-                                    if let Some(reason) =
+                                if let Some(data) = data
+                                    && let Some(reason) =
                                         decode_tee_prover_registry_revert(data.as_ref())
-                                    {
-                                        warn!(
-                                            signer = %signer_address,
-                                            registry_error = reason,
-                                            "registration reverted with known TEEProverRegistry error"
-                                        );
-                                        return Err(RegistrarError::RegistryRevert {
-                                            reason,
-                                            source: e,
-                                        });
-                                    }
+                                {
+                                    warn!(
+                                        signer = %signer_address,
+                                        registry_error = reason,
+                                        "registration reverted with known TEEProverRegistry error"
+                                    );
+                                    return Err(RegistrarError::RegistryRevert {
+                                        reason,
+                                        source: e,
+                                    });
                                 }
                             }
                             return Err(RegistrarError::from(e));
