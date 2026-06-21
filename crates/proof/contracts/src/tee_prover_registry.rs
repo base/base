@@ -5,7 +5,7 @@
 
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
-use alloy_sol_types::{SolError, sol};
+use alloy_sol_types::sol;
 use async_trait::async_trait;
 
 use crate::ContractError;
@@ -59,21 +59,9 @@ sol! {
 /// Returns a human-readable name for known `TEEProverRegistry` custom-error
 /// revert data.
 pub fn decode_tee_prover_registry_revert(data: &[u8]) -> Option<&'static str> {
-    let selector = data.get(..4)?;
-    match selector {
-        s if s == ITEEProverRegistry::AttestationTooOld::SELECTOR => Some("AttestationTooOld"),
-        s if s == ITEEProverRegistry::AttestationVerificationFailed::SELECTOR => {
-            Some("AttestationVerificationFailed")
-        }
-        s if s == ITEEProverRegistry::InvalidPublicKey::SELECTOR => Some("InvalidPublicKey"),
-        s if s == ITEEProverRegistry::PCR0NotFound::SELECTOR => Some("PCR0NotFound"),
-        s if s == ITEEProverRegistry::DisputeGameFactoryNotSet::SELECTOR => {
-            Some("DisputeGameFactoryNotSet")
-        }
-        s if s == ITEEProverRegistry::ImageHashReadFailed::SELECTOR => Some("ImageHashReadFailed"),
-        s if s == ITEEProverRegistry::InvalidGameType::SELECTOR => Some("InvalidGameType"),
-        _ => None,
-    }
+    data.get(..4)
+        .and_then(|selector| selector.try_into().ok())
+        .and_then(ITEEProverRegistry::ITEEProverRegistryErrors::name_by_selector)
 }
 
 /// Reads registration state from the on-chain `TEEProverRegistry`.

@@ -44,16 +44,6 @@ pub enum RegistrarError {
         tx_hash: B256,
     },
 
-    /// Registration reverted with a known `TEEProverRegistry` custom error.
-    #[error("registration reverted with TEEProverRegistry error {reason}: {source}")]
-    RegistryRevert {
-        /// Decoded registry custom error name.
-        reason: &'static str,
-        /// Underlying transaction manager error, including raw revert bytes when available.
-        #[source]
-        source: TxManagerError,
-    },
-
     /// Configuration is invalid.
     #[error("config error: {0}")]
     Config(String),

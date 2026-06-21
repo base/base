@@ -314,10 +314,6 @@ where
                                         registry_error = reason,
                                         "registration reverted with known TEEProverRegistry error"
                                     );
-                                    return Err(RegistrarError::RegistryRevert {
-                                        reason,
-                                        source: e,
-                                    });
                                 }
                             }
                             return Err(RegistrarError::from(e));
@@ -509,7 +505,6 @@ mod tests {
     };
 
     use alloy_primitives::{Address, B256, Bytes};
-    use alloy_sol_types::SolError;
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
     use base_tx_manager::{SendHandle, TxManagerError};
@@ -873,33 +868,6 @@ mod tests {
                 manager.tx_manager.take_sent().into_iter().map(|(_, data)| data).collect();
             assert!(sent.windows(2).all(|w| w[0] == w[1]), "calldata mismatch: {sent:?}");
         }
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn register_signer_decodes_registry_custom_error() {
-        let proof_provider = RecordingProofProvider::default();
-        let manager = manager_with(
-            proof_provider.clone(),
-            MockRegistry::default(),
-            RecordingTxManager::with_errors(vec![TxManagerError::ExecutionReverted {
-                reason: None,
-                data: Some(Bytes::copy_from_slice(
-                    &ITEEProverRegistry::AttestationTooOld::SELECTOR,
-                )),
-            }]),
-        );
-
-        let result = register(&manager, &CancellationToken::new()).await;
-
-        assert!(
-            matches!(
-                result,
-                Err(RegistrarError::RegistryRevert { reason: "AttestationTooOld", .. })
-            ),
-            "known registry custom error should be decoded: {result:?}"
-        );
-        assert_eq!(manager.tx_manager.send_count(), 1, "should submit exactly one tx");
-        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
     }
 
     #[tokio::test(start_paused = true)]
