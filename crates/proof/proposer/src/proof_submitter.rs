@@ -74,7 +74,7 @@ impl std::fmt::Display for SubmitAction {
 ///
 /// Bundles the scalar parameters the submitter needs at construction time so
 /// [`ProofSubmitter::new`] takes a small, fixed argument list. All fields are
-/// derived from the parent [`crate::PipelineConfig`].
+/// derived from the parent [`crate::DriverConfig`].
 #[derive(Debug, Clone, Copy)]
 pub struct ProofSubmitterConfig {
     /// Address of the proposer on L1.
