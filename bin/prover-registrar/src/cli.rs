@@ -180,7 +180,7 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
 
-    /// Transaction submission retry delay in seconds.
+    /// Initial transaction submission retry delay in seconds.
     #[arg(
         long = "tx-retry-delay-secs",
         env = cli_env!("TX_RETRY_DELAY_SECS"),
