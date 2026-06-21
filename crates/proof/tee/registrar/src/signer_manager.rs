@@ -31,6 +31,21 @@ pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
 /// Default delay between transaction submission retries in seconds.
 pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 
+/// Runtime configuration for [`SignerManager`].
+#[derive(Debug, Clone, Copy)]
+pub struct SignerManagerConfig {
+    /// `TEEProverRegistry` contract address.
+    pub registry_address: Address,
+    /// Maximum concurrent proof-generation tasks.
+    pub max_concurrency: usize,
+    /// Maximum number of transaction submission retries for transient errors.
+    pub max_tx_retries: u32,
+    /// Delay between transaction submission retries.
+    pub tx_retry_delay: Duration,
+    /// Maximum proof attestation age accepted before on-chain submission.
+    pub max_attestation_age: Duration,
+}
+
 /// State for a proof-generation task currently in-flight.
 ///
 /// One entry per signer address. The pending map is keyed by [`Address`] so
@@ -61,16 +76,14 @@ pub struct SignerManager<P, R, T> {
 
 impl<P, R, T> SignerManager<P, R, T> {
     /// Creates a signer manager from the signer lifecycle dependencies.
-    pub fn new(
-        proof_provider: P,
-        registry: R,
-        tx_manager: T,
-        registry_address: Address,
-        max_concurrency: usize,
-        max_tx_retries: u32,
-        tx_retry_delay: Duration,
-        max_attestation_age: Duration,
-    ) -> Self {
+    pub fn new(proof_provider: P, registry: R, tx_manager: T, config: SignerManagerConfig) -> Self {
+        let SignerManagerConfig {
+            registry_address,
+            max_concurrency,
+            max_tx_retries,
+            tx_retry_delay,
+            max_attestation_age,
+        } = config;
         let proof_semaphore = Semaphore::new(max_concurrency.max(1));
         Self {
             proof_provider,
@@ -740,11 +753,13 @@ mod tests {
             proof_provider,
             registry,
             tx_manager,
-            TEST_REGISTRY_ADDRESS,
-            DEFAULT_MAX_CONCURRENCY,
-            DEFAULT_MAX_TX_RETRIES,
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-            TEST_MAX_ATTESTATION_AGE,
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+            },
         )
     }
 
@@ -1037,11 +1052,13 @@ mod tests {
             proof_provider.clone(),
             MockRegistry::default(),
             RecordingTxManager::stalling(),
-            TEST_REGISTRY_ADDRESS,
-            1,
-            DEFAULT_MAX_TX_RETRIES,
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-            TEST_MAX_ATTESTATION_AGE,
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: 1,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+            },
         ));
         let cancel = CancellationToken::new();
 

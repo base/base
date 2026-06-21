@@ -374,7 +374,7 @@ mod tests {
     use super::*;
     use crate::{
         DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, InstanceHealthStatus, RegistrarError,
-        Result, SignerClient,
+        Result, SignerClient, SignerManagerConfig,
         test_utils::{
             EP1, EP2, EP3, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
             TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
@@ -460,11 +460,13 @@ mod tests {
             signer_client.clone(),
             (),
             NoopTxManager,
-            TEST_REGISTRY_ADDRESS,
-            DEFAULT_MAX_CONCURRENCY,
-            DEFAULT_MAX_TX_RETRIES,
-            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-            TEST_MAX_ATTESTATION_AGE,
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+            },
         ));
 
         RegistrationDriver::new(
