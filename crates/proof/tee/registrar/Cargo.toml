@@ -49,7 +49,6 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 # Async
 futures.workspace = true
 tokio-util.workspace = true
-async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 
 # Error
@@ -77,8 +76,8 @@ url.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
-rstest.workspace = true
 hex-literal.workspace = true
+async-trait.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }

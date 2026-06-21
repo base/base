@@ -91,6 +91,8 @@ pub(crate) struct Cli {
     boundless_timeout: u64,
 
     /// Minimum Boundless offer price in ETH for each submitted proof request.
+    ///
+    /// Must be set together with `--boundless-max-price-eth`.
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"),
@@ -99,6 +101,11 @@ pub(crate) struct Cli {
     boundless_min_price_eth: Option<Amount>,
 
     /// Maximum Boundless offer price in ETH for each submitted proof request.
+    ///
+    /// Must be set together with `--boundless-min-price-eth` and be greater than or equal to it.
+    /// When set, the Boundless SDK uses this value verbatim as the on-chain `maxPrice` and does not
+    /// add the gas-cost buffer it applies to SDK-derived max prices. Include headroom for gas-price
+    /// volatility between request submission and fulfillment.
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"),
@@ -107,6 +114,10 @@ pub(crate) struct Cli {
     boundless_max_price_eth: Option<Amount>,
 
     /// Boundless offer price ramp duration in seconds.
+    ///
+    /// May be set independently of explicit min/max prices. When min/max prices are unset, this
+    /// overrides only the ramp duration while the Boundless SDK still derives prices from cycle
+    /// count.
     #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
     boundless_offer_ramp_up_period_secs: Option<u32>,
 
@@ -246,7 +257,8 @@ impl Cli {
                 offer_ramp_up_period_secs: self.boundless_offer_ramp_up_period_secs,
                 offer_lock_timeout_secs: self.boundless_offer_lock_timeout_secs,
                 offer_bidding_start_delay_secs: self.boundless_offer_bidding_start_delay_secs,
-            }),
+            })
+            .map_err(|e| Box::new(RegistrarError::Config(format!("boundless prover: {e}"))))?,
             poll_interval: Duration::from_secs(self.poll_interval),
             prover_timeout: Duration::from_secs(self.prover_timeout),
             max_concurrency: self.max_concurrency,

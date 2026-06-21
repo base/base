@@ -12,13 +12,7 @@ pub use cli::{
 };
 
 mod config;
-pub use config::{ConfigError, ProposerConfig};
-
-mod constants;
-pub use constants::{
-    MAX_PROOF_RETRIES, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY, SUBMIT_TIMEOUT,
-    SUBMIT_TIMEOUT_SLACK,
-};
+pub use config::ProposerConfig;
 
 mod output_proposer;
 pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
@@ -59,7 +53,7 @@ mod error;
 pub use error::{ProposerError, ProposerResult};
 
 mod admin;
-pub use admin::{AdminServer, ProposerAdminApiServer, ProposerAdminApiServerImpl};
+pub use admin::ProposerAdminApiServerImpl;
 
 mod metrics;
 pub use metrics::Metrics;

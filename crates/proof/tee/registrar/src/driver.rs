@@ -21,8 +21,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, warn};
 
 use crate::{
-    CertManager, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet, ProverClient,
-    ProverInstance, RegistrarMetrics, Result, SignerClient, SignerManager,
+    CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet,
+    ProverClient, ProverInstance, RegistrarMetrics, Result, SignerManager,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -126,7 +126,7 @@ impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T> {
 impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
 where
     D: InstanceDiscovery,
-    S: SignerClient,
+    S: EnclaveEndpointClient,
     T: TxManager,
 {
     /// Runs the registration loop until cancelled.
@@ -226,7 +226,11 @@ where
                 lt.elapsed()
                     .is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
             });
-        if !instance.health_status.should_register() && !recently_launched_unhealthy {
+        if !matches!(
+            instance.health_status,
+            InstanceHealthStatus::Initial | InstanceHealthStatus::Healthy
+        ) && !recently_launched_unhealthy
+        {
             debug!(
                 status = ?instance.health_status,
                 instance = %instance.instance_id,
@@ -255,7 +259,7 @@ where
         );
         let all_attestations = match self
             .signer_client
-            .signer_attestation(&instance.endpoint, None, Some(nonce.to_vec()))
+            .signer_attestation(&instance.endpoint, Some(nonce.to_vec()))
             .await
         {
             Ok(attestations) => attestations,
@@ -271,12 +275,12 @@ where
             }
         };
 
-        if all_attestations.len() < addresses.len() {
+        if all_attestations.len() != addresses.len() {
             warn!(
                 expected = addresses.len(),
                 actual = all_attestations.len(),
                 instance = %instance.instance_id,
-                "signer attestation count was lower than signer public key count"
+                "signer attestation count did not match signer public key count"
             );
             RegistrarMetrics::processing_errors_total().increment(1);
             outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
@@ -289,7 +293,7 @@ where
         if let Some(cert_manager) = &self.cert_manager {
             let first_attestation = all_attestations
                 .first()
-                .expect("guarded by attestation count >= signer count >= 1");
+                .expect("guarded by attestation count == signer count >= 1");
             match cert_manager.check_and_revoke_crls(first_attestation, instance).await {
                 Ok(true) => {
                     warn!(
@@ -420,8 +424,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, InstanceHealthStatus, RegistrarError,
-        Result, SignerClient,
+        DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, EnclaveEndpointClient,
+        InstanceHealthStatus, RegistrarError, Result,
         test_utils::{
             EP1, EP2, EP3, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
             TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
@@ -436,13 +440,13 @@ mod tests {
     }
 
     #[derive(Clone, Debug, Default)]
-    struct MockSignerClient {
+    struct MockEnclaveEndpointClient {
         keys: HashMap<Url, Vec<Vec<u8>>>,
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
     }
 
-    impl MockSignerClient {
+    impl MockEnclaveEndpointClient {
         fn from_keys(entries: &[(&str, &[u8; 32])]) -> Self {
             let keys = entries
                 .iter()
@@ -457,7 +461,7 @@ mod tests {
         }
     }
 
-    impl SignerClient for MockSignerClient {
+    impl EnclaveEndpointClient for MockEnclaveEndpointClient {
         async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
             self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
                 instance: endpoint.to_string(),
@@ -468,7 +472,6 @@ mod tests {
         async fn signer_attestation(
             &self,
             endpoint: &Url,
-            _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
         ) -> Result<Vec<Vec<u8>>> {
             if self.fail_attestation.contains(endpoint) {
@@ -487,8 +490,8 @@ mod tests {
 
     type TestDriver = RegistrationDriver<
         Vec<ProverInstance>,
-        MockSignerClient,
-        MockSignerClient,
+        MockEnclaveEndpointClient,
+        MockEnclaveEndpointClient,
         (),
         NoopTxManager,
     >;
@@ -499,7 +502,7 @@ mod tests {
 
     fn cycle_driver(
         instances: Vec<ProverInstance>,
-        signer_client: MockSignerClient,
+        signer_client: MockEnclaveEndpointClient,
         cancel: CancellationToken,
     ) -> TestDriver {
         let signer_manager = Arc::new(SignerManager::new(
@@ -540,7 +543,7 @@ mod tests {
 
         let instance_under_test =
             prover_instance(EP1, InstanceHealthStatus::Unhealthy, launch_time);
-        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
 
         let driver = cycle_driver(
             vec![instance_under_test.clone()],
@@ -557,8 +560,11 @@ mod tests {
 
     #[tokio::test]
     async fn discover_and_resolve_allows_orphan_pass_when_discovery_is_empty() {
-        let driver =
-            cycle_driver(vec![], MockSignerClient::from_keys(&[]), CancellationToken::new());
+        let driver = cycle_driver(
+            vec![],
+            MockEnclaveEndpointClient::from_keys(&[]),
+            CancellationToken::new(),
+        );
 
         let resolution = discover_once(&driver).await;
         assert!(resolution.active_signers.is_empty());
@@ -575,7 +581,7 @@ mod tests {
             healthy_prover_instance(EP3),
         ];
 
-        let signer_client = MockSignerClient::from_keys(&[
+        let signer_client = MockEnclaveEndpointClient::from_keys(&[
             (EP1, &HARDHAT_KEY_0),
             (EP2, &HARDHAT_KEY_1),
             (EP3, &HARDHAT_KEY_2),
@@ -595,7 +601,8 @@ mod tests {
         let addr1 = signer_from_private_key(&HARDHAT_KEY_1);
 
         let instances = vec![prover_instance(EP1, InstanceHealthStatus::Draining, None)];
-        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        let signer_client =
+            MockEnclaveEndpointClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
@@ -617,7 +624,7 @@ mod tests {
         ];
 
         let signer_client =
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
+            MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
 
         let driver = cycle_driver(instances, signer_client, CancellationToken::new());
 
@@ -629,25 +636,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discover_and_resolve_attestation_failure_keeps_signer_active_and_unresolved() {
+    async fn discover_and_resolve_bad_attestations_keep_signer_active_and_unresolved() {
         let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
         let inst = healthy_prover_instance(EP1);
-        let mut missing_attestation = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let mut missing_attestation =
+            MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         missing_attestation.attestations.insert(endpoint_url(EP1), vec![]);
-        let mut failing_attestation = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let mut extra_attestation = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        extra_attestation
+            .attestations
+            .insert(endpoint_url(EP1), vec![b"mock-attestation".to_vec(), b"extra".to_vec()]);
+        let mut failing_attestation =
+            MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         failing_attestation.fail_attestation.insert(endpoint_url(EP1));
-        let signer_clients = [missing_attestation, failing_attestation];
+        let signer_clients = [
+            ("missing attestation", missing_attestation),
+            ("extra attestation", extra_attestation),
+            ("failing attestation", failing_attestation),
+        ];
 
-        for signer_client in signer_clients {
+        for (case, signer_client) in signer_clients {
             let driver = cycle_driver(vec![inst.clone()], signer_client, CancellationToken::new());
 
             let resolution = discover_once(&driver).await;
 
-            assert!(resolution.active_signers.contains(&signer_addr));
-            assert!(resolution.registerable.is_empty());
+            assert!(resolution.active_signers.contains(&signer_addr), "{case}");
+            assert!(resolution.registerable.is_empty(), "{case}");
             assert_eq!(
                 resolution.unresolved_instance_ids,
-                HashSet::from([inst.instance_id.clone()])
+                HashSet::from([inst.instance_id.clone()]),
+                "{case}"
             );
         }
     }

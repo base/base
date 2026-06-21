@@ -1,7 +1,7 @@
 //! `NitroEnclaveVerifier` contract bindings.
 //!
 //! Used by the registrar to revoke intermediate certificates that appear on
-//! AWS Nitro CRL distribution lists, and to consult the on-chain durable
+//! AWS Nitro CRL distribution lists, and to consult the onchain durable
 //! revocation sentinel before submitting registrations. All other
 //! `NitroEnclaveVerifier` interactions happen through the `TEEProverRegistry`.
 
@@ -27,16 +27,16 @@ sol! {
     }
 }
 
-/// Reads the durable revocation sentinel from the on-chain
+/// Reads the durable revocation sentinel from the onchain
 /// `NitroEnclaveVerifier` (CHAIN-4194 / Immunefi #75608).
 #[async_trait]
-pub trait NitroEnclaveVerifierClient: Send + Sync {
-    /// Returns the on-chain address of the verifier contract this client
+pub trait NitroEnclaveVerifierClient: Send + Sync + std::fmt::Debug {
+    /// Returns the onchain address of the verifier contract this client
     /// is bound to.
     fn address(&self) -> Address;
 
     /// Returns `true` if the given accumulated-path-digest hash is currently
-    /// marked as revoked on-chain.
+    /// marked as revoked onchain.
     async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool, ContractError>;
 }
 

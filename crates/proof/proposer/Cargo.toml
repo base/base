@@ -38,7 +38,7 @@ base-prover-service-protocol.workspace = true
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # JSON-RPC
-jsonrpsee = { workspace = true, features = ["server", "macros"] }
+jsonrpsee = { workspace = true, features = ["server"] }
 
 # Async
 tokio.workspace = true
@@ -79,7 +79,6 @@ rstest.workspace = true
 serde_json.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-common-genesis = { workspace = true, features = ["serde"] }
