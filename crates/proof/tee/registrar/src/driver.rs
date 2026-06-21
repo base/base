@@ -445,6 +445,8 @@ mod tests {
         NoopTxManager,
     >;
 
+    const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
+
     fn endpoint_url(host_port: &str) -> Url {
         Url::parse(&format!("http://{host_port}")).unwrap()
     }
@@ -462,7 +464,7 @@ mod tests {
             DEFAULT_MAX_CONCURRENCY,
             DEFAULT_MAX_TX_RETRIES,
             Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-            Duration::from_secs(3300),
+            TEST_MAX_ATTESTATION_AGE,
         ));
 
         RegistrationDriver::new(
