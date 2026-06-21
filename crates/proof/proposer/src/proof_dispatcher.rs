@@ -63,6 +63,10 @@ pub enum ProofDispatchAttempt {
 }
 
 /// Builds and dispatches proposer TEE proof requests.
+///
+/// This type intentionally holds only shared clients and static config. Mutable
+/// cursor and retry state belongs in [`ProofDispatcherState`] so cloned
+/// dispatchers do not diverge.
 pub struct ProofDispatcher<L1, L2, R>
 where
     L1: L1Provider,
