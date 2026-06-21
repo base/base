@@ -80,7 +80,6 @@ pub struct RecoveredState {
 
 /// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
 /// and stopped at runtime (e.g. via the admin RPC).
-#[derive(Debug)]
 pub struct PipelineHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
@@ -93,6 +92,21 @@ where
     session: TokioMutex<Option<(CancellationToken, JoinHandle<Result<()>>)>>,
     global_cancel: CancellationToken,
     running: Arc<AtomicBool>,
+}
+
+impl<L1, L2, R, ASR, F> std::fmt::Debug for PipelineHandle<L1, L2, R, ASR, F>
+where
+    L1: L1Provider + 'static,
+    L2: L2Provider + 'static,
+    R: RollupProvider + 'static,
+    ASR: AnchorStateRegistryClient + 'static,
+    F: DisputeGameFactoryClient + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PipelineHandle")
+            .field("running", &self.running.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
 }
 
 impl<L1, L2, R, ASR, F> PipelineHandle<L1, L2, R, ASR, F>
