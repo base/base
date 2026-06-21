@@ -14,13 +14,13 @@ workspace = true
 [dependencies]
 # reth
 reth-evm.workspace = true
-reth-revm.workspace = true
 reth-tasks.workspace = true
 reth-provider.workspace = true
 reth-execution-errors.workspace = true
 reth-primitives-traits.workspace = true
 reth-db = { workspace = true, features = ["mdbx"] }
 reth-codecs.workspace = true
+reth-revm = { workspace = true, features = ["witness"] }
 reth-trie = { workspace = true, features = ["serde"] }
 reth-trie-common = { workspace = true, features = ["serde"] }
 
@@ -53,11 +53,13 @@ parking_lot.workspace = true
 derive_more.workspace = true
 eyre = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
+rocksdb = { workspace = true, features = ["lz4", "zstd"] }
+static_assertions.workspace = true
 
 [dev-dependencies]
 eyre.workspace = true
-rand_08.workspace = true
 mockall.workspace = true
+rand_08.workspace = true
 tempfile.workspace = true
 test-case.workspace = true
 reth-node-api.workspace = true
@@ -79,6 +81,15 @@ tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"
 
 # misc
 serial_test.workspace = true
+criterion = { workspace = true, features = ["html_reports"] }
+
+[[bench]]
+name = "witness_reads"
+harness = false
+
+[[bench]]
+name = "deep_history_reads"
+harness = false
 
 [features]
 serde-bincode-compat = [

@@ -33,6 +33,9 @@ sol! {
         /// Error bubbled from `TEEVerifier` when a proof signer is not registered.
         error InvalidSigner(address signer);
 
+        /// Error returned when a proof type has already been verified.
+        error AlreadyProven(uint8 proofType);
+
         /// Returns the root claim (output root) of this game.
         function rootClaim() external pure returns (bytes32);
 
@@ -88,6 +91,9 @@ sol! {
             uint256 intermediateRootIndex,
             bytes32 intermediateRootToProve
         ) external;
+
+        /// Verifies an additional proof for the current game.
+        function verifyProposalProof(bytes calldata proofBytes) external;
 
         /// Challenges the TEE proof with a ZK proof.
         ///
@@ -312,6 +318,17 @@ pub const fn invalid_parent_game_selector() -> [u8; 4] {
 /// The 4-byte selector for `TEEVerifier.InvalidSigner(address)`.
 pub const fn invalid_signer_selector() -> [u8; 4] {
     IAggregateVerifier::InvalidSigner::SELECTOR
+}
+
+/// The 4-byte selector for `AlreadyProven(uint8)`.
+pub const fn already_proven_selector() -> [u8; 4] {
+    IAggregateVerifier::AlreadyProven::SELECTOR
+}
+
+/// Encodes the calldata for `IAggregateVerifier.verifyProposalProof()`.
+pub fn encode_verify_proposal_proof_calldata(proof_bytes: Bytes) -> Bytes {
+    let call = IAggregateVerifier::verifyProposalProofCall { proofBytes: proof_bytes };
+    Bytes::from(call.abi_encode())
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.

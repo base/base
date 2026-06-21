@@ -1,6 +1,6 @@
 //! [`PrecompileProvider`] for FPVM-accelerated rollup precompiles.
 
-use alloc::{boxed::Box, string::String};
+use alloc::string::String;
 
 use alloy_evm::precompiles::PrecompilesMap;
 #[cfg(target_os = "zkvm")]
@@ -196,8 +196,8 @@ where
     }
 
     #[inline]
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
-        Box::new(self.inner.addresses().copied())
+    fn warm_addresses(&self) -> &revm::primitives::AddressSet {
+        <PrecompilesMap as PrecompileProvider<CTX>>::warm_addresses(&self.inner)
     }
 
     #[inline]
@@ -243,6 +243,7 @@ mod tests {
             return_memory_offset: 0..0,
             known_bytecode: Default::default(),
             reservoir: 0,
+            charged_new_account_state_gas: false,
         }
     }
 
@@ -329,6 +330,7 @@ mod tests {
             return_memory_offset: 0..0,
             known_bytecode: Default::default(),
             reservoir: 0,
+            charged_new_account_state_gas: false,
         };
 
         let result = precompiles.run(&mut ctx, &call_inputs).unwrap();
@@ -404,11 +406,15 @@ mod tests {
                 <PrecompilesMap as PrecompileProvider<TestContext>>::warm_addresses(
                     &base_precompiles,
                 )
+                .iter()
+                .copied()
                 .collect();
             let zkvm_addresses: Vec<_> =
                 <BaseZkvmPrecompiles as PrecompileProvider<TestContext>>::warm_addresses(
                     &zkvm_precompiles,
                 )
+                .iter()
+                .copied()
                 .collect();
 
             assert_eq!(

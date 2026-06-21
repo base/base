@@ -24,7 +24,7 @@ use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
     miner::{BaseMinerExtApi, MinerApiExtServer},
-    witness::BaseDebugWitnessApi,
+    witness::{BaseDebugWitnessApi, DebugExecutionWitnessApiServer},
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
@@ -59,7 +59,7 @@ use reth_node_builder::{
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::{SealedHeader, header::HeaderMut};
 use reth_provider::providers::ProviderFactoryBuilder;
-use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer, eth::RpcTypes};
+use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
@@ -246,7 +246,6 @@ impl BaseNode {
             compute_pending_block,
             discovery_v4,
             txpool_ordering,
-            base_protocol,
             max_inflight_delegated_slots,
             ..
         } = self.args;
@@ -267,7 +266,7 @@ impl BaseNode {
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
-            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4, base_protocol))
+            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
             .consensus(BaseConsensusBuilder::default())
     }
 
@@ -954,7 +953,7 @@ where
         let transaction_pool = TxPoolBuilder::new(ctx)
             .with_validator(validator)
             .build_with_ordering_and_spawn_maintenance_task(
-                ordering,
+                ordering.clone(),
                 blob_store,
                 final_pool_config,
             )?;
@@ -962,7 +961,7 @@ where
         info!(target: "reth::cli", max_inflight_delegated_slots, "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");
 
-        Ok(transaction_pool)
+        Ok(BaseTransactionPool::new(transaction_pool, ordering))
     }
 }
 
@@ -1074,30 +1073,18 @@ where
 }
 
 /// A basic Base network builder.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BaseNetworkBuilder {
     /// Disable transaction pool gossip
     pub disable_txpool_gossip: bool,
     /// Disable discovery v4
     pub disable_discovery_v4: bool,
-    /// Enable the Base discv5 protocol identity
-    pub base_protocol: bool,
-}
-
-impl Default for BaseNetworkBuilder {
-    fn default() -> Self {
-        Self { disable_discovery_v4: false, disable_txpool_gossip: false, base_protocol: true }
-    }
 }
 
 impl BaseNetworkBuilder {
     /// Creates a new `BaseNetworkBuilder`.
-    pub const fn new(
-        disable_txpool_gossip: bool,
-        disable_discovery_v4: bool,
-        base_protocol: bool,
-    ) -> Self {
-        Self { disable_txpool_gossip, disable_discovery_v4, base_protocol }
+    pub const fn new(disable_txpool_gossip: bool, disable_discovery_v4: bool) -> Self {
+        Self { disable_txpool_gossip, disable_discovery_v4 }
     }
 
     /// Runs a future on the current runtime, or creates one when needed.
@@ -1115,14 +1102,12 @@ impl BaseNetworkBuilder {
 pub struct BaseDiscoveryConfig {
     /// Disable discovery v4.
     pub disable_discovery_v4: bool,
-    /// Enable the Base discv5 protocol identity.
-    pub base_protocol: bool,
 }
 
 impl BaseDiscoveryConfig {
     /// Creates a new discovery config.
-    pub const fn new(disable_discovery_v4: bool, base_protocol: bool) -> Self {
-        Self { disable_discovery_v4, base_protocol }
+    pub const fn new(disable_discovery_v4: bool) -> Self {
+        Self { disable_discovery_v4 }
     }
 
     /// Returns true if discv4 discovery should be disabled.
@@ -1175,16 +1160,14 @@ impl BaseDiscoveryConfig {
         builder
     }
 
-    /// Creates the inner discv5 config with Base protocol identity when enabled.
+    /// Creates the inner discv5 config with the Base protocol identity.
     pub fn discv5_config(&self, args: &RethNetworkArgs) -> reth_discv5::discv5::Config {
         let mut builder = reth_discv5::discv5::ConfigBuilder::new(Self::discv5_listen_config(args));
 
-        if self.base_protocol {
-            builder.protocol_identity(reth_discv5::discv5::ProtocolIdentity {
-                protocol_id: BASE_V0_PROTOCOL_VERSION,
-                ..Default::default()
-            });
-        }
+        builder.protocol_identity(reth_discv5::discv5::ProtocolIdentity {
+            protocol_id: BASE_V0_PROTOCOL_VERSION,
+            ..Default::default()
+        });
 
         builder.build()
     }
@@ -1207,9 +1190,20 @@ impl BaseDiscoveryConfig {
         });
 
         reth_discv5::discv5::ListenConfig::from_two_sockets(
-            discv5_addr_ipv4.map(|addr| SocketAddrV4::new(addr, args.discovery.discv5_port)),
-            discv5_addr_ipv6
-                .map(|addr| SocketAddrV6::new(addr, args.discovery.discv5_port_ipv6, 0, 0)),
+            discv5_addr_ipv4.map(|addr| {
+                SocketAddrV4::new(
+                    addr,
+                    args.discovery.discv5_port.unwrap_or_else(|| rlpx_socket.port()),
+                )
+            }),
+            discv5_addr_ipv6.map(|addr| {
+                SocketAddrV6::new(
+                    addr,
+                    args.discovery.discv5_port_ipv6.unwrap_or_else(|| rlpx_socket.port()),
+                    0,
+                    0,
+                )
+            }),
         )
     }
 
@@ -1251,8 +1245,7 @@ impl BaseNetworkBuilder {
         NetworkP: NetworkPrimitives,
     {
         let disable_txpool_gossip = self.disable_txpool_gossip;
-        let discovery_config =
-            BaseDiscoveryConfig::new(self.disable_discovery_v4, self.base_protocol);
+        let discovery_config = BaseDiscoveryConfig::new(self.disable_discovery_v4);
         let args = &ctx.config().network;
         let network_builder = ctx
             .network_config_builder()?
@@ -1362,10 +1355,7 @@ mod tests {
     };
 
     use reth_chainspec::MAINNET;
-    use reth_discv5::{
-        build_local_enr,
-        discv5::{ListenConfig, ProtocolIdentity},
-    };
+    use reth_discv5::{build_local_enr, discv5::ListenConfig};
     use reth_network::{EthNetworkPrimitives, NetworkConfigBuilder, config::rng_secret_key};
     use rstest::rstest;
 
@@ -1387,7 +1377,7 @@ mod tests {
             disable_discv4_discovery: disable_by_reth,
             ..Default::default()
         };
-        let discovery_config = BaseDiscoveryConfig::new(disable_by_base, true);
+        let discovery_config = BaseDiscoveryConfig::new(disable_by_base);
 
         assert_eq!(discovery_config.should_disable_discv4(&discovery_args), expected);
     }
@@ -1406,7 +1396,7 @@ mod tests {
         let mut args = RethNetworkArgs::default();
         args.discovery.disable_discovery = disable_all_discovery;
         args.discovery.disable_discv4_discovery = disable_by_reth;
-        let discovery_config = BaseDiscoveryConfig::new(disable_by_base, true);
+        let discovery_config = BaseDiscoveryConfig::new(disable_by_base);
 
         let network_config = discovery_config
             .apply_to_network_builder(
@@ -1431,7 +1421,7 @@ mod tests {
     ) {
         let mut args = RethNetworkArgs::default();
         args.discovery.disable_discovery = disable_all_discovery;
-        let discovery_config = BaseDiscoveryConfig::new(false, true);
+        let discovery_config = BaseDiscoveryConfig::new(false);
 
         let network_config = discovery_config
             .apply_to_network_builder(
@@ -1447,19 +1437,14 @@ mod tests {
         assert_eq!(network_config.discovery_v5_config.is_some(), expected_enabled);
     }
 
-    #[rstest]
-    #[case::base_protocol_enabled(true, BASE_V0_PROTOCOL_VERSION)]
-    #[case::default_protocol(false, ProtocolIdentity::default().protocol_id)]
-    fn discv5_config_uses_protocol_identity(
-        #[case] base_protocol: bool,
-        #[case] expected_protocol_id: [u8; 6],
-    ) {
+    #[test]
+    fn discv5_config_uses_base_protocol_identity() {
         let args = RethNetworkArgs::default();
-        let discovery_config = BaseDiscoveryConfig::new(false, base_protocol);
+        let discovery_config = BaseDiscoveryConfig::new(false);
 
         let discv5_config = discovery_config.discv5_config(&args);
 
-        assert_eq!(discv5_config.protocol_identity.protocol_id, expected_protocol_id);
+        assert_eq!(discv5_config.protocol_identity.protocol_id, BASE_V0_PROTOCOL_VERSION);
     }
 
     #[rstest]
@@ -1511,9 +1496,9 @@ mod tests {
         let mut args = RethNetworkArgs { addr: rlpx_ip, port: 30303, ..Default::default() };
         args.discovery.discv5_addr = discv5_addr;
         args.discovery.discv5_addr_ipv6 = discv5_addr_ipv6;
-        args.discovery.discv5_port = discv5_port;
-        args.discovery.discv5_port_ipv6 = discv5_port_ipv6;
-        let discovery_config = BaseDiscoveryConfig::new(false, true);
+        args.discovery.discv5_port = Some(discv5_port);
+        args.discovery.discv5_port_ipv6 = Some(discv5_port_ipv6);
+        let discovery_config = BaseDiscoveryConfig::new(false);
 
         let reth_discv5_config =
             discovery_config.discovery_v5_builder(&args, Vec::<NodeRecord>::new(), None).build();
@@ -1531,7 +1516,7 @@ mod tests {
     fn discovery_v5_builder_advertises_external_ip(#[case] external_addr: IpAddr) {
         let args =
             RethNetworkArgs { addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED), ..Default::default() };
-        let discovery_config = BaseDiscoveryConfig::new(false, true);
+        let discovery_config = BaseDiscoveryConfig::new(false);
 
         let reth_discv5_config = discovery_config
             .discovery_v5_builder(&args, Vec::<NodeRecord>::new(), Some(external_addr))
@@ -1559,7 +1544,7 @@ mod tests {
         #[case] expected: ListenConfig,
     ) {
         let args = RethNetworkArgs { addr: rlpx_ip, port: 30303, ..Default::default() };
-        let discovery_config = BaseDiscoveryConfig::new(false, true);
+        let discovery_config = BaseDiscoveryConfig::new(false);
 
         let discv5_config = discovery_config.discv5_config(&args);
 

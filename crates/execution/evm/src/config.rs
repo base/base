@@ -57,7 +57,10 @@ pub struct BaseNextBlockEnvAttributes {
 impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv<H>
     for BaseNextBlockEnvAttributes
 {
-    fn build_pending_env(parent: &SealedHeader<H>) -> Self {
+    fn build_pending_env(
+        parent: &SealedHeader<H>,
+        _block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
+    ) -> Self {
         Self {
             timestamp: parent.timestamp().saturating_add(12),
             suggested_fee_recipient: parent.beneficiary(),
@@ -268,9 +271,9 @@ mod tests {
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
     use base_common_evm::BaseSpecId;
+    use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::ChainSpec;
     use reth_evm::{ConfigureEvm, EvmEnv, execute::ProviderError};
@@ -315,7 +318,7 @@ mod tests {
         let header = Header::default();
 
         // Build the ChainSpec for Ethereum mainnet, activating London, Paris, and Shanghai
-        // hardforks
+        // upgrades
         let chain_spec = ChainSpec::builder()
             .chain(0.into())
             .genesis(Genesis::default())

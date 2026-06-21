@@ -17,9 +17,6 @@ sol! {
         /// Feature is already activated.
         error AlreadyActivated(bytes32 feature);
 
-        /// Feature is already deactivated.
-        error AlreadyDeactivated(bytes32 feature);
-
         /// Feature is not activated.
         error FeatureNotActivated(bytes32 feature);
 
@@ -43,5 +40,32 @@ sol! {
 
         /// Deactivates `feature`.
         function deactivate(bytes32 feature) external;
+    }
+}
+
+impl IActivationRegistry::IActivationRegistryCalls {
+    /// Returns the stable metric label for this decoded activation-registry call.
+    pub const fn as_label(&self) -> &'static str {
+        match self {
+            Self::isActivated(_) => "activation.isActivated",
+            Self::checkActivated(_) => "activation.checkActivated",
+            Self::admin(_) => "activation.admin",
+            Self::activate(_) => "activation.activate",
+            Self::deactivate(_) => "activation.deactivate",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::IActivationRegistry;
+
+    #[test]
+    fn activation_call_labels_are_stable() {
+        assert_eq!(
+            IActivationRegistry::IActivationRegistryCalls::admin(IActivationRegistry::adminCall {})
+                .as_label(),
+            "activation.admin"
+        );
     }
 }

@@ -12,6 +12,16 @@ Procedural macros for type-safe EVM storage abstractions for Base native precomp
 - `storable_arrays!()`, `storable_nested_arrays!()` — fixed-size array impls
 - `gen_storable_tests!()` — proptest round-trip tests for all storage types
 
+For `#[contract]` layouts, place the namespace helper below `#[contract]`:
+
+```rust,ignore
+#[contract]
+#[namespace("b20")]
+pub struct B20Contract {
+    pub total_supply: U256,
+}
+```
+
 For `Storable` layouts, place the derive before the namespace helper:
 
 ```rust,ignore

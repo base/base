@@ -1,6 +1,6 @@
 //! Contains the block executor for base.
 
-use alloc::{borrow::Cow, boxed::Box, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
@@ -8,9 +8,8 @@ use alloy_evm::{
     Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, GasOutput, OnStateHook, StateChangePostBlockSource, StateChangeSource,
-        StateDB, SystemCaller,
-        state_changes::{balance_increment_state, post_block_balance_increments},
+        ExecutableTx, GasOutput, StateDB, SystemCaller,
+        state_changes::post_block_balance_increments,
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
@@ -48,7 +47,7 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     /// This is only set for blocks post-Jovian activation.
     /// See [DA footprint block limit spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit)
     pub da_footprint_used: u64,
-    /// Whether Regolith hardfork is active.
+    /// Whether Regolith upgrade is active.
     pub is_regolith: bool,
     /// Utility to call system smart contracts.
     pub system_caller: SystemCaller<Spec>,
@@ -223,8 +222,6 @@ where
             depositor,
         } = output;
 
-        self.system_caller.on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
-
         let tx_gas_used = result.tx_gas_used();
         let state_gas_used = result.gas().block_state_gas_used();
 
@@ -275,20 +272,11 @@ where
     ) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
         let balance_increments =
             post_block_balance_increments::<Header>(&self.spec, self.evm.block(), &[], None);
-        // increment balances
+
         self.evm
             .db_mut()
-            .increment_balances(balance_increments.clone())
+            .increment_balances(balance_increments)
             .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
-        // call state hook with changes due to balance increments.
-        self.system_caller.try_on_state_with(|| {
-            balance_increment_state(&balance_increments, self.evm.db_mut()).map(|state| {
-                (
-                    StateChangeSource::PostBlock(StateChangePostBlockSource::BalanceIncrements),
-                    Cow::Owned(state),
-                )
-            })
-        })?;
 
         let legacy_gas_used =
             self.receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or_default();
@@ -302,10 +290,6 @@ where
                 blob_gas_used: self.da_footprint_used,
             },
         ))
-    }
-
-    fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
-        self.system_caller.with_state_hook(hook);
     }
 
     fn evm_mut(&mut self) -> &mut Self::Evm {
@@ -332,8 +316,9 @@ mod tests {
     };
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
-    use base_common_chains::{BaseUpgrade, ChainUpgrades};
+    use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{BaseTxEnvelope, Predeploys};
+    use base_common_genesis::BaseUpgrade;
     use revm::{
         Context,
         context::BlockEnv,
@@ -421,7 +406,7 @@ mod tests {
     fn build_executor<'a>(
         db: &'a mut revm::database::State<InMemoryDB>,
         receipt_builder: &'a AlloyReceiptBuilder,
-        base_chain_hardforks: &'a ChainUpgrades,
+        base_chain_upgrades: &'a ChainUpgrades,
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> BaseBlockExecutor<
@@ -448,7 +433,7 @@ mod tests {
         BaseBlockExecutor::new(
             evm,
             BaseBlockExecutionCtx::default(),
-            base_chain_hardforks,
+            base_chain_upgrades,
             receipt_builder,
         )
     }
@@ -460,7 +445,7 @@ mod tests {
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let base_chain_hardforks = ChainUpgrades::new(
+        let base_chain_upgrades = ChainUpgrades::new(
             BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
@@ -470,7 +455,7 @@ mod tests {
         let mut executor = build_executor(
             &mut db,
             &receipt_builder,
-            &base_chain_hardforks,
+            &base_chain_upgrades,
             GAS_LIMIT,
             JOVIAN_TIMESTAMP,
         );
@@ -505,7 +490,7 @@ mod tests {
         const GAS_LIMIT: u64 = 100;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let base_chain_hardforks = ChainUpgrades::new(
+        let base_chain_upgrades = ChainUpgrades::new(
             BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
@@ -515,7 +500,7 @@ mod tests {
         let mut executor = build_executor(
             &mut db,
             &receipt_builder,
-            &base_chain_hardforks,
+            &base_chain_upgrades,
             GAS_LIMIT,
             JOVIAN_TIMESTAMP,
         );
@@ -562,7 +547,7 @@ mod tests {
         const GAS_LIMIT: u64 = 200_000;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let base_chain_hardforks = ChainUpgrades::new(
+        let base_chain_upgrades = ChainUpgrades::new(
             BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
@@ -572,7 +557,7 @@ mod tests {
         let mut executor = build_executor(
             &mut db,
             &receipt_builder,
-            &base_chain_hardforks,
+            &base_chain_upgrades,
             GAS_LIMIT,
             JOVIAN_TIMESTAMP,
         );

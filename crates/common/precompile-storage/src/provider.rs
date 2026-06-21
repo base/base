@@ -25,6 +25,8 @@ pub trait PrecompileStorageProvider {
     fn beneficiary(&self) -> Address;
     /// Returns the current block number.
     fn block_number(&self) -> u64;
+    /// Returns the transaction origin (`tx.origin`).
+    fn origin(&self) -> Address;
 
     /// Sets the bytecode at the given address.
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()>;
@@ -77,6 +79,9 @@ pub trait PrecompileStorageProvider {
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
 
+    /// Returns the native value (in wei) attached to this precompile call.
+    fn call_value(&self) -> U256;
+
     /// Returns the address that called this precompile.
     fn caller(&self) -> Address;
     /// Replaces the current caller address and returns the previous caller.
@@ -84,13 +89,13 @@ pub trait PrecompileStorageProvider {
 
     /// Creates a new journal checkpoint for atomic state management.
     fn checkpoint(&mut self) -> JournalCheckpoint;
-    /// Commits all state changes since the given checkpoint.
-    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint);
+    /// Commits all state changes since the last checkpoint.
+    fn checkpoint_commit(&mut self);
     /// Reverts all state changes back to the given checkpoint.
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint);
 
     /// Computes keccak256 and charges the appropriate gas.
-    fn keccak256(&mut self, data: &[u8]) -> Result<B256> {
+    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256> {
         let num_words =
             u64::try_from(data.len().div_ceil(32)).map_err(|_| BasePrecompileError::OutOfGas)?;
         let price = KECCAK256WORD
@@ -316,7 +321,16 @@ pub trait StorageKey: sealed::OnlyPrimitives {
     /// Returns key bytes for storage slot computation (left-padded to 32 bytes).
     fn as_storage_bytes(&self) -> impl AsRef<[u8]>;
 
-    /// Computes `keccak256(lpad32(key) ‖ slot_be32)` — the Solidity mapping slot derivation.
+    /// Computes `keccak256(lpad32(key) ‖ slot_be32)`.
+    ///
+    /// The formula is Solidity-compatible for unsigned integers (`u8`..`u256`), `Address`,
+    /// `FixedBytes<32>`, and `String`. Signed integers and `FixedBytes<N>` for `N < 32`
+    /// intentionally diverge from Solidity's `abi.encode(key, slot)` encoding: signed integers
+    /// use raw signed bytes and short `FixedBytes<N>` keys are left-padded from their slice
+    /// rather than right-padded as Solidity would. Off-chain tools reconstructing mapping slots
+    /// for those key types must use this crate's encoding, not Solidity's.
+    ///
+    /// See the crate-level README for a full compatibility table.
     fn mapping_slot(&self, slot: U256) -> U256 {
         let key_bytes = self.as_storage_bytes();
         let key_bytes = key_bytes.as_ref();

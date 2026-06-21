@@ -148,7 +148,7 @@ impl BatchReader {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::{HardForkConfig, RollupConfig};
+    use base_common_genesis::{RollupConfig, UpgradeConfig};
     use miniz_oxide::{
         deflate::{CompressionLevel, compress_to_vec_zlib},
         inflate::decompress_to_vec_zlib,
@@ -182,7 +182,7 @@ mod tests {
             BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize, true);
         reader
             .next_batch(&RollupConfig {
-                hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+                upgrades: UpgradeConfig { fjord_time: Some(0), ..Default::default() },
                 ..Default::default()
             })
             .unwrap();

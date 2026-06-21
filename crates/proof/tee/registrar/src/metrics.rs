@@ -25,17 +25,20 @@ base_metrics::define_metrics! {
     #[describe("Total number of certificate revocations detected via CRL")]
     crl_revocations_detected: counter,
 
-    #[describe("Total number of on-chain durable revocation pre-checks performed")]
+    #[describe("Total number of onchain durable revocation pre-checks performed")]
     onchain_revocation_checks_total: counter,
 
-    #[describe("Total number of intermediates rejected by the on-chain durable revocation sentinel")]
+    #[describe("Total number of intermediates rejected by the onchain durable revocation sentinel")]
     onchain_revocations_detected: counter,
 
-    #[describe("Total number of on-chain revocation pre-checks that failed and fell through to the AWS CRL layer (fail-open)")]
+    #[describe("Total number of onchain revocation pre-checks that failed and fell through to the AWS CRL layer (fail-open)")]
     onchain_revocation_check_errors: counter,
 
     #[describe("Total number of revokeCert transaction submission failures")]
     revoke_cert_tx_failures: counter,
+
+    #[describe("Total number of revokeCert transactions that landed onchain but reverted")]
+    revoke_cert_reverted_total: counter,
 
     #[describe("Total number of successful revokeCert transactions")]
     revoke_cert_success_total: counter,
@@ -57,11 +60,4 @@ base_metrics::define_metrics! {
 
     #[describe("Number of proof-generation tasks currently in-flight in the run() loop")]
     proof_tasks_pending: gauge,
-}
-
-impl RegistrarMetrics {
-    /// Records shutdown by setting the UP gauge to 0.
-    pub fn record_shutdown() {
-        Self::up().set(0.0);
-    }
 }

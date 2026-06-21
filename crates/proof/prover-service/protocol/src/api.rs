@@ -3,9 +3,11 @@
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{
-    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse, HeartbeatRequest,
-    HeartbeatResponse, ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest,
-    ProveBlockRangeResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse,
+    GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
+    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
+    WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -78,4 +80,18 @@ pub trait ProverWorkerApi {
         &self,
         request: WorkerSubmitProofRequest,
     ) -> jsonrpsee::core::RpcResult<WorkerSubmitProofResponse>;
+
+    /// Look up the active backend session recorded for a claimed proof job.
+    #[method(name = "getProofSession")]
+    async fn get_proof_session(
+        &self,
+        request: GetProofSessionRequest,
+    ) -> jsonrpsee::core::RpcResult<GetProofSessionResponse>;
+
+    /// Record (insert or update) the backend session for a claimed proof job.
+    #[method(name = "recordProofSession")]
+    async fn record_proof_session(
+        &self,
+        request: RecordProofSessionRequest,
+    ) -> jsonrpsee::core::RpcResult<RecordProofSessionResponse>;
 }

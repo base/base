@@ -19,33 +19,18 @@ workspace = true
 # Internal
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true
-base-balance-monitor.workspace = true
-base-health = { workspace = true, features = ["axum-server"] }
 base-proof-tee-registrar = { workspace = true, features = ["metrics"] }
 base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove"] }
 
 # Alloy
-alloy-provider.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 boundless-market.workspace = true
 
-# AWS
-aws-sdk-ec2.workspace = true
-aws-sdk-elasticloadbalancingv2.workspace = true
-aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
-
 # CLI / runtime
-hex.workspace = true
 url.workspace = true
 eyre.workspace = true
 serde.workspace = true
-tracing.workspace = true
 humantime.workspace = true
-tokio-util.workspace = true
-tokio = { workspace = true, features = ["full"] }
-rustls = { workspace = true, features = ["ring"] }
 clap = { workspace = true, features = ["derive", "env"] }
-
-[dev-dependencies]
-rstest.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

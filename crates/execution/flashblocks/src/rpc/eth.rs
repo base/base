@@ -445,9 +445,14 @@ where
         state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
         let final_overrides = state_overrides_builder.build();
 
-        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, Some(final_overrides))
-            .await
-            .map_err(Into::into)
+        EthCall::estimate_gas_at(
+            &self.eth_api,
+            transaction,
+            block_id,
+            EvmOverrides::new(Some(final_overrides), pending_overrides.block),
+        )
+        .await
+        .map_err(Into::into)
     }
 
     async fn simulate_v1(

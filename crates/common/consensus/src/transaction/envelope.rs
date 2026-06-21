@@ -52,10 +52,10 @@ pub enum BaseTxEnvelope {
     #[envelope(ty = 126)]
     #[serde(serialize_with = "crate::serde_deposit_tx_rpc")]
     Deposit(Sealed<TxDeposit>),
-    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x7D.
+    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x7B.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
-    #[envelope(ty = 125, typed = TxEip8130)]
+    #[envelope(ty = 123, typed = TxEip8130)]
     Eip8130(Eip8130Signed),
 }
 
@@ -157,11 +157,11 @@ impl From<Signed<BaseTypedTransaction>> for BaseTxEnvelope {
                 Self::Eip7702(tx)
             }
             BaseTypedTransaction::Eip8130(tx) => {
-                debug_assert!(
+                assert!(
                     tx.sender.is_none(),
-                    "configured-owner EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; route them via BaseTxEnvelope::Eip8130 directly with the appropriate sender_auth",
+                    "configured-actor EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; route them via BaseTxEnvelope::Eip8130 directly with the appropriate sender_auth",
                 );
-                debug_assert!(
+                assert!(
                     tx.payer.is_none(),
                     "sponsored EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; the payer_auth would be silently dropped",
                 );
@@ -843,6 +843,8 @@ mod tests {
 
     use alloy_consensus::{SignableTransaction, Transaction};
     use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, hex};
+    #[cfg(feature = "reth")]
+    use reth_codecs::Compact;
 
     use super::*;
 
@@ -1055,14 +1057,14 @@ mod tests {
 
     #[cfg(feature = "k256")]
     #[test]
-    fn eip8130_envelope_recovery_short_circuits_configured_owner() {
+    fn eip8130_envelope_recovery_short_circuits_configured_actor() {
         use alloy_consensus::transaction::SignerRecoverable;
 
         use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
 
         let explicit = Address::repeat_byte(0xab);
         let tx = TxEip8130 { sender: Some(explicit), ..Default::default() };
-        // sender_auth is irrelevant on the configured-owner path; supply 65
+        // sender_auth is irrelevant on the configured-actor path; supply 65
         // zero bytes so the structural shape stays well-formed.
         let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
             tx,
@@ -1074,5 +1076,76 @@ mod tests {
         assert_eq!(envelope.recover_signer_unchecked().unwrap(), explicit);
         let mut buf = alloc::vec::Vec::new();
         assert_eq!(envelope.recover_unchecked_with_buf(&mut buf).unwrap(), explicit);
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn eip8130_compact_roundtrip() {
+        use alloy_consensus::Typed2718;
+
+        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
+
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+            TxEip8130 {
+                chain_id: 8453,
+                sender: Some(Address::with_last_byte(0x11)),
+                nonce_key: U256::from(7u64),
+                nonce_sequence: 3,
+                expiry: 123,
+                max_priority_fee_per_gas: 1_000,
+                max_fee_per_gas: 5_000,
+                gas_limit: 42_000,
+                account_changes: Vec::new(),
+                calls: Vec::new(),
+                metadata: Bytes::from_static(&[0x01, 0x02, 0x03]),
+                payer: Some(Address::with_last_byte(0x22)),
+            },
+            Bytes::from_static(&[0xAB; 65]),
+            Bytes::from_static(&[0xCD; 24]),
+        ));
+
+        let mut buf = Vec::new();
+        let len = envelope.to_compact(&mut buf);
+        let (decoded, remaining) = BaseTxEnvelope::from_compact(&buf, len);
+
+        assert_eq!(decoded, envelope);
+        assert!(remaining.is_empty());
+        assert_eq!(decoded.tx_type(), OpTxType::Eip8130);
+        assert_eq!(decoded.ty(), crate::EIP8130_TX_TYPE_ID);
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn eip8130_compact_decode_preserves_trailing_bytes() {
+        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
+
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+            TxEip8130 {
+                chain_id: 8453,
+                sender: Some(Address::with_last_byte(0x11)),
+                nonce_key: U256::from(7u64),
+                nonce_sequence: 3,
+                expiry: 123,
+                max_priority_fee_per_gas: 1_000,
+                max_fee_per_gas: 5_000,
+                gas_limit: 42_000,
+                account_changes: Vec::new(),
+                calls: Vec::new(),
+                metadata: Bytes::from_static(&[0x01, 0x02, 0x03]),
+                payer: Some(Address::with_last_byte(0x22)),
+            },
+            Bytes::from_static(&[0xAB; 65]),
+            Bytes::from_static(&[0xCD; 24]),
+        ));
+
+        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut buf = Vec::new();
+        let _ = envelope.to_compact(&mut buf);
+        buf.extend_from_slice(&trailing);
+
+        let (decoded, remaining) = BaseTxEnvelope::from_compact(&buf, buf.len());
+
+        assert_eq!(decoded, envelope);
+        assert_eq!(remaining, trailing);
     }
 }

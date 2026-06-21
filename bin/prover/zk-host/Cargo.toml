@@ -1,0 +1,25 @@
+[package]
+name = "base-prover-zk-host"
+description = "ZK prover-service worker host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-prover-zk-host"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# CLI
+eyre.workspace = true
+tracing.workspace = true
+base-cli-utils.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+# Required by base-cli-utils logging and metrics macro expansions.
+serde = { workspace = true, features = ["derive", "std"] }

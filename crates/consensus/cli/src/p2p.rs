@@ -16,7 +16,8 @@ use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{
-    ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS, GaterConfig,
+    ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
+    DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig,
 };
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
@@ -114,6 +115,13 @@ pub struct P2PNetworkArgs {
     /// number.
     #[arg(long = "p2p.peers.hi", default_value = "30", env = "BASE_NODE_P2P_PEERS_HI")]
     pub peers_hi: u32,
+    /// Maximum number of outbound libp2p connections that may be pending at once.
+    #[arg(
+        long = "p2p.max-pending-outgoing",
+        default_value_t = DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS,
+        env = "BASE_NODE_P2P_MAX_PENDING_OUTGOING"
+    )]
+    pub max_pending_outgoing: u32,
     /// Maximum number of peers to retain identify metadata for.
     #[arg(
         long = "p2p.identify.peerstore.size",
@@ -215,6 +223,14 @@ pub struct P2PNetworkArgs {
     /// dials is reset to 0, allowing the peer to be dialed again.
     #[arg(long = "p2p.redial.period", env = "BASE_NODE_P2P_REDIAL_PERIOD", default_value = "60")]
     pub redial_period: u64,
+
+    /// The duration in seconds before a pending outbound dial is aborted.
+    #[arg(
+        long = "p2p.pending-dial.timeout",
+        env = "BASE_NODE_P2P_PENDING_DIAL_TIMEOUT",
+        default_value_t = DEFAULT_PENDING_DIAL_TIMEOUT.as_secs()
+    )]
+    pub pending_dial_timeout: u64,
 
     /// An optional list of bootnode ENRs or node records to start the node with.
     #[arg(
@@ -601,8 +617,12 @@ impl P2PArgs {
             gater_config: GaterConfig {
                 peer_redialing: self.peer_redial,
                 dial_period: Duration::from_secs(60 * self.redial_period),
+                pending_dial_timeout: Duration::from_secs(self.pending_dial_timeout),
             },
-            connection_limits_config: ConnectionLimitsConfig::new(self.peers_hi),
+            connection_limits_config: ConnectionLimitsConfig {
+                max_pending_outgoing: self.max_pending_outgoing,
+                ..ConnectionLimitsConfig::new(self.peers_hi)
+            },
             max_identify_peerstore_peers: self.identify_peerstore_size,
             bootnodes,
             rollup_config: config.clone(),
@@ -950,6 +970,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_p2p_config_wires_max_pending_outgoing_to_connection_limits() {
+        let args = MockCommand::parse_from(["test", "--p2p.max-pending-outgoing", "64"]);
+
+        let config = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .await
+            .unwrap();
+
+        assert_eq!(config.connection_limits_config.max_pending_outgoing, 64);
+    }
+
+    #[tokio::test]
     async fn test_p2p_config_wires_identify_peerstore_size() {
         let args = MockCommand::parse_from(["test", "--p2p.identify.peerstore.size", "2048"]);
 
@@ -960,6 +993,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.max_identify_peerstore_peers.get(), 2048);
+    }
+
+    #[tokio::test]
+    async fn test_p2p_config_wires_pending_dial_timeout() {
+        let args = MockCommand::parse_from(["test", "--p2p.pending-dial.timeout", "45"]);
+
+        let config = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .await
+            .unwrap();
+
+        assert_eq!(config.gater_config.pending_dial_timeout, Duration::from_secs(45));
     }
 
     #[test]

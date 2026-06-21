@@ -16,6 +16,9 @@ sol! {
         /// `updateExtraMetadata` was called with an empty metadata key.
         error InvalidMetadataKey();
 
+        /// `updateMultiplier` was called with a zero multiplier.
+        error InvalidMultiplier();
+
         /// A batched function was called with parallel arrays of differing lengths.
         error LengthMismatch(uint256 leftLen, uint256 rightLen);
 
@@ -124,7 +127,9 @@ impl IB20Asset::IB20AssetCalls {
 
 #[cfg(test)]
 mod tests {
-    use crate::IB20Asset;
+    use alloy_sol_types::SolInterface;
+
+    use crate::{IB20, IB20Asset};
 
     #[test]
     fn asset_call_labels_are_stable() {
@@ -136,5 +141,22 @@ mod tests {
             .as_label(),
             "precompile-b20-asset-updateExtraMetadata"
         );
+    }
+
+    #[test]
+    fn asset_and_inherited_call_selectors_are_disjoint() {
+        for selector in IB20Asset::IB20AssetCalls::selectors() {
+            assert!(
+                !IB20::IB20Calls::valid_selector(selector),
+                "asset selector {selector:?} overlaps with inherited IB20 selector"
+            );
+        }
+
+        for selector in IB20::IB20Calls::selectors() {
+            assert!(
+                !IB20Asset::IB20AssetCalls::valid_selector(selector),
+                "inherited IB20 selector {selector:?} overlaps with asset selector"
+            );
+        }
     }
 }

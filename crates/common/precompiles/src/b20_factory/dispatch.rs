@@ -1,41 +1,73 @@
 //! ABI dispatch for the `B20Factory` precompile.
 
-use alloy_primitives::{Address, Bytes};
-use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use alloy_primitives::Bytes;
+use alloy_sol_types::{SolCall, SolValue};
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    B20FactoryStorage, B20Variant, IB20Factory,
-    macros::{decode_precompile_call, deduct_calldata_cost},
+    B20FactoryStorage, B20Variant, BerylCallRecorder, BerylMetricLabels, IB20Factory,
+    NoopPrecompileCallObserver, PrecompileCallObserver, macros::decode_precompile_call,
 };
 
 impl<'a> B20FactoryStorage<'a> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        deduct_calldata_cost!(ctx, calldata);
-        let result = self.inner(ctx, calldata);
-        let gas = ctx.gas_used();
-        result.into_precompile_result(gas, ctx.state_gas_used(), |b| b)
+        self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
     }
 
-    fn inner(
+    /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler with an observer.
+    pub fn dispatch_with_observer<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-    ) -> base_precompile_storage::Result<Bytes> {
+        observer: O,
+    ) -> PrecompileResult
+    where
+        O: PrecompileCallObserver,
+    {
+        let mut recorder =
+            BerylCallRecorder::start(observer.clone(), BerylMetricLabels::factory_call(calldata));
+        if !ctx.call_value().is_zero() {
+            return recorder.record_base_error_result(
+                ctx,
+                BasePrecompileError::revert(IB20Factory::NonPayable {}),
+            );
+        }
+        if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
+            return recorder.record_base_error_result(ctx, error);
+        }
+        recorder.record_base_result(ctx, self.inner(ctx, calldata, observer), |b| b)
+    }
+
+    fn inner<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        observer: O,
+    ) -> base_precompile_storage::Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
         match decode_precompile_call!(calldata, IB20Factory::IB20FactoryCalls) {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
-                let token = self.create_b20(caller, call)?;
+                // abi_decode_validate rejects non-canonical discriminants before dispatch,
+                // so from_abi returning None here would be an internal invariant violation.
+                let variant = B20Variant::from_abi(call.variant).expect(
+                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
+                );
+                let address_hash = ctx.metered_keccak256(&(caller, call.salt).abi_encode())?;
+                let token = self.create_b20_with_observer(call, address_hash, observer.clone())?;
+                observer.record_b20_created(variant.as_label());
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
-                // Returns zero for an unrecognized variant to match base-std, which documents
-                // this function as "Never reverts."
-                let addr = B20Variant::from_abi(call.variant)
-                    .map(|v| v.compute_address(call.sender, call.salt).0)
-                    .unwrap_or(Address::ZERO);
+                let v = B20Variant::from_abi(call.variant).expect(
+                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
+                );
+                let hash = ctx.metered_keccak256(&(call.sender, call.salt).abi_encode())?;
+                let addr = v.compute_address_from_hash(hash).0;
                 Ok(IB20Factory::getB20AddressCall::abi_encode_returns(&addr).into())
             }
             IB20Factory::IB20FactoryCalls::isB20(call) => {
@@ -47,5 +79,32 @@ impl<'a> B20FactoryStorage<'a> {
                 Ok(IB20Factory::isB20InitializedCall::abi_encode_returns(&initialized).into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+    use alloy_sol_types::{SolCall, SolError};
+    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+
+    use crate::{B20FactoryStorage, IB20Factory};
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(U256::from(1u64));
+        let calldata = IB20Factory::isB20Call { token: Address::ZERO }.abi_encode();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            B20FactoryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        assert_eq!(
+            out.bytes,
+            alloy_primitives::Bytes::from(IB20Factory::NonPayable {}.abi_encode())
+        );
     }
 }

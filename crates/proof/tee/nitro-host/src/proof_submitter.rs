@@ -152,8 +152,9 @@ mod tests {
     use async_trait::async_trait;
     use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
     use base_prover_service_protocol::{
-        GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse, ProofJob,
-        ProofJobStatus, ProofRequest, ProofRequestKind, TeeProofRequest,
+        GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+        HeartbeatRequest, HeartbeatResponse, ProofJob, ProofJobStatus, ProofRequest,
+        ProofRequestKind, RecordProofSessionRequest, RecordProofSessionResponse, TeeProofRequest,
     };
     use chrono::Utc;
     use tokio::time::{sleep, timeout};
@@ -227,6 +228,20 @@ mod tests {
             }
 
             Ok(WorkerSubmitProofResponse { job: proof_job_for_submission(&request) })
+        }
+
+        async fn get_proof_session(
+            &self,
+            _request: GetProofSessionRequest,
+        ) -> Result<GetProofSessionResponse, ProverServiceClientError> {
+            panic!("get_proof_session is not used by proof submitter tests")
+        }
+
+        async fn record_proof_session(
+            &self,
+            _request: RecordProofSessionRequest,
+        ) -> Result<RecordProofSessionResponse, ProverServiceClientError> {
+            panic!("record_proof_session is not used by proof submitter tests")
         }
     }
 

@@ -8,7 +8,7 @@ use revm::{
     interpreter::interpreter::EthInterpreter,
 };
 
-use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId};
+use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMetricsObserver};
 
 /// Trait that allows constructing a [`BaseEvm`] from a [`BaseContext`].
 ///
@@ -21,6 +21,13 @@ pub trait Builder: Sized {
 
     /// Returns the active [`BaseSpecId`] for this builder.
     fn spec(&self) -> BaseSpecId;
+
+    /// Installs Base precompiles for node execution with the production Beryl metrics observer.
+    fn precompiles_for_node(&self, activation_admin_address: Option<Address>) -> PrecompilesMap {
+        BasePrecompiles::new_with_spec(self.spec())
+            .with_activation_admin_address(activation_admin_address)
+            .install_with_observer(BerylPrecompileMetricsObserver)
+    }
 
     /// Builds a [`BaseEvm`] with a `()` inspector. The inspect flag is `false`,
     /// so [`Inspector`][revm::Inspector] callbacks are never invoked via
@@ -37,10 +44,7 @@ pub trait Builder: Sized {
         self,
         activation_admin_address: Option<Address>,
     ) -> BaseEvm<Self::Db, (), PrecompilesMap> {
-        let spec = self.spec();
-        let precompiles = BasePrecompiles::new_with_spec(spec)
-            .with_activation_admin_address(activation_admin_address)
-            .install();
+        let precompiles = self.precompiles_for_node(activation_admin_address);
         self.build_base_with_precompiles(precompiles)
     }
 
@@ -69,10 +73,7 @@ pub trait Builder: Sized {
         inspector: INSP,
         activation_admin_address: Option<Address>,
     ) -> BaseEvm<Self::Db, INSP, PrecompilesMap> {
-        let spec = self.spec();
-        let precompiles = BasePrecompiles::new_with_spec(spec)
-            .with_activation_admin_address(activation_admin_address)
-            .install();
+        let precompiles = self.precompiles_for_node(activation_admin_address);
         self.build_with_inspector_and_precompiles(inspector, precompiles)
     }
 
@@ -148,7 +149,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{BaseTransaction, BaseUpgrade, DefaultBase};
+    use crate::{BaseTransaction, BaseUpgrade, BerylPrecompileMetricsObserver, DefaultBase};
 
     fn b20_token_address() -> Address {
         B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22)).0
@@ -193,6 +194,8 @@ mod tests {
 
     #[test]
     fn build_base_with_activation_admin_address_configures_activation_registry() {
+        BerylPrecompileMetricsObserver::reset_recorded_calls_for_test();
+
         let admin = Address::repeat_byte(0xaa);
         let ctx =
             Context::base().with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl)));
@@ -212,6 +215,7 @@ mod tests {
         let actual = IActivationRegistry::adminCall::abi_decode_returns(output).unwrap();
 
         assert_eq!(actual, admin);
+        assert!(BerylPrecompileMetricsObserver::recorded_calls_for_test() > 0);
     }
 
     struct ReadOnlyDbAdapter;

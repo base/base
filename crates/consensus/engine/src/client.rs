@@ -94,7 +94,7 @@ where
     engine: L2Provider,
     /// The L1 chain provider for reading L1 data.
     l1_provider: L1Provider,
-    /// The [`RollupConfig`] for determining Engine API versions based on hardfork activations.
+    /// The [`RollupConfig`] for determining Engine API versions based on upgrade activations.
     cfg: Arc<RollupConfig>,
 }
 
@@ -164,7 +164,7 @@ pub struct EngineClientBuilder {
     pub l2_jwt: JwtSecret,
     /// The L1 RPC URL.
     pub l1_rpc: Url,
-    /// The [`RollupConfig`] for determining Engine API versions based on hardfork activations.
+    /// The [`RollupConfig`] for determining Engine API versions based on upgrade activations.
     pub cfg: Arc<RollupConfig>,
 }
 

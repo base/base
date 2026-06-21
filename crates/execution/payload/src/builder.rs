@@ -374,8 +374,13 @@ impl<Txs> Builder<'_, Txs> {
             }
         }
 
-        let BlockBuilderOutcome { execution_result, hashed_state, trie_updates, block } =
-            builder.finish(state_provider, None)?;
+        let BlockBuilderOutcome {
+            execution_result,
+            hashed_state,
+            trie_updates,
+            block,
+            block_access_list,
+        } = builder.finish(state_provider, None)?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
@@ -387,15 +392,19 @@ impl<Txs> Builder<'_, Txs> {
         let executed: BuiltPayloadExecutedBlock<N> = BuiltPayloadExecutedBlock {
             recovered_block: Arc::new(block),
             execution_output: Arc::new(execution_outcome),
-            // Keep unsorted; conversion to sorted happens when needed downstream
-            hashed_state: either::Either::Left(Arc::new(hashed_state)),
-            trie_updates: either::Either::Left(Arc::new(trie_updates)),
+            hashed_state: Arc::new(hashed_state),
+            trie_updates: Arc::new(trie_updates),
         };
 
         let no_tx_pool = ctx.attributes().no_tx_pool();
 
-        let payload =
-            BaseBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed));
+        let payload = BaseBuiltPayload::new(
+            ctx.payload_id(),
+            sealed_block,
+            info.total_fees,
+            Some(executed),
+            block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
+        );
 
         if no_tx_pool {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included

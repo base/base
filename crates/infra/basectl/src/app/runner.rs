@@ -22,8 +22,8 @@ use crate::{
 
 /// Launches the TUI application starting from the specified view and network.
 ///
-/// `conductor_rpc` is the optional `--conductor-rpc` CLI override; when set it
-/// forces the conductor source into `Discover` mode regardless of config.
+/// `conductor_rpc` is the optional `--conductor-rpc` CLI override. Static
+/// conductor config takes precedence over the override.
 pub async fn run_app(
     initial_view: ViewId,
     network: &str,
@@ -31,9 +31,10 @@ pub async fn run_app(
 ) -> Result<()> {
     let mut config = MonitoringConfig::load(network).await?;
     if config.conductors.is_none()
-        && let Some(bootstrap) = conductor_rpc.as_ref()
+        && let Some(source) = config.conductor_source(conductor_rpc.clone())
+        && let ConductorSource::Discover { bootstrap, .. } = source
     {
-        let detect_rpc = config.detect_rpc_for(Some(bootstrap));
+        let detect_rpc = config.detect_rpc_for(Some(&bootstrap));
         if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&detect_rpc).await {
             config.name = detected;
         }
@@ -42,32 +43,6 @@ pub async fn run_app(
     start_background_services(&config, &mut resources, conductor_rpc.clone());
     let app = App::new(resources, initial_view, conductor_rpc);
     app.run(create_view).await
-}
-
-/// Resolves the active conductor source from CLI flag and config.
-///
-/// Precedence: hand-configured `conductors` list > CLI `--conductor-rpc` flag >
-/// `discovery.bootstrap_rpc` from config. Static config wins so local devnet
-/// (which ships with a hardcoded 3-node list) isn't accidentally clobbered by
-/// the default `--conductor-rpc` value. Returns `None` when no source is
-/// configured (conductor view will simply show no nodes).
-fn resolve_conductor_source(
-    cli_flag: Option<Url>,
-    config: &MonitoringConfig,
-) -> Option<ConductorSource> {
-    if let Some(nodes) = config.conductors.clone() {
-        return Some(ConductorSource::Static(nodes));
-    }
-    if let Some(bootstrap) = cli_flag {
-        let ports = config.discovery.as_ref().map(|d| d.ports.clone()).unwrap_or_default();
-        return Some(ConductorSource::Discover { bootstrap, ports });
-    }
-    if let Some(d) = config.discovery.as_ref()
-        && let Some(bootstrap) = d.bootstrap_rpc.clone()
-    {
-        return Some(ConductorSource::Discover { bootstrap, ports: d.ports.clone() });
-    }
-    None
 }
 
 /// Starts all background data-fetching services, wiring their channels into `resources`.
@@ -152,7 +127,7 @@ pub fn start_background_services(
         }
     });
 
-    if let Some(source) = resolve_conductor_source(conductor_rpc, config) {
+    if let Some(source) = config.conductor_source(conductor_rpc) {
         let (conductor_tx, conductor_rx) = mpsc::channel::<ConductorPollUpdate>(8);
         resources.conductor.set_channel(conductor_rx);
         resources.conductor.set_source_label(match &source {

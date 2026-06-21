@@ -42,6 +42,13 @@ pub struct SnapshotterConfig {
     #[arg(long, default_value = "")]
     pub prefix: String,
 
+    /// Public HTTP base URL used by download clients.
+    ///
+    /// This should be the externally reachable base for the snapshot bucket, without
+    /// a trailing slash, for example `https://zeronet-v2-snapshots.base.org`.
+    #[arg(long, env = "SNAPSHOTTER_PUBLIC_BASE_URL")]
+    pub public_base_url: Option<String>,
+
     /// Chain ID for the snapshot manifest.
     #[arg(long, default_value = "8453")]
     pub chain_id: u64,

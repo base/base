@@ -2,7 +2,7 @@
 
 Library crate for the prover registrar service.
 
-Implements automated discovery and on-chain registration of TEE prover signer
+Implements automated discovery and onchain registration of TEE prover signer
 keys for the Base multi-proof system. The registrar polls AWS ALB target groups
 to detect new Nitro enclave instances, fetches their attestation documents via
 `enclave_signerAttestation`, generates ZK proofs via the Boundless Network
@@ -11,9 +11,9 @@ to detect new Nitro enclave instances, fetches their attestation documents via
 
 ## Modules
 
-- **`config`** — [`RegistrarConfig`] runtime config struct, [`BoundlessConfig`],
-  and [`SigningConfig`] for L1 transaction signing.
+- **`service`** — [`RegistrarConfig`] runtime config and lifecycle runner.
 - **`error`** — [`RegistrarError`] enum covering all failure modes.
 - **`prover`** — [`ProverClient`] JSON-RPC client for polling prover signer endpoints.
-- **`traits`** — [`InstanceDiscovery`] and [`AttestationProofProvider`] trait definitions.
-- **`types`** — Core domain types: [`ProverInstance`], [`RegisteredSigner`].
+- **`signer_manager`** — [`SignerManager`] lifecycle management for signer proof tasks and registration execution.
+- **`traits`** — [`InstanceDiscovery`] and attestation proof provider trait usage.
+- **`types`** — Core domain types: [`ProverInstance`].

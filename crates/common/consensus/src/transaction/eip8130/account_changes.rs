@@ -14,7 +14,7 @@ use alloy_rlp::{
 
 use crate::transaction::eip8130::constants::Eip8130Constants;
 
-/// Bitmask describing the contexts in which an owner is valid.
+/// Bitmask describing the contexts in which an actor is valid.
 ///
 /// On the wire, `Scope` is encoded as a single RLP-encoded byte (matching the
 /// EIP-8130 `uint8` spec), not as a one-element list. The derived RLP impls
@@ -43,7 +43,7 @@ impl Decodable for Scope {
 }
 
 impl Scope {
-    /// Unrestricted scope (owner valid in all contexts).
+    /// Unrestricted scope (actor valid in all contexts).
     pub const UNRESTRICTED: Self = Self(Eip8130Constants::SCOPE_UNRESTRICTED);
 
     /// Returns the raw bitmask.
@@ -72,84 +72,95 @@ impl Scope {
     }
 }
 
-/// Initial owner installed on a newly-created account.
+/// Initial actor installed on a newly-created account.
+///
+/// Per [EIP-8130], a create entry's initial actors are `[actorId, authenticator]`
+/// tuples, always registered as unrestricted owners (`scope = 0x00`, no expiry,
+/// no policy). Scope, expiry, and policy are deliberately not expressible here
+/// and default to their zero values; restricted keys are added afterwards via a
+/// [`ConfigChange`]. The field order matches the wire encoding and the
+/// address-derivation commitment (`actorId || authenticator`).
+///
+/// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct InitialOwner {
-    /// Address of the verifier contract (e.g. an ERC-1271 verifier).
-    pub verifier: Address,
-    /// Owner identifier passed to the verifier.
-    pub owner_id: B256,
-    /// Scope bitmask granted to this owner.
-    pub scope: Scope,
+pub struct InitialActor {
+    /// Actor identifier (the authenticator-derived `actorId`).
+    pub actor_id: B256,
+    /// Address of the authenticator contract (e.g. an ERC-1271 authenticator).
+    pub authenticator: Address,
 }
 
-/// Operation performed by an [`OwnerChange`] inside a [`ConfigChange`].
+/// Operation performed by an [`ActorChange`] inside a [`ConfigChange`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum OwnerChangeType {
-    /// Authorize a new owner (op byte `0x01`).
+pub enum ActorChangeType {
+    /// Authorize a new actor (op byte `0x01`).
     Authorize,
-    /// Revoke an existing owner (op byte `0x02`).
+    /// Revoke an existing actor (op byte `0x02`).
     Revoke,
 }
 
-impl OwnerChangeType {
+impl ActorChangeType {
     /// Returns the on-wire op byte.
     pub const fn op_byte(&self) -> u8 {
         match self {
-            Self::Authorize => Eip8130Constants::OWNER_CHANGE_AUTHORIZE,
-            Self::Revoke => Eip8130Constants::OWNER_CHANGE_REVOKE,
+            Self::Authorize => Eip8130Constants::ACTOR_CHANGE_AUTHORIZE,
+            Self::Revoke => Eip8130Constants::ACTOR_CHANGE_REVOKE,
         }
     }
 
     /// Parses a wire op byte.
     pub const fn from_op_byte(byte: u8) -> Option<Self> {
         match byte {
-            Eip8130Constants::OWNER_CHANGE_AUTHORIZE => Some(Self::Authorize),
-            Eip8130Constants::OWNER_CHANGE_REVOKE => Some(Self::Revoke),
+            Eip8130Constants::ACTOR_CHANGE_AUTHORIZE => Some(Self::Authorize),
+            Eip8130Constants::ACTOR_CHANGE_REVOKE => Some(Self::Revoke),
             _ => None,
         }
     }
 }
 
-/// A single owner authorization or revocation inside a [`ConfigChange`].
+/// A single actor authorization or revocation inside a [`ConfigChange`].
+///
+/// Per [EIP-8130], `data` is the operation-specific, contract-ABI-encoded blob:
+/// `abi.encode(ActorConfig, bytes policyData)` for an `Authorize` (carrying the
+/// new actor's authenticator, scope, expiry, policy type, and policy data), and
+/// empty for a `Revoke`. It is opaque at this layer — decoded only where the
+/// change is applied (native authorization or `applySignedActorChanges`) — and
+/// is the value hashed (`keccak256(data)`) in the config-change signature
+/// payload, so the same blob is interpreted identically on every path.
+///
+/// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct OwnerChange {
+pub struct ActorChange {
     /// Operation (authorize / revoke).
-    pub change_type: OwnerChangeType,
-    /// Verifier contract address.
-    pub verifier: Address,
-    /// Owner identifier.
-    pub owner_id: B256,
-    /// Scope bitmask (relevant for `Authorize`; ignored on `Revoke`).
-    pub scope: Scope,
+    pub change_type: ActorChangeType,
+    /// Actor identifier.
+    pub actor_id: B256,
+    /// Operation-specific ABI-encoded data (opaque at this layer).
+    pub data: Bytes,
 }
 
-impl OwnerChange {
+impl ActorChange {
     fn rlp_fields_len(&self) -> usize {
-        self.change_type.op_byte().length()
-            + self.verifier.length()
-            + self.owner_id.length()
-            + self.scope.length()
+        self.change_type.op_byte().length() + self.actor_id.length() + self.data.length()
     }
 }
 
-impl Encodable for OwnerChange {
+impl Encodable for ActorChange {
     fn encode(&self, out: &mut dyn BufMut) {
         let fields_len = self.rlp_fields_len();
         let header = Header { list: true, payload_length: fields_len };
         header.encode(out);
         self.change_type.op_byte().encode(out);
-        self.verifier.encode(out);
-        self.owner_id.encode(out);
-        self.scope.encode(out);
+        self.actor_id.encode(out);
+        self.data.encode(out);
     }
 
     fn length(&self) -> usize {
@@ -158,7 +169,7 @@ impl Encodable for OwnerChange {
     }
 }
 
-impl Decodable for OwnerChange {
+impl Decodable for ActorChange {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let header = Header::decode(buf)?;
         if !header.list {
@@ -166,11 +177,10 @@ impl Decodable for OwnerChange {
         }
         let started_len = buf.len();
         let op = u8::decode(buf)?;
-        let change_type = OwnerChangeType::from_op_byte(op)
-            .ok_or(alloy_rlp::Error::Custom("invalid OwnerChange op byte"))?;
-        let verifier = Address::decode(buf)?;
-        let owner_id = B256::decode(buf)?;
-        let scope = Scope::decode(buf)?;
+        let change_type = ActorChangeType::from_op_byte(op)
+            .ok_or(alloy_rlp::Error::Custom("invalid ActorChange op byte"))?;
+        let actor_id = B256::decode(buf)?;
+        let data = Bytes::decode(buf)?;
         let consumed = started_len - buf.len();
         if consumed != header.payload_length {
             return Err(alloy_rlp::Error::ListLengthMismatch {
@@ -178,7 +188,7 @@ impl Decodable for OwnerChange {
                 got: consumed,
             });
         }
-        Ok(Self { change_type, verifier, owner_id, scope })
+        Ok(Self { change_type, actor_id, data })
     }
 }
 
@@ -192,8 +202,8 @@ pub struct CreateEntry {
     pub user_salt: B256,
     /// Account bytecode to install.
     pub code: Bytes,
-    /// Initial owners authorized on the new account.
-    pub initial_owners: Vec<InitialOwner>,
+    /// Initial actors authorized on the new account.
+    pub initial_actors: Vec<InitialActor>,
 }
 
 /// Body of an [`AccountChange::ConfigChange`] entry.
@@ -206,9 +216,9 @@ pub struct ConfigChange {
     pub chain_id: u64,
     /// Per-account config-change sequence number.
     pub sequence: u64,
-    /// Owner authorize/revoke operations applied in order.
-    pub owner_changes: Vec<OwnerChange>,
-    /// Authorization payload validated against an existing owner with `SCOPE_CONFIG`.
+    /// Actor authorize/revoke operations applied in order.
+    pub actor_changes: Vec<ActorChange>,
+    /// Authorization payload validated against an existing actor with `SCOPE_CONFIG`.
     pub auth: Bytes,
 }
 
@@ -235,7 +245,7 @@ pub struct Delegation {
 pub enum AccountChange {
     /// Create a new account.
     Create(CreateEntry),
-    /// Change an existing account's owner set.
+    /// Change an existing account's actor set.
     ConfigChange(ConfigChange),
     /// Set or clear an [EIP-7702]-style delegation.
     ///
@@ -321,26 +331,25 @@ mod tests {
     }
 
     #[test]
-    fn owner_change_type_roundtrip() {
-        for ct in [OwnerChangeType::Authorize, OwnerChangeType::Revoke] {
-            assert_eq!(OwnerChangeType::from_op_byte(ct.op_byte()), Some(ct));
+    fn actor_change_type_roundtrip() {
+        for ct in [ActorChangeType::Authorize, ActorChangeType::Revoke] {
+            assert_eq!(ActorChangeType::from_op_byte(ct.op_byte()), Some(ct));
         }
-        assert_eq!(OwnerChangeType::from_op_byte(0x00), None);
-        assert_eq!(OwnerChangeType::from_op_byte(0xff), None);
+        assert_eq!(ActorChangeType::from_op_byte(0x00), None);
+        assert_eq!(ActorChangeType::from_op_byte(0xff), None);
     }
 
     #[test]
-    fn owner_change_rlp_roundtrip() {
-        let oc = OwnerChange {
-            change_type: OwnerChangeType::Authorize,
-            verifier: address!("0x00000000000000000000000000000000000000aa"),
-            owner_id: b256!("0x1111111111111111111111111111111111111111111111111111111111111111"),
-            scope: Scope(Eip8130Constants::SCOPE_SIGNATURE | Eip8130Constants::SCOPE_SENDER),
+    fn actor_change_rlp_roundtrip() {
+        let oc = ActorChange {
+            change_type: ActorChangeType::Authorize,
+            actor_id: b256!("0x1111111111111111111111111111111111111111111111111111111111111111"),
+            data: bytes!("00000000000000000000000000000000000000000000000000000000000000aa"),
         };
         let mut buf = Vec::new();
         oc.encode(&mut buf);
         assert_eq!(buf.len(), oc.length());
-        let decoded = OwnerChange::decode(&mut buf.as_slice()).unwrap();
+        let decoded = ActorChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(oc, decoded);
     }
 
@@ -349,12 +358,11 @@ mod tests {
         let ac = AccountChange::Create(CreateEntry {
             user_salt: b256!("0x2222222222222222222222222222222222222222222222222222222222222222"),
             code: bytes!("6080604052"),
-            initial_owners: vec![InitialOwner {
-                verifier: address!("0x00000000000000000000000000000000000000bb"),
-                owner_id: b256!(
+            initial_actors: vec![InitialActor {
+                actor_id: b256!(
                     "0x3333333333333333333333333333333333333333333333333333333333333333"
                 ),
-                scope: Scope(Eip8130Constants::SCOPE_SIGNATURE),
+                authenticator: address!("0x00000000000000000000000000000000000000bb"),
             }],
         });
         let mut buf = Vec::new();
@@ -370,13 +378,12 @@ mod tests {
         let ac = AccountChange::ConfigChange(ConfigChange {
             chain_id: 8453,
             sequence: 7,
-            owner_changes: vec![OwnerChange {
-                change_type: OwnerChangeType::Revoke,
-                verifier: address!("0x00000000000000000000000000000000000000cc"),
-                owner_id: b256!(
+            actor_changes: vec![ActorChange {
+                change_type: ActorChangeType::Revoke,
+                actor_id: b256!(
                     "0x4444444444444444444444444444444444444444444444444444444444444444"
                 ),
-                scope: Scope::UNRESTRICTED,
+                data: Bytes::new(),
             }],
             auth: bytes!("aabbcc"),
         });

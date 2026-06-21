@@ -10,6 +10,7 @@ use std::{
 use alloy_consensus::{
     Eip658Value, Header as ConsensusHeader, Receipt, ReceiptEnvelope, ReceiptWithBloom,
 };
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
@@ -657,8 +658,11 @@ impl L2Provider for MockL2Provider {
             .ok_or_else(|| RpcError::ProofNotFound(format!("no proof for hash {block_hash}")))
     }
 
-    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<RpcHeader> {
-        let block_number = number.unwrap_or(0);
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<RpcHeader> {
+        let block_number = match block {
+            BlockNumberOrTag::Number(number) => number,
+            other => panic!("MockL2Provider::header_by_number does not support tag {other:?}"),
+        };
         if self.error_blocks.contains(&block_number) {
             return Err(RpcError::BlockNotFound(format!("block {block_number} not available")));
         }
@@ -668,7 +672,10 @@ impl L2Provider for MockL2Provider {
             .ok_or_else(|| RpcError::HeaderNotFound(format!("no header for block {block_number}")))
     }
 
-    async fn block_by_number(&self, _number: Option<u64>) -> RpcResult<base_proof_rpc::BaseBlock> {
+    async fn block_by_number(
+        &self,
+        _block: BlockNumberOrTag,
+    ) -> RpcResult<base_proof_rpc::BaseBlock> {
         Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 
@@ -972,6 +979,14 @@ mod tests {
 
     use super::*;
     use crate::scanner::{GameCategory, GameScanner};
+
+    #[tokio::test]
+    #[should_panic(expected = "MockL2Provider::header_by_number does not support tag finalized")]
+    async fn test_mock_l2_provider_rejects_block_tags() {
+        let provider = MockL2Provider::new();
+
+        let _ = provider.header_by_number(BlockNumberOrTag::Finalized).await;
+    }
 
     /// Happy path: mixed games, only `IN_PROGRESS` / non-nullified returned.
     #[tokio::test]

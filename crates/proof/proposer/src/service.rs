@@ -1,8 +1,11 @@
 //! Full proposer service lifecycle.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use alloy_primitives::Address;
@@ -29,11 +32,16 @@ use tracing::{info, warn};
 use crate::{
     Metrics,
     config::ProposerConfig,
-    constants::MAX_PROOF_RETRIES,
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::ProposalSubmitter,
     pipeline::{PipelineConfig, ProvingPipeline},
 };
+
+const SUBMIT_TIMEOUT_SLACK: Duration = Duration::from_mins(2);
+const DEFAULT_TX_SEND_TIMEOUT: Duration = Duration::from_mins(10);
+const DEFAULT_SUBMIT_TIMEOUT: Duration =
+    Duration::from_secs(DEFAULT_TX_SEND_TIMEOUT.as_secs() + SUBMIT_TIMEOUT_SLACK.as_secs());
+const MAX_PROOF_RETRIES: u32 = 8;
 
 /// Top-level proposer service.
 #[derive(Debug)]
@@ -138,15 +146,20 @@ impl ProposerService {
             init_bond = %init_bond,
             impl_address = %impl_address,
             game_type = config.game_type,
-            "Read on-chain config from AggregateVerifier and DisputeGameFactory"
+            "Read onchain config from AggregateVerifier and DisputeGameFactory"
         );
 
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
+        let submit_timeout =
+            config.tx_manager.as_ref().map_or(Some(DEFAULT_SUBMIT_TIMEOUT), |tx| {
+                (!tx.tx_send_timeout.is_zero())
+                    .then(|| tx.tx_send_timeout.saturating_add(SUBMIT_TIMEOUT_SLACK))
+            });
 
         let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
             if config.dry_run {
-                info!("Dry-run mode enabled — proofs will be sourced but NOT submitted on-chain");
+                info!("Dry-run mode enabled - proofs will be sourced but NOT submitted onchain");
                 (Arc::new(crate::DryRunProposer), None)
             } else {
                 let signing = config.signing.ok_or_else(|| {
@@ -204,6 +217,7 @@ impl ProposerService {
         let pipeline_config = PipelineConfig {
             max_retries: MAX_PROOF_RETRIES,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
+            submit_timeout,
             tee_prover_registry_address: config.tee_prover_registry_address,
             driver: DriverConfig {
                 poll_interval: config.poll_interval,
@@ -243,7 +257,7 @@ impl ProposerService {
         let admin_server = if let Some(admin_addr) = config.admin_addr {
             info!("Admin RPC enabled");
             let driver = Arc::clone(&driver_handle);
-            Some(crate::admin::AdminServer::spawn(admin_addr, driver).await?)
+            Some(crate::admin::ProposerAdminApiServerImpl::spawn(admin_addr, driver).await?)
         } else {
             None
         };
@@ -274,7 +288,8 @@ impl ProposerService {
         }
 
         if let Some(admin_server) = admin_server {
-            admin_server.shutdown().await;
+            let _ = admin_server.stop();
+            admin_server.stopped().await;
         }
 
         match health_handle.await {

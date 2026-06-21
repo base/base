@@ -78,7 +78,7 @@ pub enum BaseInvalidTransactionError {
     /// An EIP-8130 (account-abstraction) transaction was submitted via
     /// `eth_sendRawTransaction` and rejected at the RPC ingress boundary.
     ///
-    /// The transaction type byte (`0x7D`) is recognised by the consensus layer for
+    /// The transaction type byte (`0x7B`) is recognised by the consensus layer for
     /// decoding/serialization purposes, but no validation, mempool admission, or
     /// execution path exists yet. The rejection is unconditional (not gated on any
     /// fork activation) and is mirrored by the txpool validator so EIP-8130

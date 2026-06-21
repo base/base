@@ -26,9 +26,16 @@ use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, 
 use base_consensus_sources::BlockSigner;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
-use tokio::task::JoinHandle;
+use tempfile::TempDir;
+use tokio::{
+    task::JoinHandle,
+    time::{sleep, timeout},
+};
 use tracing::info;
 use url::Url;
+
+const SEQUENCER_UNSAFE_HEAD_TIMEOUT: Duration = Duration::from_secs(60);
+const SEQUENCER_UNSAFE_HEAD_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Configuration for starting an in-process consensus node.
 #[derive(Debug)]
@@ -72,6 +79,7 @@ pub struct InProcessConsensus {
     rpc_addr: SocketAddr,
     p2p_tcp_port: u16,
     peer_id: String,
+    _checkpoint_dir: TempDir,
     _handle: JoinHandle<()>,
 }
 
@@ -167,6 +175,12 @@ impl InProcessConsensus {
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
         };
 
+        let checkpoint_dir = tempfile::tempdir()
+            .wrap_err("Failed to create temporary checkpoint database directory")?;
+        let checkpoint_path = checkpoint_dir.path().join("checkpoint.redb");
+
+        // In-process devnets can run multiple consensus nodes with the same chain ID.
+        // Give each node isolated checkpoint storage so redb writer locks do not collide.
         let mut builder = RollupNodeBuilder::new(
             rollup_config,
             l1_config,
@@ -174,7 +188,8 @@ impl InProcessConsensus {
             engine_config,
             net_config,
             Some(rpc_config),
-        );
+        )
+        .with_checkpoint_path(checkpoint_path);
 
         if config.mode == NodeMode::Sequencer {
             builder = builder.with_sequencer_config(SequencerConfig {
@@ -207,7 +222,13 @@ impl InProcessConsensus {
             }
         }
 
-        Ok(Self { rpc_addr, p2p_tcp_port, peer_id, _handle: handle })
+        Ok(Self {
+            rpc_addr,
+            p2p_tcp_port,
+            peer_id,
+            _checkpoint_dir: checkpoint_dir,
+            _handle: handle,
+        })
     }
 
     /// Connects this node to a peer at the given libp2p multiaddr via the `opp2p_connectPeer` RPC.
@@ -228,7 +249,7 @@ impl InProcessConsensus {
                 }
                 Err(e) => {
                     last_err = Some(e);
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    sleep(Duration::from_millis(500)).await;
                 }
             }
         }
@@ -248,19 +269,28 @@ impl InProcessConsensus {
         // The consensus node validates that the provided hash matches the engine's actual unsafe
         // head before activating the sequencer. Poll sync status until the engine is initialized
         // (non-zero unsafe head hash), then pass the real value.
-        let mut unsafe_head = B256::ZERO;
-        for _ in 0..40 {
-            match client.sync_status().await {
-                Ok(status) if status.unsafe_l2.block_info.hash != B256::ZERO => {
-                    unsafe_head = status.unsafe_l2.block_info.hash;
-                    break;
+        let mut last_sync_error = None;
+        let unsafe_head = timeout(SEQUENCER_UNSAFE_HEAD_TIMEOUT, async {
+            loop {
+                match client.sync_status().await {
+                    Ok(status) if status.unsafe_l2.block_info.hash != B256::ZERO => {
+                        return status.unsafe_l2.block_info.hash;
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        last_sync_error = Some(e.to_string());
+                    }
                 }
-                _ => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+                sleep(SEQUENCER_UNSAFE_HEAD_POLL_INTERVAL).await;
             }
-        }
-        if unsafe_head == B256::ZERO {
-            return Err(eyre::eyre!("Engine unsafe head did not initialize within 10s"));
-        }
+        })
+        .await
+        .map_err(|_| {
+            let suffix = last_sync_error
+                .map(|e| format!("; last sync_status error: {e}"))
+                .unwrap_or_default();
+            eyre::eyre!("Engine unsafe head did not initialize within 60s{suffix}")
+        })?;
 
         client
             .admin_start_sequencer(unsafe_head)
@@ -333,7 +363,7 @@ async fn wait_for_rpc(addr: SocketAddr) -> Result<()> {
             }
             Err(e) => {
                 last_err = Some(e);
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                sleep(Duration::from_millis(500)).await;
             }
         }
     }

@@ -22,6 +22,7 @@ alloy-primitives.workspace = true
 # base
 base-common-flz.workspace = true
 base-common-chains.workspace = true
+base-common-genesis.workspace = true
 base-common-precompiles.workspace = true
 base-common-consensus = { workspace = true, features = ["evm"] }
 
@@ -32,6 +33,10 @@ revm.workspace = true
 auto_impl.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, optional = true }
+
+# metrics
+base-metrics = { workspace = true, optional = true }
+metrics = { workspace = true, optional = true }
 
 # reth
 reth-evm = { workspace = true, optional = true }
@@ -54,6 +59,7 @@ std = [
 	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-flz/std",
+	"base-common-genesis/std",
 	"base-common-precompiles/std",
 	"revm/std",
 	"serde?/std",
@@ -65,10 +71,12 @@ serde = [
 	"alloy-primitives/serde",
 	"base-common-chains/serde",
 	"base-common-consensus/serde",
+	"base-common-genesis/serde",
 	"dep:serde",
 	"revm/serde",
 ]
 reth = [ "dep:reth-evm", "std" ]
+metrics = [ "base-metrics/metrics", "dep:base-metrics", "dep:metrics", "std" ]
 bn = [ "base-common-precompiles/bn", "revm/bn" ]
 blst = [ "base-common-precompiles/blst", "revm/blst" ]
 c-kzg = [ "base-common-precompiles/c-kzg", "revm/c-kzg" ]

@@ -24,7 +24,7 @@ pub trait StageReset {
         system_config: SystemConfig,
     ) -> PipelineResult<()>;
 
-    /// Performs a hardfork activation soft-reset of the stage.
+    /// Performs an upgrade activation soft-reset of the stage.
     async fn activate(&mut self) -> PipelineResult<()>;
 
     /// Flushes the currently active channel.

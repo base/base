@@ -1,21 +1,19 @@
-use std::sync::Arc;
+use std::{collections::HashMap as StdHashMap, sync::Arc};
 
 use alloy_consensus::{Header, Sealed, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{
-    Address, B256, BlockNumber, TxHash, U256,
-    map::foldhash::{HashMap, HashMapExt},
-};
+use alloy_primitives::{Address, B256, BlockNumber, TxHash, U256};
 use alloy_provider::network::TransactionResponse;
 use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_common_consensus::{BaseTxReceipt, OpTxType};
-use base_common_evm::{BaseHaltReason, BaseTxResult};
-use base_common_flashblocks::Flashblock;
+use base_common_evm::{BaseHaltReason, BaseTxResult, L1BlockInfo as PendingL1BlockInfo};
+use base_common_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_common_network::Base;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
+use imbl::{HashMap, Vector};
 use reth_evm::eth::EthTxResult;
 use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
@@ -31,16 +29,22 @@ use crate::{BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLo
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
 pub struct PendingBlocksBuilder {
-    flashblocks: Vec<Flashblock>,
+    flashblocks: Vector<Flashblock>,
     headers: Vec<Sealed<Header>>,
+    latest_flashblock_tx_start: Option<usize>,
+    latest_block_base: Option<ExecutionPayloadBaseV1>,
+    latest_block_l1_block_info: Option<PendingL1BlockInfo>,
+    latest_block_transaction_count: Option<usize>,
+    latest_block_cumulative_gas_used: Option<u64>,
+    latest_block_next_log_index: Option<usize>,
 
-    transactions: Vec<Transaction>,
+    transactions: Vector<Transaction>,
     account_balances: HashMap<Address, U256>,
     transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, BaseTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_position: HashMap<B256, (BlockNumber, usize)>,
-    next_position_per_block: HashMap<BlockNumber, usize>,
+    next_position_per_block: StdHashMap<BlockNumber, usize>,
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
@@ -64,15 +68,21 @@ impl PendingBlocksBuilder {
     /// Creates a new empty builder.
     pub fn new() -> Self {
         Self {
-            flashblocks: Vec::new(),
+            flashblocks: Vector::new(),
             headers: Vec::new(),
-            transactions: Vec::new(),
+            latest_flashblock_tx_start: None,
+            latest_block_base: None,
+            latest_block_l1_block_info: None,
+            latest_block_transaction_count: None,
+            latest_block_cumulative_gas_used: None,
+            latest_block_next_log_index: None,
+            transactions: Vector::new(),
             account_balances: HashMap::new(),
             transaction_count: HashMap::new(),
             transaction_receipts: HashMap::new(),
             transactions_by_hash: HashMap::new(),
             transaction_position: HashMap::new(),
-            next_position_per_block: HashMap::new(),
+            next_position_per_block: StdHashMap::new(),
             transaction_state: HashMap::new(),
             transaction_senders: HashMap::new(),
             transaction_results: HashMap::new(),
@@ -80,6 +90,54 @@ impl PendingBlocksBuilder {
             state_root_times: HashMap::new(),
             state_overrides: None,
             bundle_state: None,
+            deferred_error: None,
+        }
+    }
+
+    /// Creates a builder pre-populated from an existing snapshot.
+    pub fn from_previous(pending_blocks: &PendingBlocks) -> Self {
+        let flashblocks = pending_blocks.flashblocks.clone();
+        let headers =
+            vec![pending_blocks.earliest_header.clone(), pending_blocks.latest_header.clone()];
+        let transactions = pending_blocks.transactions.clone();
+        let account_balances = pending_blocks.account_balances.clone();
+        let transaction_count = pending_blocks.transaction_count.clone();
+        let transaction_receipts = pending_blocks.transaction_receipts.clone();
+        let transactions_by_hash = pending_blocks.transactions_by_hash.clone();
+        let transaction_position = pending_blocks.transaction_position.clone();
+        let transaction_state = pending_blocks.transaction_state.clone();
+        let transaction_senders = pending_blocks.transaction_senders.clone();
+        let transaction_results = pending_blocks.transaction_results.clone();
+        let execution_times = pending_blocks.execution_times.clone();
+        let state_root_times = pending_blocks.state_root_times.clone();
+        let next_position_per_block = pending_blocks.next_position_per_block.clone();
+        let bundle_state = Arc::clone(&pending_blocks.bundle_state);
+
+        let state_overrides = pending_blocks.state_overrides.clone();
+
+        Self {
+            flashblocks,
+            headers,
+            latest_flashblock_tx_start: Some(pending_blocks.latest_flashblock_tx_start),
+            latest_block_base: Some(pending_blocks.latest_block_base.clone()),
+            latest_block_l1_block_info: Some(pending_blocks.latest_block_l1_block_info.clone()),
+            latest_block_transaction_count: Some(pending_blocks.latest_block_transaction_count),
+            latest_block_cumulative_gas_used: Some(pending_blocks.latest_block_cumulative_gas_used),
+            latest_block_next_log_index: Some(pending_blocks.latest_block_next_log_index),
+            transactions,
+            account_balances,
+            transaction_count,
+            transaction_receipts,
+            transactions_by_hash,
+            transaction_position,
+            next_position_per_block,
+            transaction_state,
+            transaction_senders,
+            state_overrides,
+            transaction_results,
+            execution_times,
+            state_root_times,
+            bundle_state: Some(bundle_state),
             deferred_error: None,
         }
     }
@@ -95,6 +153,37 @@ impl PendingBlocksBuilder {
     #[inline]
     pub fn with_header(&mut self, header: Sealed<Header>) -> &Self {
         self.headers.push(header);
+        self
+    }
+
+    /// Replaces the latest header in the builder.
+    #[inline]
+    pub fn replace_latest_header(&mut self, header: Sealed<Header>) -> &Self {
+        if let Some(latest) = self.headers.last_mut() {
+            *latest = header;
+        } else {
+            self.headers.push(header);
+        }
+        self
+    }
+
+    /// Stores metadata needed to append more transactions to the latest block without replaying it.
+    #[inline]
+    pub fn with_latest_block_context(
+        &mut self,
+        latest_flashblock_tx_start: usize,
+        latest_block_base: ExecutionPayloadBaseV1,
+        latest_block_l1_block_info: PendingL1BlockInfo,
+        latest_block_transaction_count: usize,
+        latest_block_cumulative_gas_used: u64,
+        latest_block_next_log_index: usize,
+    ) -> &Self {
+        self.latest_flashblock_tx_start = Some(latest_flashblock_tx_start);
+        self.latest_block_base = Some(latest_block_base);
+        self.latest_block_l1_block_info = Some(latest_block_l1_block_info);
+        self.latest_block_transaction_count = Some(latest_block_transaction_count);
+        self.latest_block_cumulative_gas_used = Some(latest_block_cumulative_gas_used);
+        self.latest_block_next_log_index = Some(latest_block_next_log_index);
         self
     }
 
@@ -116,7 +205,7 @@ impl PendingBlocksBuilder {
         self.transaction_position.insert(tx_hash, (block_number, *position));
         *position += 1;
         self.transactions_by_hash.insert(tx_hash, transaction.clone());
-        self.transactions.push(transaction);
+        self.transactions.push_back(transaction);
         self
     }
 
@@ -202,11 +291,58 @@ impl PendingBlocksBuilder {
         if let Some(err) = self.deferred_error {
             return Err(err.into());
         }
+
         let earliest_header = self.headers.first().cloned().ok_or(BuildError::MissingHeaders)?;
         let latest_header = self.headers.last().cloned().ok_or(BuildError::MissingHeaders)?;
 
         let latest_flashblock_index =
             self.flashblocks.last().map(|fb| fb.index).ok_or(BuildError::NoFlashblocks)?;
+        let latest_block_base = self
+            .latest_block_base
+            .clone()
+            .or_else(|| {
+                self.flashblocks.iter().rev().find_map(|flashblock| flashblock.base.clone())
+            })
+            .ok_or(BuildError::MissingHeaders)?;
+        let latest_block_l1_block_info =
+            self.latest_block_l1_block_info.clone().unwrap_or_default();
+        let latest_block_transaction_count =
+            self.latest_block_transaction_count.unwrap_or_else(|| {
+                self.transactions
+                    .iter()
+                    .filter(|tx| tx.block_number.unwrap_or_default() == latest_header.number)
+                    .count()
+            });
+        let latest_block_cumulative_gas_used =
+            self.latest_block_cumulative_gas_used.unwrap_or_else(|| {
+                self.transactions
+                    .iter()
+                    .filter(|tx| tx.block_number.unwrap_or_default() == latest_header.number)
+                    .filter_map(|tx| self.transaction_receipts.get(&tx.tx_hash()))
+                    .last()
+                    .map(|receipt| receipt.inner.inner.cumulative_gas_used())
+                    .unwrap_or_default()
+            });
+        let latest_block_next_log_index = self.latest_block_next_log_index.unwrap_or_else(|| {
+            self.transactions
+                .iter()
+                .filter(|tx| tx.block_number.unwrap_or_default() == latest_header.number)
+                .filter_map(|tx| self.transaction_receipts.get(&tx.tx_hash()))
+                .map(|receipt| receipt.inner.logs().len())
+                .sum()
+        });
+        let latest_flashblock_tx_start = self.latest_flashblock_tx_start.unwrap_or_else(|| {
+            let latest_flashblock_tx_count = self
+                .flashblocks
+                .last()
+                .map(|flashblock| flashblock.diff.transactions.len())
+                .unwrap_or_default();
+            if latest_flashblock_tx_count == 0 {
+                0
+            } else {
+                self.transactions.len().saturating_sub(latest_flashblock_tx_count)
+            }
+        });
 
         for transaction in &self.transactions {
             let tx_hash = transaction.tx_hash();
@@ -219,6 +355,12 @@ impl PendingBlocksBuilder {
             earliest_header,
             latest_header,
             latest_flashblock_index,
+            latest_flashblock_tx_start,
+            latest_block_base,
+            latest_block_l1_block_info,
+            latest_block_transaction_count,
+            latest_block_cumulative_gas_used,
+            latest_block_next_log_index,
             flashblocks: self.flashblocks,
             transactions: self.transactions,
             account_balances: self.account_balances,
@@ -226,6 +368,7 @@ impl PendingBlocksBuilder {
             transaction_receipts: self.transaction_receipts,
             transactions_by_hash: self.transactions_by_hash,
             transaction_position: self.transaction_position,
+            next_position_per_block: self.next_position_per_block,
             transaction_state: self.transaction_state,
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
@@ -243,14 +386,21 @@ pub struct PendingBlocks {
     earliest_header: Sealed<Header>,
     latest_header: Sealed<Header>,
     latest_flashblock_index: u64,
-    flashblocks: Vec<Flashblock>,
-    transactions: Vec<Transaction>,
+    latest_flashblock_tx_start: usize,
+    latest_block_base: ExecutionPayloadBaseV1,
+    latest_block_l1_block_info: PendingL1BlockInfo,
+    latest_block_transaction_count: usize,
+    latest_block_cumulative_gas_used: u64,
+    latest_block_next_log_index: usize,
+    flashblocks: Vector<Flashblock>,
+    transactions: Vector<Transaction>,
 
     account_balances: HashMap<Address, U256>,
     transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, BaseTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_position: HashMap<B256, (BlockNumber, usize)>,
+    next_position_per_block: StdHashMap<BlockNumber, usize>,
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
@@ -298,13 +448,49 @@ impl PendingBlocks {
     /// Returns the payload ID for the current build attempt.
     #[inline]
     pub fn payload_id(&self) -> PayloadId {
-        self.flashblocks.first().map(|fb| fb.payload_id).unwrap_or_default()
+        self.flashblocks.iter().next().map(|fb| fb.payload_id).unwrap_or_default()
     }
 
     /// Returns the index of the latest flashblock.
     #[inline]
     pub const fn latest_flashblock_index(&self) -> u64 {
         self.latest_flashblock_index
+    }
+
+    /// Returns the start offset of the latest flashblock's transactions in the flattened tx list.
+    #[inline]
+    pub const fn latest_flashblock_tx_start(&self) -> usize {
+        self.latest_flashblock_tx_start
+    }
+
+    /// Returns the base payload for the latest pending block.
+    #[inline]
+    pub const fn latest_block_base(&self) -> &ExecutionPayloadBaseV1 {
+        &self.latest_block_base
+    }
+
+    /// Returns the cached L1 block info for the latest pending block.
+    #[inline]
+    pub const fn latest_block_l1_block_info(&self) -> &PendingL1BlockInfo {
+        &self.latest_block_l1_block_info
+    }
+
+    /// Returns the current transaction count for the latest pending block.
+    #[inline]
+    pub const fn latest_block_transaction_count(&self) -> usize {
+        self.latest_block_transaction_count
+    }
+
+    /// Returns the cumulative gas used after the latest transaction in the latest pending block.
+    #[inline]
+    pub const fn latest_block_cumulative_gas_used(&self) -> u64 {
+        self.latest_block_cumulative_gas_used
+    }
+
+    /// Returns the next log index for the latest pending block.
+    #[inline]
+    pub const fn latest_block_next_log_index(&self) -> usize {
+        self.latest_block_next_log_index
     }
 
     /// Returns the latest header.
@@ -327,7 +513,17 @@ impl PendingBlocks {
 
     /// Returns all flashblocks.
     pub fn get_flashblocks(&self) -> Vec<Flashblock> {
-        self.flashblocks.clone()
+        self.flashblocks.iter().cloned().collect()
+    }
+
+    /// Returns only the flashblocks for the latest pending block.
+    pub fn latest_block_flashblocks(&self) -> Vec<Flashblock> {
+        let latest_block = self.latest_block_number();
+        self.flashblocks
+            .iter()
+            .filter(|flashblock| flashblock.metadata.block_number == latest_block)
+            .cloned()
+            .collect()
     }
 
     /// Returns the EVM state for a transaction.
@@ -491,7 +687,13 @@ impl PendingBlocks {
 
     /// Returns all pending transactions from flashblocks.
     pub fn get_pending_transactions(&self) -> Vec<Transaction> {
-        self.transactions.clone()
+        self.transactions.iter().cloned().collect()
+    }
+
+    /// Returns the total number of pending transactions across all tracked blocks.
+    #[inline]
+    pub fn pending_transaction_count(&self) -> usize {
+        self.transactions.len()
     }
 
     /// Returns all pending transactions with their associated logs from flashblocks.
@@ -513,14 +715,8 @@ impl PendingBlocks {
 
     /// Returns the number of transactions in all flashblocks except the latest one.
     /// This is used to compute the delta (transactions only in the latest flashblock).
-    fn previous_flashblocks_tx_count(&self) -> usize {
-        if self.flashblocks.len() <= 1 {
-            return 0;
-        }
-        self.flashblocks[..self.flashblocks.len() - 1]
-            .iter()
-            .map(|fb| fb.diff.transactions.len())
-            .sum()
+    const fn previous_flashblocks_tx_count(&self) -> usize {
+        self.latest_flashblock_tx_start
     }
 
     /// Returns logs matching the filter from only the latest flashblock (delta).
@@ -658,7 +854,8 @@ mod tests {
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, Transaction};
-    use revm::context_interface::result::ExecutionResult;
+    use revm::{context_interface::result::ExecutionResult, state::AccountInfo};
+    use revm_database::states::BundleBuilder;
 
     use super::*;
 
@@ -667,6 +864,10 @@ mod tests {
     }
 
     fn test_flashblock() -> Flashblock {
+        test_flashblock_for_block(1)
+    }
+
+    fn test_flashblock_for_block(block_number: u64) -> Flashblock {
         Flashblock {
             payload_id: PayloadId::default(),
             index: 0,
@@ -675,7 +876,7 @@ mod tests {
                 parent_hash: B256::ZERO,
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::ZERO,
-                block_number: 1,
+                block_number,
                 gas_limit: 30_000_000,
                 timestamp: 1_700_000_000,
                 extra_data: Bytes::default(),
@@ -692,7 +893,7 @@ mod tests {
                 withdrawals_root: B256::ZERO,
                 blob_gas_used: None,
             },
-            metadata: Metadata { block_number: 1 },
+            metadata: Metadata::new(block_number),
         }
     }
 
@@ -720,6 +921,10 @@ mod tests {
 
     /// Creates a [`Transaction`] whose `tx_hash()` equals `hash`.
     fn test_transaction_with_hash(hash: B256) -> Transaction {
+        test_transaction_with_hash_in_block(hash, 1)
+    }
+
+    fn test_transaction_with_hash_in_block(hash: B256, block_number: u64) -> Transaction {
         let legacy = alloy_consensus::TxLegacy {
             chain_id: Some(1),
             nonce: 0,
@@ -739,7 +944,7 @@ mod tests {
             inner: alloy_rpc_types_eth::Transaction {
                 inner: recovered,
                 block_hash: Some(B256::ZERO),
-                block_number: Some(1),
+                block_number: Some(block_number),
                 block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
@@ -806,34 +1011,46 @@ mod tests {
 
     /// Creates an [`BaseTransactionReceipt`] with a single log emitted from `log_address`.
     fn test_receipt_with_log(tx_hash: B256, log_address: Address) -> BaseTransactionReceipt {
-        let log = Log {
-            inner: PrimitiveLog {
-                address: log_address,
-                data: LogData::new_unchecked(vec![], Bytes::new()),
-            },
-            block_hash: Some(B256::ZERO),
-            block_number: Some(1),
-            block_timestamp: None,
-            transaction_hash: Some(tx_hash),
-            transaction_index: Some(0),
-            log_index: Some(0),
-            removed: false,
-        };
+        test_receipt_for_block_with_log_count(tx_hash, 1, log_address, 1, 21_000)
+    }
+
+    fn test_receipt_for_block_with_log_count(
+        tx_hash: B256,
+        block_number: u64,
+        log_address: Address,
+        log_count: usize,
+        cumulative_gas_used: u64,
+    ) -> BaseTransactionReceipt {
+        let logs = (0..log_count)
+            .map(|log_index| Log {
+                inner: PrimitiveLog {
+                    address: log_address,
+                    data: LogData::new_unchecked(vec![], Bytes::new()),
+                },
+                block_hash: Some(B256::ZERO),
+                block_number: Some(block_number),
+                block_timestamp: None,
+                transaction_hash: Some(tx_hash),
+                transaction_index: Some(0),
+                log_index: Some(log_index as u64),
+                removed: false,
+            })
+            .collect();
 
         BaseTransactionReceipt {
             inner: alloy_rpc_types_eth::TransactionReceipt {
                 inner: ReceiptWithBloom {
                     receipt: BaseReceipt::Legacy(Receipt {
                         status: alloy_consensus::Eip658Value::Eip658(true),
-                        cumulative_gas_used: 21_000,
-                        logs: vec![log],
+                        cumulative_gas_used,
+                        logs,
                     }),
                     logs_bloom: Bloom::default(),
                 },
                 transaction_hash: tx_hash,
                 transaction_index: Some(0),
                 block_hash: Some(B256::ZERO),
-                block_number: Some(1),
+                block_number: Some(block_number),
                 gas_used: 21_000,
                 effective_gas_price: 1_000_000_000,
                 blob_gas_used: None,
@@ -884,6 +1101,57 @@ mod tests {
         builder.with_transaction_result(tx_hash, test_execution_result());
         builder.with_receipt(tx_hash, test_receipt(tx_hash, blob_gas_used));
         (tx_hash, builder.build().expect("should build pending blocks"))
+    }
+
+    #[test]
+    fn from_previous_preserves_bundle_state() {
+        let tx_hash = B256::with_last_byte(0xAA);
+        let sender = test_sender();
+        let bundle_state = BundleBuilder::new(0..=0)
+            .state_address(sender)
+            .state_present_account_info(sender, AccountInfo::default())
+            .build();
+
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.with_transaction(test_transaction_with_hash(tx_hash));
+        builder.with_receipt(tx_hash, test_receipt_with_log(tx_hash, sender));
+        builder.with_bundle_state(bundle_state);
+
+        let pending_blocks = builder.build().expect("build should succeed");
+        let next_builder = PendingBlocksBuilder::from_previous(&pending_blocks);
+        let next_pending_blocks = next_builder.build().expect("build from previous should succeed");
+
+        assert!(
+            next_pending_blocks.get_bundle_state().account(&sender).is_some(),
+            "bundle_state should be preserved when cloning a pending snapshot"
+        );
+    }
+
+    #[test]
+    fn from_previous_preserves_next_position_per_block() {
+        let tx_hash_a = B256::with_last_byte(0xAA);
+        let tx_hash_b = B256::with_last_byte(0xBB);
+        let tx_hash_c = B256::with_last_byte(0xCC);
+
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.with_transaction(test_transaction_with_hash(tx_hash_a));
+        builder.with_receipt(tx_hash_a, test_receipt_with_log(tx_hash_a, test_sender()));
+        builder.with_transaction(test_transaction_with_hash(tx_hash_b));
+        builder.with_receipt(tx_hash_b, test_receipt_with_log(tx_hash_b, test_sender()));
+
+        let pending_blocks = builder.build().expect("build should succeed");
+
+        let mut next_builder = PendingBlocksBuilder::from_previous(&pending_blocks);
+        next_builder.with_transaction(test_transaction_with_hash(tx_hash_c));
+        next_builder.with_receipt(tx_hash_c, test_receipt_with_log(tx_hash_c, test_sender()));
+        let next_pending_blocks =
+            next_builder.build().expect("build from previous should preserve positions");
+
+        assert_eq!(next_pending_blocks.transaction_position(1, &tx_hash_c), Some(2));
     }
 
     /// Builds a [`PendingBlocks`] with the supplied (hash, `log_address`) pairs
@@ -977,6 +1245,40 @@ mod tests {
 
         let err = builder.build().expect_err("build should fail on duplicate tx");
         assert_eq!(err, StateProcessorError::Build(BuildError::DuplicateTransaction { tx_hash }));
+    }
+
+    #[test]
+    fn build_fallbacks_use_latest_block_values_only() {
+        let tx_hash_1 = B256::with_last_byte(0xA1);
+        let tx_hash_2 = B256::with_last_byte(0xB2);
+
+        let mut builder = PendingBlocksBuilder::default();
+        builder.with_flashblocks([test_flashblock_for_block(1), test_flashblock_for_block(2)]);
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: 1, ..Default::default() },
+            B256::ZERO,
+        ));
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: 2, ..Default::default() },
+            B256::ZERO,
+        ));
+        builder.with_transaction(test_transaction_with_hash_in_block(tx_hash_1, 1));
+        builder.with_receipt(
+            tx_hash_1,
+            test_receipt_for_block_with_log_count(tx_hash_1, 1, test_sender(), 2, 21_000),
+        );
+        builder.with_transaction(test_transaction_with_hash_in_block(tx_hash_2, 2));
+        builder.with_receipt(
+            tx_hash_2,
+            test_receipt_for_block_with_log_count(tx_hash_2, 2, test_sender(), 1, 42_000),
+        );
+
+        let pending_blocks = builder.build().expect("build should succeed without latest context");
+
+        assert_eq!(pending_blocks.latest_block_base().block_number, 2);
+        assert_eq!(pending_blocks.latest_block_transaction_count(), 1);
+        assert_eq!(pending_blocks.latest_block_cumulative_gas_used(), 42_000);
+        assert_eq!(pending_blocks.latest_block_next_log_index(), 1);
     }
 
     #[test]

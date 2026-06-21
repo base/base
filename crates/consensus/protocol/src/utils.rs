@@ -145,7 +145,7 @@ mod tests {
 
     use alloy_eips::eip1898::BlockNumHash;
     use alloy_primitives::{U256, address, bytes, uint};
-    use base_common_genesis::{ChainGenesis, HardForkConfig};
+    use base_common_genesis::{ChainGenesis, UpgradeConfig};
 
     use super::*;
     use crate::{
@@ -343,7 +343,7 @@ mod tests {
                 l2: BlockNumHash { hash: block_hash, ..Default::default() },
                 ..Default::default()
             },
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         };
         assert!(rollup_config.is_holocene_active(block.header.timestamp));
@@ -392,7 +392,7 @@ mod tests {
                 l2: BlockNumHash { hash: block_hash, ..Default::default() },
                 ..Default::default()
             },
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
                 ..Default::default()

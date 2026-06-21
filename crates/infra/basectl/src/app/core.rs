@@ -252,10 +252,12 @@ impl App {
         let conductor_rpc = self.conductor_rpc.clone();
         tokio::spawn(async move {
             let mut load = MonitoringConfig::load(&name).await;
-            if let (Ok(config), Some(bootstrap)) = (load.as_mut(), conductor_rpc.as_ref())
+            if let Ok(config) = load.as_mut()
                 && config.conductors.is_none()
+                && let Some(source) = config.conductor_source(conductor_rpc)
+                && let crate::config::ConductorSource::Discover { bootstrap, .. } = source
             {
-                let detect_rpc = config.detect_rpc_for(Some(bootstrap));
+                let detect_rpc = config.detect_rpc_for(Some(&bootstrap));
                 if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&detect_rpc).await {
                     config.name = detected;
                 }

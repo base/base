@@ -242,6 +242,10 @@ pub trait AdminApi {
         payload: BaseExecutionPayloadEnvelope,
     ) -> RpcResult<()>;
 
+    /// Clears pending outbound P2P connection attempts.
+    #[method(name = "clearPendingP2pConnections")]
+    async fn admin_clear_pending_p2p_connections(&self) -> RpcResult<usize>;
+
     /// Checks if the sequencer is active.
     #[method(name = "sequencerActive")]
     async fn admin_sequencer_active(&self) -> RpcResult<bool>;
@@ -584,6 +588,10 @@ mod tests {
             unimplemented!()
         }
 
+        async fn admin_clear_pending_p2p_connections(&self) -> RpcResult<usize> {
+            unimplemented!()
+        }
+
         async fn admin_sequencer_active(&self) -> RpcResult<bool> {
             unimplemented!()
         }
@@ -619,6 +627,7 @@ mod tests {
 
     #[rstest]
     #[case("admin_postUnsafePayload")]
+    #[case("admin_clearPendingP2pConnections")]
     #[case("admin_sequencerActive")]
     #[case("admin_startSequencer")]
     #[case("admin_stopSequencer")]

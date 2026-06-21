@@ -5,7 +5,7 @@
 
 extern crate alloc;
 
-pub use base_common_chains::BaseUpgrade;
+pub use base_common_genesis::BaseUpgrade;
 
 mod spec;
 pub use spec::BaseSpecId;
@@ -27,6 +27,9 @@ pub use handler::{BaseHandler, IsTxError};
 
 mod precompiles;
 pub use precompiles::BasePrecompiles;
+
+mod beryl_metrics;
+pub use beryl_metrics::BerylPrecompileMetricsObserver;
 
 mod api;
 pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};

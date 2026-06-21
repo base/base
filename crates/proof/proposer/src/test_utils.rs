@@ -8,26 +8,27 @@ use std::{
     },
 };
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
+use base_optimism_rpc::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
 use base_proof_primitives::Proposal;
-use base_proof_rpc::{
-    BaseBlock, L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OutputAtBlock,
-    RollupProvider, RpcError, RpcResult, SyncStatus,
-};
+use base_proof_rpc::{BaseBlock, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind as ApiProofRequestKind,
+    ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    TeeKind, TeeProofResult,
 };
+use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
@@ -43,7 +44,10 @@ impl L1Provider for MockL1 {
     async fn block_number(&self) -> RpcResult<u64> {
         Ok(self.latest_block_number)
     }
-    async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {
+    async fn header_by_number(
+        &self,
+        _: BlockNumberOrTag,
+    ) -> RpcResult<alloy_rpc_types_eth::Header> {
         Ok(alloy_rpc_types_eth::Header { hash: B256::repeat_byte(0x11), ..Default::default() })
     }
     async fn header_by_hash(&self, _: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
@@ -55,10 +59,10 @@ impl L1Provider for MockL1 {
     ) -> RpcResult<Vec<alloy_rpc_types_eth::TransactionReceipt>> {
         unimplemented!()
     }
-    async fn code_at(&self, _: Address, _: Option<u64>) -> RpcResult<Bytes> {
+    async fn code_at(&self, _: Address, _: BlockNumberOrTag) -> RpcResult<Bytes> {
         unimplemented!()
     }
-    async fn call_contract(&self, _: Address, _: Bytes, _: Option<u64>) -> RpcResult<Bytes> {
+    async fn call_contract(&self, _: Address, _: Bytes, _: BlockNumberOrTag) -> RpcResult<Bytes> {
         unimplemented!()
     }
     async fn get_balance(&self, _: Address) -> RpcResult<U256> {
@@ -84,11 +88,14 @@ impl L2Provider for MockL2 {
     async fn get_proof(&self, _: Address, _: B256) -> RpcResult<EIP1186AccountProofResponse> {
         unimplemented!()
     }
-    async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {
+    async fn header_by_number(
+        &self,
+        _: BlockNumberOrTag,
+    ) -> RpcResult<alloy_rpc_types_eth::Header> {
         let hash = self.canonical_hash.unwrap_or(B256::repeat_byte(0x30));
         Ok(alloy_rpc_types_eth::Header { hash, ..Default::default() })
     }
-    async fn block_by_number(&self, _: Option<u64>) -> RpcResult<BaseBlock> {
+    async fn block_by_number(&self, _: BlockNumberOrTag) -> RpcResult<BaseBlock> {
         if self.block_not_found {
             Err(RpcError::BlockNotFound("mock: no blocks".into()))
         } else {
@@ -239,6 +246,8 @@ pub struct MockAggregateVerifier {
     pub failing_addresses: HashSet<Address>,
     /// Map of game address to intermediate output roots.
     pub intermediate_roots_map: HashMap<Address, Vec<B256>>,
+    /// Map of game address to L1 head returned by `l1_head()`.
+    pub l1_head_map: HashMap<Address, B256>,
 }
 
 impl MockAggregateVerifier {
@@ -274,8 +283,8 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn starting_block_number(&self, _: Address) -> Result<u64, ContractError> {
         Ok(0)
     }
-    async fn l1_head(&self, _: Address) -> Result<B256, ContractError> {
-        Ok(B256::ZERO)
+    async fn l1_head(&self, addr: Address) -> Result<B256, ContractError> {
+        Ok(self.l1_head_map.get(&addr).copied().unwrap_or(B256::ZERO))
     }
     async fn read_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         Ok(512)
@@ -412,6 +421,10 @@ pub fn test_proposal(block_number: u64) -> Proposal {
 pub struct MockProofRequester {
     /// Requests accepted through `prove_block_range`.
     pub requests: std::sync::Mutex<HashMap<String, ProveBlockRangeRequest>>,
+    /// Sessions that should return a terminal failed status from `get_proof`.
+    pub failed_sessions: std::sync::Mutex<HashMap<String, String>>,
+    /// Number of `prove_block_range` calls accepted.
+    pub prove_count: AtomicUsize,
 }
 
 #[async_trait]
@@ -421,6 +434,7 @@ impl ProofRequesterProvider for MockProofRequester {
         request: ProveBlockRangeRequest,
     ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
         let session_id = request.proof.session_id.clone();
+        self.prove_count.fetch_add(1, Ordering::SeqCst);
         self.requests.lock().unwrap().insert(session_id.clone(), request);
         Ok(ProveBlockRangeResponse { session_id })
     }
@@ -429,10 +443,28 @@ impl ProofRequesterProvider for MockProofRequester {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
+        if let Some(message) = self.failed_sessions.lock().unwrap().get(&request.session_id) {
+            return Ok(GetProofResponse {
+                status: ProofStatus::Failed,
+                error_message: Some(message.clone()),
+                result: None,
+            });
+        }
+
         let requests = self.requests.lock().unwrap();
-        let request = requests
-            .get(&request.session_id)
-            .ok_or_else(|| ProverServiceClientError::MissingResult("unknown session".to_owned()))?;
+        let request = requests.get(&request.session_id).ok_or_else(|| {
+            // Mirror the production prover-service: an unknown session_id surfaces
+            // as a JSON-RPC NotFound error. The proposer pipeline relies
+            // on this to distinguish "no session yet, dispatch needed" from other
+            // transient or terminal errors.
+            ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(
+                ErrorObjectOwned::owned(
+                    ProverServiceClientError::ERROR_NOT_FOUND,
+                    PROOF_REQUEST_NOT_FOUND_MESSAGE,
+                    None::<()>,
+                ),
+            ))
+        })?;
         let ApiProofRequestKind::Tee(tee_request) = &request.proof.request else {
             return Err(ProverServiceClientError::UnexpectedResultPayload(
                 "expected TEE request".to_owned(),

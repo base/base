@@ -15,6 +15,8 @@ use alloy_primitives::{
     Address, B256, Bytes, ChainId, Signature, TxKind, U256, bytes::BufMut, keccak256,
 };
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
+#[cfg(feature = "reth")]
+use reth_codecs::Compact;
 
 use crate::transaction::eip8130::{
     account_changes::AccountChange, call::Call, constants::Eip8130Constants,
@@ -32,7 +34,7 @@ use crate::transaction::eip8130::{
 ///
 /// - [`Self::sender`]: `None` selects the EOA path (recovered from
 ///   `sender_auth` as a 65-byte ECDSA signature); `Some` selects the
-///   configured-owner path with an explicit account address.
+///   configured-actor path with an explicit account address.
 /// - [`Self::payer`]: `None` selects self-pay (the resolved sender pays);
 ///   `Some` selects sponsored pay (the payer address pays).
 ///
@@ -54,8 +56,10 @@ pub struct TxEip8130 {
     /// Unix-seconds expiry timestamp; `0` means no expiry.
     pub expiry: u64,
     /// Max priority fee per gas (tip) the sender is willing to pay.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub max_priority_fee_per_gas: u128,
     /// Max total fee per gas (base + tip cap) the sender is willing to pay.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub max_fee_per_gas: u128,
     /// Gas limit for the entire AA transaction execution.
     pub gas_limit: u64,
@@ -64,6 +68,10 @@ pub struct TxEip8130 {
     /// Calls dispatched by the protocol after account changes apply, grouped
     /// into phases (`Vec<Vec<Call>>`).
     pub calls: Vec<Vec<Call>>,
+    /// Opaque attribution/annotation bytes; empty when unused. Carried in the
+    /// wire body between `calls` and `payer` and committed to by both the
+    /// sender and payer signatures, but otherwise uninterpreted by the protocol.
+    pub metadata: Bytes,
     /// Optional explicit payer; `None` means the resolved sender pays gas.
     pub payer: Option<Address>,
 }
@@ -149,6 +157,7 @@ impl TxEip8130 {
             + self.gas_limit.length()
             + self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)
+            + self.metadata.length()
             + Self::address_opt_encoded_length(&self.payer)
     }
 
@@ -164,6 +173,7 @@ impl TxEip8130 {
         self.gas_limit.encode(out);
         self.account_changes.encode(out);
         Self::encode_calls(&self.calls, out);
+        self.metadata.encode(out);
         Self::encode_address_opt(&self.payer, out);
     }
 
@@ -180,6 +190,7 @@ impl TxEip8130 {
             gas_limit: Decodable::decode(buf)?,
             account_changes: Decodable::decode(buf)?,
             calls: Self::decode_calls(buf)?,
+            metadata: Decodable::decode(buf)?,
             payer: Self::decode_address_opt(buf)?,
         })
     }
@@ -199,6 +210,63 @@ impl TxEip8130 {
         self.rlp_header().length_with_payload()
     }
 
+    #[cfg(feature = "reth")]
+    fn compact_tail(&self) -> Vec<u8> {
+        let mut calls = Vec::with_capacity(Self::calls_encoded_length(&self.calls));
+        Self::encode_calls(&self.calls, &mut calls);
+
+        let account_changes = Bytes::from(alloy_rlp::encode(&self.account_changes));
+        let calls = Bytes::from(calls);
+        let tail_payload_length =
+            account_changes.length() + calls.length() + self.metadata.length();
+        let mut tail =
+            Vec::with_capacity(length_of_length(tail_payload_length) + tail_payload_length);
+        Header { list: true, payload_length: tail_payload_length }.encode(&mut tail);
+        account_changes.encode(&mut tail);
+        calls.encode(&mut tail);
+        self.metadata.encode(&mut tail);
+        tail
+    }
+
+    #[cfg(feature = "reth")]
+    fn decode_compact_tail(tail: &[u8]) -> (Vec<AccountChange>, Vec<Vec<Call>>, Bytes) {
+        let mut tail = tail;
+        let header = Header::decode(&mut tail)
+            .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 tail: {err}"));
+        assert!(header.list, "compact-encoded EIP-8130 tail must be an RLP list");
+        let started = tail.len();
+
+        let account_changes = Bytes::decode(&mut tail).unwrap_or_else(|err| {
+            panic!("invalid compact-encoded EIP-8130 account changes: {err}")
+        });
+        let calls = Bytes::decode(&mut tail)
+            .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
+        let metadata = Bytes::decode(&mut tail)
+            .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 metadata: {err}"));
+        let consumed = started - tail.len();
+        assert_eq!(
+            consumed, header.payload_length,
+            "compact-encoded EIP-8130 tail length mismatch"
+        );
+
+        let mut account_changes_buf = account_changes.as_ref();
+        let account_changes = Vec::<AccountChange>::decode(&mut account_changes_buf)
+            .unwrap_or_else(|err| {
+                panic!("invalid compact-encoded EIP-8130 account changes: {err}")
+            });
+        assert!(
+            account_changes_buf.is_empty(),
+            "compact-encoded EIP-8130 account changes left trailing bytes"
+        );
+
+        let mut calls_buf = calls.as_ref();
+        let calls = Self::decode_calls(&mut calls_buf)
+            .unwrap_or_else(|err| panic!("invalid compact-encoded EIP-8130 calls: {err}"));
+        assert!(calls_buf.is_empty(), "compact-encoded EIP-8130 calls left trailing bytes");
+
+        (account_changes, calls, metadata)
+    }
+
     /// Signing-hash preimage for the sender, per [EIP-8130].
     ///
     /// `keccak256(EIP8130_TX_TYPE || rlp([...unsigned body fields...]))`.
@@ -213,8 +281,11 @@ impl TxEip8130 {
 
     /// Signing-hash preimage for the payer, per [EIP-8130].
     ///
-    /// `keccak256(EIP8130_PAYER_TYPE || rlp(unsigned body fields with the
-    /// `sender` slot replaced by the recovered sender address))`.
+    /// `keccak256(EIP8130_PAYER_TYPE || rlp([all body fields through `payer`]))`
+    /// with the `sender` slot replaced by the recovered sender address. The
+    /// payer commits to the full transaction body — including the `payer` slot
+    /// itself — and only the `sender_auth` / `payer_auth` slots (which live in
+    /// the signed wrapper) are excluded.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     pub fn payer_signature_hash(&self, resolved_sender: Address) -> B256 {
@@ -237,6 +308,7 @@ impl TxEip8130 {
             + mem::size_of::<u64>()
             + self.account_changes.capacity() * mem::size_of::<AccountChange>()
             + self.calls.iter().map(|p| p.capacity() * mem::size_of::<Call>()).sum::<usize>()
+            + self.metadata.len()
             + mem::size_of::<Option<Address>>()
     }
 }
@@ -267,6 +339,90 @@ impl Decodable for TxEip8130 {
             });
         }
         Ok(this)
+    }
+}
+
+#[cfg(feature = "reth")]
+#[derive(Debug, Clone, PartialEq, Eq, Compact)]
+#[reth_codecs(crate = "reth_codecs")]
+struct CompactTxEip8130Head {
+    chain_id: ChainId,
+    sender: Option<Address>,
+    nonce_key: U256,
+    nonce_sequence: u64,
+    expiry: u64,
+    max_priority_fee_per_gas: u128,
+    max_fee_per_gas: u128,
+    gas_limit: u64,
+    payer: Option<Address>,
+    tail_len: u64,
+}
+
+#[cfg(feature = "reth")]
+impl Compact for TxEip8130 {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        let tail = self.compact_tail();
+        let head = CompactTxEip8130Head {
+            chain_id: self.chain_id,
+            sender: self.sender,
+            nonce_key: self.nonce_key,
+            nonce_sequence: self.nonce_sequence,
+            expiry: self.expiry,
+            max_priority_fee_per_gas: self.max_priority_fee_per_gas,
+            max_fee_per_gas: self.max_fee_per_gas,
+            gas_limit: self.gas_limit,
+            payer: self.payer,
+            tail_len: tail.len() as u64,
+        };
+
+        let identifier = head.to_compact(buf);
+        buf.put_slice(&tail);
+        identifier
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        let (head, buf) = CompactTxEip8130Head::from_compact(buf, len);
+        let CompactTxEip8130Head {
+            chain_id,
+            sender,
+            nonce_key,
+            nonce_sequence,
+            expiry,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas_limit,
+            payer,
+            tail_len,
+        } = head;
+
+        let tail_len: usize = tail_len.try_into().expect("EIP-8130 compact tail length overflow");
+        assert!(
+            buf.len() >= tail_len,
+            "compact-encoded EIP-8130 tail shorter than declared length"
+        );
+        let (tail, buf) = buf.split_at(tail_len);
+        let (account_changes, calls, metadata) = Self::decode_compact_tail(tail);
+
+        (
+            Self {
+                chain_id,
+                sender,
+                nonce_key,
+                nonce_sequence,
+                expiry,
+                max_priority_fee_per_gas,
+                max_fee_per_gas,
+                gas_limit,
+                account_changes,
+                calls,
+                metadata,
+                payer,
+            },
+            buf,
+        )
     }
 }
 
@@ -379,6 +535,8 @@ impl SignableTransaction<Signature> for TxEip8130 {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, bytes};
+    #[cfg(feature = "reth")]
+    use reth_codecs::Compact;
 
     use super::*;
     use crate::transaction::eip8130::account_changes::Delegation;
@@ -400,6 +558,7 @@ mod tests {
                 to: address!("0x00000000000000000000000000000000000000cc"),
                 data: bytes!("deadbeef"),
             }]],
+            metadata: bytes!("c0ffee"),
             payer: None,
         }
     }
@@ -426,6 +585,49 @@ mod tests {
         tx.encode(&mut buf);
         let decoded = TxEip8130::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(tx, decoded);
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_roundtrip() {
+        let tx = sample_tx();
+        let mut buf = Vec::new();
+        let len = tx.to_compact(&mut buf);
+        let (decoded, remaining) = TxEip8130::from_compact(&buf, len);
+
+        assert_eq!(decoded, tx);
+        assert!(remaining.is_empty());
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_roundtrip_eoa_sender_with_explicit_payer() {
+        let tx = TxEip8130 {
+            sender: None,
+            payer: Some(address!("0x00000000000000000000000000000000000000dd")),
+            ..sample_tx()
+        };
+        let mut buf = Vec::new();
+        let len = tx.to_compact(&mut buf);
+        let (decoded, remaining) = TxEip8130::from_compact(&buf, len);
+
+        assert_eq!(decoded, tx);
+        assert!(remaining.is_empty());
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn compact_decode_preserves_trailing_bytes() {
+        let tx = sample_tx();
+        let trailing = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut buf = Vec::new();
+        let _ = tx.to_compact(&mut buf);
+        buf.extend_from_slice(&trailing);
+
+        let (decoded, remaining) = TxEip8130::from_compact(&buf, buf.len());
+
+        assert_eq!(decoded, tx);
+        assert_eq!(remaining, trailing);
     }
 
     #[test]
@@ -537,5 +739,82 @@ mod tests {
         tx2.rlp_encode(&mut buf);
         let payer_hash_v2 = keccak256(&buf);
         assert_eq!(payer_hash_v1, payer_hash_v2);
+    }
+
+    // `metadata` is committed to by both signatures.
+    #[test]
+    fn metadata_is_covered_by_both_signature_hashes() {
+        let tx = sample_tx();
+        let resolved = address!("0x00000000000000000000000000000000000000dd");
+        let mut other = tx.clone();
+        other.metadata = bytes!("beef");
+
+        assert_ne!(tx.sender_signature_hash(), other.sender_signature_hash());
+        assert_ne!(tx.payer_signature_hash(resolved), other.payer_signature_hash(resolved));
+    }
+
+    // Both signatures commit to the full body through `payer`, so changing the
+    // `payer` slot changes both the sender and payer hashes.
+    #[test]
+    fn payer_field_is_covered_by_both_signature_hashes() {
+        let resolved = address!("0x00000000000000000000000000000000000000dd");
+        let mut self_pay = sample_tx();
+        self_pay.payer = None;
+        let sponsored = TxEip8130 {
+            payer: Some(address!("0x00000000000000000000000000000000000000ee")),
+            ..self_pay.clone()
+        };
+
+        assert_ne!(
+            self_pay.payer_signature_hash(resolved),
+            sponsored.payer_signature_hash(resolved)
+        );
+        assert_ne!(self_pay.sender_signature_hash(), sponsored.sender_signature_hash());
+    }
+
+    /// Proves that EIP-8130 transactions can be deserialized through the
+    /// `BaseTxEnvelope` tagged-enum path with hex-string quantity fields.
+    ///
+    /// Without `#[serde(with = "alloy_serde::quantity")]` on the u128 fee
+    /// fields, this test fails with:
+    ///   "u128 is not supported"
+    /// because serde's internal Content buffer (used for internally-tagged
+    /// enums) cannot handle u128 deserialization.
+    ///
+    /// See: <https://github.com/serde-rs/serde/issues/2230>
+    #[cfg(feature = "serde")]
+    #[test]
+    fn eip8130_deserializes_through_envelope() {
+        use crate::BaseTxEnvelope;
+
+        let json = serde_json::json!({
+            "type": "0x7b",
+            "tx": {
+                "chainId": 1,
+                "sender": null,
+                "nonceKey": "0x0",
+                "nonceSequence": 1,
+                "expiry": 0,
+                "maxPriorityFeePerGas": "0x3b9aca00",
+                "maxFeePerGas": "0x3b9aca00",
+                "gasLimit": 21000,
+                "accountChanges": [],
+                "calls": [],
+                "metadata": "0x",
+                "payer": null
+            },
+            "senderAuth": "0x",
+            "payerAuth": "0x"
+        });
+
+        let result = serde_json::from_value::<BaseTxEnvelope>(json);
+        assert!(
+            result.is_ok(),
+            "EIP-8130 envelope deserialization failed: {:#}",
+            result.unwrap_err()
+        );
+
+        let envelope = result.unwrap();
+        assert!(matches!(envelope, BaseTxEnvelope::Eip8130(_)));
     }
 }

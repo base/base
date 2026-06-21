@@ -1,72 +1,78 @@
-//! Parallel proving pipeline for the proposer.
+//! Proving pipeline for the proposer.
 //!
-//! The [`ProvingPipeline`] is an event-driven coordinator that runs multiple
-//! proofs concurrently while maintaining strictly sequential on-chain submission.
+//! The [`ProvingPipeline`] runs two cooperative tasks per session: a
+//! dispatcher loop that walks forward from the latest on-chain game and sends
+//! proof requests up to the safe head, and a collector loop that polls and
+//! submits completed proofs in order. Submit failures restart both tasks from
+//! chain-derived state.
 //!
-//! # Architecture
+//! # Iteration
 //!
 //! ```text
-//! ┌──────────┐     ┌──────────────┐     ┌──────────────┐
-//! │  PLAN    │ ──▶ │  PROVE       │ ──▶ │  SUBMIT      │
-//! │ (scan)   │     │ (parallel)   │     │ (at most 1)  │
-//! └──────────┘     └──────────────┘     └──────────────┘
+//! ┌──────────┐     ┌──────────────────┐
+//! │ RECOVER  │ ──▶ │ DISPATCH LOOP    │ ──▶ prover service
+//! │ (cached) │     └──────────────────┘
+//! │          │     ┌──────────────────┐
+//! │          │ ──▶ │ COLLECT LOOP     │ ──▶ L1 submitter
+//! └──────────┘     └──────────────────┘
 //! ```
 //!
-//! The coordinator loop uses `tokio::select!` over three event sources:
-//!
-//! - **Submit completion** — when the spawned L1 transaction resolves, the
-//!   coordinator processes the outcome and (on success only) chains the next
-//!   submission immediately.
-//! - **Proof completion** — when any proof task finishes, its result is stored
-//!   in `proved` and the coordinator attempts to start a submission if one is
-//!   ready and no submission is in flight.
-//! - **Poll-interval tick** — periodic recovery scan that discovers new safe
-//!   head advances, refills proof slots, and retries failed submissions.
-//!
-//! Submission runs as a separate spawned task so the coordinator never blocks
-//! on L1 transaction confirmation. Failed submissions defer retry to the next
-//! tick rather than retrying immediately, preventing tight loops when L1 is
-//! persistently failing.
+//! Normal sessions remain root-derived so a restarted proposer can rediscover
+//! work. Discard retries use retry-specific sessions because the prover service
+//! intentionally replays `Succeeded` sessions for the root-derived id.
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    panic::AssertUnwindSafe,
-    sync::Arc,
-};
+#[cfg(test)]
+use std::collections::HashMap;
+use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
+#[cfg(test)]
+use alloy_primitives::B256;
 use base_proof_contracts::{
-    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, encode_extra_data,
+    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
 };
-use base_proof_primitives::{ProofRequest, ProofResult};
-use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
+#[cfg(test)]
+use base_proof_primitives::ProofResult;
+use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::TeeKind;
 use eyre::Result;
-use futures::{FutureExt, StreamExt, stream};
-use tokio::task::JoinSet;
+use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{info, instrument, warn};
 
 use crate::{
     Metrics,
-    driver::{DriverConfig, RecoveredState},
-    error::ProposerError,
+    driver::DriverConfig,
     output_proposer::OutputProposer,
-    proof_adapter::{ProofRequesterDispatcher, ProposerProofAdapter},
-    proof_collector::{CollectedProof, ProofCollector},
-    proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction},
+    proof_collector::{
+        ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig,
+        ProofCollectorState, ProofCollectorTickResult,
+    },
+    proof_dispatcher::{
+        ProofDispatcher, ProofDispatcherConfig, ProofDispatcherRuntimeConfig, ProofDispatcherState,
+    },
+    proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig},
+    proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
+};
+#[cfg(test)]
+use crate::{
+    driver::RecoveredState, error::ProposerError, proof_collector::ProofSubmitEffect,
+    proof_dispatcher::ProofDispatchOutcome, proof_submitter::SubmitAction,
 };
 
-/// Configuration for the parallel proving pipeline.
+/// Configuration for the proving pipeline.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
-    /// Maximum retries for a single proof range before dropping that target
-    /// and the cached recovery; other in-flight and proved entries are
-    /// preserved.
+    /// Maximum retries for a single target block before dropping the cached
+    /// recovery. Only proof failures and dispatch RPC errors count against
+    /// this budget; transient submit and poll errors do not.
     pub max_retries: u32,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
+    /// Optional maximum duration for a single inline submit (validation + L1
+    /// transaction). When exceeded, the pipeline restarts without counting
+    /// against the retry budget. `None` disables the outer pipeline timeout.
+    pub submit_timeout: Option<Duration>,
     /// Base driver configuration.
     pub driver: DriverConfig,
     /// Optional address of the `TEEProverRegistry` contract on L1.
@@ -75,94 +81,52 @@ pub struct PipelineConfig {
 }
 
 /// Cached result from the last successful recovery.
-///
-/// The cache is keyed by `game_count`. When `game_count` is unchanged
-/// and the anchor has not advanced past the cached tip, the cached
-/// `RecoveredState` is returned immediately (zero additional RPCs).
-///
-/// When `game_count` increases (and the anchor is still at or behind the
-/// cached tip), the walk resumes from the cached tip (incremental —
-/// typically 1–2 steps).
-///
-/// A full re-walk from the anchor is only needed when:
-/// - No cache exists (cold start, or invalidated by a submit `RootMismatch`
-///   or a target hitting `max_retries`).
-/// - The anchor advanced past the cached tip (governance intervention).
-/// - `game_count` decreased (L1 reorg removed games).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CachedRecovery {
-    /// Factory `game_count` at the time of the last walk.
-    game_count: u64,
-    /// The recovered on-chain state from the walk.
-    state: RecoveredState,
-}
+type CachedRecovery = ProofRecoveryCache;
 
-/// Mutable state for the coordinator loop.
-struct PipelineState {
-    /// Running proof dispatch tasks, each accepting a prover-service session.
-    dispatch_tasks: JoinSet<ProofDispatchOutcome>,
-    /// At most one concurrent submission task.
-    submit_tasks: JoinSet<SubmitOutcome>,
-    /// Completed proofs waiting for sequential submission, keyed by target block.
-    proved: BTreeMap<u64, ProofResult>,
-    /// Target blocks currently being proved.
-    inflight: BTreeSet<u64>,
-    /// Target block currently being submitted (at most one).
-    submitting: Option<u64>,
-    /// Per-target-block retry counts; exceeding `max_retries` triggers a full reset.
-    retry_counts: BTreeMap<u64, u32>,
-    /// Cached result from the last successful recovery scan.
-    cached_recovery: Option<CachedRecovery>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PipelineSessionExit {
+    Cancelled,
+    Restart,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ProofPlan {
-    start_block: u64,
-    target_block: u64,
+enum TaskKind {
+    Dispatcher,
+    Collector,
 }
 
-enum ProofDispatchOutcome {
-    Accepted { plan: ProofPlan, session_id: String },
-    Failed { plan: ProofPlan, error: ProposerError },
-}
-
-impl PipelineState {
-    fn new() -> Self {
-        Self {
-            dispatch_tasks: JoinSet::new(),
-            submit_tasks: JoinSet::new(),
-            proved: BTreeMap::new(),
-            inflight: BTreeSet::new(),
-            submitting: None,
-            retry_counts: BTreeMap::new(),
-            cached_recovery: None,
+impl TaskKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Dispatcher => "dispatcher",
+            Self::Collector => "collector",
         }
     }
-
-    fn record_gauges(&self) {
-        Metrics::inflight_proofs().set(self.inflight.len() as f64);
-        Metrics::proved_queue_depth().set(self.proved.len() as f64);
-        Metrics::pipeline_retries().set(self.retry_counts.values().sum::<u32>() as f64);
-    }
-
-    fn prune_stale(&mut self, recovered_block: u64) {
-        self.proved.retain(|&target, _| target > recovered_block);
-        self.inflight.retain(|&target| target > recovered_block);
-        self.retry_counts.retain(|&target, _| target > recovered_block);
-        // NOTE: we intentionally do NOT abort in-flight submit tasks here.
-        // When the recovered block advances past the submitting block, it
-        // means the transaction already landed on L1.  Aborting the task
-        // would prevent `handle_submit_result` from recording the
-        // `last_proposed_block` metric and performing proper state cleanup.
-        // The task will finish with `Success` or `GameAlreadyExists`, and
-        // `handle_submit_result` will clear `submitting` and update metrics.
-    }
 }
 
-/// The parallel proving pipeline.
+#[cfg(test)]
+type DispatchOutcome = ProofDispatchOutcome;
+
+#[cfg(test)]
+type SubmitEffect = ProofSubmitEffect;
+
+#[cfg(test)]
+struct DiscardRetryState<'a> {
+    counts: &'a mut HashMap<u64, u32>,
+    sessions: &'a mut HashMap<u64, String>,
+    count_dispatch_failure: bool,
+}
+
+struct CollectorTickContext<'a> {
+    cancel: &'a CancellationToken,
+    restart_tx: &'a mpsc::Sender<String>,
+}
+
+/// The proving pipeline.
 ///
-/// Orchestrates multiple concurrent proof tasks with a single-threaded
-/// coordinator loop.
+/// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
+/// Submit failures restart both tasks from on-chain state; cancellation stops
+/// them cleanly.
 pub struct ProvingPipeline<L1, L2, R, ASR, F>
 where
     L1: L1Provider,
@@ -173,9 +137,10 @@ where
 {
     config: PipelineConfig,
     proof_requester: Arc<dyn ProofRequesterProvider>,
-    proof_dispatcher: ProofRequesterDispatcher,
+    proof_dispatcher: ProofDispatcher<L1, L2, R>,
     proof_collector: ProofCollector<R>,
     proof_submitter: ProofSubmitter<L1, R>,
+    proof_recovery: ProofRecovery<R, ASR, F>,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
@@ -201,6 +166,7 @@ where
             proof_dispatcher: self.proof_dispatcher.clone(),
             proof_collector: self.proof_collector.clone(),
             proof_submitter: self.proof_submitter.clone(),
+            proof_recovery: self.proof_recovery.clone(),
             l1_client: Arc::clone(&self.l1_client),
             l2_client: Arc::clone(&self.l2_client),
             rollup_client: Arc::clone(&self.rollup_client),
@@ -234,7 +200,7 @@ where
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
-    /// Creates a new parallel proving pipeline.
+    /// Creates a new proving pipeline.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: PipelineConfig,
@@ -248,18 +214,30 @@ where
         output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
     ) -> Self {
-        let proof_collector = ProofCollector::aws_nitro(
+        let proof_collector = ProofCollector::target_poller_aws_nitro(
             Arc::clone(&proof_requester),
             Arc::clone(&rollup_client),
-            config.driver.block_interval,
-            config.recovery_scan_concurrency,
+        );
+        let proof_dispatcher = ProofDispatcher::aws_nitro(
+            Arc::clone(&proof_requester),
+            Arc::clone(&l1_client),
+            Arc::clone(&l2_client),
+            Arc::clone(&rollup_client),
+            ProofDispatcherConfig {
+                proposer_address: config.driver.proposer_address,
+                intermediate_block_interval: config.driver.intermediate_block_interval,
+                tee_image_hash: config.driver.tee_image_hash,
+            },
         );
         let proof_submitter = ProofSubmitter::new(
             Arc::clone(&output_proposer),
             Arc::clone(&rollup_client),
             Arc::clone(&l1_client),
+            Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
+            Arc::clone(&verifier_client),
             ProofSubmitterConfig {
                 proposer_address: config.driver.proposer_address,
+                game_type: config.driver.game_type,
                 block_interval: config.driver.block_interval,
                 intermediate_block_interval: config.driver.intermediate_block_interval,
                 tee_image_hash: config.driver.tee_image_hash,
@@ -267,13 +245,27 @@ where
                 output_fetch_concurrency: config.recovery_scan_concurrency,
             },
         );
+        let proof_recovery = ProofRecovery::new(
+            ProofRecoveryConfig {
+                block_interval: config.driver.block_interval,
+                intermediate_block_interval: config.driver.intermediate_block_interval,
+                game_type: config.driver.game_type,
+                allow_non_finalized: config.driver.allow_non_finalized,
+                anchor_state_registry_address: config.driver.anchor_state_registry_address,
+                scan_concurrency: config.recovery_scan_concurrency,
+            },
+            Arc::clone(&rollup_client),
+            Arc::clone(&anchor_registry),
+            Arc::clone(&factory_client),
+        );
 
         Self {
             config,
             proof_requester: Arc::clone(&proof_requester),
-            proof_dispatcher: ProofRequesterDispatcher::aws_nitro(proof_requester),
+            proof_dispatcher,
             proof_collector,
             proof_submitter,
+            proof_recovery,
             l1_client,
             l2_client,
             rollup_client,
@@ -293,1068 +285,353 @@ where
         self.cancel = cancel;
     }
 
-    /// Runs the parallel proving pipeline until cancelled.
+    fn collector_orchestrator(
+        &self,
+    ) -> ProofCollectorOrchestrator<L1, L2, R, ProofRecovery<R, ASR, F>> {
+        ProofCollectorOrchestrator::new(
+            self.proof_collector.clone(),
+            self.proof_dispatcher.clone(),
+            self.proof_submitter.clone(),
+            Arc::new(self.proof_recovery.clone()),
+            ProofCollectorRuntimeConfig {
+                block_interval: self.config.driver.block_interval,
+                max_retries: self.config.max_retries,
+                submit_timeout: self.config.submit_timeout,
+            },
+        )
+    }
+
+    /// Runs the proving pipeline until cancelled.
     ///
-    /// The coordinator never blocks on L1 transaction confirmation. Submission
-    /// runs as a separate spawned task while the coordinator continues to
-    /// collect proof completions and refill proof slots immediately.
+    /// Each session starts a dispatcher task and a collector task. The
+    /// dispatcher can run ahead up to the safe head, while the collector
+    /// submits proofs in order. Submit failures restart both tasks from a
+    /// fresh recovery walk.
     pub async fn run(&self) -> Result<()> {
         info!(
             block_interval = self.config.driver.block_interval,
-            "Starting parallel proving pipeline"
+            poll_interval_secs = self.config.driver.poll_interval.as_secs(),
+            submit_timeout_secs = ?self.config.submit_timeout.map(|timeout| timeout.as_secs()),
+            "Starting proving pipeline"
         );
 
-        let mut state = PipelineState::new();
-        let mut poll_interval = tokio::time::interval(self.config.driver.poll_interval);
+        loop {
+            match self.run_session().await? {
+                PipelineSessionExit::Cancelled => break,
+                PipelineSessionExit::Restart => {
+                    info!("Restarting proving pipeline after submit failure");
+                }
+            }
+        }
+
+        info!("Proving pipeline stopped");
+        Ok(())
+    }
+
+    async fn run_session(&self) -> Result<PipelineSessionExit> {
+        let session_cancel = self.cancel.child_token();
+        let (restart_tx, mut restart_rx) = mpsc::channel(1);
+
+        let mut dispatcher =
+            spawn_loop(self.clone(), session_cancel.clone(), |pipeline, cancel| async move {
+                pipeline.dispatcher_loop(cancel).await
+            });
+        let mut collector =
+            spawn_loop(self.clone(), session_cancel.clone(), |pipeline, cancel| async move {
+                pipeline.collector_loop(cancel, restart_tx).await
+            });
+        let mut dispatcher_done = false;
+        let mut collector_done = false;
+
+        let exit = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => PipelineSessionExit::Cancelled,
+            result = &mut dispatcher => {
+                dispatcher_done = true;
+                handle_task_result(TaskKind::Dispatcher, result);
+                PipelineSessionExit::Restart
+            }
+            result = &mut collector => {
+                collector_done = true;
+                handle_task_result(TaskKind::Collector, result);
+                PipelineSessionExit::Restart
+            }
+            reason = restart_rx.recv() => {
+                let reason = reason.unwrap_or_else(|| "collector restart channel closed".to_owned());
+                warn!(reason = %reason, "Restarting pipeline session");
+                PipelineSessionExit::Restart
+            }
+        };
+
+        session_cancel.cancel();
+        if !dispatcher_done {
+            await_loop(TaskKind::Dispatcher, dispatcher).await;
+        }
+        if !collector_done {
+            await_loop(TaskKind::Collector, collector).await;
+        }
+        Ok(exit)
+    }
+
+    /// Runs the proof dispatcher loop.
+    ///
+    /// The dispatcher recovers the latest on-chain game, then dispatches every
+    /// missing block interval up to the safe head. Its cursor is intentionally
+    /// independent from the collector cursor: it tracks how far proof requests
+    /// have been sent, not how far proofs have landed on-chain.
+    #[instrument(skip_all)]
+    async fn dispatcher_loop(&self, cancel: CancellationToken) -> Result<()> {
+        let mut cache: Option<CachedRecovery> = None;
+        let mut state = ProofDispatcherState::new();
 
         loop {
             tokio::select! {
                 biased;
+                () = cancel.cancelled() => break,
+                () = self.dispatcher_tick(&mut cache, &mut state, &cancel) => {}
+            }
 
-                () = self.cancel.cancelled() => {
-                    state.dispatch_tasks.abort_all();
-                    state.submit_tasks.abort_all();
-                    break;
-                }
-
-                Some(result) = state.dispatch_tasks.join_next() => {
-                    self.handle_dispatch_result(result, &mut state);
-                }
-
-                Some(result) = state.submit_tasks.join_next() => {
-                    let chain_next = self.handle_submit_result(result, &mut state).await;
-                    if chain_next {
-                        self.try_submit(&mut state);
-                    }
-                }
-
-                _ = poll_interval.tick() => {
-                    if let Err(e) = self.tick(&mut state).await {
-                        error!(error = ?e, "Pipeline tick failed, retrying next interval");
-                    }
-                    self.try_submit(&mut state);
-                }
+            sleep_or_cancel(self.config.driver.poll_interval, &cancel).await;
+            if cancel.is_cancelled() {
+                break;
             }
         }
 
-        info!("Parallel proving pipeline stopped");
         Ok(())
     }
 
-    #[instrument(skip_all)]
-    async fn tick(&self, state: &mut PipelineState) -> Result<()> {
+    async fn dispatcher_tick(
+        &self,
+        cache: &mut Option<CachedRecovery>,
+        state: &mut ProofDispatcherState,
+        cancel: &CancellationToken,
+    ) {
         let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
 
-        if let Some((recovered, safe_head)) =
-            self.try_recover_and_plan(&mut state.cached_recovery).await
-        {
-            Metrics::safe_head().set(safe_head as f64);
-            Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
-            state.prune_stale(recovered.l2_block_number);
-            self.collect_proofs(&recovered, safe_head, state).await;
-            self.dispatch_proofs(&recovered, safe_head, state).await?;
-        }
-        Ok(())
-    }
-
-    #[instrument(skip_all, fields(
-        recovered_block = recovered.l2_block_number,
-        safe_head = safe_head,
-    ))]
-    async fn dispatch_proofs(
-        &self,
-        recovered: &RecoveredState,
-        safe_head: u64,
-        state: &mut PipelineState,
-    ) -> Result<()> {
-        let (plans, output_blocks) = self.plan_proofs(recovered, safe_head, state)?;
-
-        if plans.is_empty() {
-            state.record_gauges();
-            return Ok(());
-        }
-
-        let requests = match self
-            .build_proof_requests_for(recovered, &plans, output_blocks.into_iter().collect())
-            .await
-        {
-            Ok(requests) => requests,
-            Err(e) => {
-                warn!(error = %e, "Failed to build proof request batch");
-                state.record_gauges();
-                return Ok(());
-            }
-        };
-
-        for (plan, request) in requests {
-            let retry_count = state.retry_counts.get(&plan.target_block).copied().unwrap_or(0);
-            let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
-            let dispatcher = self.proof_dispatcher.clone();
-            let cancel = self.cancel.child_token();
-
-            info!(
-                session_id = %session_id,
-                from_block = plan.start_block,
-                to_block = plan.target_block,
-                blocks = plan.target_block.saturating_sub(plan.start_block),
-                retry_count,
-                "Dispatching proof task"
-            );
-            state.inflight.insert(plan.target_block);
-            state.dispatch_tasks.spawn(async move {
-                let inner = async move {
-                    tokio::select! {
-                        () = cancel.cancelled() => {
-                            ProofDispatchOutcome::Failed {
-                                plan,
-                                error: ProposerError::Internal("cancelled".into()),
-                            }
-                        }
-                        result = dispatcher.dispatch_tee(request) => {
-                            match result {
-                                Ok(dispatched) if dispatched.session_id == session_id => {
-                                    ProofDispatchOutcome::Accepted { plan, session_id }
-                                }
-                                Ok(dispatched) => ProofDispatchOutcome::Failed {
-                                    plan,
-                                    error: ProposerError::Prover(format!(
-                                        "prover service returned mismatched session_id: expected {}, got {}",
-                                        session_id,
-                                        dispatched.session_id
-                                    )),
-                                },
-                                Err(error) => ProofDispatchOutcome::Failed { plan, error },
-                            }
-                        }
-                    }
-                };
-                // Catch panics inside the dispatch future so a single bad task
-                // never bubbles up as a tokio JoinError that the coordinator
-                // can't attribute to a specific target.
-                match AssertUnwindSafe(inner).catch_unwind().await {
-                    Ok(outcome) => outcome,
-                    Err(panic) => ProofDispatchOutcome::Failed {
-                        plan,
-                        error: ProposerError::Internal(format!(
-                            "proof dispatch task panicked: {}",
-                            panic_message(&panic),
-                        )),
-                    },
-                }
-            });
-        }
-
-        state.record_gauges();
-        Ok(())
-    }
-
-    fn plan_proofs(
-        &self,
-        recovered: &RecoveredState,
-        safe_head: u64,
-        state: &PipelineState,
-    ) -> Result<(Vec<ProofPlan>, BTreeSet<u64>)> {
-        let mut cursor = recovered
-            .l2_block_number
-            .checked_add(self.config.driver.block_interval)
-            .ok_or_else(|| {
-            eyre::eyre!(
-                "overflow: l2_block_number {} + block_interval {}",
-                recovered.l2_block_number,
-                self.config.driver.block_interval
-            )
-        })?;
-
-        let mut start_block = recovered.l2_block_number;
-        let mut plans = Vec::new();
-        let mut output_blocks = BTreeSet::new();
-
-        // Plan every eligible target up to the safe head. There is no per-tick
-        // parallel cap: dispatch is fire-and-forget against the prover service
-        // (which queues sessions itself) and collection is naturally bounded
-        // by the safe head's distance from the recovered tip.
-        while cursor <= safe_head {
-            let mut last_skipped = None;
-            while cursor <= safe_head
-                && (state.inflight.contains(&cursor)
-                    || state.proved.contains_key(&cursor)
-                    || state.submitting == Some(cursor))
-            {
-                last_skipped = Some(cursor);
-                cursor = match cursor.checked_add(self.config.driver.block_interval) {
-                    Some(c) => c,
-                    None => return Ok((plans, output_blocks)),
-                };
-            }
-
-            if cursor > safe_head {
-                break;
-            }
-
-            if let Some(skipped) = last_skipped {
-                start_block = skipped;
-                output_blocks.insert(skipped);
-            }
-
-            plans.push(ProofPlan { start_block, target_block: cursor });
-            output_blocks.insert(cursor);
-            start_block = cursor;
-
-            cursor = match cursor.checked_add(self.config.driver.block_interval) {
-                Some(c) => c,
-                None => break,
-            };
-        }
-        Ok((plans, output_blocks))
-    }
-
-    fn handle_dispatch_result(
-        &self,
-        join_result: Result<ProofDispatchOutcome, tokio::task::JoinError>,
-        state: &mut PipelineState,
-    ) {
-        let outcome = match join_result {
-            Ok(outcome) => outcome,
-            Err(join_err) if join_err.is_cancelled() => {
-                debug!(error = %join_err, "Proof dispatch task cancelled");
-                return;
-            }
-            Err(join_err) => {
-                // Panics inside dispatch futures are caught and returned as
-                // `ProofDispatchOutcome::Failed` with target context. A raw
-                // join error here has no target block, so stale inflight
-                // cleanup falls back to `prune_stale`.
-                warn!(error = %join_err, "Proof dispatch task join error");
-                state.record_gauges();
+        let (recovered, safe_head) = match self.proof_recovery.try_recover_and_plan(cache).await {
+            Some(pair) => pair,
+            None => {
+                Metrics::pipeline_retries().set(state.retry_counts.values().sum::<u32>() as f64);
                 return;
             }
         };
 
-        match outcome {
-            ProofDispatchOutcome::Accepted { plan, session_id } => {
-                if !state.inflight.contains(&plan.target_block)
-                    || state.proved.contains_key(&plan.target_block)
-                {
-                    debug!(
-                        target_block = plan.target_block,
-                        session_id = %session_id,
-                        "Ignoring stale proof dispatch result"
-                    );
-                    return;
-                }
+        Metrics::safe_head().set(safe_head as f64);
+        Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-                info!(
-                    target_block = plan.target_block,
-                    session_id = %session_id,
-                    from_block = plan.start_block,
-                    "Proof request accepted by prover service"
-                );
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
-                state.record_gauges();
-            }
-            ProofDispatchOutcome::Failed { plan, error } => {
-                if !state.inflight.contains(&plan.target_block)
-                    || state.proved.contains_key(&plan.target_block)
-                {
-                    debug!(
-                        target_block = plan.target_block,
-                        error = %error,
-                        "Ignoring stale proof dispatch failure"
-                    );
-                    return;
-                }
-
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
-                self.handle_proof_failure(plan.target_block, error, state);
-            }
-        }
-    }
-
-    async fn collect_proofs(
-        &self,
-        recovered: &RecoveredState,
-        safe_head: u64,
-        state: &mut PipelineState,
-    ) {
-        // Compute targets synchronously while we still hold an immutable view of
-        // `state` so the collector itself can run without borrowing pipeline state
-        // across await points.
-        let targets = self.proof_collector.collectable_targets(recovered, safe_head, |target| {
-            state.proved.contains_key(&target) || state.submitting == Some(target)
-        });
-
-        for outcome in self.proof_collector.collect(&targets).await {
-            match outcome {
-                CollectedProof::Ready { target_block, session_id, proof } => {
-                    state.inflight.remove(&target_block);
-                    state.retry_counts.remove(&target_block);
-                    state.proved.insert(target_block, proof);
-                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
-                    Metrics::last_collected_block().set(target_block as f64);
-                    state.record_gauges();
-                    info!(
-                        target_block,
-                        session_id = %session_id,
-                        "Proof completed successfully"
-                    );
-                }
-                CollectedProof::Failed { target_block, session_id, error } => {
-                    if !state.inflight.contains(&target_block) {
-                        debug!(
-                            target_block,
-                            session_id = %session_id,
-                            error = %error,
-                            "Ignoring failed proof result for non-inflight target"
-                        );
-                        continue;
-                    }
-
-                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
-                        .increment(1);
-                    self.handle_proof_failure(target_block, error, state);
-                }
-            }
-        }
-    }
-
-    fn handle_proof_failure(&self, target: u64, error: ProposerError, state: &mut PipelineState) {
-        Metrics::errors_total(error.metric_label()).increment(1);
-        state.inflight.remove(&target);
-        let count = state.retry_counts.entry(target).or_insert(0);
-        *count += 1;
-        Metrics::proof_retries_total().increment(1);
-        if *count >= self.config.max_retries {
-            error!(
-                target_block = target,
-                attempts = *count,
-                error = %error,
-                "Proof failed after max retries, dropping cached recovery"
-            );
-            state.retry_counts.remove(&target);
-            state.cached_recovery = None;
-        } else {
-            warn!(
-                target_block = target,
-                attempt = *count,
-                error = %error,
-                "Proof failed, will retry next tick"
-            );
-        }
-        state.record_gauges();
-    }
-
-    fn try_submit(&self, state: &mut PipelineState) {
-        if state.submitting.is_some() || !state.submit_tasks.is_empty() {
-            return;
-        }
-
-        let recovered = match &state.cached_recovery {
-            Some(cached) => cached.state,
-            _ => return,
-        };
-
-        let next_to_submit =
-            match recovered.l2_block_number.checked_add(self.config.driver.block_interval) {
-                Some(n) => n,
-                None => return,
-            };
-
-        let proof_result = match state.proved.remove(&next_to_submit) {
-            Some(r) => r,
-            None => return,
-        };
-
-        let parent_address = recovered.parent_address;
-        state.submitting = Some(next_to_submit);
-        state.record_gauges();
-
-        info!(target_block = next_to_submit, parent_address = %parent_address, "Spawning submission task");
-
-        let pipeline = self.clone();
-        // Keep a clone outside the spawned future so a panic inside the task
-        // does not destroy the proof; the catch_unwind branch re-attaches it
-        // to a Failed outcome so the coordinator can re-queue it for retry.
-        let proof_for_panic = proof_result.clone();
-        state.submit_tasks.spawn(async move {
-            let inner = async move {
-                let mut submit_timer =
-                    base_metrics::timed!(Metrics::proposal_total_duration_seconds());
-                let result = pipeline
-                    .validate_and_submit(&proof_result, next_to_submit, parent_address)
-                    .await;
-                match result {
-                    Ok(()) => {
-                        drop(submit_timer);
-                        SubmitOutcome::Success { target_block: next_to_submit }
-                    }
-                    Err(SubmitAction::RootMismatch) => {
-                        submit_timer.disarm();
-                        SubmitOutcome::RootMismatch { target_block: next_to_submit }
-                    }
-                    Err(SubmitAction::Failed(e)) => {
-                        submit_timer.disarm();
-                        SubmitOutcome::Failed {
-                            target_block: next_to_submit,
-                            proof: proof_result,
-                            error: e,
-                        }
-                    }
-                    Err(SubmitAction::GameAlreadyExists) => {
-                        submit_timer.disarm();
-                        SubmitOutcome::GameAlreadyExists { target_block: next_to_submit }
-                    }
-                    Err(SubmitAction::Discard(e)) => {
-                        submit_timer.disarm();
-                        SubmitOutcome::Discard { target_block: next_to_submit, error: e }
-                    }
-                }
-            };
-            match AssertUnwindSafe(inner).catch_unwind().await {
-                Ok(outcome) => outcome,
-                Err(panic) => SubmitOutcome::Failed {
-                    target_block: next_to_submit,
-                    proof: proof_for_panic,
-                    error: ProposerError::Internal(format!(
-                        "submit task panicked: {}",
-                        panic_message(&panic)
-                    )),
+        let result = self
+            .proof_dispatcher
+            .tick(
+                state,
+                recovered,
+                safe_head,
+                ProofDispatcherRuntimeConfig {
+                    block_interval: self.config.driver.block_interval,
+                    max_retries: self.config.max_retries,
                 },
-            }
-        });
-    }
-
-    /// Returns `true` when the caller should immediately attempt the next
-    /// submission (i.e. on success). Returns `false` on failure/discard so
-    /// that retry is deferred to the next poll-interval tick.
-    async fn handle_submit_result(
-        &self,
-        join_result: Result<SubmitOutcome, tokio::task::JoinError>,
-        state: &mut PipelineState,
-    ) -> bool {
-        let outcome = match join_result {
-            Ok(outcome) => outcome,
-            Err(join_err) if join_err.is_cancelled() => {
-                debug!(error = %join_err, "Submit task cancelled");
-                state.submitting = None;
-                return false;
-            }
-            Err(join_err) => {
-                // Panics are caught inside the spawned future and reported as
-                // SubmitOutcome::Failed (with the proof re-attached) so this
-                // branch should not normally fire. Treat as a transient
-                // failure: release the slot and leave `proved` intact.
-                warn!(error = %join_err, "Submit task join error");
-                state.submitting = None;
-                state.record_gauges();
-                return false;
-            }
-        };
-
-        match outcome {
-            SubmitOutcome::Success { target_block } => {
-                info!(target_block, "Submission successful");
-                Metrics::last_proposed_block().set(target_block as f64);
-                state.retry_counts.remove(&target_block);
-                state.submitting = None;
-                // Don't clear the cache — recover_latest_state will see the
-                // new game_count and incrementally scan just the new entry.
-                match self.recover_latest_state(&mut state.cached_recovery).await {
-                    Ok(recovered) => {
-                        state.prune_stale(recovered.l2_block_number);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Failed to recover state after submission");
-                    }
-                }
-                state.record_gauges();
-                true
-            }
-            SubmitOutcome::GameAlreadyExists { target_block } => {
-                info!(target_block, "Game already exists on chain");
-                Metrics::last_proposed_block().set(target_block as f64);
-                state.retry_counts.remove(&target_block);
-                state.submitting = None;
-                // The game exists but the forward walk missed it — most
-                // likely because `game_count` was read from a different L1
-                // RPC replica than the one serving `factory.games()`.
-                // Decrement the cached game_count so the next recovery sees
-                // `actual_count > cached_count` and performs an incremental
-                // forward walk from the cached tip (O(1): a single
-                // `factory.games()` lookup at the next expected block).
-                if let Some(ref mut cached) = state.cached_recovery {
-                    cached.game_count = cached.game_count.saturating_sub(1);
-                }
-                match self.recover_latest_state(&mut state.cached_recovery).await {
-                    Ok(recovered) => {
-                        state.prune_stale(recovered.l2_block_number);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Failed to recover state after GameAlreadyExists");
-                    }
-                }
-                state.record_gauges();
-                true
-            }
-            SubmitOutcome::RootMismatch { target_block } => {
-                warn!(
-                    target_block,
-                    "Output root mismatch at submit time, dropping cached recovery"
-                );
-                Metrics::root_mismatch_total().increment(1);
-                // The mismatched proof was already removed from `proved` by
-                // `try_submit`. Drop the recovery cache so the next tick
-                // re-walks the chain and `prune_stale` evicts any newly
-                // overtaken entries. Other proved entries are left intact:
-                // each faces JIT validation independently at submit time and
-                // any that have gone stale will self-eject via this same
-                // path. Re-proving a still-valid block is much more expensive
-                // than one extra JIT validation RPC.
-                state.cached_recovery = None;
-                state.submitting = None;
-                state.record_gauges();
-                false
-            }
-            SubmitOutcome::Failed { target_block, proof, error } => {
-                Metrics::errors_total(error.metric_label()).increment(1);
-                // Drop the cache only when the contract explicitly reports
-                // the parent is no longer valid; transient failures (RPC,
-                // gas/nonce, signing) leave it intact to avoid an
-                // unnecessary forward walk on the next tick.
-                if error.is_invalid_parent_game() {
-                    warn!(
-                        error = %error,
-                        target_block,
-                        "Submission rejected: parent game invalid, dropping recovery cache"
-                    );
-                    state.cached_recovery = None;
-                } else {
-                    warn!(error = %error, target_block, "Submission failed, will retry");
-                }
-                state.proved.insert(target_block, proof);
-                state.submitting = None;
-                state.record_gauges();
-                false
-            }
-            SubmitOutcome::Discard { target_block, error } => {
-                Metrics::errors_total(error.metric_label()).increment(1);
-                warn!(
-                    error = %error,
-                    target_block,
-                    "Proof discarded, will re-prove"
-                );
-                state.submitting = None;
-                state.record_gauges();
-                false
-            }
+                cancel,
+            )
+            .await;
+        if result.drop_recovery_cache {
+            *cache = None;
         }
     }
 
-    /// Attempts to recover on-chain state and fetch the safe head.
+    /// Runs the proof collector loop.
     ///
-    /// Returns `None` if either step fails (logged as warnings), allowing the
-    /// caller to fall through to the poll-tick sleep.
-    async fn try_recover_and_plan(
+    /// The collector submits proofs in order. Any non-success submit outcome
+    /// that invalidates the current submit attempt asks the driver to restart
+    /// both loops from a fresh forward walk.
+    #[instrument(skip_all)]
+    async fn collector_loop(
         &self,
-        cache: &mut Option<CachedRecovery>,
-    ) -> Option<(RecoveredState, u64)> {
-        if let Some(cached) = cache.as_ref() {
-            let safe_head = match self.latest_safe_block_number().await {
-                Ok(n) => n,
-                Err(e) => {
-                    warn!(error = %e, "Failed to fetch safe head, retrying next tick");
-                    return None;
-                }
-            };
+        cancel: CancellationToken,
+        restart_tx: mpsc::Sender<String>,
+    ) -> Result<()> {
+        let mut cache: Option<CachedRecovery> = None;
+        let mut state = ProofCollectorState::new();
 
-            let next_proposal_block =
-                match cached.state.l2_block_number.checked_add(self.config.driver.block_interval) {
-                    Some(block) => block,
-                    None => {
-                        warn!(
-                            cached_block = cached.state.l2_block_number,
-                            block_interval = self.config.driver.block_interval,
-                            "Cannot compute next proposal block, retrying next tick"
-                        );
-                        return None;
-                    }
-                };
-
-            if safe_head < next_proposal_block {
-                debug!(
-                    safe_head,
-                    cached_block = cached.state.l2_block_number,
-                    next_proposal_block,
-                    "Safe head below next proposal target, skipping recovery"
-                );
-                return Some((cached.state, safe_head));
+        loop {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => break,
+                () = self.collector_tick(
+                    &mut cache,
+                    &mut state,
+                    CollectorTickContext { cancel: &cancel, restart_tx: &restart_tx },
+                ) => {}
             }
 
-            let state = match self.recover_latest_state(cache).await {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
-                    return None;
-                }
-            };
-
-            return Some((state, safe_head));
-        }
-
-        let (state_result, safe_head_result) =
-            tokio::join!(self.recover_latest_state(cache), self.latest_safe_block_number(),);
-
-        let state = match state_result {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
-                return None;
-            }
-        };
-
-        let safe_head = match safe_head_result {
-            Ok(n) => n,
-            Err(e) => {
-                warn!(error = %e, "Failed to fetch safe head, retrying next tick");
-                return None;
-            }
-        };
-
-        Some((state, safe_head))
-    }
-
-    /// Recovers the latest on-chain state using a deterministic forward walk
-    /// from the anchor root.
-    ///
-    /// # Strategy
-    ///
-    /// 1. Read `game_count` from the factory and anchor root from the registry
-    ///    once the safe head is high enough to need recovery.
-    /// 2. **Cache check — fast path.** If both `game_count` and `anchor_root`
-    ///    match the cache, return the cached state immediately (zero RPCs).
-    /// 3. **Forward walk.** Walk from the anchor block, stepping by
-    ///    `block_interval`. At each step:
-    ///    - Compute expected block number deterministically.
-    ///    - Fetch the canonical output root and intermediate roots from the
-    ///      rollup node.
-    ///    - Build `extraData` from the block number, parent address, and
-    ///      intermediate roots.
-    ///    - Call `factory.games(gameType, rootClaim, extraData)` to look up
-    ///      the game by its unique UUID.
-    ///    - If `proxy == Address::ZERO`, no game exists — gap found, stop.
-    ///    - Otherwise, advance to the returned proxy as the new parent.
-    ///
-    /// This approach is deterministic: the correct game for each step is
-    /// uniquely identified by its `(gameType, rootClaim, extraData)` tuple.
-    /// There is no ambiguity or filtering — the game either exists or it
-    /// doesn't.
-    ///
-    /// # Bounding
-    ///
-    /// The walk is NOT bounded by the safe/finalized L2 head because it
-    /// only verifies existing on-chain games (which were already submitted
-    /// and included on L1). New proposal dispatch in [`Self::dispatch_proofs`]
-    /// is separately bounded by the safe head.
-    async fn recover_latest_state(
-        &self,
-        cache: &mut Option<CachedRecovery>,
-    ) -> Result<RecoveredState, ProposerError> {
-        let count = self
-            .factory_client
-            .game_count()
-            .await
-            .map_err(|e| ProposerError::Contract(format!("recovery game_count failed: {e}")))?;
-
-        // Read the anchor root and anchor game from one L1 snapshot so
-        // recovery cannot combine an old root with a newer anchor game.
-        let anchor_snapshot = self
-            .anchor_registry
-            .anchor_snapshot()
-            .await
-            .map_err(|e| ProposerError::Contract(format!("anchor_snapshot failed: {e}")))?;
-        let anchor = anchor_snapshot.anchor_root;
-
-        // The cached tip is valid as long as the anchor hasn't advanced past
-        // it. The anchor advances when games resolve (~every 20 min after the
-        // dispute window elapses), but it always stays behind the chain tip.
-        let tip_still_valid =
-            |cached: &CachedRecovery| anchor.l2_block_number <= cached.state.l2_block_number;
-
-        // Fast path: game_count unchanged and anchor still behind tip →
-        // return the cached state with zero additional RPCs.
-        if let Some(cached) = cache.as_ref()
-            && tip_still_valid(cached)
-            && cached.game_count == count
-        {
-            debug!(game_count = count, "No changes since last recovery, returning cached state");
-            return Ok(cached.state);
-        }
-
-        // ── Forward walk ────────────────────────────────────────────────
-        //
-        // When game_count increased and the anchor is still at or behind
-        // the cached tip, resume from the tip instead of re-walking from
-        // the anchor. This turns post-submission recovery from O(K) to
-        // O(1).
-        //
-        // A full walk from the anchor is required when:
-        // - No cache exists (cold start, or invalidated by RootMismatch /
-        //   max_retries).
-        // - The anchor advanced past the cached tip (governance / anomaly).
-        // - game_count decreased (L1 reorg removed games).
-        let start = match cache.as_ref() {
-            Some(cached) if tip_still_valid(cached) && count > cached.game_count => {
-                debug!(
-                    cached_block = cached.state.l2_block_number,
-                    old_count = cached.game_count,
-                    new_count = count,
-                    "Resuming forward walk from cached tip"
-                );
-                cached.state
-            }
-            _ => {
-                let parent_address = if anchor_snapshot.anchor_game.is_zero() {
-                    self.config.driver.anchor_state_registry_address
-                } else {
-                    anchor_snapshot.anchor_game
-                };
-
-                RecoveredState {
-                    parent_address,
-                    output_root: anchor.root,
-                    l2_block_number: anchor.l2_block_number,
-                }
-            }
-        };
-
-        let state = self.forward_walk(&start).await?;
-
-        *cache = Some(CachedRecovery { game_count: count, state });
-        Ok(state)
-    }
-
-    /// Performs a deterministic forward walk to find the latest verified game
-    /// using UUID-based `games()` lookups.
-    ///
-    /// The walk starts from `start`, which is either the anchor state (full
-    /// walk) or the cached tip from a previous walk (incremental).
-    ///
-    /// At each step:
-    /// 1. Compute the expected block number: `parent_block + block_interval`.
-    /// 2. Fetch all intermediate roots (including the target block's output
-    ///    root) from the rollup node in a single batch.
-    /// 3. Build `extraData` from the block number, parent address, and
-    ///    intermediate roots.
-    /// 4. Call `factory.games(gameType, rootClaim, extraData)` — the factory
-    ///    returns the proxy address if a game with this exact UUID exists, or
-    ///    `Address::ZERO` if not.
-    /// 5. `Address::ZERO` → gap found, stop. Otherwise advance the parent.
-    ///
-    /// Because the game's UUID is computed from canonical data, there is no
-    /// ambiguity: the correct game either exists or it doesn't. Invalid games
-    /// (wrong root claim, wrong parent, wrong intermediate roots) simply have
-    /// different UUIDs and are never matched.
-    ///
-    /// The walk is sequential (each step needs the previous proxy address for
-    /// `extraData`), but each step requires only two RPCs: one
-    /// `fetch_canonical_roots` batch and one `games()` lookup.
-    async fn forward_walk(&self, start: &RecoveredState) -> Result<RecoveredState, ProposerError> {
-        let block_interval = self.config.driver.block_interval;
-        let game_type = self.config.driver.game_type;
-
-        let log_interval = (block_interval / 5).max(1);
-
-        let mut parent_address = start.parent_address;
-        let mut parent_output_root = start.output_root;
-        let mut parent_block = start.l2_block_number;
-        let mut steps: u64 = 0;
-
-        while let Some(expected_block) = parent_block.checked_add(block_interval) {
-            // Fetch all intermediate roots (including the final root at
-            // `expected_block`) from the rollup node in one batch. The last
-            // element of `intermediate_blocks` is always `expected_block`,
-            // so this also provides the canonical output root — no separate
-            // `output_at_block` call needed.
-            let intermediate_blocks =
-                self.proof_submitter.intermediate_block_numbers(parent_block)?;
-            let intermediate_roots =
-                match self.fetch_canonical_roots(intermediate_blocks.clone()).await {
-                    Ok(roots) => roots,
-                    Err(ProposerError::Rpc(RpcError::BlockNotFound(_))) => {
-                        // The block doesn't exist yet (ahead of safe head).
-                        // This is the natural termination point of the walk.
-                        debug!(
-                            block = expected_block,
-                            "Block not available yet, treating as end of walk"
-                        );
-                        break;
-                    }
-                    Err(e) => {
-                        // All other RPC errors (retryable or not) propagate so
-                        // recovery retries on the next tick rather than caching
-                        // a partial result.
-                        warn!(
-                            expected_block,
-                            parent_block,
-                            error = %e,
-                            "Forward walk failed to fetch canonical roots"
-                        );
-                        return Err(e);
-                    }
-                };
-
-            // Extract the canonical root for the target block (always the
-            // last intermediate block).
-            let canonical_root = *intermediate_roots.get(&expected_block).ok_or_else(|| {
-                ProposerError::Internal(format!(
-                    "missing canonical root for expected block {expected_block}"
-                ))
-            })?;
-
-            // Build the ordered intermediate root vector matching extraData layout.
-            let intermediate_root_vec: Vec<B256> = intermediate_blocks
-                .iter()
-                .map(|ib| {
-                    intermediate_roots.get(ib).copied().ok_or_else(|| {
-                        ProposerError::Internal(format!(
-                            "missing canonical root for intermediate block {ib}"
-                        ))
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-
-            // Build extraData and look up the game by UUID.
-            let extra_data =
-                encode_extra_data(expected_block, parent_address, &intermediate_root_vec);
-
-            let lookup =
-                self.factory_client.games(game_type, canonical_root, extra_data).await.map_err(
-                    |e| {
-                        ProposerError::Contract(format!(
-                            "games lookup failed at block {expected_block}: {e}"
-                        ))
-                    },
-                )?;
-
-            if lookup == Address::ZERO {
-                info!(
-                    gap_block = expected_block,
-                    parent_block,
-                    parent_address = %parent_address,
-                    games_verified = steps,
-                    "No game found at expected block, will propose from here"
-                );
+            sleep_or_cancel(self.config.driver.poll_interval, &cancel).await;
+            if cancel.is_cancelled() {
                 break;
             }
+        }
 
-            parent_address = lookup;
-            parent_output_root = canonical_root;
-            parent_block = expected_block;
-            steps += 1;
+        Ok(())
+    }
 
-            if steps.is_multiple_of(log_interval) {
-                info!(
-                    games_verified = steps,
-                    latest_block = parent_block,
-                    "Recovery forward walk in progress"
-                );
+    async fn collector_tick(
+        &self,
+        cache: &mut Option<CachedRecovery>,
+        state: &mut ProofCollectorState,
+        context: CollectorTickContext<'_>,
+    ) {
+        let _tick_timer = base_metrics::timed!(Metrics::collector_tick_duration_seconds());
+
+        let (recovered, safe_head) = match self.proof_recovery.try_recover_and_plan(cache).await {
+            Some(pair) => pair,
+            None => {
+                Metrics::pipeline_retries().set(state.retry_counts.values().sum::<u32>() as f64);
+                return;
             }
-        }
+        };
 
-        if steps > 0 {
-            info!(
-                latest_block = parent_block,
-                parent_address = %parent_address,
-                games_verified = steps,
-                "Recovery forward walk complete"
-            );
-        }
-
-        Ok(RecoveredState {
-            parent_address,
-            output_root: parent_output_root,
-            l2_block_number: parent_block,
-        })
-    }
-
-    /// Returns the latest safe L2 block number.
-    async fn latest_safe_block_number(&self) -> Result<u64, ProposerError> {
-        let sync_status = self.rollup_client.sync_status().await?;
-        if self.config.driver.allow_non_finalized {
-            Ok(sync_status.safe_l2.number)
-        } else {
-            Ok(sync_status.finalized_l2.number)
+        let result = self
+            .collector_orchestrator()
+            .tick(state, cache, recovered, safe_head, context.cancel)
+            .await;
+        if result == ProofCollectorTickResult::Restart {
+            request_restart(context.restart_tx, "submit failure").await;
         }
     }
 
-    /// Concurrently fetches canonical output roots for the given block numbers.
-    async fn fetch_canonical_roots(
+    /// Validates and submits the proof inline against the `submit_timeout`
+    /// budget.
+    ///
+    /// On success, advances `last_proposed_block`, drops the per-target retry
+    /// counter, and refreshes the recovery cache
+    /// incrementally. Submit failures are transient by default — they do not
+    /// count against the per-target retry budget — except `RootMismatch` and
+    /// `InvalidParentGame` failures, which drop the cached recovery
+    /// so the next iteration re-walks the chain.
+    #[cfg(test)]
+    async fn submit_inline(
         &self,
-        blocks: Vec<u64>,
-    ) -> Result<HashMap<u64, B256>, ProposerError> {
-        self.fetch_canonical_root_results(blocks)
-            .await
-            .into_iter()
-            .map(|(block_number, result)| result.map(|root| (block_number, root)))
-            .collect()
-    }
-
-    async fn fetch_canonical_root_results(
-        &self,
-        blocks: Vec<u64>,
-    ) -> HashMap<u64, Result<B256, ProposerError>> {
-        if blocks.is_empty() {
-            return HashMap::new();
-        }
-        stream::iter(blocks)
-            .map(|block_number| {
-                let rollup = &self.rollup_client;
-                async move {
-                    let result = rollup
-                        .output_at_block(block_number)
-                        .await
-                        .map(|out| out.output_root)
-                        .map_err(ProposerError::Rpc);
-                    (block_number, result)
-                }
-            })
-            .buffered(self.config.recovery_scan_concurrency)
-            .collect()
-            .await
-    }
-
-    async fn build_proof_requests_for(
-        &self,
+        target_block: u64,
         recovered: &RecoveredState,
-        plans: &[ProofPlan],
-        output_blocks: Vec<u64>,
-    ) -> Result<Vec<(ProofPlan, ProofRequest)>, ProposerError> {
-        let start_blocks: Vec<u64> = plans
-            .iter()
-            .map(|plan| plan.start_block)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        proof: ProofResult,
+        retry_counts: &mut HashMap<u64, u32>,
+        cache: &mut Option<CachedRecovery>,
+        cancel: &CancellationToken,
+    ) -> SubmitEffect {
+        let mut collector_state = ProofCollectorState {
+            retry_counts: std::mem::take(retry_counts),
+            ..Default::default()
+        };
+        let effect = self
+            .collector_orchestrator()
+            .submit_inline(target_block, recovered, proof, &mut collector_state, cache, cancel)
+            .await;
+        *retry_counts = collector_state.retry_counts;
+        effect
+    }
 
-        let (l1_head_result, output_roots, l2_heads) = tokio::join!(
-            async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
-            self.fetch_canonical_root_results(output_blocks),
-            async {
-                stream::iter(start_blocks)
-                    .map(|block_number| {
-                        let l2 = &self.l2_client;
-                        async move {
-                            let result = l2
-                                .header_by_number(Some(block_number))
-                                .await
-                                .map_err(ProposerError::Rpc);
-                            (block_number, result)
-                        }
-                    })
-                    .buffered(self.config.recovery_scan_concurrency)
-                    .collect::<HashMap<_, _>>()
-                    .await
-            },
-        );
-        let l1_head = l1_head_result?;
-
-        let mut requests = Vec::with_capacity(plans.len());
-        for plan in plans {
-            let agreed_l2_head = match l2_heads.get(&plan.start_block) {
-                Some(Ok(header)) => header,
-                Some(Err(e)) => {
-                    warn!(
-                        error = %e,
-                        start_block = plan.start_block,
-                        target_block = plan.target_block,
-                        "Stopping proof request batch after L2 header fetch failed"
-                    );
-                    break;
-                }
-                None => {
-                    warn!(
-                        start_block = plan.start_block,
-                        target_block = plan.target_block,
-                        "Stopping proof request batch because L2 header is missing"
-                    );
-                    break;
-                }
-            };
-
-            let agreed_output_root = if plan.start_block == recovered.l2_block_number {
-                recovered.output_root
-            } else {
-                match output_roots.get(&plan.start_block) {
-                    Some(Ok(root)) => *root,
-                    Some(Err(e)) => {
-                        warn!(
-                            error = %e,
-                            start_block = plan.start_block,
-                            target_block = plan.target_block,
-                            "Stopping proof request batch after start output fetch failed"
-                        );
-                        break;
-                    }
-                    None => {
-                        warn!(
-                            start_block = plan.start_block,
-                            target_block = plan.target_block,
-                            "Stopping proof request batch because start output is missing"
-                        );
-                        break;
-                    }
-                }
-            };
-
-            let claimed_l2_output_root = match output_roots.get(&plan.target_block) {
-                Some(Ok(root)) => *root,
-                Some(Err(e)) => {
-                    warn!(
-                        error = %e,
-                        target_block = plan.target_block,
-                        "Stopping proof request batch after target output fetch failed"
-                    );
-                    break;
-                }
-                None => {
-                    warn!(
-                        target_block = plan.target_block,
-                        "Stopping proof request batch because target output is missing"
-                    );
-                    break;
-                }
-            };
-
-            let request = ProofRequest {
-                l1_head: l1_head.hash,
-                agreed_l2_head_hash: agreed_l2_head.hash,
-                agreed_l2_output_root: agreed_output_root,
+    /// Builds and dispatches a fresh `prove_block_range` request for
+    /// `target_block`.
+    ///
+    /// Request-build failures (transient L1/L2 RPC errors while assembling
+    /// the request) are logged and skipped without bumping the per-target
+    /// retry budget — they never reached the prover service, so the
+    /// proof-failure retry policy does not apply. Dispatcher errors (the
+    /// prover service rejected an otherwise valid request) count against the
+    /// budget unless this dispatch is an immediate re-dispatch after an
+    /// already-counted failed session.
+    #[cfg(test)]
+    async fn dispatch_for(
+        &self,
+        target_block: u64,
+        recovered: &RecoveredState,
+        claimed_l2_output_root: B256,
+        retry_counts: &mut HashMap<u64, u32>,
+        cache: &mut Option<CachedRecovery>,
+        count_dispatch_failure: bool,
+    ) -> DispatchOutcome {
+        let mut dispatcher_state = ProofDispatcherState {
+            recovered: None,
+            cursor: None,
+            retry_counts: std::mem::take(retry_counts),
+        };
+        let outcome = self
+            .proof_dispatcher
+            .dispatch_with_retry(
+                target_block,
+                recovered,
                 claimed_l2_output_root,
-                claimed_l2_block_number: plan.target_block,
-                proposer: self.config.driver.proposer_address,
-                intermediate_block_interval: self.config.driver.intermediate_block_interval,
-                l1_head_number: l1_head.number,
-                image_hash: self.config.driver.tee_image_hash,
-            };
-
-            info!(
-                from_block = plan.start_block,
-                to_block = plan.target_block,
-                l1_head_number = l1_head.number,
-                "Built proof request for parallel proving"
-            );
-
-            requests.push((*plan, request));
+                &mut dispatcher_state,
+                self.config.max_retries,
+                count_dispatch_failure,
+            )
+            .await;
+        *retry_counts = dispatcher_state.retry_counts;
+        if outcome == DispatchOutcome::RetryExhausted {
+            *cache = None;
         }
+        outcome
+    }
 
-        Ok(requests)
+    #[cfg(test)]
+    async fn dispatch_discard_retry(
+        &self,
+        target_block: u64,
+        recovered: &RecoveredState,
+        claimed_l2_output_root: B256,
+        retry_counts: &mut HashMap<u64, u32>,
+        cache: &mut Option<CachedRecovery>,
+        discard_retry: DiscardRetryState<'_>,
+    ) {
+        let mut collector_state = ProofCollectorState {
+            retry_counts: std::mem::take(retry_counts),
+            discard_retry_counts: std::mem::take(discard_retry.counts),
+            retry_sessions: std::mem::take(discard_retry.sessions),
+            ..Default::default()
+        };
+        self.collector_orchestrator()
+            .dispatch_discard_retry(
+                target_block,
+                recovered,
+                claimed_l2_output_root,
+                &mut collector_state,
+                cache,
+                discard_retry.count_dispatch_failure,
+            )
+            .await;
+        *retry_counts = collector_state.retry_counts;
+        *discard_retry.counts = collector_state.discard_retry_counts;
+        *discard_retry.sessions = collector_state.retry_sessions;
+    }
+
+    /// Records a proof failure for `target` and applies the retry policy.
+    ///
+    /// Increments `proof_retries_total` and the per-target counter. When the
+    /// counter reaches `max_retries`, drops the cached recovery so the next
+    /// iteration performs a full forward walk.
+    #[cfg(test)]
+    fn handle_proof_failure(
+        &self,
+        target: u64,
+        error: ProposerError,
+        retry_counts: &mut HashMap<u64, u32>,
+        cache: &mut Option<CachedRecovery>,
+    ) -> bool {
+        let mut collector_state = ProofCollectorState {
+            retry_counts: std::mem::take(retry_counts),
+            ..Default::default()
+        };
+        let should_retry =
+            collector_state.handle_proof_failure(target, error, self.config.max_retries, cache);
+        *retry_counts = collector_state.retry_counts;
+        should_retry
     }
 
     /// Validates the proof and submits it to L1 by delegating to the
     /// [`ProofSubmitter`].
     ///
-    /// Kept on the pipeline as a thin wrapper so the spawned submission task
-    /// in [`Self::try_submit`] (and existing tests) can continue to call a
-    /// single entry point.
+    /// Kept on the pipeline as a thin wrapper so the inline submit path in
+    /// [`Self::submit_inline`] (and existing tests) can continue to call a
+    /// single entry point. This method itself does NOT apply
+    /// `submit_timeout`; the timeout is applied by [`Self::submit_inline`].
+    #[cfg(test)]
     async fn validate_and_submit(
         &self,
         proof_result: &ProofResult,
@@ -1365,22 +642,55 @@ where
     }
 }
 
-/// Extracts a printable message from a `catch_unwind` panic payload.
-fn panic_message(panic: &Box<dyn std::any::Any + Send + 'static>) -> String {
-    panic
-        .downcast_ref::<&'static str>()
-        .map(|s| (*s).to_string())
-        .or_else(|| panic.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "non-string panic payload".to_string())
+fn spawn_loop<L1, L2, R, ASR, F, Fut>(
+    pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
+    cancel: CancellationToken,
+    f: impl FnOnce(ProvingPipeline<L1, L2, R, ASR, F>, CancellationToken) -> Fut,
+) -> JoinHandle<Result<()>>
+where
+    L1: L1Provider + 'static,
+    L2: L2Provider + 'static,
+    R: RollupProvider + 'static,
+    ASR: AnchorStateRegistryClient + 'static,
+    F: DisputeGameFactoryClient + 'static,
+    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+{
+    tokio::spawn(f(pipeline, cancel))
 }
 
-/// Result of a concurrent submission task, returned to the coordinator.
-enum SubmitOutcome {
-    Success { target_block: u64 },
-    GameAlreadyExists { target_block: u64 },
-    RootMismatch { target_block: u64 },
-    Failed { target_block: u64, proof: ProofResult, error: ProposerError },
-    Discard { target_block: u64, error: ProposerError },
+async fn await_loop(kind: TaskKind, handle: JoinHandle<Result<()>>) {
+    handle_task_result(kind, handle.await);
+}
+
+fn handle_task_result(
+    kind: TaskKind,
+    result: std::result::Result<Result<()>, tokio::task::JoinError>,
+) {
+    match result {
+        Ok(Ok(())) => {
+            warn!(task = kind.label(), "Pipeline task exited unexpectedly, restarting session");
+        }
+        Ok(Err(error)) => {
+            warn!(task = kind.label(), error = %error, "Pipeline task failed, restarting session");
+        }
+        Err(error) => {
+            warn!(task = kind.label(), error = %error, "Pipeline task panicked, restarting session");
+        }
+    }
+}
+
+async fn sleep_or_cancel(duration: Duration, cancel: &CancellationToken) {
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => {}
+        () = tokio::time::sleep(duration) => {}
+    }
+}
+
+async fn request_restart(restart_tx: &mpsc::Sender<String>, reason: &str) {
+    if restart_tx.send(reason.to_owned()).await.is_err() {
+        warn!(reason, "Failed to send pipeline restart request");
+    }
 }
 
 #[cfg(test)]
@@ -1389,7 +699,7 @@ mod tests {
         collections::HashMap,
         sync::{
             Arc,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicU64, Ordering},
         },
         time::Duration,
     };
@@ -1397,6 +707,13 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_proof_primitives::{ProofResult, Proposal};
+    use base_proof_rpc::RpcError;
+    use base_proof_submission::ProofSubmissionError;
+    use base_prover_service_client::ProverServiceClientError;
+    use base_prover_service_protocol::{
+        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofStatus,
+        ProveBlockRangeRequest, ProveBlockRangeResponse,
+    };
     #[cfg(feature = "metrics")]
     use metrics_util::{
         CompositeKey, MetricKind,
@@ -1406,10 +723,13 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::test_utils::{
-        MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-        MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root, test_proposal,
-        test_sync_status,
+    use crate::{
+        proof_adapter::ProposerProofAdapter,
+        test_utils::{
+            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
+            MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
+            test_proposal, test_sync_status,
+        },
     };
 
     // ---- Named constants for test data ----
@@ -1439,9 +759,6 @@ mod tests {
     /// Game type used across recovery tests.
     const TEST_GAME_TYPE: u32 = 42;
 
-    /// Default block interval for recovery tests (matches `DriverConfig` default).
-    const TEST_BLOCK_INTERVAL: u64 = 512;
-
     /// Default anchor block number.
     const TEST_ANCHOR_BLOCK: u64 = 0;
 
@@ -1460,63 +777,6 @@ mod tests {
         Address::new(bytes)
     }
 
-    /// Builds a chain of `N` sequential games starting from the anchor,
-    /// registering them in the factory's `uuid_games` map.
-    ///
-    /// Uses `block_interval == intermediate_block_interval == TEST_BLOCK_INTERVAL`
-    /// (one intermediate root per game, equal to the root claim).
-    ///
-    /// Returns `(factory, output_roots)` ready to use in pipeline builders.
-    fn game_chain(n: usize) -> (MockDisputeGameFactory, HashMap<u64, B256>) {
-        game_chain_full(n, TEST_ANCHOR_BLOCK, TEST_BLOCK_INTERVAL, TEST_BLOCK_INTERVAL)
-    }
-
-    /// Builds a chain of `N` sequential games with configurable intervals.
-    fn game_chain_full(
-        n: usize,
-        anchor_block: u64,
-        block_interval: u64,
-        intermediate_block_interval: u64,
-    ) -> (MockDisputeGameFactory, HashMap<u64, B256>) {
-        let mut uuid_games = std::collections::HashMap::new();
-        let mut output_roots = HashMap::new();
-        let intermediate_count = block_interval / intermediate_block_interval;
-
-        let mut parent = Address::ZERO; // anchor_state_registry_address default
-        for i in 0..n {
-            let block = anchor_block + block_interval * (i as u64 + 1);
-            let root_claim = B256::repeat_byte((i as u8) + 1);
-
-            // Build intermediate roots (canonical values).
-            let parent_block = block - block_interval;
-            let mut intermediate_roots = Vec::with_capacity(intermediate_count as usize);
-            for j in 1..=intermediate_count {
-                let ib = parent_block + j * intermediate_block_interval;
-                let ir = if ib == block { root_claim } else { B256::repeat_byte(ib as u8) };
-                output_roots.insert(ib, ir);
-                intermediate_roots.push(ir);
-            }
-            output_roots.insert(block, root_claim);
-
-            let extra_data = encode_extra_data(block, parent, &intermediate_roots);
-            let proxy = proxy_addr(i as u64);
-
-            uuid_games.insert((TEST_GAME_TYPE, root_claim, extra_data), proxy);
-
-            parent = proxy;
-        }
-
-        let factory = MockDisputeGameFactory {
-            games: Vec::new(),
-            game_count_override: Some(n as u64),
-            uuid_games,
-            games_should_fail: false,
-            game_count_calls: None,
-        };
-
-        (factory, output_roots)
-    }
-
     // ---- Pipeline builders ----
 
     /// Type alias to reduce repetition in builder return types.
@@ -1527,70 +787,6 @@ mod tests {
         MockAnchorStateRegistry,
         MockDisputeGameFactory,
     >;
-
-    #[derive(Debug)]
-    struct SnapshotOnlyAnchorStateRegistry {
-        snapshot: base_proof_contracts::AnchorSnapshot,
-    }
-
-    #[async_trait::async_trait]
-    impl AnchorStateRegistryClient for SnapshotOnlyAnchorStateRegistry {
-        async fn anchor_snapshot(
-            &self,
-        ) -> std::result::Result<
-            base_proof_contracts::AnchorSnapshot,
-            base_proof_contracts::ContractError,
-        > {
-            Ok(self.snapshot)
-        }
-    }
-
-    fn test_pipeline(
-        pipeline_config: PipelineConfig,
-        safe_block_number: u64,
-        cancel: CancellationToken,
-    ) -> TestPipeline {
-        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(safe_block_number, B256::ZERO),
-            output_roots: HashMap::new(),
-            max_safe_block: None,
-        });
-        let anchor_registry = Arc::new(MockAnchorStateRegistry {
-            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
-            anchor_game: Address::ZERO,
-        });
-        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
-
-        ProvingPipeline::new(
-            pipeline_config,
-            Arc::new(MockProofRequester::default()),
-            l1,
-            l2,
-            rollup,
-            anchor_registry,
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
-            cancel,
-        )
-    }
-
-    /// Builds a recovery pipeline with a pre-configured factory and canonical
-    /// output roots. Uses default anchor block and block interval.
-    fn recovery_pipeline(
-        factory: MockDisputeGameFactory,
-        output_roots: HashMap<u64, B256>,
-    ) -> TestPipeline {
-        recovery_pipeline_full(
-            factory,
-            output_roots,
-            TEST_ANCHOR_BLOCK,
-            TEST_BLOCK_INTERVAL,
-            TEST_BLOCK_INTERVAL,
-        )
-    }
 
     fn recovery_pipeline_full(
         factory: MockDisputeGameFactory,
@@ -1628,25 +824,6 @@ mod tests {
         )
     }
 
-    fn recovery_pipeline_full_with_anchor_game(
-        factory: MockDisputeGameFactory,
-        output_roots: HashMap<u64, B256>,
-        anchor_block: u64,
-        anchor_game: Address,
-        block_interval: u64,
-        intermediate_block_interval: u64,
-    ) -> TestPipeline {
-        recovery_pipeline_full_with_anchor_game_and_output_proposer(
-            factory,
-            output_roots,
-            anchor_block,
-            anchor_game,
-            block_interval,
-            intermediate_block_interval,
-            Arc::new(MockOutputProposer),
-        )
-    }
-
     fn recovery_pipeline_full_with_anchor_game_and_output_proposer(
         factory: MockDisputeGameFactory,
         output_roots: HashMap<u64, B256>,
@@ -1671,6 +848,7 @@ mod tests {
 
         ProvingPipeline::new(
             PipelineConfig {
+                submit_timeout: Some(std::time::Duration::from_secs(60)),
                 max_retries: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1693,1067 +871,12 @@ mod tests {
         )
     }
 
-    // ---- Pipeline lifecycle tests ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_pipeline_cancellation() {
-        let cancel = CancellationToken::new();
-        let pipeline = test_pipeline(
-            PipelineConfig {
-                max_retries: 3,
-                recovery_scan_concurrency: 8,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    poll_interval: Duration::from_secs(3600),
-                    block_interval: TEST_BLOCK_INTERVAL,
-                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
-                    ..Default::default()
-                },
-            },
-            200, // safe head below first target, so no proofs dispatched
-            cancel.clone(),
-        );
-
-        let handle = tokio::spawn(async move { pipeline.run().await });
-        cancel.cancel();
-
-        let result = handle.await.expect("task should not panic");
-        assert!(result.is_ok(), "run() should return Ok on cancellation");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_pipeline_proves_and_submits() {
-        let cancel = CancellationToken::new();
-        let pipeline = test_pipeline(
-            PipelineConfig {
-                max_retries: 3,
-                recovery_scan_concurrency: 8,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    poll_interval: Duration::from_millis(100),
-                    block_interval: TEST_BLOCK_INTERVAL,
-                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
-                    ..Default::default()
-                },
-            },
-            TEST_BLOCK_INTERVAL, // safe head at first target block
-            cancel.clone(),
-        );
-
-        let handle = tokio::spawn(async move { pipeline.run().await });
-
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        cancel.cancel();
-
-        let result = handle.await.expect("task should not panic");
-        assert!(result.is_ok());
-    }
-
-    #[cfg(feature = "metrics")]
-    #[test]
-    fn test_tick_records_recovered_last_proposed_block() {
-        let (factory, output_roots) = game_chain(1);
-        let pipeline = recovery_pipeline(factory, output_roots);
-
-        with_recorder(|snap| {
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            let mut state = PipelineState::new();
-
-            rt.block_on(async {
-                pipeline.tick(&mut state).await.unwrap();
-            });
-
-            let snapshot = snap.snapshot().into_vec();
-            match find_metric(&snapshot, MetricKind::Gauge, "base_proposer.last_proposed_block") {
-                Some(DebugValue::Gauge(value)) => {
-                    assert_eq!(value.into_inner(), TEST_BLOCK_INTERVAL as f64);
-                }
-                other => panic!("expected recovered last_proposed_block gauge, got {other:?}"),
-            }
-        });
-    }
-
-    /// Verifies `handle_proof_failure` increments `proof_retries_total` on every
-    /// retry attempt below `max_retries`.
-    #[cfg(feature = "metrics")]
-    #[test]
-    fn test_handle_proof_failure_emits_retry_metrics() {
-        let pipeline =
-            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
-
-        with_recorder(|snap| {
-            let mut state = PipelineState::new();
-            let target = TEST_BLOCK_INTERVAL * 3;
-            state.inflight.insert(target);
-
-            // Each call to `handle_proof_failure` increments `proof_retries_total`
-            // before the max-retries check, so two calls yield a counter value of 2.
-            pipeline.handle_proof_failure(target, ProposerError::Prover("boom".into()), &mut state);
-            pipeline.handle_proof_failure(target, ProposerError::Prover("boom".into()), &mut state);
-
-            let snapshot = snap.snapshot().into_vec();
-            match find_metric(&snapshot, MetricKind::Counter, "base_proposer.proof_retries_total") {
-                Some(DebugValue::Counter(value)) => assert_eq!(*value, 2),
-                other => panic!("expected proof_retries_total counter, got {other:?}"),
-            }
-        });
-    }
-
-    /// Verifies `handle_dispatch_result` increments `proof_dispatch_total` with
-    /// the right `outcome` label for both accepted and failed dispatch outcomes.
-    #[cfg(feature = "metrics")]
-    #[test]
-    fn test_handle_dispatch_result_emits_dispatch_metrics() {
-        let pipeline =
-            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
-
-        with_recorder(|snap| {
-            let mut state = PipelineState::new();
-            let accepted_target = TEST_BLOCK_INTERVAL;
-            let failed_target = TEST_BLOCK_INTERVAL * 2;
-            state.inflight.insert(accepted_target);
-            state.inflight.insert(failed_target);
-
-            pipeline.handle_dispatch_result(
-                Ok(ProofDispatchOutcome::Accepted {
-                    plan: ProofPlan { start_block: 0, target_block: accepted_target },
-                    session_id: "session-accepted".to_owned(),
-                }),
-                &mut state,
-            );
-            pipeline.handle_dispatch_result(
-                Ok(ProofDispatchOutcome::Failed {
-                    plan: ProofPlan { start_block: accepted_target, target_block: failed_target },
-                    error: ProposerError::Prover("dispatch failed".into()),
-                }),
-                &mut state,
-            );
-
-            let snapshot = snap.snapshot().into_vec();
-            let accepted = snapshot
-                .iter()
-                .find(|(ck, _, _, _)| {
-                    ck.kind() == MetricKind::Counter
-                        && ck.key().name() == "base_proposer.proof_dispatch_total"
-                        && ck
-                            .key()
-                            .labels()
-                            .any(|l| l.key() == "outcome" && l.value() == "accepted")
-                })
-                .map(|(_, _, _, v)| v);
-            match accepted {
-                Some(DebugValue::Counter(value)) => assert_eq!(*value, 1),
-                other => panic!("expected accepted dispatch counter, got {other:?}"),
-            }
-
-            let failed = snapshot
-                .iter()
-                .find(|(ck, _, _, _)| {
-                    ck.kind() == MetricKind::Counter
-                        && ck.key().name() == "base_proposer.proof_dispatch_total"
-                        && ck.key().labels().any(|l| l.key() == "outcome" && l.value() == "failed")
-                })
-                .map(|(_, _, _, v)| v);
-            match failed {
-                Some(DebugValue::Counter(value)) => assert_eq!(*value, 1),
-                other => panic!("expected failed dispatch counter, got {other:?}"),
-            }
-        });
-    }
-
-    // ---- Recovery: empty factory ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_returns_anchor_when_no_games() {
-        let factory = MockDisputeGameFactory::with_games(vec![]);
-        let pipeline = recovery_pipeline(factory, HashMap::new());
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        assert_eq!(
-            state.parent_address,
-            Address::ZERO,
-            "should return anchor_state_registry_address"
-        );
-        assert_eq!(state.l2_block_number, TEST_ANCHOR_BLOCK, "should return anchor block");
-        assert!(cache.is_some(), "cache should still be populated");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cold_start_uses_anchor_game_after_anchor_advance() {
-        let anchor_game = proxy_addr(0);
-        let anchor_block = TEST_BLOCK_INTERVAL;
-
-        let mut factory = MockDisputeGameFactory::with_games(vec![]);
-        factory.game_count_override = Some(1);
-        let pipeline = recovery_pipeline_full_with_anchor_game(
-            factory,
-            HashMap::new(),
-            anchor_block,
-            anchor_game,
-            TEST_BLOCK_INTERVAL,
-            TEST_BLOCK_INTERVAL,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        assert_eq!(state.parent_address, anchor_game, "advanced anchor game should be the parent");
-        assert_eq!(state.l2_block_number, anchor_block, "should propose after the live anchor");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_reads_anchor_root_and_game_from_one_snapshot() {
-        let anchor_game = proxy_addr(0);
-        let anchor_root = B256::repeat_byte(0xAA);
-        let anchor_block = TEST_BLOCK_INTERVAL;
-        let cancel = CancellationToken::new();
-        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(TEST_BLOCK_INTERVAL * 2, B256::ZERO),
-            output_roots: HashMap::new(),
-            max_safe_block: None,
-        });
-        let anchor_registry = Arc::new(SnapshotOnlyAnchorStateRegistry {
-            snapshot: base_proof_contracts::AnchorSnapshot {
-                anchor_root: base_proof_contracts::AnchorRoot {
-                    root: anchor_root,
-                    l2_block_number: anchor_block,
-                },
-                anchor_game,
-            },
-        });
-        let mut factory = MockDisputeGameFactory::with_games(vec![]);
-        factory.game_count_override = Some(1);
-
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
-                max_retries: 3,
-                recovery_scan_concurrency: 8,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    block_interval: TEST_BLOCK_INTERVAL,
-                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
-                    ..Default::default()
-                },
-            },
-            Arc::new(MockProofRequester::default()),
-            l1,
-            l2,
-            rollup,
-            anchor_registry,
-            Arc::new(factory),
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
-            cancel,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        assert_eq!(state.parent_address, anchor_game);
-        assert_eq!(state.output_root, anchor_root);
-        assert_eq!(state.l2_block_number, anchor_block);
-    }
-
-    // ---- Recovery: forward walk ----
-
-    #[rstest]
-    #[case::single_game(1, 0, TEST_BLOCK_INTERVAL, "single game at first interval")]
-    #[case::chain_of_two(2, 1, TEST_BLOCK_INTERVAL * 2, "chain of two sequential games")]
-    #[case::chain_of_five(5, 4, TEST_BLOCK_INTERVAL * 5, "chain of five sequential games")]
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_forward_walk_chain(
-        #[case] game_count: usize,
-        #[case] expected_proxy_index: u64,
-        #[case] expected_block: u64,
-        #[case] scenario: &str,
-    ) {
-        let (factory, output_roots) = game_chain(game_count);
-        let pipeline = recovery_pipeline(factory, output_roots);
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        assert_eq!(state.parent_address, proxy_addr(expected_proxy_index), "{scenario}");
-        assert_eq!(state.l2_block_number, expected_block, "{scenario}");
-        assert!(cache.is_some(), "{scenario}: cache should be populated");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_forward_walk_stops_at_gap() {
-        // Game at block 512 exists, but no game at block 1024.
-        // Walk should stop after the first game.
-        let root_1 = B256::repeat_byte(0x01);
-        let extra_data_1 = encode_extra_data(TEST_BLOCK_INTERVAL, Address::ZERO, &[root_1]);
-
-        let mut factory = MockDisputeGameFactory::with_games(vec![]);
-        factory.game_count_override = Some(1);
-        factory.uuid_games.insert((TEST_GAME_TYPE, root_1, extra_data_1), proxy_addr(0));
-
-        let output_roots = HashMap::from([(TEST_BLOCK_INTERVAL, root_1)]);
-
-        let pipeline = recovery_pipeline(factory, output_roots);
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        assert_eq!(state.parent_address, proxy_addr(0), "should stop at first game before gap");
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(state.output_root, root_1);
-    }
-
-    // ---- Recovery: error propagation ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_propagates_games_lookup_failure() {
-        // A chain of 2 games exists, but factory.games() always fails.
-        // The walk should propagate the error as ProposerError::Contract.
-        let (mut factory, output_roots) = game_chain(2);
-        factory.games_should_fail = true;
-
-        let pipeline = recovery_pipeline(factory, output_roots);
-
-        let mut cache: Option<CachedRecovery> = None;
-        let result = pipeline.recover_latest_state(&mut cache).await;
-
-        assert!(result.is_err(), "games() failure should propagate");
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, ProposerError::Contract(_)),
-            "expected ProposerError::Contract, got {err:?}"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_forward_walk_stops_at_safe_head() {
-        // 3 games exist on-chain, but the rollup node only has blocks up to
-        // block 2 * TEST_BLOCK_INTERVAL. The walk should verify games 0 and 1,
-        // then terminate gracefully when it can't fetch the output root for
-        // game 2's block (ahead of safe head).
-        let (factory, output_roots) = game_chain(3);
-
-        let cancel = CancellationToken::new();
-        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(0, B256::ZERO),
-            output_roots,
-            max_safe_block: Some(TEST_BLOCK_INTERVAL * 2),
-        });
-        let anchor_registry = Arc::new(MockAnchorStateRegistry {
-            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
-            anchor_game: Address::ZERO,
-        });
-
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
-                max_retries: 1,
-                recovery_scan_concurrency: 8,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    game_type: TEST_GAME_TYPE,
-                    block_interval: TEST_BLOCK_INTERVAL,
-                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
-                    ..Default::default()
-                },
-            },
-            Arc::new(MockProofRequester::default()),
-            l1,
-            l2,
-            rollup,
-            anchor_registry,
-            Arc::new(factory),
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
-            cancel,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Should stop after game 1 (block 1024), not reach game 2 (block 1536).
-        assert_eq!(state.parent_address, proxy_addr(1), "should stop at game 1");
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL * 2);
-    }
-
-    // ---- Recovery: caching ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_hit_equal_game_count() {
-        let (factory, output_roots) = game_chain(1);
-        let game_proxy = proxy_addr(0);
-
-        let pipeline = recovery_pipeline(factory, output_roots);
-
-        // First call: cold start, populates the cache.
-        let mut cache: Option<CachedRecovery> = None;
-        let state1 = pipeline.recover_latest_state(&mut cache).await.unwrap();
-        assert!(cache.is_some(), "cache should be populated after first call");
-        assert_eq!(state1.parent_address, game_proxy);
-        assert_eq!(state1.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(cache.as_ref().unwrap().game_count, 1);
-
-        // Second call: same game_count → cached state returned without re-walk.
-        let state2 = pipeline.recover_latest_state(&mut cache).await.unwrap();
-        assert_eq!(state2.parent_address, state1.parent_address);
-        assert_eq!(state2.l2_block_number, state1.l2_block_number);
-        assert_eq!(state2.output_root, state1.output_root);
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_tick_skips_recovery_when_safe_head_below_cached_next_target() {
-        let game_count_calls = Arc::new(AtomicUsize::new(0));
-        let mut factory = MockDisputeGameFactory::with_games(vec![]);
-        factory.game_count_calls = Some(Arc::clone(&game_count_calls));
-        let pipeline = recovery_pipeline(factory, HashMap::new());
-
-        let cached = CachedRecovery {
-            game_count: 0,
-            state: RecoveredState {
-                parent_address: Address::ZERO,
-                output_root: B256::ZERO,
-                l2_block_number: TEST_ANCHOR_BLOCK,
-            },
-        };
-        let mut state = PipelineState::new();
-        state.cached_recovery = Some(cached);
-
-        pipeline.tick(&mut state).await.unwrap();
-
-        assert_eq!(game_count_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(state.cached_recovery, Some(cached));
-        assert!(state.inflight.is_empty());
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_incremental_on_count_increase() {
-        // Seed cache with game_count=1, state at game 0. Factory now has 2
-        // games. Anchor is still at block 0 (behind the cached tip at
-        // TEST_BLOCK_INTERVAL), so the walk resumes from the cached tip
-        // and only needs to discover game 1.
-        let (factory, output_roots) = game_chain(2);
-
-        let mut cache = Some(CachedRecovery {
-            game_count: 1,
-            state: RecoveredState {
-                parent_address: proxy_addr(0),
-                output_root: B256::repeat_byte(0x01),
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
-        });
-
-        let pipeline = recovery_pipeline(factory, output_roots);
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        assert_eq!(state.parent_address, proxy_addr(1), "should find game 1 incrementally");
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL * 2);
-        assert_eq!(cache.as_ref().unwrap().game_count, 2, "cache should reflect new count");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_incremental_resumes_mid_chain() {
-        // Build a chain of 5 games. Seed cache at game 2 (game_count=3).
-        // Factory now has 5 games. The walk should resume from game 2's
-        // tip and discover games 3 and 4 without re-walking games 0–2.
-        let (factory, output_roots) = game_chain(5);
-
-        let mut cache = Some(CachedRecovery {
-            game_count: 3,
-            state: RecoveredState {
-                parent_address: proxy_addr(2),
-                output_root: B256::repeat_byte(0x03),
-                l2_block_number: TEST_BLOCK_INTERVAL * 3,
-            },
-        });
-
-        let pipeline = recovery_pipeline(factory, output_roots);
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        assert_eq!(state.parent_address, proxy_addr(4), "should reach game 4 from cached tip");
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL * 5);
-        assert_eq!(cache.as_ref().unwrap().game_count, 5);
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_incremental_unrelated_games() {
-        // game_count increased (1 → 2) but the new game is not in our
-        // chain (no UUID entry at the next expected block). The incremental
-        // walk resumes from the cached tip, finds nothing, and returns the
-        // same state. This happens when another proposer creates a game
-        // with different parameters.
-        let (factory, output_roots) = game_chain(1);
-        // factory has game_count=1, but we'll seed cache as game_count=0
-        // so the code sees an increase (0 → 1). The walk from the anchor
-        // will find game 0. But to test the "unrelated game" path, we need
-        // game_count > cached_count and no new UUID at the next block.
-        //
-        // Seed cache at game 0, pretend game_count was 1. Factory reports
-        // game_count=2 (simulating someone else's unrelated game), but
-        // there's no UUID entry at block 2*TEST_BLOCK_INTERVAL.
-        let mut factory_with_extra_count = factory;
-        factory_with_extra_count.game_count_override = Some(2);
-
-        let pipeline = recovery_pipeline(factory_with_extra_count, output_roots);
-
-        let mut cache = Some(CachedRecovery {
-            game_count: 1,
-            state: RecoveredState {
-                parent_address: proxy_addr(0),
-                output_root: B256::repeat_byte(0x01),
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
-        });
-
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Walk resumed from game 0, found no game at the next block,
-        // returned the same state.
-        assert_eq!(state.parent_address, proxy_addr(0), "should remain at game 0");
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(cache.as_ref().unwrap().game_count, 2, "cache updated to new count");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_invalidated_by_count_decrease() {
-        // Seed cache with game_count=5. Factory now has only 1 game (reorg).
-        let (factory, output_roots) = game_chain(1);
-
-        let mut cache = Some(CachedRecovery {
-            game_count: 5,
-            state: RecoveredState {
-                parent_address: proxy_addr(99),
-                output_root: B256::repeat_byte(0xDD),
-                l2_block_number: 5 * TEST_BLOCK_INTERVAL,
-            },
-        });
-
-        let pipeline = recovery_pipeline(factory, output_roots);
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        assert_eq!(state.parent_address, proxy_addr(0), "reorg: should find the 1 remaining game");
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(cache.as_ref().unwrap().game_count, 1, "reorg: cache should reflect new count");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_full_walk_when_anchor_past_tip() {
-        // Anchor is at block 2048 (past the cached tip at block 512).
-        // This simulates a governance intervention that advanced the
-        // anchor past the cached tip. A full walk from the new anchor
-        // is required.
-        let anchor_block = TEST_BLOCK_INTERVAL * 4; // block 2048
-        let (factory, output_roots) =
-            game_chain_full(1, anchor_block, TEST_BLOCK_INTERVAL, TEST_BLOCK_INTERVAL);
-
-        let mut cache = Some(CachedRecovery {
-            game_count: 0,
-            state: RecoveredState {
-                parent_address: proxy_addr(99), // stale — will be recomputed
-                output_root: B256::repeat_byte(0xDD),
-                l2_block_number: TEST_BLOCK_INTERVAL, // tip at 512, anchor at 2048
-            },
-        });
-
-        let pipeline = recovery_pipeline_full(
-            factory,
-            output_roots,
-            anchor_block,
-            TEST_BLOCK_INTERVAL,
-            TEST_BLOCK_INTERVAL,
-        );
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Anchor past cached tip → full walk from new anchor.
-        assert_eq!(state.parent_address, proxy_addr(0));
-        assert_eq!(state.l2_block_number, anchor_block + TEST_BLOCK_INTERVAL);
-    }
-
-    // ---- Recovery: intermediate roots with multiple checkpoints ----
-
-    /// Block intervals for recovery tests with multiple intermediate roots.
-    const RECOVERY_BI: u64 = 4;
-    const RECOVERY_IBI: u64 = 2;
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_forward_walk_with_intermediate_roots() {
-        // block_interval = 4, intermediate_block_interval = 2
-        // → intermediate_count = 2 (roots at parent+2 and parent+4)
-        //
-        // Two games: block 4 (parent = anchor) and block 8 (parent = game 0).
-        // Both have correct UUID including intermediate roots. Walk should
-        // traverse both games.
-        let (factory, output_roots) =
-            game_chain_full(2, TEST_ANCHOR_BLOCK, RECOVERY_BI, RECOVERY_IBI);
-
-        let pipeline = recovery_pipeline_full(
-            factory,
-            output_roots,
-            TEST_ANCHOR_BLOCK,
-            RECOVERY_BI,
-            RECOVERY_IBI,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Both games verified, walk should reach game 1.
-        assert_eq!(state.parent_address, proxy_addr(1));
-        assert_eq!(state.l2_block_number, RECOVERY_BI * 2);
-    }
-
-    // ---- Dispatch: slot filling ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_dispatch_skips_inflight_and_proved_blocks() {
-        // Scenario: blocks 512–2048 were dispatched on the first tick.
-        // Proof for 512 completed (now in `proved`); proofs for
-        // 1024/1536/2048 are still in-flight.  The next tick calls
-        // dispatch_proofs which must skip past all four handled blocks and
-        // dispatch every remaining eligible block up to the safe head.
-        let cancel = CancellationToken::new();
-        let safe_head = TEST_BLOCK_INTERVAL * 6;
-
-        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(safe_head, B256::ZERO),
-            output_roots: HashMap::new(),
-            max_safe_block: None,
-        });
-        let anchor_registry = Arc::new(MockAnchorStateRegistry {
-            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
-            anchor_game: Address::ZERO,
-        });
-        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
-
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
-                max_retries: 3,
-                recovery_scan_concurrency: 8,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    block_interval: TEST_BLOCK_INTERVAL,
-                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
-                    ..Default::default()
-                },
-            },
-            Arc::new(MockProofRequester::default()),
-            l1,
-            l2,
-            rollup,
-            anchor_registry,
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
-            cancel,
-        );
-
-        let recovered = RecoveredState {
-            parent_address: Address::ZERO,
-            output_root: B256::ZERO,
-            l2_block_number: TEST_ANCHOR_BLOCK,
-        };
-
-        let mut state = PipelineState::new();
-        state.proved.insert(TEST_BLOCK_INTERVAL, {
-            let p = test_proposal(TEST_BLOCK_INTERVAL);
-            ProofResult::Tee { aggregate_proposal: p.clone(), proposals: vec![p] }
-        });
-        state.inflight.insert(TEST_BLOCK_INTERVAL * 2);
-        state.inflight.insert(TEST_BLOCK_INTERVAL * 3);
-        state.inflight.insert(TEST_BLOCK_INTERVAL * 4);
-
-        pipeline.dispatch_proofs(&recovered, safe_head, &mut state).await.unwrap();
-
-        // safe_head = TEST_BLOCK_INTERVAL * 6 yields candidates 1..=6.
-        // Already handled: 1 (proved), 2/3/4 (inflight). Dispatch should add
-        // 5 and 6 — every remaining eligible target up to the safe head.
-        assert!(
-            state.inflight.contains(&(TEST_BLOCK_INTERVAL * 5)),
-            "block {} should have been dispatched",
-            TEST_BLOCK_INTERVAL * 5
-        );
-        assert!(
-            state.inflight.contains(&(TEST_BLOCK_INTERVAL * 6)),
-            "block {} should have been dispatched",
-            TEST_BLOCK_INTERVAL * 6
-        );
-        assert_eq!(
-            state.inflight.len(),
-            5,
-            "all eligible targets up to safe_head should be inflight"
-        );
-        assert!(
-            state.proved.contains_key(&TEST_BLOCK_INTERVAL),
-            "proved entries must not be removed by dispatch"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_dispatch_keeps_successful_plans_when_later_output_fetch_fails() {
-        let cancel = CancellationToken::new();
-        let safe_head = TEST_BLOCK_INTERVAL * 2;
-
-        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(safe_head, B256::ZERO),
-            output_roots: HashMap::new(),
-            max_safe_block: Some(TEST_BLOCK_INTERVAL),
-        });
-        let anchor_registry = Arc::new(MockAnchorStateRegistry {
-            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
-            anchor_game: Address::ZERO,
-        });
-        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
-
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
-                max_retries: 3,
-                recovery_scan_concurrency: 8,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    block_interval: TEST_BLOCK_INTERVAL,
-                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
-                    ..Default::default()
-                },
-            },
-            Arc::new(MockProofRequester::default()),
-            l1,
-            l2,
-            rollup,
-            anchor_registry,
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
-            cancel,
-        );
-
-        let recovered = RecoveredState {
-            parent_address: Address::ZERO,
-            output_root: B256::ZERO,
-            l2_block_number: TEST_ANCHOR_BLOCK,
-        };
-        let mut state = PipelineState::new();
-
-        pipeline.dispatch_proofs(&recovered, safe_head, &mut state).await.unwrap();
-
-        assert!(state.inflight.contains(&TEST_BLOCK_INTERVAL));
-        assert!(!state.inflight.contains(&(TEST_BLOCK_INTERVAL * 2)));
-        assert_eq!(state.inflight.len(), 1);
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_dispatch_skips_submitting_block() {
-        let cancel = CancellationToken::new();
-        let safe_head = TEST_BLOCK_INTERVAL * 4;
-
-        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(safe_head, B256::ZERO),
-            output_roots: HashMap::new(),
-            max_safe_block: None,
-        });
-        let anchor_registry = Arc::new(MockAnchorStateRegistry {
-            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
-            anchor_game: Address::ZERO,
-        });
-        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
-
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
-                max_retries: 3,
-                recovery_scan_concurrency: 8,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    block_interval: TEST_BLOCK_INTERVAL,
-                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
-                    ..Default::default()
-                },
-            },
-            Arc::new(MockProofRequester::default()),
-            l1,
-            l2,
-            rollup,
-            anchor_registry,
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
-            cancel,
-        );
-
-        let recovered = RecoveredState {
-            parent_address: Address::ZERO,
-            output_root: B256::ZERO,
-            l2_block_number: TEST_ANCHOR_BLOCK,
-        };
-
-        let mut state = PipelineState::new();
-        state.submitting = Some(TEST_BLOCK_INTERVAL);
-
-        pipeline.dispatch_proofs(&recovered, safe_head, &mut state).await.unwrap();
-
-        assert!(
-            !state.inflight.contains(&TEST_BLOCK_INTERVAL),
-            "submitting block must not be re-dispatched"
-        );
-        assert!(
-            state.inflight.contains(&(TEST_BLOCK_INTERVAL * 2)),
-            "block after submitting should be dispatched"
-        );
-    }
-
-    // ---- State management tests ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_prune_stale_does_not_abort_inflight_submit() {
-        let mut state = PipelineState::new();
-        state.submitting = Some(512);
-        state.proved.insert(512, {
-            let p = test_proposal(512);
-            ProofResult::Tee { aggregate_proposal: p.clone(), proposals: vec![p] }
-        });
-        state.inflight.insert(512);
-        state.retry_counts.insert(512, 1);
-
-        state.submit_tasks.spawn(async { SubmitOutcome::Success { target_block: 512 } });
-
-        state.prune_stale(512);
-
-        assert!(state.proved.is_empty());
-        assert!(state.inflight.is_empty());
-        assert!(state.retry_counts.is_empty());
-        assert!(!state.submit_tasks.is_empty(), "submit task must not be aborted by prune_stale");
-
-        let result = state.submit_tasks.join_next().await.expect("task should exist");
-        let outcome = result.expect("task should complete without cancellation");
-        assert!(
-            matches!(outcome, SubmitOutcome::Success { target_block: 512 }),
-            "submit task should produce Success, not be cancelled"
-        );
-    }
-
-    /// Builds a `PipelineState` populated with several proved entries plus a
-    /// couple of in-flight bookkeeping targets, used for failure-isolation
-    /// tests that need to assert sibling entries survive.
-    fn state_with_proved_siblings() -> PipelineState {
-        let mut state = PipelineState::new();
-        for target in [TEST_BLOCK_INTERVAL, TEST_BLOCK_INTERVAL * 2, TEST_BLOCK_INTERVAL * 3] {
-            let p = test_proposal(target);
-            state.proved.insert(
-                target,
-                ProofResult::Tee { aggregate_proposal: p.clone(), proposals: vec![p] },
-            );
-        }
-        // Unrelated in-flight + retry-count entries that must not be wiped
-        // when a sibling target hits a failure path.
-        state.inflight.insert(TEST_BLOCK_INTERVAL * 4);
-        state.retry_counts.insert(TEST_BLOCK_INTERVAL * 4, 1);
-        state.cached_recovery = Some(CachedRecovery {
-            game_count: 10,
-            state: RecoveredState {
-                parent_address: proxy_addr(5),
-                output_root: B256::repeat_byte(0x11),
-                l2_block_number: 0,
-            },
-        });
-        state
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_proof_max_retries_preserves_proved_queue() {
-        let pipeline =
-            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
-        let mut state = state_with_proved_siblings();
-        let failing_target = TEST_BLOCK_INTERVAL * 7;
-        state.inflight.insert(failing_target);
-        state.retry_counts.insert(failing_target, pipeline.config.max_retries.saturating_sub(1));
-
-        // Final attempt fails and pushes the counter to max_retries.
-        pipeline.handle_proof_failure(
-            failing_target,
-            ProposerError::Prover("boom".into()),
-            &mut state,
-        );
-
-        assert!(!state.inflight.contains(&failing_target), "failing target cleared");
-        assert!(!state.retry_counts.contains_key(&failing_target), "retry count cleared");
-        assert!(
-            state.cached_recovery.is_none(),
-            "cached_recovery should be dropped to force a re-walk"
-        );
-        assert_eq!(state.proved.len(), 3, "proved entries for sibling targets must survive");
-        assert!(state.inflight.contains(&(TEST_BLOCK_INTERVAL * 4)), "unrelated inflight survives");
-        assert_eq!(
-            state.retry_counts.get(&(TEST_BLOCK_INTERVAL * 4)),
-            Some(&1),
-            "unrelated retry count survives"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_dispatch_join_error_preserves_proved_queue() {
-        // Construct a synthetic JoinError by joining an aborted task.
-        let cancelled_err = {
-            let mut js: JoinSet<()> = JoinSet::new();
-            let handle = js.spawn(async { std::future::pending::<()>().await });
-            handle.abort();
-            js.join_next().await.unwrap().unwrap_err()
-        };
-        assert!(cancelled_err.is_cancelled(), "fixture must produce a cancellation error");
-
-        let pipeline =
-            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
-        let mut state = state_with_proved_siblings();
-        let proved_before = state.proved.clone();
-        let cached_before = state.cached_recovery;
-
-        // A cancellation join error is the only join error reachable in practice
-        // (panics are caught inside the spawned future). Verify it leaves
-        // state alone.
-        pipeline.handle_dispatch_result(Err(cancelled_err), &mut state);
-        assert_eq!(state.proved, proved_before, "proved queue untouched on cancellation");
-        assert_eq!(state.cached_recovery, cached_before, "cache untouched on cancellation");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_root_mismatch_preserves_proved_queue() {
-        let pipeline =
-            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
-        let mut state = state_with_proved_siblings();
-        state.submitting = Some(TEST_BLOCK_INTERVAL * 5);
-
-        let chain_next = pipeline
-            .handle_submit_result(
-                Ok(SubmitOutcome::RootMismatch { target_block: TEST_BLOCK_INTERVAL * 5 }),
-                &mut state,
-            )
-            .await;
-
-        assert!(!chain_next, "root mismatch must not chain another submit");
-        assert!(state.submitting.is_none(), "submitting slot released");
-        assert!(state.cached_recovery.is_none(), "cached_recovery dropped on mismatch");
-        assert_eq!(
-            state.proved.len(),
-            3,
-            "sibling proved entries must survive a root mismatch on a different target"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_submit_join_error_preserves_proved_queue() {
-        // Build a real cancellation JoinError (only join error reachable
-        // post-catch_unwind).
-        let cancelled_err = {
-            let mut js: JoinSet<()> = JoinSet::new();
-            let handle = js.spawn(async { std::future::pending::<()>().await });
-            handle.abort();
-            js.join_next().await.unwrap().unwrap_err()
-        };
-
-        let pipeline =
-            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
-        let mut state = state_with_proved_siblings();
-        state.submitting = Some(TEST_BLOCK_INTERVAL * 9);
-        let proved_before = state.proved.clone();
-
-        let chain_next = pipeline.handle_submit_result(Err(cancelled_err), &mut state).await;
-
-        assert!(!chain_next);
-        assert!(state.submitting.is_none(), "slot released");
-        assert_eq!(state.proved, proved_before, "proved queue survives a submit join error");
-    }
-
-    /// Pipeline, primed state with a cached recovery tip, and a proof ready
-    /// for `handle_submit_result(SubmitOutcome::Failed { .. })` tests.
-    fn submission_failure_fixture() -> (TestPipeline, PipelineState, ProofResult) {
-        let pipeline =
-            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
-        let target_block = TEST_BLOCK_INTERVAL;
-        let proposal = test_proposal(target_block);
-        let proof =
-            ProofResult::Tee { aggregate_proposal: proposal.clone(), proposals: vec![proposal] };
-
-        let mut state = PipelineState::new();
-        state.submitting = Some(target_block);
-        state.cached_recovery = Some(CachedRecovery {
-            game_count: 1,
-            state: RecoveredState {
-                parent_address: proxy_addr(0),
-                output_root: B256::repeat_byte(0x01),
-                l2_block_number: target_block,
-            },
-        });
-
-        (pipeline, state, proof)
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_invalid_parent_game_submission_clears_cached_recovery() {
-        let (pipeline, mut state, proof) = submission_failure_fixture();
-        let target_block = TEST_BLOCK_INTERVAL;
-        let cached_before = state.cached_recovery;
-
-        let chain_next = pipeline
-            .handle_submit_result(
-                Ok(SubmitOutcome::Failed {
-                    target_block,
-                    proof,
-                    error: ProposerError::InvalidParentGame,
-                }),
-                &mut state,
-            )
-            .await;
-
-        assert!(cached_before.is_some());
-        assert!(!chain_next, "failed submission should not chain another submit");
-        assert!(state.cached_recovery.is_none(), "InvalidParentGame must drop the cache");
-        assert!(state.proved.contains_key(&target_block), "proof should be re-queued for retry");
-        assert!(state.submitting.is_none(), "submitting slot should be released");
-    }
-
-    #[rstest]
-    #[case::contract_revert(ProposerError::Contract("mock submission failure".into()))]
-    #[case::rpc_transport(ProposerError::Rpc(base_proof_rpc::RpcError::Transport("rpc down".into())))]
-    #[case::rpc_timeout(ProposerError::Rpc(base_proof_rpc::RpcError::Timeout("slow rpc".into())))]
-    #[case::tx_manager_nonce(ProposerError::TxManager(
-        base_tx_manager::TxManagerError::NonceTooLow
-    ))]
-    #[case::tx_reverted(ProposerError::TxReverted("0xdeadbeef".into()))]
-    #[case::internal(ProposerError::Internal("bug".into()))]
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_transient_failed_submission_preserves_cached_recovery(
-        #[case] error: ProposerError,
-    ) {
-        let (pipeline, mut state, proof) = submission_failure_fixture();
-        let target_block = TEST_BLOCK_INTERVAL;
-        let cached_before = state.cached_recovery;
-
-        let chain_next = pipeline
-            .handle_submit_result(
-                Ok(SubmitOutcome::Failed { target_block, proof, error }),
-                &mut state,
-            )
-            .await;
-
-        assert!(!chain_next, "transient failure should not chain another submit");
-        assert_eq!(
-            state.cached_recovery, cached_before,
-            "transient failure must preserve the cached recovery tip"
-        );
-        assert!(state.proved.contains_key(&target_block), "proof should be re-queued for retry");
-        assert!(state.submitting.is_none(), "submitting slot should be released");
-    }
-
     // ---- Intermediate output root validation (submission) tests ----
 
     /// Shared block intervals for submission validation tests.
     const SUBMIT_BLOCK_INTERVAL: u64 = 4;
     const SUBMIT_INTERMEDIATE_INTERVAL: u64 = 2;
+    const DEFAULT_SUBMIT_TIMEOUT: Duration = Duration::from_mins(12);
 
     fn submit_pipeline(output_roots: HashMap<u64, B256>) -> TestPipeline {
         recovery_pipeline_full(
@@ -2800,7 +923,7 @@ mod tests {
             _parent_address: Address,
             _intermediate_roots: &[B256],
         ) -> Result<(), ProposerError> {
-            Err(ProposerError::L1OriginTooOld)
+            Err(ProposerError::Submission(ProofSubmissionError::L1OriginTooOld))
         }
     }
 
@@ -2815,7 +938,7 @@ mod tests {
             _parent_address: Address,
             _intermediate_roots: &[B256],
         ) -> Result<(), ProposerError> {
-            Err(ProposerError::InvalidSigner)
+            Err(ProposerError::Submission(ProofSubmissionError::InvalidSigner))
         }
     }
 
@@ -2840,7 +963,7 @@ mod tests {
             SUBMIT_BLOCK_INTERVAL,
             SUBMIT_INTERMEDIATE_INTERVAL,
             Arc::new(DelayedOutputProposer {
-                delay: crate::constants::PROPOSAL_TIMEOUT + Duration::from_secs(1),
+                delay: DEFAULT_SUBMIT_TIMEOUT + Duration::from_secs(1),
             }),
         );
         let proof_result = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
@@ -2870,7 +993,12 @@ mod tests {
             pipeline.validate_and_submit(&proof_result, SUBMIT_BLOCK_INTERVAL, Address::ZERO).await;
 
         assert!(
-            matches!(result, Err(SubmitAction::Discard(ProposerError::L1OriginTooOld))),
+            matches!(
+                result,
+                Err(SubmitAction::Discard(ProposerError::Submission(
+                    ProofSubmissionError::L1OriginTooOld
+                )))
+            ),
             "stale L1 origin should discard the proof, got {result:?}"
         );
     }
@@ -2891,7 +1019,12 @@ mod tests {
             pipeline.validate_and_submit(&proof_result, SUBMIT_BLOCK_INTERVAL, Address::ZERO).await;
 
         assert!(
-            matches!(result, Err(SubmitAction::Discard(ProposerError::InvalidSigner))),
+            matches!(
+                result,
+                Err(SubmitAction::Discard(ProposerError::Submission(
+                    ProofSubmissionError::InvalidSigner
+                )))
+            ),
             "invalid signer should discard the proof, got {result:?}"
         );
     }
@@ -2914,5 +1047,1233 @@ mod tests {
             matches!(result, Err(SubmitAction::RootMismatch)),
             "{scenario}: expected RootMismatch, got {result:?}"
         );
+    }
+
+    // ---- Pipeline loops: dispatch / collect / submit / retry ----
+
+    /// Builds a pipeline tailored for dispatcher / collector / submit tests.
+    ///
+    /// Uses `SUBMIT_BLOCK_INTERVAL` for short cycles and exposes the
+    /// underlying [`MockProofRequester`] so tests can pre-seed the
+    /// prover-service stub or assert on its post-state. Also returns the
+    /// `CancellationToken` so tests covering `run()` can stop the loop.
+    fn step_pipeline_full(
+        output_roots: HashMap<u64, B256>,
+        safe_head_block: u64,
+        max_retries: u32,
+        submit_timeout: Duration,
+        output_proposer: Arc<dyn OutputProposer>,
+    ) -> (TestPipeline, Arc<MockProofRequester>, CancellationToken) {
+        let proof_requester = Arc::new(MockProofRequester::default());
+        let cancel = CancellationToken::new();
+        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(safe_head_block, B256::ZERO),
+            output_roots,
+            max_safe_block: None,
+        });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                submit_timeout: Some(submit_timeout),
+                max_retries,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    game_type: TEST_GAME_TYPE,
+                    block_interval: SUBMIT_BLOCK_INTERVAL,
+                    intermediate_block_interval: SUBMIT_INTERMEDIATE_INTERVAL,
+                    poll_interval: Duration::from_millis(10),
+                    ..Default::default()
+                },
+            },
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            Arc::new(MockDisputeGameFactory::with_games(vec![])),
+            Arc::new(MockAggregateVerifier::default()),
+            output_proposer,
+            cancel.clone(),
+        );
+
+        (pipeline, proof_requester, cancel)
+    }
+
+    fn step_pipeline_default(
+        safe_head_block: u64,
+    ) -> (TestPipeline, Arc<MockProofRequester>, CancellationToken) {
+        step_pipeline_full(
+            HashMap::new(),
+            safe_head_block,
+            3,
+            Duration::from_secs(60),
+            Arc::new(MockOutputProposer),
+        )
+    }
+
+    fn anchor_recovered_state() -> RecoveredState {
+        RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::ZERO,
+            l2_block_number: TEST_ANCHOR_BLOCK,
+        }
+    }
+
+    /// Output proposer that always rejects with `InvalidParentGame`.
+    #[derive(Debug)]
+    struct InvalidParentGameOutputProposer;
+
+    #[async_trait]
+    impl OutputProposer for InvalidParentGameOutputProposer {
+        async fn propose_output(
+            &self,
+            _: &Proposal,
+            _: Address,
+            _: &[B256],
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::Submission(ProofSubmissionError::InvalidParentGame))
+        }
+    }
+
+    /// Output proposer that always rejects with a transient internal error.
+    #[derive(Debug)]
+    struct TransientFailOutputProposer;
+
+    #[async_trait]
+    impl OutputProposer for TransientFailOutputProposer {
+        async fn propose_output(
+            &self,
+            _: &Proposal,
+            _: Address,
+            _: &[B256],
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::Internal("simulated transient failure".into()))
+        }
+    }
+
+    /// Prover-service requester that reports any polled session as failed and
+    /// rejects every dispatch. Used to verify that failed-session recovery does
+    /// not double-count a same-tick re-dispatch failure.
+    #[derive(Debug, Default)]
+    struct FailedThenRejectDispatchRequester;
+
+    #[async_trait]
+    impl ProofRequesterProvider for FailedThenRejectDispatchRequester {
+        async fn prove_block_range(
+            &self,
+            _: ProveBlockRangeRequest,
+        ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+            Err(ProverServiceClientError::Timeout("simulated dispatch timeout".into()))
+        }
+
+        async fn get_proof(
+            &self,
+            _: GetProofRequest,
+        ) -> Result<GetProofResponse, ProverServiceClientError> {
+            Ok(GetProofResponse {
+                status: ProofStatus::Failed,
+                error_message: Some("simulated failed session".to_owned()),
+                result: None,
+            })
+        }
+
+        async fn list_proofs(
+            &self,
+            _: ListProofsRequest,
+        ) -> Result<ListProofsResponse, ProverServiceClientError> {
+            unimplemented!("tests do not list proofs")
+        }
+    }
+
+    #[derive(Debug)]
+    struct AdvancingGameFactory {
+        submitted_games: Arc<AtomicU64>,
+    }
+
+    #[async_trait]
+    impl DisputeGameFactoryClient for AdvancingGameFactory {
+        async fn game_count(&self) -> Result<u64, base_proof_contracts::ContractError> {
+            Ok(self.submitted_games.load(Ordering::SeqCst))
+        }
+
+        async fn game_at_index(
+            &self,
+            index: u64,
+        ) -> Result<base_proof_contracts::GameAtIndex, base_proof_contracts::ContractError>
+        {
+            Ok(base_proof_contracts::GameAtIndex {
+                game_type: TEST_GAME_TYPE,
+                timestamp: 0,
+                proxy: proxy_addr(index),
+            })
+        }
+
+        async fn init_bonds(
+            &self,
+            _: u32,
+        ) -> Result<alloy_primitives::U256, base_proof_contracts::ContractError> {
+            Ok(alloy_primitives::U256::ZERO)
+        }
+
+        async fn game_impls(&self, _: u32) -> Result<Address, base_proof_contracts::ContractError> {
+            Ok(Address::ZERO)
+        }
+
+        async fn games(
+            &self,
+            _: u32,
+            root_claim: B256,
+            _: alloy_primitives::Bytes,
+        ) -> Result<Address, base_proof_contracts::ContractError> {
+            let block = root_claim.as_slice()[0] as u64;
+            let index = block / SUBMIT_BLOCK_INTERVAL;
+            if index > 0 && index <= self.submitted_games.load(Ordering::SeqCst) {
+                Ok(proxy_addr(index - 1))
+            } else {
+                Ok(Address::ZERO)
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct AdvancingOutputProposer {
+        submitted_games: Arc<AtomicU64>,
+    }
+
+    #[async_trait]
+    impl OutputProposer for AdvancingOutputProposer {
+        async fn propose_output(
+            &self,
+            _: &Proposal,
+            _: Address,
+            _: &[B256],
+        ) -> Result<(), ProposerError> {
+            self.submitted_games.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// `handle_proof_failure` increments per-target counters and drops the
+    /// cached recovery once the target reaches `max_retries`.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_handle_proof_failure_drops_cache_at_max_retries() {
+        let (pipeline, _proof_requester, _cancel) = step_pipeline_full(
+            HashMap::new(),
+            0,
+            3,
+            Duration::from_secs(60),
+            Arc::new(MockOutputProposer),
+        );
+
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut cache = Some(CachedRecovery { game_count: 0, state: anchor_recovered_state() });
+
+        // First two failures: counter increments, cache is preserved.
+        for attempt in 1..=2u32 {
+            pipeline.handle_proof_failure(
+                SUBMIT_BLOCK_INTERVAL,
+                ProposerError::Internal("simulated".into()),
+                &mut retry_counts,
+                &mut cache,
+            );
+            assert_eq!(
+                retry_counts.get(&SUBMIT_BLOCK_INTERVAL).copied(),
+                Some(attempt),
+                "attempt {attempt}: counter should equal attempt count",
+            );
+            assert!(cache.is_some(), "attempt {attempt}: cache should still be populated");
+        }
+
+        // Third failure trips max_retries=3: counter is removed and cache is cleared.
+        pipeline.handle_proof_failure(
+            SUBMIT_BLOCK_INTERVAL,
+            ProposerError::Internal("simulated".into()),
+            &mut retry_counts,
+            &mut cache,
+        );
+
+        assert!(
+            !retry_counts.contains_key(&SUBMIT_BLOCK_INTERVAL),
+            "retry counter should be removed at max_retries"
+        );
+        assert!(cache.is_none(), "cache should be dropped when max_retries is reached");
+    }
+
+    /// `run()` honors cancellation between iterations.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_run_returns_when_cancelled() {
+        let (pipeline, _proof_requester, cancel) = step_pipeline_default(0);
+        let pipeline = Arc::new(pipeline);
+
+        let runner = tokio::spawn({
+            let pipeline = Arc::clone(&pipeline);
+            async move { pipeline.run().await }
+        });
+
+        // Yield once so the spawned task can begin its first iteration.
+        tokio::task::yield_now().await;
+        cancel.cancel();
+
+        let result = tokio::time::timeout(Duration::from_secs(5), runner)
+            .await
+            .expect("run should return promptly after cancel")
+            .expect("run task should not panic");
+        assert!(result.is_ok(), "run should return Ok when cancelled");
+    }
+
+    /// When `safe_head < target_block`, the dispatcher returns without
+    /// dispatching and leaves retry counters untouched.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatcher_tick_skips_when_safe_head_below_next_target() {
+        // safe_head=0, target = 0 + SUBMIT_BLOCK_INTERVAL = 4 > 0 → skip.
+        let (pipeline, proof_requester, cancel) = step_pipeline_default(0);
+
+        let mut cache: Option<CachedRecovery> = None;
+        let mut dispatch_state = ProofDispatcherState::new();
+        pipeline.dispatcher_tick(&mut cache, &mut dispatch_state, &cancel).await;
+
+        assert!(
+            proof_requester.requests.lock().unwrap().is_empty(),
+            "no proof should have been dispatched while safe head is behind target"
+        );
+        assert!(dispatch_state.retry_counts.is_empty(), "retry counters should be untouched");
+    }
+
+    /// The dispatcher sends proof requests up to the safe head instead of
+    /// limiting itself to one in-flight proof.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatcher_tick_dispatches_all_targets_up_to_safe_head() {
+        let safe_head = SUBMIT_BLOCK_INTERVAL * 3;
+        let (pipeline, proof_requester, cancel) = step_pipeline_default(safe_head);
+
+        let mut cache: Option<CachedRecovery> = None;
+        let mut dispatch_state = ProofDispatcherState::new();
+        pipeline.dispatcher_tick(&mut cache, &mut dispatch_state, &cancel).await;
+
+        let requests = proof_requester.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3, "dispatcher should dispatch every interval up to safe head");
+        assert!(
+            dispatch_state.retry_counts.is_empty(),
+            "successful dispatch should not bump the retry counter"
+        );
+    }
+
+    /// A terminal prover-service `Failed` status is sticky until the proposer
+    /// calls `prove_block_range` again for the same session id. The collector
+    /// must therefore re-dispatch immediately instead of only incrementing a
+    /// local retry counter and polling the same failed row again.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_collector_tick_redispatches_failed_session() {
+        let (pipeline, proof_requester, cancel) = step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
+        let mut dispatch_cache: Option<CachedRecovery> = None;
+        let mut dispatch_state = ProofDispatcherState::new();
+        pipeline.dispatcher_tick(&mut dispatch_cache, &mut dispatch_state, &cancel).await;
+
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(
+            B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+            pipeline.proof_collector.tee_kind(),
+        );
+        proof_requester
+            .failed_sessions
+            .lock()
+            .unwrap()
+            .insert(session_id, "simulated prover failure".to_owned());
+        let prove_count_before =
+            proof_requester.prove_count.load(std::sync::atomic::Ordering::SeqCst);
+
+        let mut collect_cache: Option<CachedRecovery> = None;
+        let mut collect_state = ProofCollectorState::new();
+        let (restart_tx, _restart_rx) = mpsc::channel(1);
+
+        pipeline
+            .collector_tick(
+                &mut collect_cache,
+                &mut collect_state,
+                CollectorTickContext { cancel: &cancel, restart_tx: &restart_tx },
+            )
+            .await;
+
+        assert!(
+            proof_requester.prove_count.load(std::sync::atomic::Ordering::SeqCst)
+                > prove_count_before,
+            "collector should re-dispatch failed prover-service sessions"
+        );
+        assert_eq!(
+            collect_state.retry_counts.get(&SUBMIT_BLOCK_INTERVAL).copied(),
+            Some(1),
+            "failed session should consume one retry attempt"
+        );
+    }
+
+    /// A failed prover-service session consumes one retry attempt. If the
+    /// immediate re-dispatch also fails, that dispatch failure is logged but
+    /// does not consume a second retry in the same collector tick.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_failed_session_redispatch_failure_does_not_double_count_retry() {
+        let proof_requester = Arc::new(FailedThenRejectDispatchRequester);
+        let cancel = CancellationToken::new();
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                submit_timeout: Some(Duration::from_secs(60)),
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    game_type: TEST_GAME_TYPE,
+                    block_interval: SUBMIT_BLOCK_INTERVAL,
+                    intermediate_block_interval: SUBMIT_INTERMEDIATE_INTERVAL,
+                    poll_interval: Duration::from_millis(10),
+                    ..Default::default()
+                },
+            },
+            proof_requester,
+            Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER }),
+            Arc::new(MockL2 { block_not_found: true, canonical_hash: None }),
+            Arc::new(MockRollupClient {
+                sync_status: test_sync_status(SUBMIT_BLOCK_INTERVAL, B256::ZERO),
+                output_roots: HashMap::new(),
+                max_safe_block: None,
+            }),
+            Arc::new(MockAnchorStateRegistry {
+                anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+                anchor_game: Address::ZERO,
+            }),
+            Arc::new(MockDisputeGameFactory::with_games(vec![])),
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockOutputProposer),
+            cancel.clone(),
+        );
+
+        let mut cache: Option<CachedRecovery> = None;
+        let mut collect_state = ProofCollectorState::new();
+        let (restart_tx, _restart_rx) = mpsc::channel(1);
+
+        pipeline
+            .collector_tick(
+                &mut cache,
+                &mut collect_state,
+                CollectorTickContext { cancel: &cancel, restart_tx: &restart_tx },
+            )
+            .await;
+
+        assert_eq!(
+            collect_state.retry_counts.get(&SUBMIT_BLOCK_INTERVAL).copied(),
+            Some(1),
+            "failed session plus same-tick dispatch failure should consume one retry"
+        );
+    }
+
+    /// Submit failures ask the driver to restart both dispatcher and collector
+    /// tasks from chain-derived state.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_collector_tick_requests_restart_on_submit_failure() {
+        let (pipeline, proof_requester, cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            Duration::from_secs(60),
+            Arc::new(TransientFailOutputProposer),
+        );
+        let mut dispatch_cache: Option<CachedRecovery> = None;
+        let mut dispatch_state = ProofDispatcherState::new();
+        pipeline.dispatcher_tick(&mut dispatch_cache, &mut dispatch_state, &cancel).await;
+
+        assert_eq!(
+            proof_requester.requests.lock().unwrap().len(),
+            1,
+            "test setup should dispatch one ready proof"
+        );
+
+        let mut collect_cache: Option<CachedRecovery> = None;
+        let mut collect_state = ProofCollectorState::new();
+        let (restart_tx, mut restart_rx) = mpsc::channel(1);
+
+        pipeline
+            .collector_tick(
+                &mut collect_cache,
+                &mut collect_state,
+                CollectorTickContext { cancel: &cancel, restart_tx: &restart_tx },
+            )
+            .await;
+
+        assert_eq!(
+            restart_rx.try_recv().expect("collector should request restart"),
+            "submit failure"
+        );
+    }
+
+    /// When the dispatcher has already produced a backlog of ready proofs, the
+    /// collector should submit each sequentially ready target in one tick
+    /// instead of sleeping `poll_interval` between successful submissions.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_collector_tick_drains_ready_backlog_after_success() {
+        let submitted_games = Arc::new(AtomicU64::new(0));
+        let proof_requester = Arc::new(MockProofRequester::default());
+        let cancel = CancellationToken::new();
+        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(SUBMIT_BLOCK_INTERVAL * 3, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
+        let factory =
+            Arc::new(AdvancingGameFactory { submitted_games: Arc::clone(&submitted_games) });
+        let output_proposer =
+            Arc::new(AdvancingOutputProposer { submitted_games: Arc::clone(&submitted_games) });
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                submit_timeout: Some(Duration::from_secs(60)),
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    game_type: TEST_GAME_TYPE,
+                    block_interval: SUBMIT_BLOCK_INTERVAL,
+                    intermediate_block_interval: SUBMIT_BLOCK_INTERVAL,
+                    poll_interval: Duration::from_millis(10),
+                    ..Default::default()
+                },
+            },
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            factory,
+            Arc::new(MockAggregateVerifier::default()),
+            output_proposer,
+            cancel.clone(),
+        );
+
+        let mut dispatch_cache: Option<CachedRecovery> = None;
+        let mut dispatch_state = ProofDispatcherState::new();
+        pipeline.dispatcher_tick(&mut dispatch_cache, &mut dispatch_state, &cancel).await;
+
+        assert_eq!(
+            proof_requester.requests.lock().unwrap().len(),
+            3,
+            "test setup should dispatch three ready proofs"
+        );
+
+        let mut collect_cache: Option<CachedRecovery> = None;
+        let mut collect_state = ProofCollectorState::new();
+        let (restart_tx, mut restart_rx) = mpsc::channel(1);
+
+        pipeline
+            .collector_tick(
+                &mut collect_cache,
+                &mut collect_state,
+                CollectorTickContext { cancel: &cancel, restart_tx: &restart_tx },
+            )
+            .await;
+
+        assert_eq!(
+            submitted_games.load(Ordering::SeqCst),
+            3,
+            "collector should submit every ready proof without waiting another poll tick"
+        );
+        assert!(restart_rx.try_recv().is_err(), "successful backlog drain should not restart");
+    }
+
+    /// `submit_inline` with a `RootMismatch` outcome drops the cached
+    /// recovery but leaves retry counters untouched (transient submit
+    /// failures never count against the per-target retry budget).
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_inline_root_mismatch_clears_cache_only() {
+        // Force a final-root mismatch by overriding the canonical root for
+        // the target block.
+        let output_roots = HashMap::from([(SUBMIT_BLOCK_INTERVAL, B256::repeat_byte(0xFF))]);
+        let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+            output_roots,
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            Duration::from_secs(60),
+            Arc::new(MockOutputProposer),
+        );
+
+        let recovered = anchor_recovered_state();
+        let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::from([(SUBMIT_BLOCK_INTERVAL, 1)]);
+
+        let effect = pipeline
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &cancel,
+            )
+            .await;
+
+        assert!(cache.is_none(), "RootMismatch should drop the recovery cache");
+        assert_eq!(effect, SubmitEffect::Restart, "RootMismatch should restart the session");
+        assert_eq!(
+            retry_counts.get(&SUBMIT_BLOCK_INTERVAL).copied(),
+            Some(1),
+            "submit failures should not bump per-target retry counters"
+        );
+    }
+
+    /// `submit_inline` with an `InvalidParentGame` rejection drops the
+    /// cached recovery (so the next iteration re-walks) and does not bump
+    /// retry counters.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_inline_invalid_parent_game_clears_cache() {
+        let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            Duration::from_secs(60),
+            Arc::new(InvalidParentGameOutputProposer),
+        );
+
+        let recovered = anchor_recovered_state();
+        let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+
+        let effect = pipeline
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &cancel,
+            )
+            .await;
+
+        assert!(cache.is_none(), "InvalidParentGame should drop the recovery cache");
+        assert_eq!(effect, SubmitEffect::Restart, "InvalidParentGame should restart the session");
+        assert!(retry_counts.is_empty(), "submit failures should not bump retry counters");
+    }
+
+    /// Other transient submit failures preserve both the cache and retry
+    /// counters, but restart both loops from a fresh recovery walk.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_inline_transient_failure_preserves_cache() {
+        let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            Duration::from_secs(60),
+            Arc::new(TransientFailOutputProposer),
+        );
+
+        let recovered = anchor_recovered_state();
+        let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+
+        let effect = pipeline
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &cancel,
+            )
+            .await;
+
+        assert!(cache.is_some(), "transient submit failures should preserve the recovery cache");
+        assert_eq!(effect, SubmitEffect::Restart, "transient submit failures should restart");
+        assert!(
+            retry_counts.is_empty(),
+            "transient submit failures should not bump retry counters"
+        );
+    }
+
+    /// When `submit_inline` exceeds `submit_timeout`, neither the cache
+    /// nor retry counters are mutated, but the pipeline session restarts.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_inline_timeout_does_not_count_against_retries() {
+        let submit_timeout = Duration::from_millis(50);
+        let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            submit_timeout,
+            Arc::new(DelayedOutputProposer { delay: submit_timeout * 10 }),
+        );
+
+        let recovered = anchor_recovered_state();
+        let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+
+        let effect = pipeline
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &cancel,
+            )
+            .await;
+
+        assert!(cache.is_some(), "submit timeout should preserve the recovery cache");
+        assert!(retry_counts.is_empty(), "submit timeout should not bump retry counters");
+        assert_eq!(effect, SubmitEffect::Restart, "submit timeout should restart the session");
+    }
+
+    /// Cancellation aborts the inline submit wait immediately and restarts the
+    /// session without mutating retry accounting.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_inline_cancelled_does_not_count_against_retries() {
+        let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            Duration::from_secs(60),
+            Arc::new(MockOutputProposer),
+        );
+
+        let recovered = anchor_recovered_state();
+        let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        cancel.cancel();
+
+        let effect = pipeline
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &cancel,
+            )
+            .await;
+
+        assert!(cache.is_some(), "cancelled submit should preserve the recovery cache");
+        assert!(retry_counts.is_empty(), "cancelled submit should not bump retry counters");
+        assert_eq!(effect, SubmitEffect::Restart, "cancelled submit should restart the session");
+    }
+
+    /// On a successful submission `submit_inline` advances
+    /// `last_proposed_block`; `last_collected_block` is advanced when the
+    /// collector observes a ready proof.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_submit_inline_advances_last_proposed_block_on_success() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        with_recorder(|snap| {
+            rt.block_on(async {
+                let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+                    HashMap::new(),
+                    SUBMIT_BLOCK_INTERVAL,
+                    3,
+                    Duration::from_secs(60),
+                    Arc::new(MockOutputProposer),
+                );
+                let recovered = anchor_recovered_state();
+                let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+                let mut cache: Option<CachedRecovery> = None;
+                let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+                pipeline
+                    .submit_inline(
+                        SUBMIT_BLOCK_INTERVAL,
+                        &recovered,
+                        proof,
+                        &mut retry_counts,
+                        &mut cache,
+                        &cancel,
+                    )
+                    .await;
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            match find_metric(&snapshot, MetricKind::Gauge, "base_proposer.last_proposed_block") {
+                Some(DebugValue::Gauge(value)) => {
+                    assert_eq!(
+                        value.into_inner(),
+                        SUBMIT_BLOCK_INTERVAL as f64,
+                        "last_proposed_block should advance to target block on success",
+                    );
+                }
+                other => panic!("expected last_proposed_block gauge, got {other:?}"),
+            }
+        });
+    }
+
+    /// The collector advances `last_collected_block` when it polls a proof as
+    /// ready, before attempting L1 submission.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_collector_tick_advances_last_collected_block_on_ready() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        with_recorder(|snap| {
+            rt.block_on(async {
+                let (pipeline, proof_requester, cancel) =
+                    step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
+                let mut dispatch_cache: Option<CachedRecovery> = None;
+                let mut dispatch_state = ProofDispatcherState::new();
+                pipeline.dispatcher_tick(&mut dispatch_cache, &mut dispatch_state, &cancel).await;
+
+                assert_eq!(
+                    proof_requester.requests.lock().unwrap().len(),
+                    1,
+                    "test setup should dispatch one ready proof"
+                );
+
+                let mut collect_cache: Option<CachedRecovery> = None;
+                let mut collect_state = ProofCollectorState::new();
+                let (restart_tx, _restart_rx) = mpsc::channel(1);
+                pipeline
+                    .collector_tick(
+                        &mut collect_cache,
+                        &mut collect_state,
+                        CollectorTickContext { cancel: &cancel, restart_tx: &restart_tx },
+                    )
+                    .await;
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            match find_metric(&snapshot, MetricKind::Gauge, "base_proposer.last_collected_block") {
+                Some(DebugValue::Gauge(value)) => {
+                    assert_eq!(
+                        value.into_inner(),
+                        SUBMIT_BLOCK_INTERVAL as f64,
+                        "last_collected_block should advance when proof is ready",
+                    );
+                }
+                other => panic!("expected last_collected_block gauge, got {other:?}"),
+            }
+        });
+    }
+
+    /// Submit timeouts are observable through a dedicated counter.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_submit_inline_timeout_increments_submit_timeouts_total() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        with_recorder(|snap| {
+            rt.block_on(async {
+                let submit_timeout = Duration::from_millis(50);
+                let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+                    HashMap::new(),
+                    SUBMIT_BLOCK_INTERVAL,
+                    3,
+                    submit_timeout,
+                    Arc::new(DelayedOutputProposer { delay: submit_timeout * 10 }),
+                );
+                let recovered = anchor_recovered_state();
+                let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+                let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+                let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+                pipeline
+                    .submit_inline(
+                        SUBMIT_BLOCK_INTERVAL,
+                        &recovered,
+                        proof,
+                        &mut retry_counts,
+                        &mut cache,
+                        &cancel,
+                    )
+                    .await;
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            match find_metric(&snapshot, MetricKind::Counter, "base_proposer.submit_timeouts_total")
+            {
+                Some(DebugValue::Counter(value)) => {
+                    assert_eq!(*value, 1, "submit_timeouts_total should increment once");
+                }
+                other => panic!("expected submit_timeouts_total counter, got {other:?}"),
+            }
+        });
+    }
+
+    /// `submit_inline` with a `RootMismatch` outcome increments the
+    /// `root_mismatch_total` counter.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_submit_inline_increments_root_mismatch_total() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        with_recorder(|snap| {
+            rt.block_on(async {
+                let output_roots =
+                    HashMap::from([(SUBMIT_BLOCK_INTERVAL, B256::repeat_byte(0xFF))]);
+                let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+                    output_roots,
+                    SUBMIT_BLOCK_INTERVAL,
+                    3,
+                    Duration::from_secs(60),
+                    Arc::new(MockOutputProposer),
+                );
+                let recovered = anchor_recovered_state();
+                let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+                let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+                let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+                pipeline
+                    .submit_inline(
+                        SUBMIT_BLOCK_INTERVAL,
+                        &recovered,
+                        proof,
+                        &mut retry_counts,
+                        &mut cache,
+                        &cancel,
+                    )
+                    .await;
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            match find_metric(&snapshot, MetricKind::Counter, "base_proposer.root_mismatch_total") {
+                Some(DebugValue::Counter(value)) => {
+                    assert_eq!(*value, 1, "root_mismatch_total should increment once");
+                }
+                other => panic!("expected root_mismatch_total counter, got {other:?}"),
+            }
+        });
+    }
+
+    /// On successful submission, `submit_inline` clears the per-target
+    /// retry counter and refreshes the recovery cache.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_inline_success_clears_retry_counter() {
+        let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            Duration::from_secs(60),
+            Arc::new(MockOutputProposer),
+        );
+
+        let recovered = anchor_recovered_state();
+        let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+        let mut cache: Option<CachedRecovery> = None;
+        let mut retry_counts: HashMap<u64, u32> = HashMap::from([(SUBMIT_BLOCK_INTERVAL, 2)]);
+
+        let effect = pipeline
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &cancel,
+            )
+            .await;
+
+        assert!(
+            !retry_counts.contains_key(&SUBMIT_BLOCK_INTERVAL),
+            "successful submit should clear the per-target retry counter"
+        );
+        assert!(cache.is_some(), "successful submit should refresh the cache");
+        assert!(
+            matches!(effect, SubmitEffect::Submitted { .. }),
+            "successful submit should be Submitted"
+        );
+    }
+
+    /// L1 mock whose `header_by_number` always errors. Used to drive
+    /// `dispatch_for` through its build-failure path.
+    #[derive(Debug)]
+    struct FailingL1;
+
+    #[async_trait]
+    impl L1Provider for FailingL1 {
+        async fn block_number(&self) -> base_proof_rpc::RpcResult<u64> {
+            Ok(TEST_L1_BLOCK_NUMBER)
+        }
+        async fn header_by_number(
+            &self,
+            _: alloy_eips::BlockNumberOrTag,
+        ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
+            Err(RpcError::Transport("simulated L1 outage".into()))
+        }
+        async fn header_by_hash(
+            &self,
+            _: B256,
+        ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
+            unimplemented!()
+        }
+        async fn block_receipts(
+            &self,
+            _: B256,
+        ) -> base_proof_rpc::RpcResult<Vec<alloy_rpc_types_eth::TransactionReceipt>> {
+            unimplemented!()
+        }
+        async fn code_at(
+            &self,
+            _: Address,
+            _: alloy_eips::BlockNumberOrTag,
+        ) -> base_proof_rpc::RpcResult<alloy_primitives::Bytes> {
+            unimplemented!()
+        }
+        async fn call_contract(
+            &self,
+            _: Address,
+            _: alloy_primitives::Bytes,
+            _: alloy_eips::BlockNumberOrTag,
+        ) -> base_proof_rpc::RpcResult<alloy_primitives::Bytes> {
+            unimplemented!()
+        }
+        async fn get_balance(
+            &self,
+            _: Address,
+        ) -> base_proof_rpc::RpcResult<alloy_primitives::U256> {
+            Ok(alloy_primitives::U256::ZERO)
+        }
+    }
+
+    /// `dispatch_for` build failures are transient infrastructure errors and
+    /// must not bump the per-target retry budget — they never reached the
+    /// prover service, so the proof-failure retry policy does not apply.
+    /// Without this guard a sustained L1 RPC outage would burn the whole
+    /// retry budget and drop the recovery cache, causing a noisy
+    /// re-walk-and-fail-again cycle on every tick.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_for_build_failure_does_not_bump_retries() {
+        let proof_requester = Arc::new(MockProofRequester::default());
+        let cancel = CancellationToken::new();
+        let l1 = Arc::new(FailingL1);
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(SUBMIT_BLOCK_INTERVAL, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                submit_timeout: Some(Duration::from_secs(60)),
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    game_type: TEST_GAME_TYPE,
+                    block_interval: SUBMIT_BLOCK_INTERVAL,
+                    intermediate_block_interval: SUBMIT_INTERMEDIATE_INTERVAL,
+                    poll_interval: Duration::from_millis(10),
+                    ..Default::default()
+                },
+            },
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            Arc::new(MockDisputeGameFactory::with_games(vec![])),
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockOutputProposer),
+            cancel,
+        );
+
+        let recovered = anchor_recovered_state();
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+
+        let outcome = pipeline
+            .dispatch_for(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+                &mut retry_counts,
+                &mut cache,
+                true,
+            )
+            .await;
+
+        assert!(
+            proof_requester.requests.lock().unwrap().is_empty(),
+            "build failure should not reach the prover service"
+        );
+        assert!(retry_counts.is_empty(), "build failures must not bump per-target retry counters");
+        assert!(cache.is_some(), "build failures must not drop the recovery cache");
+        assert_eq!(outcome, DispatchOutcome::Skipped, "build failure should skip dispatch");
+    }
+
+    /// `submit_inline` with a `Discard` outcome (e.g. `L1OriginTooOld`)
+    /// returns a re-dispatch effect instead of marking the target skipped.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_inline_discard_requests_redispatch() {
+        let (pipeline, _proof_requester, cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            Duration::from_secs(60),
+            Arc::new(L1OriginTooOldOutputProposer),
+        );
+
+        let recovered = anchor_recovered_state();
+        let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+
+        let effect = pipeline
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &cancel,
+            )
+            .await;
+
+        assert_eq!(
+            effect,
+            SubmitEffect::Redispatch {
+                claimed_l2_output_root: B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+            },
+            "Discard outcome should request a fresh proof dispatch"
+        );
+        assert!(retry_counts.is_empty(), "Discard must not bump per-target retry counters");
+        assert!(cache.is_some(), "Discard must not drop the recovery cache");
+    }
+
+    /// Discard retries use retry-specific session ids so a previously
+    /// `Succeeded` root-derived session does not force the collector to reuse
+    /// the same discarded proof forever.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_discard_retry_uses_retry_session() {
+        let (pipeline, proof_requester, _cancel) = step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
+        let recovered = anchor_recovered_state();
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut discard_retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut retry_sessions: HashMap<u64, String> = HashMap::new();
+
+        pipeline
+            .dispatch_discard_retry(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+                &mut retry_counts,
+                &mut cache,
+                DiscardRetryState {
+                    counts: &mut discard_retry_counts,
+                    sessions: &mut retry_sessions,
+                    count_dispatch_failure: true,
+                },
+            )
+            .await;
+
+        let requests = proof_requester.requests.lock().unwrap();
+        let retry_session = retry_sessions
+            .get(&SUBMIT_BLOCK_INTERVAL)
+            .expect("discard retry should store retry session id");
+        assert!(requests.contains_key(retry_session), "retry session should be dispatched");
+        assert_ne!(
+            retry_session,
+            &ProposerProofAdapter::tee_session_id_for_root(
+                B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+                pipeline.proof_collector.tee_kind(),
+            ),
+            "discard retries must not reuse root-derived session id"
+        );
+    }
+
+    /// Discard retries are capped so persistent discard reasons do not create
+    /// unbounded prover-service sessions for one target.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_discard_retry_exhaustion_drops_cache() {
+        let (pipeline, proof_requester, _cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            2,
+            Duration::from_secs(60),
+            Arc::new(MockOutputProposer),
+        );
+        let recovered = anchor_recovered_state();
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut discard_retry_counts: HashMap<u64, u32> =
+            HashMap::from([(SUBMIT_BLOCK_INTERVAL, 2)]);
+        let mut retry_sessions: HashMap<u64, String> =
+            HashMap::from([(SUBMIT_BLOCK_INTERVAL, "stale-session".to_owned())]);
+
+        pipeline
+            .dispatch_discard_retry(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+                &mut retry_counts,
+                &mut cache,
+                DiscardRetryState {
+                    counts: &mut discard_retry_counts,
+                    sessions: &mut retry_sessions,
+                    count_dispatch_failure: true,
+                },
+            )
+            .await;
+
+        assert!(cache.is_none(), "discard exhaustion should drop the recovery cache");
+        assert!(discard_retry_counts.is_empty(), "discard exhaustion should clear retry count");
+        assert!(retry_sessions.is_empty(), "discard exhaustion should clear retry session");
+        assert!(
+            proof_requester.requests.lock().unwrap().is_empty(),
+            "discard exhaustion should not dispatch another session"
+        );
+    }
+
+    /// If a retry-specific session disappears from prover service, the
+    /// collector should dispatch a fresh retry instead of polling the missing
+    /// session forever.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_collector_tick_redispatches_missing_retry_session() {
+        let (pipeline, proof_requester, cancel) = step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
+
+        let mut cache: Option<CachedRecovery> = None;
+        let mut collect_state = ProofCollectorState::new();
+        collect_state
+            .retry_sessions
+            .insert(SUBMIT_BLOCK_INTERVAL, "missing-retry-session".to_owned());
+        let (restart_tx, _restart_rx) = mpsc::channel(1);
+
+        pipeline
+            .collector_tick(
+                &mut cache,
+                &mut collect_state,
+                CollectorTickContext { cancel: &cancel, restart_tx: &restart_tx },
+            )
+            .await;
+
+        let retry_session = collect_state
+            .retry_sessions
+            .get(&SUBMIT_BLOCK_INTERVAL)
+            .expect("missing retry session should be replaced");
+        assert_ne!(retry_session, "missing-retry-session");
+        assert!(
+            proof_requester.requests.lock().unwrap().contains_key(retry_session),
+            "collector should dispatch the replacement retry session"
+        );
+        assert_eq!(
+            collect_state.discard_retry_counts.get(&SUBMIT_BLOCK_INTERVAL).copied(),
+            Some(1),
+            "replacement retry should consume one discard retry attempt"
+        );
+    }
+
+    /// A task panic is treated as a session restart instead of being
+    /// propagated out of the pipeline runner.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_handle_task_result_treats_panic_as_restartable() {
+        let handle = tokio::spawn(async { panic!("simulated task panic") });
+        let result = handle.await;
+        assert!(result.is_err(), "test setup should produce a JoinError");
+        handle_task_result(TaskKind::Dispatcher, result.map(|()| Ok(())));
     }
 }

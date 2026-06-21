@@ -1,8 +1,8 @@
 //! Handler related to Base chain
 use alloc::{boxed::Box, vec::Vec};
 
-use base_common_chains::BaseUpgrade;
 use base_common_consensus::Predeploys;
+use base_common_genesis::BaseUpgrade;
 use revm::{
     context::{
         LocalContextTr,
@@ -185,6 +185,7 @@ where
     fn last_frame_result(
         &mut self,
         evm: &mut Self::Evm,
+        _original_reservoir: u64,
         frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
     ) -> Result<(), Self::Error> {
         let ctx = evm.ctx();
@@ -197,9 +198,11 @@ where
         let gas = frame_result.gas_mut();
         let remaining = gas.remaining();
         let refunded = gas.refunded();
+        let reservoir = gas.reservoir();
+        let state_gas_spent = gas.state_gas_spent();
 
         // Spend the gas limit. Gas is reimbursed when the tx returns successfully.
-        *gas = Gas::new_spent(tx_gas_limit);
+        *gas = Gas::new_spent_with_reservoir(tx_gas_limit, reservoir);
 
         if instruction_result.is_ok() {
             if !is_deposit || is_regolith {
@@ -211,6 +214,14 @@ where
         } else if instruction_result.is_revert() && (!is_deposit || is_regolith) {
             gas.erase_cost(remaining);
         }
+
+        if instruction_result.is_ok() {
+            gas.set_state_gas_spent(state_gas_spent);
+        } else {
+            gas.set_state_gas_spent(0);
+            gas.set_reservoir(reservoir.saturating_add_signed(state_gas_spent));
+        }
+
         Ok(())
     }
 
@@ -432,7 +443,7 @@ mod tests {
         let mut handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
 
-        handler.last_frame_result(&mut evm, &mut exec_result).unwrap();
+        handler.last_frame_result(&mut evm, 0, &mut exec_result).unwrap();
         handler.refund(&mut evm, &mut exec_result, 0);
         *exec_result.gas()
     }

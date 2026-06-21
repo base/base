@@ -59,11 +59,7 @@ impl TryFrom<&str> for ProofStatus {
     }
 }
 
-/// Worker-owned job lifecycle status, distinct from the requester [`ProofStatus`].
-///
-/// The worker API (`getNextProof` / `heartbeat` / `submitProof`) drives this field
-/// on the same `proof_requests` row, while `status` continues to model the
-/// requester-facing proof lifecycle.
+/// Worker-owned job lifecycle status, distinct from requester [`ProofStatus`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProofJobStatus {
@@ -134,6 +130,11 @@ impl SessionStatus {
             Self::Completed => "COMPLETED",
             Self::Failed => "FAILED",
         }
+    }
+
+    /// Whether this status represents a terminal backend session.
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Failed)
     }
 }
 
@@ -604,12 +605,67 @@ pub struct ProofJob {
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     /// Error message when the job failed.
     pub error_message: Option<String>,
+    /// Stored protocol result payload once the job has completed.
+    pub result_payload: Option<serde_json::Value>,
     /// Timestamp when the job was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last update.
     pub updated_at: DateTime<Utc>,
     /// Timestamp when the job completed.
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+impl ProofJob {
+    /// Reject a submitted result whose variant or capability discriminator
+    /// (`zk_vm`/`tee_kind`) does not match this claimed job, returning the
+    /// mismatch reason. Guards against a worker storing the wrong proof type.
+    pub fn validate_submitted_result(&self, result: &ProtocolProofResult) -> Result<(), String> {
+        match result {
+            ProtocolProofResult::Compressed(zk) => {
+                self.check_api_proof_type(ApiProofType::Compressed)?;
+                self.check_zk_vm(ZkVmKind::from(zk.zk_vm))
+            }
+            ProtocolProofResult::SnarkGroth16(snark) => {
+                self.check_api_proof_type(ApiProofType::SnarkGroth16)?;
+                self.check_zk_vm(ZkVmKind::from(snark.proof.zk_vm))
+            }
+            ProtocolProofResult::Tee(tee) => {
+                self.check_api_proof_type(ApiProofType::Tee)?;
+                self.check_tee_kind(TeeKind::from(tee.tee_kind))
+            }
+        }
+    }
+
+    fn check_api_proof_type(&self, expected: ApiProofType) -> Result<(), String> {
+        if self.api_proof_type == expected {
+            Ok(())
+        } else {
+            Err(format!(
+                "submitted {expected} result but claimed job proof type is {}",
+                self.api_proof_type
+            ))
+        }
+    }
+
+    fn check_zk_vm(&self, submitted: ZkVmKind) -> Result<(), String> {
+        match self.zk_vm {
+            Some(expected) if expected == submitted => Ok(()),
+            Some(expected) => {
+                Err(format!("submitted zk_vm {submitted} but claimed job zk_vm is {expected}"))
+            }
+            None => Err(format!("submitted zk_vm {submitted} but claimed job has no zk_vm")),
+        }
+    }
+
+    fn check_tee_kind(&self, submitted: TeeKind) -> Result<(), String> {
+        match self.tee_kind {
+            Some(expected) if expected == submitted => Ok(()),
+            Some(expected) => Err(format!(
+                "submitted tee_kind {submitted} but claimed job tee_kind is {expected}"
+            )),
+            None => Err(format!("submitted tee_kind {submitted} but claimed job has no tee_kind")),
+        }
+    }
 }
 
 /// Offset pagination parameters.
@@ -940,7 +996,7 @@ pub struct ClaimProofJob {
     pub zk_vms: Vec<ZkVmKind>,
     /// Lock duration in seconds. Callers must resolve the server default first.
     pub lock_duration_seconds: u32,
-    /// Reclaim budget: expired claims are only reclaimable while `attempt < max_attempts`.
+    /// Reclaim budget for expired claims.
     pub max_attempts: u32,
 }
 
@@ -960,15 +1016,15 @@ pub struct HeartbeatProofJob {
 /// Outcome of attempting to heartbeat a worker proof job.
 #[derive(Debug, Clone)]
 pub enum HeartbeatOutcome {
-    /// The heartbeat succeeded and the returned job has the updated lock expiry.
+    /// Heartbeat succeeded.
     Updated(ProofJob),
     /// No proof job exists for the supplied `session_id`.
     NotFound,
     /// The job exists but is not currently claimed.
     NotClaimed(ProofJob),
-    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    /// The supplied worker or lock no longer owns the job.
     StaleLock(ProofJob),
-    /// The supplied lock matched the job, but it had already expired.
+    /// The lock matched the job but had expired.
     Expired(ProofJob),
     /// The job is already terminal.
     Terminal(ProofJob),
@@ -992,20 +1048,138 @@ pub struct CompleteClaimedProofJob {
 /// Outcome of attempting to complete a worker proof job.
 #[derive(Debug, Clone)]
 pub enum SubmitProofOutcome {
-    /// The submit succeeded and the returned job is terminal `SUCCEEDED`.
+    /// Submit succeeded.
     Completed(ProofJob),
+    /// The submitted result does not match the claimed job's proof type or
+    /// capability discriminator. The stored job is left unchanged.
+    ResultMismatch {
+        /// The claimed job whose proof type was violated.
+        job: ProofJob,
+        /// Human-readable description of the mismatch.
+        reason: String,
+    },
+    /// An idempotent retry from the owning worker/lock submitted a result that
+    /// differs from the one already stored. The stored result is kept.
+    ResultConflict {
+        /// The already-completed job whose stored result was retained.
+        job: ProofJob,
+    },
     /// No proof job exists for the supplied `session_id`.
     NotFound,
     /// The job exists but is not currently claimed.
     NotClaimed(ProofJob),
-    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    /// The supplied worker or lock no longer owns the job.
     StaleLock(ProofJob),
-    /// The supplied lock matched the job, but it had already expired.
+    /// The lock matched the job but had expired.
     Expired(ProofJob),
     /// The job is already terminal.
     Terminal(ProofJob),
     /// The update was denied, but the diagnostic read did not identify a stable reason.
     Unknown(ProofJob),
+}
+
+/// A proof job's current lock columns, as read under a row lock, against which a
+/// worker write is authorized.
+///
+/// Grouping the job-side values keeps them from being confused with the
+/// worker-supplied fencing token at `ClaimAuth::classify` call sites.
+#[derive(Debug, Clone, Copy)]
+pub struct JobLockState<'a> {
+    /// Current lifecycle status of the job.
+    pub status: ProofJobStatus,
+    /// Active lock identifier, set while the job is claimed.
+    pub lock_id: Option<Uuid>,
+    /// Worker that currently holds the lock, if any.
+    pub worker_id: Option<&'a str>,
+    /// When the active lock expires, if any.
+    pub lock_expires_at: Option<DateTime<Utc>>,
+}
+
+/// Parameters for an external worker recording a backend session id against a
+/// claimed job, so a restart or reclaim resumes the in-flight backend job.
+#[derive(Debug, Clone)]
+pub struct WorkerSessionUpsert {
+    /// Public proof session identifier.
+    pub session_id: String,
+    /// Current worker fencing token.
+    pub lock_id: Uuid,
+    /// Worker identifier that owns the claim.
+    pub worker_id: String,
+    /// Backend session type being recorded.
+    pub session_type: SessionType,
+    /// Backend-issued session identifier to persist.
+    pub backend_session_id: String,
+    /// Backend session lifecycle state to persist.
+    pub status: SessionStatus,
+    /// Failure reason to persist, typically set alongside a `Failed` status.
+    pub error_message: Option<String>,
+}
+
+/// Outcome of attempting to record a backend session for a worker job.
+#[derive(Debug, Clone)]
+pub enum RecordSessionOutcome {
+    /// The session was inserted or updated and the active row is returned.
+    Recorded(ProofSession),
+    /// A row for the requested backend session already reached a terminal state.
+    TerminalBackendSession(ProofSession),
+    /// No proof job exists for the supplied `session_id`.
+    NotFound,
+    /// The job exists but is not currently claimed.
+    NotClaimed,
+    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    StaleLock,
+    /// The supplied lock matched the job, but it had already expired.
+    Expired,
+    /// The job is already terminal.
+    Terminal,
+    /// The requested session status is terminal and must be coordinated with job completion.
+    TerminalSessionStatus,
+}
+
+/// Result of checking a worker's fencing token against a claimed job's lock.
+///
+/// Shared by `heartbeat_proof_job` and `record_worker_proof_session` so both
+/// authorize worker writes against identical lock rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimAuth {
+    /// The requesting worker holds the active lock; the write may proceed.
+    Authorized,
+    /// The job has already reached a terminal state.
+    Terminal,
+    /// The job is not currently claimed.
+    NotClaimed,
+    /// The lock is held by another worker or has been rotated.
+    StaleLock,
+    /// The lock has expired.
+    Expired,
+}
+
+impl ClaimAuth {
+    /// Classify a worker claim from a job's current lock columns (`job`) against
+    /// the fencing token (`req_lock_id`, `req_worker_id`) the worker presented.
+    ///
+    /// `now` is supplied by the caller so the expiry check stays pure and
+    /// deterministically testable.
+    pub fn classify(
+        job: JobLockState<'_>,
+        req_lock_id: Uuid,
+        req_worker_id: &str,
+        now: DateTime<Utc>,
+    ) -> Self {
+        if matches!(job.status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
+            return Self::Terminal;
+        }
+        if job.status != ProofJobStatus::Claimed {
+            return Self::NotClaimed;
+        }
+        if job.lock_id != Some(req_lock_id) || job.worker_id != Some(req_worker_id) {
+            return Self::StaleLock;
+        }
+        if job.lock_expires_at.is_none_or(|expires_at| expires_at <= now) {
+            return Self::Expired;
+        }
+        Self::Authorized
+    }
 }
 
 /// Parameters for terminally failing expired worker jobs that exhausted attempts.
@@ -1021,9 +1195,39 @@ pub struct FailExpiredProofJobs<'a> {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{ZkProofRequest, ZkVm};
+    use base_prover_service_protocol::{
+        SnarkGroth16ProofResult, ZkProofRequest, ZkProofResult, ZkVm,
+    };
 
     use super::*;
+
+    fn proof_job_with(
+        api_proof_type: ApiProofType,
+        zk_vm: Option<ZkVmKind>,
+        tee_kind: Option<TeeKind>,
+    ) -> ProofJob {
+        let now = Utc::now();
+        ProofJob {
+            id: Uuid::new_v4(),
+            session_id: "session-1".to_owned(),
+            request_payload: serde_json::Value::Null,
+            api_proof_type,
+            zk_vm,
+            tee_kind,
+            job_status: ProofJobStatus::Claimed,
+            attempt: 1,
+            worker_id: Some("worker-1".to_owned()),
+            lock_id: Some(Uuid::new_v4()),
+            lock_expires_at: Some(now),
+            claimed_at: Some(now),
+            last_heartbeat_at: Some(now),
+            error_message: None,
+            result_payload: None,
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+        }
+    }
 
     fn compressed_protocol_request(session_id: impl Into<String>) -> ProtocolProofRequest {
         ProtocolProofRequest {
@@ -1074,5 +1278,111 @@ mod tests {
         req.session_id = "other-session".to_owned();
 
         assert_eq!(req.validate(), Err(CreateProofRequestValidationError::SessionIdMismatch));
+    }
+
+    #[test]
+    fn validate_submitted_result_accepts_matching_compressed() {
+        let job = proof_job_with(ApiProofType::Compressed, Some(ZkVmKind::Sp1), None);
+        let result = ProtocolProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![0x01].into(),
+        });
+
+        assert_eq!(job.validate_submitted_result(&result), Ok(()));
+    }
+
+    #[test]
+    fn validate_submitted_result_rejects_wrong_variant() {
+        let job = proof_job_with(ApiProofType::Tee, None, Some(TeeKind::AwsNitro));
+        let result = ProtocolProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![0x01].into(),
+        });
+
+        assert!(job.validate_submitted_result(&result).is_err());
+    }
+
+    #[test]
+    fn validate_submitted_result_rejects_snark_for_compressed_job() {
+        let job = proof_job_with(ApiProofType::Compressed, Some(ZkVmKind::Sp1), None);
+        let result = ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![0x01].into() },
+        });
+
+        assert!(job.validate_submitted_result(&result).is_err());
+    }
+
+    #[test]
+    fn validate_submitted_result_rejects_missing_zk_vm_capability() {
+        let job = proof_job_with(ApiProofType::Compressed, None, None);
+        let result = ProtocolProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![0x01].into(),
+        });
+
+        assert!(job.validate_submitted_result(&result).is_err());
+    }
+
+    #[test]
+    fn claim_auth_classify_covers_every_branch() {
+        let now = Utc::now();
+        let lock = Uuid::new_v4();
+        let worker = "worker-1";
+        let unexpired = Some(now + chrono::Duration::seconds(30));
+
+        let claimed = |lock_id, worker_id, lock_expires_at| JobLockState {
+            status: ProofJobStatus::Claimed,
+            lock_id,
+            worker_id,
+            lock_expires_at,
+        };
+
+        let authorized =
+            ClaimAuth::classify(claimed(Some(lock), Some(worker), unexpired), lock, worker, now);
+        assert_eq!(authorized, ClaimAuth::Authorized);
+
+        for status in [ProofJobStatus::Succeeded, ProofJobStatus::Failed] {
+            let job = JobLockState {
+                status,
+                lock_id: Some(lock),
+                worker_id: Some(worker),
+                lock_expires_at: unexpired,
+            };
+            assert_eq!(ClaimAuth::classify(job, lock, worker, now), ClaimAuth::Terminal);
+        }
+
+        let pending = JobLockState {
+            status: ProofJobStatus::Pending,
+            lock_id: Some(lock),
+            worker_id: Some(worker),
+            lock_expires_at: unexpired,
+        };
+        assert_eq!(ClaimAuth::classify(pending, lock, worker, now), ClaimAuth::NotClaimed);
+
+        let wrong_lock = ClaimAuth::classify(
+            claimed(Some(Uuid::new_v4()), Some(worker), unexpired),
+            lock,
+            worker,
+            now,
+        );
+        assert_eq!(wrong_lock, ClaimAuth::StaleLock);
+
+        let wrong_worker = ClaimAuth::classify(
+            claimed(Some(lock), Some("worker-2"), unexpired),
+            lock,
+            worker,
+            now,
+        );
+        assert_eq!(wrong_worker, ClaimAuth::StaleLock);
+
+        // Expiry is evaluated against the supplied `now`, so the boundary is
+        // deterministic: an `expires_at` equal to `now` counts as expired.
+        let expired =
+            ClaimAuth::classify(claimed(Some(lock), Some(worker), Some(now)), lock, worker, now);
+        assert_eq!(expired, ClaimAuth::Expired);
+
+        let missing_expiry =
+            ClaimAuth::classify(claimed(Some(lock), Some(worker), None), lock, worker, now);
+        assert_eq!(missing_expiry, ClaimAuth::Expired);
     }
 }

@@ -229,10 +229,6 @@ where
         self.executor.finish()
     }
 
-    fn set_state_hook(&mut self, hook: Option<Box<dyn reth_evm::OnStateHook>>) {
-        self.executor.set_state_hook(hook)
-    }
-
     fn evm_mut(&mut self) -> &mut Self::Evm {
         self.executor.evm_mut()
     }
@@ -338,7 +334,7 @@ mod tests {
                 withdrawals_root: B256::ZERO,
                 blob_gas_used: None,
             },
-            metadata: Metadata { block_number },
+            metadata: Metadata::new(block_number),
         }
     }
 

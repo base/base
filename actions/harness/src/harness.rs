@@ -297,7 +297,7 @@ impl ActionTestHarness {
     ///
     /// Every L2 block begins with an L1 info deposit whose calldata encodes the
     /// active [`L1BlockInfoTx`] variant (Bedrock / Ecotone / Isthmus / Jovian).
-    /// Use this to assert that the correct format is used at hardfork boundaries.
+    /// Use this to assert that the correct format is used at upgrade boundaries.
     ///
     /// # Panics
     ///

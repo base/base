@@ -9,6 +9,7 @@ use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
+use base_optimism_rpc::{OptimismRollupProviderExt, OutputAtBlock, SyncStatus};
 use base_retry::RetryConfig;
 use url::Url;
 
@@ -17,9 +18,7 @@ use super::{
     cache::MeteredCache,
     config::DEFAULT_CACHE_SIZE,
     error::{RpcError, RpcResult},
-    provider_ext::OptimismRollupProviderExt,
     traits::RollupProvider,
-    types::{OutputAtBlock, SyncStatus},
 };
 
 /// Configuration for the rollup client.

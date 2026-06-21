@@ -10,9 +10,9 @@ use base_precompile_storage::Result;
 
 use crate::{
     IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
-    b20_asset::{AssetAccounting, B20AssetToken},
+    b20_asset::{AssetAccounting, B20AssetStorage, B20AssetToken},
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
-    common::{Policy, TokenAccounting},
+    common::{B20_MAX_SUPPLY_CAP, Policy, TokenAccounting},
 };
 
 /// Convenience alias: [`B20AssetToken`] wired with both in-memory fakes.
@@ -37,7 +37,7 @@ pub struct InMemoryTokenAccounting {
     pub allowances: HashMap<(Address, Address), U256>,
     /// Current total token supply.
     pub total_supply: U256,
-    /// Defaults to `U256::MAX` so mint tests don't need to set a cap explicitly.
+    /// Defaults to [`B20_MAX_SUPPLY_CAP`] so mint tests don't need to set a cap explicitly.
     pub supply_cap: U256,
     /// Token name.
     pub name: String,
@@ -80,7 +80,7 @@ impl InMemoryTokenAccounting {
             balances: HashMap::new(),
             allowances: HashMap::new(),
             total_supply: U256::ZERO,
-            supply_cap: U256::MAX,
+            supply_cap: B20_MAX_SUPPLY_CAP,
             name: String::new(),
             symbol: String::new(),
             decimals: 18,
@@ -376,8 +376,7 @@ impl PolicyRegistry for InMemoryPolicy {
 
 impl AssetAccounting for InMemoryTokenAccounting {
     fn multiplier(&self) -> Result<U256> {
-        const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
-        Ok(if self.multiplier.is_zero() { WAD } else { self.multiplier })
+        Ok(if self.multiplier.is_zero() { B20AssetStorage::WAD } else { self.multiplier })
     }
 
     fn set_multiplier(&mut self, ratio: U256) -> Result<()> {
@@ -408,6 +407,6 @@ impl AssetAccounting for InMemoryTokenAccounting {
     }
 
     fn decimals(&self) -> Result<u8> {
-        Ok(if self.decimals == 0 { 6 } else { self.decimals })
+        Ok(if self.decimals == 0 { B20AssetStorage::MIN_DECIMALS } else { self.decimals })
     }
 }

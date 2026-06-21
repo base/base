@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, Predeploys};
@@ -34,7 +34,10 @@ pub struct BaseEngineTypes<T: PayloadTypes = BasePayloadTypes> {
     _marker: PhantomData<T>,
 }
 
-impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for BaseEngineTypes<T> {
+impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for BaseEngineTypes<T>
+where
+    ExecutionData: From<T::BuiltPayload>,
+{
     type ExecutionData = T::ExecutionData;
     type BuiltPayload = T::BuiltPayload;
     type PayloadAttributes = T::PayloadAttributes;
@@ -43,13 +46,19 @@ impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for BaseEngine
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
+        bal: Option<Bytes>,
     ) -> <T as PayloadTypes>::ExecutionData {
-        ExecutionData::from_block_unchecked(block.hash(), &block.into_block().into_ethereum_block())
+        ExecutionData::from_block_unchecked_with_extras(
+            block.hash(),
+            &block.into_block().into_ethereum_block(),
+            bal,
+        )
     }
 }
 
 impl<T: PayloadTypes<ExecutionData = ExecutionData>> EngineTypes for BaseEngineTypes<T>
 where
+    ExecutionData: From<T::BuiltPayload>,
     T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = BaseBlock>>
         + TryInto<ExecutionPayloadV1>
         + TryInto<ExecutionPayloadEnvelopeV2>
@@ -112,14 +121,14 @@ where
         self.inner.chain_spec()
     }
 
-    /// Verifies hardfork-gated post-execution rules against the supplied parent state.
+    /// Verifies upgrade-gated post-execution rules against the supplied parent state.
     ///
     /// Authoritative implementation of all Base-specific post-execution checks that require
     /// access to parent state (currently: Isthmus' L2-to-L1 message-passer storage root).
     /// Callers supply `parent_state` explicitly so engine pipelines can pass in-memory-aware
     /// overlay providers when the parent block isn't canonical yet.
     ///
-    /// To add a check for a future hardfork, extend the body with another
+    /// To add a check for a future upgrade, extend the body with another
     /// `if chain_spec.is_<X>_active_at_timestamp(...)` arm.
     pub fn validate_block_post_execution_with_state<DB, H>(
         &self,

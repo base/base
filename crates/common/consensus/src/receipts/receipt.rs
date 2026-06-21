@@ -10,6 +10,8 @@ use alloy_consensus::{
 use alloy_eips::eip2718::{Eip2718Error, Eip2718Result, IsTyped2718};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
+#[cfg(all(test, feature = "reth"))]
+use reth_codecs::Compact;
 
 use super::{BaseTxReceipt, DepositReceipt};
 use crate::{BaseReceiptEnvelope, OpTxType};
@@ -38,7 +40,7 @@ pub enum BaseReceipt<T = Log> {
     #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
     Deposit(DepositReceipt<T>),
     /// EIP-8130 Account Abstraction receipt
-    #[cfg_attr(feature = "serde", serde(rename = "0x7d", alias = "0x7D"))]
+    #[cfg_attr(feature = "serde", serde(rename = "0x7b", alias = "0x7B"))]
     Eip8130(Receipt<T>),
 }
 
@@ -820,5 +822,21 @@ mod tests {
             legacy_receipt.encode_2718_len(),
             "Encoded length for legacy receipt should match the actual encoded data length"
         );
+    }
+
+    #[cfg(feature = "reth")]
+    #[test]
+    fn eip8130_compact_roundtrip() {
+        let receipt = BaseReceipt::Eip8130(Receipt {
+            status: true.into(),
+            cumulative_gas_used: 21_000,
+            logs: vec![Log::default()],
+        });
+
+        let mut buf = Vec::new();
+        let len = receipt.to_compact(&mut buf);
+        let (decoded, _) = BaseReceipt::from_compact(&buf, len);
+
+        assert_eq!(decoded, receipt);
     }
 }

@@ -93,13 +93,8 @@ fn build_components<Node>(
 where
     Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
-    let RollupArgs {
-        disable_txpool_gossip,
-        compute_pending_block,
-        discovery_v4,
-        base_protocol,
-        ..
-    } = RollupArgs::default();
+    let RollupArgs { disable_txpool_gossip, compute_pending_block, discovery_v4, .. } =
+        RollupArgs::default();
     ComponentsBuilder::default()
         .node_types::<Node>()
         .pool(BasePoolBuilder::default())
@@ -108,7 +103,7 @@ where
             BasePayloadBuilder::new(compute_pending_block)
                 .with_transactions(CustomTxPriority { chain_id }),
         ))
-        .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4, base_protocol))
+        .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
         .consensus(BaseConsensusBuilder::default())
 }
 
@@ -131,8 +126,8 @@ async fn test_custom_block_priority_config() {
             datadir: reth_db::test_utils::tempdir_path().into(),
             ..Default::default()
         });
-    config.network.discovery.discv5_port = 0;
-    config.network.discovery.discv5_port_ipv6 = 0;
+    config.network.discovery.discv5_port = Some(0);
+    config.network.discovery.discv5_port_ipv6 = Some(0);
     let db = create_test_rw_db_with_path(
         config
             .datadir

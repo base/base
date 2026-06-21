@@ -40,17 +40,57 @@ impl ProofRequesterDispatcher {
         Self { requester, tee_kind }
     }
 
+    /// Returns the TEE implementation used by this dispatcher.
+    pub const fn tee_kind(&self) -> TeeKind {
+        self.tee_kind
+    }
+
     /// Submits a TEE proof request to prover service without waiting for completion.
     pub async fn dispatch_tee(
         &self,
         request: PrimitiveProofRequest,
     ) -> Result<DispatchedProof, ProposerError> {
         let request = ProposerProofAdapter::tee_prove_block_range_request(request, self.tee_kind);
-        let response = self
-            .requester
-            .prove_block_range(request)
-            .await
-            .map_err(|e| ProposerError::Prover(e.to_string()))?;
+        self.dispatch_prepared(request).await
+    }
+
+    /// Submits a TEE proof request under an explicit session id.
+    ///
+    /// Used for discard retries. The normal proposer session id is keyed only
+    /// by claimed output root so restarts can rediscover in-flight work, but a
+    /// discarded `Succeeded` session cannot be requeued by replaying that same
+    /// id. A retry-specific id lets the proposer obtain a genuinely fresh TEE
+    /// proof for the same output root.
+    pub async fn dispatch_tee_with_session_id(
+        &self,
+        request: PrimitiveProofRequest,
+        session_id: String,
+    ) -> Result<DispatchedProof, ProposerError> {
+        let request = ProposerProofAdapter::tee_prove_block_range_request_with_session_id(
+            request,
+            self.tee_kind,
+            session_id,
+        );
+        self.dispatch_prepared(request).await
+    }
+
+    async fn dispatch_prepared(
+        &self,
+        request: ProveBlockRangeRequest,
+    ) -> Result<DispatchedProof, ProposerError> {
+        let session_id = request.proof.session_id.clone();
+        let response = match self.requester.prove_block_range(request).await {
+            Ok(response) => response,
+            Err(e) if e.is_l1_head_conflict_for_session(&session_id) => {
+                debug!(
+                    session_id = %session_id,
+                    tee_kind = ?self.tee_kind,
+                    "prover-service already has this TEE proof session with a different l1_head"
+                );
+                return Ok(DispatchedProof { session_id });
+            }
+            Err(e) => return Err(ProposerError::Prover(e.to_string())),
+        };
         debug!(
             session_id = %response.session_id,
             tee_kind = ?self.tee_kind,
@@ -97,12 +137,37 @@ impl ProposerProofAdapter {
         ProofSessionId::derive(Self::SESSION_NAMESPACE, Self::tee_session_label(tee_kind), root)
     }
 
+    /// Derives a TEE proof retry session id for a discarded proof.
+    pub fn tee_discard_retry_session_id(
+        request: &PrimitiveProofRequest,
+        tee_kind: TeeKind,
+        attempt: u32,
+    ) -> String {
+        let label = Self::tee_session_label(tee_kind);
+        let l1_head_number = request.l1_head_number.to_be_bytes();
+        let attempt = attempt.to_be_bytes();
+        ProofSessionId::derive_from_components(
+            Self::SESSION_NAMESPACE,
+            label,
+            &[request.claimed_l2_output_root.as_slice(), &l1_head_number, &attempt],
+        )
+    }
+
     /// Builds a prover-service request for a TEE proposal proof.
     pub fn tee_prove_block_range_request(
         request: PrimitiveProofRequest,
         tee_kind: TeeKind,
     ) -> ProveBlockRangeRequest {
         let session_id = Self::tee_session_id(&request, tee_kind);
+        Self::tee_prove_block_range_request_with_session_id(request, tee_kind, session_id)
+    }
+
+    /// Builds a prover-service request for a TEE proposal proof with a caller-supplied session id.
+    pub const fn tee_prove_block_range_request_with_session_id(
+        request: PrimitiveProofRequest,
+        tee_kind: TeeKind,
+        session_id: String,
+    ) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
@@ -149,9 +214,11 @@ mod tests {
     use base_proof_primitives::Proposal;
     use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
     use base_prover_service_protocol::{
-        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequestKind,
-        ProofResult, ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+        ProofRequestIdCollisionMessage, ProofRequestKind, ProofResult, ProveBlockRangeRequest,
+        ProveBlockRangeResponse, TeeKind, TeeProofResult,
     };
+    use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
     use super::{ProofRequesterDispatcher, ProposerProofAdapter};
 
@@ -170,6 +237,38 @@ mod tests {
             let session_id = request.proof.session_id.clone();
             self.prove_requests.lock().unwrap().push(request);
             Ok(ProveBlockRangeResponse { session_id })
+        }
+
+        async fn get_proof(
+            &self,
+            _request: GetProofRequest,
+        ) -> Result<GetProofResponse, ProverServiceClientError> {
+            unimplemented!("tests do not poll proofs")
+        }
+
+        async fn list_proofs(
+            &self,
+            _request: ListProofsRequest,
+        ) -> Result<ListProofsResponse, ProverServiceClientError> {
+            unimplemented!("tests do not list proofs")
+        }
+    }
+
+    #[derive(Debug)]
+    struct L1HeadConflictRequester;
+
+    #[async_trait]
+    impl ProofRequesterProvider for L1HeadConflictRequester {
+        async fn prove_block_range(
+            &self,
+            request: ProveBlockRangeRequest,
+        ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+            let session_id = request.proof.session_id;
+            Err(ProverServiceClientError::from(JsonRpcClientError::Call(ErrorObjectOwned::owned(
+                ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+                ProofRequestIdCollisionMessage::for_field(session_id, "l1_head"),
+                None::<()>,
+            ))))
         }
 
         async fn get_proof(
@@ -255,6 +354,38 @@ mod tests {
     }
 
     #[test]
+    fn tee_discard_retry_session_id_differs_from_root_session() {
+        let request = test_request(B256::repeat_byte(0xaa));
+
+        assert_ne!(
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 1),
+            ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro),
+        );
+    }
+
+    #[test]
+    fn tee_discard_retry_session_id_changes_by_attempt() {
+        let request = test_request(B256::repeat_byte(0xaa));
+
+        assert_ne!(
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 1),
+            ProposerProofAdapter::tee_discard_retry_session_id(&request, TeeKind::AwsNitro, 2),
+        );
+    }
+
+    #[test]
+    fn tee_discard_retry_session_id_changes_by_l1_head_number() {
+        let first = test_request(B256::repeat_byte(0xaa));
+        let mut second = first.clone();
+        second.l1_head_number += 1;
+
+        assert_ne!(
+            ProposerProofAdapter::tee_discard_retry_session_id(&first, TeeKind::AwsNitro, 1),
+            ProposerProofAdapter::tee_discard_retry_session_id(&second, TeeKind::AwsNitro, 1),
+        );
+    }
+
+    #[test]
     fn tee_prove_block_range_request_wraps_primitive_request() {
         let request = test_request(B256::repeat_byte(0xaa));
         let expected_session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
@@ -333,5 +464,17 @@ mod tests {
         // Both calls carry the same session id and identical TEE proof payload.
         assert_eq!(prove_requests[0].proof.session_id, expected_session_id);
         assert_eq!(prove_requests[1].proof.session_id, expected_session_id);
+    }
+
+    #[tokio::test]
+    async fn proof_requester_dispatcher_accepts_existing_l1_head_conflict() {
+        let dispatcher =
+            ProofRequesterDispatcher::aws_nitro(std::sync::Arc::new(L1HeadConflictRequester));
+        let request = test_request(B256::repeat_byte(0xaa));
+        let expected_session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+
+        let dispatched = dispatcher.dispatch_tee(request).await.unwrap();
+
+        assert_eq!(dispatched.session_id, expected_session_id);
     }
 }

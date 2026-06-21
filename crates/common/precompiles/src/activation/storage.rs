@@ -2,9 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, address, b256};
 use base_precompile_macros::contract;
-use base_precompile_storage::{
-    BasePrecompileError, Handler, IntoPrecompileResult, Mapping, Result,
-};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 use revm::precompile::PrecompileResult;
 
 use crate::IActivationRegistry;
@@ -58,7 +56,12 @@ impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
     pub const ADDRESS: Address = address!("8453000000000000000000000000000000000001");
 
-    /// Returns the activation admin.
+    /// Returns the activation admin address, or [`Address::ZERO`] if no admin is configured.
+    ///
+    /// [`Address::ZERO`] here means "no admin is set": it is not a valid admin address.
+    /// Configuration-time validation rejects `Some(Address::ZERO)`, so in a correctly
+    /// constructed chain spec the zero return always means `activation_admin_address` was
+    /// `None`. Callers must not treat the zero return as a meaningful admin address.
     pub const fn admin(&self, activation_admin_address: Option<Address>) -> Address {
         match activation_admin_address {
             Some(address) => address,
@@ -77,11 +80,7 @@ impl ActivationRegistryStorage<'_> {
     /// [`revm::precompile::PrecompileOutput::reverted`] to distinguish an activated feature from an
     /// ABI revert.
     pub fn assert_activated(&self, feature: B256) -> PrecompileResult {
-        self.ensure_activated(feature).into_precompile_result(
-            self.storage.gas_used(),
-            self.storage.state_gas_used(),
-            |()| Bytes::new(),
-        )
+        self.storage.result_output(self.ensure_activated(feature), |()| Bytes::new())
     }
 
     /// Returns `Ok(())` when the feature is activated.
@@ -115,7 +114,7 @@ impl ActivationRegistryStorage<'_> {
     pub fn set_activated(
         &mut self,
         feature: B256,
-        activated: bool,
+        to_activated_state: bool,
         activation_admin_address: Option<Address>,
     ) -> Result<()> {
         // Keep this guard at the shared mutation boundary so `activate`, `deactivate`, and direct
@@ -125,6 +124,9 @@ impl ActivationRegistryStorage<'_> {
         }
 
         let caller = self.storage.caller();
+        if caller.is_zero() {
+            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
+        }
         let Some(admin) = activation_admin_address else {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
         };
@@ -132,20 +134,24 @@ impl ActivationRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
         }
 
-        let current = self.features.at(&feature).read()?;
-        if current == activated {
-            if activated {
-                return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
-                    feature,
-                }));
-            }
+        let current_activated_state = self.features.at(&feature).read()?;
 
+        let is_activating_and_already_activated = to_activated_state && current_activated_state;
+        let is_deactivating_and_already_deactivated =
+            !to_activated_state && !current_activated_state;
+
+        if is_activating_and_already_activated {
+            return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
+                feature,
+            }));
+        }
+        if is_deactivating_and_already_deactivated {
             return Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
                 feature,
             }));
         }
 
-        if activated {
+        if to_activated_state {
             self.__initialize()?;
             self.features.at_mut(&feature).write(true)?;
             self.emit_event(IActivationRegistry::FeatureActivated { feature, caller })?;
@@ -479,5 +485,69 @@ mod tests {
                 feature: FEATURE,
             })
         );
+    }
+
+    /// A zero-address caller must be rejected even when the admin is also configured as
+    /// `Address::ZERO`. This prevents deposit transactions with `msg.sender == Address::ZERO` from
+    /// toggling activation state on a misconfigured chain.
+    #[test]
+    fn zero_address_caller_with_zero_admin_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(Address::ZERO);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).activate(FEATURE, Some(Address::ZERO))
+        })
+        .unwrap_err();
+
+        assert!(matches!(err, BasePrecompileError::Revert(_)));
+        assert_activated(&mut storage, false);
+    }
+
+    /// End-to-end test: activate a feature, then deactivate it through `dispatch`. Deactivation
+    /// clears the feature storage slot (nonzero to zero SSTORE), which earns an EIP-3529 refund
+    /// that must appear in `PrecompileOutput::gas_refunded`.
+    #[test]
+    fn dispatch_deactivate_propagates_sstore_refund() {
+        use alloy_sol_types::SolCall;
+
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+
+        // Activate first so deactivation has a nonzero slot to clear.
+        activate_feature(&mut storage).unwrap();
+
+        let calldata = IActivationRegistry::deactivateCall { feature: FEATURE }.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).dispatch(ctx, &calldata, Some(ADMIN))
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(output.is_success(), "deactivate must succeed");
+        assert!(
+            output.gas_refunded > 0,
+            "deactivating a feature clears a storage slot and must propagate an EIP-3529 refund"
+        );
+    }
+
+    /// Activating a feature writes to a zero slot (nonzero-to-zero refunds do not apply to
+    /// zero-to-nonzero writes), so `gas_refunded` must be zero on the activate path.
+    #[test]
+    fn dispatch_activate_has_no_sstore_refund() {
+        use alloy_sol_types::SolCall;
+
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+
+        let calldata = IActivationRegistry::activateCall { feature: FEATURE }.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).dispatch(ctx, &calldata, Some(ADMIN))
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(output.is_success());
+        assert_eq!(output.gas_refunded, 0, "writing to a zero slot earns no refund");
     }
 }

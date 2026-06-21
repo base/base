@@ -134,7 +134,9 @@ where
     fn delete<S: StorageOps>(storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
         let values: Vec<T> = Vec::load(storage, slot, LayoutCtx::FULL)?;
         for value in values {
-            let pos_slot = value.mapping_slot(slot + U256::ONE);
+            let pos_slot = value.mapping_slot(
+                slot.checked_add(U256::ONE).ok_or(BasePrecompileError::SlotOverflow)?,
+            );
             <U256 as Storable>::delete(storage, pos_slot, LayoutCtx::FULL)?;
         }
         <Vec<T> as Storable>::delete(storage, slot, ctx)
@@ -154,10 +156,15 @@ where
     T: Storable + StorageKey + Eq + Clone + Ord,
 {
     /// Creates a new handler for the set at the given base slot.
-    pub fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+    pub const fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+        // positions_slot = base_slot + 1. Base slots are keccak256-derived and never U256::MAX,
+        // so overflow is unreachable in practice.
+        let positions_slot = base_slot
+            .checked_add(U256::ONE)
+            .expect("slot overflow: base slot is keccak256-derived and cannot be U256::MAX");
         Self {
             values: VecHandler::new(base_slot, address, storage),
-            positions: MappingHandler::new(base_slot + U256::ONE, address, storage),
+            positions: MappingHandler::new(positions_slot, address, storage),
             base_slot,
             address,
             storage,
@@ -308,13 +315,13 @@ where
     }
 
     fn t_read(&self) -> Result<Set<T>> {
-        unimplemented!("Set does not support transient storage")
+        Err(BasePrecompileError::Fatal("Set does not support transient storage".into()))
     }
     fn t_write(&mut self, _: Set<T>) -> Result<()> {
-        unimplemented!("Set does not support transient storage")
+        Err(BasePrecompileError::Fatal("Set does not support transient storage".into()))
     }
     fn t_delete(&mut self) -> Result<()> {
-        unimplemented!("Set does not support transient storage")
+        Err(BasePrecompileError::Fatal("Set does not support transient storage".into()))
     }
 }
 
@@ -378,6 +385,19 @@ mod tests {
             for addr in &addrs {
                 assert!(handler.contains(addr).unwrap());
             }
+        });
+    }
+
+    #[test]
+    fn test_set_transient_methods_return_err() {
+        let (mut storage, contract_addr) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(800u64);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
+
+            assert!(handler.t_read().is_err());
+            assert!(handler.t_write(Set::default()).is_err());
+            assert!(handler.t_delete().is_err());
         });
     }
 

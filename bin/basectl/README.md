@@ -13,7 +13,7 @@ Global options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-c, --config <CONFIG>` | `mainnet` | Chain config: `mainnet`, `sepolia`, `devnet`, or a path to a config file |
-| `--conductor-rpc <URL>` | `http://localhost:5545` | Bootstrap conductor JSON-RPC URL for runtime cluster discovery. Overrides any hardcoded conductor list in the chain config. Set via `BASECTL_CONDUCTOR_RPC`. |
+| `--conductor-rpc <URL>` | | Bootstrap conductor JSON-RPC URL for runtime cluster discovery when the chain config has no hardcoded conductor list. Used by `basectl conductor` and `basectl sequencer`. If omitted, basectl uses `discovery.bootstrap_rpc` from config. Set via `BASECTL_CONDUCTOR_RPC`. |
 
 ## Commands
 
@@ -95,6 +95,177 @@ is one of `caught_up` (within ±N blocks of the reference, where N is the
 | `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`, `tipReference` object, `elSyncInfo` with `processedBlocks` / `remainingBlocks`) instead of the key-value table. |
 | `--raw` | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`. |
 
+### `basectl p2p`
+
+P2P inspection and single-peer management commands for execution and
+consensus layers.
+
+- `basectl p2p info` shows the advertised endpoint per layer plus peer counts.
+- `basectl p2p peers` shows the connected peer list per layer.
+- `basectl p2p add-peer <TARGET>` connects one peer. `enode://...` routes to
+  the execution layer; `enr:...` or `/.../p2p/<peer-id>` routes to the
+  consensus layer.
+- `basectl p2p remove-peer <TARGET>` disconnects one peer. `enode://...` routes
+  to the execution layer; any other non-empty target is treated as a bare
+  consensus libp2p peer ID. ENR records and multiaddrs are rejected for removal.
+- `basectl p2p ban <PEER_ID>` bans one consensus-layer peer and then attempts
+  to disconnect it so the ban takes effect immediately.
+- `basectl p2p unban <PEER_ID>` unbans one consensus-layer peer. It does not
+  reconnect the peer.
+- `basectl p2p unban-all` unbans every peer currently banned by the consensus
+  layer RPC.
+
+Read-only p2p commands and `add-peer` / `remove-peer` support:
+
+| Flag | Description |
+|------|-------------|
+| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field. |
+| `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
+
+CL-only ban/unban commands support:
+
+| Flag | Description |
+|------|-------------|
+| `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
+
+Read-only p2p commands also support:
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit humanized JSON instead of the pretty table output. |
+| `--raw` | With `--json`, emit raw nested RPC payloads instead of the humanized summary. Errors at parse time if used without `--json`. |
+
+Destructive p2p commands also support:
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip the interactive confirmation prompt. By default, destructive p2p commands print the exact action and wait for `y` or `yes`; empty input and every other answer abort without error. |
+| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. |
+
+Important EL RPC note:
+
+- EL peer count comes from `net_peerCount`, so it works on many restricted or public-style EL RPCs.
+- EL advertised endpoint data (`admin_nodeInfo`) and EL peer listings (`admin_peers`) require an admin-enabled EL RPC.
+- If the EL RPC does not expose those admin methods, `basectl p2p` degrades gracefully: EL peer count still appears, but EL endpoint fields or EL peer listings show as unavailable / `null`.
+- CL data comes from `opp2p_self`, `opp2p_peerStats`, and `opp2p_peers(true)` on the consensus RPC.
+- CL ban/unban commands use `opp2p_blockPeer`, `opp2p_unblockPeer`, and `opp2p_listBlockedPeers` underneath, but the basectl command surface uses ban/unban terminology so it can stay consistent when EL ban support is added later.
+
+### `basectl conductor`
+
+Conductor inspection and control commands for HA sequencer clusters.
+
+- `basectl conductor status` shows cluster membership, leader, pause state,
+  sequencer health, L1/L2 heads, and peer counts per node.
+- `basectl conductor transfer-leader [TARGET]` transfers raft leadership away
+  from the current leader, or to a named target node when `TARGET` is provided.
+- `basectl conductor pause <NODE>` pauses op-conductor's control loop on one
+  node.
+- `basectl conductor unpause <NODE>` resumes op-conductor's control loop on one
+  node.
+- `basectl conductor pause-all` pauses op-conductor's control loop on every
+  node in the cluster.
+- `basectl conductor unpause-all` resumes op-conductor's control loop on every
+  node in the cluster.
+
+Conductor commands use the selected config's hardcoded `conductors` list when
+present. Otherwise they discover the cluster via the `--conductor-rpc` bootstrap
+URL or `discovery.bootstrap_rpc` in the config.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | For `status`, emit a structured cluster status summary instead of the pretty table output. |
+
+Destructive conductor commands also support:
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip the interactive confirmation prompt. |
+| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on interactive confirmation. |
+
+Safety notes:
+
+- `pause` / `unpause` prompts with the exact node name and conductor RPC URL.
+- `transfer-leader` prompts with the target node or selected network.
+- `pause-all` / `unpause-all` require typing the selected network name unless
+  `--yes` is provided.
+- Cluster-wide actions can partially succeed before one node fails. Pretty and
+  JSON output include the success and failure sets, and the command exits
+  non-zero when any node fails.
+
+### `basectl sequencer`
+
+Sequencer inspection and control commands for the nodes in an HA conductor
+cluster.
+
+- `basectl sequencer status [NODE]` shows sequencer activity, health, pause
+  state, L1/L2 heads, and peer counts for every node, or for one selected node
+  when `NODE` is provided.
+- `basectl sequencer start <NODE> [UNSAFE_HEAD]` starts sequencing on one node
+  through the consensus node's `admin_startSequencer` RPC.
+- `basectl sequencer stop <NODE>` stops sequencing on one node through the
+  consensus node's `admin_stopSequencer` RPC.
+
+Like `basectl conductor`, sequencer commands use the selected config's
+hardcoded `conductors` list when present and otherwise discover the live raft
+membership from the global `--conductor-rpc` bootstrap URL or
+`discovery.bootstrap_rpc` in the config.
+
+When `start` omits `UNSAFE_HEAD`, basectl uses the node's currently observed
+unsafe L2 hash. This matches the existing TUI behavior and the sequencer RPC's
+safety contract: the requested hash must match the node's current engine unsafe
+head.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | For `status`, emit a structured JSON status summary instead of the pretty table output. |
+
+Destructive sequencer commands also support:
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip the interactive confirmation prompt. |
+| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. |
+
+Safety notes:
+
+- `start` prompts with the exact node name, CL RPC URL, and unsafe head hash.
+- `stop` prompts with the exact node name and CL RPC URL.
+- After `start` / `stop`, basectl polls `admin_sequencerActive` for up to 12s
+  before reporting success so an acknowledged RPC is not confused with the node
+  actually reaching the desired state.
+
+### `basectl doctor`
+
+Runs read-only diagnostics for a single node and prints one row per check. The
+command exits `1` if any check fails, and exits `0` when checks only pass, warn,
+skip, or report informational context.
+
+Doctor reads the selected config the same way as the other non-TUI commands:
+built-in preset, optional YAML override, or explicit config path through global
+`-c/--config`. By default it uses the config's `rpc`, `l1_rpc`, and
+`consensus_node_rpc` values. Pass `--el-rpc` and `--cl-rpc` to point at a
+specific node when the config points at shared/public endpoints.
+
+Checks include declared network vs. live chain ID, p2p endpoint context,
+canonical bootnode config context, advertised endpoint sanity, EL/CL peer counts,
+EL head vs. public tip, safe-head recency, optional `reth.toml` headers/bodies
+limits, consensus-node RPC presence, and L1 RPC reachability. Doctor does not
+mutate node state and does not prove advertised ports are reachable from the
+public internet; it reports what can be observed from local config and exposed
+RPC metadata.
+
+| Flag | Description |
+|------|-------------|
+| `--el-rpc <URL>` | Override the execution-layer RPC URL used for local-node checks. Defaults to the selected config's `rpc` field. |
+| `--cl-rpc <URL>` | Override the consensus-node RPC URL. If omitted and the selected config has no `consensus_node_rpc`, CL-dependent checks are skipped with hints. |
+| `--reth-config <PATH>` | Path to the local `reth.toml` file. If omitted, the reth limits check is skipped. |
+| `--peer-warn-threshold <COUNT>` | Connected peer count below which EL/CL peer checks warn. Default `5`. |
+| `--head-lag-warn-blocks <BLOCKS>` | EL head lag behind the public tip above which doctor warns. Default `10`. |
+| `--head-lag-fail-blocks <BLOCKS>` | EL head lag behind the public tip above which doctor fails. Default `20`. |
+| `--safe-recency-warn-blocks <BLOCKS>` | Safe-head lag behind unsafe head above which doctor warns. Default `150`. |
+| `--safe-recency-fail-blocks <BLOCKS>` | Safe-head lag behind unsafe head above which doctor fails. Default `300`. |
+| `--json` | Emit a humanized JSON report with `inputs`, `summary`, and `checks` instead of pretty text. |
+
 ### `basectl flashblocks`
 
 Streams live flashblocks as newline-delimited JSON to stdout. For the
@@ -145,4 +316,75 @@ basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/
 
 # Humanized JSON shows precomputed safe-head lag for downstream tooling
 basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/ --json | jq '{safeLagSeconds, safeLagBlocks, elActivelySyncing}'
+
+# P2P endpoint summary for a node
+basectl -c sepolia p2p info --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/
+
+# P2P peers as JSON
+basectl -c sepolia p2p peers --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --json | jq '{el: .el | length, cl: .cl | length}'
+
+# Add an execution-layer peer after confirmation
+basectl -c sepolia p2p add-peer enode://<node-id>@203.0.113.10:30303 --el-rpc https://your-el.example/
+
+# Connect a consensus peer non-interactively and emit JSON
+basectl -c sepolia p2p add-peer enr:<record> --cl-rpc https://your-cl.example/ --yes --json | jq .
+
+# Connect a consensus peer by raw libp2p multiaddr
+basectl -c sepolia p2p add-peer /ip4/203.0.113.10/tcp/9000/p2p/16Uiu2HAm... --cl-rpc https://your-cl.example/ --yes
+
+# Remove a consensus peer by bare libp2p peer ID
+basectl -c sepolia p2p remove-peer 16Uiu2HAm... --cl-rpc https://your-cl.example/
+
+# Ban a consensus peer and best-effort disconnect it immediately
+basectl -c sepolia p2p ban 16Uiu2HAm... --cl-rpc https://your-cl.example/
+
+# Unban a consensus peer non-interactively and emit JSON
+basectl -c sepolia p2p unban 16Uiu2HAm... --cl-rpc https://your-cl.example/ --yes --json | jq .
+
+# Unban all currently banned consensus peers
+basectl -c sepolia p2p unban-all --cl-rpc https://your-cl.example/ --yes
+
+# If the EL RPC is restricted, EL peer count still works but EL admin-backed fields may be unavailable
+basectl -c sepolia p2p info --el-rpc https://your-public-el.example/ --cl-rpc https://your-cl.example/
+
+# Show devnet conductor cluster status
+basectl -c devnet conductor status
+
+# Conductor status as structured JSON
+basectl -c devnet conductor status --json | jq '{leader, paused, nodes: [.nodes[].name]}'
+
+# Transfer conductor leadership to a target node after confirmation
+basectl -c devnet conductor transfer-leader op-conductor-1
+
+# Pause and unpause one conductor node
+basectl -c devnet conductor pause op-conductor-0
+basectl -c devnet conductor unpause op-conductor-0 --yes --json | jq .
+
+# Cluster-wide conductor actions require typed confirmation, or --yes for scripts
+basectl -c devnet conductor pause-all
+basectl -c devnet conductor unpause-all --yes --json | jq .
+
+# Show sequencer state for every devnet conductor node
+basectl -c devnet sequencer status
+
+# Show sequencer state for one node as JSON
+basectl -c devnet sequencer status op-conductor-0 --json | jq .
+
+# Stop a sequencer node and capture the returned unsafe head
+basectl -c devnet sequencer stop op-conductor-0 --yes --json | jq '{node, unsafeHead}'
+
+# Start a sequencer node using its currently observed unsafe head
+basectl -c devnet sequencer start op-conductor-0 --yes
+
+# Start a sequencer node with an explicit unsafe head hash
+basectl -c devnet sequencer start op-conductor-0 0x1111111111111111111111111111111111111111111111111111111111111111 --yes --json | jq .
+
+# Run doctor with values from the selected config
+basectl -c mainnet doctor
+
+# Run doctor against a specific node
+basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/
+
+# Include local reth headers/bodies limit validation and JSON output
+basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --reth-config /etc/reth/reth.toml --json
 ```

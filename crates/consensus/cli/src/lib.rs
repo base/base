@@ -36,7 +36,7 @@ pub use metrics::CliMetrics;
 mod node;
 pub use node::{
     ConsensusNodeArgs, ConsensusNodeCommand, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    EmbeddedConsensusNodeConfigArgs,
+    EmbeddedConsensusNodeConfigArgs, EmbeddedSequencerConsensusNodeConfigArgs,
 };
 
 mod rpc;

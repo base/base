@@ -29,8 +29,12 @@ async fn main() -> Result<()> {
 
     let container_manager = DockerContainerManager::new(&config.docker_socket)?;
     let storage_client = create_s3_client(&config).await?;
-    let uploader =
-        SnapshotUploader::new(storage_client, config.bucket.clone(), config.prefix.clone());
+    let uploader = SnapshotUploader::new(
+        storage_client,
+        config.bucket.clone(),
+        config.prefix.clone(),
+        config.public_base_url.clone(),
+    );
 
     let snapshotter = Snapshotter::new(container_manager, uploader, config);
     snapshotter.run().await

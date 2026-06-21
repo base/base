@@ -38,15 +38,22 @@ pub use bls12_381::{
 
 mod common;
 pub use common::{
-    B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole, Burnable,
-    Configurable, Eip712Domain, IB20, Mintable, Pausable, PermitArgs, Permittable, Policy,
-    PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable,
+    B20_MAX_SUPPLY_CAP, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole,
+    Burnable, Configurable, Eip712Domain, IB20, Mintable, Pausable, PermitArgs, Permittable,
+    Policy, PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
 
 mod observer;
 pub use observer::{EndGuard, NoopPrecompileCallObserver, PrecompileCallObserver};
+
+mod metrics;
+pub use metrics::{
+    BerylAuxiliaryMetrics, BerylCallOutcome, BerylCallRecorder, BerylCallTimer,
+    BerylErrorClassifier, BerylErrorKind, BerylMetricLabels, BerylSelector, CALLDATA_WORD_GAS,
+    PrecompileCallMetric, PrecompileCallOutcome, PrecompileCallStatus,
+};
 
 mod b20_asset;
 pub use b20_asset::{
@@ -69,3 +76,9 @@ mod policy;
 pub use policy::{
     IPolicyRegistry, PackedPolicy, PolicyHandle, PolicyRegistryPrecompile, PolicyRegistryStorage,
 };
+
+mod tx_context;
+pub use tx_context::{ITransactionContext, TxContext, TxContextStorage};
+
+mod nonce;
+pub use nonce::{INonceManager, NonceManager, NonceManagerStorage};

@@ -11,7 +11,7 @@ use base_protocol::L2BlockInfo;
 pub enum Signal {
     /// Reset the pipeline.
     Reset(ResetSignal),
-    /// Hardfork Activation.
+    /// Upgrade Activation.
     Activation(ActivationSignal),
     /// Flush the currently active channel.
     FlushChannel,
@@ -41,7 +41,7 @@ impl ResetSignal {
     }
 }
 
-/// A pipeline hardfork activation signal.
+/// A pipeline upgrade activation signal.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ActivationSignal {
     /// The L2 safe head to reset to.

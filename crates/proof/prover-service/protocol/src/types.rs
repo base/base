@@ -1,9 +1,25 @@
 //! JSON-RPC request and response types for the shared prover service protocol.
 
+use std::fmt;
+
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+/// JSON-RPC error message returned when a proof request session cannot be found.
+pub const PROOF_REQUEST_NOT_FOUND_MESSAGE: &str = "Proof request not found";
+
+/// JSON-RPC error message returned when a session id is reused for a different request.
+#[derive(Debug, Clone, Copy)]
+pub struct ProofRequestIdCollisionMessage;
+
+impl ProofRequestIdCollisionMessage {
+    /// Builds the proof request id collision message for the mismatched field.
+    pub fn for_field(session_id: impl fmt::Display, field: &str) -> String {
+        format!("session_id {session_id} already exists with a different {field}")
+    }
+}
 
 /// Type of proof requested from the prover service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -336,6 +352,84 @@ pub struct WorkerSubmitProofRequest {
 pub struct WorkerSubmitProofResponse {
     /// Completed proof job.
     pub job: ProofJob,
+}
+
+/// Kind of backend session tracked for a proof job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionType {
+    /// STARK proving session.
+    Stark,
+    /// SNARK proving session.
+    Snark,
+}
+
+/// Lifecycle state of a tracked backend session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendSessionState {
+    /// Reservation placeholder before the backend job has been submitted.
+    Submitting,
+    /// Backend session is actively running.
+    Running,
+    /// Backend session completed successfully.
+    Completed,
+    /// Backend session failed.
+    Failed,
+}
+
+/// A backend session tracked in the prover service for a proof job.
+///
+/// Workers record the backend-issued identifier (for example an SP1 cluster or
+/// network proof id) so a restart or reclaim resumes the in-flight backend job
+/// rather than re-running it. The worker itself holds no local state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackendSession {
+    /// Backend-specific session identifier used to resume polling.
+    pub backend_session_id: String,
+    /// Current backend session lifecycle state.
+    pub state: BackendSessionState,
+}
+
+/// Request to look up the active backend session for a proof job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GetProofSessionRequest {
+    /// Proof session identifier.
+    pub session_id: String,
+    /// Backend session type to look up.
+    pub session_type: SessionType,
+}
+
+/// Response carrying the active backend session, if one exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GetProofSessionResponse {
+    /// Active backend session, if one is recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<BackendSession>,
+}
+
+/// Request to record (insert or update) the backend session for a proof job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordProofSessionRequest {
+    /// Proof session identifier.
+    pub session_id: String,
+    /// Server-issued lock identifier for this worker claim.
+    pub lock_id: String,
+    /// Worker identifier.
+    pub worker_id: String,
+    /// Backend session type being recorded.
+    pub session_type: SessionType,
+    /// Backend-specific session identifier to persist.
+    pub backend_session_id: String,
+    /// Backend session lifecycle state to persist.
+    pub state: BackendSessionState,
+}
+
+/// Response returned after recording a backend session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordProofSessionResponse {
+    /// The recorded backend session.
+    pub session: BackendSession,
 }
 
 #[cfg(test)]

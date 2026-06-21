@@ -1,8 +1,6 @@
 use alloy_hardforks::{EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
-use base_common_genesis::RollupConfig;
-
-use crate::BaseUpgrade;
+use base_common_genesis::{BaseUpgrade, RollupConfig};
 
 /// Extends [`EthereumHardforks`] with Base upgrade helper methods.
 #[auto_impl::auto_impl(&, Arc)]
@@ -87,63 +85,52 @@ impl Upgrades for RollupConfig {
         match fork {
             BaseUpgrade::Bedrock => ForkCondition::Block(0),
             BaseUpgrade::Regolith => self
-                .hardforks
-                .regolith_time
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Regolith)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Canyon)),
             BaseUpgrade::Canyon => self
-                .hardforks
-                .canyon_time
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Canyon)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Ecotone)),
             BaseUpgrade::Ecotone => self
-                .hardforks
-                .ecotone_time
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Fjord)),
             BaseUpgrade::Fjord => self
-                .hardforks
-                .fjord_time
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Fjord)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Granite)),
             BaseUpgrade::Granite => self
-                .hardforks
-                .granite_time
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Granite)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Holocene)),
             BaseUpgrade::Holocene => self
-                .hardforks
-                .holocene_time
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Holocene)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Isthmus)),
             BaseUpgrade::Isthmus => self
-                .hardforks
-                .isthmus_time
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Jovian)),
             BaseUpgrade::Jovian => self
-                .hardforks
-                .jovian_time
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Jovian)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Azul => self
-                .hardforks
-                .base
-                .azul
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Azul)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Beryl => self
-                .hardforks
-                .base
-                .beryl
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Beryl)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Cobalt => self
-                .hardforks
-                .base
-                .cobalt
+                .contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
+            // Contract-only upgrades (Delta, PectraBlobSchedule) and any future variants are
+            // absent from the execution fork ladder.
+            _ => ForkCondition::Never,
         }
     }
 }
@@ -156,7 +143,7 @@ mod tests {
     fn rollup_config_upgrade_activation_cascade() {
         const ACTIVATION: u64 = 10;
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.ecotone_time = Some(ACTIVATION);
+        cfg.upgrades.ecotone_time = Some(ACTIVATION);
 
         // Cascading: Regolith and Canyon should fall through to Ecotone.
         assert_eq!(
@@ -178,5 +165,34 @@ mod tests {
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Never);
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Beryl), ForkCondition::Never);
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Cobalt), ForkCondition::Never);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn rollup_config_upgrade_activation_uses_runtime_overrides() {
+        use base_common_genesis::RuntimeUpgradeRegistry;
+
+        const CHAIN_ID: u64 = 9_777_001;
+        const ACTIVATION: u64 = 42;
+
+        let cfg = RollupConfig {
+            l2_chain_id: alloy_chains::Chain::from_id(CHAIN_ID),
+            ..RollupConfig::default()
+        };
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
+        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Azul, ACTIVATION);
+        RuntimeUpgradeRegistry::set_activation_timestamp(
+            CHAIN_ID,
+            BaseUpgrade::Cobalt,
+            ACTIVATION + 1,
+        );
+
+        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Timestamp(ACTIVATION));
+        assert_eq!(
+            cfg.upgrade_activation(BaseUpgrade::Cobalt),
+            ForkCondition::Timestamp(ACTIVATION + 1)
+        );
+
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
     }
 }

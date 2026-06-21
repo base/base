@@ -17,13 +17,11 @@ use crate::{
 ///
 /// Mirrors the structure of [`crate::B20Token`] but requires `S: AssetAccounting`
 /// so the dispatch layer can read and write asset-specific storage (multiplier,
-/// extra metadata, announcement IDs). The `in_announcement` flag guards against
-/// recursive `announce` calls within a single precompile invocation.
+/// extra metadata, announcement IDs).
 #[derive(Debug, Clone)]
 pub struct B20AssetToken<S: AssetAccounting, P: Policy> {
     accounting: S,
     policy: P,
-    in_announcement: bool,
 }
 
 impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
@@ -37,17 +35,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
     /// Creates a `B20AssetToken` backed by the provided storage and policy adapters.
     pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
-        Self { accounting, policy, in_announcement: false }
-    }
-
-    /// Returns whether this token is currently executing an announcement.
-    pub const fn is_announcement_active(&self) -> bool {
-        self.in_announcement
-    }
-
-    /// Marks this token as executing an announcement.
-    pub const fn begin_announcement(&mut self) {
-        self.in_announcement = true;
+        Self { accounting, policy }
     }
 }
 
@@ -214,6 +202,9 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         privileged: bool,
     ) -> Result<()> {
         self.ensure_operator_role(caller, privileged)?;
+        if new_multiplier.is_zero() {
+            return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
+        }
         self.accounting_mut().set_multiplier(new_multiplier)?;
         self.accounting_mut().emit_event(
             IB20Asset::MultiplierUpdated { multiplier: new_multiplier }.encode_log_data(),
@@ -243,7 +234,19 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
     /// Mints tokens to multiple recipients. All-or-nothing.
     ///
-    /// Check order: PAUSE → ROLE → INPUT → BUSINESS
+    /// # Authorization boundary
+    ///
+    /// The `ensure_not_paused` and `ensure_token_role` calls below are the **sole**
+    /// authorization gate for all batch-mint operations. The inner [`Mintable::mint`]
+    /// calls pass `privileged = true` only to avoid re-running the same checks once
+    /// per recipient, which is safe because the outer guards have already fired.
+    ///
+    /// **Do not remove or conditionalize the outer guards.** Doing so would leave a
+    /// fully open privileged path, since the inner mints unconditionally bypass
+    /// their own checks. The tests `batch_mint_check_order` in this module pin this
+    /// invariant and will fail if either guard is dropped.
+    ///
+    /// Check order: PAUSE -> ROLE -> INPUT -> BUSINESS
     pub fn batch_mint(
         &mut self,
         caller: Address,
@@ -280,6 +283,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{Address, B256, U256, keccak256};
+    use alloy_sol_types::SolEvent;
     use base_precompile_storage::BasePrecompileError;
     use rstest::rstest;
 
@@ -421,5 +425,28 @@ mod tests {
         let err = token.update_policy(CALLER, invalid_scope, 999, false).unwrap_err();
 
         assert_eq!(err, expected_update_policy_error(setup, invalid_scope));
+    }
+
+    #[test]
+    fn update_multiplier_rejects_zero() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, CALLER), true);
+
+        let err = token.update_multiplier(CALLER, U256::ZERO, false).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
+    }
+
+    #[test]
+    fn update_multiplier_emits_wad_event() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, CALLER), true);
+
+        token.update_multiplier(CALLER, B20AssetStorage::WAD, false).unwrap();
+
+        assert_eq!(token.accounting().events.len(), 1);
+        let decoded =
+            IB20Asset::MultiplierUpdated::decode_log_data(&token.accounting().events[0]).unwrap();
+        assert_eq!(decoded.multiplier, B20AssetStorage::WAD);
     }
 }

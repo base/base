@@ -5,18 +5,21 @@
 //! distinction is the `StablecoinAccounting` bound that provides `currency()`
 //! from the stablecoin extension namespace.
 
+use alloc::string::ToString;
+
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
-use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    B20StablecoinToken, B20TokenRole, Burnable, Configurable,
+    B20StablecoinToken, B20TokenRole, B20Variant, BerylCallRecorder, BerylMetricLabels,
+    BerylSelector, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
     PrecompileCallObserver, RoleManaged, StablecoinAccounting, Token, Transferable,
-    macros::{decode_precompile_call, deduct_calldata_cost},
+    macros::decode_precompile_call,
 };
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
@@ -35,21 +38,27 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        deduct_calldata_cost!(ctx, calldata);
+        let mut recorder = BerylCallRecorder::start(
+            observer.clone(),
+            BerylMetricLabels::b20_stablecoin_call(calldata),
+        );
+        if !ctx.call_value().is_zero() {
+            return recorder
+                .record_base_error_result(ctx, BasePrecompileError::revert(IB20::NonPayable {}));
+        }
+        if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
+            return recorder.record_base_error_result(ctx, error);
+        }
         // Ensure the token has been deployed (has bytecode at its address).
         match self.accounting().is_initialized() {
             Ok(true) => {}
             Ok(false) => {
-                return BasePrecompileError::Revert(Bytes::new())
-                    .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+                return recorder
+                    .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
             }
-            Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
+            Err(error) => return recorder.record_base_error_result(ctx, error),
         }
-        self.inner_with_observer(ctx, calldata, observer).into_precompile_result(
-            ctx.gas_used(),
-            ctx.state_gas_used(),
-            |b| b,
-        )
+        recorder.record_base_result(ctx, self.inner_with_observer(ctx, calldata, observer), |b| b)
     }
 
     /// Decodes calldata and executes the matching `IB20` operation.
@@ -101,7 +110,12 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        if let Ok(call) = IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata) {
+        if let Some(selector) = BerylSelector::selector(calldata)
+            && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
+        {
+            let call = IB20Stablecoin::IB20StablecoinCalls::abi_decode_validate(calldata).map_err(
+                |error| BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() },
+            )?;
             let label = call.as_label();
             return observer.observe(label, || self.handle_stablecoin_call(call));
         }
@@ -114,7 +128,16 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 // --- Pure reads: direct to accounting ---
                 C::name(_) => self.accounting().name()?.abi_encode().into(),
                 C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
-                C::decimals(_) => U256::from(self.accounting().decimals()?).abi_encode().into(),
+                // Stablecoin precision is fixed at 6 by the protocol spec; never read from
+                // storage to avoid the zero-return window during the factory bootstrap
+                // (BOP-349/PSRC-27).
+                C::decimals(_) => U256::from(
+                    B20Variant::Stablecoin
+                        .decimals()
+                        .expect("stablecoin has fixed 6-decimal precision"),
+                )
+                .abi_encode()
+                .into(),
                 C::totalSupply(_) => self.accounting().total_supply()?.abi_encode().into(),
                 C::balanceOf(c) => self.accounting().balance_of(c.account)?.abi_encode().into(),
                 C::allowance(c) => {
@@ -316,5 +339,72 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             SC::currency(_) => self.accounting().currency()?.abi_encode().into(),
         };
         Ok(encoded)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_sol_types::{SolCall, SolError, SolValue};
+    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+
+    use crate::{
+        B20StablecoinToken, IB20, InMemoryPolicy, InMemoryTokenAccounting,
+        NoopPrecompileCallObserver, TestStablecoinToken,
+    };
+
+    const TOKEN: Address = Address::repeat_byte(0x01);
+
+    fn make_stablecoin_token_with_decimals(decimals: u8) -> TestStablecoinToken {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.decimals = decimals;
+        TestStablecoinToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
+    fn call_inner(token: &mut TestStablecoinToken, calldata: &[u8]) -> Vec<u8> {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(TOKEN);
+        StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata)).unwrap().to_vec()
+    }
+
+    fn make_token() -> B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy> {
+        B20StablecoinToken::with_storage_and_policy(
+            InMemoryTokenAccounting::new(TOKEN),
+            InMemoryPolicy::new(),
+        )
+    }
+
+    /// Decimals always returns 6 regardless of what the underlying accounting stores.
+    ///
+    /// During the factory bootstrap window the storage slot is uninitialized and would
+    /// return 0 if read directly. Hard-coding 6 in the dispatch eliminates that window.
+    #[test]
+    fn decimals_returns_fixed_six_regardless_of_storage() {
+        // Token with decimals = 0 in storage (simulates an uninitialized slot).
+        let mut uninitialized = make_stablecoin_token_with_decimals(0);
+        let calldata = IB20::decimalsCall {}.abi_encode();
+        let result = call_inner(&mut uninitialized, &calldata);
+        assert_eq!(U256::abi_decode(&result).unwrap(), U256::from(6u8));
+
+        // Token with decimals = 18 in storage (default for InMemoryTokenAccounting).
+        let mut default = make_stablecoin_token_with_decimals(18);
+        let result = call_inner(&mut default, &calldata);
+        assert_eq!(U256::abi_decode(&result).unwrap(), U256::from(6u8));
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut token = make_token();
+        let calldata = IB20::balanceOfCall { account: Address::ZERO }.abi_encode();
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(U256::from(1u64));
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            token.dispatch_with_observer(ctx, &calldata, NoopPrecompileCallObserver)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        assert_eq!(out.bytes, Bytes::from(IB20::NonPayable {}.abi_encode()));
     }
 }

@@ -27,19 +27,39 @@ pub use config::{
     PodGroupConfig, PodsConfig, ProofsConfig, ValidatorNodeConfig,
 };
 
+mod doctor;
+pub use doctor::{
+    Doctor, DoctorCheck, DoctorInputs, DoctorOptions, DoctorReport, DoctorStatus, DoctorSummary,
+    DoctorThresholds, LayerEndpointSanity, RethLimitSection, RethLimits, RethToml,
+};
+
+mod errors;
+pub use errors::{
+    BlockRefParseError, ConductorCommandError, DoctorArgsError, NodeLookupError, P2pCommandError,
+    P2pTargetError, SequencerCommandError, StateConvergenceTimeoutError, SyncStatusCommandError,
+};
+
 mod rpc;
 pub use rpc::{
-    BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, ConductorNodeStatus,
-    ConductorPollUpdate, InitialBacklog, L1BlockInfo, L1ConnectionMode, LatestProposal,
-    PausedPeers, PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, ProofsSnapshot,
-    SyncStatusReport, TimestampedFlashblock, TxSummary, ValidatorNodeStatus,
-    conductor_pause_all_nodes, conductor_pause_node, conductor_resume_all_nodes,
-    conductor_resume_node, decode_flashblock_transactions, fetch_block, fetch_block_transactions,
-    fetch_full_system_config, fetch_initial_backlog_with_progress, fetch_safe_and_latest,
-    fetch_sync_status, pause_sequencer_node, restart_conductor_node, run_block_fetcher,
-    run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher,
-    run_pods_poller, run_proofs_poller, run_safe_head_poller, run_validator_poller,
-    start_sequencer_node, stop_sequencer_node, transfer_conductor_leader, unpause_sequencer_node,
+    BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, ClInfoReport,
+    ConductorClusterSnapshot, ConductorControl, ConductorFanoutReport, ConductorNodeFailure,
+    ConductorNodeStatus, ConductorPollUpdate, DiscoveryInfo, ElInfoReport, InitialBacklog,
+    L1BlockInfo, L1ConnectionMode, LatestProposal, NodeEndpoint, NodeInfoReport, PausedPeers,
+    PeerListReport, PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus, PodsPoller,
+    PodsSnapshot, ProofsSnapshot, RawInfoReport, RawPeerCounts, RawPeersReport,
+    SEQUENCER_ACTIVE_RPC_TIMEOUT, SyncStatusReport, TimestampedFlashblock, TxSummary,
+    ValidatorNodeStatus, add_peer, ban_peer, conductor_pause_all_nodes, conductor_pause_node,
+    conductor_resume_all_nodes, conductor_resume_node, connect_peer,
+    decode_flashblock_transactions, disconnect_peer, fetch_block, fetch_block_transactions,
+    fetch_cl_info, fetch_connected_peers, fetch_el_info, fetch_full_system_config, fetch_info,
+    fetch_initial_backlog_with_progress, fetch_l1_block_number, fetch_l2_block_number,
+    fetch_l2_chain_id, fetch_raw_info, fetch_raw_peers, fetch_safe_and_latest,
+    fetch_sequencer_active, fetch_sync_status, list_banned_peers, pause_sequencer_node,
+    remove_peer, restart_conductor_node, run_block_fetcher, run_conductor_poller,
+    run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_pods_poller,
+    run_proofs_poller, run_safe_head_poller, run_validator_poller, start_sequencer,
+    start_sequencer_node, stop_sequencer, stop_sequencer_node, transfer_conductor_leader,
+    unban_peer, unpause_sequencer_node,
 };
 
 mod tui;

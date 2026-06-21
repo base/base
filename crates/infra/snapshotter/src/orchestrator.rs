@@ -47,7 +47,8 @@ impl<C: ContainerManager> Snapshotter<C> {
     /// 2. Verifies the container is stopped
     /// 3. Generates snapshot archives
     /// 4. Uploads to S3/R2
-    /// 5. Restarts the EL container (always, even on failure)
+    /// 5. Clears reth's persisted peer list (best effort)
+    /// 6. Restarts the EL container (always, even on failure)
     pub async fn run(&self) -> Result<()> {
         let stop_result = self.container_manager.stop(&self.config.container_name).await;
 
@@ -55,6 +56,12 @@ impl<C: ContainerManager> Snapshotter<C> {
             Ok(()) => self.generate_and_upload().await,
             Err(e) => Err(e).context("failed to stop EL container"),
         };
+
+        // Clear reth's persisted peer list before the EL restarts so the node
+        // rediscovers peers from bootnodes — an early-warning canary for peering
+        // health. Best effort: a missing file or removal error is logged and
+        // never aborts the run or blocks the restart.
+        self.clear_known_peers();
 
         let restart_result = self.container_manager.start(&self.config.container_name).await;
 
@@ -154,6 +161,23 @@ impl<C: ContainerManager> Snapshotter<C> {
         }
 
         Ok(())
+    }
+
+    /// Removes reth's persisted peer list (`known-peers.json`) from the datadir.
+    ///
+    /// Best effort: a missing file or removal error is logged and swallowed so
+    /// it never aborts the snapshot run or blocks the EL restart.
+    fn clear_known_peers(&self) {
+        let known_peers = self.config.source_datadir.join("known-peers.json");
+        match std::fs::remove_file(&known_peers) {
+            Ok(()) => info!(path = %known_peers.display(), "cleared persisted peer list"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                error!(path = %known_peers.display(), "persisted peer list not found; nothing to clear")
+            }
+            Err(e) => {
+                error!(error = %e, path = %known_peers.display(), "failed to clear persisted peer list")
+            }
+        }
     }
 }
 

@@ -1,7 +1,10 @@
 use base_prover_service_db::{
-    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, canonical_session_id,
+    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    canonical_session_id,
 };
-use base_prover_service_protocol::{ProveBlockRangeRequest, ProveBlockRangeResponse};
+use base_prover_service_protocol::{
+    ProofRequestIdCollisionMessage, ProveBlockRangeRequest, ProveBlockRangeResponse,
+};
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
 
@@ -43,23 +46,15 @@ impl ProverServiceServer {
             "Attempting to prove base block(s)",
         );
 
-        if let Some(interval) = db_request.intermediate_root_interval {
-            if interval == 0 {
-                return Err(invalid_argument(
-                    "Invalid intermediate_root_interval: must be greater than 0",
-                ));
-            }
-            if !db_request.number_of_blocks_to_prove.is_multiple_of(interval) {
-                return Err(invalid_argument(format!(
-                    "Invalid number_of_blocks_to_prove ({}): must be a multiple of intermediate_root_interval ({})",
-                    db_request.number_of_blocks_to_prove, interval,
-                )));
-            }
-        }
+        validate_intermediate_root_interval(
+            db_request.api_proof_type,
+            db_request.number_of_blocks_to_prove,
+            db_request.intermediate_root_interval,
+        )?;
 
         let outcome = self
             .repo
-            .create_for_worker_queue(db_request, self.max_proof_retries)
+            .create_for_worker_queue(db_request, self.config.max_proof_retries)
             .await
             .map_err(|e| match e {
                 CreateProofRequestError::IdCollision { id, field } => {
@@ -68,9 +63,7 @@ impl ProverServiceServer {
                         mismatched_field = field,
                         "rejected ProveBlockRange: session_id already bound to a different request"
                     );
-                    failed_precondition(format!(
-                        "session_id {id} already exists with a different {field}"
-                    ))
+                    failed_precondition(ProofRequestIdCollisionMessage::for_field(id, field))
                 }
                 CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
                     warn!(
@@ -90,7 +83,7 @@ impl ProverServiceServer {
                 warn!(
                     proof_request_id = %id,
                     session_id = %session_id,
-                    max_proof_retries = self.max_proof_retries,
+                    max_proof_retries = self.config.max_proof_retries,
                     "rejected ProveBlockRange: proof request retry budget exhausted for this session_id",
                 );
                 return Err(resource_exhausted(format!(
@@ -125,12 +118,38 @@ fn parse_session_id(session_id: &str) -> RpcResult<String> {
     canonical_session_id(session_id).map_err(|e| invalid_argument(format!("{e}")))
 }
 
+fn validate_intermediate_root_interval(
+    api_proof_type: ApiProofType,
+    number_of_blocks_to_prove: u64,
+    intermediate_root_interval: Option<u64>,
+) -> RpcResult<()> {
+    match api_proof_type {
+        ApiProofType::Tee => return Ok(()),
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {}
+    }
+
+    if let Some(interval) = intermediate_root_interval {
+        if interval == 0 {
+            return Err(invalid_argument(
+                "Invalid intermediate_root_interval: must be greater than 0",
+            ));
+        }
+        if !number_of_blocks_to_prove.is_multiple_of(interval) {
+            return Err(invalid_argument(format!(
+                "Invalid number_of_blocks_to_prove ({number_of_blocks_to_prove}): must be a multiple of intermediate_root_interval ({interval})",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use base_prover_service_db::{ApiProofType, ProofType};
     use uuid::Uuid;
 
-    use super::parse_session_id;
+    use super::{parse_session_id, validate_intermediate_root_interval};
     use crate::metrics;
 
     #[test]
@@ -178,5 +197,19 @@ mod tests {
         let parsed = parse_session_id(session_id).unwrap();
 
         assert_eq!(parsed, session_id);
+    }
+
+    #[test]
+    fn zkp_request_rejects_non_multiple_intermediate_root_interval() {
+        let result = validate_intermediate_root_interval(ApiProofType::Compressed, 1, Some(30));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn tee_request_accepts_intermediate_block_interval() {
+        let result = validate_intermediate_root_interval(ApiProofType::Tee, 1, Some(30));
+
+        assert!(result.is_ok());
     }
 }

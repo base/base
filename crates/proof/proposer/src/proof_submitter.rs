@@ -9,7 +9,7 @@
 //! 2. Intermediate-root validation: extract the per-block intermediate roots
 //!    from the underlying proposals, fetch fresh canonical roots for each
 //!    intermediate block, and verify they all match the canonical chain.
-//! 3. Optional pre-submission TEE signer validation against the on-chain
+//! 3. Optional pre-submission TEE signer validation against the onchain
 //!    `TEEProverRegistry`.
 //! 4. Calls `output_proposer.propose_output(..)` to create the dispute game on
 //!    L1 and maps contract-level errors into the [`SubmitAction`] variants the
@@ -21,15 +21,22 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Signature, keccak256};
 use alloy_sol_types::SolCall;
-use base_proof_contracts::ITEEProverRegistry;
+use base_proof_contracts::{
+    AggregateVerifierClient, DisputeGameFactoryClient, ITEEProverRegistry, encode_extra_data,
+};
 use base_proof_primitives::{ProofJournal, ProofResult, Proposal};
 use base_proof_rpc::{L1Provider, RollupProvider};
+use base_proof_submission::ProofSubmissionError;
 use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 
-use crate::{Metrics, error::ProposerError, output_proposer::OutputProposer};
+use crate::{
+    Metrics, error::ProposerError, output_proposer::OutputProposer,
+    proposal_intervals::ProposalIntervals,
+};
 
 /// Internal action returned to the pipeline after a single submission attempt.
 ///
@@ -41,7 +48,7 @@ pub enum SubmitAction {
     /// chain. The pipeline drops the cached recovery and re-proves on the
     /// next tick.
     RootMismatch,
-    /// The dispute game already exists on-chain by a previous attempt whose
+    /// The dispute game already exists onchain by a previous attempt whose
     /// result was lost to an RPC propagation delay. The pipeline must
     /// invalidate its recovery cache so the next forward walk discovers the
     /// existing game.
@@ -72,13 +79,15 @@ impl std::fmt::Display for SubmitAction {
 pub struct ProofSubmitterConfig {
     /// Address of the proposer on L1.
     pub proposer_address: Address,
+    /// Dispute game type used for proposals.
+    pub game_type: u32,
     /// Number of L2 blocks per proposal.
     pub block_interval: u64,
     /// Stride (in L2 blocks) between intermediate roots within a proposal.
     pub intermediate_block_interval: u64,
     /// Expected TEE enclave image hash.
     pub tee_image_hash: B256,
-    /// Optional on-chain `TEEProverRegistry` address. When set, the submitter
+    /// Optional onchain `TEEProverRegistry` address. When set, the submitter
     /// performs an `isValidSigner` pre-flight check before calling
     /// `propose_output`.
     pub tee_prover_registry_address: Option<Address>,
@@ -96,6 +105,8 @@ where
     output_proposer: Arc<dyn OutputProposer>,
     rollup_client: Arc<R>,
     l1_client: Arc<L1>,
+    factory_client: Arc<dyn DisputeGameFactoryClient>,
+    verifier_client: Arc<dyn AggregateVerifierClient>,
     config: ProofSubmitterConfig,
 }
 
@@ -109,6 +120,8 @@ where
             output_proposer: Arc::clone(&self.output_proposer),
             rollup_client: Arc::clone(&self.rollup_client),
             l1_client: Arc::clone(&self.l1_client),
+            factory_client: Arc::clone(&self.factory_client),
+            verifier_client: Arc::clone(&self.verifier_client),
             config: self.config,
         }
     }
@@ -134,9 +147,11 @@ where
         output_proposer: Arc<dyn OutputProposer>,
         rollup_client: Arc<R>,
         l1_client: Arc<L1>,
+        factory_client: Arc<dyn DisputeGameFactoryClient>,
+        verifier_client: Arc<dyn AggregateVerifierClient>,
         config: ProofSubmitterConfig,
     ) -> Self {
-        Self { output_proposer, rollup_client, l1_client, config }
+        Self { output_proposer, rollup_client, l1_client, factory_client, verifier_client, config }
     }
 
     /// Validates the completed proof and submits it to L1 as a dispute game.
@@ -223,7 +238,7 @@ where
 
         // Pre-submission signer validation: if a TEE prover registry is
         // configured, recover the signer from the aggregate proposal signature
-        // and check `isValidSigner` on-chain. If the signer is invalid, skip
+        // and check `isValidSigner` onchain. If the signer is invalid, skip
         // submission to avoid wasting gas on a transaction that will revert.
         if let Some(registry_address) = self.config.tee_prover_registry_address {
             match self
@@ -237,13 +252,13 @@ where
             {
                 Ok(true) => {}
                 Ok(false) => {
-                    // The proof's signer is not registered on-chain. Discard
+                    // The proof's signer is not registered onchain. Discard
                     // this proof so the pipeline re-proves with a (potentially
                     // different, registered) enclave on the next attempt.
-                    warn!(target_block, "TEE signer is not valid on-chain, discarding proof");
+                    warn!(target_block, "TEE signer is not valid onchain, discarding proof");
                     Metrics::tee_signer_invalid_total().increment(1);
                     return Err(SubmitAction::Discard(ProposerError::Internal(
-                        "TEE signer not registered on-chain".into(),
+                        "TEE signer not registered onchain".into(),
                     )));
                 }
                 Err(e) => {
@@ -253,10 +268,27 @@ where
                     // This also handles the case where the registry contract
                     // is not yet deployed (rolling out the
                     // --tee-prover-registry-address config before the contract
-                    // exists on-chain).
+                    // exists onchain).
                     warn!(error = %e, target_block, "signer validity check failed, proceeding anyway");
                 }
             }
+        }
+
+        let extra_data = encode_extra_data(target_block, parent_address, &intermediate_roots);
+        let existing_game = self
+            .factory_client
+            .games(self.config.game_type, aggregate_proposal.output_root, extra_data.clone())
+            .await
+            .map_err(|e| {
+                SubmitAction::Failed(ProposerError::Contract(format!(
+                    "matching game lookup failed: {e}"
+                )))
+            })?;
+
+        if existing_game != Address::ZERO {
+            return self
+                .attach_existing_game_proof(existing_game, aggregate_proposal, target_block)
+                .await;
         }
 
         info!(
@@ -282,14 +314,37 @@ where
                 Ok(())
             }
             Err(e) => {
-                if e.is_game_already_exists() {
+                if matches!(e, ProposerError::Submission(ProofSubmissionError::GameAlreadyExists)) {
                     drop(propose_timer);
+                    info!(target_block, "Game already exists, checking fresh state from chain");
+                    let raced_game = self
+                        .factory_client
+                        .games(self.config.game_type, aggregate_proposal.output_root, extra_data)
+                        .await
+                        .map_err(|e| {
+                            SubmitAction::Failed(ProposerError::Contract(format!(
+                                "matching game lookup after duplicate create failed: {e}"
+                            )))
+                        })?;
+                    if raced_game != Address::ZERO {
+                        return self
+                            .attach_existing_game_proof(
+                                raced_game,
+                                aggregate_proposal,
+                                target_block,
+                            )
+                            .await;
+                    }
+
                     info!(
                         target_block,
                         "Game already exists, next tick will load fresh state from chain"
                     );
                     Err(SubmitAction::GameAlreadyExists)
-                } else if e.is_l1_origin_too_old() {
+                } else if matches!(
+                    e,
+                    ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)
+                ) {
                     propose_timer.disarm();
                     warn!(
                         error = %e,
@@ -297,12 +352,15 @@ where
                         "Proof L1 origin is too old, discarding proof to re-prove"
                     );
                     Err(SubmitAction::Discard(e))
-                } else if e.is_invalid_signer() {
+                } else if matches!(
+                    e,
+                    ProposerError::Submission(ProofSubmissionError::InvalidSigner)
+                ) {
                     propose_timer.disarm();
                     warn!(
                         error = %e,
                         target_block,
-                        "Proof signer is invalid on-chain, discarding proof to re-prove"
+                        "Proof signer is invalid onchain, discarding proof to re-prove"
                     );
                     Metrics::tee_signer_invalid_total().increment(1);
                     Err(SubmitAction::Discard(e))
@@ -310,6 +368,80 @@ where
                     propose_timer.disarm();
                     Err(SubmitAction::Failed(e))
                 }
+            }
+        }
+    }
+
+    async fn attach_existing_game_proof(
+        &self,
+        game_address: Address,
+        aggregate_proposal: &Proposal,
+        target_block: u64,
+    ) -> Result<(), SubmitAction> {
+        let game_l1_head = self.verifier_client.l1_head(game_address).await.map_err(|e| {
+            SubmitAction::Failed(ProposerError::Contract(format!(
+                "l1Head lookup failed for game {game_address}: {e}"
+            )))
+        })?;
+        if game_l1_head != aggregate_proposal.l1_origin_hash {
+            info!(
+                target_block,
+                game_address = %game_address,
+                game_l1_head = ?game_l1_head,
+                proof_l1_origin = ?aggregate_proposal.l1_origin_hash,
+                "Existing dispute game uses a different L1 head, recovering chain state"
+            );
+            return Err(SubmitAction::GameAlreadyExists);
+        }
+
+        info!(
+            target_block,
+            game_address = %game_address,
+            output_root = ?aggregate_proposal.output_root,
+            "Attaching TEE proof to existing dispute game"
+        );
+
+        let mut attach_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
+        match self.output_proposer.verify_proposal_proof(game_address, aggregate_proposal).await {
+            Ok(()) => {
+                drop(attach_timer);
+                info!(target_block, game_address = %game_address, "TEE proof attached successfully");
+                Metrics::l2_output_proposals_total().increment(1);
+                Ok(())
+            }
+            Err(ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified)) => {
+                drop(attach_timer);
+                info!(
+                    target_block,
+                    game_address = %game_address,
+                    "TEE proof was attached by another submitter"
+                );
+                Ok(())
+            }
+            Err(e @ ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)) => {
+                attach_timer.disarm();
+                warn!(
+                    error = %e,
+                    target_block,
+                    game_address = %game_address,
+                    "Proof L1 origin is too old, discarding proof to re-prove"
+                );
+                Err(SubmitAction::Discard(e))
+            }
+            Err(e @ ProposerError::Submission(ProofSubmissionError::InvalidSigner)) => {
+                attach_timer.disarm();
+                warn!(
+                    error = %e,
+                    target_block,
+                    game_address = %game_address,
+                    "Proof signer is invalid onchain, discarding proof to re-prove"
+                );
+                Metrics::tee_signer_invalid_total().increment(1);
+                Err(SubmitAction::Discard(e))
+            }
+            Err(e) => {
+                attach_timer.disarm();
+                Err(SubmitAction::Failed(e))
             }
         }
     }
@@ -355,7 +487,7 @@ where
         let calldata = ITEEProverRegistry::isValidSignerCall { signer }.abi_encode();
         let result = self
             .l1_client
-            .call_contract(registry_address, calldata.into(), None)
+            .call_contract(registry_address, calldata.into(), BlockNumberOrTag::Latest)
             .await
             .map_err(ProposerError::Rpc)?;
 
@@ -371,35 +503,17 @@ where
     /// Returns intermediate block numbers between `starting_block_number` and
     /// the next proposal target, stepping by `intermediate_block_interval`.
     ///
-    /// Shared with [`crate::pipeline::ProvingPipeline`]'s recovery forward walk,
-    /// which calls through this method on the pipeline's owned submitter so the
-    /// stepping logic lives in exactly one place.
+    /// Used by submit validation to match the same checkpoint layout as
+    /// proposer recovery.
     pub fn intermediate_block_numbers(
         &self,
         starting_block_number: u64,
     ) -> Result<Vec<u64>, ProposerError> {
-        let interval = self.config.intermediate_block_interval;
-        if interval == 0 {
-            return Err(ProposerError::Config(
-                "intermediate_block_interval must not be zero".into(),
-            ));
-        }
-        let count = self.config.block_interval / interval;
-        (1..=count)
-            .map(|i| {
-                starting_block_number
-                    .checked_add(i.checked_mul(interval).ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })?)
-                    .ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })
-            })
-            .collect()
+        ProposalIntervals::intermediate_block_numbers(
+            self.config.block_interval,
+            self.config.intermediate_block_interval,
+            starting_block_number,
+        )
     }
 
     /// Extracts intermediate output roots from per-block proposals.
@@ -455,5 +569,272 @@ where
             .into_iter()
             .map(|(block_number, result)| result.map(|root| (block_number, root)))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::{HashMap, VecDeque},
+        sync::Arc,
+    };
+
+    use alloy_primitives::{Bytes, U256};
+    use async_trait::async_trait;
+    use base_proof_contracts::{ContractError, GameAtIndex, encode_extra_data};
+    use base_proof_primitives::ProofResult;
+    use rstest::rstest;
+
+    use super::*;
+    use crate::test_utils::{
+        MockAggregateVerifier, MockDisputeGameFactory, MockL1, MockRollupClient, test_proposal,
+        test_sync_status,
+    };
+
+    const TEST_GAME_TYPE: u32 = 42;
+    const TEST_BLOCK_INTERVAL: u64 = 100;
+
+    #[derive(Debug, Default)]
+    struct RecordingOutputProposer {
+        created: std::sync::Mutex<u32>,
+        verified: std::sync::Mutex<Vec<Address>>,
+        create_error: std::sync::Mutex<Option<ProposerError>>,
+        verify_error: std::sync::Mutex<Option<ProposerError>>,
+    }
+
+    #[async_trait]
+    impl OutputProposer for RecordingOutputProposer {
+        async fn propose_output(
+            &self,
+            _proposal: &Proposal,
+            _parent_address: Address,
+            _intermediate_roots: &[B256],
+        ) -> Result<(), ProposerError> {
+            *self.created.lock().unwrap() += 1;
+            if let Some(error) = self.create_error.lock().unwrap().take() {
+                return Err(error);
+            }
+            Ok(())
+        }
+
+        async fn verify_proposal_proof(
+            &self,
+            game_address: Address,
+            _proposal: &Proposal,
+        ) -> Result<(), ProposerError> {
+            self.verified.lock().unwrap().push(game_address);
+            if let Some(error) = self.verify_error.lock().unwrap().take() {
+                return Err(error);
+            }
+            Ok(())
+        }
+    }
+
+    fn proof_result(target_block: u64) -> ProofResult {
+        let mut aggregate_proposal = test_proposal(target_block);
+        aggregate_proposal.l1_origin_hash = B256::ZERO;
+        let proposals: Vec<Proposal> = (1..=target_block).map(test_proposal).collect();
+        ProofResult::Tee { aggregate_proposal, proposals }
+    }
+
+    fn submitter(
+        output_proposer: Arc<RecordingOutputProposer>,
+        factory: MockDisputeGameFactory,
+        verifier: MockAggregateVerifier,
+    ) -> ProofSubmitter<MockL1, MockRollupClient> {
+        submitter_with_factory(output_proposer, Arc::new(factory), verifier)
+    }
+
+    fn submitter_with_factory(
+        output_proposer: Arc<RecordingOutputProposer>,
+        factory: Arc<dyn DisputeGameFactoryClient>,
+        verifier: MockAggregateVerifier,
+    ) -> ProofSubmitter<MockL1, MockRollupClient> {
+        let output_roots = HashMap::from([(TEST_BLOCK_INTERVAL, B256::repeat_byte(0x64))]);
+        ProofSubmitter::new(
+            output_proposer,
+            Arc::new(MockRollupClient {
+                sync_status: test_sync_status(TEST_BLOCK_INTERVAL, B256::ZERO),
+                output_roots,
+                max_safe_block: None,
+            }),
+            Arc::new(MockL1 { latest_block_number: 1000 }),
+            factory,
+            Arc::new(verifier),
+            ProofSubmitterConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                game_type: TEST_GAME_TYPE,
+                block_interval: TEST_BLOCK_INTERVAL,
+                intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                tee_image_hash: B256::repeat_byte(0x05),
+                tee_prover_registry_address: None,
+                output_fetch_concurrency: 1,
+            },
+        )
+    }
+
+    fn existing_game_factory(game_address: Address) -> MockDisputeGameFactory {
+        let root = B256::repeat_byte(0x64);
+        let extra_data = encode_extra_data(TEST_BLOCK_INTERVAL, Address::ZERO, &[root]);
+        let mut factory = MockDisputeGameFactory::with_games(vec![]);
+        factory.uuid_games.insert((TEST_GAME_TYPE, root, extra_data), game_address);
+        factory
+    }
+
+    #[derive(Debug)]
+    struct SequentialGameFactory {
+        responses: std::sync::Mutex<VecDeque<Address>>,
+    }
+
+    impl SequentialGameFactory {
+        fn new(responses: impl IntoIterator<Item = Address>) -> Self {
+            Self { responses: std::sync::Mutex::new(responses.into_iter().collect()) }
+        }
+    }
+
+    #[async_trait]
+    impl DisputeGameFactoryClient for SequentialGameFactory {
+        async fn game_count(&self) -> Result<u64, ContractError> {
+            Ok(0)
+        }
+
+        async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
+            Err(ContractError::Validation(format!("index {index} out of bounds")))
+        }
+
+        async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {
+            Ok(U256::ZERO)
+        }
+
+        async fn game_impls(&self, _: u32) -> Result<Address, ContractError> {
+            Ok(Address::ZERO)
+        }
+
+        async fn games(&self, _: u32, _: B256, _: Bytes) -> Result<Address, ContractError> {
+            Ok(self.responses.lock().unwrap().pop_front().unwrap_or(Address::ZERO))
+        }
+    }
+
+    #[tokio::test]
+    async fn submit_attaches_proof_to_existing_matching_game() {
+        let game_address = Address::repeat_byte(0xAA);
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter = submitter(
+            Arc::clone(&output),
+            existing_game_factory(game_address),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
+    }
+
+    #[tokio::test]
+    async fn submit_attaches_proof_after_game_already_exists_race() {
+        let game_address = Address::repeat_byte(0xAA);
+        let output = Arc::new(RecordingOutputProposer::default());
+        *output.create_error.lock().unwrap() =
+            Some(ProposerError::Submission(ProofSubmissionError::GameAlreadyExists));
+        let submitter = submitter_with_factory(
+            Arc::clone(&output),
+            Arc::new(SequentialGameFactory::new([Address::ZERO, game_address])),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(*output.created.lock().unwrap(), 1);
+        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
+    }
+
+    #[tokio::test]
+    async fn submit_recovers_when_existing_game_l1_head_mismatches() {
+        let game_address = Address::repeat_byte(0xAA);
+        let mut verifier = MockAggregateVerifier::default();
+        verifier.l1_head_map.insert(game_address, B256::repeat_byte(0xCC));
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter =
+            submitter(Arc::clone(&output), existing_game_factory(game_address), verifier);
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));
+        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert!(output.verified.lock().unwrap().is_empty());
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum ExpectedAttachErrorAction {
+        Success,
+        Discard(&'static str),
+    }
+
+    #[rstest]
+    #[case::already_verified(
+        ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified),
+        ExpectedAttachErrorAction::Success
+    )]
+    #[case::l1_origin_too_old(
+        ProposerError::Submission(ProofSubmissionError::L1OriginTooOld),
+        ExpectedAttachErrorAction::Discard("l1_origin_too_old")
+    )]
+    #[case::invalid_signer(
+        ProposerError::Submission(ProofSubmissionError::InvalidSigner),
+        ExpectedAttachErrorAction::Discard("invalid_signer")
+    )]
+    #[tokio::test]
+    async fn submit_handles_existing_game_attach_error(
+        #[case] error: ProposerError,
+        #[case] expected: ExpectedAttachErrorAction,
+    ) {
+        let game_address = Address::repeat_byte(0xAA);
+        let output = Arc::new(RecordingOutputProposer::default());
+        *output.verify_error.lock().unwrap() = Some(error);
+        let submitter = submitter(
+            Arc::clone(&output),
+            existing_game_factory(game_address),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        match expected {
+            ExpectedAttachErrorAction::Success => assert!(result.is_ok()),
+            ExpectedAttachErrorAction::Discard(label) => assert!(
+                matches!(result, Err(SubmitAction::Discard(ref error)) if error.metric_label() == label)
+            ),
+        }
+        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
+    }
+
+    #[tokio::test]
+    async fn submit_creates_game_when_no_match_exists() {
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter = submitter(
+            Arc::clone(&output),
+            MockDisputeGameFactory::with_games(vec![]),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(*output.created.lock().unwrap(), 1);
+        assert!(output.verified.lock().unwrap().is_empty());
     }
 }

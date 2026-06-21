@@ -23,6 +23,7 @@ alloy-rpc-types-eth.workspace = true
 alloy-transport-http.workspace = true
 
 # Base Alloy
+base-optimism-rpc.workspace = true
 base-common-network.workspace = true
 base-common-rpc-types.workspace = true
 

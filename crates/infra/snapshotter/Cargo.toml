@@ -18,12 +18,12 @@ blake3 = { workspace = true }
 rayon = { workspace = true }
 bollard = { workspace = true }
 futures = { workspace = true }
+reth-cli-commands = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "fs"] }
 clap = { workspace = true, features = ["derive", "env"] }
-serde = { workspace = true, features = ["std", "derive"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]

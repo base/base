@@ -267,7 +267,7 @@ jobs:
           echo "has_digests=$has_digests" >> "$GITHUB_OUTPUT"
           echo "has_binaries=$has_binaries" >> "$GITHUB_OUTPUT"
 
-  # Merge manifests and publish
+  # Merge Docker manifests and publish
   publish:
     needs: [find-release-artifacts]
     if: ${{ !cancelled() && (needs.find-release-artifacts.outputs.has_digests == 'true' || (inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true')) }}
@@ -362,7 +362,7 @@ jobs:
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "GitHub Release $TAG already exists, skipping creation"
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes --draft
+            gh release create "$TAG" --title "$TAG" --notes "" --draft
           fi
 
       - name: Download binary artifacts

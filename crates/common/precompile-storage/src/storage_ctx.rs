@@ -18,7 +18,7 @@ use revm::{
 };
 
 use crate::{
-    error::{BasePrecompileError, Result},
+    error::{BasePrecompileError, IntoPrecompileResult, Result},
     provider::PrecompileStorageProvider,
 };
 
@@ -107,6 +107,10 @@ impl<'a> StorageCtx<'a> {
     pub fn block_number(&self) -> u64 {
         self.with_storage(|s| s.block_number())
     }
+    /// Returns the transaction origin (`tx.origin`).
+    pub fn origin(&self) -> Address {
+        self.with_storage(|s| s.origin())
+    }
 
     /// Sets the bytecode at the given address.
     pub fn set_code(&self, address: Address, code: Bytecode) -> Result<()> {
@@ -166,6 +170,10 @@ impl<'a> StorageCtx<'a> {
     pub fn is_static(&self) -> bool {
         self.with_storage(|s| s.is_static())
     }
+    /// Returns the native value (in wei) attached to this precompile call.
+    pub fn call_value(&self) -> U256 {
+        self.with_storage(|s| s.call_value())
+    }
     /// Returns the address that called this precompile.
     pub fn caller(&self) -> Address {
         self.with_storage(|s| s.caller())
@@ -174,10 +182,8 @@ impl<'a> StorageCtx<'a> {
     /// Executes `f` with a temporary caller override, restoring the previous caller on exit.
     pub fn with_caller<R>(&self, caller: Address, f: impl FnOnce() -> R) -> R {
         let previous = self.with_storage(|s| s.replace_caller(caller));
-        let guard = CallerGuard { storage: *self, previous: Some(previous) };
-        let result = f();
-        drop(guard);
-        result
+        let _guard = CallerGuard { storage: *self, previous: Some(previous) };
+        f()
     }
 
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
@@ -186,8 +192,8 @@ impl<'a> StorageCtx<'a> {
     }
 
     /// Computes keccak256 and charges the appropriate gas.
-    pub fn keccak256(&self, data: &[u8]) -> Result<B256> {
-        self.try_with_storage(|s| s.keccak256(data))
+    pub fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+        self.try_with_storage(|s| s.metered_keccak256(data))
     }
 
     /// Creates a journal checkpoint and returns a RAII guard that auto-reverts on drop.
@@ -225,6 +231,29 @@ impl<'a> StorageCtx<'a> {
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
         error.into().into_precompile_result(self.gas_used(), self.state_gas_used())
     }
+
+    /// Converts a `Result<T>` into a [`PrecompileResult`], reading all gas accounting fields
+    /// from the current context.
+    ///
+    /// On success, `encode_ok` encodes the value and the output carries `gas_used`,
+    /// `state_gas_used`, and `gas_refunded` from the context — the same fields that
+    /// [`success_output`](Self::success_output) sets. On error, delegates to
+    /// [`BasePrecompileError::into_precompile_result`].
+    ///
+    /// Use this instead of calling [`IntoPrecompileResult::into_precompile_result`] directly,
+    /// so callers do not have to manually thread gas values through.
+    pub fn result_output<T>(
+        &self,
+        result: Result<T>,
+        encode_ok: impl FnOnce(T) -> Bytes,
+    ) -> PrecompileResult {
+        result.into_precompile_result(
+            self.gas_used(),
+            self.state_gas_used(),
+            self.gas_refunded(),
+            encode_ok,
+        )
+    }
 }
 
 /// RAII guard for temporary caller overrides.
@@ -237,9 +266,14 @@ struct CallerGuard<'a> {
 impl Drop for CallerGuard<'_> {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            self.storage.with_storage(|s| {
-                s.replace_caller(previous);
-            });
+            match self.storage.storage.try_borrow_mut() {
+                Ok(mut guard) => {
+                    guard.replace_caller(previous);
+                }
+                Err(_) => tracing::warn!(
+                    "skipping caller restore: RefCell already borrowed (likely during unwind)"
+                ),
+            }
         }
     }
 }
@@ -256,9 +290,14 @@ pub struct CheckpointGuard<'a> {
 
 impl CheckpointGuard<'_> {
     /// Commits all state changes since the checkpoint.
+    ///
+    /// Uses `borrow_mut` (panicking) intentionally: `commit` is an explicit
+    /// caller action, so a conflicting borrow here is a logic bug that should
+    /// surface loudly. Contrast with `drop` below, which uses `try_borrow_mut`
+    /// because `drop` may run during unwinding where a second panic would abort.
     pub fn commit(mut self) {
-        if let Some(cp) = self.checkpoint.take() {
-            self.storage.with_storage(|s| s.checkpoint_commit(cp));
+        if self.checkpoint.take().is_some() {
+            self.storage.with_storage(|s| s.checkpoint_commit());
         }
     }
 }
@@ -266,7 +305,12 @@ impl CheckpointGuard<'_> {
 impl Drop for CheckpointGuard<'_> {
     fn drop(&mut self) {
         if let Some(cp) = self.checkpoint.take() {
-            self.storage.with_storage(|s| s.checkpoint_revert(cp));
+            match self.storage.storage.try_borrow_mut() {
+                Ok(mut guard) => guard.checkpoint_revert(cp),
+                Err(_) => tracing::warn!(
+                    "skipping checkpoint revert: RefCell already borrowed (likely during unwind)"
+                ),
+            }
         }
     }
 }
@@ -416,5 +460,55 @@ mod tests {
             }
             assert_eq!(ctx.sload(addr, key).unwrap(), U256::from(99));
         });
+    }
+
+    #[test]
+    fn result_output_success_propagates_gas_refunded() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let addr = Address::ZERO;
+        let key = U256::from(1);
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            // Write a non-zero value then clear it to generate an EIP-3529 refund.
+            ctx.sstore(addr, key, U256::from(42)).unwrap();
+            ctx.sstore(addr, key, U256::ZERO).unwrap();
+
+            ctx.result_output::<Bytes>(Ok(Bytes::new()), |b| b)
+        })
+        .unwrap();
+
+        assert!(output.is_success());
+        assert!(output.gas_refunded > 0, "clearing a slot must propagate a non-zero refund");
+    }
+
+    #[test]
+    fn result_output_error_does_not_expose_refund() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let addr = Address::ZERO;
+        let key = U256::from(1);
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ctx.sstore(addr, key, U256::from(1)).unwrap();
+            ctx.sstore(addr, key, U256::ZERO).unwrap();
+
+            ctx.result_output::<Bytes>(Err(BasePrecompileError::Revert(Bytes::new())), |b| b)
+        })
+        .unwrap();
+
+        assert!(output.is_revert());
+        assert_eq!(output.gas_refunded, 0, "error path must not propagate gas_refunded");
+    }
+
+    #[test]
+    fn result_output_success_no_refund() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ctx.result_output::<Bytes>(Ok(Bytes::new()), |b| b)
+        })
+        .unwrap();
+
+        assert!(output.is_success());
+        assert_eq!(output.gas_refunded, 0);
     }
 }

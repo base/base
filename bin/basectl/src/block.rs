@@ -4,11 +4,11 @@ use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use alloy_provider::Network;
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use anyhow::{Result, anyhow, bail};
+use anyhow::Result;
 use base_common_network::Base;
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, TimestampJson, fetch_block, format_bytes,
-    format_gas, format_gwei, format_unix_timestamp,
+    BlockRefParseError, JsonOutput, KeyValueTable, MonitoringConfig, TimestampJson, fetch_block,
+    format_bytes, format_gas, format_gwei, format_unix_timestamp,
 };
 use serde::Serialize;
 
@@ -20,10 +20,10 @@ use serde::Serialize;
 /// tag (alloy's typed `Block` can't deserialize a pending block's null
 /// number and hash, so accepting it here would only produce a confusing
 /// error after a wasted RPC round-trip).
-pub(crate) fn parse_block_ref(s: &str) -> Result<BlockId> {
+pub(crate) fn parse_block_ref(s: &str) -> Result<BlockId, BlockRefParseError> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
-        bail!("invalid block reference: empty input");
+        return Err(BlockRefParseError::Empty);
     }
     if let Ok(number) = trimmed.parse::<u64>() {
         return Ok(BlockId::Number(BlockNumberOrTag::Number(number)));
@@ -32,16 +32,17 @@ pub(crate) fn parse_block_ref(s: &str) -> Result<BlockId> {
         && hex.len() == 64
         && hex.chars().all(|c| c.is_ascii_hexdigit())
     {
-        let hash: B256 =
-            trimmed.parse().map_err(|_| anyhow!("invalid block reference: malformed hash"))?;
+        let hash: B256 = trimmed
+            .parse()
+            .map_err(|_| BlockRefParseError::MalformedHash { raw: trimmed.to_string() })?;
         return Ok(BlockId::Hash(hash.into()));
     }
-    let tag =
-        trimmed.parse::<BlockNumberOrTag>().map_err(|e| anyhow!("invalid block reference: {e}"))?;
+    let tag = trimmed.parse::<BlockNumberOrTag>().map_err(|e| BlockRefParseError::InvalidTag {
+        raw: trimmed.to_string(),
+        message: e.to_string(),
+    })?;
     if tag == BlockNumberOrTag::Pending {
-        bail!(
-            "the `pending` tag is not supported; use `latest`, `safe`, `finalized`, or `earliest`"
-        );
+        return Err(BlockRefParseError::PendingUnsupported);
     }
     Ok(BlockId::Number(tag))
 }
@@ -161,6 +162,7 @@ mod tests {
     use alloy_eips::BlockId;
     use alloy_primitives::B256;
     use alloy_rpc_types_eth::BlockNumberOrTag;
+    use basectl_cli::BlockRefParseError;
 
     use super::parse_block_ref;
 
@@ -210,19 +212,21 @@ mod tests {
     #[test]
     fn rejects_pending() {
         for input in ["pending", "Pending", "PENDING"] {
-            let err = parse_block_ref(input).unwrap_err().to_string();
-            assert!(
-                err.contains("`pending` tag is not supported"),
-                "expected pending rejection for {input:?}, got: {err}",
-            );
+            assert!(matches!(
+                parse_block_ref(input).unwrap_err(),
+                BlockRefParseError::PendingUnsupported
+            ));
         }
     }
 
     #[test]
     fn rejects_invalid_input() {
-        assert!(parse_block_ref("notatag").is_err());
-        assert!(parse_block_ref("").is_err());
-        assert!(parse_block_ref("   ").is_err());
+        assert!(matches!(
+            parse_block_ref("notatag").unwrap_err(),
+            BlockRefParseError::InvalidTag { .. }
+        ));
+        assert!(matches!(parse_block_ref("").unwrap_err(), BlockRefParseError::Empty));
+        assert!(matches!(parse_block_ref("   ").unwrap_err(), BlockRefParseError::Empty));
     }
 
     #[test]

@@ -1,9 +1,6 @@
 //! CLI definition for the Nitro TEE prover host binary.
 
-#[cfg(any(
-    all(target_os = "linux", not(feature = "worker")),
-    all(feature = "local", not(feature = "worker"))
-))]
+#[cfg(any(target_os = "linux", feature = "local"))]
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::sync::Arc;
@@ -29,8 +26,8 @@ use base_proof_tee_nitro_host::NitroProverServer;
 use base_proof_tee_nitro_host::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS, JobDiscovery, JobDiscoveryConfig,
-    NitroEnclavePool, ProofGenerator, ProofGeneratorHeartbeatConfig, ProofSubmitter,
-    RegistrationChecker,
+    NitroEnclavePool, NitroProverServer, ProofGenerator, ProofGeneratorHeartbeatConfig,
+    ProofSubmitter, RegistrationChecker,
 };
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::{NitroTransport, RegistrationHealthConfig};
@@ -113,7 +110,7 @@ struct ProverRuntimeArgs {
     enable_experimental_witness_endpoint: bool,
 
     /// `TEEProverRegistry` contract address on L1. When set, proving is guarded
-    /// by on-chain signer validity and server `/healthz` is registration-gated.
+    /// by onchain signer validity and server `/healthz` is registration-gated.
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Option<Address>,
 }
@@ -173,6 +170,10 @@ struct ServerArgs {
 
     #[command(flatten)]
     worker: WorkerArgs,
+
+    /// Socket address for the registrar-facing signer JSON-RPC API.
+    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
+    listen_addr: SocketAddr,
 
     /// Vsock CID(s) of the enclave(s), comma-separated for multi-enclave mode.
     #[arg(long, env = "VSOCK_CID", value_delimiter = ',')]
@@ -275,7 +276,7 @@ impl ServerArgs {
         }
         if self.vsock_cid.len() > 1 && !registry_configured {
             return Err(eyre!(
-                "multi-CID requires --tee-prover-registry-address for on-chain routing"
+                "multi-CID requires --tee-prover-registry-address for onchain routing"
             ));
         }
         let transports = vsock_transports(&self.vsock_cid);
@@ -301,7 +302,15 @@ impl ServerArgs {
         let transports = vsock_transports(&self.vsock_cid);
 
         info!(cids = ?self.vsock_cid, "configured vsock CIDs");
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Vsock, cancel).await
+        run_worker(
+            self.runtime,
+            self.worker,
+            transports,
+            WorkerTransportMode::Vsock,
+            Some(self.listen_addr),
+            cancel,
+        )
+        .await
     }
 }
 
@@ -373,7 +382,8 @@ impl LocalArgs {
         }
 
         let transports = local_transports(self.local_enclave_count)?;
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, cancel).await
+        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, None, cancel)
+            .await
     }
 }
 
@@ -398,6 +408,7 @@ async fn run_worker(
     worker: WorkerArgs,
     transports: Vec<Arc<NitroTransport>>,
     transport_mode: WorkerTransportMode,
+    registrar_listen_addr: Option<SocketAddr>,
     cancel: CancellationToken,
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
@@ -411,7 +422,7 @@ async fn run_worker(
     if enclave_count > 1 && !registry_configured {
         if transport_mode.requires_registry_for_multi_transport() {
             return Err(eyre!(
-                "multi-CID requires --tee-prover-registry-address for on-chain routing"
+                "multi-CID requires --tee-prover-registry-address for onchain routing"
             ));
         }
 
@@ -422,15 +433,20 @@ async fn run_worker(
     }
 
     let mut pool = NitroEnclavePool::new_multi(config, transports);
-    if let Some(registration_health) = registration_health {
-        let checker = Arc::new(
-            RegistrationChecker::from_health_config(pool.transports(), &registration_health)
+    let registration_checker = if let Some(registration_health) = &registration_health {
+        Some(Arc::new(
+            RegistrationChecker::from_health_config(pool.transports(), registration_health)
                 .map_err(|e| eyre!("registration checker init failed: {e}"))?,
-        );
+        ))
+    } else {
+        None
+    };
+    if let Some(checker) = &registration_checker {
         pool = pool
-            .with_registration_checker(checker)
+            .with_registration_checker(Arc::clone(checker))
             .map_err(|e| eyre!("registration checker init failed: {e}"))?;
     }
+    let registrar_transports = pool.transports();
 
     let prover_service = ProverServiceClientConfig::new(worker.prover_service_endpoint.clone())
         .with_request_timeout(Duration::from_secs(worker.prover_service_request_timeout_secs));
@@ -448,6 +464,18 @@ async fn run_worker(
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
+    let registrar_handle = if let Some(addr) = registrar_listen_addr {
+        Some(
+            NitroProverServer::run_registrar_rpc_server(
+                addr,
+                registrar_transports,
+                registration_checker,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
 
     match transport_mode {
         #[cfg(target_os = "linux")]
@@ -469,6 +497,10 @@ async fn run_worker(
         }
     }
     discovery.run_until_cancelled(cancel).await;
+    if let Some(handle) = registrar_handle {
+        let _ = handle.stop();
+        handle.stopped().await;
+    }
     Ok(())
 }
 

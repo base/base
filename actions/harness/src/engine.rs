@@ -130,7 +130,7 @@ pub struct ActionEngineClient {
 }
 
 impl ActionEngineClient {
-    /// Build a test genesis whose hardfork schedule and chain ID match `rollup_config`.
+    /// Build a test genesis whose upgrade schedule and chain ID match `rollup_config`.
     ///
     /// Starts from [`build_test_genesis`] (pre-funded test accounts, all forks through
     /// Jovian at timestamp 0) and overrides each fork timestamp and the chain ID from the
@@ -148,7 +148,7 @@ impl ActionEngineClient {
             GenesisAccount::default().with_balance(test_balance),
         );
 
-        let hf = &rollup_config.hardforks;
+        let hf = &rollup_config.upgrades;
         // Helper: set or clear a JSON extra-field that BaseChainSpec::from_genesis reads.
         macro_rules! set_ts {
             ($key:expr, $val:expr) => {
@@ -224,7 +224,7 @@ impl ActionEngineClient {
         block_registry: SharedBlockHashRegistry,
         l1_chain: SharedL1Chain,
     ) -> Self {
-        // Build a genesis whose chain ID and hardfork schedule matches the rollup config.
+        // Build a genesis whose chain ID and upgrade schedule matches the rollup config.
         // build_test_genesis() provides the genesis accounts and sets all forks through
         // Jovian at timestamp 0; we override per-fork times and the chain ID here.
         let chain_spec =

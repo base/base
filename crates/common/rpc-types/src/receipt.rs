@@ -89,13 +89,13 @@ pub struct TransactionReceiptFields {
     /* --------------------------------------- Regolith --------------------------------------- */
     /// Deposit nonce for deposit transactions.
     ///
-    /// Always null prior to the Regolith hardfork.
+    /// Always null prior to the Regolith upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_nonce: Option<u64>,
     /* ---------------------------------------- Canyon ---------------------------------------- */
     /// Deposit receipt version for deposit transactions.
     ///
-    /// Always null prior to the Canyon hardfork.
+    /// Always null prior to the Canyon upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_receipt_version: Option<u64>,
 }
@@ -168,34 +168,34 @@ pub struct L1BlockInfo {
     /* ---------------------------------------- Ecotone ---------------------------------------- */
     /// L1 base fee scalar. Applied to base fee to compute weighted gas price multiplier.
     ///
-    /// Always null prior to the Ecotone hardfork.
+    /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_base_fee_scalar: Option<u128>,
     /// L1 blob base fee.
     ///
-    /// Always null prior to the Ecotone hardfork.
+    /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_blob_base_fee: Option<u128>,
     /// L1 blob base fee scalar. Applied to blob base fee to compute weighted gas price multiplier.
     ///
-    /// Always null prior to the Ecotone hardfork.
+    /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_blob_base_fee_scalar: Option<u128>,
     /* ---------------------------------------- Isthmus ---------------------------------------- */
     /// Operator fee scalar.
     ///
-    /// Always null prior to the Isthmus hardfork.
+    /// Always null prior to the Isthmus upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub operator_fee_scalar: Option<u128>,
     /// Operator fee constant.
     ///
-    /// Always null prior to the Isthmus hardfork.
+    /// Always null prior to the Isthmus upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub operator_fee_constant: Option<u128>,
     /* ---------------------------------------- Jovian ---------------------------------------- */
     /// DA footprint gas scalar. Used to set the DA footprint block limit on the L2.
     ///
-    /// Always null prior to the Jovian hardfork.
+    /// Always null prior to the Jovian upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub da_footprint_gas_scalar: Option<u16>,
 }

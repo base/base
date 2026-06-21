@@ -4,4 +4,5 @@ mod bootnode;
 mod command;
 pub(crate) use command::BaseCommand;
 mod rpc;
+mod sequencer;
 mod update;

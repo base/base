@@ -27,7 +27,7 @@ use reth_chainspec::EthChainSpec;
 use reth_payload_builder::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayload, BuiltPayloadExecutedBlock};
 use reth_primitives_traits::{
-    NodePrimitives, SealedBlock, SealedHeader, SignedTransaction, WithEncoded,
+    Block as _, NodePrimitives, SealedBlock, SealedHeader, SignedTransaction, WithEncoded,
 };
 
 /// Minimal Ethereum payload builder attributes retained for Base payload construction.
@@ -108,7 +108,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
         }
     }
 
-    /// Extracts the extra data parameters post-Holocene hardfork.
+    /// Extracts the extra data parameters post-Holocene upgrade.
     /// In Holocene, those parameters are the EIP-1559 base fee parameters.
     pub fn get_holocene_extra_data(
         &self,
@@ -119,7 +119,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 
-    /// Extracts the extra data parameters post-Jovian hardfork.
+    /// Extracts the extra data parameters post-Jovian upgrade.
     /// Those parameters are the EIP-1559 parameters from Holocene and the minimum base fee.
     pub fn get_jovian_extra_data(
         &self,
@@ -265,6 +265,8 @@ pub struct BaseBuiltPayload<N: NodePrimitives = BasePrimitives> {
     pub(crate) block: Arc<SealedBlock<N::Block>>,
     /// Block execution data for the payload, if any.
     pub(crate) executed_block: Option<BuiltPayloadExecutedBlock<N>>,
+    /// Amsterdam block access list RLP bytes, if any.
+    pub(crate) block_access_list: Option<Bytes>,
     /// The fees of the block
     pub(crate) fees: U256,
 }
@@ -278,8 +280,9 @@ impl<N: NodePrimitives> BaseBuiltPayload<N> {
         block: Arc<SealedBlock<N::Block>>,
         fees: U256,
         executed_block: Option<BuiltPayloadExecutedBlock<N>>,
+        block_access_list: Option<Bytes>,
     ) -> Self {
-        Self { id, block, fees, executed_block }
+        Self { id, block, fees, executed_block, block_access_list }
     }
 
     /// Returns the identifier of the payload.
@@ -318,8 +321,29 @@ impl<N: NodePrimitives> BuiltPayload for BaseBuiltPayload<N> {
         self.executed_block.clone()
     }
 
+    fn block_access_list(&self) -> Option<&Bytes> {
+        self.block_access_list.as_ref()
+    }
+
     fn requests(&self) -> Option<Requests> {
         None
+    }
+}
+
+impl<N: NodePrimitives> From<BaseBuiltPayload<N>> for base_common_rpc_types_engine::ExecutionData
+where
+    N::SignedTx: SignedTransaction,
+{
+    fn from(value: BaseBuiltPayload<N>) -> Self {
+        let BaseBuiltPayload { block, block_access_list, .. } = value;
+        let block_hash = block.hash();
+        let block = Arc::unwrap_or_clone(block).into_block();
+
+        Self::from_block_unchecked_with_extras(
+            block_hash,
+            &block.into_ethereum_block(),
+            block_access_list,
+        )
     }
 }
 
@@ -467,7 +491,7 @@ where
 ///
 /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
 ///
-/// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for a hardfork.
+/// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for an upgrade.
 /// See also <https://github.com/ethereum-optimism/op-geth/blob/d401af16f2dd94b010a72eaef10e07ac10b31931/miner/payload_building.go#L59-L59>
 pub fn payload_id(
     parent: &B256,

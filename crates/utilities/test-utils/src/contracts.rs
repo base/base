@@ -62,6 +62,15 @@ sol!(
 
 sol!(
     #[sol(rpc)]
+    ParentBlockhashGuard,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/contracts/out/ParentBlockhashGuard.sol/ParentBlockhashGuard.json"
+    )
+);
+
+sol!(
+    #[sol(rpc)]
     Logic,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/Proxy.sol/Logic.json")
 );

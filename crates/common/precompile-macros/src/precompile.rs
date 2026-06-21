@@ -92,6 +92,7 @@ impl Parse for PrecompileConfig {
         let mut storage = None;
         let mut macro_path = None;
         let mut args = Vec::new();
+        let mut args_seen = false;
         let mut install = None;
 
         while !input.is_empty() {
@@ -113,9 +114,10 @@ impl Parse for PrecompileConfig {
                     macro_path = Some(input.parse()?);
                 }
                 "args" => {
-                    if !args.is_empty() {
+                    if args_seen {
                         return Err(syn::Error::new_spanned(key, "duplicate `args` option"));
                     }
+                    args_seen = true;
                     let content;
                     parenthesized!(content in input);
                     args = content
@@ -181,13 +183,22 @@ struct InstallConfig {
 impl Parse for InstallConfig {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let key: Ident = input.parse()?;
-        if key != "address" && key != "addr" {
-            return Err(syn::Error::new_spanned(key, "`install` supports only `address = ...`"));
+        if key != "addr" {
+            return Err(syn::Error::new_spanned(
+                &key,
+                format!(
+                    "unrecognized install argument `{key}`, the supported argument is `addr = \"0x...\"`"
+                ),
+            ));
         }
 
         input.parse::<Token![=]>()?;
         let address = input.parse()?;
 
+        let has_non_comma_remainder = !input.is_empty() && !input.peek(Token![,]);
+        if has_non_comma_remainder {
+            return Err(syn::Error::new(input.span(), "unexpected `install` option"));
+        }
         if !input.is_empty() {
             input.parse::<Token![,]>()?;
         }
@@ -252,5 +263,51 @@ mod tests {
 
         assert!(config.storage.is_some());
         assert!(config.macro_path.is_some());
+    }
+
+    #[test]
+    fn install_config_rejects_address_alias_with_helpful_diagnostic() {
+        let err = parse_config(quote! { install(address = X) }).err().unwrap();
+
+        let msg = err.to_string();
+        assert!(msg.contains("unrecognized install argument `address`"), "got: {msg}");
+        assert!(msg.contains("addr"), "got: {msg}");
+    }
+
+    #[test]
+    fn install_config_rejects_typo_with_helpful_diagnostic() {
+        let err = parse_config(quote! { install(a = X) }).err().unwrap();
+
+        let msg = err.to_string();
+        assert!(msg.contains("unrecognized install argument `a`"), "got: {msg}");
+        assert!(msg.contains("addr"), "got: {msg}");
+    }
+
+    #[test]
+    fn install_config_rejects_extra_option_without_comma() {
+        let err = parse_config(quote! { install(addr = X extra) }).err().unwrap();
+
+        assert!(err.to_string().contains("unexpected `install` option"));
+    }
+
+    #[test]
+    fn install_config_rejects_extra_option_after_comma() {
+        let err = parse_config(quote! { install(addr = X, extra) }).err().unwrap();
+
+        assert!(err.to_string().contains("unexpected `install` option"));
+    }
+
+    #[test]
+    fn config_rejects_duplicate_empty_args() {
+        let err = parse_config(quote! { args(), args() }).err().unwrap();
+
+        assert!(err.to_string().contains("duplicate `args` option"));
+    }
+
+    #[test]
+    fn config_rejects_duplicate_args_where_first_is_empty() {
+        let err = parse_config(quote! { args(), args(x: u8) }).err().unwrap();
+
+        assert!(err.to_string().contains("duplicate `args` option"));
     }
 }

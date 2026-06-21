@@ -127,6 +127,7 @@ pub struct SystemTestStackBuilder {
     l1_chain_id: Option<u64>,
     l2_chain_id: Option<u64>,
     slot_duration: Option<u64>,
+    isthmus_activation_block: Option<u64>,
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
@@ -156,6 +157,12 @@ impl SystemTestStackBuilder {
     /// Sets the slot duration.
     pub const fn with_slot_duration(mut self, slot_duration: u64) -> Self {
         self.slot_duration = Some(slot_duration);
+        self
+    }
+
+    /// Sets the L2 block number at which Isthmus activates.
+    pub const fn with_isthmus_activation_block(mut self, block: u64) -> Self {
+        self.isthmus_activation_block = Some(block);
         self
     }
 
@@ -211,6 +218,10 @@ impl SystemTestStackBuilder {
             .with_chain_id(l1_chain_id)
             .with_l2_chain_id(l2_chain_id)
             .with_slot_duration(slot_duration);
+
+        if let Some(block) = self.isthmus_activation_block {
+            setup = setup.with_isthmus_activation_block(block);
+        }
 
         if let Some(block) = self.base_azul_activation_block {
             setup = setup.with_base_azul_activation_block(block);

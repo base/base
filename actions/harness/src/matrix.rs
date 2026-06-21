@@ -4,12 +4,12 @@ use std::{
     panic::{self, AssertUnwindSafe},
 };
 
-use base_common_genesis::HardForkConfig;
+use base_common_genesis::UpgradeConfig;
 
-/// A function that activates a single hardfork on a [`HardForkConfig`].
-pub type ForkSetter = fn(&mut HardForkConfig);
+/// A function that activates a single upgrade on a [`UpgradeConfig`].
+pub type ForkSetter = fn(&mut UpgradeConfig);
 
-/// All supported hardfork stages in canonical order. Each setter activates
+/// All supported upgrade stages in canonical order. Each setter activates
 /// exactly one additional fork; [`ForkMatrix::all`] applies these in sequence
 /// to produce a cumulative snapshot after each step.
 ///
@@ -31,19 +31,19 @@ static FORK_PROGRESSION: &[(&str, ForkSetter)] = &[
     ("cobalt", |h| h.base.cobalt = Some(0)),
 ];
 
-/// Named hardfork schedules for parametrizing harness tests across protocol upgrades.
+/// Named upgrade schedules for parametrizing harness tests across protocol upgrades.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ForkMatrix {
-    forks: Vec<(&'static str, HardForkConfig)>,
+    forks: Vec<(&'static str, UpgradeConfig)>,
 }
 
 impl ForkMatrix {
-    /// Returns every cumulative hardfork stage supported by the harness.
+    /// Returns every cumulative upgrade stage supported by the harness.
     ///
     /// Each entry activates one additional fork on top of all previous ones,
     /// derived automatically from [`FORK_PROGRESSION`].
     pub fn all() -> Self {
-        Self::build(FORK_PROGRESSION, HardForkConfig::default())
+        Self::build(FORK_PROGRESSION, UpgradeConfig::default())
     }
 
     /// Returns the cumulative forks from Granite through Holocene (pre-Isthmus).
@@ -54,7 +54,7 @@ impl ForkMatrix {
         Self::all().retain(|_, h| h.granite_time.is_some() && h.isthmus_time.is_none())
     }
 
-    /// Returns the cumulative inherited rollup hardforks from Isthmus onward.
+    /// Returns the cumulative inherited rollup upgrades from Isthmus onward.
     ///
     /// Base-specific forks (e.g. `azul` and `beryl`) are excluded.
     pub fn from_isthmus() -> Self {
@@ -75,7 +75,7 @@ impl ForkMatrix {
         ];
         Self::build(
             PROGRESSION,
-            HardForkConfig {
+            UpgradeConfig {
                 regolith_time: Some(0),
                 canyon_time: Some(0),
                 delta_time: Some(0),
@@ -87,14 +87,14 @@ impl ForkMatrix {
     }
 
     /// Iterates through the named fork schedules.
-    pub fn iter(&self) -> impl Iterator<Item = (&'static str, HardForkConfig)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, UpgradeConfig)> + '_ {
         self.forks.iter().copied()
     }
 
     /// Keeps only the fork schedules matching the predicate.
     pub fn retain<F>(mut self, mut f: F) -> Self
     where
-        F: FnMut(&'static str, HardForkConfig) -> bool,
+        F: FnMut(&'static str, UpgradeConfig) -> bool,
     {
         self.forks.retain(|(name, config)| f(name, *config));
         self
@@ -103,7 +103,7 @@ impl ForkMatrix {
     /// Runs a test closure once per configured fork, annotating any panic with the fork name.
     pub fn run<F>(&self, mut test: F)
     where
-        F: FnMut(&'static str, HardForkConfig),
+        F: FnMut(&'static str, UpgradeConfig),
     {
         for (name, config) in self.iter() {
             if let Err(e) = panic::catch_unwind(AssertUnwindSafe(|| test(name, config))) {
@@ -115,7 +115,7 @@ impl ForkMatrix {
     /// Async version of [`run`](ForkMatrix::run) for tests that call async sequencer methods.
     pub async fn run_async<F, Fut>(&self, mut test: F)
     where
-        F: FnMut(&'static str, HardForkConfig) -> Fut,
+        F: FnMut(&'static str, UpgradeConfig) -> Fut,
         Fut: Future<Output = ()>,
     {
         for (name, config) in self.iter() {
@@ -123,7 +123,7 @@ impl ForkMatrix {
         }
     }
 
-    fn build(progression: &[(&'static str, ForkSetter)], base: HardForkConfig) -> Self {
+    fn build(progression: &[(&'static str, ForkSetter)], base: UpgradeConfig) -> Self {
         let mut config = base;
         Self {
             forks: progression
@@ -150,15 +150,15 @@ impl ForkMatrix {
 mod tests {
     use std::any::Any;
 
-    use base_common_genesis::{HardForkConfig, RollupConfig};
+    use base_common_genesis::{RollupConfig, UpgradeConfig};
 
     use super::ForkMatrix;
 
     struct MatrixFixture;
 
     impl MatrixFixture {
-        fn rollup_config(hardforks: HardForkConfig) -> RollupConfig {
-            RollupConfig { block_time: 2, hardforks, ..Default::default() }
+        fn rollup_config(upgrades: UpgradeConfig) -> RollupConfig {
+            RollupConfig { block_time: 2, upgrades, ..Default::default() }
         }
 
         fn panic_message(payload: Box<dyn Any + Send>) -> String {
@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn all_covers_the_supported_hardfork_progression() {
+    fn all_covers_the_supported_upgrade_progression() {
         let names: Vec<_> = ForkMatrix::all().iter().map(|(name, _)| name).collect();
         assert_eq!(
             names,
@@ -213,8 +213,8 @@ mod tests {
 
     #[test]
     fn each_case_is_cumulative_without_enabling_the_next_fork() {
-        for (fork_name, hardforks) in ForkMatrix::all().iter() {
-            let cfg = MatrixFixture::rollup_config(hardforks);
+        for (fork_name, upgrades) in ForkMatrix::all().iter() {
+            let cfg = MatrixFixture::rollup_config(upgrades);
             match fork_name {
                 "regolith" => {
                     assert!(cfg.is_regolith_active(0));

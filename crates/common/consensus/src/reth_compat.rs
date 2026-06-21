@@ -22,7 +22,7 @@ use reth_codecs::{
 
 use crate::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
-    DepositReceipt, EIP8130_TX_TYPE_ID, OpTxType, TxDeposit,
+    DepositReceipt, EIP8130_TX_TYPE_ID, OpTxType, TxDeposit, TxEip8130,
 };
 
 // ---------------------------------------------------------------------------
@@ -157,9 +157,7 @@ impl Compact for BaseTypedTransaction {
             Self::Eip1559(tx) => tx.to_compact(out),
             Self::Eip7702(tx) => tx.to_compact(out),
             Self::Deposit(tx) => tx.to_compact(out),
-            Self::Eip8130(_) => unimplemented!(
-                "Compact encoding for EIP-8130 BaseTypedTransaction is not yet implemented"
-            ),
+            Self::Eip8130(tx) => tx.to_compact(out),
         };
         identifier
     }
@@ -187,9 +185,10 @@ impl Compact for BaseTypedTransaction {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
                 (Self::Deposit(tx), buf)
             }
-            OpTxType::Eip8130 => unimplemented!(
-                "Compact decoding for EIP-8130 BaseTypedTransaction is not yet implemented"
-            ),
+            OpTxType::Eip8130 => {
+                let (tx, buf) = TxEip8130::from_compact(buf, buf.len());
+                (Self::Eip8130(tx), buf)
+            }
         }
     }
 }
@@ -201,14 +200,24 @@ impl Compact for BaseTypedTransaction {
 impl reth_codecs::alloy::transaction::ToTxCompact for BaseTxEnvelope {
     fn to_tx_compact(&self, buf: &mut (impl BufMut + AsMut<[u8]>)) {
         match self {
-            Self::Legacy(tx) => tx.tx().to_compact(buf),
-            Self::Eip2930(tx) => tx.tx().to_compact(buf),
-            Self::Eip1559(tx) => tx.tx().to_compact(buf),
-            Self::Eip7702(tx) => tx.tx().to_compact(buf),
-            Self::Deposit(tx) => tx.to_compact(buf),
-            Self::Eip8130(_) => unimplemented!(
-                "Compact encoding for EIP-8130 BaseTxEnvelope is not yet implemented"
-            ),
+            Self::Legacy(tx) => {
+                tx.tx().to_compact(buf);
+            }
+            Self::Eip2930(tx) => {
+                tx.tx().to_compact(buf);
+            }
+            Self::Eip1559(tx) => {
+                tx.tx().to_compact(buf);
+            }
+            Self::Eip7702(tx) => {
+                tx.tx().to_compact(buf);
+            }
+            Self::Deposit(tx) => {
+                tx.to_compact(buf);
+            }
+            Self::Eip8130(tx) => {
+                tx.to_compact(buf);
+            }
         };
     }
 }
@@ -243,9 +252,14 @@ impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
                 let tx = Sealed::new(tx);
                 (Self::Deposit(tx), buf)
             }
-            OpTxType::Eip8130 => unimplemented!(
-                "Compact decoding for EIP-8130 BaseTxEnvelope is not yet implemented"
-            ),
+            OpTxType::Eip8130 => {
+                let (tx, buf) = Compact::from_compact(buf, buf.len());
+                // EIP-8130 carries sender_auth / payer_auth inside the signed
+                // payload itself, so the outer envelope signature is only a
+                // placeholder mandated by the trait contract.
+                let _ = signature;
+                (Self::Eip8130(tx), buf)
+            }
         }
     }
 }
@@ -254,8 +268,8 @@ impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
 // Envelope – BaseTxEnvelope
 // ---------------------------------------------------------------------------
 
-/// Deposit signature placeholder (all zeros).
-const DEPOSIT_SIGNATURE: Signature = Signature::new(U256::ZERO, U256::ZERO, false);
+/// Placeholder signature used for transaction types without an ECDSA signature.
+const PLACEHOLDER_SIGNATURE: Signature = Signature::new(U256::ZERO, U256::ZERO, false);
 
 impl reth_codecs::alloy::transaction::Envelope for BaseTxEnvelope {
     fn signature(&self) -> &Signature {
@@ -269,7 +283,7 @@ impl reth_codecs::alloy::transaction::Envelope for BaseTxEnvelope {
             // does. Both Deposit and EIP-8130 AA transactions carry their own auth model
             // and have no meaningful ECDSA signature: callers MUST NOT feed this value
             // into ECDSA recovery — it is an all-zero placeholder.
-            Self::Deposit(_) | Self::Eip8130(_) => &DEPOSIT_SIGNATURE,
+            Self::Deposit(_) | Self::Eip8130(_) => &PLACEHOLDER_SIGNATURE,
         }
     }
 
@@ -358,9 +372,7 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
             OpTxType::Deposit => {
                 Self::Deposit(DepositReceipt { inner, deposit_nonce, deposit_receipt_version })
             }
-            OpTxType::Eip8130 => {
-                unimplemented!("Compact decoding for EIP-8130 BaseReceipt is not yet implemented")
-            }
+            OpTxType::Eip8130 => Self::Eip8130(inner),
         }
     }
 }

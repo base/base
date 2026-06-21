@@ -1,13 +1,16 @@
+use alloc::string::ToString;
+
 use alloy_primitives::Bytes;
-use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use alloy_sol_types::{SolCall, SolInterface};
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage,
+    ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
+    BerylMetricLabels,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
-    PolicyRegistryStorage,
-    macros::{decode_precompile_call, deduct_calldata_cost},
+    NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
+    macros::decode_precompile_call,
 };
 
 impl PolicyRegistryStorage<'_> {
@@ -16,39 +19,73 @@ impl PolicyRegistryStorage<'_> {
     /// View (read-only) calls bypass the activation gate and remain accessible even when the
     /// feature is disabled. Write calls require the feature to be activated.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        deduct_calldata_cost!(ctx, calldata);
-        let result = if Self::is_view_selector(calldata) {
-            self.inner(calldata)
-        } else {
-            ActivationRegistryStorage::new(ctx)
-                .ensure_activated(ActivationFeature::PolicyRegistry.id())
-                .and_then(|()| self.inner(calldata))
-        };
-        result.into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), |b| b)
+        self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
     }
 
-    /// Returns `true` when the calldata selector belongs to a view (read-only) function.
-    ///
-    /// View functions are accessible regardless of whether the feature is activated, so that
-    /// callers can still query policy state (e.g. check blocklist membership) even if the
-    /// precompile feature is administratively disabled.
-    fn is_view_selector(calldata: &[u8]) -> bool {
-        let Some(selector) = calldata.first_chunk::<4>().copied() else {
-            return false;
+    /// ABI-dispatches policy registry calldata with an observer.
+    pub fn dispatch_with_observer<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        observer: O,
+    ) -> PrecompileResult
+    where
+        O: PrecompileCallObserver,
+    {
+        let mut recorder =
+            BerylCallRecorder::start(observer.clone(), BerylMetricLabels::policy_call(calldata));
+        if !ctx.call_value().is_zero() {
+            return recorder.record_base_error_result(
+                ctx,
+                BasePrecompileError::revert(IPolicyRegistry::NonPayable {}),
+            );
+        }
+        if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
+            return recorder.record_base_error_result(ctx, error);
+        }
+        let result = match calldata.first_chunk::<4>().copied() {
+            None => Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4])),
+            Some(sel)
+                if sel == IPolicyRegistry::isAuthorizedCall::SELECTOR
+                    || sel == IPolicyRegistry::policyExistsCall::SELECTOR
+                    || sel == IPolicyRegistry::policyAdminCall::SELECTOR
+                    || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR =>
+            {
+                self.inner(calldata, &observer)
+            }
+            Some(sel) if IPolicyRegistry::IPolicyRegistryCalls::valid_selector(sel) => {
+                // Validate ABI encoding before the activation gate so that malformed
+                // arguments return AbiDecodeFailed regardless of activation state.
+                IPolicyRegistry::IPolicyRegistryCalls::abi_decode_validate(calldata)
+                    .map_err(|e| BasePrecompileError::AbiDecodeFailed {
+                        selector: sel,
+                        error: e.to_string(),
+                    })
+                    .and_then(|_| {
+                        ActivationRegistryStorage::new(ctx)
+                            .ensure_activated(ActivationFeature::PolicyRegistry.id())
+                            .and_then(|()| self.inner(calldata, &observer))
+                    })
+            }
+            Some(sel) => Err(BasePrecompileError::UnknownFunctionSelector(sel)),
         };
-        selector == IPolicyRegistry::isAuthorizedCall::SELECTOR
-            || selector == IPolicyRegistry::policyExistsCall::SELECTOR
-            || selector == IPolicyRegistry::policyAdminCall::SELECTOR
-            || selector == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR
+        recorder.record_base_result(ctx, result, |b| b)
     }
 
-    fn inner(&mut self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
+    fn inner<O>(&mut self, calldata: &[u8], observer: &O) -> base_precompile_storage::Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
         match decode_precompile_call!(calldata, IPolicyRegistry::IPolicyRegistryCalls) {
             C::createPolicy(call) => {
                 let id = self.create_policy(call.admin, call.policyType)?;
                 Ok(IPolicyRegistry::createPolicyCall::abi_encode_returns(&id).into())
             }
             C::createPolicyWithAccounts(call) => {
+                observer.record_batch_items(
+                    &BerylAuxiliaryMetrics::singleton("policy", "createPolicyWithAccounts"),
+                    call.accounts.len(),
+                );
                 let id =
                     self.create_policy_with_accounts(call.admin, call.policyType, call.accounts)?;
                 Ok(IPolicyRegistry::createPolicyWithAccountsCall::abi_encode_returns(&id).into())
@@ -66,10 +103,18 @@ impl PolicyRegistryStorage<'_> {
                 Ok(Bytes::new())
             }
             C::updateAllowlist(call) => {
+                observer.record_batch_items(
+                    &BerylAuxiliaryMetrics::singleton("policy", "updateAllowlist"),
+                    call.accounts.len(),
+                );
                 self.update_allowlist(call.policyId, call.allowed, call.accounts)?;
                 Ok(Bytes::new())
             }
             C::updateBlocklist(call) => {
+                observer.record_batch_items(
+                    &BerylAuxiliaryMetrics::singleton("policy", "updateBlocklist"),
+                    call.accounts.len(),
+                );
                 self.update_blocklist(call.policyId, call.blocked, call.accounts)?;
                 Ok(Bytes::new())
             }
@@ -95,17 +140,38 @@ impl PolicyRegistryStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bytes, U256, address};
-    use alloy_sol_types::{Panic, PanicKind, SolCall, SolError, SolValue};
+    use std::sync::{Arc, Mutex};
+
+    use alloy_primitives::{Address, Bytes, address};
+    use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, IPolicyRegistry, PolicyRegistryStorage,
+        ActivationFeature, ActivationRegistryStorage, BerylErrorKind, IPolicyRegistry,
+        PolicyRegistryStorage, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
+        PrecompileCallStatus,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
+
+    #[derive(Debug, Clone, Default)]
+    struct RecordingObserver {
+        calls: Arc<Mutex<Vec<(PrecompileCallMetric, PrecompileCallOutcome)>>>,
+    }
+
+    impl RecordingObserver {
+        fn calls(&self) -> Vec<(PrecompileCallMetric, PrecompileCallOutcome)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl PrecompileCallObserver for RecordingObserver {
+        fn record_call(&self, call: &PrecompileCallMetric, outcome: &PrecompileCallOutcome) {
+            self.calls.lock().unwrap().push((call.clone(), *outcome));
+        }
+    }
 
     fn activate_policy_registry(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
@@ -135,6 +201,54 @@ mod tests {
                 .deactivate(ActivationFeature::PolicyRegistry.id(), Some(ACTIVATION_ADMIN))
                 .unwrap()
         });
+    }
+
+    #[test]
+    fn dispatch_with_observer_records_singleton_success() {
+        let observer = RecordingObserver::default();
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_and_init(&mut storage);
+        let calldata =
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID }
+                .abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch_with_observer(ctx, &calldata, observer.clone())
+        })
+        .expect("dispatch should not fatally error");
+
+        assert!(output.is_success());
+        let calls = observer.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0.precompile, "policy");
+        assert_eq!(calls[0].0.method, "policyExists");
+        assert_eq!(calls[0].0.variant, None);
+        assert_eq!(calls[0].1.status, PrecompileCallStatus::Success);
+    }
+
+    #[test]
+    fn dispatch_with_observer_records_singleton_revert() {
+        let observer = RecordingObserver::default();
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+        let calldata = IPolicyRegistry::createPolicyCall {
+            admin: ADMIN,
+            policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+        }
+        .abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch_with_observer(ctx, &calldata, observer.clone())
+        })
+        .expect("dispatch should not fatally error");
+
+        assert!(output.is_revert());
+        let calls = observer.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0.precompile, "policy");
+        assert_eq!(calls[0].0.method, "createPolicy");
+        assert_eq!(calls[0].1.status, PrecompileCallStatus::Revert);
+        assert_eq!(calls[0].1.error, Some(BerylErrorKind::FeatureInactive));
     }
 
     #[test]
@@ -208,10 +322,7 @@ mod tests {
         })
         .expect("dispatch should not fatally error");
 
-        let expected: Bytes =
-            Panic { code: U256::from(PanicKind::EnumConversionError as u32) }.abi_encode().into();
         assert!(output.is_revert());
-        assert_eq!(output.bytes, expected);
 
         let valid_calldata = IPolicyRegistry::createPolicyCall {
             admin: ADMIN,
@@ -509,5 +620,82 @@ mod tests {
             .unwrap();
             assert!(out.is_revert(), "createPolicy must revert when feature is deactivated");
         }
+    }
+
+    #[test]
+    fn inactive_unknown_selector_returns_unknown_function_selector() {
+        let mut storage = HashMapStorageProvider::new(1);
+        // Unknown selector; feature never activated.
+        let calldata = [0xde, 0xad, 0xbe, 0xef, 0x00, 0x00, 0x00, 0x00];
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        // UnknownFunctionSelector encodes as the raw 4-byte selector.
+        assert_eq!(out.bytes, Bytes::from([0xde, 0xad, 0xbe, 0xef].as_ref()));
+    }
+
+    #[test]
+    fn inactive_malformed_view_selector_returns_abi_decode_error() {
+        let mut storage = HashMapStorageProvider::new(1);
+        // policyExists selector with no arguments (truncated); feature inactive.
+        let calldata = IPolicyRegistry::policyExistsCall::SELECTOR.to_vec();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        // AbiDecodeFailed encodes as selector || error_string. The first 4 bytes of the
+        // revert data are the matched function selector, which differs from the 4-byte
+        // ABI error selector that FeatureNotActivated would produce.
+        assert_eq!(
+            out.bytes.get(..4),
+            Some(IPolicyRegistry::policyExistsCall::SELECTOR.as_ref()),
+            "revert must be AbiDecodeFailed, not FeatureNotActivated"
+        );
+    }
+
+    #[test]
+    fn inactive_malformed_write_selector_returns_abi_decode_error() {
+        let mut storage = HashMapStorageProvider::new(1);
+        // createPolicy selector with no arguments (truncated); feature inactive.
+        let calldata = IPolicyRegistry::createPolicyCall::SELECTOR.to_vec();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        // AbiDecodeFailed encodes as selector || error_string. The first 4 bytes of the
+        // revert data are the matched function selector, which differs from the 4-byte
+        // ABI error selector that FeatureNotActivated would produce.
+        assert_eq!(
+            out.bytes.get(..4),
+            Some(IPolicyRegistry::createPolicyCall::SELECTOR.as_ref()),
+            "revert must be AbiDecodeFailed, not FeatureNotActivated"
+        );
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(alloy_primitives::U256::from(1u64));
+        let calldata =
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID }
+                .abi_encode();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(out.is_revert());
+        assert_eq!(out.bytes, Bytes::from(IPolicyRegistry::NonPayable {}.abi_encode()));
     }
 }

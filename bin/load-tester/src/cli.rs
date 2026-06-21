@@ -263,46 +263,101 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
 
     if summary.error.is_none() || summary.throughput.total_submitted > 0 {
         println!();
-        println!("=== Results ===");
+        println!("=== Results: Observed Window ===");
         if let Some(ref err) = summary.error {
             println!("Error: {err}");
         }
+        let fh = &summary.observed_window;
+        let fhbr = &fh.block_range;
+        match fhbr.first_block {
+            Some(first) => println!(
+                "Window: blocks {first}..={} ({} blocks, ~{:.1}s)",
+                first.saturating_add(fh.expected_block_count.saturating_sub(1)),
+                fh.expected_block_count,
+                fh.duration.as_secs_f64()
+            ),
+            _ => println!(
+                "Window: {} blocks ({:.1}s) — no test txs landed",
+                fh.expected_block_count,
+                fh.duration.as_secs_f64()
+            ),
+        }
+        println!("Confirmed: {} | TPS: {:.2} | GPS: {:.0}", fh.confirmed_count, fh.tps, fh.gps);
+        let fhbl = &fh.block_latency;
         println!(
-            "Submitted: {} | Confirmed: {} | Failed: {} | Reverted: {}",
+            "Block Latency:       min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+            fhbl.min, fhbl.p50, fhbl.mean, fhbl.p99, fhbl.max
+        );
+        let fhbrd = &fh.block_receipt_delay;
+        println!(
+            "Block Receipt Delay: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+            fhbrd.min, fhbrd.p50, fhbrd.mean, fhbrd.p99, fhbrd.max
+        );
+        let fhfb = &fh.flashblocks_latency;
+        println!(
+            "FB Latency:          min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
+            fhfb.min, fhfb.p50, fhfb.mean, fhfb.p99, fhfb.max, fhfb.count
+        );
+
+        println!();
+        println!("=== Results: Tail Inclusion (txs past the observed window) ===");
+        match &summary.tail {
+            None => println!("N/A: continuous run (no configured duration)"),
+            Some(tail) => {
+                if let Some(boundary) = tail.observed_window_end_block {
+                    println!("Boundary: tail = blocks > {boundary} (end of observed window)");
+                } else {
+                    println!("Boundary: no confirmed data");
+                }
+                if tail.count == 0 {
+                    println!(
+                        "Tail: 0 of {} confirmed — no txs landed past the observed window",
+                        summary.throughput.total_confirmed
+                    );
+                } else {
+                    println!(
+                        "Tail: {} of {} confirmed ({:.2}%)",
+                        tail.count, summary.throughput.total_confirmed, tail.confirmed_pct
+                    );
+                    let tbr = &tail.block_range;
+                    if let (Some(first), Some(last)) = (tbr.first_block, tbr.last_block) {
+                        println!(
+                            "Blocks: first={first}  last={last}  span={} block(s)",
+                            tbr.block_count
+                        );
+                    }
+                    let tp = &tail.time_past_observed_window;
+                    println!(
+                        "Time past observed window: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+                        tp.min, tp.p50, tp.mean, tp.p99, tp.max
+                    );
+                    let tbl = &tail.block_latency;
+                    println!(
+                        "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+                        tbl.min, tbl.p50, tbl.mean, tbl.p99, tbl.max
+                    );
+                    let tbrd = &tail.block_receipt_delay;
+                    println!(
+                        "Block Receipt Delay:              min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+                        tbrd.min, tbrd.p50, tbrd.mean, tbrd.p99, tbrd.max
+                    );
+                    let tfb = &tail.flashblocks_latency;
+                    println!(
+                        "FB Latency:                       min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
+                        tfb.min, tfb.p50, tfb.mean, tfb.p99, tfb.max, tfb.count
+                    );
+                }
+            }
+        }
+
+        println!();
+        println!(
+            "Totals: Submitted={} | Confirmed={} | Failed={} | Reverted={} | Success={:.1}%",
             summary.throughput.total_submitted,
             summary.throughput.total_confirmed,
             summary.throughput.total_failed,
-            summary.throughput.total_reverted
-        );
-        println!(
-            "TPS: {:.2} | GPS: {:.0} | Success: {:.1}%",
-            summary.throughput.tps,
-            summary.throughput.gps,
+            summary.throughput.total_reverted,
             summary.throughput.success_rate()
-        );
-        let tp = &summary.throughput_percentiles;
-        println!(
-            "TPS Rolling:   p50={:.0}  p90={:.0}  p99={:.0}  max={:.0}",
-            tp.tps_p50, tp.tps_p90, tp.tps_p99, tp.tps_max
-        );
-        println!(
-            "GPS Rolling:   p50={:.0}  p90={:.0}  p99={:.0}  max={:.0}",
-            tp.gps_p50, tp.gps_p90, tp.gps_p99, tp.gps_max
-        );
-        let bl = &summary.block_latency;
-        println!(
-            "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
-            bl.min, bl.p50, bl.mean, bl.p99, bl.max
-        );
-        let brd = &summary.block_receipt_delay;
-        println!(
-            "Block Receipt Delay: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
-            brd.min, brd.p50, brd.mean, brd.p99, brd.max
-        );
-        let fb = &summary.flashblocks_latency;
-        println!(
-            "FB Latency:    min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
-            fb.min, fb.p50, fb.mean, fb.p99, fb.max, fb.count
         );
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
         let br = &summary.block_range;

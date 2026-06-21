@@ -609,10 +609,10 @@ mod tests {
             ..Default::default()
         };
 
-        let hardforks = BaseChainSpec::mainnet();
+        let upgrades = BaseChainSpec::mainnet();
 
         let receipt = ReceiptFieldsBuilder::new(ChainConfig::mainnet().jovian_timestamp, u64::MAX)
-            .l1_block_info(&hardforks, &tx, &mut l1_block_info)
+            .l1_block_info(&upgrades, &tx, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
 
@@ -644,10 +644,10 @@ mod tests {
             ..Default::default()
         };
 
-        let hardforks = BaseChainSpec::mainnet();
+        let upgrades = BaseChainSpec::mainnet();
 
         let receipt = BaseReceiptBuilder::new(
-            &hardforks,
+            &upgrades,
             ConvertReceiptInput::<BasePrimitives> {
                 tx: Recovered::new_unchecked(&tx, Address::default()),
                 receipt: BaseReceipt::Eip7702(Receipt {
@@ -698,10 +698,10 @@ mod tests {
             ..Default::default()
         };
 
-        let hardforks = BaseChainSpec::mainnet();
+        let upgrades = BaseChainSpec::mainnet();
 
         let receipt = BaseReceiptBuilder::new(
-            &hardforks,
+            &upgrades,
             ConvertReceiptInput::<BasePrimitives> {
                 tx: Recovered::new_unchecked(&tx, Address::default()),
                 receipt: BaseReceipt::Eip7702(Receipt {
