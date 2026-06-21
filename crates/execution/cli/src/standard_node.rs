@@ -255,13 +255,22 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
         runner.install_ext::<TxForwardingExtension>((&args).into());
+        // Issue #45: clone the shared FlashblocksState BEFORE the config is moved
+        // into the flashblocks extension, so the MEV emitter can subscribe to
+        // preconfirmations (ahead-of-committed pool-slot source). Only when the
+        // emitter is enabled — otherwise `None` (committed loop only).
+        let mev_fb_state = if std::env::var("MEV_EMITTER_ENABLE").is_ok() {
+            flashblocks_config.as_ref().map(|c| std::sync::Arc::clone(&c.state))
+        } else {
+            None
+        };
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rpc.rollup_args);
         // MEV emitter (Section C, C-2): opt-in via `MEV_EMITTER_ENABLE`. OFF by
         // default so a rebuild never changes node behavior; the ExEx isolates
         // per-block re-execution failures and cannot crash the node.
         if std::env::var("MEV_EMITTER_ENABLE").is_ok() {
-            runner.install_ext::<base_mev_emitter::exex::MevEmitterExtension>(());
+            runner.install_ext::<base_mev_emitter::exex::MevEmitterExtension>(mev_fb_state);
         }
 
         Ok(runner)

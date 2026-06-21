@@ -43,6 +43,9 @@ base-common-flashblocks = { workspace = true, optional = true }
 base-flashblocks = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, optional = true, default-features = false, features = ["std"] }
 alloy-eips = { workspace = true, optional = true }
+# Issue #45: TransactionResponse::tx_hash for the flashblocks RPC Transaction
+# (preconf pool-slot emission path).
+alloy-network-primitives = { workspace = true, optional = true }
 
 [features]
 # Pulls the reth/node dependency graph and enables the `exex` + `revm_bridge` modules.
@@ -63,6 +66,7 @@ node = [
     "dep:base-flashblocks",
     "dep:base-common-consensus",
     "dep:alloy-eips",
+    "dep:alloy-network-primitives",
     "dep:tokio",
     "dep:tokio-tungstenite",
 ]

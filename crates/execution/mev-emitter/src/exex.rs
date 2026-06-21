@@ -13,9 +13,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_evm::Evm;
+use alloy_network_primitives::TransactionResponse;
 use alloy_primitives::B256;
 use base_execution_evm::BaseEvmConfig;
-use base_flashblocks::FlashblocksSubscriber;
+use base_flashblocks::{FlashblocksAPI, FlashblocksState, FlashblocksSubscriber, PendingBlocks};
 use base_node_runner::{BaseNodeAdapter, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use futures::TryStreamExt;
 use reth_chainspec::ChainSpecProvider;
@@ -25,9 +26,11 @@ use reth_provider::StateProviderFactory;
 use reth_revm::database::StateProviderDatabase;
 use revm::DatabaseCommit;
 use revm::database::State;
+use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
 use crate::flashblocks::{EmitterFlashblocksReceiver, FlashblockIndex};
+use crate::transport::EventSink;
 
 /// Margin (in blocks below the committed tip) kept in the [`FlashblockIndex`]
 /// after each canonical commit, before older entries are pruned. Generous
@@ -79,8 +82,67 @@ fn start_flashblocks_index() -> FlashblockIndex {
     index
 }
 
+/// Issue #45: emit pool storage-slot diffs from one FLASHBLOCK PRECONFIRMATION.
+///
+/// This is the genuinely AHEAD-OF-COMMITTED price source. The `base-flashblocks`
+/// crate reconstructs preconfirmed pending state ~0.2–2s before canonical commit;
+/// for the latest flashblock delta we re-use the EXACT same extraction the
+/// committed loop uses ([`crate::candidates::swap_pool_candidates`] +
+/// [`crate::revm_bridge::pool_slot_diffs_from_evm_state`]) over the per-tx
+/// `EvmState` the flashblocks crate already captured. The events carry the
+/// flashblock `payload_id`/`index`, so downstream `MidBlockSlotAggregator` keys by
+/// `payload_id` and reconciles/discards on preconf reorg.
+///
+/// Total by construction: no `unwrap`/panic — it runs in a spawned task next to a
+/// critical ExEx and must never be able to take the node down.
+///
+/// v1 limitation: re-emits the latest pending flashblock each time it ticks
+/// (idempotent per `payload_id`+pool+slot, so the downstream aggregator dedups).
+/// Reserve-pool (Aerodrome / UniV2) slot SEMANTIC decoding remains a downstream TS
+/// concern — this path emits raw `(slot, post-value)` words like the committed loop.
+fn emit_preconf_pool_slots(pb: &PendingBlocks, sink: &EventSink) {
+    let block_number = pb.latest_block_number();
+    let payload_id = format!("{}", pb.payload_id());
+    let fb_index = pb.latest_flashblock_index() as u32;
+    for twl in pb.get_latest_flashblock_transactions_with_logs() {
+        let tx_hash = twl.transaction.tx_hash();
+        // Pool addresses (Swap-log emitters) — mirrors the committed loop's
+        // `swap_pool_candidates(... map(|l| (l.address, l.topics())))`. Flashblock
+        // logs are `alloy_rpc_types_eth::Log`, so `address()`/`topics()` accessors.
+        let pool_candidates = crate::candidates::swap_pool_candidates(
+            twl.logs.iter().map(|l| (l.address(), l.topics())),
+        );
+        if pool_candidates.is_empty() {
+            continue;
+        }
+        let Some(evm_state) = pb.get_transaction_state(&tx_hash) else {
+            continue;
+        };
+        let events = crate::revm_bridge::pool_slot_diffs_from_evm_state(
+            &evm_state,
+            &pool_candidates,
+            tx_hash,
+            block_number,
+            fb_index,
+            payload_id.clone(),
+        );
+        for ev in events {
+            sink.send_event(&crate::NodeEvent::PoolSlotDiff(ev));
+        }
+    }
+}
+
 /// `ExEx` run loop: drain canonical-chain notifications, report `FinishedHeight`.
-pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre::Result<()> {
+///
+/// `fb_state` (issue #45): when present, a failure-isolated background task
+/// subscribes to flashblock preconfirmations and emits ahead-of-committed
+/// pool-slot diffs via [`emit_preconf_pool_slots`]. The committed-chain loop below
+/// is UNCHANGED and remains the finalizing/reconciling path (its
+/// `BlockBoundaryEvent { finalized: true }` reconciles the preconf stream).
+pub async fn run_mev_emitter_exex(
+    mut ctx: ExExContext<BaseNodeAdapter>,
+    fb_state: Option<Arc<FlashblocksState>>,
+) -> eyre::Result<()> {
     // C-2 ①: the EVM configuration used to re-execute committed transactions (the
     // per-tx `EvmState` source for `revm_bridge`). `chain_spec` comes from the
     // ExEx provider; `BaseEvmConfig::base` wires the mainnet receipt builder.
@@ -94,6 +156,32 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
     // the sink valid (events go nowhere) and never affects the ExEx. `info!` is
     // emitted inside once the listener is up.
     let sink = crate::transport::start_event_server();
+    // Issue #45: ahead-of-committed preconf pool-slot emission. Failure-isolated in
+    // its own task — a lagged/closed receiver only ends the task, never the ExEx.
+    if let Some(state) = fb_state {
+        let task_sink = sink.clone();
+        let mut rx = state.subscribe_to_flashblocks();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(pending) => emit_preconf_pool_slots(&pending, &task_sink),
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(
+                            target: "base::mev_emitter",
+                            skipped = n,
+                            "preconf flashblock receiver lagged",
+                        );
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+        info!(
+            target: "base::mev_emitter",
+            "preconf pool-slot emission enabled (flashblock state)",
+        );
+    }
     info!(target: "base::mev_emitter", "mev-emitter ExEx started");
     ctx.notifications.set_without_head();
     while let Some(notification) = ctx.notifications.try_next().await? {
@@ -345,19 +433,29 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
 
 /// Node extension that installs the [`run_mev_emitter_exex`] `ExEx` via
 /// [`NodeHooks::install_exex`]. Register with `BaseNodeRunner::install_ext`.
+///
+/// `fb_state` (issue #45): the shared [`FlashblocksState`] (cloned from the
+/// flashblocks extension's config) the ExEx subscribes to for ahead-of-committed
+/// preconf pool-slot emission. `None` disables that path (committed loop only).
 #[derive(Debug)]
-pub struct MevEmitterExtension;
+pub struct MevEmitterExtension {
+    fb_state: Option<Arc<FlashblocksState>>,
+}
 
 impl FromExtensionConfig for MevEmitterExtension {
-    type Config = ();
+    type Config = Option<Arc<FlashblocksState>>;
 
-    fn from_config(_config: Self::Config) -> Self {
-        Self
+    fn from_config(config: Self::Config) -> Self {
+        Self { fb_state: config }
     }
 }
 
 impl BaseNodeExtension for MevEmitterExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
-        hooks.install_exex("mev-emitter", move |ctx| async move { Ok(run_mev_emitter_exex(ctx)) })
+        let fb_state = self.fb_state;
+        hooks.install_exex("mev-emitter", move |ctx| {
+            let fb_state = fb_state.clone();
+            async move { Ok(run_mev_emitter_exex(ctx, fb_state)) }
+        })
     }
 }
