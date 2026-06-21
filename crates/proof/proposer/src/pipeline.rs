@@ -208,7 +208,8 @@ mod tests {
     #[tokio::test]
     async fn dispatcher_retry_exhaustion_ends_dispatcher_loop() {
         let requester = Arc::new(RejectingProofRequester::default());
-        let proof_requester: Arc<dyn ProofRequesterProvider> = requester.clone();
+        let proof_requester: Arc<dyn ProofRequesterProvider> =
+            Arc::<RejectingProofRequester>::clone(&requester);
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup = Arc::new(MockRollupClient {
