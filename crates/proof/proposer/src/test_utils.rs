@@ -32,6 +32,12 @@ use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwn
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
+const TEST_SIGNATURE: [u8; 65] = {
+    let mut signature = [0xab; 65];
+    signature[64] = 1;
+    signature
+};
+
 /// Mock L1 provider for tests.
 #[derive(Debug)]
 pub struct MockL1 {
@@ -407,7 +413,7 @@ pub fn test_anchor_root(block_number: u64) -> AnchorRoot {
 pub fn test_proposal(block_number: u64) -> Proposal {
     Proposal {
         output_root: B256::repeat_byte(block_number as u8),
-        signature: Bytes::from_static(&[0xab; 65]),
+        signature: Bytes::from_static(&TEST_SIGNATURE),
         l1_origin_hash: B256::repeat_byte(0x02),
         l1_origin_number: 100 + block_number,
         l2_block_number: block_number,
@@ -512,6 +518,14 @@ impl OutputProposer for MockOutputProposer {
         _proposal: &Proposal,
         _parent_address: Address,
         _intermediate_roots: &[B256],
+    ) -> Result<(), ProposerError> {
+        Ok(())
+    }
+
+    async fn verify_proposal_proof(
+        &self,
+        _game_address: Address,
+        _proposal: &Proposal,
     ) -> Result<(), ProposerError> {
         Ok(())
     }

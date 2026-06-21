@@ -1354,6 +1354,14 @@ mod tests {
         ) -> Result<(), ProposerError> {
             Err(ProposerError::Submission(ProofSubmissionError::L1OriginTooOld))
         }
+
+        async fn verify_proposal_proof(
+            &self,
+            _game_address: Address,
+            _proposal: &Proposal,
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::Submission(ProofSubmissionError::L1OriginTooOld))
+        }
     }
 
     #[async_trait]

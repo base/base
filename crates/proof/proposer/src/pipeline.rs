@@ -910,6 +910,15 @@ mod tests {
             tokio::time::sleep(self.delay).await;
             Ok(())
         }
+
+        async fn verify_proposal_proof(
+            &self,
+            _game_address: Address,
+            _proposal: &Proposal,
+        ) -> Result<(), ProposerError> {
+            tokio::time::sleep(self.delay).await;
+            Ok(())
+        }
     }
 
     #[derive(Debug)]
@@ -925,6 +934,14 @@ mod tests {
         ) -> Result<(), ProposerError> {
             Err(ProposerError::Submission(ProofSubmissionError::L1OriginTooOld))
         }
+
+        async fn verify_proposal_proof(
+            &self,
+            _game_address: Address,
+            _proposal: &Proposal,
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::Submission(ProofSubmissionError::L1OriginTooOld))
+        }
     }
 
     #[derive(Debug)]
@@ -937,6 +954,14 @@ mod tests {
             _proposal: &Proposal,
             _parent_address: Address,
             _intermediate_roots: &[B256],
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::Submission(ProofSubmissionError::InvalidSigner))
+        }
+
+        async fn verify_proposal_proof(
+            &self,
+            _game_address: Address,
+            _proposal: &Proposal,
         ) -> Result<(), ProposerError> {
             Err(ProposerError::Submission(ProofSubmissionError::InvalidSigner))
         }
@@ -1140,6 +1165,14 @@ mod tests {
         ) -> Result<(), ProposerError> {
             Err(ProposerError::Submission(ProofSubmissionError::InvalidParentGame))
         }
+
+        async fn verify_proposal_proof(
+            &self,
+            _: Address,
+            _: &Proposal,
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::Submission(ProofSubmissionError::InvalidParentGame))
+        }
     }
 
     /// Output proposer that always rejects with a transient internal error.
@@ -1153,6 +1186,14 @@ mod tests {
             _: &Proposal,
             _: Address,
             _: &[B256],
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::Internal("simulated transient failure".into()))
+        }
+
+        async fn verify_proposal_proof(
+            &self,
+            _: Address,
+            _: &Proposal,
         ) -> Result<(), ProposerError> {
             Err(ProposerError::Internal("simulated transient failure".into()))
         }
@@ -1254,6 +1295,15 @@ mod tests {
             _: &Proposal,
             _: Address,
             _: &[B256],
+        ) -> Result<(), ProposerError> {
+            self.submitted_games.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn verify_proposal_proof(
+            &self,
+            _: Address,
+            _: &Proposal,
         ) -> Result<(), ProposerError> {
             self.submitted_games.fetch_add(1, Ordering::SeqCst);
             Ok(())
