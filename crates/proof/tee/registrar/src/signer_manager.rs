@@ -371,6 +371,13 @@ where
         let age = Duration::from_millis(age_ms);
 
         if age > self.max_attestation_age {
+            warn!(
+                signer = %signer,
+                age_secs = age.as_secs(),
+                max_age_secs = self.max_attestation_age.as_secs(),
+                timestamp_ms = journal.timestamp,
+                "pre-submission freshness check failed"
+            );
             return Err(RegistrarError::StaleAttestationProof {
                 signer,
                 age,
