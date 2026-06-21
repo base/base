@@ -74,26 +74,30 @@ impl L2ForkchoiceState {
             // to a block whose body is older than reth's prune window. base/base reth returns a hard
             // 4444 error here rather than an empty body, so it bypasses the MissingL1InfoDeposit
             // recovery below; route it into the same recovery explicitly to avoid crash-looping.
-            let rpc_block =
-                match get_block_compat(engine_client, BlockNumberOrTag::Finalized.into()).await {
-                    Ok(Some(block)) => Some(block),
-                    Ok(None) => Some(
-                        engine_client
-                            .get_l2_block(cfg.genesis.l2.number.into())
-                            .full()
-                            .await?
-                            .ok_or(SyncStartError::BlockNotFound(cfg.genesis.l2.number.into()))?,
-                    ),
-                    Err(e) if is_pruned_history_error(&e) => {
-                        warn!(
-                            target: "sync_start",
-                            error = %e,
-                            "finalized label query hit pruned history; recovering to earliest unpruned block"
-                        );
-                        None
-                    }
-                    Err(e) => return Err(e.into()),
-                };
+            let rpc_block = match get_block_compat(
+                engine_client,
+                BlockNumberOrTag::Finalized.into(),
+            )
+            .await
+            {
+                Ok(Some(block)) => Some(block),
+                Ok(None) => Some(
+                    engine_client
+                        .get_l2_block(cfg.genesis.l2.number.into())
+                        .full()
+                        .await?
+                        .ok_or(SyncStartError::BlockNotFound(cfg.genesis.l2.number.into()))?,
+                ),
+                Err(e) if is_pruned_history_error(&e) => {
+                    warn!(
+                        target: "sync_start",
+                        error = %e,
+                        "finalized label query hit pruned history; recovering to earliest unpruned block"
+                    );
+                    None
+                }
+                Err(e) => return Err(e.into()),
+            };
 
             match rpc_block {
                 Some(rpc_block) => {
@@ -107,7 +111,9 @@ impl L2ForkchoiceState {
                     .await
                     {
                         Ok(info) => info,
-                        Err(SyncStartError::FromBlock(FromBlockError::MissingL1InfoDeposit(hash))) => {
+                        Err(SyncStartError::FromBlock(FromBlockError::MissingL1InfoDeposit(
+                            hash,
+                        ))) => {
                             warn!(
                                 target: "sync_start",
                                 block_hash = %hash,
@@ -115,7 +121,8 @@ impl L2ForkchoiceState {
                                 "finalized block body is pruned and no valid checkpoint exists, \
                                  recovering to earliest unpruned block"
                             );
-                            find_earliest_unpruned_block(cfg, engine_client, rpc_block_number).await?
+                            find_earliest_unpruned_block(cfg, engine_client, rpc_block_number)
+                                .await?
                         }
                         Err(e) => return Err(e),
                     }

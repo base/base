@@ -10,12 +10,12 @@
 //! The block-re-execution loop that produces the `EvmState` per tx (running each
 //! tx with the Base EVM inside the `ExEx`) is the remaining integration step.
 
-use alloy_primitives::{Address, U256, B256};
-use revm::state::EvmState;
+use alloy_primitives::{Address, B256, U256};
 use revm::Database;
+use revm::state::EvmState;
 
-use crate::state_diff::{signed_delta, BalanceSlotRegistry, TxStateDiffAccumulator};
-use crate::{PoolSlotDiffEvent, StateDiffEvent, NATIVE_SENTINEL};
+use crate::state_diff::{BalanceSlotRegistry, TxStateDiffAccumulator, signed_delta};
+use crate::{NATIVE_SENTINEL, PoolSlotDiffEvent, StateDiffEvent};
 
 /// Convert a single transaction's revm [`EvmState`] into net [`StateDiffEvent`]s.
 ///
@@ -166,9 +166,10 @@ mod tests {
         let slot = balance_slot_key(&holder, 3); // WETH balance slot index = 3
 
         let mut account = Account::default();
-        account
-            .storage
-            .insert(slot, EvmStorageSlot::new_changed(U256::from(100), U256::from(175), Default::default()));
+        account.storage.insert(
+            slot,
+            EvmStorageSlot::new_changed(U256::from(100), U256::from(175), Default::default()),
+        );
         let mut state = EvmState::default();
         state.insert(weth, account);
 
@@ -195,21 +196,25 @@ mod tests {
         let liq_slot = U256::from(4u64);
 
         let mut pool_acct = Account::default();
-        pool_acct
-            .storage
-            .insert(slot0, EvmStorageSlot::new_changed(U256::from(1), U256::from(2), Default::default()));
-        pool_acct
-            .storage
-            .insert(liq_slot, EvmStorageSlot::new_changed(U256::from(10), U256::from(20), Default::default()));
+        pool_acct.storage.insert(
+            slot0,
+            EvmStorageSlot::new_changed(U256::from(1), U256::from(2), Default::default()),
+        );
+        pool_acct.storage.insert(
+            liq_slot,
+            EvmStorageSlot::new_changed(U256::from(10), U256::from(20), Default::default()),
+        );
         // an unchanged slot must NOT be emitted
-        pool_acct
-            .storage
-            .insert(U256::from(7u64), EvmStorageSlot::new_changed(U256::from(5), U256::from(5), Default::default()));
+        pool_acct.storage.insert(
+            U256::from(7u64),
+            EvmStorageSlot::new_changed(U256::from(5), U256::from(5), Default::default()),
+        );
 
         let mut other_acct = Account::default();
-        other_acct
-            .storage
-            .insert(slot0, EvmStorageSlot::new_changed(U256::from(1), U256::from(2), Default::default()));
+        other_acct.storage.insert(
+            slot0,
+            EvmStorageSlot::new_changed(U256::from(1), U256::from(2), Default::default()),
+        );
 
         let mut state = EvmState::default();
         state.insert(pool, pool_acct);
@@ -241,9 +246,10 @@ mod tests {
         let slot = balance_slot_key(&holder, 3);
 
         let mut account = Account::default();
-        account
-            .storage
-            .insert(slot, EvmStorageSlot::new_changed(U256::ZERO, U256::from(1), Default::default()));
+        account.storage.insert(
+            slot,
+            EvmStorageSlot::new_changed(U256::ZERO, U256::from(1), Default::default()),
+        );
         let mut state = EvmState::default();
         state.insert(untrusted, account);
 
@@ -450,7 +456,9 @@ mod tests {
             native_balance_diffs_from_evm_state(&state, &mut db, B256::ZERO, 1, 0, "0x04".into())
                 .unwrap();
         let ev = crate::NodeEvent::StateDiff(events[0].clone());
-        assert!(crate::encode_event(&ev)
-            .contains(r#""token":"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee""#));
+        assert!(
+            crate::encode_event(&ev)
+                .contains(r#""token":"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee""#)
+        );
     }
 }

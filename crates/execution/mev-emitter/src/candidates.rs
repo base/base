@@ -9,7 +9,7 @@
 //! independent of any node type, so it is unit-tested directly and reused by the
 //! ExEx loop (which pulls topics off the committed receipts).
 
-use alloy_primitives::{b256, Address, B256};
+use alloy_primitives::{Address, B256, b256};
 
 /// `keccak256("Transfer(address,address,uint256)")` — the ERC-20 Transfer topic0.
 pub const ERC20_TRANSFER_TOPIC0: B256 =
@@ -27,9 +27,7 @@ pub fn erc20_transfer_parties(topics: &[B256]) -> Option<(Address, Address)> {
 
 /// Collect the de-duplicated candidate holders (Transfer `from`/`to`) across a
 /// transaction's logs, given each log's topics. First-seen order is preserved.
-pub fn transfer_candidates<'a>(
-    log_topics: impl IntoIterator<Item = &'a [B256]>,
-) -> Vec<Address> {
+pub fn transfer_candidates<'a>(log_topics: impl IntoIterator<Item = &'a [B256]>) -> Vec<Address> {
     let mut out: Vec<Address> = Vec::new();
     for topics in log_topics {
         if let Some((from, to)) = erc20_transfer_parties(topics) {
@@ -80,9 +78,7 @@ pub const AERODROME_SWAP_TOPIC0: B256 =
 /// True when a log's `topic0` is one of the recognized AMM Swap signatures, i.e.
 /// the log's emitter is a pool whose price state moved this tx.
 pub fn is_swap_topic0(topic0: &B256) -> bool {
-    *topic0 == UNIV3_SWAP_TOPIC0
-        || *topic0 == UNIV2_SWAP_TOPIC0
-        || *topic0 == AERODROME_SWAP_TOPIC0
+    *topic0 == UNIV3_SWAP_TOPIC0 || *topic0 == UNIV2_SWAP_TOPIC0 || *topic0 == AERODROME_SWAP_TOPIC0
 }
 
 /// Collect the de-duplicated POOL addresses (log emitters) that emitted a Swap
@@ -137,12 +133,8 @@ mod tests {
         let transfer = [ERC20_TRANSFER_TOPIC0, topic_addr(0x11), topic_addr(0x22)];
         // pool_a swaps (v3) then again (aero) -> dedup; pool_b swaps (v2); router
         // only emits a Transfer -> excluded (not a pool price move).
-        let logs: Vec<(Address, &[B256])> = vec![
-            (pool_a, &v3),
-            (router, &transfer),
-            (pool_b, &v2),
-            (pool_a, &aero),
-        ];
+        let logs: Vec<(Address, &[B256])> =
+            vec![(pool_a, &v3), (router, &transfer), (pool_b, &v2), (pool_a, &aero)];
         let cands = swap_pool_candidates(logs);
         assert_eq!(cands, vec![pool_a, pool_b]);
     }
@@ -165,11 +157,7 @@ mod tests {
         let cands = transfer_candidates(logs);
         assert_eq!(
             cands,
-            vec![
-                Address::from([0x11; 20]),
-                Address::from([0x22; 20]),
-                Address::from([0x33; 20]),
-            ]
+            vec![Address::from([0x11; 20]), Address::from([0x22; 20]), Address::from([0x33; 20]),]
         );
     }
 }

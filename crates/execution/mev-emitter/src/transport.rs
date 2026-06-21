@@ -178,7 +178,7 @@ async fn handle_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NodeEvent, StateDiffEvent, PROTOCOL_VERSION};
+    use crate::{NodeEvent, PROTOCOL_VERSION, StateDiffEvent};
     use alloy_primitives::{Address, B256, I256};
 
     fn sample_event() -> NodeEvent {

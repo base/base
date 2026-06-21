@@ -23,8 +23,8 @@ use reth_evm::ConfigureEvm;
 use reth_exex::{ExExContext, ExExEvent, ExExNotificationsStream};
 use reth_provider::StateProviderFactory;
 use reth_revm::database::StateProviderDatabase;
-use revm::database::State;
 use revm::DatabaseCommit;
+use revm::database::State;
 use tracing::{debug, info, warn};
 
 use crate::flashblocks::{EmitterFlashblocksReceiver, FlashblockIndex};
@@ -120,13 +120,11 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                 let block_result: eyre::Result<(usize, usize, usize, usize, usize)> = (|| {
                     // C-2 ②: the parent state to re-execute this block's txs against.
                     let parent = block_number.saturating_sub(1);
-                    let db = StateProviderDatabase::new(
-                        ctx.provider().history_by_block_number(parent)?,
-                    );
+                    let db =
+                        StateProviderDatabase::new(ctx.provider().history_by_block_number(parent)?);
                     // C-2 ③④: a commit-capable revm State over that DB + the Base
                     // EVM configured for this block's environment.
-                    let state =
-                        State::builder().with_database(db).with_bundle_update().build();
+                    let state = State::builder().with_database(db).with_bundle_update().build();
                     let evm_env = evm_config.evm_env(block.header())?;
                     let mut evm = evm_config.evm_with_env(state, evm_env);
                     // Canonical blocks carry no flashblock payloadId on the header;
@@ -196,14 +194,15 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                         // reads the prior-commit (pre-tx) balance as the baseline.
                         // Reordering/batching the commit would corrupt the baseline
                         // and TRIP `revm_bridge::tests` (the pre-tx baseline test).
-                        let native_events = crate::revm_bridge::native_balance_diffs_from_evm_state(
-                            &out.state,
-                            evm.db_mut(),
-                            tx_hash,
-                            block_number,
-                            fb_index,
-                            payload_id.clone(),
-                        )?;
+                        let native_events =
+                            crate::revm_bridge::native_balance_diffs_from_evm_state(
+                                &out.state,
+                                evm.db_mut(),
+                                tx_hash,
+                                block_number,
+                                fb_index,
+                                payload_id.clone(),
+                            )?;
                         // Pool-slot events: RAW changed storage slots of the pools
                         // that swapped. Computed BEFORE `payload_id` is moved into
                         // `state_diffs_from_evm_state` below (mirrors native's clone).
@@ -286,7 +285,8 @@ pub async fn run_mev_emitter_exex(mut ctx: ExExContext<BaseNodeAdapter>) -> eyre
                         sent_this_block += 1;
                     }
                     Ok((diffs, cands, trusted, attributed, boundaries))
-                })();
+                })(
+                );
                 // Accumulate AFTER the closure regardless of Ok/Err: events sent
                 // before a mid-block failure still went out on the wire.
                 total_events_sent += sent_this_block;
@@ -358,8 +358,6 @@ impl FromExtensionConfig for MevEmitterExtension {
 
 impl BaseNodeExtension for MevEmitterExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
-        hooks.install_exex("mev-emitter", move |ctx| async move {
-            Ok(run_mev_emitter_exex(ctx))
-        })
+        hooks.install_exex("mev-emitter", move |ctx| async move { Ok(run_mev_emitter_exex(ctx)) })
     }
 }

@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use alloy_primitives::{keccak256, Address, I256, U256, B256};
+use alloy_primitives::{Address, B256, I256, U256, keccak256};
 
 use crate::StateDiffEvent;
 

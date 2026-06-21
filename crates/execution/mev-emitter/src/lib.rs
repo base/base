@@ -17,7 +17,7 @@
 //! locked down (and unit-tested against the TS encoding) before the inspector /
 //! `ExEx` increments build on it.
 
-use alloy_primitives::{address, Address, FixedBytes, I256, U256, B256};
+use alloy_primitives::{Address, B256, FixedBytes, I256, U256, address};
 use serde::{Deserialize, Serialize};
 
 /// Protocol version embedded in every event (mirrors `PROTOCOL_VERSION`).
