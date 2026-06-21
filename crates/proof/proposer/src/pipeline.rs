@@ -105,7 +105,6 @@ where
                         )
                         .await
                     {
-                        tokio::time::sleep(self.config.poll_interval).await;
                         break;
                     }
                 }
