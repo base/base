@@ -409,12 +409,7 @@ where
                 Metrics::l2_output_proposals_total().increment(1);
                 Ok(())
             }
-            Err(e)
-                if matches!(
-                    e,
-                    ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified)
-                ) =>
-            {
+            Err(ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified)) => {
                 drop(attach_timer);
                 info!(
                     target_block,
@@ -423,9 +418,7 @@ where
                 );
                 Ok(())
             }
-            Err(e)
-                if matches!(e, ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)) =>
-            {
+            Err(e @ ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)) => {
                 attach_timer.disarm();
                 warn!(
                     error = %e,
