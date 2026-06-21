@@ -428,9 +428,7 @@ where
                 );
                 Err(SubmitAction::Discard(e))
             }
-            Err(e)
-                if matches!(e, ProposerError::Submission(ProofSubmissionError::InvalidSigner)) =>
-            {
+            Err(e @ ProposerError::Submission(ProofSubmissionError::InvalidSigner)) => {
                 attach_timer.disarm();
                 warn!(
                     error = %e,
