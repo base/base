@@ -503,7 +503,8 @@ impl AccountChangeApplier {
     /// The CREATE2 salt: `keccak256(user_salt || actors_commitment)`. Mirrors
     /// `_computeEffectiveSalt`.
     fn effective_salt(user_salt: B256, initial_actors: &[InitialActor]) -> B256 {
-        let mut packed = Vec::with_capacity(32 + initial_actors.len() * 52);
+        // Exactly 64 bytes: `user_salt` (32) || `actors_commitment` hash (32).
+        let mut packed = Vec::with_capacity(64);
         packed.extend_from_slice(user_salt.as_slice());
         packed.extend_from_slice(Self::actors_commitment(initial_actors).as_slice());
         keccak256(packed)
