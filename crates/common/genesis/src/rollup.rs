@@ -166,42 +166,6 @@ impl EthereumHardforks for RollupConfig {
     }
 }
 
-#[derive(Clone, Copy)]
-enum UpgradeActivationLog {
-    Ecotone,
-    Fjord,
-    Granite,
-    Holocene,
-    Isthmus,
-    Jovian,
-    Azul,
-    Beryl,
-    Cobalt,
-}
-
-impl UpgradeActivationLog {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Ecotone => "ecotone",
-            Self::Fjord => "fjord",
-            Self::Granite => "granite",
-            Self::Holocene => "holocene",
-            Self::Isthmus => "isthmus",
-            Self::Jovian => "jovian",
-            Self::Azul => "azul",
-            Self::Beryl => "beryl",
-            Self::Cobalt => "cobalt",
-        }
-    }
-
-    const fn banner(self) -> Option<&'static str> {
-        match self {
-            Self::Azul => Some(RollupConfig::AZUL_ACTIVATION_BANNER),
-            _ => None,
-        }
-    }
-}
-
 macro_rules! rollup_fork_methods {
     ($(
         $active:ident,
@@ -443,39 +407,40 @@ impl RollupConfig {
     /// The activation banner for the Base Azul hardfork, printed when the first block of the fork is built or processed.
     const AZUL_ACTIVATION_BANNER: &str = include_str!("../static/azul_activation_banner.txt");
 
-    fn emit_upgrade_activation(&self, block_number: u64, activation: UpgradeActivationLog) {
-        if let Some(banner) = activation.banner() {
+    fn emit_upgrade_activation(&self, block_number: u64, upgrade: BaseUpgrade) {
+        if let BaseUpgrade::Azul = upgrade {
+            let banner = Self::AZUL_ACTIVATION_BANNER;
             for line in banner.lines() {
                 tracing::info!(target: "upgrades", "{line}");
             }
         }
 
-        tracing::info!(target: "upgrades", block_number, upgrade = activation.name(), "Activated upgrade");
+        tracing::info!(target: "upgrades", block_number, upgrade = upgrade.contract_id(), "Activated upgrade");
     }
 
-    fn first_upgrade_activation(
+    fn first_logged_upgrade_activation(
         &self,
         timestamp: u64,
         parent_timestamp: u64,
-    ) -> Option<UpgradeActivationLog> {
+    ) -> Option<BaseUpgrade> {
         if self.is_first_ecotone_block(timestamp, parent_timestamp) {
-            Some(UpgradeActivationLog::Ecotone)
+            Some(BaseUpgrade::Ecotone)
         } else if self.is_first_fjord_block(timestamp, parent_timestamp) {
-            Some(UpgradeActivationLog::Fjord)
+            Some(BaseUpgrade::Fjord)
         } else if self.is_first_granite_block(timestamp, parent_timestamp) {
-            Some(UpgradeActivationLog::Granite)
+            Some(BaseUpgrade::Granite)
         } else if self.is_first_holocene_block(timestamp, parent_timestamp) {
-            Some(UpgradeActivationLog::Holocene)
+            Some(BaseUpgrade::Holocene)
         } else if self.is_first_isthmus_block(timestamp, parent_timestamp) {
-            Some(UpgradeActivationLog::Isthmus)
+            Some(BaseUpgrade::Isthmus)
         } else if self.is_first_jovian_block(timestamp, parent_timestamp) {
-            Some(UpgradeActivationLog::Jovian)
+            Some(BaseUpgrade::Jovian)
         } else if self.is_first_base_azul_block(timestamp, parent_timestamp) {
-            Some(UpgradeActivationLog::Azul)
+            Some(BaseUpgrade::Azul)
         } else if self.is_first_beryl_block(timestamp, parent_timestamp) {
-            Some(UpgradeActivationLog::Beryl)
+            Some(BaseUpgrade::Beryl)
         } else if self.is_first_cobalt_block(timestamp, parent_timestamp) {
-            Some(UpgradeActivationLog::Cobalt)
+            Some(BaseUpgrade::Cobalt)
         } else {
             None
         }
@@ -483,19 +448,18 @@ impl RollupConfig {
 
     /// Logs upgrade activation when the caller knows the actual parent timestamp.
     pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64, parent_timestamp: u64) {
-        if let Some(activation) = self.first_upgrade_activation(timestamp, parent_timestamp) {
-            self.emit_upgrade_activation(block_number, activation);
+        if let Some(upgrade) = self.first_logged_upgrade_activation(timestamp, parent_timestamp) {
+            self.emit_upgrade_activation(block_number, upgrade);
         }
     }
 
     /// Logs upgrade activation using block-time estimation when the parent timestamp is unknown.
     pub fn log_upgrade_activation_estimated(&self, block_number: u64, timestamp: u64) {
-        let estimated_parent_timestamp = timestamp.saturating_sub(self.block_time);
-        if let Some(activation) =
-            self.first_upgrade_activation(timestamp, estimated_parent_timestamp)
-        {
-            self.emit_upgrade_activation(block_number, activation);
-        }
+        self.log_upgrade_activation(
+            block_number,
+            timestamp,
+            timestamp.saturating_sub(self.block_time),
+        );
     }
 }
 
