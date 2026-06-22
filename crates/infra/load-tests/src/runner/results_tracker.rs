@@ -28,15 +28,14 @@ pub struct SentTransaction {
 pub struct BlockObservation {
     /// Canonical block number.
     pub number: u64,
-    /// Local instant corresponding to the block timestamp, when available.
-    pub block_time: Option<Instant>,
-    /// Local time when the load-test process observed the block.
+    /// Local time when the load-test process observed the block. Used as the
+    /// landing time for transactions first seen in this block.
     pub observed_at: Instant,
 }
 
 /// Canonical receipt data for a transaction, fetched in a single batch pass at the
 /// end of the load test (not during the run). Used to backfill gas, effective gas
-/// price, and revert status, and to measure receipt-fetch delay internally.
+/// price, and revert status.
 #[derive(Debug, Clone, Copy)]
 pub struct BlockReceipt {
     /// Transaction hash.
@@ -296,7 +295,7 @@ mod tests {
     use super::*;
 
     fn block_at(number: u64, observed_at: Instant) -> BlockObservation {
-        BlockObservation { number, block_time: Some(observed_at), observed_at }
+        BlockObservation { number, observed_at }
     }
 
     #[test]

@@ -23,6 +23,10 @@ pub struct MetricsCollector {
     rolling: RollingWindow,
     flashblocks_rolling: RollingWindow,
     throughput_samples: Vec<ThroughputSample>,
+    /// Fallback per-tx gas used for live throughput while the real receipt gas is
+    /// still pending. Canonical gas arrives only in the end-of-run receipt pass, so
+    /// without this the rolling GPS would read 0 for the whole run.
+    estimated_gas: u64,
 }
 
 impl MetricsCollector {
@@ -37,7 +41,13 @@ impl MetricsCollector {
             rolling: RollingWindow::new(),
             flashblocks_rolling: RollingWindow::new(),
             throughput_samples: Vec::new(),
+            estimated_gas: 0,
         }
+    }
+
+    /// Sets the estimated per-tx gas used for live throughput before receipts arrive.
+    pub const fn set_estimated_gas(&mut self, estimated_gas: u64) {
+        self.estimated_gas = estimated_gas;
     }
 
     /// Records a submitted transaction.
@@ -56,10 +66,14 @@ impl MetricsCollector {
             "tx landed"
         );
         let at = metrics.confirmed_at.unwrap_or_else(Instant::now);
+        // Canonical gas is backfilled later by the receipt pass, so a freshly landed
+        // tx reports gas_used == 0. Use the estimate for the live rolling window
+        // (GPS, rate-limiter feedback); the final summary still uses real gas.
+        let live_gas = if metrics.gas_used == 0 { self.estimated_gas } else { metrics.gas_used };
         if let Some(latency) = metrics.block_latency {
-            self.rolling.push(metrics.gas_used, latency, at);
+            self.rolling.push(live_gas, latency, at);
         } else {
-            self.rolling.push_gas(metrics.gas_used, at);
+            self.rolling.push_gas(live_gas, at);
         }
         if let Some(flashblocks_latency) = metrics.flashblocks_latency {
             self.flashblocks_rolling.push_latency(flashblocks_latency, at);
@@ -155,6 +169,7 @@ impl MetricsCollector {
         self.rolling = RollingWindow::new();
         self.flashblocks_rolling = RollingWindow::new();
         self.throughput_samples.clear();
+        self.estimated_gas = 0;
     }
 
     /// Snapshots the current rolling TPS and GPS with elapsed time for timeseries output.
@@ -191,12 +206,17 @@ impl MetricsCollector {
     }
 
     /// Returns the average gas used per confirmed transaction.
+    ///
+    /// Before the end-of-run receipt pass backfills canonical gas, landed txs report
+    /// `gas_used == 0`; in that window this falls back to the configured estimate so
+    /// the rate limiter keeps a non-zero feedback signal.
     pub fn avg_gas_used(&self) -> Option<u64> {
         if self.transactions.is_empty() {
             return None;
         }
         let total: u64 = self.transactions.iter().map(|t| t.gas_used).sum();
-        Some(total / self.transactions.len() as u64)
+        let avg = total / self.transactions.len() as u64;
+        if avg == 0 { (self.estimated_gas > 0).then_some(self.estimated_gas) } else { Some(avg) }
     }
 }
 
@@ -268,5 +288,32 @@ mod tests {
         assert_eq!(summary.gas.total_gas, 30_000, "only matched tx contributes gas");
         assert_eq!(summary.throughput.total_reverted, 0, "no reverts");
         assert_eq!(collector.reverted_count(), 0, "unmatched tx stays non-reverted");
+    }
+
+    #[test]
+    fn estimated_gas_drives_live_throughput_before_receipts() {
+        let mut collector = MetricsCollector::new();
+        collector.set_estimated_gas(21_000);
+
+        // Landed txs report gas_used == 0 until the receipt pass runs.
+        for i in 0..5u8 {
+            collector.record_confirmed(landed(TxHash::repeat_byte(i), 100 + u64::from(i)));
+        }
+
+        assert!(collector.rolling_gps() > 0.0, "live GPS must use the estimate, not 0");
+        assert_eq!(
+            collector.avg_gas_used(),
+            Some(21_000),
+            "avg gas falls back to the estimate before receipts backfill real gas"
+        );
+    }
+
+    #[test]
+    fn live_throughput_is_zero_without_estimate() {
+        let mut collector = MetricsCollector::new();
+        collector.record_confirmed(landed(TxHash::repeat_byte(1), 100));
+
+        assert_eq!(collector.rolling_gps(), 0.0, "no estimate set → GPS stays 0");
+        assert_eq!(collector.avg_gas_used(), None, "no estimate and no real gas → None");
     }
 }

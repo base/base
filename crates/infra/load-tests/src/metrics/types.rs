@@ -27,10 +27,6 @@ pub struct TransactionMetrics {
     /// Time from submission to first observation in a polled block (includes the
     /// block poll + scan cost).
     pub block_latency: Option<Duration>,
-    /// Time from block production to receipt observation by the end-of-run receipt
-    /// pass. Internal-only: measured for logging, never serialized.
-    #[serde(skip)]
-    pub block_receipt_delay: Option<Duration>,
     /// Time from submission to sequencer acceptance.
     pub flashblocks_latency: Option<Duration>,
     /// Gas used by the transaction.
@@ -59,7 +55,6 @@ impl TransactionMetrics {
         Self {
             tx_hash,
             block_latency,
-            block_receipt_delay: None,
             flashblocks_latency,
             gas_used,
             gas_price,

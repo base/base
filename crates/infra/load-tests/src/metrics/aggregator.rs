@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    TransactionMetrics,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.

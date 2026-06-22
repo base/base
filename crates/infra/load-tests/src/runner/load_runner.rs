@@ -1044,6 +1044,9 @@ impl LoadRunner {
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
         let initial_avg_gas = self.estimate_avg_gas();
+        // Seed the collector so live throughput (rolling GPS) and rate-limiter
+        // feedback have a non-zero gas figure before canonical receipt gas lands.
+        self.collector.set_estimated_gas(initial_avg_gas);
         let mut rate_limiter = RateLimiter::new(self.config.target_gps, initial_avg_gas);
         let start = Instant::now();
         let mut current_account_idx = 0usize;
@@ -1171,7 +1174,6 @@ impl LoadRunner {
                 let submitted = self.collector.submitted_count();
                 let confirmed = self.collector.confirmed_count();
                 let failed = self.collector.failed_count();
-                let reverted = self.collector.reverted_count();
                 let in_flight = results_tracker.total_in_flight();
                 let pending = results_tracker.pending_count();
                 let senders_blocked = results_tracker.senders_at_limit(max_in_flight_per_sender);
@@ -1184,7 +1186,6 @@ impl LoadRunner {
                     submitted,
                     confirmed,
                     failed,
-                    reverted,
                     in_flight,
                     pending,
                     total_queued,
@@ -1461,7 +1462,6 @@ impl LoadRunner {
             submitted: self.collector.submitted_count(),
             confirmed: self.collector.confirmed_count(),
             failed: self.collector.failed_count(),
-            reverted: self.collector.reverted_count(),
             in_flight: results_tracker.total_in_flight(),
             senders_blocked: results_tracker.senders_at_limit(max_in_flight_per_sender),
             total_senders: account_count,

@@ -3,27 +3,33 @@
 //! The watcher polls for new canonical blocks and reports the transaction hashes
 //! contained in each block to the [`ResultsTracker`], which records landing latency.
 //! Canonical receipts (gas, revert status) are fetched separately in a single batch
-//! pass at the end of the run via [`fetch_block_receipts`], not during polling.
+//! pass at the end of the run via [`BlockWatcher::fetch_receipts`], not during polling.
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use alloy_network::ReceiptResponse;
 use alloy_primitives::TxHash;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use base_common_network::Base;
+use futures::{StreamExt, stream};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{BlockObservation, BlockReceipt, ResultsTracker};
 
 /// How frequently to poll for a new canonical block.
-const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(1000);
+const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Maximum time to wait for a block watcher RPC request.
 const BLOCK_RPC_TIMEOUT: Duration = Duration::from_secs(10);
+/// Maximum time to wait for a block receipt RPC request.
+const RECEIPT_RPC_TIMEOUT: Duration = Duration::from_secs(50);
 /// Small startup lookback so early landings are not missed if the watcher task is
 /// scheduled after the first submissions.
 const INITIAL_BLOCK_LOOKBACK: u64 = 8;
+/// Maximum concurrent `eth_getBlockReceipts` requests during the end-of-run pass.
+/// Blocks are independent, so they are fetched in parallel up to this bound.
+const RECEIPT_FETCH_CONCURRENCY: usize = 3;
 
 /// Polls canonical blocks and reports their transaction hashes for landing detection.
 #[derive(Debug)]
@@ -77,22 +83,26 @@ impl BlockWatcher {
                     backoff = (backoff * 2).min(max_backoff);
                     continue;
                 }
-                Ok(Some((latest_block, latest_hashes))) => {
+                Ok(Some(latest)) => {
                     backoff = Duration::from_millis(100);
-                    let latest_block_number = latest_block.number;
+                    let latest_block_number = latest.0.number;
                     let first_block = last_seen_block.map_or_else(
                         || latest_block_number.saturating_sub(INITIAL_BLOCK_LOOKBACK),
                         |block| block.saturating_add(1),
                     );
 
                     if first_block <= latest_block_number {
+                        // The latest block was already fetched above; move it out (no
+                        // clone of its tx-hash Vec) on the final iteration that reaches
+                        // it, and fetch only the intermediate gap blocks.
+                        let mut latest = Some(latest);
                         for block_number in first_block..=latest_block_number {
                             if self.cancel_token.is_cancelled() {
                                 return;
                             }
                             trace!(block = block_number, "received new block");
                             let observed = if block_number == latest_block_number {
-                                Some((latest_block, latest_hashes.clone()))
+                                latest.take()
                             } else {
                                 self.fetch_block(block_number)
                                     .await
@@ -149,11 +159,7 @@ impl BlockWatcher {
             return Ok(None);
         };
 
-        let observation = BlockObservation {
-            number: block.header.number,
-            block_time: timestamp_to_instant(block.header.timestamp, observed_at),
-            observed_at,
-        };
+        let observation = BlockObservation { number: block.header.number, observed_at };
         let tx_hashes = block.transactions.hashes().collect();
 
         Ok(Some((observation, tx_hashes)))
@@ -169,45 +175,50 @@ impl BlockWatcher {
         provider: &RootProvider<Base>,
         block_numbers: &[u64],
     ) -> Vec<BlockReceipt> {
-        let mut out = Vec::new();
-        for &block_number in block_numbers {
-            let block_id = BlockId::Number(BlockNumberOrTag::Number(block_number));
-            match tokio::time::timeout(BLOCK_RPC_TIMEOUT, provider.get_block_receipts(block_id))
-                .await
-            {
-                Ok(Ok(Some(receipts))) => {
-                    out.extend(receipts.into_iter().map(|receipt| BlockReceipt {
-                        tx_hash: receipt.transaction_hash(),
-                        block_number: receipt.block_number().unwrap_or(block_number),
-                        gas_used: receipt.gas_used(),
-                        effective_gas_price: receipt.effective_gas_price(),
-                        success: receipt.status(),
-                    }));
-                }
-                Ok(Ok(None)) => {
-                    warn!(block = block_number, "eth_getBlockReceipts returned no receipts")
-                }
-                Ok(Err(e)) => {
-                    warn!(block = block_number, error = %e, "eth_getBlockReceipts failed")
-                }
-                Err(_) => warn!(
+        stream::iter(block_numbers.iter().copied())
+            .map(|block_number| Self::fetch_block_receipts(provider, block_number))
+            .buffer_unordered(RECEIPT_FETCH_CONCURRENCY)
+            .flat_map(stream::iter)
+            .collect()
+            .await
+    }
+
+    /// Fetches the canonical receipts for a single block, mapping each into a
+    /// [`BlockReceipt`]. Returns an empty vector on timeout, RPC error, or missing
+    /// receipts (logged as a warning) so a single bad block cannot fail the pass.
+    async fn fetch_block_receipts(
+        provider: &RootProvider<Base>,
+        block_number: u64,
+    ) -> Vec<BlockReceipt> {
+        let block_id = BlockId::Number(BlockNumberOrTag::Number(block_number));
+        match tokio::time::timeout(RECEIPT_RPC_TIMEOUT, provider.get_block_receipts(block_id)).await
+        {
+            Ok(Ok(Some(receipts))) => receipts
+                .into_iter()
+                .map(|receipt| BlockReceipt {
+                    tx_hash: receipt.transaction_hash(),
+                    block_number: receipt.block_number().unwrap_or(block_number),
+                    gas_used: receipt.gas_used(),
+                    effective_gas_price: receipt.effective_gas_price(),
+                    success: receipt.status(),
+                })
+                .collect(),
+            Ok(Ok(None)) => {
+                warn!(block = block_number, "eth_getBlockReceipts returned no receipts");
+                Vec::new()
+            }
+            Ok(Err(e)) => {
+                warn!(block = block_number, error = %e, "eth_getBlockReceipts failed");
+                Vec::new()
+            }
+            Err(_) => {
+                warn!(
                     block = block_number,
-                    timeout_secs = BLOCK_RPC_TIMEOUT.as_secs(),
+                    timeout_secs = RECEIPT_RPC_TIMEOUT.as_secs(),
                     "eth_getBlockReceipts timed out"
-                ),
+                );
+                Vec::new()
             }
         }
-        out
     }
-}
-
-fn timestamp_to_instant(timestamp: u64, now_instant: Instant) -> Option<Instant> {
-    let now_system = SystemTime::now();
-    let block_system = UNIX_EPOCH.checked_add(Duration::from_secs(timestamp))?;
-
-    if let Ok(delta) = now_system.duration_since(block_system) {
-        return now_instant.checked_sub(delta);
-    }
-
-    block_system.duration_since(now_system).ok().and_then(|delta| now_instant.checked_add(delta))
 }
