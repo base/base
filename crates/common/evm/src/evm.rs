@@ -22,9 +22,11 @@ use revm::{
     state::EvmState,
 };
 
+#[cfg(feature = "std")]
+use crate::Eip8130Executor;
 use crate::{
     BaseContext, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
-    BaseTransactionError, handler::BaseHandler,
+    BaseTransactionError, BaseTxTr, handler::BaseHandler,
 };
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
@@ -220,6 +222,15 @@ where
     }
 
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
+        // EIP-8130 transactions must run through the enshrined pre-call pipeline
+        // (`Evm::transact_raw`); the standard single-frame handler would
+        // mis-execute the placeholder `TxEnv`. Reject them here so the failure
+        // is explicit rather than silent for any direct `ExecuteEvm` caller.
+        if tx.is_eip8130() {
+            return Err(EVMError::Transaction(BaseTransactionError::eip8130(
+                "EIP-8130 transactions must be executed via Evm::transact_raw",
+            )));
+        }
         self.inner.ctx.set_tx(tx);
         let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
         h.run(self)
@@ -269,6 +280,13 @@ where
     }
 
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
+        // See `transact_one`: EIP-8130 transactions are not handled by the
+        // single-frame (inspector) handler and must use `Evm::transact_raw`.
+        if tx.is_eip8130() {
+            return Err(EVMError::Transaction(BaseTransactionError::eip8130(
+                "EIP-8130 transactions must be executed via Evm::transact_raw",
+            )));
+        }
         self.inner.ctx.set_tx(tx);
         let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
         h.inspect_run(self)
@@ -345,6 +363,11 @@ where
     }
 }
 
+// The `Journal: core::fmt::Debug` bound is required by the EIP-8130 path:
+// `Eip8130Executor::execute` borrows the journal through
+// `EvmInternals::from_context`, whose bounds require `Debug`. This is a public
+// API surface addition over the prior `JournalExt`-only bound, but revm's
+// journal types derive `Debug`, so it is satisfied by every in-tree consumer.
 impl<DB, I, P> Evm for BaseEvm<DB, I, P>
 where
     DB: AlloyDatabase,
@@ -352,7 +375,12 @@ where
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
-        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
+        + ContextTr<
+            Db = DB,
+            Tx = BaseTransaction<TxEnv>,
+            Block = BlockEnv,
+            Journal: JournalExt + core::fmt::Debug,
+        >,
 {
     type DB = DB;
     type Tx = BaseTransaction<TxEnv>;
@@ -382,6 +410,33 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+        // EIP-8130 transactions are executed by the enshrined pre-call pipeline,
+        // around (not inside) an EVM call frame, so they bypass both the mainnet
+        // single-frame handler and the inspector frame loop. The pipeline lives
+        // behind the `std` feature; `no_std` builds reject 8130 transactions
+        // rather than mis-executing the placeholder `TxEnv`.
+        //
+        // The inspector is intentionally not driven here: there is no call frame
+        // to step through, and the `Inspector` trait has no transaction-level
+        // start/end hook to emit instead. Tracing integration for 8130 is
+        // deferred until the path is reachable via RPC; until then 8130 txns
+        // produce no inspector output.
+        if tx.is_eip8130() {
+            #[cfg(feature = "std")]
+            {
+                self.inner.ctx.set_tx(tx);
+                let result = Eip8130Executor::execute(self.ctx_mut())?;
+                let state = self.inner.ctx.journal_mut().finalize();
+                return Ok(ResultAndState::new(result, state));
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                let _ = tx;
+                return Err(EVMError::Transaction(BaseTransactionError::eip8130(
+                    "EIP-8130 execution is unavailable in no_std builds",
+                )));
+            }
+        }
         if self.inspect { InspectEvm::inspect_tx(self, tx) } else { ExecuteEvm::transact(self, tx) }
     }
 

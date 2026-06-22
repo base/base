@@ -70,6 +70,24 @@ pub enum BaseTransactionError {
     /// Non-deposit transactions on Base must have `enveloped_tx` field set
     /// to properly calculate L1 costs.
     MissingEnvelopedTx,
+    /// An EIP-8130 (account-abstraction) transaction was rejected during its
+    /// enshrined execution pipeline (authorization, nonce, intrinsic gas, fee,
+    /// or account-change apply). The string is the underlying rejection reason.
+    ///
+    /// As an [`EVMError::Transaction`] error this is cause for non-inclusion, so
+    /// the transaction's journal writes are reverted and it is not added to the
+    /// block.
+    Eip8130(alloc::string::String),
+}
+
+impl BaseTransactionError {
+    /// Wraps an EIP-8130 pipeline rejection (any [`Display`] error from the
+    /// authorize / nonce / intrinsic-gas / fee / apply stages) as
+    /// [`BaseTransactionError::Eip8130`]. Keeps the call sites a single
+    /// `.map_err(BaseTransactionError::eip8130)?`.
+    pub fn eip8130(reason: impl Display) -> Self {
+        Self::Eip8130(alloc::string::ToString::to_string(&reason))
+    }
 }
 
 impl TransactionError for BaseTransactionError {}
@@ -89,6 +107,9 @@ impl Display for BaseTransactionError {
             }
             Self::MissingEnvelopedTx => {
                 write!(f, "missing enveloped transaction bytes for non-deposit transaction")
+            }
+            Self::Eip8130(reason) => {
+                write!(f, "EIP-8130 transaction rejected: {reason}")
             }
         }
     }
