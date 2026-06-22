@@ -23,6 +23,28 @@ has_bypass_label() {
   ' >/dev/null 2>&1 <<< "$pr_labels_json"
 }
 
+write_fail_closed_body() {
+  local reason="$1"
+  shift
+
+  marker_payload="$(jq -cn \
+    --arg head_sha "$HEAD_SHA" \
+    --arg reason "$reason" \
+    '{head_sha: $head_sha, bypassed: false, error: true, error_reason: $reason}')"
+
+  {
+    printf '%s\n' "$marker"
+    printf '%s\n' "$marker_payload"
+    printf '%s\n\n' "-->"
+    printf '## AI Blocking Review\n\n'
+    printf 'The AI blocking review gate failed closed for `%s`.\n\n' "$HEAD_SHA"
+    for line in "$@"; do
+      printf '%s\n' "$line"
+    done
+    printf '\nCheck the workflow logs and rerun the review after fixing the structured output issue.\n'
+  } > "$body_file"
+}
+
 if has_bypass_label; then
   marker_payload="$(jq -cn \
     --arg head_sha "$HEAD_SHA" \
@@ -39,54 +61,57 @@ if has_bypass_label; then
   } > "$body_file"
 else
   if [[ -z "${REVIEW_JSON:-}" ]]; then
-    echo "REVIEW_JSON is required when the bypass label is absent" >&2
-    exit 1
-  fi
-
-  if ! jq -e . >/dev/null <<< "$REVIEW_JSON"; then
-    echo "REVIEW_JSON is not valid JSON" >&2
-    exit 1
-  fi
-
-  if ! jq -e --arg head_sha "$HEAD_SHA" '
+    write_fail_closed_body \
+      "missing-structured-output" \
+      "The blocking review did not return structured output."
+  elif ! jq -e . >/dev/null 2>&1 <<< "$REVIEW_JSON"; then
+    write_fail_closed_body \
+      "invalid-json" \
+      "The blocking review produced output that was not valid JSON."
+  elif ! jq -e --arg head_sha "$HEAD_SHA" '
     (.head_sha == $head_sha) and
     (.has_blocking_findings | type == "boolean") and
     (.findings | type == "array") and
     (.max_severity == "NONE" or .max_severity == "HIGH" or .max_severity == "CRITICAL")
   ' >/dev/null <<< "$REVIEW_JSON"; then
-    echo "Blocking review result is malformed or stale" >&2
-    exit 1
-  fi
+    reported_head="$(jq -r '.head_sha // "missing"' <<< "$REVIEW_JSON" 2>/dev/null || printf 'unreadable')"
+    write_fail_closed_body \
+      "malformed-or-stale" \
+      "The blocking review result was malformed or did not match the current PR head SHA." \
+      "" \
+      "- Expected head SHA: \`$HEAD_SHA\`" \
+      "- Reported head SHA: \`$reported_head\`"
+  else
 
-  has_blocking_findings="$(jq -r '.has_blocking_findings' <<< "$REVIEW_JSON")"
-  max_severity="$(jq -r '.max_severity' <<< "$REVIEW_JSON")"
-  blocking_count="$(jq '[.findings[] | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' <<< "$REVIEW_JSON")"
-  summary="$(jq -r '.summary // ""' <<< "$REVIEW_JSON")"
+    has_blocking_findings="$(jq -r '.has_blocking_findings' <<< "$REVIEW_JSON")"
+    max_severity="$(jq -r '.max_severity' <<< "$REVIEW_JSON")"
+    blocking_count="$(jq '[.findings[] | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' <<< "$REVIEW_JSON")"
+    summary="$(jq -r '.summary // ""' <<< "$REVIEW_JSON")"
 
-  effective_has_blocking_findings="false"
-  if [[ "$has_blocking_findings" == "true" || "$max_severity" != "NONE" || "$blocking_count" != "0" ]]; then
-    effective_has_blocking_findings="true"
-  fi
+    effective_has_blocking_findings="false"
+    if [[ "$has_blocking_findings" == "true" || "$max_severity" != "NONE" || "$blocking_count" != "0" ]]; then
+      effective_has_blocking_findings="true"
+    fi
 
-  marker_payload="$(jq -cn \
-    --arg head_sha "$HEAD_SHA" \
-    --arg max_severity "$max_severity" \
-    --argjson has_blocking_findings "$effective_has_blocking_findings" \
-    '{head_sha: $head_sha, has_blocking_findings: $has_blocking_findings, max_severity: $max_severity, bypassed: false}')"
+    marker_payload="$(jq -cn \
+      --arg head_sha "$HEAD_SHA" \
+      --arg max_severity "$max_severity" \
+      --argjson has_blocking_findings "$effective_has_blocking_findings" \
+      '{head_sha: $head_sha, has_blocking_findings: $has_blocking_findings, max_severity: $max_severity, bypassed: false}')"
 
-  {
-    printf '%s\n' "$marker"
-    printf '%s\n' "$marker_payload"
-    printf '%s\n\n' "-->"
-    printf '## AI Blocking Review\n\n'
+    {
+      printf '%s\n' "$marker"
+      printf '%s\n' "$marker_payload"
+      printf '%s\n\n' "-->"
+      printf '## AI Blocking Review\n\n'
 
-    if [[ "$effective_has_blocking_findings" == "true" ]]; then
-      printf 'Blocking findings were reported for `%s`.\n\n' "$HEAD_SHA"
-      if [[ -n "$summary" ]]; then
-        printf '%s\n\n' "$summary"
-      fi
+      if [[ "$effective_has_blocking_findings" == "true" ]]; then
+        printf 'Blocking findings were reported for `%s`.\n\n' "$HEAD_SHA"
+        if [[ -n "$summary" ]]; then
+          printf '%s\n\n' "$summary"
+        fi
 
-      rendered_findings="$(jq -r '
+        rendered_findings="$(jq -r '
         .findings[]
         | select(.severity == "HIGH" or .severity == "CRITICAL")
         | "### \(.severity): \(.title)\n\n" +
@@ -96,18 +121,19 @@ else
           "**Required fix**\n\n\(.required_fix // "Not provided")\n"
       ' <<< "$REVIEW_JSON")"
 
-      if [[ -n "$rendered_findings" ]]; then
-        printf '%s\n' "$rendered_findings"
+        if [[ -n "$rendered_findings" ]]; then
+          printf '%s\n' "$rendered_findings"
+        else
+          printf 'The structured review marked this PR as blocking, but did not include a renderable HIGH or CRITICAL finding. Treat this as fail-closed and rerun the review after checking the workflow logs.\n'
+        fi
       else
-        printf 'The structured review marked this PR as blocking, but did not include a renderable HIGH or CRITICAL finding. Treat this as fail-closed and rerun the review after checking the workflow logs.\n'
+        printf 'No critical or high issues were reported for `%s`.\n\n' "$HEAD_SHA"
+        if [[ -n "$summary" ]]; then
+          printf '%s\n' "$summary"
+        fi
       fi
-    else
-      printf 'No critical or high issues were reported for `%s`.\n\n' "$HEAD_SHA"
-      if [[ -n "$summary" ]]; then
-        printf '%s\n' "$summary"
-      fi
-    fi
-  } > "$body_file"
+    } > "$body_file"
+  fi
 fi
 
 existing_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
