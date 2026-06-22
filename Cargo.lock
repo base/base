@@ -4398,6 +4398,7 @@ name = "base-execution-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-eips 2.0.5",
+ "alloy-primitives",
  "alloy-provider 2.0.5",
  "axum 0.8.9",
  "backon",

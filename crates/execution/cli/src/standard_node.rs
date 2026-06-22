@@ -280,19 +280,20 @@ impl StandardBaseRethNode {
         Ok(())
     }
 
-    /// Validates standalone execution-node upgrade signal arguments before node setup.
+    /// Validates execution upgrade signal arguments before node setup.
     ///
-    /// A standalone `base-reth-node` has no derived L1 RPC (unlike `base rpc` and the consensus
-    /// node), so a configured contract requires an explicit `--upgrade-signal.l1-rpc`. This holds
-    /// for every mode, including the default metrics-only mode, which still polls the contract.
+    /// Execution upgrade-signal polling is configured independently from consensus polling, so a
+    /// configured contract always requires an explicit `--upgrade-signal.l1-rpc`. This holds for
+    /// every mode, including the default metrics-only mode, which still polls the contract.
     pub fn validate_upgrade_signal_args(rollup_args: &RollupArgs) -> eyre::Result<()> {
         if rollup_args.upgrade_signal.contract_address.is_some()
             && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none()
         {
             eyre::bail!(
                 "--upgrade-signal.contract (env BASE_NODE_UPGRADE_SIGNAL_CONTRACT) requires \
-                 --upgrade-signal.l1-rpc (env BASE_NODE_UPGRADE_SIGNAL_L1_RPC) for base-reth-node; \
-                 every mode, including the default metrics-only mode, reads the contract over L1"
+                 --upgrade-signal.l1-rpc (env BASE_NODE_UPGRADE_SIGNAL_L1_RPC) for execution \
+                 upgrade-signal polling; every mode, including the default metrics-only mode, \
+                 reads the contract over L1"
             );
         }
 
@@ -422,6 +423,7 @@ impl StandardBaseRethNode {
 mod tests {
     use std::time::Duration;
 
+    use alloy_primitives::address;
     use clap::{Args, Parser};
 
     use super::*;
@@ -538,5 +540,19 @@ mod tests {
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
+    }
+
+    #[test]
+    fn test_upgrade_signal_contract_requires_execution_l1_rpc() {
+        let error = StandardBaseRethNode::validate_upgrade_signal_args(&RollupArgs {
+            upgrade_signal: base_upgrade_signal::UpgradeSignalArgs {
+                contract_address: Some(address!("0000000000000000000000000000000000000001")),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect_err("upgrade signal contract should require an explicit execution L1 RPC");
+
+        assert!(error.to_string().contains("--upgrade-signal.l1-rpc"));
     }
 }

@@ -9,7 +9,9 @@ use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedSequencerConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_cli::{ExecutionNodeConfigArgs, chainspec::chain_value_parser};
+use base_execution_cli::{
+    ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
+};
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use clap::Args;
@@ -72,13 +74,24 @@ impl SequencerCommand {
                 .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
             let task_executor = ctx.task_executor.clone();
             let builder = execution.into_default_node_builder(ctx)?;
-            let mut runner = BaseNodeRunner::new(rollup_args)
+            // Execution upgrade-signal polling remains independently configured from consensus,
+            // so this path still relies on an explicit `--upgrade-signal.l1-rpc` when enabled.
+            let builder = StandardBaseRethNode::apply_initial_upgrade_signal_from_rollup_args(
+                builder,
+                &rollup_args,
+            )
+            .await?;
+            let mut runner = BaseNodeRunner::new(rollup_args.clone())
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
                 .with_service_builder(FlashblocksServiceBuilder(builder_config));
             runner.install_ext::<MeteringStoreExtension>(metering_provider);
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
             runner.install_ext::<BuilderApiExtension>(());
+            StandardBaseRethNode::install_upgrade_signal_metrics_extension(
+                &mut runner,
+                &rollup_args,
+            )?;
 
             let launched = runner.launch(builder).await?;
             let handle = launched.handle;

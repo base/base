@@ -131,11 +131,10 @@ impl UpgradeSignalArgs {
     }
 }
 
-/// TODO: Default this to the execution CLI's L1 RPC URL so users do not need to pass the same
-/// endpoint twice. This likely requires refactoring how the upgrade signal args are wired into
-/// the standalone execution CLI.
+/// TODO: If an execution service gains its own explicit L1 execution RPC setting, default this
+/// to that URL so users do not need to pass the same endpoint twice.
 ///
-/// CLI argument for the L1 RPC endpoint used by standalone execution nodes.
+/// CLI argument for the L1 RPC endpoint used by execution upgrade-signal polling.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct UpgradeSignalL1RpcArgs {
     /// L1 execution RPC URL used to read the upgrade signal contract.
