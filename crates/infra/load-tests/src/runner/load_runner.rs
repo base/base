@@ -1443,11 +1443,7 @@ impl LoadRunner {
             );
         }
 
-        Ok(self.collector.summarize(
-            last_confirmed_at,
-            self.config.duration,
-            self.config_summary.clone(),
-        ))
+        Ok(self.collector.summarize(last_confirmed_at, self.config_summary.clone()))
     }
 
     fn build_snapshot(

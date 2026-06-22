@@ -127,20 +127,14 @@ impl MetricsCollector {
     ///
     /// `wall_clock_duration` is used as a fallback when block timestamps are
     /// unavailable. TPS is normally derived from block time span.
-    ///
-    /// `configured_duration` is the user-configured test duration; when present
-    /// it anchors the observed window and enables tail (post-observed-window)
-    /// metrics. Pass `None` for continuous runs.
     pub fn summarize(
         &self,
         wall_clock_duration: Duration,
-        configured_duration: Option<Duration>,
         config: Option<ConfigSummary>,
     ) -> MetricsSummary {
         let aggregator = MetricsAggregator::new(&self.transactions);
         aggregator.summarize(
             wall_clock_duration,
-            configured_duration,
             SubmissionStats {
                 submitted: self.submitted_count,
                 failed: self.failed_count,
@@ -253,7 +247,7 @@ mod tests {
         ]);
         collector.apply_receipts(&receipts);
 
-        let summary = collector.summarize(Duration::from_secs(1), None, None);
+        let summary = collector.summarize(Duration::from_secs(1), None);
         assert_eq!(summary.gas.total_gas, 66_000, "gas backfilled from receipts");
         assert_eq!(summary.throughput.total_reverted, 1, "exactly one tx reverted");
         assert_eq!(collector.reverted_count(), 1, "reverted_count set by apply_receipts");
@@ -270,7 +264,7 @@ mod tests {
         let receipts = HashMap::from([(landed_hash, receipt(landed_hash, 30_000, true))]);
         collector.apply_receipts(&receipts);
 
-        let summary = collector.summarize(Duration::from_secs(1), None, None);
+        let summary = collector.summarize(Duration::from_secs(1), None);
         assert_eq!(summary.gas.total_gas, 30_000, "only matched tx contributes gas");
         assert_eq!(summary.throughput.total_reverted, 0, "no reverts");
         assert_eq!(collector.reverted_count(), 0, "unmatched tx stays non-reverted");

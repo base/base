@@ -20,9 +20,8 @@ pub use rpc::{
 mod metrics;
 pub use metrics::{
     BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    MetricsAggregator, MetricsCollector, MetricsSummary, ObservedWindowMetrics, RollingWindow,
-    SubmissionStats, TailMetrics, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
-    TransactionMetrics,
+    MetricsAggregator, MetricsCollector, MetricsSummary, RollingWindow, SubmissionStats,
+    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
 };
 
 mod workload;
