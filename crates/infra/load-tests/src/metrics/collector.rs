@@ -10,6 +10,7 @@ use super::{
     ConfigSummary, MetricsAggregator, MetricsSummary, RollingWindow, SubmissionStats,
     ThroughputSample, TransactionMetrics,
 };
+use crate::runner::BlockReceipt;
 
 /// Collects transaction metrics during test execution.
 #[derive(Debug)]
@@ -20,7 +21,6 @@ pub struct MetricsCollector {
     reverted_count: u64,
     failure_reasons: HashMap<String, u64>,
     rolling: RollingWindow,
-    block_receipt_delay_rolling: RollingWindow,
     flashblocks_rolling: RollingWindow,
     throughput_samples: Vec<ThroughputSample>,
 }
@@ -35,7 +35,6 @@ impl MetricsCollector {
             reverted_count: 0,
             failure_reasons: HashMap::new(),
             rolling: RollingWindow::new(),
-            block_receipt_delay_rolling: RollingWindow::new(),
             flashblocks_rolling: RollingWindow::new(),
             throughput_samples: Vec::new(),
         }
@@ -46,17 +45,16 @@ impl MetricsCollector {
         self.submitted_count += 1;
     }
 
-    /// Records a confirmed transaction with metrics.
+    /// Records a transaction that landed in a polled block.
+    ///
+    /// Gas and revert status are unknown at landing time and stay at their defaults
+    /// until [`Self::apply_receipts`] backfills them from the end-of-run receipt pass.
     pub fn record_confirmed(&mut self, metrics: TransactionMetrics) {
         debug!(
             tx_hash = %metrics.tx_hash,
             block_latency_ms = ?metrics.block_latency.map(|d| d.as_millis()),
-            reverted = metrics.reverted,
-            "tx confirmed"
+            "tx landed"
         );
-        if metrics.reverted {
-            self.reverted_count += 1;
-        }
         let at = metrics.confirmed_at.unwrap_or_else(Instant::now);
         if let Some(latency) = metrics.block_latency {
             self.rolling.push(metrics.gas_used, latency, at);
@@ -66,10 +64,31 @@ impl MetricsCollector {
         if let Some(flashblocks_latency) = metrics.flashblocks_latency {
             self.flashblocks_rolling.push_latency(flashblocks_latency, at);
         }
-        if let Some(block_receipt_delay) = metrics.block_receipt_delay {
-            self.block_receipt_delay_rolling.push_latency(block_receipt_delay, at);
-        }
         self.transactions.push(metrics);
+    }
+
+    /// Backfills gas, effective gas price, and revert status onto landed transactions
+    /// from the end-of-run canonical receipt pass.
+    ///
+    /// Receipts are keyed by transaction hash. Landed transactions without a matching
+    /// receipt keep their default gas (0) and `reverted = false`.
+    pub fn apply_receipts(&mut self, receipts: &HashMap<TxHash, BlockReceipt>) {
+        let mut reverted = 0;
+        let mut matched = 0;
+        for tx in &mut self.transactions {
+            let Some(receipt) = receipts.get(&tx.tx_hash) else {
+                continue;
+            };
+            tx.gas_used = receipt.gas_used;
+            tx.gas_price = receipt.effective_gas_price;
+            tx.reverted = !receipt.success;
+            if tx.reverted {
+                reverted += 1;
+            }
+            matched += 1;
+        }
+        self.reverted_count = reverted;
+        debug!(matched, total = self.transactions.len(), reverted, "applied end-of-run receipts");
     }
 
     /// Records a failed transaction with a categorized reason.
@@ -108,20 +127,14 @@ impl MetricsCollector {
     ///
     /// `wall_clock_duration` is used as a fallback when block timestamps are
     /// unavailable. TPS is normally derived from block time span.
-    ///
-    /// `configured_duration` is the user-configured test duration; when present
-    /// it anchors the observed window and enables tail (post-observed-window)
-    /// metrics. Pass `None` for continuous runs.
     pub fn summarize(
         &self,
         wall_clock_duration: Duration,
-        configured_duration: Option<Duration>,
         config: Option<ConfigSummary>,
     ) -> MetricsSummary {
         let aggregator = MetricsAggregator::new(&self.transactions);
         aggregator.summarize(
             wall_clock_duration,
-            configured_duration,
             SubmissionStats {
                 submitted: self.submitted_count,
                 failed: self.failed_count,
@@ -140,7 +153,6 @@ impl MetricsCollector {
         self.reverted_count = 0;
         self.failure_reasons.clear();
         self.rolling = RollingWindow::new();
-        self.block_receipt_delay_rolling = RollingWindow::new();
         self.flashblocks_rolling = RollingWindow::new();
         self.throughput_samples.clear();
     }
@@ -178,13 +190,6 @@ impl MetricsCollector {
         self.flashblocks_rolling.p50_p99()
     }
 
-    /// Rolling 30s block receipt delay (p50, p99).
-    pub fn rolling_block_receipt_delay_p50_p99(
-        &mut self,
-    ) -> (std::time::Duration, std::time::Duration) {
-        self.block_receipt_delay_rolling.p50_p99()
-    }
-
     /// Returns the average gas used per confirmed transaction.
     pub fn avg_gas_used(&self) -> Option<u64> {
         if self.transactions.is_empty() {
@@ -198,5 +203,70 @@ impl MetricsCollector {
 impl Default for MetricsCollector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn landed(tx_hash: TxHash, block_number: u64) -> TransactionMetrics {
+        TransactionMetrics::new(
+            tx_hash,
+            Some(Duration::from_millis(100)),
+            None,
+            0,
+            0,
+            Some(block_number),
+        )
+    }
+
+    fn receipt(tx_hash: TxHash, gas_used: u64, success: bool) -> BlockReceipt {
+        BlockReceipt {
+            tx_hash,
+            block_number: 1,
+            gas_used,
+            effective_gas_price: 1_000_000_000,
+            success,
+        }
+    }
+
+    #[test]
+    fn apply_receipts_backfills_gas_and_revert() {
+        let ok_hash = TxHash::repeat_byte(1);
+        let bad_hash = TxHash::repeat_byte(2);
+        let mut collector = MetricsCollector::new();
+        collector.record_confirmed(landed(ok_hash, 5));
+        collector.record_confirmed(landed(bad_hash, 5));
+
+        let receipts = HashMap::from([
+            (ok_hash, receipt(ok_hash, 21_000, true)),
+            (bad_hash, receipt(bad_hash, 45_000, false)),
+        ]);
+        collector.apply_receipts(&receipts);
+
+        let summary = collector.summarize(Duration::from_secs(1), None);
+        assert_eq!(summary.gas.total_gas, 66_000, "gas backfilled from receipts");
+        assert_eq!(summary.throughput.total_reverted, 1, "exactly one tx reverted");
+        assert_eq!(collector.reverted_count(), 1, "reverted_count set by apply_receipts");
+    }
+
+    #[test]
+    fn apply_receipts_leaves_unmatched_tx_at_defaults() {
+        let landed_hash = TxHash::repeat_byte(3);
+        let unmatched_hash = TxHash::repeat_byte(4);
+        let mut collector = MetricsCollector::new();
+        collector.record_confirmed(landed(landed_hash, 7));
+        collector.record_confirmed(landed(unmatched_hash, 7));
+
+        let receipts = HashMap::from([(landed_hash, receipt(landed_hash, 30_000, true))]);
+        collector.apply_receipts(&receipts);
+
+        let summary = collector.summarize(Duration::from_secs(1), None);
+        assert_eq!(summary.gas.total_gas, 30_000, "only matched tx contributes gas");
+        assert_eq!(summary.throughput.total_reverted, 0, "no reverts");
+        assert_eq!(collector.reverted_count(), 0, "unmatched tx stays non-reverted");
     }
 }

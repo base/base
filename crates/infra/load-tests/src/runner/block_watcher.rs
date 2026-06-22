@@ -1,8 +1,14 @@
-//! Block watching, receipt ingestion, and first-seen timestamp tracking.
+//! Block watching and transaction landing detection via `eth_getBlockByNumber`.
+//!
+//! The watcher polls for new canonical blocks and reports the transaction hashes
+//! contained in each block to the [`ResultsTracker`], which records landing latency.
+//! Canonical receipts (gas, revert status) are fetched separately in a single batch
+//! pass at the end of the run via [`fetch_block_receipts`], not during polling.
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alloy_network::ReceiptResponse;
+use alloy_primitives::TxHash;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use base_common_network::Base;
@@ -12,14 +18,14 @@ use tracing::{debug, error, info, trace, warn};
 use super::{BlockObservation, BlockReceipt, ResultsTracker};
 
 /// How frequently to poll for a new canonical block.
-const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(1000);
 /// Maximum time to wait for a block watcher RPC request.
 const BLOCK_RPC_TIMEOUT: Duration = Duration::from_secs(10);
-/// Small startup lookback so early confirmations are not missed if the watcher task is scheduled
-/// after the first submissions.
+/// Small startup lookback so early landings are not missed if the watcher task is
+/// scheduled after the first submissions.
 const INITIAL_BLOCK_LOOKBACK: u64 = 8;
 
-/// Tracks canonical blocks and their receipts.
+/// Polls canonical blocks and reports their transaction hashes for landing detection.
 #[derive(Debug)]
 pub struct BlockWatcher {
     provider: RootProvider<Base>,
@@ -52,7 +58,7 @@ impl BlockWatcher {
         let mut last_seen_block: Option<u64> = None;
 
         while !self.cancel_token.is_cancelled() {
-            match self.fetch_latest_block_observation().await {
+            match self.fetch_latest_block().await {
                 Err(e) => {
                     if self.cancel_token.is_cancelled() {
                         return;
@@ -71,7 +77,7 @@ impl BlockWatcher {
                     backoff = (backoff * 2).min(max_backoff);
                     continue;
                 }
-                Ok(Some(latest_block)) => {
+                Ok(Some((latest_block, latest_hashes))) => {
                     backoff = Duration::from_millis(100);
                     let latest_block_number = latest_block.number;
                     let first_block = last_seen_block.map_or_else(
@@ -85,32 +91,25 @@ impl BlockWatcher {
                                 return;
                             }
                             trace!(block = block_number, "received new block");
-                            let block = if block_number == latest_block_number {
-                                Some(latest_block)
+                            let observed = if block_number == latest_block_number {
+                                Some((latest_block, latest_hashes.clone()))
                             } else {
-                                self.fetch_block_observation(block_number)
+                                self.fetch_block(block_number)
                                     .await
                                     .inspect_err(|e| {
                                         warn!(
                                             block = block_number,
                                             error = %e,
-                                            "failed to fetch block header"
+                                            "failed to fetch block hashes"
                                         );
                                     })
                                     .ok()
                                     .flatten()
                             };
-                            let Some(block) = block else {
+                            let Some((block, tx_hashes)) = observed else {
                                 break;
                             };
-                            if let Err(e) = self.fetch_and_record_receipts(block).await {
-                                warn!(
-                                    block = block_number,
-                                    error = %e,
-                                    "failed to fetch block receipts"
-                                );
-                                break;
-                            }
+                            self.results_tracker.on_new_block_hashes(block, tx_hashes);
                             last_seen_block = Some(block_number);
                         }
                     }
@@ -128,16 +127,16 @@ impl BlockWatcher {
         debug!("block watcher stopped");
     }
 
-    async fn fetch_latest_block_observation(
+    async fn fetch_latest_block(
         &self,
-    ) -> std::result::Result<Option<BlockObservation>, String> {
-        self.fetch_block_observation(BlockNumberOrTag::Latest).await
+    ) -> std::result::Result<Option<(BlockObservation, Vec<TxHash>)>, String> {
+        self.fetch_block(BlockNumberOrTag::Latest).await
     }
 
-    async fn fetch_block_observation(
+    async fn fetch_block(
         &self,
         block: impl Into<BlockNumberOrTag>,
-    ) -> std::result::Result<Option<BlockObservation>, String> {
+    ) -> std::result::Result<Option<(BlockObservation, Vec<TxHash>)>, String> {
         let observed_at = Instant::now();
         let block = tokio::time::timeout(BLOCK_RPC_TIMEOUT, async {
             self.provider.get_block_by_number(block.into()).hashes().await
@@ -150,60 +149,65 @@ impl BlockWatcher {
             return Ok(None);
         };
 
-        Ok(Some(BlockObservation {
+        let observation = BlockObservation {
             number: block.header.number,
-            block_time: Self::timestamp_to_instant(block.header.timestamp, observed_at),
+            block_time: timestamp_to_instant(block.header.timestamp, observed_at),
             observed_at,
-        }))
+        };
+        let tx_hashes = block.transactions.hashes().collect();
+
+        Ok(Some((observation, tx_hashes)))
     }
 
-    async fn fetch_and_record_receipts(
-        &self,
-        block: BlockObservation,
-    ) -> std::result::Result<(), String> {
-        let receipts = self.fetch_receipts(block.number).await?;
-        let observed_at = Instant::now();
-        self.results_tracker.on_new_block(BlockObservation { observed_at, ..block }, receipts);
-
-        Ok(())
-    }
-
-    async fn fetch_receipts(
-        &self,
-        block_number: u64,
-    ) -> std::result::Result<Vec<BlockReceipt>, String> {
-        let block_id = BlockId::Number(BlockNumberOrTag::Number(block_number));
-        let receipts = tokio::time::timeout(BLOCK_RPC_TIMEOUT, async {
-            self.provider.get_block_receipts(block_id).await
-        })
-        .await
-        .map_err(|_| format!("eth_getBlockReceipts timed out after {BLOCK_RPC_TIMEOUT:?}"))?
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "eth_getBlockReceipts returned no receipts".to_string())?;
-
-        Ok(receipts
-            .into_iter()
-            .map(|receipt| BlockReceipt {
-                tx_hash: receipt.transaction_hash(),
-                block_number: receipt.block_number().unwrap_or(block_number),
-                gas_used: receipt.gas_used(),
-                effective_gas_price: receipt.effective_gas_price(),
-                success: receipt.status(),
-            })
-            .collect())
-    }
-
-    fn timestamp_to_instant(timestamp: u64, now_instant: Instant) -> Option<Instant> {
-        let now_system = SystemTime::now();
-        let block_system = UNIX_EPOCH.checked_add(Duration::from_secs(timestamp))?;
-
-        if let Ok(delta) = now_system.duration_since(block_system) {
-            return now_instant.checked_sub(delta);
+    /// Fetches canonical receipts for the given block numbers in a single batch pass.
+    ///
+    /// Returns one [`BlockReceipt`] per transaction across all requested blocks.
+    /// Intended for the end-of-run enrichment pass, where the caller already knows
+    /// exactly which blocks contain its transactions, so receipts are fetched only
+    /// for those blocks.
+    pub async fn fetch_receipts(
+        provider: &RootProvider<Base>,
+        block_numbers: &[u64],
+    ) -> Vec<BlockReceipt> {
+        let mut out = Vec::new();
+        for &block_number in block_numbers {
+            let block_id = BlockId::Number(BlockNumberOrTag::Number(block_number));
+            match tokio::time::timeout(BLOCK_RPC_TIMEOUT, provider.get_block_receipts(block_id))
+                .await
+            {
+                Ok(Ok(Some(receipts))) => {
+                    out.extend(receipts.into_iter().map(|receipt| BlockReceipt {
+                        tx_hash: receipt.transaction_hash(),
+                        block_number: receipt.block_number().unwrap_or(block_number),
+                        gas_used: receipt.gas_used(),
+                        effective_gas_price: receipt.effective_gas_price(),
+                        success: receipt.status(),
+                    }));
+                }
+                Ok(Ok(None)) => {
+                    warn!(block = block_number, "eth_getBlockReceipts returned no receipts")
+                }
+                Ok(Err(e)) => {
+                    warn!(block = block_number, error = %e, "eth_getBlockReceipts failed")
+                }
+                Err(_) => warn!(
+                    block = block_number,
+                    timeout_secs = BLOCK_RPC_TIMEOUT.as_secs(),
+                    "eth_getBlockReceipts timed out"
+                ),
+            }
         }
-
-        block_system
-            .duration_since(now_system)
-            .ok()
-            .and_then(|delta| now_instant.checked_add(delta))
+        out
     }
+}
+
+fn timestamp_to_instant(timestamp: u64, now_instant: Instant) -> Option<Instant> {
+    let now_system = SystemTime::now();
+    let block_system = UNIX_EPOCH.checked_add(Duration::from_secs(timestamp))?;
+
+    if let Ok(delta) = now_system.duration_since(block_system) {
+        return now_instant.checked_sub(delta);
+    }
+
+    block_system.duration_since(now_system).ok().and_then(|delta| now_instant.checked_add(delta))
 }
