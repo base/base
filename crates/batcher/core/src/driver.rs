@@ -31,7 +31,7 @@ where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
-    TM: TxManager,
+    TM: TxManager + 'static,
     TC: ThrottleClient,
     L: L1HeadSource,
 {
@@ -70,7 +70,7 @@ where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
-    TM: TxManager,
+    TM: TxManager + 'static,
     TC: ThrottleClient,
     L: L1HeadSource,
 {
@@ -97,6 +97,7 @@ where
                 tx_manager,
                 config.inbox,
                 config.max_pending_transactions,
+                config.alt_da,
             ),
             throttle,
             l1_head_source: Some(l1_head_source),
