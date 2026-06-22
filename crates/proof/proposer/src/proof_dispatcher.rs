@@ -111,8 +111,8 @@ where
     L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
-    /// Creates an AWS Nitro TEE proof dispatcher.
-    pub fn aws_nitro(
+    /// Creates a proof dispatcher.
+    pub fn new(
         proof_requester: Arc<dyn ProofRequesterProvider>,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
@@ -553,7 +553,7 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        ProofDispatcher::aws_nitro(
+        ProofDispatcher::new(
             requester,
             l1,
             l2,

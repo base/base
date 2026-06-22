@@ -234,7 +234,7 @@ impl ProposerService {
         };
         let proof_collector =
             ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
-        let proof_dispatcher = ProofDispatcher::aws_nitro(
+        let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::clone(&l1_client),
             Arc::clone(&l2_client),

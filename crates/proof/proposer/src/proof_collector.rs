@@ -1283,7 +1283,7 @@ mod tests {
         });
         let collector =
             ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             proof_requester,
             Arc::clone(&l1),
             l2,
@@ -1352,7 +1352,7 @@ mod tests {
         });
         let collector =
             ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             proof_requester,
             Arc::clone(&l1),
             l2,
@@ -1434,7 +1434,7 @@ mod tests {
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
         let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
@@ -1496,7 +1496,7 @@ mod tests {
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(MismatchedProofRequester);
         let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
@@ -1571,7 +1571,7 @@ mod tests {
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
         );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             l1,
             l2,
@@ -1630,7 +1630,7 @@ mod tests {
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
         let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
@@ -1694,7 +1694,7 @@ mod tests {
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
         let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
@@ -1777,7 +1777,7 @@ mod tests {
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
         );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&l1),
             l2,
@@ -1842,7 +1842,7 @@ mod tests {
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
         );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&l1),
             l2,

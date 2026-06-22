@@ -240,7 +240,7 @@ mod tests {
             intermediate_block_interval: 100,
             ..Default::default()
         };
-        let proof_dispatcher = ProofDispatcher::aws_nitro(
+        let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::clone(&l1),
             Arc::clone(&l2),
