@@ -1,13 +1,9 @@
 //! Builder transaction event emission.
 
-use std::{fmt, sync::Arc};
-
 use alloy_primitives::{B256, TxHash};
 use base_observability_events::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
-    TransactionEventWriter,
+    TransactionEventProducer, TransactionEventType, TransactionEventWriter, transaction_event,
 };
-use chrono::Utc;
 use serde_json::{Map, Value, json};
 use tracing::warn;
 
@@ -16,43 +12,25 @@ use crate::{
     TxnExecutionError,
 };
 
-/// Non-blocking sink for builder transaction events.
-pub trait BuilderTransactionEventSink: Send + Sync {
-    /// Attempts to enqueue one event without blocking the payload-building path.
-    fn try_write_event(&self, event: &TransactionEvent) -> Result<(), String>;
-}
-
-impl BuilderTransactionEventSink for TransactionEventWriter {
-    fn try_write_event(&self, event: &TransactionEvent) -> Result<(), String> {
-        self.try_write(event).map_err(|err| err.to_string())
-    }
-}
-
 /// Shared builder transaction event sink handle.
-#[derive(Clone)]
-pub struct SharedBuilderTransactionEventSink(Arc<dyn BuilderTransactionEventSink>);
+#[derive(Clone, Debug)]
+pub struct SharedBuilderTransactionEventSink(TransactionEventWriter);
 
 impl SharedBuilderTransactionEventSink {
-    /// Wraps a concrete sink.
-    pub fn new(sink: Arc<dyn BuilderTransactionEventSink>) -> Self {
-        Self(sink)
+    /// Wraps the configured transaction event writer.
+    pub const fn new(writer: TransactionEventWriter) -> Self {
+        Self(writer)
     }
 
-    /// Attempts to write an event through the wrapped sink.
-    pub fn try_write_event(&self, event: &TransactionEvent) -> Result<(), String> {
-        self.0.try_write_event(event)
-    }
-}
-
-impl fmt::Debug for SharedBuilderTransactionEventSink {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("SharedBuilderTransactionEventSink(..)")
+    /// Returns the wrapped writer.
+    pub const fn writer(&self) -> &TransactionEventWriter {
+        &self.0
     }
 }
 
 impl From<TransactionEventWriter> for SharedBuilderTransactionEventSink {
     fn from(writer: TransactionEventWriter) -> Self {
-        Self::new(Arc::new(writer))
+        Self::new(writer)
     }
 }
 
@@ -138,7 +116,7 @@ pub(crate) fn add_budget_fields(
 }
 
 /// Returns a stable rejection reason code for builder transaction events.
-pub(crate) fn rejection_reason_code(err: &TxnExecutionError) -> &'static str {
+pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static str {
     match err {
         TxnExecutionError::TransactionDASizeExceeded(_, _) => "tx_da_size_exceeded",
         TxnExecutionError::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
@@ -182,40 +160,22 @@ pub(crate) fn emit_builder_transaction_event(
     let event_type_label = event_type.to_string();
     let mut base_data = ctx.base_data();
     base_data.append(&mut data);
+    debug_assert_eq!(sink.writer().network(), ctx.network);
 
-    let mut event_id = EventIdBuilder::new()
-        .part("producer", TransactionEventProducer::BaseBuilder)
-        .part("event_type", event_type)
-        .part("payload_id", &ctx.payload_id)
-        .part("block_number", ctx.block_number)
-        .part("tx_hash", tx_hash);
-    if let Some(block_hash) = ctx.block_hash {
-        event_id = event_id.part("block_hash", block_hash);
-    }
-    if let Some(flashblock_index) = ctx.flashblock_index {
-        event_id = event_id.part("flashblock_index", flashblock_index);
-    }
-    if let Some(ordering_position) = ctx.ordering_position {
-        event_id = event_id.part("ordering_position", ordering_position);
-    }
-
-    let mut event = TransactionEvent::new(
-        event_id.finish(),
-        Utc::now(),
-        TransactionEventProducer::BaseBuilder,
-        event_type,
-    )
-    .with_network(ctx.network)
-    .with_tx_hash(tx_hash)
-    .with_block_number(ctx.block_number)
-    .with_payload_id(ctx.payload_id)
-    .with_data(base_data);
-
-    if let Some(block_hash) = ctx.block_hash {
-        event = event.with_block_hash(block_hash);
-    }
-
-    match sink.try_write_event(&event) {
+    match transaction_event!(
+        writer: Some(sink.writer()),
+        producer: TransactionEventProducer::BaseBuilder,
+        event_type: event_type,
+        tx_hash: tx_hash,
+        maybe_block_hash: ctx.block_hash,
+        block_number: ctx.block_number,
+        payload_id: ctx.payload_id,
+        id: {
+            "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
+            "ordering_position" => ctx.ordering_position.map(|position| position.to_string()).unwrap_or_default(),
+        },
+        data: base_data,
+    ) {
         Ok(()) => {
             BuilderMetrics::builder_transaction_events_emitted(event_type_label).increment(1);
         }
@@ -225,8 +185,8 @@ pub(crate) fn emit_builder_transaction_event(
             warn!(
                 target: "payload_builder",
                 error = %err,
-                event_type = %event.event_type,
-                tx_hash = ?event.tx_hash,
+                event_type = %event_type,
+                tx_hash = ?tx_hash,
                 "failed to enqueue builder transaction event"
             );
         }
@@ -247,35 +207,20 @@ pub(crate) fn emit_builder_payload_event(
     let event_type_label = event_type.to_string();
     let mut base_data = ctx.base_data();
     base_data.append(&mut data);
+    debug_assert_eq!(sink.writer().network(), ctx.network);
 
-    let mut event_id = EventIdBuilder::new()
-        .part("producer", TransactionEventProducer::BaseBuilder)
-        .part("event_type", event_type)
-        .part("payload_id", &ctx.payload_id)
-        .part("block_number", ctx.block_number);
-    if let Some(block_hash) = ctx.block_hash {
-        event_id = event_id.part("block_hash", block_hash);
-    }
-    if let Some(flashblock_index) = ctx.flashblock_index {
-        event_id = event_id.part("flashblock_index", flashblock_index);
-    }
-
-    let mut event = TransactionEvent::new(
-        event_id.finish(),
-        Utc::now(),
-        TransactionEventProducer::BaseBuilder,
-        event_type,
-    )
-    .with_network(ctx.network)
-    .with_block_number(ctx.block_number)
-    .with_payload_id(ctx.payload_id)
-    .with_data(base_data);
-
-    if let Some(block_hash) = ctx.block_hash {
-        event = event.with_block_hash(block_hash);
-    }
-
-    match sink.try_write_event(&event) {
+    match transaction_event!(
+        writer: Some(sink.writer()),
+        producer: TransactionEventProducer::BaseBuilder,
+        event_type: event_type,
+        maybe_block_hash: ctx.block_hash,
+        block_number: ctx.block_number,
+        payload_id: ctx.payload_id,
+        id: {
+            "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
+        },
+        data: base_data,
+    ) {
         Ok(()) => {
             BuilderMetrics::builder_transaction_events_emitted(event_type_label).increment(1);
         }
@@ -285,8 +230,7 @@ pub(crate) fn emit_builder_payload_event(
             warn!(
                 target: "payload_builder",
                 error = %err,
-                event_type = %event.event_type,
-                payload_id = ?event.payload_id,
+                event_type = %event_type,
                 "failed to enqueue builder payload event"
             );
         }
@@ -295,22 +239,39 @@ pub(crate) fn emit_builder_payload_event(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::{fs, path::PathBuf, time::Duration};
 
-    use base_observability_events::TransactionEventType;
+    use base_observability_events::{
+        DEFAULT_QUEUE_CAPACITY, TransactionEvent, TransactionEventType,
+        TransactionEventWriterConfig,
+    };
 
     use super::*;
 
-    #[derive(Default)]
-    struct RecordingSink {
-        events: Mutex<Vec<TransactionEvent>>,
+    async fn writer(path: PathBuf) -> TransactionEventWriter {
+        TransactionEventWriter::from_config(TransactionEventWriterConfig {
+            enabled: true,
+            file_path: path,
+            queue_capacity: DEFAULT_QUEUE_CAPACITY,
+            flush_interval: Duration::from_millis(10),
+            required: true,
+            producer: TransactionEventProducer::BaseBuilder,
+            network: "base-sepolia".to_string(),
+        })
+        .await
+        .unwrap()
     }
 
-    impl BuilderTransactionEventSink for RecordingSink {
-        fn try_write_event(&self, event: &TransactionEvent) -> Result<(), String> {
-            self.events.lock().unwrap().push(event.clone());
-            Ok(())
-        }
+    async fn read_events(path: PathBuf, writer: TransactionEventWriter) -> Vec<TransactionEvent> {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(writer);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
     }
 
     fn context() -> BuilderTransactionEventContext {
@@ -328,10 +289,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn emits_builder_decision_event_with_safe_context_fields() {
-        let sink = Arc::new(RecordingSink::default());
-        let shared = SharedBuilderTransactionEventSink::new(sink.clone());
+    #[tokio::test]
+    async fn emits_builder_decision_event_with_safe_context_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let writer = writer(path.clone()).await;
+        let shared = SharedBuilderTransactionEventSink::new(writer.clone());
         let tx_hash = TxHash::repeat_byte(0x11);
         let mut data = Map::new();
         add_budget_fields(
@@ -366,7 +329,7 @@ mod tests {
             data,
         );
 
-        let events = sink.events.lock().unwrap();
+        let events = read_events(path, writer).await;
         assert_eq!(events.len(), 1);
         let event = &events[0];
         assert_eq!(event.producer, TransactionEventProducer::BaseBuilder);
@@ -385,10 +348,12 @@ mod tests {
         assert!(!serialized.contains("raw_tx"));
     }
 
-    #[test]
-    fn emits_builder_payload_event_with_block_join_fields() {
-        let sink = Arc::new(RecordingSink::default());
-        let shared = SharedBuilderTransactionEventSink::new(sink.clone());
+    #[tokio::test]
+    async fn emits_builder_payload_event_with_block_join_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let writer = writer(path.clone()).await;
+        let shared = SharedBuilderTransactionEventSink::new(writer.clone());
         let mut ctx = context();
         let block_hash = B256::repeat_byte(0xbb);
         ctx.block_hash = Some(block_hash);
@@ -402,7 +367,7 @@ mod tests {
             Map::from_iter([("transaction_count".to_string(), json!(0))]),
         );
 
-        let events = sink.events.lock().unwrap();
+        let events = read_events(path, writer).await;
         assert_eq!(events.len(), 1);
         let event = &events[0];
         assert_eq!(event.event_type, TransactionEventType::BuilderPayloadFinalized);
@@ -415,10 +380,12 @@ mod tests {
         assert!(event.validate().is_ok());
     }
 
-    #[test]
-    fn payload_event_id_includes_flashblock_index_when_present() {
-        let sink = Arc::new(RecordingSink::default());
-        let shared = SharedBuilderTransactionEventSink::new(sink.clone());
+    #[tokio::test]
+    async fn payload_event_id_includes_flashblock_index_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let writer = writer(path.clone()).await;
+        let shared = SharedBuilderTransactionEventSink::new(writer.clone());
         let mut first = context();
         first.flashblock_index = Some(1);
         let mut second = context();
@@ -437,7 +404,7 @@ mod tests {
             Map::new(),
         );
 
-        let events = sink.events.lock().unwrap();
+        let events = read_events(path, writer).await;
         assert_eq!(events.len(), 2);
         assert_ne!(events[0].event_id, events[1].event_id);
         assert_eq!(events[0].data["flashblock_index"], 1);
