@@ -407,23 +407,9 @@ impl RollupConfig {
     /// The activation banner for the Base Azul hardfork, printed when the first block of the fork is built or processed.
     const AZUL_ACTIVATION_BANNER: &str = include_str!("../static/azul_activation_banner.txt");
 
-    fn emit_upgrade_activation(&self, block_number: u64, upgrade: BaseUpgrade) {
-        if let BaseUpgrade::Azul = upgrade {
-            let banner = Self::AZUL_ACTIVATION_BANNER;
-            for line in banner.lines() {
-                tracing::info!(target: "upgrades", "{line}");
-            }
-        }
-
-        tracing::info!(target: "upgrades", block_number, upgrade = upgrade.contract_id(), "Activated upgrade");
-    }
-
-    fn first_logged_upgrade_activation(
-        &self,
-        timestamp: u64,
-        parent_timestamp: u64,
-    ) -> Option<BaseUpgrade> {
-        if self.is_first_ecotone_block(timestamp, parent_timestamp) {
+    /// Logs upgrade activation when the caller knows the actual parent timestamp.
+    pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64, parent_timestamp: u64) {
+        let upgrade = if self.is_first_ecotone_block(timestamp, parent_timestamp) {
             Some(BaseUpgrade::Ecotone)
         } else if self.is_first_fjord_block(timestamp, parent_timestamp) {
             Some(BaseUpgrade::Fjord)
@@ -443,23 +429,19 @@ impl RollupConfig {
             Some(BaseUpgrade::Cobalt)
         } else {
             None
-        }
-    }
+        };
 
-    /// Logs upgrade activation when the caller knows the actual parent timestamp.
-    pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64, parent_timestamp: u64) {
-        if let Some(upgrade) = self.first_logged_upgrade_activation(timestamp, parent_timestamp) {
-            self.emit_upgrade_activation(block_number, upgrade);
-        }
-    }
+        let Some(upgrade) = upgrade else {
+            return;
+        };
 
-    /// Logs upgrade activation using block-time estimation when the parent timestamp is unknown.
-    pub fn log_upgrade_activation_estimated(&self, block_number: u64, timestamp: u64) {
-        self.log_upgrade_activation(
-            block_number,
-            timestamp,
-            timestamp.saturating_sub(self.block_time),
-        );
+        if let BaseUpgrade::Azul = upgrade {
+            for line in Self::AZUL_ACTIVATION_BANNER.lines() {
+                tracing::info!(target: "upgrades", "{line}");
+            }
+        }
+
+        tracing::info!(target: "upgrades", block_number, upgrade = upgrade.contract_id(), "Activated upgrade");
     }
 }
 
