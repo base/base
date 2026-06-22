@@ -12,6 +12,7 @@ permissions:
   contents: read
   # This allows posting comments and reviews
   # It does not allow pushing any commits or modifying any files in the repo
+  issues: write
   pull-requests: write
 
 jobs:
@@ -92,12 +93,90 @@ jobs:
             - Rust idioms: &String instead of &str, &Vec<T> instead of &[T], manual implementations of standard traits, needless lifetime annotations
 
             COMMENT MANAGEMENT:
-            Before posting your review summary, clean up previous summary comments from earlier runs:
-            1. Delete your previous summary comments by running: gh pr comment ${{ github.event.pull_request.number }} --delete-last --yes
-            2. Repeat step 1 until it returns an error (no more comments to delete)
-            3. Then post your new summary using: gh pr comment ${{ github.event.pull_request.number }} --body "<!-- CLAUDE_REVIEW_SUMMARY -->\n\n<your summary>"
-            Note: --delete-last only deletes your own top-level comments, not inline review comments or other users' comments.
+            When posting your review summary, do not delete previous comments with `gh pr comment --delete-last`.
+            Instead, upsert one top-level summary comment from github-actions[bot] whose body starts with:
+            <!-- CLAUDE_REVIEW_SUMMARY:v1 -->
+            Use `gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments` to find the existing comment by marker.
+            If it exists, update it with `gh api repos/${{ github.repository }}/issues/comments/<comment-id> -X PATCH --raw-field body="<body>"`.
+            If it does not exist, create it with `gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --raw-field body="<body>"`.
 
           claude_args: |
             --model claude-opus-4-6-default
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --edit-last --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --delete-last:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/issues/comments/*:*)"
+
+  ai-blocking-review:
+    name: AI Blocking Review
+    # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
+    # It will not work on other runners
+    # Skip for external contributor PRs (forks) — secrets and runner group are unavailable
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on:
+      group: BaseRunnerGroup
+    steps:
+      - name: Harden the runner (Block unauthorized outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            bun.sh:443
+            github.com:443
+            objects.githubusercontent.com:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+            ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Run blocking AI review
+        id: blocking-review
+        uses: anthropics/claude-code-action@1b8ee3b94104046d71fde52ec3557651ad8c0d71 # v1.0.29
+        env:
+          ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
+        with:
+          anthropic_api_key: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          track_progress: false
+          prompt: |
+            You are reviewing a Pull Request for Base Reth Node — a Rust Ethereum L2 node built on Reth.
+
+            Review PR #${{ github.event.pull_request.number }} in ${{ github.repository }} for CRITICAL and HIGH severity issues only.
+            Current PR head SHA: ${{ github.event.pull_request.head.sha }}
+
+            Severity definitions:
+            - CRITICAL: consensus failure, chain divergence, funds at risk, authorization bypass, signer/key compromise, or deterministic production data corruption.
+            - HIGH: likely production outage, major safety invariant violation, externally triggerable unbounded resource denial-of-service, silent corruption, or severe API/compatibility break.
+            - NONE: no CRITICAL or HIGH issues found.
+
+            Rules:
+            - Ignore style, formatting, medium/low severity issues, missing tests alone, speculative concerns, and non-blocking maintainability feedback.
+            - Every finding must be directly supported by the PR diff and repository context.
+            - Do not post GitHub comments or inline review comments. Return structured output only.
+            - Set `head_sha` exactly to `${{ github.event.pull_request.head.sha }}`.
+            - Set `has_blocking_findings` to true if and only if there is at least one CRITICAL or HIGH finding.
+            - Set `max_severity` to CRITICAL, HIGH, or NONE.
+            - If there are no blocking findings, return an empty `findings` array.
+            - For each finding, include the concrete file path, line when available, evidence, required fix, and a confidence value from 0 to 1.
+
+          claude_args: |
+            --model claude-opus-4-6-default
+            --json-schema '{"type":"object","additionalProperties":false,"properties":{"head_sha":{"type":"string"},"has_blocking_findings":{"type":"boolean"},"max_severity":{"type":"string","enum":["NONE","HIGH","CRITICAL"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"severity":{"type":"string","enum":["HIGH","CRITICAL"]},"title":{"type":"string"},"path":{"type":"string"},"line":{"type":"integer"},"evidence":{"type":"string"},"required_fix":{"type":"string"},"confidence":{"type":"number","minimum":0,"maximum":1}},"required":["severity","title","path","evidence","required_fix","confidence"]}}},"required":["head_sha","has_blocking_findings","max_severity","summary","findings"]}'
+            --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*)"
+
+      - name: Update blocking review comment
+        if: always() && steps.blocking-review.outputs.structured_output != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_JSON: ${{ steps.blocking-review.outputs.structured_output }}
+        run: .github/scripts/update-ai-blocking-review-comment.sh
+
+      - name: Enforce blocking review
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_JSON: ${{ steps.blocking-review.outputs.structured_output }}
+        run: .github/scripts/enforce-ai-blocking-review.sh
