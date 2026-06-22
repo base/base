@@ -55,7 +55,7 @@ pub struct RegistrarConfig {
     pub max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     pub max_tx_retries: u32,
-    /// Delay between transaction submission retries.
+    /// Initial delay between transaction submission retries.
     pub tx_retry_delay: Duration,
     /// Grace window for registering recently launched unhealthy instances.
     pub unhealthy_registration_window: Duration,

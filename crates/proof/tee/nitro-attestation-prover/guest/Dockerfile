@@ -58,13 +58,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 #   - curl, ca-certificates, xz-utils: fetch rustup / rzup / just installers.
 #   - gcc, libc6-dev, pkg-config, libssl-dev: link proc-macro dylibs and
 #     compile the host-side `compute-image-id` helper.
-#   - mold: the workspace .cargo/config.toml at <repo>/.cargo/config.toml
-#     may force `-C link-arg=-fuse-ld=mold` for the host target, which
-#     cargo discovers when walking up from any subdir. Required only by the
-#     host-side compute-image-id binary; the guest ELF targets
-#     riscv32im-risc0-zkvm-elf and uses rust-lld, so it is unaffected by the
-#     choice of host linker (i.e. installing mold here does not change the
-#     guest ELF bytes).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -73,7 +66,6 @@ RUN apt-get update \
         git \
         libc6-dev \
         libssl-dev \
-        mold \
         pkg-config \
         xz-utils \
     && rm -rf /var/lib/apt/lists/*

@@ -38,7 +38,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           sp1: "true"
           rust-cache-shared-key: "manual-succinct-vkeys"
           rust-cache-save: "false"

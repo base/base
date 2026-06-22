@@ -28,10 +28,13 @@ use crate::{DiscoveryResolution, RegistrarError, RegistrarMetrics, Result};
 /// errors before giving up.
 pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
 
-/// Default delay between transaction submission retries in seconds.
+/// Default initial delay between transaction submission retries in seconds.
 pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 
 const ATTESTATION_NONCE_DOMAIN: &[u8] = b"base-proof-tee-registrar:attestation-nonce:v1";
+
+/// Maximum exponential backoff delay between transaction submission retries.
+const MAX_TX_RETRY_BACKOFF_DELAY: Duration = Duration::from_secs(60);
 
 /// State for a proof-generation task currently in-flight.
 ///
@@ -352,16 +355,22 @@ where
                         }
 
                         let retry = retry + 1;
+                        let max_retry_delay = MAX_TX_RETRY_BACKOFF_DELAY.max(self.tx_retry_delay);
+                        let retry_delay = self
+                            .tx_retry_delay
+                            .saturating_mul(2_u32.saturating_pow(retry - 1))
+                            .min(max_retry_delay);
                         warn!(
                             error = %e,
                             signer = %signer_address,
                             retry,
                             max_retries = self.max_tx_retries,
+                            delay = ?retry_delay,
                             "tx submission failed, retrying with same proof"
                         );
 
                         if signer_cancel
-                            .run_until_cancelled(tokio::time::sleep(self.tx_retry_delay))
+                            .run_until_cancelled(tokio::time::sleep(retry_delay))
                             .await
                             .is_none()
                         {
@@ -925,6 +934,38 @@ mod tests {
             let sent: Vec<_> =
                 manager.tx_manager.take_sent().into_iter().map(|(_, data)| data).collect();
             assert!(sent.windows(2).all(|w| w[0] == w[1]), "calldata mismatch: {sent:?}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn register_signer_backs_off_between_tx_retries() {
+        for (case, max_retries, retry_delay, errors, expected_sends, expected_elapsed) in [
+            ("exponential", 3, Duration::from_secs(1), 3, 4, Duration::from_secs(7)),
+            ("capped", 4, Duration::from_secs(30), 4, 5, Duration::from_secs(210)),
+        ] {
+            let manager = SignerManager::new(
+                RecordingProofProvider::default(),
+                MockRegistry::default(),
+                RecordingTxManager::with_errors(
+                    (1..=errors)
+                        .map(|retry| TxManagerError::Rpc(format!("transient {retry}")))
+                        .collect(),
+                ),
+                TEST_REGISTRY_ADDRESS,
+                DEFAULT_MAX_CONCURRENCY,
+                max_retries,
+                retry_delay,
+            );
+            let start = tokio::time::Instant::now();
+
+            let result = register(&manager, &CancellationToken::new()).await;
+
+            assert!(
+                result.is_ok(),
+                "{case}: retryable errors should eventually succeed: {result:?}"
+            );
+            assert_eq!(manager.tx_manager.send_count(), expected_sends, "{case}");
+            assert_eq!(start.elapsed(), expected_elapsed, "{case}");
         }
     }
 

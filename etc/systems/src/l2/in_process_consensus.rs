@@ -217,7 +217,7 @@ impl InProcessConsensus {
                 result.wrap_err("startup channel closed")?
                       .wrap_err("consensus node failed during startup")?;
             }
-            result = wait_for_rpc(rpc_addr) => {
+            result = wait_for_rpc(rpc_addr, "consensus RPC") => {
                 result?;
             }
         }
@@ -350,7 +350,7 @@ fn extract_signing_key(keypair: &libp2p::identity::Keypair) -> Result<k256::ecds
 }
 
 /// Polls the RPC endpoint until it responds or times out.
-async fn wait_for_rpc(addr: SocketAddr) -> Result<()> {
+pub(super) async fn wait_for_rpc(addr: SocketAddr, description: &str) -> Result<()> {
     let url = format!("http://{}:{}", addr.ip(), addr.port());
     let client = reqwest::Client::new();
 
@@ -358,7 +358,7 @@ async fn wait_for_rpc(addr: SocketAddr) -> Result<()> {
     for i in 0..60 {
         match client.get(&url).send().await {
             Ok(_) => {
-                info!(attempts = i + 1, "consensus RPC is ready");
+                info!(attempts = i + 1, description = %description, "RPC endpoint is ready");
                 return Ok(());
             }
             Err(e) => {
@@ -368,8 +368,11 @@ async fn wait_for_rpc(addr: SocketAddr) -> Result<()> {
         }
     }
 
-    Err(eyre::eyre!(
-        "Consensus RPC at {url} did not become ready within 30s: {}",
-        last_err.unwrap()
-    ))
+    let Some(last_err) = last_err else {
+        return Err(eyre::eyre!(
+            "{description} at {url} did not become ready within 30s: no readiness attempts were made"
+        ));
+    };
+
+    Err(eyre::eyre!("{description} at {url} did not become ready within 30s: {last_err}"))
 }

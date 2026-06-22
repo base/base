@@ -21,21 +21,12 @@ use crate::{
 /// Static parameters needed to build proposer proof requests.
 #[derive(Debug, Clone, Copy)]
 pub struct ProofDispatcherConfig {
-    /// Address of the proposer that will submit the proof on-chain.
+    /// Address of the proposer that will submit the proof onchain.
     pub proposer_address: Address,
     /// Number of L2 blocks between intermediate output root checkpoints.
     pub intermediate_block_interval: u64,
     /// Expected TEE enclave image hash.
     pub tee_image_hash: B256,
-}
-
-/// Runtime parameters for dispatcher orchestration.
-#[derive(Debug, Clone, Copy)]
-pub struct ProofDispatcherRuntimeConfig {
-    /// Number of L2 blocks between output proposals.
-    pub block_interval: u64,
-    /// Maximum dispatch/proof failures before asking the caller to drop recovery state.
-    pub max_retries: u32,
 }
 
 /// Mutable dispatcher-side orchestration state.
@@ -47,13 +38,6 @@ pub struct ProofDispatcherState {
     pub cursor: Option<RecoveredState>,
     /// Per-target proof/dispatch retry counts.
     pub retry_counts: HashMap<u64, u32>,
-}
-
-/// Result of a dispatcher tick.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProofDispatcherTickResult {
-    /// True when the retry policy was exhausted and recovery should be refreshed.
-    pub drop_recovery_cache: bool,
 }
 
 /// Outcome of a single target dispatch attempt after retry accounting.
@@ -79,6 +63,10 @@ pub enum ProofDispatchAttempt {
 }
 
 /// Builds and dispatches proposer TEE proof requests.
+///
+/// This type intentionally holds only shared clients and static config. Mutable
+/// cursor and retry state belongs in [`ProofDispatcherState`] so cloned
+/// dispatchers do not diverge.
 pub struct ProofDispatcher<L1, L2, R>
 where
     L1: L1Provider,
@@ -260,9 +248,10 @@ where
         state: &mut ProofDispatcherState,
         recovered: RecoveredState,
         safe_head: u64,
-        runtime: ProofDispatcherRuntimeConfig,
+        block_interval: u64,
+        max_retries: u32,
         cancel: &CancellationToken,
-    ) -> ProofDispatcherTickResult {
+    ) -> bool {
         state.retry_counts.retain(|&target, _| target > recovered.l2_block_number);
 
         if state.recovered != Some(recovered) || state.cursor.is_none() {
@@ -279,7 +268,7 @@ where
             }
 
             let Some(target_block) =
-                Self::next_target_block(current.l2_block_number, runtime.block_interval)
+                Self::next_target_block(current.l2_block_number, block_interval)
             else {
                 break;
             };
@@ -304,7 +293,7 @@ where
                     &current,
                     claimed_l2_output_root,
                     state,
-                    runtime.max_retries,
+                    max_retries,
                     true,
                 )
                 .await
@@ -323,7 +312,7 @@ where
         }
 
         Metrics::pipeline_retries().set(state.retry_counts.values().sum::<u32>() as f64);
-        ProofDispatcherTickResult { drop_recovery_cache }
+        drop_recovery_cache
     }
 
     /// Builds and dispatches a fresh root-derived request with retry accounting.
@@ -570,17 +559,9 @@ mod tests {
         let mut state = ProofDispatcherState::new();
         let cancel = CancellationToken::new();
 
-        let result = dispatcher
-            .tick(
-                &mut state,
-                recovered(),
-                400,
-                ProofDispatcherRuntimeConfig { block_interval: 100, max_retries: 3 },
-                &cancel,
-            )
-            .await;
+        let result = dispatcher.tick(&mut state, recovered(), 400, 100, 3, &cancel).await;
 
-        assert!(!result.drop_recovery_cache);
+        assert!(!result);
         assert_eq!(requester.requests.lock().unwrap().len(), 3);
         assert_eq!(state.cursor.map(|cursor| cursor.l2_block_number), Some(400));
         assert!(state.retry_counts.is_empty());
@@ -604,17 +585,9 @@ mod tests {
             retry_counts: HashMap::new(),
         };
 
-        let result = dispatcher
-            .tick(
-                &mut state,
-                recovered(),
-                200,
-                ProofDispatcherRuntimeConfig { block_interval: 100, max_retries: 3 },
-                &cancel,
-            )
-            .await;
+        let result = dispatcher.tick(&mut state, recovered(), 200, 100, 3, &cancel).await;
 
-        assert!(!result.drop_recovery_cache);
+        assert!(!result);
         assert_eq!(state.recovered, Some(recovered()));
         assert_eq!(state.cursor.map(|cursor| cursor.l2_block_number), Some(200));
         assert_eq!(requester.requests.lock().unwrap().len(), 1);

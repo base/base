@@ -13,9 +13,7 @@ mod classifier;
 pub use classifier::KnownRevert;
 
 mod submission;
-pub use submission::{
-    ChallengeProofSubmission, NullifyProofSubmission, VerifyProposalProofSubmission,
-};
+pub use submission::{ChallengeProofSubmission, NullifyProofSubmission};
 
 mod submitter;
 pub use submitter::AggregateProofSubmitter;

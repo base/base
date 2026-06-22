@@ -74,7 +74,6 @@ jobs:
         with:
           free-disk: "true"
           foundry: ${{ matrix.settings.smoke_test && 'true' || 'false' }}
-          mold: "true"
           native-deps: "true"
           rust-cache-shared-key: "base-anvil-package"
 

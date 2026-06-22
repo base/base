@@ -128,7 +128,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           sp1: "true"
           rust-cache-shared-key: "stable"
@@ -157,7 +156,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           components: clippy
           rust-cache-shared-key: "stable"
@@ -186,7 +184,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           sp1: "true"
           tools: cargo-nextest
@@ -227,7 +224,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           rust-cache-shared-key: "stable"
       - run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
 
@@ -298,7 +294,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           sp1: "true"
           tools: cargo-nextest
