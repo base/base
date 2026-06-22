@@ -37,7 +37,7 @@ pub struct ProofCollectorState {
 pub struct ProofCollectorTargetState {
     /// Proof polling and dispatch transport retry count.
     pub retry_count: u32,
-    /// Accepted discard-specific proof retry count.
+    /// Retry-specific proof request attempt count.
     pub discard_retry_count: u32,
     /// Active retry-specific prover-service session.
     pub retry_session: Option<String>,
@@ -109,6 +109,44 @@ impl ProofCollectorState {
                 attempt = attempts,
                 error = %error,
                 "Proof failed, re-dispatching"
+            );
+            true
+        }
+    }
+
+    /// Records a retry-specific dispatch failure and returns whether retrying is still allowed.
+    #[must_use]
+    pub fn handle_retry_dispatch_failure(
+        &mut self,
+        target: u64,
+        error: ProposerError,
+        max_retries: u32,
+        cache: &mut Option<ProofRecoveryCache>,
+    ) -> bool {
+        Metrics::errors_total(error.metric_label()).increment(1);
+        Metrics::proof_retries_total().increment(1);
+
+        let attempts = {
+            let state = self.target_for(target);
+            state.discard_retry_count += 1;
+            state.discard_retry_count
+        };
+        if attempts >= max_retries {
+            error!(
+                target_block = target,
+                attempts,
+                error = %error,
+                "Retry-specific proof dispatch failed after max retries, dropping cached recovery"
+            );
+            let _ = self.target.take_if(|(block, _)| *block == target);
+            *cache = None;
+            false
+        } else {
+            warn!(
+                target_block = target,
+                attempt = attempts,
+                error = %error,
+                "Retry-specific proof dispatch failed, will retry next iteration"
             );
             true
         }
@@ -282,7 +320,6 @@ where
                         claimed_l2_output_root,
                         state,
                         cache,
-                        true,
                     )
                     .await;
             }
@@ -328,7 +365,6 @@ where
                                     claimed_l2_output_root,
                                     state,
                                     cache,
-                                    true,
                                 )
                                 .await;
                         }
@@ -351,7 +387,6 @@ where
                                 claimed_l2_output_root,
                                 state,
                                 cache,
-                                true,
                             )
                             .await;
                     }
@@ -374,54 +409,15 @@ where
                     if !state.handle_proof_failure(target_block, error, self.max_retries, cache) {
                         break true;
                     }
-                    if state.target(target_block).and_then(|target| target.retry_session.as_ref())
-                        == Some(&session_id)
-                    {
-                        let dispatch = self
-                            .dispatch_discard_retry(
-                                target_block,
-                                &current,
-                                claimed_l2_output_root,
-                                state,
-                                cache,
-                                false,
-                            )
-                            .await;
-                        break dispatch;
-                    } else {
-                        let dispatch = self
-                            .dispatcher
-                            .dispatch_for(target_block, &current, claimed_l2_output_root)
-                            .await;
-                        Metrics::proof_dispatch_total(dispatch.metric_label()).increment(1);
-                        match dispatch {
-                            ProofDispatchAttempt::Accepted(session_id) => {
-                                info!(
-                                    target_block,
-                                    session_id = %session_id,
-                                    from_block = current.l2_block_number,
-                                    "Proof request accepted by prover service"
-                                );
-                            }
-                            ProofDispatchAttempt::BuildFailed(error) => {
-                                error!(
-                                    target_block,
-                                    error = %error,
-                                    "Failed to build proof request for root retry"
-                                );
-                                break false;
-                            }
-                            ProofDispatchAttempt::DispatchFailed(error) => {
-                                warn!(
-                                    target_block,
-                                    error = %error,
-                                    "Immediate re-dispatch failed after failed proof session"
-                                );
-                                break false;
-                            }
-                        }
-                    }
-                    break false;
+                    break self
+                        .dispatch_discard_retry(
+                            target_block,
+                            &current,
+                            claimed_l2_output_root,
+                            state,
+                            cache,
+                        )
+                        .await;
                 }
             }
         };
@@ -548,7 +544,6 @@ where
         claimed_l2_output_root: B256,
         state: &mut ProofCollectorState,
         cache: &mut Option<ProofRecoveryCache>,
-        count_dispatch_failure: bool,
     ) -> bool {
         let current_attempt =
             state.target(target_block).map_or(0, |target| target.discard_retry_count);
@@ -565,7 +560,7 @@ where
         }
 
         let attempt = current_attempt + 1;
-        // Keep the root before dispatch so restart can retry a failed discard dispatch.
+        // Keep the root so the next tick can retry a failed retry-specific dispatch.
         state.target_for(target_block).pending_discard_root = Some(claimed_l2_output_root);
 
         let dispatch = self
@@ -589,25 +584,12 @@ where
                 false
             }
             ProofDispatchAttempt::BuildFailed(error) => {
-                warn!(target_block, error = %error, "Failed to build discard retry proof request");
                 state.target_for(target_block).retry_session = None;
-                true
+                !state.handle_retry_dispatch_failure(target_block, error, self.max_retries, cache)
             }
             ProofDispatchAttempt::DispatchFailed(error) => {
                 state.target_for(target_block).retry_session = None;
-                if !count_dispatch_failure {
-                    warn!(
-                        target_block,
-                        error = %error,
-                        "Immediate discard retry dispatch failed after failed proof session"
-                    );
-                    return true;
-                }
-                if state.handle_proof_failure(target_block, error, self.max_retries, cache) {
-                    false
-                } else {
-                    true
-                }
+                !state.handle_retry_dispatch_failure(target_block, error, self.max_retries, cache)
             }
         }
     }
@@ -871,15 +853,14 @@ mod tests {
                 B256::repeat_byte(0xaa),
                 &mut state,
                 &mut cache,
-                true,
             )
             .await;
 
-        assert!(restart);
+        assert!(!restart);
         let target = state.target(target_block).expect("target state");
         assert!(target.retry_session.is_none());
         assert_eq!(target.pending_discard_root, Some(B256::repeat_byte(0xaa)));
-        assert_eq!(target.discard_retry_count, 1);
+        assert_eq!(target.discard_retry_count, 2);
         assert_eq!(target.retry_count, 0);
         assert!(cache.is_some());
     }
@@ -904,7 +885,6 @@ mod tests {
                 claimed_root,
                 &mut state,
                 &mut cache,
-                true,
             )
             .await;
 
@@ -912,6 +892,8 @@ mod tests {
         let target = state.target(target_block).expect("target state");
         assert!(target.retry_session.is_none());
         assert_eq!(target.pending_discard_root, Some(claimed_root));
+        assert_eq!(target.discard_retry_count, 1);
+        assert_eq!(target.retry_count, 0);
         assert!(cache.is_some());
     }
 
@@ -946,7 +928,6 @@ mod tests {
                 claimed_root,
                 &mut state,
                 &mut cache,
-                true,
             )
             .await;
 
@@ -954,7 +935,8 @@ mod tests {
         let target = state.target(target_block).expect("target state");
         assert!(target.retry_session.is_none());
         assert_eq!(target.pending_discard_root, Some(claimed_root));
-        assert_eq!(target.retry_count, 1);
+        assert_eq!(target.discard_retry_count, 1);
+        assert_eq!(target.retry_count, 0);
         assert!(cache.is_some());
     }
 
@@ -979,6 +961,8 @@ mod tests {
         assert!(!result);
         let target = state.target(target_block).expect("target state");
         assert_eq!(target.retry_count, 1);
+        assert_eq!(target.discard_retry_count, 1);
+        assert_eq!(target.pending_discard_root, Some(claimed_root));
         assert!(cache.is_some());
     }
 
@@ -1004,6 +988,35 @@ mod tests {
         assert!(!result);
         let target = state.target(target_block).expect("target state");
         assert_eq!(target.retry_count, 1);
+        assert_eq!(target.discard_retry_count, 1);
+        assert_eq!(target.pending_discard_root, Some(claimed_root));
+        assert!(cache.is_some());
+    }
+
+    #[tokio::test]
+    async fn failed_root_session_dispatches_retry_specific_session() {
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(target_block as u8);
+        let requester = failed_session_requester(claimed_root);
+        let orchestrator = make_orchestrator(OrchestratorParts {
+            proof_requester: requester.clone(),
+            rollup_client: rollup_client(target_block, Some(claimed_root)),
+            max_retries: 2,
+            ..Default::default()
+        });
+        let mut state = ProofCollectorState::default();
+        let mut cache = cache();
+        let cancel = CancellationToken::new();
+
+        let result =
+            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+
+        assert!(!result);
+        let target = state.target(target_block).expect("target state");
+        let retry_session = target.retry_session.as_ref().expect("retry session");
+        assert_ne!(retry_session, &ProposerProofAdapter::tee_session_id_for_root(claimed_root));
+        assert_eq!(target.discard_retry_count, 1);
+        assert!(requester.requests.lock().unwrap().contains_key(retry_session));
         assert!(cache.is_some());
     }
 
@@ -1026,7 +1039,6 @@ mod tests {
                 B256::repeat_byte(0xaa),
                 &mut state,
                 &mut cache,
-                true,
             )
             .await;
 
