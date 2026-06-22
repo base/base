@@ -7,6 +7,7 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Typed2718};
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_chains::Upgrades;
@@ -56,13 +57,20 @@ where
 
         // Cobalt-gate EIP-8130 (account-abstraction) admission so the RPC ingress
         // and the txpool validator agree: rejected before Cobalt, accepted once
-        // active. The block-of-head timestamp drives the gate.
+        // active. The block-of-head timestamp drives the gate. A missing latest
+        // header is an explicit error (not timestamp 0): defaulting to 0 would
+        // silently *accept* 8130 before the node has synced any blocks on a chain
+        // with Cobalt activated at timestamp 0 (e.g. a devnet).
         let head_timestamp = self
             .provider()
             .latest_header()
             .map_err(Self::Error::from_eth_err)?
-            .map(|header| header.timestamp())
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                Self::Error::from_eth_err(EthApiError::HeaderNotFound(
+                    BlockNumberOrTag::Latest.into(),
+                ))
+            })?
+            .timestamp();
         BaseInvalidTransactionError::check_eip8130_rpc_admission(
             recovered.ty(),
             self.provider().chain_spec().as_ref(),
