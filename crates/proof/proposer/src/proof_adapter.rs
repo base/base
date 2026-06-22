@@ -60,10 +60,18 @@ impl ProposerProofAdapter {
 
     /// Converts a prover-service TEE proof result into the proposer proof result type.
     pub fn tee_proof_result(result: ProofResult) -> Result<PrimitiveProofResult, ProposerError> {
-        let ProofResult::Tee(result) = result else {
-            return Err(ProposerError::Prover(
-                "expected TEE proof result, got non-TEE proof result".into(),
-            ));
+        let result = match result {
+            ProofResult::Tee(result) => result,
+            ProofResult::Compressed(_) => {
+                return Err(ProposerError::Prover(
+                    "expected TEE proof result, got Compressed".into(),
+                ));
+            }
+            ProofResult::SnarkGroth16(_) => {
+                return Err(ProposerError::Prover(
+                    "expected TEE proof result, got SnarkGroth16".into(),
+                ));
+            }
         };
         if result.tee_kind != TeeKind::AwsNitro {
             return Err(ProposerError::Prover(format!(
@@ -83,9 +91,13 @@ impl ProposerProofAdapter {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_primitives::Proposal;
-    use base_prover_service_protocol::{ProofRequestKind, ProofResult, TeeKind, TeeProofResult};
+    use base_prover_service_protocol::{
+        ProofRequestKind, ProofResult, SnarkGroth16ProofResult, TeeKind, TeeProofResult,
+        ZkProofResult, ZkVm,
+    };
 
     use super::ProposerProofAdapter;
+    use crate::ProposerError;
 
     fn test_request(root: B256) -> base_proof_primitives::ProofRequest {
         base_proof_primitives::ProofRequest {
@@ -165,5 +177,31 @@ mod tests {
                 proposals: vec![proposal]
             }
         );
+    }
+
+    #[test]
+    fn tee_proof_result_reports_wrong_result_variant() {
+        for (result, expected) in [
+            (
+                ProofResult::Compressed(ZkProofResult {
+                    zk_vm: ZkVm::Sp1,
+                    proof: Bytes::from(vec![]),
+                }),
+                "expected TEE proof result, got Compressed",
+            ),
+            (
+                ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                    proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: Bytes::from(vec![]) },
+                }),
+                "expected TEE proof result, got SnarkGroth16",
+            ),
+        ] {
+            let err = ProposerProofAdapter::tee_proof_result(result).unwrap_err();
+            let ProposerError::Prover(message) = err else {
+                panic!("unexpected error: {err:?}");
+            };
+
+            assert_eq!(message, expected);
+        }
     }
 }
