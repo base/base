@@ -14,7 +14,7 @@ use base_common_chains::ChainConfig;
 use base_common_consensus::{BaseTxEnvelope, EIP8130_REJECTION_MSG};
 use base_common_network::Base;
 use base_observability_events::{
-    TransactionEventProducer, TransactionEventType, TransactionEventWriter, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -51,7 +51,6 @@ pub struct IngressService {
     bundle_cache: Cache<B256, ()>,
     send_to_builder: bool,
     cobalt_timestamp: Option<u64>,
-    transaction_event_writer: TransactionEventWriter,
 }
 
 impl std::fmt::Debug for IngressService {
@@ -67,25 +66,6 @@ impl IngressService {
         audit_channel: mpsc::Sender<BundleEvent>,
         builder_tx: broadcast::Sender<MeteringForwardMessage>,
         config: Config,
-    ) -> Self {
-        let transaction_event_writer =
-            TransactionEventWriter::disabled(config.transaction_event_writer_config());
-        Self::new_with_transaction_event_writer(
-            simulation_provider,
-            audit_channel,
-            builder_tx,
-            config,
-            transaction_event_writer,
-        )
-    }
-
-    /// Creates a new ingress service with an explicit transaction event writer.
-    pub fn new_with_transaction_event_writer(
-        simulation_provider: RootProvider<Base>,
-        audit_channel: mpsc::Sender<BundleEvent>,
-        builder_tx: broadcast::Sender<MeteringForwardMessage>,
-        config: Config,
-        transaction_event_writer: TransactionEventWriter,
     ) -> Self {
         let cobalt_timestamp = ChainConfig::by_chain_id(config.chain_id)
             .and_then(|chain_config| chain_config.cobalt_timestamp);
@@ -105,7 +85,6 @@ impl IngressService {
             bundle_cache,
             send_to_builder: config.send_to_builder,
             cobalt_timestamp,
-            transaction_event_writer,
         }
     }
 }
@@ -364,7 +343,6 @@ impl IngressService {
         bundle_id: Option<Uuid>,
     ) {
         Self::emit_transaction_event_with_data(
-            &self.transaction_event_writer,
             event_type,
             tx_hash,
             bundle_hash,
@@ -391,14 +369,7 @@ impl IngressService {
             data.insert("rejection_reason".to_string(), serde_json::json!(reason));
         }
 
-        Self::emit_transaction_event_with_data(
-            &self.transaction_event_writer,
-            event_type,
-            tx_hash,
-            Some(bundle_hash),
-            None,
-            data,
-        );
+        Self::emit_transaction_event_with_data(event_type, tx_hash, Some(bundle_hash), None, data);
     }
 
     fn emit_simulation_failed_event(
@@ -427,7 +398,6 @@ impl IngressService {
             ("rejection_code".to_string(), serde_json::json!("simulation_error")),
         ]);
         Self::emit_transaction_event_with_data(
-            &self.transaction_event_writer,
             TransactionEventType::SimulationFailed,
             tx_hash,
             Some(bundle_hash),
@@ -437,7 +407,6 @@ impl IngressService {
     }
 
     fn emit_transaction_event_with_data(
-        writer: &TransactionEventWriter,
         event_type: TransactionEventType,
         tx_hash: B256,
         bundle_hash: Option<B256>,
@@ -454,7 +423,6 @@ impl IngressService {
         }
 
         if let Err(err) = transaction_event!(
-            writer: Some(writer),
             producer: TransactionEventProducer::IngressRpc,
             event_type: event_type,
             tx_hash: tx_hash,
