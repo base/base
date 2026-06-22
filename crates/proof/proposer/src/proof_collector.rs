@@ -243,7 +243,7 @@ where
                     Metrics::last_collected_block().set(target_block as f64);
 
                     match self.submit_inline(target_block, &current, proof, cache, cancel).await {
-                        Some(recovered) => {
+                        Ok(Some(recovered)) => {
                             state.retry_counts.remove(&target_block);
                             if recovered.l2_block_number > current.l2_block_number {
                                 current = recovered;
@@ -251,8 +251,9 @@ where
                             }
                             break false;
                         }
-                        None if cancel.is_cancelled() => break false,
-                        None => {
+                        Ok(None) if cancel.is_cancelled() => break false,
+                        Err(SubmitAction::RootMismatch) => break true,
+                        Ok(None) | Err(_) => {
                             let count = state.retry_counts.entry(target_block).or_insert(0);
                             if *count >= max_retries {
                                 debug!(
@@ -336,7 +337,7 @@ where
         proof: ProofResult,
         cache: &mut Option<ProofRecoveryCache>,
         cancel: &CancellationToken,
-    ) -> Option<RecoveredState> {
+    ) -> Result<Option<RecoveredState>, SubmitAction> {
         let parent_address = recovered.parent_address;
         info!(target_block, parent_address = %parent_address, "Submitting proof inline");
 
@@ -360,12 +361,12 @@ where
                     timeout_secs = ?self.submit_timeout.map(|timeout| timeout.as_secs()),
                     "Inline submit timed out, restarting pipeline session"
                 );
-                return None;
+                return Ok(None);
             }
             None => {
                 submit_timer.disarm();
                 warn!(target_block, "Inline submit cancelled, restarting pipeline session");
-                return None;
+                return Ok(None);
             }
         };
 
@@ -378,12 +379,12 @@ where
                 warn!(target_block, "Output root mismatch at submit time, restarting pipeline");
                 Metrics::root_mismatch_total().increment(1);
                 *cache = None;
-                return None;
+                return Err(SubmitAction::RootMismatch);
             }
             Err(SubmitAction::Failed(error)) => {
                 Metrics::errors_total(error.metric_label()).increment(1);
                 let invalid_parent_game = matches!(
-                    error,
+                    &error,
                     ProposerError::Submission(ProofSubmissionError::InvalidParentGame)
                 );
                 warn!(
@@ -395,7 +396,7 @@ where
                 if invalid_parent_game {
                     *cache = None;
                 }
-                return None;
+                return Err(SubmitAction::Failed(error));
             }
             Err(SubmitAction::Discard(error)) => {
                 Metrics::errors_total(error.metric_label()).increment(1);
@@ -404,7 +405,7 @@ where
                     error = %error,
                     "Proof discarded by submitter, restarting pipeline to request it again"
                 );
-                return None;
+                return Err(SubmitAction::Discard(error));
             }
             Ok(()) => {
                 drop(submit_timer);
@@ -420,10 +421,10 @@ where
 
         Metrics::last_proposed_block().set(target_block as f64);
         match self.recovery.recover_latest_state(cache).await {
-            Ok(recovered) => Some(recovered),
+            Ok(recovered) => Ok(Some(recovered)),
             Err(e) => {
                 warn!(error = %e, "Failed to recover state after inline submit");
-                None
+                Ok(None)
             }
         }
     }
@@ -441,7 +442,13 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy_primitives::{Address, B256};
+    use async_trait::async_trait;
     use base_proof_primitives::ProofRequest;
+    use base_prover_service_client::ProverServiceClientError;
+    use base_prover_service_protocol::{
+        GetProofResponse, ListProofsRequest, ListProofsResponse, ProofResult as ApiProofResult,
+        ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+    };
 
     use super::*;
     use crate::{
@@ -477,6 +484,48 @@ mod tests {
     }
 
     const BLOCK_INTERVAL: u64 = 100;
+
+    #[derive(Debug)]
+    struct StaleProofRequester {
+        target_block: u64,
+        proof_root: B256,
+    }
+
+    #[async_trait]
+    impl ProofRequesterProvider for StaleProofRequester {
+        async fn prove_block_range(
+            &self,
+            _request: ProveBlockRangeRequest,
+        ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+            unimplemented!("collector stale-proof test does not dispatch proofs")
+        }
+
+        async fn get_proof(
+            &self,
+            _request: GetProofRequest,
+        ) -> Result<GetProofResponse, ProverServiceClientError> {
+            let mut aggregate_proposal = test_proposal(self.target_block);
+            aggregate_proposal.output_root = self.proof_root;
+            let mut proposal = test_proposal(self.target_block);
+            proposal.output_root = self.proof_root;
+            Ok(GetProofResponse {
+                status: ProofStatus::Succeeded,
+                error_message: None,
+                result: Some(ApiProofResult::Tee(TeeProofResult {
+                    aggregate_proposal,
+                    proposals: vec![proposal],
+                    tee_kind: TeeKind::AwsNitro,
+                })),
+            })
+        }
+
+        async fn list_proofs(
+            &self,
+            _request: ListProofsRequest,
+        ) -> Result<ListProofsResponse, ProverServiceClientError> {
+            unimplemented!("collector stale-proof test does not list proofs")
+        }
+    }
 
     fn make_orchestrator(
         proof_requester: Arc<dyn ProofRequesterProvider>,
@@ -538,17 +587,44 @@ mod tests {
             factory,
         );
         let proposal = test_proposal(200);
-        let proof =
-            ProofResult::Tee { aggregate_proposal: proposal.clone(), proposals: vec![proposal] };
-        let mut cache = cache();
+        let proof = ProofResult::Tee {
+            aggregate_proposal: proposal,
+            proposals: (101..=200).map(test_proposal).collect(),
+        };
+        let mut cache = None;
         let cancel = CancellationToken::new();
 
         assert!(
             orchestrator
                 .submit_inline(200, &recovered(100), proof, &mut cache, &cancel)
                 .await
+                .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn root_mismatch_restarts_without_counting_retry_budget() {
+        let target_block = 200;
+        let canonical_root = B256::repeat_byte(0xaa);
+        let stale_root = B256::repeat_byte(0xbb);
+        let orchestrator = make_orchestrator(
+            Arc::new(StaleProofRequester { target_block, proof_root: stale_root }),
+            rollup_client(target_block, Some(canonical_root)),
+            Arc::new(MockOutputProposer::default()),
+            MockDisputeGameFactory::with_games(vec![]),
+        );
+        let mut cache = cache();
+        let mut state = ProofCollectorState::new();
+        let cancel = CancellationToken::new();
+
+        assert!(
+            orchestrator
+                .tick(&mut state, &mut cache, recovered(100), target_block, 1, &cancel)
+                .await
+        );
+        assert!(cache.is_none());
+        assert!(state.retry_counts.is_empty());
     }
 
     #[tokio::test]
