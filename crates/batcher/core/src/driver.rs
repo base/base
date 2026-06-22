@@ -32,7 +32,7 @@ where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
-    TM: TxManager,
+    TM: TxManager + 'static,
     TC: ThrottleClient,
     L: L1HeadSource,
 {
@@ -76,7 +76,7 @@ where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
-    TM: TxManager,
+    TM: TxManager + 'static,
     TC: ThrottleClient,
     L: L1HeadSource,
 {
@@ -149,6 +149,7 @@ where
                 tx_manager,
                 config.inbox,
                 config.max_pending_transactions,
+                config.alt_da,
             ),
             throttle,
             l1_head_source: Some(l1_head_source),
@@ -743,6 +744,7 @@ mod tests {
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
+                alt_da: None,
             },
             DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
             QueuedL1HeadSource::new(l1_events),

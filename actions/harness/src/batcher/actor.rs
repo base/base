@@ -174,6 +174,7 @@ impl<S: L2BlockProvider> Batcher<S> {
                 max_pending_transactions: 16,
                 drain_timeout: Duration::from_secs(10),
                 force_blobs_when_throttling: true,
+                alt_da: None,
             },
             DaThrottle::new(throttle, Arc::new(NoopThrottleClient)),
             l1_source,

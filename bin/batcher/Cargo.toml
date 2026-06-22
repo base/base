@@ -18,6 +18,8 @@ workspace = true
 [dependencies]
 url.workspace = true
 eyre.workspace = true
+async-trait.workspace = true
+base-alt-da.workspace = true
 base-protocol.workspace = true
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true

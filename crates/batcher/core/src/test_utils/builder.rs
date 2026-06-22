@@ -80,6 +80,7 @@ impl DriverFixture {
                 max_pending_transactions: max_pending,
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
+                alt_da: None,
             },
             DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,

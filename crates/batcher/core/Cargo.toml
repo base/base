@@ -24,6 +24,7 @@ base-common-consensus = { workspace = true, features = ["std"] }
 # external
 auto_impl.workspace = true
 futures.workspace = true
+async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
@@ -32,7 +33,6 @@ tokio = { workspace = true, features = ["sync", "macros", "rt"] }
 derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
 
 # optional — activated by the `test-utils` feature
-async-trait = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, features = ["std"], optional = true }
 alloy-rpc-types-eth = { workspace = true, features = ["std"], optional = true }
 
@@ -71,5 +71,4 @@ test-utils = [
 	"base-runtime/test-utils",
 	"dep:alloy-consensus",
 	"dep:alloy-rpc-types-eth",
-	"dep:async-trait",
 ]
