@@ -245,7 +245,7 @@ mod tests {
         let factory: Arc<dyn DisputeGameFactoryClient> =
             Arc::new(MockDisputeGameFactory::with_games(vec![]));
         let verifier = Arc::new(MockAggregateVerifier::default());
-        let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer);
+        let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer::default());
         let config = DriverConfig {
             poll_interval: Duration::from_millis(10),
             max_retries: 1,

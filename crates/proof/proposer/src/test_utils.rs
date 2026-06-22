@@ -533,9 +533,19 @@ impl ProofRequesterProvider for MockProofRequester {
     }
 }
 
-/// Mock output proposer that always succeeds.
-#[derive(Debug)]
-pub struct MockOutputProposer;
+/// Mock output proposer that succeeds unless configured with a create error.
+#[derive(Debug, Default)]
+pub struct MockOutputProposer {
+    /// Error returned by the next `propose_output` call.
+    pub create_error: std::sync::Mutex<Option<ProposerError>>,
+}
+
+impl MockOutputProposer {
+    /// Creates a mock that fails the next output proposal.
+    pub fn with_create_error(error: ProposerError) -> Self {
+        Self { create_error: std::sync::Mutex::new(Some(error)) }
+    }
+}
 
 #[async_trait]
 impl OutputProposer for MockOutputProposer {
@@ -545,6 +555,9 @@ impl OutputProposer for MockOutputProposer {
         _parent_address: Address,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
+        if let Some(error) = self.create_error.lock().unwrap().take() {
+            return Err(error);
+        }
         Ok(())
     }
 

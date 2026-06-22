@@ -277,7 +277,8 @@ mod tests {
             Arc::new(MockProofRequester::default());
         let verifier: Arc<dyn base_proof_contracts::AggregateVerifierClient> =
             Arc::new(MockAggregateVerifier::default());
-        let output_proposer: Arc<dyn crate::OutputProposer> = Arc::new(MockOutputProposer);
+        let output_proposer: Arc<dyn crate::OutputProposer> =
+            Arc::new(MockOutputProposer::default());
         let config = DriverConfig {
             poll_interval: Duration::from_secs(3600),
             submit_timeout: Some(std::time::Duration::from_secs(60)),

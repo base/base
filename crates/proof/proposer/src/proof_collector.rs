@@ -233,32 +233,32 @@ where
         info!(target_block, parent_address = %parent_address, "Submitting proof inline");
 
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
-        let submit = async {
-            if let Some(timeout) = self.submit_timeout {
-                tokio::time::timeout(
-                    timeout,
-                    self.submitter.submit(&proof, target_block, parent_address),
-                )
-                .await
-                .ok()
-            } else {
-                Some(self.submitter.submit(&proof, target_block, parent_address).await)
+        let result = match cancel
+            .run_until_cancelled(async {
+                let submit = self.submitter.submit(&proof, target_block, parent_address);
+                match self.submit_timeout {
+                    Some(timeout) => tokio::time::timeout(timeout, submit).await,
+                    None => Ok(submit.await),
+                }
+            })
+            .await
+        {
+            Some(Ok(result)) => result,
+            Some(Err(_)) => {
+                submit_timer.disarm();
+                Metrics::submit_timeouts_total().increment(1);
+                warn!(
+                    target_block,
+                    timeout_secs = ?self.submit_timeout.map(|timeout| timeout.as_secs()),
+                    "Inline submit timed out, restarting pipeline session"
+                );
+                return None;
             }
-        };
-        let Some(result) = cancel.run_until_cancelled(submit).await else {
-            submit_timer.disarm();
-            warn!(target_block, "Inline submit cancelled, restarting pipeline session");
-            return None;
-        };
-        let Some(result) = result else {
-            submit_timer.disarm();
-            Metrics::submit_timeouts_total().increment(1);
-            warn!(
-                target_block,
-                timeout_secs = ?self.submit_timeout.map(|timeout| timeout.as_secs()),
-                "Inline submit timed out, restarting pipeline session"
-            );
-            return None;
+            None => {
+                submit_timer.disarm();
+                warn!(target_block, "Inline submit cancelled, restarting pipeline session");
+                return None;
+            }
         };
 
         match result {
@@ -324,8 +324,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256};
-    use async_trait::async_trait;
-    use base_proof_primitives::{ProofRequest, Proposal};
+    use base_proof_primitives::ProofRequest;
     use rstest::rstest;
 
     use super::*;
@@ -340,29 +339,6 @@ mod tests {
             test_proposal, test_sync_status,
         },
     };
-
-    #[derive(Debug)]
-    struct DiscardingOutputProposer;
-
-    #[async_trait]
-    impl OutputProposer for DiscardingOutputProposer {
-        async fn propose_output(
-            &self,
-            _proposal: &Proposal,
-            _parent_address: Address,
-            _intermediate_roots: &[B256],
-        ) -> Result<(), ProposerError> {
-            Err(ProposerError::Submission(ProofSubmissionError::L1OriginTooOld))
-        }
-
-        async fn verify_proposal_proof(
-            &self,
-            _game_address: Address,
-            _proposal: &Proposal,
-        ) -> Result<(), ProposerError> {
-            unreachable!("discarding proposer should not attach existing games")
-        }
-    }
 
     fn recovered(block: u64) -> RecoveredState {
         RecoveredState {
@@ -403,48 +379,33 @@ mod tests {
         }
     }
 
-    struct OrchestratorParts {
+    const BLOCK_INTERVAL: u64 = 100;
+
+    fn make_orchestrator(
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<MockRollupClient>,
         output_proposer: Arc<dyn OutputProposer>,
-        intermediate_block_interval: u64,
         factory_client: MockDisputeGameFactory,
-    }
-
-    const BLOCK_INTERVAL: u64 = 100;
-
-    impl Default for OrchestratorParts {
-        fn default() -> Self {
-            Self {
-                proof_requester: Arc::new(MockProofRequester::default()),
-                rollup_client: rollup_client(0, None),
-                output_proposer: Arc::new(MockOutputProposer),
-                intermediate_block_interval: 100,
-                factory_client: MockDisputeGameFactory::with_games(vec![]),
-            }
-        }
-    }
-
-    fn make_orchestrator(parts: OrchestratorParts) -> ProofCollector<MockL1, MockRollupClient> {
+    ) -> ProofCollector<MockL1, MockRollupClient> {
         let recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {
                 block_interval: BLOCK_INTERVAL,
-                intermediate_block_interval: parts.intermediate_block_interval,
+                intermediate_block_interval: BLOCK_INTERVAL,
                 game_type: 0,
                 allow_non_finalized: false,
                 anchor_state_registry_address: Address::ZERO,
                 scan_concurrency: 1,
             },
-            Arc::clone(&parts.rollup_client),
+            Arc::clone(&rollup_client),
             Arc::new(MockAnchorStateRegistry {
                 anchor_root: test_anchor_root(0),
                 anchor_game: Address::ZERO,
             }),
-            Arc::new(parts.factory_client),
+            Arc::new(factory_client),
         ));
         let submitter = ProofSubmitter::new(
-            parts.output_proposer,
-            Arc::clone(&parts.rollup_client),
+            output_proposer,
+            Arc::clone(&rollup_client),
             Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() }),
             Arc::new(MockDisputeGameFactory::with_games(vec![])),
             Arc::new(MockAggregateVerifier::default()),
@@ -452,7 +413,7 @@ mod tests {
                 proposer_address: Address::repeat_byte(0x04),
                 game_type: 0,
                 block_interval: BLOCK_INTERVAL,
-                intermediate_block_interval: parts.intermediate_block_interval,
+                intermediate_block_interval: BLOCK_INTERVAL,
                 tee_image_hash: B256::repeat_byte(0x05),
                 tee_prover_registry_address: None,
                 output_fetch_concurrency: 1,
@@ -460,8 +421,8 @@ mod tests {
         );
 
         ProofCollector::new(
-            parts.proof_requester,
-            parts.rollup_client,
+            proof_requester,
+            rollup_client,
             submitter,
             recovery,
             BLOCK_INTERVAL,
@@ -473,11 +434,12 @@ mod tests {
     async fn submit_inline_restarts_when_post_submit_recovery_fails() {
         let mut factory = MockDisputeGameFactory::with_games(vec![]);
         factory.games_should_fail = true;
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            rollup_client: rollup_client(200, None),
-            factory_client: factory,
-            ..Default::default()
-        });
+        let orchestrator = make_orchestrator(
+            Arc::new(MockProofRequester::default()),
+            rollup_client(200, None),
+            Arc::new(MockOutputProposer::default()),
+            factory,
+        );
         let proposal = test_proposal(200);
         let proof =
             ProofResult::Tee { aggregate_proposal: proposal.clone(), proposals: vec![proposal] };
@@ -504,11 +466,12 @@ mod tests {
             let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
             requester.failed_sessions.lock().unwrap().insert(session_id, message.to_owned());
         }
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester: requester.clone(),
-            rollup_client: rollup_client(target_block, Some(claimed_root)),
-            ..Default::default()
-        });
+        let orchestrator = make_orchestrator(
+            requester.clone(),
+            rollup_client(target_block, Some(claimed_root)),
+            Arc::new(MockOutputProposer::default()),
+            MockDisputeGameFactory::with_games(vec![]),
+        );
         let mut cache = cache();
         let cancel = CancellationToken::new();
 
@@ -532,12 +495,14 @@ mod tests {
             )))
             .await
             .expect("test setup should dispatch root session");
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester: requester.clone(),
-            rollup_client: rollup_client(target_block, Some(claimed_root)),
-            output_proposer: Arc::new(DiscardingOutputProposer),
-            ..Default::default()
-        });
+        let orchestrator = make_orchestrator(
+            requester.clone(),
+            rollup_client(target_block, Some(claimed_root)),
+            Arc::new(MockOutputProposer::with_create_error(ProposerError::Submission(
+                ProofSubmissionError::L1OriginTooOld,
+            ))),
+            MockDisputeGameFactory::with_games(vec![]),
+        );
         let mut cache = cache();
         let cancel = CancellationToken::new();
 
