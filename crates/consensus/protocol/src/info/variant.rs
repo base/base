@@ -912,7 +912,7 @@ mod tests {
 
     #[test]
     fn test_try_new_ecotone_honors_runtime_pectra_blob_schedule() {
-        let chain_id = 0;
+        let chain_id = 9_100_001;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
         RuntimeUpgradeRegistry::set_activation_timestamp(
             chain_id,
@@ -921,6 +921,7 @@ mod tests {
         );
 
         let rollup_config = RollupConfig {
+            l2_chain_id: chain_id.into(),
             upgrades: UpgradeConfig { ecotone_time: Some(1), ..Default::default() },
             ..Default::default()
         };

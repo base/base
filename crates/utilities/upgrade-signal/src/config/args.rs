@@ -53,13 +53,25 @@ pub struct UpgradeSignalArgs {
         default_value_t = UpgradeSignalBlockTag::Finalized
     )]
     pub l1_block_tag: UpgradeSignalBlockTag,
+
+    /// Enable execution-layer live upgrade-signal metrics.
+    #[arg(long = "upgrade-signal.el-metrics", env = "BASE_NODE_UPGRADE_SIGNAL_EL_METRICS")]
+    pub el_metrics_enabled: bool,
+
+    /// Enable consensus-layer live upgrade-signal metrics.
+    #[arg(long = "upgrade-signal.cl-metrics", env = "BASE_NODE_UPGRADE_SIGNAL_CL_METRICS")]
+    pub cl_metrics_enabled: bool,
 }
 
 impl UpgradeSignalArgs {
     /// Builds a schedule read configuration if the upgrade signal is enabled.
     pub fn config(&self) -> Result<Option<UpgradeSignalConfig>, UpgradeSignalConfigError> {
         let Some(contract_address) = self.contract_address else {
-            if !self.hardfork_ids.is_empty() || !self.apply_hardfork_ids.is_empty() {
+            if !self.hardfork_ids.is_empty()
+                || !self.apply_hardfork_ids.is_empty()
+                || self.el_metrics_enabled
+                || self.cl_metrics_enabled
+            {
                 return Err(UpgradeSignalConfigError::MissingContractAddress);
             }
             return Ok(None);
@@ -76,6 +88,8 @@ impl UpgradeSignalArgs {
             mode: self.mode,
             l1_block_tag: self.l1_block_tag.block_number_or_tag(),
             node_protocol_version: U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION),
+            el_metrics_enabled: self.el_metrics_enabled,
+            cl_metrics_enabled: self.cl_metrics_enabled,
         }))
     }
 
@@ -147,8 +161,16 @@ mod tests {
     use alloy_primitives::address;
     use alloy_rpc_types_eth::BlockNumberOrTag;
     use base_common_genesis::BaseUpgrade;
+    use clap::Parser;
 
     use super::*;
+    use crate::UpgradeSignalMetricLayer;
+
+    #[derive(Parser)]
+    struct CommandParser {
+        #[command(flatten)]
+        args: UpgradeSignalArgs,
+    }
 
     #[test]
     fn disabled_when_no_contract_or_hardfork_id() {
@@ -169,12 +191,24 @@ mod tests {
         assert_eq!(config.hardfork_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         assert_eq!(config.apply_hardfork_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         assert_eq!(config.mode, UpgradeSignalMode::MetricsOnly);
+        assert!(!config.metrics_enabled(UpgradeSignalMetricLayer::Execution));
+        assert!(!config.metrics_enabled(UpgradeSignalMetricLayer::Consensus));
     }
 
     #[test]
     fn rejects_hardfork_id_without_contract() {
         let args =
             UpgradeSignalArgs { hardfork_ids: vec!["azul".to_string()], ..Default::default() };
+
+        assert!(matches!(
+            args.config().unwrap_err(),
+            UpgradeSignalConfigError::MissingContractAddress
+        ));
+    }
+
+    #[test]
+    fn rejects_metrics_without_contract() {
+        let args = UpgradeSignalArgs { el_metrics_enabled: true, ..Default::default() };
 
         assert!(matches!(
             args.config().unwrap_err(),
@@ -209,10 +243,29 @@ mod tests {
         assert_eq!(config.hardfork_ids, [BaseUpgrade::Azul]);
         assert_eq!(config.apply_hardfork_ids, [BaseUpgrade::Azul]);
         assert_eq!(config.mode, UpgradeSignalMode::StartupApply);
+        assert!(!config.metrics_enabled(UpgradeSignalMetricLayer::Execution));
+        assert!(!config.metrics_enabled(UpgradeSignalMetricLayer::Consensus));
         assert_eq!(
             config.node_protocol_version,
             U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION)
         );
+    }
+
+    #[test]
+    fn enables_layer_metrics_explicitly() {
+        let args = CommandParser::parse_from([
+            "test",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+            "--upgrade-signal.el-metrics",
+            "--upgrade-signal.cl-metrics",
+        ])
+        .args;
+
+        let config = args.config().unwrap().unwrap();
+
+        assert!(config.metrics_enabled(UpgradeSignalMetricLayer::Execution));
+        assert!(config.metrics_enabled(UpgradeSignalMetricLayer::Consensus));
     }
 
     #[test]

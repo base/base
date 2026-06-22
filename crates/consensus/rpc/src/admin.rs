@@ -97,7 +97,12 @@ fn sequencer_admin_error(error: SequencerAdminAPIError) -> ErrorObject<'static> 
 
 /// Returns an RPC error indicating the upgrade signal is not available on this node.
 fn upgrade_signal_unavailable() -> ErrorObject<'static> {
-    ErrorObject::owned(-32002, "upgrade signal not configured on this node", None::<()>)
+    ErrorObject::owned(-32004, "upgrade signal not configured on this node", None::<()>)
+}
+
+/// Returns an RPC error for a failed upgrade-signal refresh without exposing internals.
+fn upgrade_signal_refresh_failed() -> ErrorObject<'static> {
+    ErrorObject::owned(-32003, "failed to refresh upgrade signal", None::<()>)
 }
 
 #[async_trait]
@@ -247,11 +252,7 @@ where
                     error = %error,
                     "failed to refresh consensus runtime upgrade signal"
                 );
-                Err(ErrorObject::owned(
-                    -32003,
-                    "failed to refresh upgrade signal",
-                    Some(error.to_string()),
-                ))
+                Err(upgrade_signal_refresh_failed())
             }
         }
     }
@@ -261,7 +262,7 @@ where
 mod tests {
     use jsonrpsee::types::{ErrorCode, ErrorObject};
 
-    use super::sequencer_admin_error;
+    use super::{sequencer_admin_error, upgrade_signal_refresh_failed, upgrade_signal_unavailable};
     use crate::SequencerAdminAPIError;
 
     #[test]
@@ -281,5 +282,22 @@ mod tests {
 
         assert_eq!(error.code(), -32002);
         assert_eq!(error.message(), "Node is not the conductor leader.");
+    }
+
+    #[test]
+    fn upgrade_signal_unavailable_uses_distinct_error_code() {
+        let error = upgrade_signal_unavailable();
+
+        assert_eq!(error.code(), -32004);
+        assert_eq!(error.message(), "upgrade signal not configured on this node");
+    }
+
+    #[test]
+    fn upgrade_signal_refresh_error_redacts_internal_failure_details() {
+        let error = upgrade_signal_refresh_failed();
+
+        assert_eq!(error.code(), -32003);
+        assert_eq!(error.message(), "failed to refresh upgrade signal");
+        assert!(error.data().is_none());
     }
 }

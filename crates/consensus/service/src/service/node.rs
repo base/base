@@ -22,10 +22,12 @@ use base_consensus_rpc::RpcBuilder;
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
 use base_upgrade_signal::{
-    UpgradeSignalConfig, UpgradeSignalRefresher, UpgradeSignalRuntimeValidation,
+    UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRefresher,
+    UpgradeSignalRuntimeValidation,
 };
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
 use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
@@ -124,6 +126,8 @@ pub struct RollupNode {
     pub safedb_path: Option<PathBuf>,
     /// Optional L1 upgrade signal metrics observer configuration.
     pub upgrade_signal_metrics_config: Option<UpgradeSignalConfig>,
+    /// Optional L1 RPC endpoint override for upgrade signal reads.
+    pub upgrade_signal_l1_rpc: Option<Url>,
     /// Optional runtime upgrade signal validation context.
     pub upgrade_signal_runtime_validation: Option<UpgradeSignalRuntimeValidation>,
 }
@@ -540,32 +544,38 @@ impl RollupNode {
             derivation_origin_rx,
             cancellation.clone(),
         );
-        let upgrade_signal_metrics_actor =
-            self.upgrade_signal_metrics_config.clone().map(|config| {
+        let upgrade_signal_config = self.upgrade_signal_metrics_config.clone();
+        let upgrade_signal_l1_provider = self
+            .upgrade_signal_l1_rpc
+            .as_ref()
+            .map(|l1_rpc| RootProvider::new_http(l1_rpc.clone()))
+            .unwrap_or_else(|| self.l1_config.engine_provider.clone());
+        let upgrade_signal_metrics_actor = upgrade_signal_config.clone().and_then(|config| {
+            config.metrics_enabled(UpgradeSignalMetricLayer::Consensus).then(|| {
                 UpgradeSignalMetricsActor::new(
                     config,
-                    self.l1_config.engine_provider.clone(),
+                    upgrade_signal_l1_provider.clone(),
                     cancellation.clone(),
                 )
-            });
-        let upgrade_signal_refresher =
-            self.upgrade_signal_metrics_config.clone().and_then(|config| {
-                config.mode.allows_runtime_admin().then(|| {
-                    // No caller-supplied validation (standalone CL) falls back to fail-closed, so
-                    // a positive Beryl signal is rejected rather than applied unguarded.
-                    let runtime_validation = self
-                        .upgrade_signal_runtime_validation
-                        .unwrap_or_else(UpgradeSignalRuntimeValidation::fail_closed);
-                    UpgradeSignalRefresher::new(
-                        config,
-                        self.l1_config.engine_provider.clone(),
-                        self.config.l2_chain_id.id(),
-                        runtime_validation,
-                    )
-                })
-            });
+            })
+        });
+        let upgrade_signal_refresher = upgrade_signal_config.and_then(|config| {
+            config.mode.allows_runtime_admin().then(|| {
+                let runtime_validation = self
+                    .upgrade_signal_runtime_validation
+                    .unwrap_or_else(UpgradeSignalRuntimeValidation::fail_closed);
+                UpgradeSignalRefresher::new(
+                    config,
+                    upgrade_signal_l1_provider.clone(),
+                    self.config.l2_chain_id.id(),
+                    runtime_validation,
+                    UpgradeSignalMetricLayer::Consensus,
+                )
+            })
+        });
+        let node_mode = self.mode();
         // Create the sequencer if needed
-        let (sequencer_actor, sequencer_admin_client) = if self.mode().is_sequencer() {
+        let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
             let sequencer_engine_client = QueuedSequencerEngineClient {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
                 unsafe_head_rx,

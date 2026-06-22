@@ -5,7 +5,8 @@ use super::{
     UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation,
 };
 use crate::{
-    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalSchedule,
+    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
+    UpgradeSignalSchedule,
 };
 
 /// Reads and applies upgrade signal schedules while the node is running.
@@ -19,6 +20,8 @@ pub struct UpgradeSignalRefresher {
     pub chain_id: u64,
     /// Runtime schedule validation context.
     pub runtime_validation: UpgradeSignalRuntimeValidation,
+    /// Metric layer recorded by this refresher.
+    pub metrics_layer: UpgradeSignalMetricLayer,
 }
 
 impl UpgradeSignalRefresher {
@@ -28,10 +31,10 @@ impl UpgradeSignalRefresher {
         l1_provider: RootProvider,
         chain_id: u64,
         runtime_validation: UpgradeSignalRuntimeValidation,
+        metrics_layer: UpgradeSignalMetricLayer,
     ) -> Self {
-        let reader = AlloyUpgradeSignalReader::new(l1_provider, config.contract_address)
-            .with_block_tag(config.l1_block_tag);
-        Self { config, reader, chain_id, runtime_validation }
+        let reader = config.reader(l1_provider);
+        Self { config, reader, chain_id, runtime_validation, metrics_layer }
     }
 
     /// Reads, metrics-records, logs, and validates the current L1 schedule.
@@ -40,7 +43,11 @@ impl UpgradeSignalRefresher {
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let application_schedule = self
             .config
-            .read_validated_application_schedule(&self.reader, "runtime refresh")
+            .read_validated_application_schedule(
+                &self.reader,
+                "runtime refresh",
+                &[self.metrics_layer],
+            )
             .await?;
         self.runtime_validation.validate_schedule(self.chain_id, &application_schedule)?;
 

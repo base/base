@@ -11,7 +11,10 @@ use futures::future::{join_all, try_join};
 use tokio::time::sleep;
 use tracing::warn;
 
-use crate::{UpgradeSignal, UpgradeSignalError, UpgradeSignalMetrics, UpgradeSignalSchedule};
+use crate::{
+    UpgradeSignal, UpgradeSignalError, UpgradeSignalMetricLayer, UpgradeSignalMetrics,
+    UpgradeSignalSchedule,
+};
 
 sol! {
     /// L1 upgrade signal interface.
@@ -152,11 +155,15 @@ impl AlloyUpgradeSignalReader {
     pub async fn read_schedule(
         &self,
         hardfork_ids: &[BaseUpgrade],
+        metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let (l1_block_number, l1_block) = match self.pinned_l1_block_id().await {
             Ok(block) => block,
             Err(error) => {
-                UpgradeSignalMetrics::record_l1_read_errors(hardfork_ids);
+                UpgradeSignalMetrics::record_l1_read_errors_for_layers(
+                    metrics_layers,
+                    hardfork_ids,
+                );
                 return Err(error);
             }
         };
@@ -175,7 +182,10 @@ impl AlloyUpgradeSignalReader {
             match result {
                 Ok(signal) => signals.push(signal),
                 Err(error) => {
-                    UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
+                    UpgradeSignalMetrics::record_l1_read_error_for_layers(
+                        metrics_layers,
+                        hardfork_id,
+                    );
                     if first_error.is_none() {
                         first_error = Some(error);
                     }
@@ -199,11 +209,12 @@ impl AlloyUpgradeSignalReader {
         hardfork_ids: &[BaseUpgrade],
         max_attempts: u32,
         backoff: Duration,
+        metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let max_attempts = max_attempts.max(1);
         let mut attempt = 1;
         loop {
-            match self.read_schedule(hardfork_ids).await {
+            match self.read_schedule(hardfork_ids, metrics_layers).await {
                 Ok(schedule) => return Ok(schedule),
                 Err(error) if attempt >= max_attempts => return Err(error),
                 Err(error) => {
@@ -229,11 +240,15 @@ impl AlloyUpgradeSignalReader {
     pub async fn read_schedule_tolerant(
         &self,
         hardfork_ids: &[BaseUpgrade],
+        metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> UpgradeSignalSchedule {
         let (l1_block_number, l1_block) = match self.pinned_l1_block_id().await {
             Ok(block) => block,
             Err(error) => {
-                UpgradeSignalMetrics::record_l1_read_errors(hardfork_ids);
+                UpgradeSignalMetrics::record_l1_read_errors_for_layers(
+                    metrics_layers,
+                    hardfork_ids,
+                );
                 warn!(
                     target: "upgrade_signal",
                     error = %error,
@@ -255,7 +270,10 @@ impl AlloyUpgradeSignalReader {
             match result {
                 Ok(signal) => signals.push(signal),
                 Err(error) => {
-                    UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
+                    UpgradeSignalMetrics::record_l1_read_error_for_layers(
+                        metrics_layers,
+                        hardfork_id,
+                    );
                     warn!(
                         target: "upgrade_signal",
                         hardfork_id = %hardfork_id.contract_id(),

@@ -20,7 +20,7 @@ mod error;
 pub use error::UpgradeSignalError;
 
 mod metrics;
-pub use metrics::UpgradeSignalMetrics;
+pub use metrics::{UpgradeSignalMetricLayer, UpgradeSignalMetrics};
 
 mod runtime;
 pub use runtime::{

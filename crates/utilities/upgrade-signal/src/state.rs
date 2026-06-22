@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use alloy_primitives::U256;
 use base_common_genesis::BaseUpgrade;
 
-use crate::{AlloyUpgradeSignalReader, UpgradeSignalMetrics};
+use crate::{AlloyUpgradeSignalReader, UpgradeSignalMetricLayer, UpgradeSignalMetrics};
 
 /// L1 upgrade signal values for one contract-backed upgrade.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -102,19 +102,21 @@ impl UpgradeSignalState {
 /// Records live upgrade signal metrics without mutating node configuration.
 #[derive(Debug, Clone)]
 pub struct UpgradeSignalMonitor {
+    /// Metric layer recorded by this monitor.
+    pub metrics_layer: UpgradeSignalMetricLayer,
     /// Live metrics state by contract-backed upgrade.
     pub states: BTreeMap<BaseUpgrade, UpgradeSignalState>,
 }
 
 impl UpgradeSignalMonitor {
     /// Creates a monitor for the provided hardfork IDs.
-    pub fn new(hardfork_ids: &[BaseUpgrade]) -> Self {
+    pub fn new(metrics_layer: UpgradeSignalMetricLayer, hardfork_ids: &[BaseUpgrade]) -> Self {
         UpgradeSignalMetrics::init();
         let mut states = BTreeMap::new();
         for hardfork_id in hardfork_ids {
             states.insert(*hardfork_id, UpgradeSignalState::new());
         }
-        Self { states }
+        Self { metrics_layer, states }
     }
 
     /// Tolerantly polls the reader, records live metrics, and returns the number of changed signals.
@@ -126,7 +128,8 @@ impl UpgradeSignalMonitor {
         reader: &AlloyUpgradeSignalReader,
         hardfork_ids: &[BaseUpgrade],
     ) -> usize {
-        let schedule = reader.read_schedule_tolerant(hardfork_ids).await;
+        let metrics_layers = [self.metrics_layer];
+        let schedule = reader.read_schedule_tolerant(hardfork_ids, &metrics_layers).await;
         self.update_schedule(schedule)
             .iter()
             .filter(|update| matches!(update, UpgradeSignalStateUpdate::Changed))
@@ -144,11 +147,11 @@ impl UpgradeSignalMonitor {
     /// Applies one signal read from L1 and records corresponding live metrics.
     pub fn update_signal(&mut self, signal: UpgradeSignal) -> UpgradeSignalStateUpdate {
         let hardfork_id = signal.hardfork_id;
-        UpgradeSignalMetrics::record_signal(&signal);
+        UpgradeSignalMetrics::record_signal(self.metrics_layer, &signal);
 
         let update = self.states.entry(hardfork_id).or_default().update_signal(signal);
         if matches!(update, UpgradeSignalStateUpdate::Changed) {
-            UpgradeSignalMetrics::record_signal_update(hardfork_id);
+            UpgradeSignalMetrics::record_signal_update(self.metrics_layer, hardfork_id);
         }
 
         update

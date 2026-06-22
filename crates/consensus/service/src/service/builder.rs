@@ -86,6 +86,8 @@ pub struct RollupNodeBuilder {
     pub safedb_path: Option<PathBuf>,
     /// Optional L1 upgrade signal metrics observer configuration.
     pub upgrade_signal_metrics_config: Option<UpgradeSignalConfig>,
+    /// Optional L1 RPC endpoint override for upgrade signal reads.
+    pub upgrade_signal_l1_rpc: Option<Url>,
     /// Optional runtime upgrade signal validation context.
     pub upgrade_signal_runtime_validation: Option<UpgradeSignalRuntimeValidation>,
 }
@@ -127,6 +129,7 @@ impl RollupNodeBuilder {
             checkpoint_path: None,
             safedb_path: None,
             upgrade_signal_metrics_config: None,
+            upgrade_signal_l1_rpc: None,
             upgrade_signal_runtime_validation: None,
         }
     }
@@ -177,6 +180,11 @@ impl RollupNodeBuilder {
     /// Sets the optional L1 upgrade signal metrics observer configuration.
     pub fn with_upgrade_signal_metrics_config(self, config: Option<UpgradeSignalConfig>) -> Self {
         Self { upgrade_signal_metrics_config: config, ..self }
+    }
+
+    /// Sets the optional L1 RPC endpoint override for upgrade signal reads.
+    pub fn with_upgrade_signal_l1_rpc(self, l1_rpc: Option<Url>) -> Self {
+        Self { upgrade_signal_l1_rpc: l1_rpc, ..self }
     }
 
     /// Sets the optional runtime upgrade signal validation context.
@@ -246,6 +254,7 @@ impl RollupNodeBuilder {
             checkpoint_path,
             safedb_path: self.safedb_path,
             upgrade_signal_metrics_config: self.upgrade_signal_metrics_config,
+            upgrade_signal_l1_rpc: self.upgrade_signal_l1_rpc,
             upgrade_signal_runtime_validation: self.upgrade_signal_runtime_validation,
         })
     }

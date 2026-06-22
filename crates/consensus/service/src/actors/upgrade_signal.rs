@@ -4,7 +4,7 @@ use alloy_provider::RootProvider;
 use base_common_genesis::BaseUpgrade;
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalError,
-    UpgradeSignalMonitor,
+    UpgradeSignalMetricLayer, UpgradeSignalMonitor,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -31,9 +31,9 @@ impl UpgradeSignalMetricsActor {
         l1_provider: RootProvider,
         cancellation: CancellationToken,
     ) -> Self {
-        let reader = AlloyUpgradeSignalReader::new(l1_provider, config.contract_address)
-            .with_block_tag(config.l1_block_tag);
-        let monitor = UpgradeSignalMonitor::new(&config.hardfork_ids);
+        let reader = config.reader(l1_provider);
+        let monitor =
+            UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus, &config.hardfork_ids);
 
         Self { reader, hardfork_ids: config.hardfork_ids, monitor, cancellation }
     }
@@ -57,13 +57,18 @@ impl NodeActor for UpgradeSignalMetricsActor {
     type Error = UpgradeSignalError;
 
     async fn start(mut self, _ctx: ()) -> Result<(), Self::Error> {
+        let cancellation = self.cancellation.clone();
         let mut interval = tokio::time::interval(UpgradeSignalDefaults::POLL_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
-                _ = self.cancellation.cancelled() => return Ok(()),
+                _ = cancellation.cancelled() => return Ok(()),
                 _ = interval.tick() => {
-                    self.poll_l1_signal().await;
+                    tokio::select! {
+                        _ = cancellation.cancelled() => return Ok(()),
+                        _ = self.poll_l1_signal() => {}
+                    }
                 }
             }
         }

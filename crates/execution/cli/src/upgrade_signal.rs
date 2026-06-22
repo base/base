@@ -6,7 +6,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, UpgradeSignalApplySummary, UpgradeSignalConfig,
-    UpgradeSignalDefaults, UpgradeSignalMonitor, UpgradeSignalRefresher,
+    UpgradeSignalDefaults, UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
     UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
@@ -43,14 +43,14 @@ impl ExecutionUpgradeSignal {
             return Ok(());
         }
 
-        let reader = AlloyUpgradeSignalReader::new(
-            RootProvider::new_http(config.l1_rpc.clone()),
-            config.signal_config.contract_address,
-        )
-        .with_block_tag(config.signal_config.l1_block_tag);
+        let reader = config.signal_config.reader(RootProvider::new_http(config.l1_rpc.clone()));
         let application_schedule = config
             .signal_config
-            .read_validated_application_schedule(&reader, "execution startup")
+            .read_validated_application_schedule(
+                &reader,
+                "execution startup",
+                &[UpgradeSignalMetricLayer::Execution],
+            )
             .await?;
 
         Self::apply_schedule_to_chain_spec(chain_spec, &application_schedule)?;
@@ -153,6 +153,7 @@ impl ExecutionUpgradeSignal {
                 RootProvider::new_http(config.l1_rpc),
                 chain_id,
                 UpgradeSignalRuntimeValidation::disabled(),
+                UpgradeSignalMetricLayer::Execution,
             ),
             ctx.config().chain.as_ref().clone(),
         );
@@ -184,7 +185,7 @@ impl ExecutionUpgradeSignalRuntimeRefresher {
     }
 }
 
-/// Execution-node extension that records live L1 upgrade signal metrics only.
+/// Execution-node extension that registers runtime admin refresh and optional live metrics.
 #[derive(Debug)]
 pub struct ExecutionUpgradeSignalMetricsExtension {
     /// Extension configuration.
@@ -227,26 +228,33 @@ impl BaseNodeExtension for ExecutionUpgradeSignalMetricsExtension {
             hooks
         };
 
+        if !config.signal_config.metrics_enabled(UpgradeSignalMetricLayer::Execution) {
+            return hooks;
+        }
+
         hooks.add_node_started_hook(move |ctx| {
-            let reader = AlloyUpgradeSignalReader::new(
-                RootProvider::new_http(config.l1_rpc.clone()),
-                config.signal_config.contract_address,
-            )
-            .with_block_tag(config.signal_config.l1_block_tag);
+            let reader = config
+                .signal_config
+                .reader(RootProvider::new_http(config.l1_rpc.clone()));
             let hardfork_ids = config.signal_config.hardfork_ids;
-            let mut monitor = UpgradeSignalMonitor::new(&hardfork_ids);
+            let mut monitor =
+                UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution, &hardfork_ids);
             let executor = ctx.task_executor;
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {
                     let mut interval = tokio::time::interval(UpgradeSignalDefaults::POLL_INTERVAL);
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                     let mut signal = Box::pin(signal);
 
                     loop {
                         tokio::select! {
                             _ = &mut signal => break,
                             _ = interval.tick() => {
-                                Self::poll_l1_signal(&mut monitor, &reader, &hardfork_ids).await;
+                                tokio::select! {
+                                    _ = &mut signal => break,
+                                    _ = Self::poll_l1_signal(&mut monitor, &reader, &hardfork_ids) => {}
+                                }
                             }
                         }
                     }

@@ -16,7 +16,7 @@ use base_tx_forwarding::{
 };
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
-use base_upgrade_signal::UpgradeSignalStartupMode;
+use base_upgrade_signal::{UpgradeSignalMetricLayer, UpgradeSignalStartupMode};
 use url::Url;
 
 use crate::upgrade_signal::{
@@ -277,7 +277,7 @@ impl StandardBaseRethNode {
         Ok(builder)
     }
 
-    /// Installs the upgrade signal metrics observer extension when configured.
+    /// Installs the upgrade signal runtime extension when execution-side live reads are configured.
     pub fn install_upgrade_signal_metrics_extension<SB: PayloadServiceBuilder>(
         runner: &mut BaseNodeRunner<SB>,
         rollup_args: &RollupArgs,
@@ -285,6 +285,11 @@ impl StandardBaseRethNode {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(());
         };
+        if !config.signal_config.mode.allows_runtime_admin()
+            && !config.signal_config.metrics_enabled(UpgradeSignalMetricLayer::Execution)
+        {
+            return Ok(());
+        }
 
         runner.install_ext::<ExecutionUpgradeSignalMetricsExtension>(config);
 
@@ -293,18 +298,23 @@ impl StandardBaseRethNode {
 
     /// Validates execution upgrade signal arguments before node setup.
     ///
-    /// Execution upgrade-signal polling is configured independently from consensus polling, so a
-    /// configured contract always requires an explicit `--upgrade-signal.l1-rpc`. This holds for
-    /// every mode, including the default metrics-only mode, which still polls the contract.
+    /// Execution upgrade-signal polling is configured independently from consensus polling, so any
+    /// execution-side startup application, runtime admin refresh, or live metrics observer requires
+    /// an explicit `--upgrade-signal.l1-rpc`.
     pub fn validate_upgrade_signal_args(rollup_args: &RollupArgs) -> eyre::Result<()> {
-        if rollup_args.upgrade_signal.contract_address.is_some()
+        let Some(signal_config) = rollup_args.upgrade_signal.config()? else {
+            return Ok(());
+        };
+        let execution_reads_upgrade_signal = signal_config.mode.applies_at_startup()
+            || signal_config.mode.allows_runtime_admin()
+            || signal_config.metrics_enabled(UpgradeSignalMetricLayer::Execution);
+        if execution_reads_upgrade_signal
             && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none()
         {
             eyre::bail!(
                 "--upgrade-signal.contract (env BASE_NODE_UPGRADE_SIGNAL_CONTRACT) requires \
                  --upgrade-signal.l1-rpc (env BASE_NODE_UPGRADE_SIGNAL_L1_RPC) for execution \
-                 upgrade-signal polling; every mode, including the default metrics-only mode, \
-                 reads the contract over L1"
+                 upgrade-signal reads"
             );
         }
 
@@ -318,6 +328,12 @@ impl StandardBaseRethNode {
             return Ok(None);
         };
         Self::validate_upgrade_signal_args(rollup_args)?;
+        let execution_reads_upgrade_signal = signal_config.mode.applies_at_startup()
+            || signal_config.mode.allows_runtime_admin()
+            || signal_config.metrics_enabled(UpgradeSignalMetricLayer::Execution);
+        if !execution_reads_upgrade_signal {
+            return Ok(None);
+        }
         let l1_rpc = rollup_args
             .upgrade_signal_l1_rpc
             .upgrade_signal_l1_rpc
@@ -571,15 +587,28 @@ mod tests {
     }
 
     #[test]
-    fn test_upgrade_signal_contract_requires_execution_l1_rpc() {
-        let error = StandardBaseRethNode::validate_upgrade_signal_args(&RollupArgs {
+    fn test_upgrade_signal_contract_without_execution_reads_does_not_require_l1_rpc() {
+        StandardBaseRethNode::validate_upgrade_signal_args(&RollupArgs {
             upgrade_signal: base_upgrade_signal::UpgradeSignalArgs {
                 contract_address: Some(address!("0000000000000000000000000000000000000001")),
                 ..Default::default()
             },
             ..Default::default()
         })
-        .expect_err("upgrade signal contract should require an explicit execution L1 RPC");
+        .expect("disabled execution metrics should not require an execution L1 RPC");
+    }
+
+    #[test]
+    fn test_execution_upgrade_signal_reads_require_l1_rpc() {
+        let error = StandardBaseRethNode::validate_upgrade_signal_args(&RollupArgs {
+            upgrade_signal: base_upgrade_signal::UpgradeSignalArgs {
+                contract_address: Some(address!("0000000000000000000000000000000000000001")),
+                el_metrics_enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .expect_err("execution upgrade signal reads should require an explicit execution L1 RPC");
 
         assert!(error.to_string().contains("--upgrade-signal.l1-rpc"));
     }

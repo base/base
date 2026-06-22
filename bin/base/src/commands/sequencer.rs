@@ -19,7 +19,7 @@ use base_execution_cli::{
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalRuntimeValidation,
+    UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeValidation,
     UpgradeSignalStartupMode,
 };
 use clap::Args;
@@ -80,11 +80,16 @@ impl SequencerCommand {
             if let Some(signal_config) = rollup_args.upgrade_signal.config()?
                 && signal_config.mode.applies_at_startup()
             {
+                let l1_rpc = rollup_args
+                    .upgrade_signal_l1_rpc
+                    .upgrade_signal_l1_rpc
+                    .clone()
+                    .expect("upgrade signal L1 RPC is derived before startup");
                 Self::apply_shared_startup_upgrade_signal(
                     &mut execution_chain,
                     &mut rollup_config,
                     &signal_config,
-                    consensus_args.config.l1_rpc_args.l1_eth_rpc.clone(),
+                    l1_rpc,
                 )
                 .await?;
             }
@@ -97,7 +102,10 @@ impl SequencerCommand {
 
             let upgrade_signal_runtime_validation =
                 Self::upgrade_signal_runtime_validation(&execution_chain);
-            let execution = execution.into_runtime_config(execution_chain).with_unified_auth_endpoint();
+            let upgrade_signal_l1_rpc =
+                rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
+            let execution =
+                execution.into_runtime_config(execution_chain).with_unified_auth_endpoint();
             let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
             let task_executor = ctx.task_executor.clone();
@@ -124,7 +132,11 @@ impl SequencerCommand {
             let consensus_exit = consensus_args
                 .start_with_overrides_and_cancellation_and_upgrade_signal_startup(
                     rollup_config,
-                    Self::consensus_overrides(l2_engine_rpc, upgrade_signal_runtime_validation),
+                    ConsensusNodeOverrides::embedded_execution(
+                        l2_engine_rpc,
+                        upgrade_signal_runtime_validation,
+                        upgrade_signal_l1_rpc,
+                    ),
                     consensus_cancellation.clone(),
                     UpgradeSignalStartupMode::AlreadyApplied,
                 );
@@ -156,17 +168,6 @@ impl SequencerCommand {
         })
     }
 
-    const fn consensus_overrides(
-        l2_engine_rpc: Url,
-        upgrade_signal_runtime_validation: UpgradeSignalRuntimeValidation,
-    ) -> ConsensusNodeOverrides {
-        ConsensusNodeOverrides {
-            l2_engine_rpc: Some(l2_engine_rpc),
-            l2_engine_jwt_secret: None,
-            upgrade_signal_runtime_validation: Some(upgrade_signal_runtime_validation),
-        }
-    }
-
     const fn upgrade_signal_runtime_validation(
         execution_chain: &BaseChainSpec,
     ) -> UpgradeSignalRuntimeValidation {
@@ -181,13 +182,13 @@ impl SequencerCommand {
         signal_config: &UpgradeSignalConfig,
         l1_rpc: Url,
     ) -> eyre::Result<()> {
-        let reader = AlloyUpgradeSignalReader::new(
-            RootProvider::new_http(l1_rpc),
-            signal_config.contract_address,
-        )
-        .with_block_tag(signal_config.l1_block_tag);
+        let reader = signal_config.reader(RootProvider::new_http(l1_rpc));
         let application_schedule = signal_config
-            .read_validated_application_schedule(&reader, "integrated sequencer startup")
+            .read_validated_application_schedule(
+                &reader,
+                "integrated sequencer startup",
+                &[UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus],
+            )
             .await?;
 
         ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
@@ -213,8 +214,10 @@ impl SequencerCommand {
 
 #[cfg(test)]
 mod tests {
+    use base_consensus_cli::ConsensusNodeConfigArgs;
     use clap::Parser;
 
+    use super::SequencerCommand;
     use crate::{cli::BaseCli, commands::BaseCommand};
 
     const REQUIRED_CONSENSUS_ARGS: &[&str] =
@@ -314,6 +317,41 @@ mod tests {
             Some("0x0000000000000000000000000000000000000001".to_string())
         );
         assert_eq!(sequencer.builder.rollup_args.upgrade_signal.hardfork_ids, ["azul"]);
+    }
+
+    #[test]
+    fn preserves_explicit_upgrade_signal_l1_rpc() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+            "--upgrade-signal.l1-rpc",
+            "http://finalized-l1:8545",
+        ]));
+
+        let BaseCommand::Sequencer(mut sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+        let consensus_config: ConsensusNodeConfigArgs = sequencer.consensus.clone().into();
+
+        SequencerCommand::derive_execution_upgrade_signal_l1_rpc(
+            &mut sequencer.builder,
+            &consensus_config,
+        );
+
+        assert_eq!(
+            sequencer
+                .builder
+                .rollup_args
+                .upgrade_signal_l1_rpc
+                .upgrade_signal_l1_rpc
+                .as_ref()
+                .map(|url| url.as_str()),
+            Some("http://finalized-l1:8545/")
+        );
     }
 
     #[test]
