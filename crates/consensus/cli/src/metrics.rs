@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use base_common_genesis::{BaseUpgrade, RollupConfig, UpgradeConfig};
+use base_common_genesis::{BaseUpgrade, RollupConfig};
 use tokio::task::JoinHandle;
 
 use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
@@ -265,26 +265,39 @@ fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static
             config
                 .contract_upgrade_activation_timestamp(upgrade)
                 .filter(|activation_time| *activation_time == next_activation_time)
-                .map(|activation_time| {
-                    (upgrade_metric_label(upgrade), activation_time.saturating_sub(now))
+                .and_then(|activation_time| {
+                    upgrade_metric_label(upgrade)
+                        .map(|label| (label, activation_time.saturating_sub(now)))
                 })
         })
         .collect()
 }
 
-fn upgrade_metric_label(upgrade: BaseUpgrade) -> &'static str {
-    let config = UpgradeConfig::default();
-    BaseUpgrade::CONTRACT_VARIANTS
-        .into_iter()
-        .zip(config.iter().map(|(label, _)| label))
-        .find_map(|(candidate, label)| (candidate == upgrade).then_some(label))
-        .expect("contract upgrade metric label exists")
+const UPGRADE_METRIC_LABELS: [(BaseUpgrade, &str); BaseUpgrade::CONTRACT_VARIANTS.len()] = [
+    (BaseUpgrade::Regolith, "Regolith"),
+    (BaseUpgrade::Canyon, "Canyon"),
+    (BaseUpgrade::Delta, "Delta"),
+    (BaseUpgrade::Ecotone, "Ecotone"),
+    (BaseUpgrade::Fjord, "Fjord"),
+    (BaseUpgrade::Granite, "Granite"),
+    (BaseUpgrade::Holocene, "Holocene"),
+    (BaseUpgrade::PectraBlobSchedule, "Pectra Blob Schedule"),
+    (BaseUpgrade::Isthmus, "Isthmus"),
+    (BaseUpgrade::Jovian, "Jovian"),
+    (BaseUpgrade::Azul, "Azul"),
+    (BaseUpgrade::Beryl, "Beryl"),
+    (BaseUpgrade::Cobalt, "Cobalt"),
+];
+
+fn upgrade_metric_label(upgrade: BaseUpgrade) -> Option<&'static str> {
+    UPGRADE_METRIC_LABELS
+        .iter()
+        .find_map(|(candidate, label)| (*candidate == upgrade).then_some(*label))
 }
 
 #[cfg(test)]
 fn upgrade_metric_labels() -> Vec<(BaseUpgrade, &'static str)> {
-    let config = UpgradeConfig::default();
-    BaseUpgrade::CONTRACT_VARIANTS.into_iter().zip(config.iter().map(|(label, _)| label)).collect()
+    UPGRADE_METRIC_LABELS.to_vec()
 }
 
 #[cfg(test)]
