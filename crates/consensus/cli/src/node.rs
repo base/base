@@ -65,7 +65,12 @@ impl ConsensusNodeCommand {
             CliMetrics::init_p2p(&args.config.p2p_flags);
         }
 
-        RuntimeManager::new().run_until_ctrl_c(args.start_with_overrides(cfg, Default::default()))
+        let metrics_enabled = self.metrics.enabled;
+        RuntimeManager::new().run_until_ctrl_c(async move {
+            let _upgrade_countdown_metrics =
+                metrics_enabled.then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
+            args.start_with_overrides(cfg, Default::default()).await
+        })
     }
 }
 
