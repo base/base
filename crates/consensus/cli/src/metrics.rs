@@ -1,6 +1,12 @@
 //! CLI Options Metrics
 
-use base_common_genesis::RollupConfig;
+use std::{
+    collections::BTreeSet,
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use base_common_genesis::{BaseUpgrade, RollupConfig};
 
 use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
 
@@ -68,6 +74,9 @@ impl CliMetrics {
 
     /// Upgrade activation times.
     pub const UPGRADE_ACTIVATION_TIMES: &'static str = "base_node_upgrades";
+
+    /// Seconds until the next scheduled upgrade activation.
+    pub const SECONDS_UNTIL_NEXT_UPGRADE: &'static str = "base_node_seconds_until_next_upgrade";
 
     /// Top-level rollup config settings.
     pub const ROLLUP_CONFIG: &'static str = "base_node_rollup_config";
@@ -144,6 +153,10 @@ impl CliMetrics {
             Self::UPGRADE_ACTIVATION_TIMES,
             "Activation times for upgrades in Base"
         );
+        metrics::describe_gauge!(
+            Self::SECONDS_UNTIL_NEXT_UPGRADE,
+            "Seconds until the next scheduled Base upgrade activation"
+        );
 
         metrics::gauge!(
             Self::ROLLUP_CONFIG,
@@ -171,5 +184,153 @@ impl CliMetrics {
             let time: f64 = activation_time.map(|t| t as f64).unwrap_or(-1f64);
             metrics::gauge!(Self::UPGRADE_ACTIVATION_TIMES, "upgrade" => upgrade_name).set(time);
         }
+
+        Self::spawn_upgrade_countdown_recorder(config.clone());
+    }
+
+    fn spawn_upgrade_countdown_recorder(config: RollupConfig) {
+        thread::spawn(move || {
+            let mut observed_upgrades = BTreeSet::new();
+
+            loop {
+                let now = current_unix_timestamp();
+                Self::record_seconds_until_next_upgrade(&config, now, &mut observed_upgrades);
+                thread::sleep(UPGRADE_COUNTDOWN_REFRESH_INTERVAL);
+            }
+        });
+    }
+
+    fn record_seconds_until_next_upgrade(
+        config: &RollupConfig,
+        now: u64,
+        observed_upgrades: &mut BTreeSet<&'static str>,
+    ) {
+        let countdowns = seconds_until_next_upgrades(config, now);
+        let current_upgrades =
+            countdowns.iter().map(|(upgrade, _)| *upgrade).collect::<BTreeSet<_>>();
+
+        for (upgrade, seconds_until_activation) in countdowns {
+            observed_upgrades.insert(upgrade);
+            metrics::gauge!(Self::SECONDS_UNTIL_NEXT_UPGRADE, "upgrade" => upgrade)
+                .set(seconds_until_activation as f64);
+        }
+
+        for upgrade in observed_upgrades.difference(&current_upgrades) {
+            metrics::gauge!(Self::SECONDS_UNTIL_NEXT_UPGRADE, "upgrade" => *upgrade)
+                .set(NO_UPCOMING_UPGRADE_SECONDS);
+        }
+    }
+}
+
+const UPGRADE_COUNTDOWN_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const UPGRADE_ACTIVATION_GRACE_SECONDS: u64 = 15 * 60;
+const NO_UPCOMING_UPGRADE_SECONDS: f64 = 4_294_967_295.0;
+
+fn current_unix_timestamp() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static str, u64)> {
+    let next_activation = BaseUpgrade::CONTRACT_VARIANTS
+        .into_iter()
+        .filter_map(|upgrade| {
+            config
+                .contract_upgrade_activation_timestamp(upgrade)
+                .filter(|activation_time| {
+                    activation_time.saturating_add(UPGRADE_ACTIVATION_GRACE_SECONDS) >= now
+                })
+                .map(|activation_time| (upgrade, activation_time))
+        })
+        .min_by_key(|(_, activation_time)| *activation_time);
+
+    let Some((_, next_activation_time)) = next_activation else {
+        return Vec::new();
+    };
+
+    BaseUpgrade::CONTRACT_VARIANTS
+        .into_iter()
+        .filter_map(|upgrade| {
+            config
+                .contract_upgrade_activation_timestamp(upgrade)
+                .filter(|activation_time| *activation_time == next_activation_time)
+                .map(|activation_time| (upgrade.contract_id(), activation_time.saturating_sub(now)))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use base_common_genesis::UpgradeConfig;
+
+    use super::*;
+
+    #[test]
+    fn seconds_until_next_upgrades_returns_future_countdown() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    azul: Some(1_000),
+                    beryl: Some(2_000),
+                    cobalt: Some(3_000),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(seconds_until_next_upgrades(&config, 800), vec![("azul", 200)]);
+    }
+
+    #[test]
+    fn seconds_until_next_upgrades_returns_zero_during_activation_grace() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    beryl: Some(1_000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(seconds_until_next_upgrades(&config, 1_000), vec![("beryl", 0)]);
+        assert_eq!(seconds_until_next_upgrades(&config, 1_100), vec![("beryl", 0)]);
+    }
+
+    #[test]
+    fn seconds_until_next_upgrades_ignores_activations_after_grace() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    beryl: Some(1_000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(
+            seconds_until_next_upgrades(&config, 1_000 + UPGRADE_ACTIVATION_GRACE_SECONDS + 1)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn seconds_until_next_upgrades_returns_all_simultaneous_next_upgrades() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    azul: Some(1_000),
+                    beryl: Some(1_000),
+                    cobalt: Some(2_000),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(seconds_until_next_upgrades(&config, 900), vec![("azul", 100), ("beryl", 100)]);
     }
 }
