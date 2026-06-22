@@ -27,9 +27,7 @@ mod proof_recovery;
 pub use proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig};
 
 mod proof_collector;
-pub use proof_collector::{
-    ProofCollectorOrchestrator, ProofCollectorState, ProofCollectorTargetState,
-};
+pub use proof_collector::{ProofCollector, ProofCollectorState};
 
 mod proof_dispatcher;
 pub use proof_dispatcher::{

@@ -247,8 +247,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ProofCollectorOrchestrator, ProofDispatcher, ProofDispatcherConfig, ProofRecovery,
-        ProofRecoveryConfig, ProofSubmitter, ProofSubmitterConfig,
+        ProofCollector, ProofDispatcher, ProofDispatcherConfig, ProofRecovery, ProofRecoveryConfig,
+        ProofSubmitter, ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
@@ -329,21 +329,16 @@ mod tests {
             anchor_registry,
             factory,
         ));
-        let proof_collector_orchestrator = ProofCollectorOrchestrator::new(
+        let proof_collector = ProofCollector::new(
             Arc::clone(&proof_requester),
-            proof_dispatcher.clone(),
+            Arc::clone(&rollup),
             proof_submitter,
             Arc::clone(&proof_recovery),
             config.block_interval,
-            config.max_retries,
             config.submit_timeout,
         );
-        let pipeline = ProvingPipeline::new(
-            config,
-            proof_dispatcher,
-            proof_recovery,
-            proof_collector_orchestrator,
-        );
+        let pipeline =
+            ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);
         PipelineHandle::new(pipeline, global_cancel)
     }
 

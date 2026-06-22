@@ -35,7 +35,7 @@ use crate::{
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::{OutputProposer, ProposalSubmitter},
     pipeline::ProvingPipeline,
-    proof_collector::ProofCollectorOrchestrator,
+    proof_collector::ProofCollector,
     proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
     proof_recovery::{ProofRecovery, ProofRecoveryConfig},
     proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
@@ -272,21 +272,16 @@ impl ProposerService {
             anchor_registry,
             factory_client,
         ));
-        let proof_collector_orchestrator = ProofCollectorOrchestrator::new(
+        let proof_collector = ProofCollector::new(
             Arc::clone(&proof_requester),
-            proof_dispatcher.clone(),
+            Arc::clone(&rollup_client),
             proof_submitter,
             Arc::clone(&proof_recovery),
             driver_config.block_interval,
-            driver_config.max_retries,
             driver_config.submit_timeout,
         );
-        let pipeline = ProvingPipeline::new(
-            driver_config,
-            proof_dispatcher,
-            proof_recovery,
-            proof_collector_orchestrator,
-        );
+        let pipeline =
+            ProvingPipeline::new(driver_config, proof_dispatcher, proof_recovery, proof_collector);
         info!("Proving pipeline initialized");
         let driver_handle: Arc<dyn ProposerDriverControl> =
             Arc::new(PipelineHandle::new(pipeline, cancel.clone()));

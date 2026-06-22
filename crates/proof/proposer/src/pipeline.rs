@@ -9,7 +9,7 @@ use tracing::info;
 use crate::{
     Metrics,
     driver::DriverConfig,
-    proof_collector::{ProofCollectorOrchestrator, ProofCollectorState},
+    proof_collector::{ProofCollector, ProofCollectorState},
     proof_dispatcher::{ProofDispatcher, ProofDispatcherState},
     proof_recovery::{ProofRecovery, ProofRecoveryCache},
 };
@@ -28,7 +28,7 @@ where
     config: DriverConfig,
     proof_dispatcher: ProofDispatcher<L1, L2, R>,
     proof_recovery: Arc<ProofRecovery<R>>,
-    proof_collector_orchestrator: ProofCollectorOrchestrator<L1, L2, R>,
+    proof_collector: ProofCollector<L1, R>,
 }
 
 impl<L1, L2, R> std::fmt::Debug for ProvingPipeline<L1, L2, R>
@@ -53,9 +53,9 @@ where
         config: DriverConfig,
         proof_dispatcher: ProofDispatcher<L1, L2, R>,
         proof_recovery: Arc<ProofRecovery<R>>,
-        proof_collector_orchestrator: ProofCollectorOrchestrator<L1, L2, R>,
+        proof_collector: ProofCollector<L1, R>,
     ) -> Self {
-        Self { config, proof_dispatcher, proof_recovery, proof_collector_orchestrator }
+        Self { config, proof_dispatcher, proof_recovery, proof_collector }
     }
 
     /// Runs the proving pipeline until cancelled.
@@ -143,7 +143,7 @@ where
                     Metrics::safe_head().set(safe_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-                    self.proof_collector_orchestrator
+                    self.proof_collector
                         .tick(&mut state, &mut cache, recovered, safe_head, cancel)
                         .await
                 } else {
@@ -296,21 +296,16 @@ mod tests {
                 output_fetch_concurrency: config.recovery_scan_concurrency,
             },
         );
-        let proof_collector_orchestrator = ProofCollectorOrchestrator::new(
+        let proof_collector = ProofCollector::new(
             Arc::clone(&proof_requester),
-            proof_dispatcher.clone(),
+            Arc::clone(&rollup),
             proof_submitter,
             Arc::clone(&proof_recovery),
             config.block_interval,
-            config.max_retries,
             config.submit_timeout,
         );
-        let pipeline = ProvingPipeline::new(
-            config,
-            proof_dispatcher,
-            proof_recovery,
-            proof_collector_orchestrator,
-        );
+        let pipeline =
+            ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);
         let cancel = CancellationToken::new();
 
         assert!(

@@ -1,10 +1,10 @@
-//! Polls and orchestrates prover-service collection for proposer TEE proofs.
+//! Polls and submits prover-service proofs for proposer TEE checkpoints.
 
 use std::{ops::ControlFlow, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use base_proof_primitives::ProofResult;
-use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
+use base_proof_rpc::{L1Provider, RollupProvider};
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{GetProofRequest, ProofStatus};
@@ -16,56 +16,34 @@ use crate::{
     error::ProposerError,
     metrics::Metrics,
     proof_adapter::ProposerProofAdapter,
-    proof_dispatcher::{ProofDispatchAttempt, ProofDispatcher},
     proof_recovery::{ProofRecovery, ProofRecoveryCache},
     proof_submitter::{ProofSubmitter, SubmitAction},
 };
 
-/// Mutable collector-side orchestration state.
+/// Mutable collector-side state.
 #[derive(Debug, Default)]
 pub struct ProofCollectorState {
     /// Recovered chain state that the current cursor was derived from.
     pub recovered: Option<RecoveredState>,
     /// Latest block the collector has submitted through.
     pub cursor: Option<RecoveredState>,
-    /// Retry bookkeeping for the current target.
-    pub target: Option<(u64, ProofCollectorTargetState)>,
 }
 
-/// Collector retry state for a single target block.
-#[derive(Debug, Default)]
-pub struct ProofCollectorTargetState {
-    /// Proof polling and dispatch transport retry count.
-    pub retry_count: u32,
-    /// Retry-specific proof request attempt count.
-    pub discard_retry_count: u32,
-    /// Active retry-specific prover-service session.
-    pub retry_session: Option<String>,
-    /// Root waiting for a retry-specific dispatch.
-    pub pending_discard_root: Option<B256>,
-}
-
-/// Owns collector-side polling, sequential submit, and retry-session orchestration.
+/// Owns proof polling and sequential submission.
 #[derive(Debug)]
-pub struct ProofCollectorOrchestrator<L1, L2, R>
+pub struct ProofCollector<L1, R>
 where
     L1: L1Provider,
-    L2: L2Provider,
     R: RollupProvider,
 {
     proof_requester: Arc<dyn ProofRequesterProvider>,
-    dispatcher: ProofDispatcher<L1, L2, R>,
+    rollup_client: Arc<R>,
     submitter: ProofSubmitter<L1, R>,
     recovery: Arc<ProofRecovery<R>>,
     block_interval: u64,
-    max_retries: u32,
     submit_timeout: Option<Duration>,
 }
 
-/// Outcome of polling the prover service for a single target block.
-///
-/// Used by the proposer's collector pipeline to choose the next action:
-/// submit, dispatch, wait, or retry.
 #[derive(Debug)]
 enum TargetPoll {
     Ready { session_id: String, proof: ProofResult },
@@ -75,133 +53,25 @@ enum TargetPoll {
     NotFound,
 }
 
-impl ProofCollectorState {
-    /// Records a proof failure and returns whether retrying is still allowed.
-    #[must_use]
-    pub fn handle_proof_failure(
-        &mut self,
-        target: u64,
-        error: ProposerError,
-        max_retries: u32,
-        cache: &mut Option<ProofRecoveryCache>,
-    ) -> bool {
-        Metrics::errors_total(error.metric_label()).increment(1);
-        Metrics::proof_retries_total().increment(1);
-
-        let attempts = {
-            let state = self.target_for(target);
-            state.retry_count += 1;
-            state.retry_count
-        };
-        if attempts >= max_retries {
-            error!(
-                target_block = target,
-                attempts,
-                error = %error,
-                "Proof failed after max retries, dropping cached recovery"
-            );
-            let _ = self.target.take_if(|(block, _)| *block == target);
-            *cache = None;
-            false
-        } else {
-            warn!(
-                target_block = target,
-                attempt = attempts,
-                error = %error,
-                "Proof failed, re-dispatching"
-            );
-            true
-        }
-    }
-
-    /// Records a retry-specific dispatch failure and returns whether retrying is still allowed.
-    #[must_use]
-    pub fn handle_retry_dispatch_failure(
-        &mut self,
-        target: u64,
-        error: ProposerError,
-        max_retries: u32,
-        cache: &mut Option<ProofRecoveryCache>,
-    ) -> bool {
-        Metrics::errors_total(error.metric_label()).increment(1);
-        Metrics::proof_retries_total().increment(1);
-
-        let attempts = {
-            let state = self.target_for(target);
-            state.discard_retry_count += 1;
-            state.discard_retry_count
-        };
-        if attempts >= max_retries {
-            error!(
-                target_block = target,
-                attempts,
-                error = %error,
-                "Retry-specific proof dispatch failed after max retries, dropping cached recovery"
-            );
-            let _ = self.target.take_if(|(block, _)| *block == target);
-            *cache = None;
-            false
-        } else {
-            warn!(
-                target_block = target,
-                attempt = attempts,
-                error = %error,
-                "Retry-specific proof dispatch failed, will retry next iteration"
-            );
-            true
-        }
-    }
-
-    /// Returns target state for `target`, replacing stale target state if needed.
-    pub fn target_for(&mut self, target: u64) -> &mut ProofCollectorTargetState {
-        if self.target.as_ref().is_none_or(|(block, _)| *block != target) {
-            self.target = Some((target, ProofCollectorTargetState::default()));
-        }
-        &mut self.target.as_mut().expect("target set").1
-    }
-
-    /// Returns target state for `target` when present.
-    pub fn target(&self, target: u64) -> Option<&ProofCollectorTargetState> {
-        self.target.as_ref().and_then(|(block, state)| (*block == target).then_some(state))
-    }
-}
-
-impl<L1, L2, R> ProofCollectorOrchestrator<L1, L2, R>
+impl<L1, R> ProofCollector<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     /// Creates a collector orchestrator from low-level proof components.
     pub const fn new(
         proof_requester: Arc<dyn ProofRequesterProvider>,
-        dispatcher: ProofDispatcher<L1, L2, R>,
+        rollup_client: Arc<R>,
         submitter: ProofSubmitter<L1, R>,
         recovery: Arc<ProofRecovery<R>>,
         block_interval: u64,
-        max_retries: u32,
         submit_timeout: Option<Duration>,
     ) -> Self {
-        Self {
-            proof_requester,
-            dispatcher,
-            submitter,
-            recovery,
-            block_interval,
-            max_retries,
-            submit_timeout,
-        }
+        Self { proof_requester, rollup_client, submitter, recovery, block_interval, submit_timeout }
     }
 
-    async fn poll_target(
-        &self,
-        target_block: u64,
-        claimed_l2_output_root: B256,
-        session_id: Option<String>,
-    ) -> TargetPoll {
-        let session_id = session_id.unwrap_or_else(|| {
-            ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root)
-        });
+    async fn poll_target(&self, target_block: u64, claimed_l2_output_root: B256) -> TargetPoll {
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
         let response = match self
             .proof_requester
             .get_proof(GetProofRequest { session_id: session_id.clone() })
@@ -234,6 +104,7 @@ where
             ProofStatus::Failed => Metrics::PROOF_STATUS_FAILED,
         })
         .increment(1);
+
         match response.status {
             ProofStatus::Queued | ProofStatus::Running => {
                 debug!(
@@ -277,8 +148,6 @@ where
         safe_head: u64,
         cancel: &CancellationToken,
     ) -> bool {
-        let _ = state.target.take_if(|(target, _)| *target <= recovered.l2_block_number);
-
         if state.recovered != Some(recovered) || state.cursor.is_none() {
             state.recovered = Some(recovered);
             state.cursor = Some(recovered);
@@ -293,10 +162,9 @@ where
                 break false;
             }
 
-            let Some(target_block) = ProofDispatcher::<L1, L2, R>::next_target_block(
-                current.l2_block_number,
-                self.block_interval,
-            ) else {
+            let Some(target_block) =
+                Self::next_target_block(current.l2_block_number, self.block_interval)
+            else {
                 break false;
             };
 
@@ -310,39 +178,17 @@ where
                 break false;
             }
 
-            if let Some(claimed_l2_output_root) =
-                state.target(target_block).and_then(|target| target.pending_discard_root)
-            {
-                break self
-                    .dispatch_discard_retry(
-                        target_block,
-                        &current,
-                        claimed_l2_output_root,
-                        state,
-                        cache,
-                    )
-                    .await;
-            }
-
-            let retry_session =
-                state.target(target_block).and_then(|target| target.retry_session.clone());
-            let Some(claimed_l2_output_root) =
-                self.dispatcher.canonical_output_root(target_block).await
+            let Some(claimed_l2_output_root) = self.canonical_output_root(target_block).await
             else {
-                debug!(
-                    target_block,
-                    session_id = ?retry_session,
-                    "Waiting for canonical output root"
-                );
                 break false;
             };
-            let poll = self.poll_target(target_block, claimed_l2_output_root, retry_session).await;
 
-            match poll {
+            match self.poll_target(target_block, claimed_l2_output_root).await {
                 TargetPoll::Ready { session_id, proof } => {
                     info!(target_block, session_id = %session_id, "Proof ready, submitting inline");
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
                     Metrics::last_collected_block().set(target_block as f64);
+
                     match self
                         .submit_inline(target_block, &current, proof, state, cache, cancel)
                         .await
@@ -354,80 +200,34 @@ where
                             }
                             break false;
                         }
-                        ControlFlow::Break(None) => {
-                            break true;
-                        }
-                        ControlFlow::Break(Some(claimed_l2_output_root)) => {
-                            break self
-                                .dispatch_discard_retry(
-                                    target_block,
-                                    &current,
-                                    claimed_l2_output_root,
-                                    state,
-                                    cache,
-                                )
-                                .await;
-                        }
+                        ControlFlow::Break(()) => break true,
                     }
                 }
                 TargetPoll::Pending | TargetPoll::Transient => break false,
                 TargetPoll::NotFound => {
-                    if state
-                        .target(target_block)
-                        .is_some_and(|target| target.retry_session.is_some())
-                    {
-                        warn!(
-                            target_block,
-                            "Discard retry session missing, dispatching a fresh retry"
-                        );
-                        break self
-                            .dispatch_discard_retry(
-                                target_block,
-                                &current,
-                                claimed_l2_output_root,
-                                state,
-                                cache,
-                            )
-                            .await;
-                    }
-                    debug!(
-                        target_block,
-                        claimed_l2_output_root = %claimed_l2_output_root,
-                        "No prover-service session for target, waiting for dispatcher"
-                    );
-                    break false;
+                    info!(target_block, "Proof missing, restarting pipeline to request it");
+                    break true;
                 }
                 TargetPoll::Failed { session_id, error } => {
                     warn!(
                         target_block,
                         session_id = %session_id,
                         error = %error,
-                        "Prover service reported failed session, re-dispatching"
+                        "Proof session failed, restarting pipeline to request it again"
                     );
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
                         .increment(1);
-                    if !state.handle_proof_failure(target_block, error, self.max_retries, cache) {
-                        break true;
-                    }
-                    break self
-                        .dispatch_discard_retry(
-                            target_block,
-                            &current,
-                            claimed_l2_output_root,
-                            state,
-                            cache,
-                        )
-                        .await;
+                    Metrics::errors_total(error.metric_label()).increment(1);
+                    Metrics::proof_retries_total().increment(1);
+                    break true;
                 }
             }
         };
 
-        Metrics::pipeline_retries()
-            .set(state.target.as_ref().map_or(0, |(_, target)| target.retry_count) as f64);
+        Metrics::pipeline_retries().set(0.0);
         restart
     }
 
-    /// Validates and submits a ready proof inline.
     async fn submit_inline(
         &self,
         target_block: u64,
@@ -436,14 +236,7 @@ where
         state: &mut ProofCollectorState,
         cache: &mut Option<ProofRecoveryCache>,
         cancel: &CancellationToken,
-    ) -> ControlFlow<Option<B256>, RecoveredState> {
-        let claimed_l2_output_root = match &proof {
-            ProofResult::Tee { aggregate_proposal, .. } => aggregate_proposal.output_root,
-            ProofResult::Zk { .. } => {
-                warn!(target_block, "Unexpected ZK proof result in TEE proposer path");
-                return ControlFlow::Break(None);
-            }
-        };
+    ) -> ControlFlow<(), RecoveredState> {
         let parent_address = recovered.parent_address;
         info!(target_block, parent_address = %parent_address, "Submitting proof inline");
 
@@ -463,7 +256,7 @@ where
         let Some(result) = cancel.run_until_cancelled(submit).await else {
             submit_timer.disarm();
             warn!(target_block, "Inline submit cancelled, restarting pipeline session");
-            return ControlFlow::Break(None);
+            return ControlFlow::Break(());
         };
 
         match result {
@@ -475,14 +268,14 @@ where
                     timeout_secs = ?self.submit_timeout.map(|timeout| timeout.as_secs()),
                     "Inline submit timed out, restarting pipeline session"
                 );
-                ControlFlow::Break(None)
+                ControlFlow::Break(())
             }
             Ok(Err(SubmitAction::RootMismatch)) => {
                 submit_timer.disarm();
                 warn!(target_block, "Output root mismatch at submit time, restarting pipeline");
                 Metrics::root_mismatch_total().increment(1);
                 *cache = None;
-                ControlFlow::Break(None)
+                ControlFlow::Break(())
             }
             Ok(Err(SubmitAction::Failed(error))) => {
                 submit_timer.disarm();
@@ -500,7 +293,7 @@ where
                 } else {
                     warn!(target_block, error = %error, "Submission failed, restarting pipeline");
                 }
-                ControlFlow::Break(None)
+                ControlFlow::Break(())
             }
             Ok(Err(SubmitAction::Discard(error))) => {
                 submit_timer.disarm();
@@ -508,14 +301,14 @@ where
                 warn!(
                     target_block,
                     error = %error,
-                    "Proof discarded by submitter, dispatching fresh retry proof"
+                    "Proof discarded by submitter, restarting pipeline to request it again"
                 );
-                ControlFlow::Break(Some(claimed_l2_output_root))
+                ControlFlow::Break(())
             }
             Ok(action @ (Ok(()) | Err(SubmitAction::GameAlreadyExists))) => {
                 if matches!(action, Err(SubmitAction::GameAlreadyExists)) {
                     submit_timer.disarm();
-                    info!(target_block, "Game already exists on chain");
+                    info!(target_block, "Game already exists onchain");
                     if let Some(cached) = cache.as_mut() {
                         cached.game_count = cached.game_count.saturating_sub(1);
                     }
@@ -524,80 +317,53 @@ where
                     info!(target_block, "Submission successful");
                 }
                 Metrics::last_proposed_block().set(target_block as f64);
-                let _ = state.target.take_if(|(block, _)| *block == target_block);
                 match self.recovery.recover_latest_state(cache).await {
-                    Ok(recovered) => ControlFlow::Continue(recovered),
+                    Ok(recovered) => {
+                        state.recovered = Some(recovered);
+                        ControlFlow::Continue(recovered)
+                    }
                     Err(e) => {
                         warn!(error = %e, "Failed to recover state after inline submit");
-                        ControlFlow::Break(None)
+                        ControlFlow::Break(())
                     }
                 }
             }
         }
     }
 
-    /// Dispatches a retry-specific proof request after a discarded proof.
-    async fn dispatch_discard_retry(
-        &self,
-        target_block: u64,
-        recovered: &RecoveredState,
-        claimed_l2_output_root: B256,
-        state: &mut ProofCollectorState,
-        cache: &mut Option<ProofRecoveryCache>,
-    ) -> bool {
-        let current_attempt =
-            state.target(target_block).map_or(0, |target| target.discard_retry_count);
-        if current_attempt >= self.max_retries {
-            error!(
-                target_block,
-                attempts = current_attempt,
-                max_retries = self.max_retries,
-                "Discard retry budget exhausted, dropping recovery cache"
-            );
-            let _ = state.target.take_if(|(block, _)| *block == target_block);
-            *cache = None;
-            return true;
-        }
-
-        let attempt = current_attempt + 1;
-        // Keep the root so the next tick can retry a failed retry-specific dispatch.
-        state.target_for(target_block).pending_discard_root = Some(claimed_l2_output_root);
-
-        let dispatch = self
-            .dispatcher
-            .dispatch_discard_retry(target_block, recovered, claimed_l2_output_root, attempt)
-            .await;
-
-        Metrics::proof_dispatch_total(dispatch.metric_label()).increment(1);
-        match dispatch {
-            ProofDispatchAttempt::Accepted(session_id) => {
-                info!(
+    async fn canonical_output_root(&self, target_block: u64) -> Option<B256> {
+        match self.rollup_client.output_at_block(target_block).await {
+            Ok(output) => Some(output.output_root),
+            Err(e) => {
+                warn!(
                     target_block,
-                    session_id = %session_id,
-                    attempt,
-                    "Discard retry proof request accepted by prover service"
+                    error = %e,
+                    "Failed to fetch canonical output root for collection target"
                 );
-                let target = state.target_for(target_block);
-                target.discard_retry_count = attempt;
-                target.retry_session = Some(session_id);
-                target.pending_discard_root = None;
-                false
-            }
-            ProofDispatchAttempt::BuildFailed(error) => {
-                state.target_for(target_block).retry_session = None;
-                !state.handle_retry_dispatch_failure(target_block, error, self.max_retries, cache)
-            }
-            ProofDispatchAttempt::DispatchFailed(error) => {
-                state.target_for(target_block).retry_session = None;
-                !state.handle_retry_dispatch_failure(target_block, error, self.max_retries, cache)
+                None
             }
         }
+    }
+
+    fn next_target_block(current_block: u64, block_interval: u64) -> Option<u64> {
+        if block_interval == 0 {
+            error!("Block interval must be non-zero");
+            return None;
+        }
+
+        current_block.checked_add(block_interval).map_or_else(
+            || {
+                error!(current_block, block_interval, "Overflow computing next target block");
+                None
+            },
+            Some,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::atomic::Ordering};
+    use std::collections::HashMap;
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
@@ -607,11 +373,10 @@ mod tests {
     use crate::{
         output_proposer::OutputProposer,
         proof_adapter::ProposerProofAdapter,
-        proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
         proof_recovery::ProofRecoveryConfig,
         proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
         test_utils::{
-            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
+            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1,
             MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
             test_proposal, test_sync_status,
         },
@@ -652,25 +417,12 @@ mod tests {
         Some(ProofRecoveryCache { game_count: 0, state: recovered(100) })
     }
 
-    fn failing_l1() -> Arc<MockL1> {
-        Arc::new(MockL1 {
-            latest_block_number: 1000,
-            header_by_number_error: Some("simulated L1 outage".to_owned()),
-        })
-    }
-
     fn rollup_client(block: u64, root: Option<B256>) -> Arc<MockRollupClient> {
         Arc::new(MockRollupClient {
             sync_status: test_sync_status(block, B256::ZERO),
             output_roots: root.map_or_else(HashMap::new, |root| HashMap::from([(block, root)])),
             max_safe_block: None,
         })
-    }
-
-    fn rejecting_requester() -> Arc<MockProofRequester> {
-        let requester = Arc::new(MockProofRequester::default());
-        requester.reject_prove.store(true, Ordering::SeqCst);
-        requester
     }
 
     fn failed_session_requester(claimed_root: B256) -> Arc<MockProofRequester> {
@@ -709,7 +461,6 @@ mod tests {
         rollup_client: Arc<MockRollupClient>,
         output_proposer: Arc<dyn OutputProposer>,
         intermediate_block_interval: u64,
-        max_retries: u32,
         factory_client: MockDisputeGameFactory,
     }
 
@@ -723,27 +474,12 @@ mod tests {
                 rollup_client: rollup_client(0, None),
                 output_proposer: Arc::new(MockOutputProposer),
                 intermediate_block_interval: 100,
-                max_retries: 3,
                 factory_client: MockDisputeGameFactory::with_games(vec![]),
             }
         }
     }
 
-    fn make_orchestrator(
-        parts: OrchestratorParts,
-    ) -> ProofCollectorOrchestrator<MockL1, MockL2, MockRollupClient> {
-        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
-        let dispatcher = ProofDispatcher::new(
-            Arc::clone(&parts.proof_requester),
-            Arc::clone(&parts.l1),
-            l2,
-            Arc::clone(&parts.rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: parts.intermediate_block_interval,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
-        );
+    fn make_orchestrator(parts: OrchestratorParts) -> ProofCollector<MockL1, MockRollupClient> {
         let recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {
                 block_interval: BLOCK_INTERVAL,
@@ -777,13 +513,12 @@ mod tests {
             },
         );
 
-        ProofCollectorOrchestrator::new(
+        ProofCollector::new(
             parts.proof_requester,
-            dispatcher,
+            parts.rollup_client,
             submitter,
             recovery,
             BLOCK_INTERVAL,
-            parts.max_retries,
             Some(std::time::Duration::from_secs(60)),
         )
     }
@@ -791,15 +526,14 @@ mod tests {
     #[tokio::test]
     async fn tick_resets_cursor_when_recovery_rewinds() {
         let orchestrator = make_orchestrator(Default::default());
-        let mut state = ProofCollectorState::default();
-        state.recovered = Some(recovered(300));
-        state.cursor = Some(recovered(500));
+        let mut state =
+            ProofCollectorState { recovered: Some(recovered(300)), cursor: Some(recovered(500)) };
         let mut cache = cache();
         let cancel = CancellationToken::new();
 
         let result = orchestrator.tick(&mut state, &mut cache, recovered(100), 200, &cancel).await;
 
-        assert!(!result);
+        assert!(result);
         assert_eq!(state.recovered, Some(recovered(100)));
         assert_eq!(state.cursor, Some(recovered(100)));
     }
@@ -810,7 +544,6 @@ mod tests {
         factory.games_should_fail = true;
         let orchestrator = make_orchestrator(OrchestratorParts {
             rollup_client: rollup_client(200, None),
-            max_retries: 2,
             factory_client: factory,
             ..Default::default()
         });
@@ -825,157 +558,17 @@ mod tests {
             .submit_inline(200, &recovered(100), proof, &mut state, &mut cache, &cancel)
             .await;
 
-        assert_eq!(effect, ControlFlow::Break(None));
+        assert_eq!(effect, ControlFlow::Break(()));
     }
 
     #[tokio::test]
-    async fn discard_retry_build_failure_removes_stale_retry_session() {
-        let orchestrator =
-            make_orchestrator(OrchestratorParts { l1: failing_l1(), ..Default::default() });
-        let target_block = 200;
-        let mut state = ProofCollectorState {
-            target: Some((
-                target_block,
-                ProofCollectorTargetState {
-                    retry_session: Some("stale-failed-session".to_owned()),
-                    discard_retry_count: 1,
-                    ..Default::default()
-                },
-            )),
-            ..Default::default()
-        };
-        let mut cache = cache();
-
-        let restart = orchestrator
-            .dispatch_discard_retry(
-                target_block,
-                &recovered(100),
-                B256::repeat_byte(0xaa),
-                &mut state,
-                &mut cache,
-            )
-            .await;
-
-        assert!(!restart);
-        let target = state.target(target_block).expect("target state");
-        assert!(target.retry_session.is_none());
-        assert_eq!(target.pending_discard_root, Some(B256::repeat_byte(0xaa)));
-        assert_eq!(target.discard_retry_count, 2);
-        assert_eq!(target.retry_count, 0);
-        assert!(cache.is_some());
-    }
-
-    #[tokio::test]
-    async fn discard_retry_dispatch_failure_does_not_store_unaccepted_session() {
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester: rejecting_requester(),
-            rollup_client: rollup_client(200, None),
-            max_retries: 2,
-            ..Default::default()
-        });
-        let target_block = 200;
-        let claimed_root = B256::repeat_byte(0xaa);
-        let mut state = ProofCollectorState::default();
-        let mut cache = cache();
-
-        let restart = orchestrator
-            .dispatch_discard_retry(
-                target_block,
-                &recovered(100),
-                claimed_root,
-                &mut state,
-                &mut cache,
-            )
-            .await;
-
-        assert!(!restart);
-        let target = state.target(target_block).expect("target state");
-        assert!(target.retry_session.is_none());
-        assert_eq!(target.pending_discard_root, Some(claimed_root));
-        assert_eq!(target.discard_retry_count, 1);
-        assert_eq!(target.retry_count, 0);
-        assert!(cache.is_some());
-    }
-
-    #[tokio::test]
-    async fn discard_retry_session_mismatch_does_not_store_unaccepted_session() {
+    async fn missing_session_restarts_pipeline_without_dispatching() {
         let requester = Arc::new(MockProofRequester::default());
-        *requester.accepted_session_id.lock().unwrap() = Some("unexpected-session".to_owned());
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester: requester,
-            rollup_client: rollup_client(200, None),
-            max_retries: 2,
-            ..Default::default()
-        });
-        let target_block = 200;
-        let claimed_root = B256::repeat_byte(0xaa);
-        let mut state = ProofCollectorState {
-            target: Some((
-                target_block,
-                ProofCollectorTargetState {
-                    retry_session: Some("stale-session".to_owned()),
-                    ..Default::default()
-                },
-            )),
-            ..Default::default()
-        };
-        let mut cache = cache();
-
-        let restart = orchestrator
-            .dispatch_discard_retry(
-                target_block,
-                &recovered(100),
-                claimed_root,
-                &mut state,
-                &mut cache,
-            )
-            .await;
-
-        assert!(!restart);
-        let target = state.target(target_block).expect("target state");
-        assert!(target.retry_session.is_none());
-        assert_eq!(target.pending_discard_root, Some(claimed_root));
-        assert_eq!(target.discard_retry_count, 1);
-        assert_eq!(target.retry_count, 0);
-        assert!(cache.is_some());
-    }
-
-    #[tokio::test]
-    async fn root_retry_build_failure_waits_with_retry_state() {
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
         let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester: failed_session_requester(claimed_root),
-            l1: failing_l1(),
-            rollup_client: rollup_client(target_block, None),
-            max_retries: 2,
-            ..Default::default()
-        });
-        let mut state = ProofCollectorState::default();
-        let mut cache = cache();
-        let cancel = CancellationToken::new();
-
-        let result =
-            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
-
-        assert!(!result);
-        let target = state.target(target_block).expect("target state");
-        assert_eq!(target.retry_count, 1);
-        assert_eq!(target.discard_retry_count, 1);
-        assert_eq!(target.pending_discard_root, Some(claimed_root));
-        assert!(cache.is_some());
-    }
-
-    #[tokio::test]
-    async fn root_retry_dispatch_failure_waits_with_retry_state() {
-        let target_block = 200;
-        let claimed_root = B256::repeat_byte(target_block as u8);
-        let proof_requester = failed_session_requester(claimed_root);
-        proof_requester.reject_prove.store(true, Ordering::SeqCst);
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester,
+            proof_requester: requester.clone(),
             rollup_client: rollup_client(target_block, Some(claimed_root)),
-            max_retries: 2,
             ..Default::default()
         });
         let mut state = ProofCollectorState::default();
@@ -985,23 +578,18 @@ mod tests {
         let result =
             orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
 
-        assert!(!result);
-        let target = state.target(target_block).expect("target state");
-        assert_eq!(target.retry_count, 1);
-        assert_eq!(target.discard_retry_count, 1);
-        assert_eq!(target.pending_discard_root, Some(claimed_root));
-        assert!(cache.is_some());
+        assert!(result);
+        assert!(requester.requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn failed_root_session_dispatches_retry_specific_session() {
+    async fn failed_session_restarts_pipeline_without_dispatching() {
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
         let requester = failed_session_requester(claimed_root);
         let orchestrator = make_orchestrator(OrchestratorParts {
             proof_requester: requester.clone(),
             rollup_client: rollup_client(target_block, Some(claimed_root)),
-            max_retries: 2,
             ..Default::default()
         });
         let mut state = ProofCollectorState::default();
@@ -1011,122 +599,31 @@ mod tests {
         let result =
             orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
 
-        assert!(!result);
-        let target = state.target(target_block).expect("target state");
-        let retry_session = target.retry_session.as_ref().expect("retry session");
-        assert_ne!(retry_session, &ProposerProofAdapter::tee_session_id_for_root(claimed_root));
-        assert_eq!(target.discard_retry_count, 1);
-        assert!(requester.requests.lock().unwrap().contains_key(retry_session));
-        assert!(cache.is_some());
+        assert!(result);
+        assert!(requester.requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn discard_retry_dispatch_failure_returns_false_on_retry_exhaustion() {
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester: rejecting_requester(),
-            rollup_client: rollup_client(200, None),
-            max_retries: 1,
-            ..Default::default()
-        });
-        let target_block = 200;
-        let mut state = ProofCollectorState::default();
-        let mut cache = cache();
-
-        let restart = orchestrator
-            .dispatch_discard_retry(
-                target_block,
-                &recovered(100),
-                B256::repeat_byte(0xaa),
-                &mut state,
-                &mut cache,
-            )
-            .await;
-
-        assert!(restart);
-        assert!(cache.is_none());
-        assert!(state.target.is_none());
-    }
-
-    #[tokio::test]
-    async fn tick_returns_restart_when_discard_retry_budget_exhausts() {
-        let proof_requester = Arc::new(MockProofRequester::default());
+    async fn discarded_proof_restarts_pipeline_without_dispatching() {
+        let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let request = proof_request(target_block, claimed_root, 100, 1000);
-        proof_requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(request))
+        requester
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request(
+                target_block,
+                claimed_root,
+                100,
+                1000,
+            )))
             .await
             .expect("test setup should dispatch root session");
         let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester,
-            rollup_client: rollup_client(target_block, None),
-            output_proposer: Arc::new(DiscardingOutputProposer),
-            max_retries: 0,
-            ..Default::default()
-        });
-        let mut state = ProofCollectorState::default();
-        let mut cache = cache();
-        let cancel = CancellationToken::new();
-
-        let result =
-            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
-
-        assert!(result);
-        assert!(cache.is_none());
-        assert!(state.target.is_none());
-    }
-
-    #[tokio::test]
-    async fn tick_returns_restart_when_failed_session_exhausts_retries() {
-        let target_block = 200;
-        let claimed_root = B256::repeat_byte(target_block as u8);
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester: failed_session_requester(claimed_root),
-            rollup_client: rollup_client(target_block, None),
-            max_retries: 1,
-            ..Default::default()
-        });
-        let mut state = ProofCollectorState::default();
-        let mut cache = cache();
-        let cancel = CancellationToken::new();
-
-        let result =
-            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
-
-        assert!(result);
-        assert!(cache.is_none());
-        assert!(state.target.is_none());
-    }
-
-    #[tokio::test]
-    async fn failed_discard_retry_session_exhaustion_clears_target() {
-        let target_block = 200;
-        let claimed_root = B256::repeat_byte(target_block as u8);
-        let request = proof_request(target_block, claimed_root, 100, 1000);
-        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(&request, 1);
-        let requester = Arc::new(MockProofRequester::default());
-        requester
-            .failed_sessions
-            .lock()
-            .unwrap()
-            .insert(session_id.clone(), "simulated proof failure".to_owned());
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester: requester,
+            proof_requester: requester.clone(),
             rollup_client: rollup_client(target_block, Some(claimed_root)),
-            max_retries: 1,
+            output_proposer: Arc::new(DiscardingOutputProposer),
             ..Default::default()
         });
-        let mut state = ProofCollectorState {
-            target: Some((
-                target_block,
-                ProofCollectorTargetState {
-                    retry_session: Some(session_id),
-                    discard_retry_count: 1,
-                    ..Default::default()
-                },
-            )),
-            ..Default::default()
-        };
+        let mut state = ProofCollectorState::default();
         let mut cache = cache();
         let cancel = CancellationToken::new();
 
@@ -1134,24 +631,15 @@ mod tests {
             orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
 
         assert!(result);
-        assert!(cache.is_none());
-        assert!(state.target.is_none());
+        assert_eq!(requester.requests.lock().unwrap().len(), 1);
     }
 
-    /// Restart/recovery: the collector derives the prover-service session id
-    /// solely from the canonical L2 output root + tee kind, so a freshly
-    /// constructed collector (mirroring a proposer restart) can pick up an
-    /// in-flight session that a previous run dispatched.
     #[tokio::test]
     async fn poll_recovers_in_flight_session_across_restart() {
         let proof_requester = Arc::new(MockProofRequester::default());
-
         let target_block = 600u64;
-        let canonical_root = B256::repeat_byte(0xCC);
+        let canonical_root = B256::repeat_byte(0xcc);
         let rollup_client = rollup_client(target_block, Some(canonical_root));
-
-        // First "run": dispatch a TEE proof for `target_block` against the shared
-        // prover-service stub.
         let proof_request = ProofRequest {
             agreed_l2_output_root: B256::repeat_byte(0x03),
             ..proof_request(target_block, canonical_root, 300, 1200)
@@ -1161,9 +649,6 @@ mod tests {
             .await
             .unwrap()
             .session_id;
-        // "Restart": build a fresh orchestrator with no in-memory dispatch state.
-        // It must rederive the session id from the canonical chain root and
-        // recover the in-flight session.
         let orchestrator = make_orchestrator(OrchestratorParts {
             proof_requester,
             l1: Arc::new(MockL1 { latest_block_number: 1200, ..Default::default() }),
@@ -1172,7 +657,7 @@ mod tests {
             ..Default::default()
         });
 
-        match orchestrator.poll_target(target_block, canonical_root, None).await {
+        match orchestrator.poll_target(target_block, canonical_root).await {
             TargetPoll::Ready { session_id, .. } => {
                 assert_eq!(session_id, expected_session_id);
             }
@@ -1180,14 +665,11 @@ mod tests {
         }
     }
 
-    /// When the prover service has no record of a session, polling returns
-    /// [`TargetPoll::NotFound`] so the caller can dispatch a new request.
     #[tokio::test]
     async fn poll_returns_not_found_for_unknown_session() {
         let proof_requester = Arc::new(MockProofRequester::default());
         let target_block = 200u64;
-        let rollup_client = rollup_client(target_block, Some(B256::repeat_byte(0xAA)));
-
+        let rollup_client = rollup_client(target_block, Some(B256::repeat_byte(0xaa)));
         let orchestrator = make_orchestrator(OrchestratorParts {
             proof_requester,
             l1: Arc::new(MockL1 { latest_block_number: 1200, ..Default::default() }),
@@ -1195,7 +677,8 @@ mod tests {
             intermediate_block_interval: 300,
             ..Default::default()
         });
-        match orchestrator.poll_target(target_block, B256::repeat_byte(0xAA), None).await {
+
+        match orchestrator.poll_target(target_block, B256::repeat_byte(0xaa)).await {
             TargetPoll::NotFound => {}
             other => panic!("expected NotFound, got {other:?}"),
         }
