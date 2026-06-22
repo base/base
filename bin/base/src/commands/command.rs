@@ -37,8 +37,10 @@ impl BaseCommand {
     ) -> eyre::Result<()> {
         match self {
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
-            Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
-            Self::Sequencer(sequencer) => (*sequencer).run(chain_resolver.resolve()?),
+            Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics_enabled),
+            Self::Sequencer(sequencer) => {
+                (*sequencer).run(chain_resolver.resolve()?, metrics_enabled)
+            }
             Self::Update(update) => (*update).run(),
         }
     }

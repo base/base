@@ -3,7 +3,7 @@
 use std::{path::Path, sync::Arc};
 
 use base_consensus_cli::{
-    ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedConsensusNodeConfigArgs,
+    CliMetrics, ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
@@ -43,7 +43,11 @@ pub(crate) struct RpcCommand {
 
 impl RpcCommand {
     /// Runs the `rpc` flavor.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
+    pub(crate) fn run(
+        self,
+        resolved_chain: ResolvedChainConfig,
+        metrics_enabled: bool,
+    ) -> eyre::Result<()> {
         let execution_chain = match self.execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
@@ -51,11 +55,16 @@ impl RpcCommand {
         let consensus_chain = resolved_chain.consensus_chain_args();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, self.consensus.into());
         let rollup_config = consensus_args.load_rollup_config()?;
+        if metrics_enabled {
+            CliMetrics::init_rollup_config(&rollup_config);
+        }
 
         let execution = self.execution.into_launch_config(execution_chain).with_auth_ipc();
         let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+            let _upgrade_countdown_metrics = metrics_enabled
+                .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
             let handle = launched.handle;
