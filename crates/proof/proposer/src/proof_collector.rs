@@ -20,13 +20,6 @@ use crate::{
     proof_target::ProofTarget,
 };
 
-/// Mutable collector-side state.
-#[derive(Debug, Default)]
-pub struct ProofCollectorState {
-    /// Cached onchain recovery state used by the collector loop.
-    pub cache: Option<ProofRecoveryCache>,
-}
-
 /// Owns proof polling and sequential submission.
 #[derive(Debug)]
 pub struct ProofCollector<L1, R>
@@ -47,7 +40,6 @@ enum TargetPoll {
     Ready { session_id: String, proof: ProofResult },
     Failed { session_id: String, error: ProposerError },
     Pending,
-    Transient,
     NotFound,
 }
 
@@ -95,7 +87,7 @@ where
                     error = %e,
                     "Transient failure polling prover service",
                 );
-                return TargetPoll::Transient;
+                return TargetPoll::Pending;
             }
         };
 
@@ -144,7 +136,7 @@ where
     /// Runs one collector tick from the supplied recovered state and safe head.
     pub async fn tick(
         &self,
-        state: &mut ProofCollectorState,
+        cache: &mut Option<ProofRecoveryCache>,
         recovered: RecoveredState,
         safe_head: u64,
         cancel: &CancellationToken,
@@ -188,10 +180,7 @@ where
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
                     Metrics::last_collected_block().set(target_block as f64);
 
-                    match self
-                        .submit_inline(target_block, &current, proof, &mut state.cache, cancel)
-                        .await
-                    {
+                    match self.submit_inline(target_block, &current, proof, cache, cancel).await {
                         Some(recovered) => {
                             if recovered.l2_block_number > current.l2_block_number {
                                 current = recovered;
@@ -202,7 +191,7 @@ where
                         None => break true,
                     }
                 }
-                TargetPoll::Pending | TargetPoll::Transient => break false,
+                TargetPoll::Pending => break false,
                 TargetPoll::NotFound => {
                     info!(target_block, "Proof missing, restarting pipeline to request it");
                     break true;
@@ -240,15 +229,15 @@ where
 
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let submit = async {
-            match self.submit_timeout {
-                Some(timeout) => {
-                    tokio::time::timeout(
-                        timeout,
-                        self.submitter.submit(&proof, target_block, parent_address),
-                    )
-                    .await
-                }
-                None => Ok(self.submitter.submit(&proof, target_block, parent_address).await),
+            if let Some(timeout) = self.submit_timeout {
+                tokio::time::timeout(
+                    timeout,
+                    self.submitter.submit(&proof, target_block, parent_address),
+                )
+                .await
+                .ok()
+            } else {
+                Some(self.submitter.submit(&proof, target_block, parent_address).await)
             }
         };
         let Some(result) = cancel.run_until_cancelled(submit).await else {
@@ -256,26 +245,26 @@ where
             warn!(target_block, "Inline submit cancelled, restarting pipeline session");
             return None;
         };
+        let Some(result) = result else {
+            submit_timer.disarm();
+            Metrics::submit_timeouts_total().increment(1);
+            warn!(
+                target_block,
+                timeout_secs = ?self.submit_timeout.map(|timeout| timeout.as_secs()),
+                "Inline submit timed out, restarting pipeline session"
+            );
+            return None;
+        };
 
         match result {
-            Err(_) => {
-                submit_timer.disarm();
-                Metrics::submit_timeouts_total().increment(1);
-                warn!(
-                    target_block,
-                    timeout_secs = ?self.submit_timeout.map(|timeout| timeout.as_secs()),
-                    "Inline submit timed out, restarting pipeline session"
-                );
-                None
-            }
-            Ok(Err(SubmitAction::RootMismatch)) => {
+            Err(SubmitAction::RootMismatch) => {
                 submit_timer.disarm();
                 warn!(target_block, "Output root mismatch at submit time, restarting pipeline");
                 Metrics::root_mismatch_total().increment(1);
                 *cache = None;
                 None
             }
-            Ok(Err(SubmitAction::Failed(error))) => {
+            Err(SubmitAction::Failed(error)) => {
                 submit_timer.disarm();
                 Metrics::errors_total(error.metric_label()).increment(1);
                 if matches!(
@@ -293,7 +282,7 @@ where
                 }
                 None
             }
-            Ok(Err(SubmitAction::Discard(error))) => {
+            Err(SubmitAction::Discard(error)) => {
                 submit_timer.disarm();
                 Metrics::errors_total(error.metric_label()).increment(1);
                 warn!(
@@ -303,7 +292,7 @@ where
                 );
                 None
             }
-            Ok(action @ (Ok(()) | Err(SubmitAction::GameAlreadyExists))) => {
+            action @ (Ok(()) | Err(SubmitAction::GameAlreadyExists)) => {
                 if matches!(action, Err(SubmitAction::GameAlreadyExists)) {
                     submit_timer.disarm();
                     info!(target_block, "Game already exists onchain");
@@ -509,11 +498,10 @@ mod tests {
             rollup_client: rollup_client(target_block, Some(claimed_root)),
             ..Default::default()
         });
-        let mut state = ProofCollectorState::default();
-        state.cache = cache();
+        let mut cache = cache();
         let cancel = CancellationToken::new();
 
-        let result = orchestrator.tick(&mut state, recovered(100), target_block, &cancel).await;
+        let result = orchestrator.tick(&mut cache, recovered(100), target_block, &cancel).await;
 
         assert!(result);
         assert!(requester.requests.lock().unwrap().is_empty());
@@ -535,11 +523,10 @@ mod tests {
             rollup_client: rollup_client(target_block, Some(claimed_root)),
             ..Default::default()
         });
-        let mut state = ProofCollectorState::default();
-        state.cache = cache();
+        let mut cache = cache();
         let cancel = CancellationToken::new();
 
-        let result = orchestrator.tick(&mut state, recovered(100), target_block, &cancel).await;
+        let result = orchestrator.tick(&mut cache, recovered(100), target_block, &cancel).await;
 
         assert!(result);
         assert!(requester.requests.lock().unwrap().is_empty());
@@ -565,11 +552,10 @@ mod tests {
             output_proposer: Arc::new(DiscardingOutputProposer),
             ..Default::default()
         });
-        let mut state = ProofCollectorState::default();
-        state.cache = cache();
+        let mut cache = cache();
         let cancel = CancellationToken::new();
 
-        let result = orchestrator.tick(&mut state, recovered(100), target_block, &cancel).await;
+        let result = orchestrator.tick(&mut cache, recovered(100), target_block, &cancel).await;
 
         assert!(result);
         assert_eq!(requester.requests.lock().unwrap().len(), 1);

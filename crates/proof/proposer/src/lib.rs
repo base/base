@@ -30,7 +30,7 @@ mod proof_recovery;
 pub use proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig};
 
 mod proof_collector;
-pub use proof_collector::{ProofCollector, ProofCollectorState};
+pub use proof_collector::ProofCollector;
 
 mod proof_dispatcher;
 pub use proof_dispatcher::{
