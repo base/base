@@ -130,7 +130,6 @@ where
     }
 
     async fn collector_loop(&self, cancel: &CancellationToken) {
-        let mut cache: Option<ProofRecoveryCache> = None;
         let mut state = ProofCollectorState::default();
 
         loop {
@@ -138,14 +137,12 @@ where
                 let _tick_timer = base_metrics::timed!(Metrics::collector_tick_duration_seconds());
 
                 if let Some((recovered, safe_head)) =
-                    self.proof_recovery.try_recover_and_plan(&mut cache).await
+                    self.proof_recovery.try_recover_and_plan(&mut state.cache).await
                 {
                     Metrics::safe_head().set(safe_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-                    self.proof_collector
-                        .tick(&mut state, &mut cache, recovered, safe_head, cancel)
-                        .await
+                    self.proof_collector.tick(&mut state, recovered, safe_head, cancel).await
                 } else {
                     false
                 }

@@ -25,6 +25,8 @@ use crate::{
 pub struct ProofCollectorState {
     /// Latest block the collector has submitted through.
     pub cursor: Option<RecoveredState>,
+    /// Cached onchain recovery state used by the collector loop.
+    pub cache: Option<ProofRecoveryCache>,
 }
 
 /// Owns proof polling and sequential submission.
@@ -141,7 +143,6 @@ where
     pub async fn tick(
         &self,
         state: &mut ProofCollectorState,
-        cache: &mut Option<ProofRecoveryCache>,
         recovered: RecoveredState,
         safe_head: u64,
         cancel: &CancellationToken,
@@ -186,7 +187,10 @@ where
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
                     Metrics::last_collected_block().set(target_block as f64);
 
-                    match self.submit_inline(target_block, &current, proof, cache, cancel).await {
+                    match self
+                        .submit_inline(target_block, &current, proof, &mut state.cache, cancel)
+                        .await
+                    {
                         ControlFlow::Continue(recovered) => {
                             state.cursor = Some(recovered);
                             if recovered.l2_block_number > current.l2_block_number {
@@ -516,11 +520,10 @@ mod tests {
     #[tokio::test]
     async fn tick_resets_cursor_when_recovery_rewinds() {
         let orchestrator = make_orchestrator(Default::default());
-        let mut state = ProofCollectorState { cursor: Some(recovered(500)) };
-        let mut cache = cache();
+        let mut state = ProofCollectorState { cursor: Some(recovered(500)), cache: cache() };
         let cancel = CancellationToken::new();
 
-        let result = orchestrator.tick(&mut state, &mut cache, recovered(100), 200, &cancel).await;
+        let result = orchestrator.tick(&mut state, recovered(100), 200, &cancel).await;
 
         assert!(result);
         assert_eq!(state.cursor, Some(recovered(100)));
@@ -558,11 +561,10 @@ mod tests {
             ..Default::default()
         });
         let mut state = ProofCollectorState::default();
-        let mut cache = cache();
+        state.cache = cache();
         let cancel = CancellationToken::new();
 
-        let result =
-            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+        let result = orchestrator.tick(&mut state, recovered(100), target_block, &cancel).await;
 
         assert!(result);
         assert!(requester.requests.lock().unwrap().is_empty());
@@ -579,11 +581,10 @@ mod tests {
             ..Default::default()
         });
         let mut state = ProofCollectorState::default();
-        let mut cache = cache();
+        state.cache = cache();
         let cancel = CancellationToken::new();
 
-        let result =
-            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+        let result = orchestrator.tick(&mut state, recovered(100), target_block, &cancel).await;
 
         assert!(result);
         assert!(requester.requests.lock().unwrap().is_empty());
@@ -610,11 +611,10 @@ mod tests {
             ..Default::default()
         });
         let mut state = ProofCollectorState::default();
-        let mut cache = cache();
+        state.cache = cache();
         let cancel = CancellationToken::new();
 
-        let result =
-            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+        let result = orchestrator.tick(&mut state, recovered(100), target_block, &cancel).await;
 
         assert!(result);
         assert_eq!(requester.requests.lock().unwrap().len(), 1);
