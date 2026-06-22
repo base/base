@@ -12,7 +12,6 @@ use base_prover_service_protocol::{
 use crate::ProposerError;
 
 /// Conversion helpers for proposer proof requests and results.
-#[derive(Debug)]
 pub struct ProposerProofAdapter;
 
 impl ProposerProofAdapter {
