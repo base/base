@@ -297,7 +297,7 @@ where
                         }
 
                         if !e.is_retryable() {
-                            if let TxManagerError::ExecutionReverted { data, .. } = &e {
+                            if let TxManagerError::ExecutionReverted { data, reason, .. } = &e {
                                 let registry_error = data
                                     .as_ref()
                                     .and_then(|d| d.get(..4))
@@ -308,6 +308,7 @@ where
                                 warn!(
                                     signer = %signer_address,
                                     registry_error = ?registry_error,
+                                    reason = ?reason,
                                     "execution reverted, blocking proof recovery for signer"
                                 );
                                 self.proof_provider.block_recovery_for_signer(signer_address);
