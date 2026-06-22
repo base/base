@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use base_common_genesis::{BaseUpgrade, RollupConfig};
+use base_common_genesis::{BaseUpgrade, RollupConfig, UpgradeConfig};
 use tokio::task::JoinHandle;
 
 use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
@@ -272,24 +272,19 @@ fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static
         .collect()
 }
 
-const fn upgrade_metric_label(upgrade: BaseUpgrade) -> &'static str {
-    match upgrade {
-        BaseUpgrade::Bedrock => "Bedrock",
-        BaseUpgrade::Regolith => "Regolith",
-        BaseUpgrade::Canyon => "Canyon",
-        BaseUpgrade::Delta => "Delta",
-        BaseUpgrade::Ecotone => "Ecotone",
-        BaseUpgrade::Fjord => "Fjord",
-        BaseUpgrade::Granite => "Granite",
-        BaseUpgrade::Holocene => "Holocene",
-        BaseUpgrade::PectraBlobSchedule => "Pectra Blob Schedule",
-        BaseUpgrade::Isthmus => "Isthmus",
-        BaseUpgrade::Jovian => "Jovian",
-        BaseUpgrade::Azul => "Azul",
-        BaseUpgrade::Beryl => "Beryl",
-        BaseUpgrade::Cobalt => "Cobalt",
-        _ => upgrade.name(),
-    }
+fn upgrade_metric_label(upgrade: BaseUpgrade) -> &'static str {
+    let config = UpgradeConfig::default();
+    BaseUpgrade::CONTRACT_VARIANTS
+        .into_iter()
+        .zip(config.iter().map(|(label, _)| label))
+        .find_map(|(candidate, label)| (candidate == upgrade).then_some(label))
+        .expect("contract upgrade metric label exists")
+}
+
+#[cfg(test)]
+fn upgrade_metric_labels() -> Vec<(BaseUpgrade, &'static str)> {
+    let config = UpgradeConfig::default();
+    BaseUpgrade::CONTRACT_VARIANTS.into_iter().zip(config.iter().map(|(label, _)| label)).collect()
 }
 
 #[cfg(test)]
@@ -395,14 +390,12 @@ mod tests {
 
     #[test]
     fn upgrade_metric_label_matches_upgrade_activation_time_labels() {
-        let labels = BaseUpgrade::CONTRACT_VARIANTS
-            .into_iter()
-            .map(upgrade_metric_label)
-            .collect::<Vec<_>>();
+        let labels = upgrade_metric_labels();
+        assert_eq!(labels.len(), BaseUpgrade::CONTRACT_VARIANTS.len());
 
         let config_labels =
             UpgradeConfig::default().iter().map(|(label, _)| label).collect::<Vec<_>>();
 
-        assert_eq!(labels, config_labels);
+        assert_eq!(labels.iter().map(|(_, label)| *label).collect::<Vec<_>>(), config_labels);
     }
 }
