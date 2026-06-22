@@ -206,6 +206,7 @@ pub(super) fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
 mod tests {
     use std::process::Command;
 
+    use base_common_genesis::BaseUpgrade;
     use base_consensus_cli::ConsensusNodeConfigArgs;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use clap::Parser;
@@ -305,8 +306,10 @@ mod tests {
 
     #[test]
     fn consensus_runtime_validation_uses_execution_activation_admin() {
-        let execution_chain =
-            BaseChainSpecBuilder::base_mainnet().optional_activation_admin_address(None).build();
+        let execution_chain = BaseChainSpecBuilder::base_mainnet()
+            .optional_activation_admin_address(None)
+            .without_fork(BaseUpgrade::Beryl)
+            .build();
 
         let validation = RpcCommand::upgrade_signal_runtime_validation(&execution_chain);
 
