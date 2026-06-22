@@ -1,6 +1,6 @@
 //! Polls and submits prover-service proofs for proposer TEE checkpoints.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use base_proof_primitives::ProofResult;
 use base_proof_rpc::{L1Provider, RollupProvider};
@@ -8,7 +8,7 @@ use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{GetProofRequest, ProofStatus};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     driver::RecoveredState,
@@ -21,7 +21,6 @@ use crate::{
 };
 
 /// Owns proof polling and sequential submission.
-#[derive(Debug)]
 pub struct ProofCollector<L1, R>
 where
     L1: L1Provider,
@@ -35,12 +34,32 @@ where
     submit_timeout: Option<Duration>,
 }
 
+/// Mutable collector-side retry state.
+#[derive(Debug, Default)]
+pub struct ProofCollectorState {
+    /// Per-target terminal proof failure counts.
+    pub retry_counts: HashMap<u64, u32>,
+}
+
 #[derive(Debug)]
 enum TargetPoll {
     Ready(ProofResult),
     Failed(ProposerError),
     Pending,
     NotFound,
+}
+
+impl<L1, R> std::fmt::Debug for ProofCollector<L1, R>
+where
+    L1: L1Provider,
+    R: RollupProvider,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProofCollector")
+            .field("block_interval", &self.block_interval)
+            .field("submit_timeout", &self.submit_timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<L1, R> ProofCollector<L1, R>
@@ -80,6 +99,7 @@ where
                 return TargetPoll::NotFound;
             }
             Err(e) => {
+                Metrics::errors_total("prover").increment(1);
                 warn!(
                     target_block,
                     session_id = %session_id,
@@ -159,12 +179,15 @@ where
     /// Runs one collector tick from the supplied recovered state and safe head.
     pub async fn tick(
         &self,
+        state: &mut ProofCollectorState,
         cache: &mut Option<ProofRecoveryCache>,
         recovered: RecoveredState,
         safe_head: u64,
+        max_retries: u32,
         cancel: &CancellationToken,
     ) -> bool {
         let mut current = recovered;
+        state.retry_counts.retain(|&target, _| target > current.l2_block_number);
 
         let restart = loop {
             if cancel.is_cancelled() {
@@ -205,6 +228,7 @@ where
             .await
             {
                 TargetPoll::Ready(proof) => {
+                    state.retry_counts.remove(&target_block);
                     info!(target_block, "Proof ready, submitting inline");
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
                     Metrics::last_collected_block().set(target_block as f64);
@@ -222,6 +246,7 @@ where
                 }
                 TargetPoll::Pending => break false,
                 TargetPoll::NotFound => {
+                    state.retry_counts.remove(&target_block);
                     info!(target_block, "Proof missing, restarting pipeline to request it");
                     break true;
                 }
@@ -229,13 +254,30 @@ where
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
                         .increment(1);
                     Metrics::errors_total(error.metric_label()).increment(1);
+                    let count = state.retry_counts.entry(target_block).or_insert(0);
+                    *count = count.saturating_add(1);
+                    if *count >= max_retries {
+                        error!(
+                            target_block,
+                            attempts = *count,
+                            error = %error,
+                            "Proof collection failed after max retries"
+                        );
+                        break false;
+                    }
+
                     Metrics::proof_retries_total().increment(1);
+                    warn!(
+                        target_block,
+                        attempt = *count,
+                        error = %error,
+                        "Proof collection failed, restarting pipeline to re-dispatch"
+                    );
                     break true;
                 }
             }
         };
 
-        Metrics::pipeline_retries().set(0.0);
         restart
     }
 
@@ -339,8 +381,17 @@ where
     }
 }
 
+impl ProofCollectorState {
+    /// Creates empty collector state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use alloy_primitives::{Address, B256};
     use base_proof_primitives::ProofRequest;
 
@@ -477,11 +528,48 @@ mod tests {
             MockDisputeGameFactory::with_games(vec![]),
         );
         let mut cache = cache();
+        let mut state = ProofCollectorState::new();
         let cancel = CancellationToken::new();
 
-        let result = orchestrator.tick(&mut cache, recovered(100), target_block, &cancel).await;
+        let result = orchestrator
+            .tick(&mut state, &mut cache, recovered(100), target_block, 8, &cancel)
+            .await;
 
         assert!(result);
+    }
+
+    #[tokio::test]
+    async fn failed_proof_restarts_until_retry_budget_is_exhausted() {
+        let proof_requester = Arc::new(MockProofRequester::default());
+        let target_block = 200u64;
+        let canonical_root = B256::repeat_byte(0xcc);
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(canonical_root);
+        proof_requester
+            .failed_sessions
+            .lock()
+            .unwrap()
+            .insert(session_id, "simulated proof failure".to_owned());
+        let orchestrator = make_orchestrator(
+            proof_requester,
+            rollup_client(target_block, Some(canonical_root)),
+            Arc::new(MockOutputProposer::default()),
+            MockDisputeGameFactory::with_games(vec![]),
+        );
+        let mut cache = cache();
+        let mut state = ProofCollectorState::new();
+        let cancel = CancellationToken::new();
+
+        assert!(
+            orchestrator
+                .tick(&mut state, &mut cache, recovered(100), target_block, 2, &cancel)
+                .await
+        );
+        assert!(
+            !orchestrator
+                .tick(&mut state, &mut cache, recovered(100), target_block, 2, &cancel)
+                .await
+        );
+        assert_eq!(state.retry_counts, HashMap::from([(target_block, 2)]));
     }
 
     #[tokio::test]

@@ -9,7 +9,7 @@ use tracing::info;
 use crate::{
     Metrics,
     driver::DriverConfig,
-    proof_collector::ProofCollector,
+    proof_collector::{ProofCollector, ProofCollectorState},
     proof_dispatcher::{ProofDispatcher, ProofDispatcherState},
     proof_recovery::{ProofRecovery, ProofRecoveryCache},
 };
@@ -72,6 +72,7 @@ where
             "Starting proving pipeline"
         );
 
+        let mut collector_state = ProofCollectorState::new();
         loop {
             // dispatcher_loop intentionally does not return; this branch keeps it
             // polled while collector_loop remains the session restart signal.
@@ -81,7 +82,7 @@ where
                 biased;
                 () = cancel.cancelled() => false,
                 () = self.dispatcher_loop(&cancel) => true,
-                () = self.collector_loop(&cancel) => true,
+                () = self.collector_loop(&cancel, &mut collector_state) => true,
             };
 
             if !restart {
@@ -129,7 +130,7 @@ where
         }
     }
 
-    async fn collector_loop(&self, cancel: &CancellationToken) {
+    async fn collector_loop(&self, cancel: &CancellationToken, state: &mut ProofCollectorState) {
         let mut cache: Option<ProofRecoveryCache> = None;
 
         loop {
@@ -142,7 +143,16 @@ where
                     Metrics::safe_head().set(safe_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-                    self.proof_collector.tick(&mut cache, recovered, safe_head, cancel).await
+                    self.proof_collector
+                        .tick(
+                            state,
+                            &mut cache,
+                            recovered,
+                            safe_head,
+                            self.config.max_retries,
+                            cancel,
+                        )
+                        .await
                 } else {
                     false
                 }

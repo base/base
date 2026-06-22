@@ -19,7 +19,7 @@ use crate::{ProverServiceClientBuildError, ProverServiceClientConfig, ProverServ
 /// that exposes only the requester surface — worker-only methods such as
 /// `claim`, `heartbeat`, `complete`, and `fail` are intentionally absent.
 #[async_trait]
-pub trait ProofRequesterProvider: std::fmt::Debug + Send + Sync {
+pub trait ProofRequesterProvider: Send + Sync {
     /// Submit a request to prove a block range.
     async fn prove_block_range(
         &self,
