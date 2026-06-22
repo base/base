@@ -325,7 +325,6 @@ where
 mod tests {
     use alloy_primitives::{Address, B256};
     use base_proof_primitives::ProofRequest;
-    use rstest::rstest;
 
     use super::*;
     use crate::{
@@ -452,33 +451,30 @@ mod tests {
         assert_eq!(effect, None);
     }
 
-    #[rstest]
-    #[case::missing(None)]
-    #[case::failed(Some("simulated proof failure"))]
     #[tokio::test]
-    async fn unavailable_session_restarts_pipeline_without_dispatching(
-        #[case] failure: Option<&'static str>,
-    ) {
-        let requester = Arc::new(MockProofRequester::default());
-        let target_block = 200;
-        let claimed_root = B256::repeat_byte(target_block as u8);
-        if let Some(message) = failure {
-            let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
-            requester.failed_sessions.lock().unwrap().insert(session_id, message.to_owned());
+    async fn unavailable_session_restarts_pipeline_without_dispatching() {
+        for failure in [None, Some("simulated proof failure")] {
+            let requester = Arc::new(MockProofRequester::default());
+            let target_block = 200;
+            let claimed_root = B256::repeat_byte(target_block as u8);
+            if let Some(message) = failure {
+                let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+                requester.failed_sessions.lock().unwrap().insert(session_id, message.to_owned());
+            }
+            let orchestrator = make_orchestrator(
+                requester.clone(),
+                rollup_client(target_block, Some(claimed_root)),
+                Arc::new(MockOutputProposer::default()),
+                MockDisputeGameFactory::with_games(vec![]),
+            );
+            let mut cache = cache();
+            let cancel = CancellationToken::new();
+
+            let result = orchestrator.tick(&mut cache, recovered(100), target_block, &cancel).await;
+
+            assert!(result);
+            assert!(requester.requests.lock().unwrap().is_empty());
         }
-        let orchestrator = make_orchestrator(
-            requester.clone(),
-            rollup_client(target_block, Some(claimed_root)),
-            Arc::new(MockOutputProposer::default()),
-            MockDisputeGameFactory::with_games(vec![]),
-        );
-        let mut cache = cache();
-        let cancel = CancellationToken::new();
-
-        let result = orchestrator.tick(&mut cache, recovered(100), target_block, &cancel).await;
-
-        assert!(result);
-        assert!(requester.requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
