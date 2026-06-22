@@ -32,7 +32,6 @@ mod rejected_tx_forwarder;
 pub use rejected_tx_forwarder::RejectedTxForwarder;
 
 mod transaction_events;
-pub use transaction_events::SharedBuilderTransactionEventSink;
 
 mod rejection_cache;
 pub use rejection_cache::RejectionCache;

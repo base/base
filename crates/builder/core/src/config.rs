@@ -8,10 +8,7 @@ use std::sync::Arc;
 
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 
-use crate::{
-    ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedBuilderTransactionEventSink,
-    SharedMeteringProvider,
-};
+use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -98,12 +95,6 @@ pub struct BuilderConfig {
     /// Maximum number of rejected transactions accumulated per block before
     /// further rejections are dropped. Prevents unbounded `ExecutionInfo` growth.
     pub max_rejected_txs_per_block: usize,
-
-    /// Optional non-blocking sink for dedicated transaction event journal writes.
-    pub transaction_event_sink: Option<SharedBuilderTransactionEventSink>,
-
-    /// Network label written into builder transaction events.
-    pub transaction_event_network: String,
 }
 
 impl BuilderConfig {
@@ -141,8 +132,6 @@ impl core::fmt::Debug for BuilderConfig {
             .field("audit_archiver_url", &self.audit_archiver_url)
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
             .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
-            .field("transaction_event_sink", &self.transaction_event_sink.is_some())
-            .field("transaction_event_network", &self.transaction_event_network)
             .finish()
     }
 }
@@ -172,8 +161,6 @@ impl Default for BuilderConfig {
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
-            transaction_event_sink: None,
-            transaction_event_network: "unknown".to_string(),
         }
     }
 }

@@ -270,7 +270,6 @@ impl Args {
     pub fn into_builder_config(
         self,
         metering_provider: SharedMeteringProvider,
-        transaction_event_sink: Option<base_builder_core::SharedBuilderTransactionEventSink>,
     ) -> eyre::Result<BuilderConfig> {
         let flashblocks_ws_addr = SocketAddr::new(
             self.flashblocks.flashblocks_addr.parse()?,
@@ -305,8 +304,6 @@ impl Args {
             audit_archiver_url: self.audit_archiver_url,
             rejected_tx_channel_size: self.rejected_tx_channel_size,
             max_rejected_txs_per_block: self.max_rejected_txs_per_block,
-            transaction_event_sink,
-            transaction_event_network: self.transaction_events.network,
         })
     }
 }

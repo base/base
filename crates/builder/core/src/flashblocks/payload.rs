@@ -916,7 +916,6 @@ where
         data: serde_json::Map<String, serde_json::Value>,
     ) {
         let event_ctx = BuilderTransactionEventContext {
-            network: ctx.builder_config.transaction_event_network.clone(),
             payload_id: ctx.payload_id().to_string(),
             block_number: ctx.block_number(),
             block_hash,
@@ -927,12 +926,7 @@ where
             builder_mode: "flashblocks",
             source_queue: "flashblock_builder",
         };
-        emit_builder_payload_event(
-            ctx.builder_config.transaction_event_sink.as_ref(),
-            event_ctx,
-            event_type,
-            data,
-        );
+        emit_builder_payload_event(event_ctx, event_type, data);
     }
 
     /// Do some logging and metric recording when we stop build flashblocks
@@ -1008,16 +1002,11 @@ where
         ctx: &BasePayloadBuilderCtx,
         final_payload: &BaseBuiltPayload,
     ) {
-        let Some(sink) = ctx.builder_config.transaction_event_sink.as_ref() else {
-            return;
-        };
-
         let block = final_payload.block();
         let block_hash = block.hash();
         let block_number = block.number;
         let transaction_count = block.body().transactions.len();
         let payload_event_ctx = BuilderTransactionEventContext {
-            network: ctx.builder_config.transaction_event_network.clone(),
             payload_id: ctx.payload_id().to_string(),
             block_number,
             block_hash: Some(block_hash),
@@ -1029,7 +1018,6 @@ where
             source_queue: "finalized_payload",
         };
         emit_builder_payload_event(
-            Some(sink),
             payload_event_ctx,
             TransactionEventType::BuilderPayloadFinalized,
             serde_json::Map::from_iter([
@@ -1043,7 +1031,6 @@ where
 
         for (position, tx) in block.body().transactions.iter().enumerate() {
             let event_ctx = BuilderTransactionEventContext {
-                network: ctx.builder_config.transaction_event_network.clone(),
                 payload_id: ctx.payload_id().to_string(),
                 block_number,
                 block_hash: Some(block_hash),
@@ -1055,7 +1042,6 @@ where
                 source_queue: "finalized_payload",
             };
             emit_builder_transaction_event(
-                Some(sink),
                 event_ctx,
                 TransactionEventType::BuilderIncluded,
                 tx.tx_hash(),

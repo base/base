@@ -510,7 +510,6 @@ impl BasePayloadBuilderCtx {
         block_hash: Option<BlockHash>,
     ) -> BuilderTransactionEventContext {
         BuilderTransactionEventContext {
-            network: self.builder_config.transaction_event_network.clone(),
             payload_id: self.payload_id().to_string(),
             block_number: self.block_number(),
             block_hash,
@@ -531,7 +530,6 @@ impl BasePayloadBuilderCtx {
         data: Map<String, serde_json::Value>,
     ) {
         emit_builder_transaction_event(
-            self.builder_config.transaction_event_sink.as_ref(),
             self.builder_transaction_event_context(ordering_position, None),
             event_type,
             tx_hash,
