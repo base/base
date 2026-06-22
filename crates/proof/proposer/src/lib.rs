@@ -23,6 +23,9 @@ pub use proof_adapter::ProposerProofAdapter;
 mod proposal_intervals;
 pub use proposal_intervals::ProposalIntervals;
 
+mod proof_target;
+pub use proof_target::ProofTarget;
+
 mod proof_recovery;
 pub use proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig};
 

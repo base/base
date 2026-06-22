@@ -1,15 +1,14 @@
 //! Polls and submits prover-service proofs for proposer TEE checkpoints.
 
-use std::{ops::ControlFlow, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::B256;
 use base_proof_primitives::ProofResult;
 use base_proof_rpc::{L1Provider, RollupProvider};
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{GetProofRequest, ProofStatus};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     driver::RecoveredState,
@@ -18,13 +17,12 @@ use crate::{
     proof_adapter::ProposerProofAdapter,
     proof_recovery::{ProofRecovery, ProofRecoveryCache},
     proof_submitter::{ProofSubmitter, SubmitAction},
+    proof_target::ProofTarget,
 };
 
 /// Mutable collector-side state.
 #[derive(Debug, Default)]
 pub struct ProofCollectorState {
-    /// Latest block the collector has submitted through.
-    pub cursor: Option<RecoveredState>,
     /// Cached onchain recovery state used by the collector loop.
     pub cache: Option<ProofRecoveryCache>,
 }
@@ -70,7 +68,11 @@ where
         Self { proof_requester, rollup_client, submitter, recovery, block_interval, submit_timeout }
     }
 
-    async fn poll_target(&self, target_block: u64, claimed_l2_output_root: B256) -> TargetPoll {
+    async fn poll_target(
+        &self,
+        target_block: u64,
+        claimed_l2_output_root: alloy_primitives::B256,
+    ) -> TargetPoll {
         let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
         let response = match self
             .proof_requester
@@ -147,21 +149,15 @@ where
         safe_head: u64,
         cancel: &CancellationToken,
     ) -> bool {
-        if state.cursor != Some(recovered) {
-            state.cursor = Some(recovered);
-        }
+        let mut current = recovered;
 
         let restart = loop {
-            let Some(current) = state.cursor else {
-                break false;
-            };
-
             if cancel.is_cancelled() {
                 break false;
             }
 
             let Some(target_block) =
-                Self::next_target_block(current.l2_block_number, self.block_interval)
+                ProofTarget::next_block(current.l2_block_number, self.block_interval)
             else {
                 break false;
             };
@@ -176,7 +172,12 @@ where
                 break false;
             }
 
-            let Some(claimed_l2_output_root) = self.canonical_output_root(target_block).await
+            let Some(claimed_l2_output_root) = ProofTarget::canonical_output_root(
+                self.rollup_client.as_ref(),
+                target_block,
+                "collector",
+            )
+            .await
             else {
                 break false;
             };
@@ -191,14 +192,14 @@ where
                         .submit_inline(target_block, &current, proof, &mut state.cache, cancel)
                         .await
                     {
-                        ControlFlow::Continue(recovered) => {
-                            state.cursor = Some(recovered);
+                        Some(recovered) => {
                             if recovered.l2_block_number > current.l2_block_number {
+                                current = recovered;
                                 continue;
                             }
                             break false;
                         }
-                        ControlFlow::Break(()) => break true,
+                        None => break true,
                     }
                 }
                 TargetPoll::Pending | TargetPoll::Transient => break false,
@@ -233,7 +234,7 @@ where
         proof: ProofResult,
         cache: &mut Option<ProofRecoveryCache>,
         cancel: &CancellationToken,
-    ) -> ControlFlow<(), RecoveredState> {
+    ) -> Option<RecoveredState> {
         let parent_address = recovered.parent_address;
         info!(target_block, parent_address = %parent_address, "Submitting proof inline");
 
@@ -253,7 +254,7 @@ where
         let Some(result) = cancel.run_until_cancelled(submit).await else {
             submit_timer.disarm();
             warn!(target_block, "Inline submit cancelled, restarting pipeline session");
-            return ControlFlow::Break(());
+            return None;
         };
 
         match result {
@@ -265,14 +266,14 @@ where
                     timeout_secs = ?self.submit_timeout.map(|timeout| timeout.as_secs()),
                     "Inline submit timed out, restarting pipeline session"
                 );
-                ControlFlow::Break(())
+                None
             }
             Ok(Err(SubmitAction::RootMismatch)) => {
                 submit_timer.disarm();
                 warn!(target_block, "Output root mismatch at submit time, restarting pipeline");
                 Metrics::root_mismatch_total().increment(1);
                 *cache = None;
-                ControlFlow::Break(())
+                None
             }
             Ok(Err(SubmitAction::Failed(error))) => {
                 submit_timer.disarm();
@@ -290,7 +291,7 @@ where
                 } else {
                     warn!(target_block, error = %error, "Submission failed, restarting pipeline");
                 }
-                ControlFlow::Break(())
+                None
             }
             Ok(Err(SubmitAction::Discard(error))) => {
                 submit_timer.disarm();
@@ -300,7 +301,7 @@ where
                     error = %error,
                     "Proof discarded by submitter, restarting pipeline to request it again"
                 );
-                ControlFlow::Break(())
+                None
             }
             Ok(action @ (Ok(()) | Err(SubmitAction::GameAlreadyExists))) => {
                 if matches!(action, Err(SubmitAction::GameAlreadyExists)) {
@@ -315,43 +316,14 @@ where
                 }
                 Metrics::last_proposed_block().set(target_block as f64);
                 match self.recovery.recover_latest_state(cache).await {
-                    Ok(recovered) => ControlFlow::Continue(recovered),
+                    Ok(recovered) => Some(recovered),
                     Err(e) => {
                         warn!(error = %e, "Failed to recover state after inline submit");
-                        ControlFlow::Break(())
+                        None
                     }
                 }
             }
         }
-    }
-
-    async fn canonical_output_root(&self, target_block: u64) -> Option<B256> {
-        match self.rollup_client.output_at_block(target_block).await {
-            Ok(output) => Some(output.output_root),
-            Err(e) => {
-                warn!(
-                    target_block,
-                    error = %e,
-                    "Failed to fetch canonical output root for collection target"
-                );
-                None
-            }
-        }
-    }
-
-    fn next_target_block(current_block: u64, block_interval: u64) -> Option<u64> {
-        if block_interval == 0 {
-            error!("Block interval must be non-zero");
-            return None;
-        }
-
-        current_block.checked_add(block_interval).map_or_else(
-            || {
-                error!(current_block, block_interval, "Overflow computing next target block");
-                None
-            },
-            Some,
-        )
     }
 }
 
@@ -417,17 +389,6 @@ mod tests {
             output_roots: root.map_or_else(HashMap::new, |root| HashMap::from([(block, root)])),
             max_safe_block: None,
         })
-    }
-
-    fn failed_session_requester(claimed_root: B256) -> Arc<MockProofRequester> {
-        let requester = Arc::new(MockProofRequester::default());
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
-        requester
-            .failed_sessions
-            .lock()
-            .unwrap()
-            .insert(session_id, "simulated proof failure".to_owned());
-        requester
     }
 
     fn proof_request(
@@ -518,18 +479,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_resets_cursor_when_recovery_rewinds() {
-        let orchestrator = make_orchestrator(Default::default());
-        let mut state = ProofCollectorState { cursor: Some(recovered(500)), cache: cache() };
-        let cancel = CancellationToken::new();
-
-        let result = orchestrator.tick(&mut state, recovered(100), 200, &cancel).await;
-
-        assert!(result);
-        assert_eq!(state.cursor, Some(recovered(100)));
-    }
-
-    #[tokio::test]
     async fn submit_inline_restarts_when_post_submit_recovery_fails() {
         let mut factory = MockDisputeGameFactory::with_games(vec![]);
         factory.games_should_fail = true;
@@ -547,7 +496,7 @@ mod tests {
         let effect =
             orchestrator.submit_inline(200, &recovered(100), proof, &mut cache, &cancel).await;
 
-        assert_eq!(effect, ControlFlow::Break(()));
+        assert_eq!(effect, None);
     }
 
     #[tokio::test]
@@ -574,7 +523,13 @@ mod tests {
     async fn failed_session_restarts_pipeline_without_dispatching() {
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let requester = failed_session_requester(claimed_root);
+        let requester = Arc::new(MockProofRequester::default());
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        requester
+            .failed_sessions
+            .lock()
+            .unwrap()
+            .insert(session_id, "simulated proof failure".to_owned());
         let orchestrator = make_orchestrator(OrchestratorParts {
             proof_requester: requester.clone(),
             rollup_client: rollup_client(target_block, Some(claimed_root)),

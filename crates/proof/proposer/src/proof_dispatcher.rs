@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     Metrics, driver::RecoveredState, error::ProposerError, proof_adapter::ProposerProofAdapter,
+    proof_target::ProofTarget,
 };
 
 /// Static parameters needed to build proposer proof requests.
@@ -296,7 +297,7 @@ where
             }
 
             let Some(target_block) =
-                Self::next_target_block(current.l2_block_number, block_interval)
+                ProofTarget::next_block(current.l2_block_number, block_interval)
             else {
                 break;
             };
@@ -310,7 +311,12 @@ where
                 break;
             }
 
-            let Some(claimed_l2_output_root) = self.canonical_output_root(target_block).await
+            let Some(claimed_l2_output_root) = ProofTarget::canonical_output_root(
+                self.rollup_client.as_ref(),
+                target_block,
+                "dispatcher",
+            )
+            .await
             else {
                 break;
             };
@@ -391,37 +397,6 @@ where
                 }
             }
         }
-    }
-
-    /// Fetches the canonical output root for a dispatch target.
-    pub async fn canonical_output_root(&self, target_block: u64) -> Option<B256> {
-        match self.rollup_client.output_at_block(target_block).await {
-            Ok(output) => Some(output.output_root),
-            Err(e) => {
-                warn!(
-                    target_block,
-                    error = %e,
-                    "Failed to fetch canonical output root for dispatch target"
-                );
-                None
-            }
-        }
-    }
-
-    /// Computes the next dispatch target from a current block and interval.
-    pub fn next_target_block(current_block: u64, block_interval: u64) -> Option<u64> {
-        if block_interval == 0 {
-            error!("Block interval must be non-zero");
-            return None;
-        }
-
-        current_block.checked_add(block_interval).map_or_else(
-            || {
-                error!(current_block, block_interval, "Overflow computing next target block");
-                None
-            },
-            Some,
-        )
     }
 }
 
@@ -680,11 +655,8 @@ mod tests {
     }
 
     #[test]
-    fn next_target_block_returns_none_for_zero_interval() {
-        assert_eq!(
-            ProofDispatcher::<MockL1, MockL2, MockRollupClient>::next_target_block(100, 0),
-            None
-        );
+    fn next_block_returns_none_for_zero_interval() {
+        assert_eq!(ProofTarget::next_block(100, 0), None);
     }
 
     #[test]
