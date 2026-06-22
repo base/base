@@ -288,11 +288,6 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             "Block Latency:       min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
             fhbl.min, fhbl.p50, fhbl.mean, fhbl.p99, fhbl.max
         );
-        let fhbrd = &fh.block_receipt_delay;
-        println!(
-            "Block Receipt Delay: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
-            fhbrd.min, fhbrd.p50, fhbrd.mean, fhbrd.p99, fhbrd.max
-        );
         let fhfb = &fh.flashblocks_latency;
         println!(
             "FB Latency:          min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
@@ -335,11 +330,6 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
                     println!(
                         "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
                         tbl.min, tbl.p50, tbl.mean, tbl.p99, tbl.max
-                    );
-                    let tbrd = &tail.block_receipt_delay;
-                    println!(
-                        "Block Receipt Delay:              min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
-                        tbrd.min, tbrd.p50, tbrd.mean, tbrd.p99, tbrd.max
                     );
                     let tfb = &tail.flashblocks_latency;
                     println!(

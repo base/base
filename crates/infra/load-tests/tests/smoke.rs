@@ -133,19 +133,6 @@ fn metrics_summary_latency() {
 
     let fb_latency = &summary.flashblocks_latency;
     assert_eq!(fb_latency.p50, Duration::from_millis(150));
-
-    let mut metrics = TransactionMetrics::new(
-        TxHash::repeat_byte(99),
-        Some(Duration::from_millis(600)),
-        None,
-        21000,
-        1_000_000_000,
-        Some(99),
-    );
-    metrics.block_receipt_delay = Some(Duration::from_millis(75));
-    collector.record_confirmed(metrics);
-    let summary = collector.summarize(Duration::from_secs(10), None, None);
-    assert_eq!(summary.block_receipt_delay.p50, Duration::from_millis(75));
 }
 
 #[test]
@@ -216,38 +203,6 @@ fn metrics_summary_observed_window_inclusion_gap() {
     assert_eq!(fh.expected_block_count, 15, "30s / 2 = 15 expected blocks");
     assert_eq!(fh.confirmed_count, 6);
     assert_eq!(fh.block_range.block_count, 6, "only 6 of 15 expected blocks had txs");
-}
-
-#[test]
-fn metrics_summary_block_receipt_delay_per_window() {
-    let mut collector = MetricsCollector::new();
-
-    // 20 txs across blocks 100..=119 with configured_duration = 30s.
-    // → expected_block_count = 15, observed_window_end_block = 114.
-    // First half = txs in blocks 100..=114 (15 txs), receipt delays 100..=240ms.
-    // Tail = txs in blocks 115..=119 (5 txs), receipt delays 250..=290ms.
-    for i in 0..20u64 {
-        let mut metrics = TransactionMetrics::new(
-            TxHash::repeat_byte(i as u8),
-            Some(Duration::from_millis(50)),
-            None,
-            21_000,
-            1_000_000_000,
-            Some(100 + i),
-        );
-        metrics.block_receipt_delay = Some(Duration::from_millis(100 + i * 10));
-        collector.record_confirmed(metrics);
-    }
-
-    let summary = collector.summarize(Duration::from_secs(60), Some(Duration::from_secs(30)), None);
-
-    let fh_brd = &summary.observed_window.block_receipt_delay;
-    assert_eq!(fh_brd.min, Duration::from_millis(100), "first half receipt delay min");
-    assert_eq!(fh_brd.max, Duration::from_millis(240), "first half receipt delay max");
-
-    let tail_brd = &summary.tail.as_ref().expect("tail Some").block_receipt_delay;
-    assert_eq!(tail_brd.min, Duration::from_millis(250), "tail receipt delay min");
-    assert_eq!(tail_brd.max, Duration::from_millis(290), "tail receipt delay max");
 }
 
 #[test]
@@ -422,7 +377,10 @@ fn metrics_summary_json_serialization() {
     let json = summary.to_json().unwrap();
 
     assert!(json.contains("block_latency"));
-    assert!(json.contains("block_receipt_delay"));
+    assert!(
+        !json.contains("block_receipt_delay"),
+        "receipt delay is internal-only and must not be serialized to JSON"
+    );
     assert!(json.contains("throughput"));
     assert!(json.contains("gas"));
 }

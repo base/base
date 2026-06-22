@@ -70,7 +70,6 @@ impl<'a> MetricsAggregator<'a> {
             observed_window,
             tail,
             block_latency: Self::compute_block_latency(self.transactions),
-            block_receipt_delay: Self::compute_block_receipt_delay(self.transactions),
             flashblocks_latency: Self::compute_flashblocks_latency(self.transactions),
             throughput: Self::compute_throughput(
                 self.transactions,
@@ -131,9 +130,6 @@ impl<'a> MetricsAggregator<'a> {
             tps,
             gps,
             block_latency: Self::compute_block_latency(transactions.iter().filter(in_window)),
-            block_receipt_delay: Self::compute_block_receipt_delay(
-                transactions.iter().filter(in_window),
-            ),
             flashblocks_latency: Self::compute_flashblocks_latency(
                 transactions.iter().filter(in_window),
             ),
@@ -177,9 +173,6 @@ impl<'a> MetricsAggregator<'a> {
             block_range: Self::compute_block_range(transactions.iter().filter(is_tail)),
             time_past_observed_window: Self::compute_duration_metrics(&mut time_past),
             block_latency: Self::compute_block_latency(transactions.iter().filter(is_tail)),
-            block_receipt_delay: Self::compute_block_receipt_delay(
-                transactions.iter().filter(is_tail),
-            ),
             flashblocks_latency: Self::compute_flashblocks_latency(
                 transactions.iter().filter(is_tail),
             ),
@@ -202,15 +195,6 @@ impl<'a> MetricsAggregator<'a> {
     ) -> LatencyMetrics {
         let mut latencies: Vec<Duration> =
             transactions.into_iter().filter_map(|t| t.block_latency).collect();
-
-        Self::compute_duration_metrics(&mut latencies)
-    }
-
-    fn compute_block_receipt_delay<'t>(
-        transactions: impl IntoIterator<Item = &'t TransactionMetrics>,
-    ) -> LatencyMetrics {
-        let mut latencies: Vec<Duration> =
-            transactions.into_iter().filter_map(|t| t.block_receipt_delay).collect();
 
         Self::compute_duration_metrics(&mut latencies)
     }
@@ -374,10 +358,8 @@ pub struct MetricsSummary {
     /// window). `None` when the run had no configured duration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tail: Option<TailMetrics>,
-    /// Block production latency (full run, baseline accounting).
+    /// Block landing latency (full run, baseline accounting).
     pub block_latency: LatencyMetrics,
-    /// Delay between block production time and receipt observation (full run).
-    pub block_receipt_delay: LatencyMetrics,
     /// Flashblocks sequencer latency (full run, baseline accounting).
     pub flashblocks_latency: FlashblocksLatencyMetrics,
     /// Throughput statistics (full run, baseline accounting).

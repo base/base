@@ -24,9 +24,12 @@ pub struct SubmissionStats<'a> {
 pub struct TransactionMetrics {
     /// Transaction hash.
     pub tx_hash: TxHash,
-    /// Time from submission to block production.
+    /// Time from submission to first observation in a polled block (includes the
+    /// block poll + scan cost).
     pub block_latency: Option<Duration>,
-    /// Time from block production to receipt observation by the block watcher.
+    /// Time from block production to receipt observation by the end-of-run receipt
+    /// pass. Internal-only: measured for logging, never serialized.
+    #[serde(skip)]
     pub block_receipt_delay: Option<Duration>,
     /// Time from submission to sequencer acceptance.
     pub flashblocks_latency: Option<Duration>,
@@ -219,11 +222,9 @@ pub struct ObservedWindowMetrics {
     pub tps: f64,
     /// Gas per second over the observed window (same denominator as `tps`).
     pub gps: f64,
-    /// Block production latency (submit→inclusion) for observed-window transactions.
+    /// Block landing latency (submit→first observation in a polled block) for
+    /// observed-window transactions.
     pub block_latency: LatencyMetrics,
-    /// Delay between block production and receipt observation by the block
-    /// watcher, for observed-window transactions.
-    pub block_receipt_delay: LatencyMetrics,
     /// Flashblocks sequencer latency for observed-window transactions.
     pub flashblocks_latency: FlashblocksLatencyMetrics,
 }
@@ -252,11 +253,9 @@ pub struct TailMetrics {
     /// Per-tx wall-time the block landed past `observed_window_end_block`,
     /// derived from `(block_number - observed_window_end_block) * BLOCK_INTERVAL`.
     pub time_past_observed_window: LatencyMetrics,
-    /// Submit→inclusion latency for tail transactions only.
+    /// Block landing latency (submit→first observation in a polled block) for tail
+    /// transactions only.
     pub block_latency: LatencyMetrics,
-    /// Delay between block production and receipt observation by the block
-    /// watcher, for tail transactions only.
-    pub block_receipt_delay: LatencyMetrics,
     /// Flashblocks sequencer latency for tail transactions only.
     pub flashblocks_latency: FlashblocksLatencyMetrics,
 }
