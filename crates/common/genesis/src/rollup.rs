@@ -206,7 +206,6 @@ macro_rules! rollup_fork_methods {
     ($(
         $active:ident,
         $first:ident,
-        $first_with_parent:ident,
         [$($timestamp:tt)+],
         $name:literal
         $(, implies $next:ident)?;
@@ -217,18 +216,12 @@ macro_rules! rollup_fork_methods {
                 self.$($timestamp)+.is_some_and(|t| timestamp >= t) $(|| self.$next(timestamp))?
             }
 
-            #[doc = concat!("Returns true if the timestamp marks the first ", $name, " block.")]
-            pub fn $first(&self, timestamp: u64) -> bool {
-                self.$active(timestamp)
-                    && !self.$active(timestamp.saturating_sub(self.block_time))
-            }
-
             #[doc = concat!(
                 "Returns true if the block at `timestamp` is the first ",
                 $name,
-                " block when compared against the actual parent timestamp.",
+                " block when compared against the parent timestamp.",
             )]
-            pub fn $first_with_parent(&self, timestamp: u64, parent_timestamp: u64) -> bool {
+            pub fn $first(&self, timestamp: u64, parent_timestamp: u64) -> bool {
                 self.$active(timestamp) && !self.$active(parent_timestamp)
             }
         )*
@@ -297,87 +290,74 @@ impl RollupConfig {
     rollup_fork_methods! {
         is_regolith_active,
         is_first_regolith_block,
-        is_first_regolith_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Regolith)],
         "Regolith",
         implies is_canyon_active;
 
         is_canyon_active,
         is_first_canyon_block,
-        is_first_canyon_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Canyon)],
         "Canyon",
         implies is_delta_active;
 
         is_delta_active,
         is_first_delta_block,
-        is_first_delta_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Delta)],
         "Delta",
         implies is_ecotone_active;
 
         is_ecotone_active,
         is_first_ecotone_block,
-        is_first_ecotone_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone)],
         "Ecotone",
         implies is_fjord_active;
 
         is_fjord_active,
         is_first_fjord_block,
-        is_first_fjord_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Fjord)],
         "Fjord",
         implies is_granite_active;
 
         is_granite_active,
         is_first_granite_block,
-        is_first_granite_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Granite)],
         "Granite",
         implies is_holocene_active;
 
         is_holocene_active,
         is_first_holocene_block,
-        is_first_holocene_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Holocene)],
         "Holocene",
         implies is_isthmus_active;
 
         is_pectra_blob_schedule_active,
         is_first_pectra_blob_schedule_block,
-        is_first_pectra_blob_schedule_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)],
         "pectra blob schedule";
 
         is_isthmus_active,
         is_first_isthmus_block,
-        is_first_isthmus_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus)],
         "Isthmus",
         implies is_jovian_active;
 
         is_jovian_active,
         is_first_jovian_block,
-        is_first_jovian_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Jovian)],
         "Jovian";
 
         is_base_azul_active,
         is_first_base_azul_block,
-        is_first_base_azul_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Azul)],
         "Base Azul";
 
         is_beryl_active,
         is_first_beryl_block,
-        is_first_beryl_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Beryl)],
         "Beryl";
 
         is_cobalt_active,
         is_first_cobalt_block,
-        is_first_cobalt_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt)],
         "Cobalt";
     }
@@ -473,52 +453,28 @@ impl RollupConfig {
         tracing::info!(target: "upgrades", block_number, upgrade = activation.name(), "Activated upgrade");
     }
 
-    fn first_upgrade_activation_estimated(&self, timestamp: u64) -> Option<UpgradeActivationLog> {
-        if self.is_first_ecotone_block(timestamp) {
-            Some(UpgradeActivationLog::Ecotone)
-        } else if self.is_first_fjord_block(timestamp) {
-            Some(UpgradeActivationLog::Fjord)
-        } else if self.is_first_granite_block(timestamp) {
-            Some(UpgradeActivationLog::Granite)
-        } else if self.is_first_holocene_block(timestamp) {
-            Some(UpgradeActivationLog::Holocene)
-        } else if self.is_first_isthmus_block(timestamp) {
-            Some(UpgradeActivationLog::Isthmus)
-        } else if self.is_first_jovian_block(timestamp) {
-            Some(UpgradeActivationLog::Jovian)
-        } else if self.is_first_base_azul_block(timestamp) {
-            Some(UpgradeActivationLog::Azul)
-        } else if self.is_first_beryl_block(timestamp) {
-            Some(UpgradeActivationLog::Beryl)
-        } else if self.is_first_cobalt_block(timestamp) {
-            Some(UpgradeActivationLog::Cobalt)
-        } else {
-            None
-        }
-    }
-
-    fn first_upgrade_activation_with_parent(
+    fn first_upgrade_activation(
         &self,
         timestamp: u64,
         parent_timestamp: u64,
     ) -> Option<UpgradeActivationLog> {
-        if self.is_first_ecotone_block_with_parent(timestamp, parent_timestamp) {
+        if self.is_first_ecotone_block(timestamp, parent_timestamp) {
             Some(UpgradeActivationLog::Ecotone)
-        } else if self.is_first_fjord_block_with_parent(timestamp, parent_timestamp) {
+        } else if self.is_first_fjord_block(timestamp, parent_timestamp) {
             Some(UpgradeActivationLog::Fjord)
-        } else if self.is_first_granite_block_with_parent(timestamp, parent_timestamp) {
+        } else if self.is_first_granite_block(timestamp, parent_timestamp) {
             Some(UpgradeActivationLog::Granite)
-        } else if self.is_first_holocene_block_with_parent(timestamp, parent_timestamp) {
+        } else if self.is_first_holocene_block(timestamp, parent_timestamp) {
             Some(UpgradeActivationLog::Holocene)
-        } else if self.is_first_isthmus_block_with_parent(timestamp, parent_timestamp) {
+        } else if self.is_first_isthmus_block(timestamp, parent_timestamp) {
             Some(UpgradeActivationLog::Isthmus)
-        } else if self.is_first_jovian_block_with_parent(timestamp, parent_timestamp) {
+        } else if self.is_first_jovian_block(timestamp, parent_timestamp) {
             Some(UpgradeActivationLog::Jovian)
-        } else if self.is_first_base_azul_block_with_parent(timestamp, parent_timestamp) {
+        } else if self.is_first_base_azul_block(timestamp, parent_timestamp) {
             Some(UpgradeActivationLog::Azul)
-        } else if self.is_first_beryl_block_with_parent(timestamp, parent_timestamp) {
+        } else if self.is_first_beryl_block(timestamp, parent_timestamp) {
             Some(UpgradeActivationLog::Beryl)
-        } else if self.is_first_cobalt_block_with_parent(timestamp, parent_timestamp) {
+        } else if self.is_first_cobalt_block(timestamp, parent_timestamp) {
             Some(UpgradeActivationLog::Cobalt)
         } else {
             None
@@ -527,16 +483,17 @@ impl RollupConfig {
 
     /// Logs upgrade activation when the caller knows the actual parent timestamp.
     pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64, parent_timestamp: u64) {
-        if let Some(activation) =
-            self.first_upgrade_activation_with_parent(timestamp, parent_timestamp)
-        {
+        if let Some(activation) = self.first_upgrade_activation(timestamp, parent_timestamp) {
             self.emit_upgrade_activation(block_number, activation);
         }
     }
 
     /// Logs upgrade activation using block-time estimation when the parent timestamp is unknown.
     pub fn log_upgrade_activation_estimated(&self, block_number: u64, timestamp: u64) {
-        if let Some(activation) = self.first_upgrade_activation_estimated(timestamp) {
+        let estimated_parent_timestamp = timestamp.saturating_sub(self.block_time);
+        if let Some(activation) =
+            self.first_upgrade_activation(timestamp, estimated_parent_timestamp)
+        {
             self.emit_upgrade_activation(block_number, activation);
         }
     }
@@ -617,108 +574,73 @@ mod tests {
         };
 
         // Regolith
-        assert!(!cfg.is_first_regolith_block(8));
-        assert!(cfg.is_first_regolith_block(10));
-        assert!(!cfg.is_first_regolith_block(12));
+        assert!(!cfg.is_first_regolith_block(8, 6));
+        assert!(cfg.is_first_regolith_block(10, 8));
+        assert!(!cfg.is_first_regolith_block(12, 10));
 
         // Canyon
-        assert!(!cfg.is_first_canyon_block(18));
-        assert!(cfg.is_first_canyon_block(20));
-        assert!(!cfg.is_first_canyon_block(22));
+        assert!(!cfg.is_first_canyon_block(18, 16));
+        assert!(cfg.is_first_canyon_block(20, 18));
+        assert!(!cfg.is_first_canyon_block(22, 20));
 
         // Delta
-        assert!(!cfg.is_first_delta_block(28));
-        assert!(cfg.is_first_delta_block(30));
-        assert!(!cfg.is_first_delta_block(32));
+        assert!(!cfg.is_first_delta_block(28, 26));
+        assert!(cfg.is_first_delta_block(30, 28));
+        assert!(!cfg.is_first_delta_block(32, 30));
 
         // Ecotone
-        assert!(!cfg.is_first_ecotone_block(38));
-        assert!(cfg.is_first_ecotone_block(40));
-        assert!(!cfg.is_first_ecotone_block(42));
+        assert!(!cfg.is_first_ecotone_block(38, 36));
+        assert!(cfg.is_first_ecotone_block(40, 38));
+        assert!(!cfg.is_first_ecotone_block(42, 40));
 
         // Fjord
-        assert!(!cfg.is_first_fjord_block(48));
-        assert!(cfg.is_first_fjord_block(50));
-        assert!(!cfg.is_first_fjord_block(52));
+        assert!(!cfg.is_first_fjord_block(48, 46));
+        assert!(cfg.is_first_fjord_block(50, 48));
+        assert!(!cfg.is_first_fjord_block(52, 50));
 
         // Granite
-        assert!(!cfg.is_first_granite_block(58));
-        assert!(cfg.is_first_granite_block(60));
-        assert!(!cfg.is_first_granite_block(62));
+        assert!(!cfg.is_first_granite_block(58, 56));
+        assert!(cfg.is_first_granite_block(60, 58));
+        assert!(!cfg.is_first_granite_block(62, 60));
 
         // Holocene
-        assert!(!cfg.is_first_holocene_block(68));
-        assert!(cfg.is_first_holocene_block(70));
-        assert!(!cfg.is_first_holocene_block(72));
+        assert!(!cfg.is_first_holocene_block(68, 66));
+        assert!(cfg.is_first_holocene_block(70, 68));
+        assert!(!cfg.is_first_holocene_block(72, 70));
 
         // Pectra blob schedule
-        assert!(!cfg.is_first_pectra_blob_schedule_block(78));
-        assert!(cfg.is_first_pectra_blob_schedule_block(80));
-        assert!(!cfg.is_first_pectra_blob_schedule_block(82));
+        assert!(!cfg.is_first_pectra_blob_schedule_block(78, 76));
+        assert!(cfg.is_first_pectra_blob_schedule_block(80, 78));
+        assert!(!cfg.is_first_pectra_blob_schedule_block(82, 80));
 
         // Isthmus
-        assert!(!cfg.is_first_isthmus_block(88));
-        assert!(cfg.is_first_isthmus_block(90));
-        assert!(!cfg.is_first_isthmus_block(92));
+        assert!(!cfg.is_first_isthmus_block(88, 86));
+        assert!(cfg.is_first_isthmus_block(90, 88));
+        assert!(!cfg.is_first_isthmus_block(92, 90));
 
         // Jovian
-        assert!(!cfg.is_first_jovian_block(98));
-        assert!(cfg.is_first_jovian_block(100));
-        assert!(!cfg.is_first_jovian_block(102));
+        assert!(!cfg.is_first_jovian_block(98, 96));
+        assert!(cfg.is_first_jovian_block(100, 98));
+        assert!(!cfg.is_first_jovian_block(102, 100));
 
         // Base Azul
-        assert!(!cfg.is_first_base_azul_block(108));
-        assert!(cfg.is_first_base_azul_block(110));
-        assert!(!cfg.is_first_base_azul_block(112));
+        assert!(!cfg.is_first_base_azul_block(108, 106));
+        assert!(cfg.is_first_base_azul_block(110, 108));
+        assert!(!cfg.is_first_base_azul_block(112, 110));
 
         // Beryl
-        assert!(!cfg.is_first_beryl_block(118));
-        assert!(cfg.is_first_beryl_block(120));
-        assert!(!cfg.is_first_beryl_block(122));
+        assert!(!cfg.is_first_beryl_block(118, 116));
+        assert!(cfg.is_first_beryl_block(120, 118));
+        assert!(!cfg.is_first_beryl_block(122, 120));
 
         // Cobalt
-        assert!(!cfg.is_first_cobalt_block(128));
-        assert!(cfg.is_first_cobalt_block(130));
-        assert!(!cfg.is_first_cobalt_block(132));
+        assert!(!cfg.is_first_cobalt_block(128, 126));
+        assert!(cfg.is_first_cobalt_block(130, 128));
+        assert!(!cfg.is_first_cobalt_block(132, 130));
     }
 
     #[test]
-    fn test_is_first_fork_block_with_parent_timestamp() {
-        let cfg = RollupConfig {
-            upgrades: UpgradeConfig {
-                regolith_time: Some(10),
-                canyon_time: Some(20),
-                delta_time: Some(30),
-                ecotone_time: Some(40),
-                fjord_time: Some(50),
-                granite_time: Some(60),
-                holocene_time: Some(70),
-                pectra_blob_schedule_time: Some(80),
-                isthmus_time: Some(90),
-                jovian_time: Some(100),
-                base: BaseUpgradeConfig { azul: Some(110), beryl: Some(120), cobalt: Some(130) },
-            },
-            block_time: 2,
-            ..Default::default()
-        };
-
-        assert!(cfg.is_first_regolith_block_with_parent(10, 8));
-        assert!(cfg.is_first_canyon_block_with_parent(20, 18));
-        assert!(cfg.is_first_delta_block_with_parent(30, 28));
-        assert!(cfg.is_first_ecotone_block_with_parent(40, 38));
-        assert!(cfg.is_first_fjord_block_with_parent(50, 48));
-        assert!(cfg.is_first_granite_block_with_parent(60, 58));
-        assert!(cfg.is_first_holocene_block_with_parent(70, 68));
-        assert!(cfg.is_first_pectra_blob_schedule_block_with_parent(80, 78));
-        assert!(cfg.is_first_isthmus_block_with_parent(90, 88));
-        assert!(cfg.is_first_jovian_block_with_parent(100, 98));
-        assert!(cfg.is_first_base_azul_block_with_parent(110, 108));
-        assert!(cfg.is_first_beryl_block_with_parent(120, 118));
-        assert!(cfg.is_first_cobalt_block_with_parent(130, 128));
-    }
-
-    #[test]
-    fn test_first_beryl_block_with_parent_timestamp_handles_same_second_boundary() {
+    fn test_first_beryl_block_handles_same_second_boundary() {
         let cfg = RollupConfig {
             upgrades: UpgradeConfig {
                 base: BaseUpgradeConfig { azul: Some(110), beryl: Some(120), cobalt: None },
@@ -728,8 +650,8 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(cfg.is_first_beryl_block_with_parent(120, 118));
-        assert!(!cfg.is_first_beryl_block_with_parent(120, 120));
+        assert!(cfg.is_first_beryl_block(120, 118));
+        assert!(!cfg.is_first_beryl_block(120, 120));
     }
 
     #[test]

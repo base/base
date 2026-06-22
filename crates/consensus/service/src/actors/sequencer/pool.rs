@@ -52,51 +52,51 @@ impl PoolActivation {
         }
 
         // Do not include transactions in the first Ecotone block.
-        if self.rollup_config.is_first_ecotone_block_with_parent(
-            attributes.payload_attributes.timestamp,
-            parent_timestamp,
-        ) {
+        if self
+            .rollup_config
+            .is_first_ecotone_block(attributes.payload_attributes.timestamp, parent_timestamp)
+        {
             return false;
         }
 
         // Do not include transactions in the first Fjord block.
-        if self.rollup_config.is_first_fjord_block_with_parent(
-            attributes.payload_attributes.timestamp,
-            parent_timestamp,
-        ) {
+        if self
+            .rollup_config
+            .is_first_fjord_block(attributes.payload_attributes.timestamp, parent_timestamp)
+        {
             return false;
         }
 
         // Do not include transactions in the first Granite block.
-        if self.rollup_config.is_first_granite_block_with_parent(
-            attributes.payload_attributes.timestamp,
-            parent_timestamp,
-        ) {
+        if self
+            .rollup_config
+            .is_first_granite_block(attributes.payload_attributes.timestamp, parent_timestamp)
+        {
             return false;
         }
 
         // Do not include transactions in the first Holocene block.
-        if self.rollup_config.is_first_holocene_block_with_parent(
-            attributes.payload_attributes.timestamp,
-            parent_timestamp,
-        ) {
+        if self
+            .rollup_config
+            .is_first_holocene_block(attributes.payload_attributes.timestamp, parent_timestamp)
+        {
             return false;
         }
 
         // Do not include transactions in the first Isthmus block.
-        if self.rollup_config.is_first_isthmus_block_with_parent(
-            attributes.payload_attributes.timestamp,
-            parent_timestamp,
-        ) {
+        if self
+            .rollup_config
+            .is_first_isthmus_block(attributes.payload_attributes.timestamp, parent_timestamp)
+        {
             return false;
         }
 
         // Do not include transactions in the first Jovian block.
         // See: `<https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/derivation.md#activation-block-rules>`
-        if self.rollup_config.is_first_jovian_block_with_parent(
-            attributes.payload_attributes.timestamp,
-            parent_timestamp,
-        ) {
+        if self
+            .rollup_config
+            .is_first_jovian_block(attributes.payload_attributes.timestamp, parent_timestamp)
+        {
             return false;
         }
 
