@@ -501,7 +501,7 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_primitives::{Address, B256, Bytes};
+    use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_proof_tee_nitro_attestation_prover::AttestationProof;
     use base_tx_manager::{SendHandle, TxManagerError};

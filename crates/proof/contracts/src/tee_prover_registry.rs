@@ -28,6 +28,9 @@ sol! {
         /// Thrown when PCR0 is not found in the attestation's PCR list.
         error PCR0NotFound();
 
+        /// Thrown when the attestation PCR0 does not match the expected image.
+        error PCR0Mismatch();
+
         /// Thrown when the dispute game factory is not configured.
         error DisputeGameFactoryNotSet();
 
