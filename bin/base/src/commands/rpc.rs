@@ -64,7 +64,7 @@ impl RpcCommand {
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
             let _upgrade_countdown_metrics = metrics_enabled
-                .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
+                .then(|| CliMetrics::spawn_upgrade_countdown_recorder(&rollup_config));
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
             let handle = launched.handle;

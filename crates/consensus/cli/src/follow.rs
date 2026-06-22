@@ -59,7 +59,7 @@ impl ConsensusFollowNodeCommand {
 
         RuntimeManager::new().run_until_ctrl_c(async move {
             let _upgrade_countdown_metrics =
-                metrics_config.map(CliMetrics::spawn_upgrade_countdown_recorder);
+                metrics_config.as_ref().map(CliMetrics::spawn_upgrade_countdown_recorder);
             args.start().await
         })
     }

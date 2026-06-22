@@ -68,7 +68,7 @@ impl ConsensusNodeCommand {
         let metrics_enabled = self.metrics.enabled;
         RuntimeManager::new().run_until_ctrl_c(async move {
             let _upgrade_countdown_metrics =
-                metrics_enabled.then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
+                metrics_enabled.then(|| CliMetrics::spawn_upgrade_countdown_recorder(&cfg));
             args.start_with_overrides(cfg, Default::default()).await
         })
     }

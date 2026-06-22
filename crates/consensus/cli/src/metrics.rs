@@ -191,25 +191,28 @@ impl CliMetrics {
     /// This must be called from an active Tokio runtime. The static rollup config metrics are
     /// initialized before the runtime exists in some CLI paths, so the dynamic countdown recorder is
     /// started separately by the async command entrypoints.
-    pub fn spawn_upgrade_countdown_recorder(config: RollupConfig) -> JoinHandle<()> {
+    pub fn spawn_upgrade_countdown_recorder(config: &RollupConfig) -> JoinHandle<()> {
+        let schedule = UpgradeCountdownSchedule::from_rollup_config(config);
+
         tokio::spawn(async move {
             let mut observed_upgrades = BTreeSet::new();
             let mut interval = tokio::time::interval(UPGRADE_COUNTDOWN_REFRESH_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 interval.tick().await;
                 let now = current_unix_timestamp();
-                Self::record_seconds_until_next_upgrade(&config, now, &mut observed_upgrades);
+                Self::record_seconds_until_next_upgrade(&schedule, now, &mut observed_upgrades);
             }
         })
     }
 
     fn record_seconds_until_next_upgrade(
-        config: &RollupConfig,
+        schedule: &UpgradeCountdownSchedule,
         now: u64,
         observed_upgrades: &mut BTreeSet<&'static str>,
     ) {
-        let countdowns = seconds_until_next_upgrades(config, now);
+        let countdowns = seconds_until_next_upgrades(schedule, now);
         let current_upgrades =
             countdowns.iter().map(|(upgrade, _)| *upgrade).collect::<BTreeSet<_>>();
 
@@ -242,33 +245,48 @@ fn current_unix_timestamp() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
-fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static str, u64)> {
-    let next_activation = BaseUpgrade::CONTRACT_VARIANTS
-        .into_iter()
-        .filter_map(|upgrade| {
-            config
-                .contract_upgrade_activation_timestamp(upgrade)
-                .filter(|activation_time| {
-                    activation_time.saturating_add(UPGRADE_ACTIVATION_GRACE_SECONDS) >= now
-                })
-                .map(|activation_time| (upgrade, activation_time))
-        })
-        .min_by_key(|(_, activation_time)| *activation_time);
+struct UpgradeCountdownSchedule {
+    activations: Vec<(&'static str, u64)>,
+}
 
-    let Some((_, next_activation_time)) = next_activation else {
+impl UpgradeCountdownSchedule {
+    fn from_rollup_config(config: &RollupConfig) -> Self {
+        let activations = BaseUpgrade::CONTRACT_VARIANTS
+            .into_iter()
+            .filter_map(|upgrade| {
+                let label = upgrade_metric_label(upgrade)?;
+                let activation_time = config.contract_upgrade_activation_timestamp(upgrade)?;
+                Some((label, activation_time))
+            })
+            .collect();
+
+        Self { activations }
+    }
+}
+
+fn seconds_until_next_upgrades(
+    schedule: &UpgradeCountdownSchedule,
+    now: u64,
+) -> Vec<(&'static str, u64)> {
+    let next_activation = schedule
+        .activations
+        .iter()
+        .filter(|(_, activation_time)| {
+            activation_time.saturating_add(UPGRADE_ACTIVATION_GRACE_SECONDS) >= now
+        })
+        .map(|(_, activation_time)| *activation_time)
+        .min();
+
+    let Some(next_activation_time) = next_activation else {
         return Vec::new();
     };
 
-    BaseUpgrade::CONTRACT_VARIANTS
-        .into_iter()
-        .filter_map(|upgrade| {
-            config
-                .contract_upgrade_activation_timestamp(upgrade)
-                .filter(|activation_time| *activation_time == next_activation_time)
-                .and_then(|activation_time| {
-                    upgrade_metric_label(upgrade)
-                        .map(|label| (label, activation_time.saturating_sub(now)))
-                })
+    schedule
+        .activations
+        .iter()
+        .filter_map(|(label, activation_time)| {
+            (*activation_time == next_activation_time)
+                .then_some((*label, activation_time.saturating_sub(now)))
         })
         .collect()
 }
@@ -306,6 +324,11 @@ mod tests {
 
     use super::*;
 
+    fn countdowns(config: &RollupConfig, now: u64) -> Vec<(&'static str, u64)> {
+        let schedule = UpgradeCountdownSchedule::from_rollup_config(config);
+        seconds_until_next_upgrades(&schedule, now)
+    }
+
     #[test]
     fn seconds_until_next_upgrades_returns_future_countdown() {
         let config = RollupConfig {
@@ -320,7 +343,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(seconds_until_next_upgrades(&config, 800), vec![("Azul", 200)]);
+        assert_eq!(countdowns(&config, 800), vec![("Azul", 200)]);
     }
 
     #[test]
@@ -336,8 +359,8 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(seconds_until_next_upgrades(&config, 1_000), vec![("Beryl", 0)]);
-        assert_eq!(seconds_until_next_upgrades(&config, 1_100), vec![("Beryl", 0)]);
+        assert_eq!(countdowns(&config, 1_000), vec![("Beryl", 0)]);
+        assert_eq!(countdowns(&config, 1_100), vec![("Beryl", 0)]);
     }
 
     #[test]
@@ -353,10 +376,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(
-            seconds_until_next_upgrades(&config, 1_000 + UPGRADE_ACTIVATION_GRACE_SECONDS + 1)
-                .is_empty()
-        );
+        assert!(countdowns(&config, 1_000 + UPGRADE_ACTIVATION_GRACE_SECONDS + 1).is_empty());
     }
 
     #[test]
@@ -373,7 +393,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(seconds_until_next_upgrades(&config, 900), vec![("Azul", 100), ("Beryl", 100)]);
+        assert_eq!(countdowns(&config, 900), vec![("Azul", 100), ("Beryl", 100)]);
     }
 
     #[test]
@@ -388,13 +408,14 @@ mod tests {
             },
             ..Default::default()
         };
+        let schedule = UpgradeCountdownSchedule::from_rollup_config(&config);
         let mut observed_upgrades = BTreeSet::new();
 
-        CliMetrics::record_seconds_until_next_upgrade(&config, 900, &mut observed_upgrades);
+        CliMetrics::record_seconds_until_next_upgrade(&schedule, 900, &mut observed_upgrades);
         assert!(observed_upgrades.contains("Beryl"));
 
         CliMetrics::record_seconds_until_next_upgrade(
-            &config,
+            &schedule,
             1_000 + UPGRADE_ACTIVATION_GRACE_SECONDS + 1,
             &mut observed_upgrades,
         );
