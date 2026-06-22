@@ -14,10 +14,8 @@ use base_common_chains::ChainConfig;
 use base_common_consensus::{BaseTxEnvelope, EIP8130_REJECTION_MSG};
 use base_common_network::Base;
 use base_observability_events::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
-    TransactionEventWriter,
+    TransactionEventProducer, TransactionEventType, TransactionEventWriter, transaction_event,
 };
-use chrono::Utc;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -411,14 +409,15 @@ impl IngressService {
         reason: String,
         metering: Option<&MeterBundleResponse>,
     ) {
-        let mut data = if let Some(metering) = metering {
-            metering_summary_data(bundle_hash, None, metering)
-        } else {
-            serde_json::Map::from_iter([(
-                "bundle_hash".to_string(),
-                serde_json::json!(bundle_hash.to_string()),
-            )])
-        };
+        let mut data = metering.map_or_else(
+            || {
+                serde_json::Map::from_iter([(
+                    "bundle_hash".to_string(),
+                    serde_json::json!(bundle_hash.to_string()),
+                )])
+            },
+            |metering| metering_summary_data(bundle_hash, None, metering),
+        );
         data.extend([
             (
                 "simulation_duration_ms".to_string(),
@@ -454,25 +453,13 @@ impl IngressService {
                 .or_insert_with(|| serde_json::json!(bundle_id.to_string()));
         }
 
-        let event_time = Utc::now();
-        let event_id = EventIdBuilder::new()
-            .part("producer", TransactionEventProducer::IngressRpc)
-            .part("event_type", event_type)
-            .part("tx_hash", tx_hash)
-            .part("event_time", event_time.timestamp_nanos_opt().unwrap_or_default())
-            .finish();
-
-        let event = TransactionEvent::new(
-            event_id,
-            event_time,
-            TransactionEventProducer::IngressRpc,
-            event_type,
-        )
-        .with_network(writer.network())
-        .with_tx_hash(tx_hash)
-        .with_data(data);
-
-        if let Err(err) = writer.try_write(&event) {
+        if let Err(err) = transaction_event!(
+            writer: Some(writer),
+            producer: TransactionEventProducer::IngressRpc,
+            event_type: event_type,
+            tx_hash: tx_hash,
+            data: data,
+        ) {
             debug!(error = %err, event_type = %event_type, tx_hash = %tx_hash, "transaction event not written");
         }
     }
@@ -503,11 +490,11 @@ struct MeterBundleFailure {
 }
 
 impl MeterBundleFailure {
-    fn without_response(error: ErrorObjectOwned) -> Self {
+    const fn without_response(error: ErrorObjectOwned) -> Self {
         Self { error, metering: None }
     }
 
-    fn with_response(error: ErrorObjectOwned, metering: MeterBundleResponse) -> Self {
+    const fn with_response(error: ErrorObjectOwned, metering: MeterBundleResponse) -> Self {
         Self { error, metering: Some(metering) }
     }
 }

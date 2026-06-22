@@ -87,15 +87,6 @@ pub enum TransactionEventType {
     /// Transaction simulation failed, timed out, or rejected the transaction.
     #[serde(rename = "SIMULATION_FAILED")]
     SimulationFailed,
-    /// Ingress-rpc attempted to forward a transaction to a target service.
-    #[serde(rename = "INGRESS_TX_FORWARD_ATTEMPT")]
-    IngressTxForwardAttempt,
-    /// Ingress-rpc successfully forwarded a transaction to a target service.
-    #[serde(rename = "INGRESS_TX_FORWARD_SUCCESS")]
-    IngressTxForwardSuccess,
-    /// Ingress-rpc failed to forward a transaction to a target service.
-    #[serde(rename = "INGRESS_TX_FORWARD_FAILURE")]
-    IngressTxForwardFailure,
     /// Ingress-rpc attempted to send metering data for a transaction.
     #[serde(rename = "INGRESS_METERING_SEND_ATTEMPT")]
     IngressMeteringSendAttempt,
@@ -199,9 +190,6 @@ impl fmt::Display for TransactionEventType {
             Self::SimulationStarted => "SIMULATION_STARTED",
             Self::SimulationSucceeded => "SIMULATION_SUCCEEDED",
             Self::SimulationFailed => "SIMULATION_FAILED",
-            Self::IngressTxForwardAttempt => "INGRESS_TX_FORWARD_ATTEMPT",
-            Self::IngressTxForwardSuccess => "INGRESS_TX_FORWARD_SUCCESS",
-            Self::IngressTxForwardFailure => "INGRESS_TX_FORWARD_FAILURE",
             Self::IngressMeteringSendAttempt => "INGRESS_METERING_SEND_ATTEMPT",
             Self::IngressMeteringSendSuccess => "INGRESS_METERING_SEND_SUCCESS",
             Self::IngressMeteringSendFailure => "INGRESS_METERING_SEND_FAILURE",

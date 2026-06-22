@@ -25,10 +25,9 @@ use alloy_provider::{Provider, RootProvider};
 use base_bundles::MeterBundleResponse;
 use base_common_network::Base;
 use base_observability_events::{
-    DEFAULT_QUEUE_CAPACITY, EventIdBuilder, TransactionEvent, TransactionEventProducer,
-    TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig,
+    DEFAULT_QUEUE_CAPACITY, TransactionEventProducer, TransactionEventType,
+    TransactionEventWriter, TransactionEventWriterConfig, transaction_event,
 };
-use chrono::Utc;
 use clap::Args;
 use serde_json::{Map, json};
 use tokio::{
@@ -347,32 +346,17 @@ fn emit_metering_send_event(
     data.entry("rpc_method".to_string()).or_insert_with(|| json!("base_setMeteringInformation"));
     data.entry("destination_index".to_string()).or_insert_with(|| json!(destination_index));
 
-    let event_time = Utc::now();
-    let mut event_id = EventIdBuilder::new()
-        .part("producer", TransactionEventProducer::IngressRpc)
-        .part("event_type", event_type)
-        .part("destination_index", destination_index)
-        .part("event_time", event_time.timestamp_nanos_opt().unwrap_or_default());
-    if let Some(tx_hash) = tx_hash {
-        event_id = event_id.part("tx_hash", tx_hash);
-    }
-    if let Some(bundle_hash) = bundle_hash {
-        event_id = event_id.part("bundle_hash", bundle_hash);
-    }
-
-    let mut event = TransactionEvent::new(
-        event_id.finish(),
-        event_time,
-        TransactionEventProducer::IngressRpc,
-        event_type,
-    )
-    .with_network(writer.network())
-    .with_data(data);
-    if let Some(tx_hash) = tx_hash {
-        event = event.with_tx_hash(tx_hash);
-    }
-
-    if let Err(err) = writer.try_write(&event) {
+    if let Err(err) = transaction_event!(
+        writer: Some(writer),
+        producer: TransactionEventProducer::IngressRpc,
+        event_type: event_type,
+        maybe_tx_hash: tx_hash,
+        id: {
+            "destination_index" => destination_index,
+            "bundle_hash" => bundle_hash.map(|hash| hash.to_string()).unwrap_or_default(),
+        },
+        data: data,
+    ) {
         debug!(error = %err, event_type = %event_type, "transaction event not written");
     }
 }
