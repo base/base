@@ -394,6 +394,22 @@ impl ConductorControl {
         )
     }
 
+    /// Returns docker containers to restart in dependency order, with duplicate names removed.
+    pub fn restart_containers(node: &ConductorNodeConfig) -> Vec<&str> {
+        let ordered = [
+            node.docker_el.as_deref(),
+            node.docker_cl.as_deref(),
+            node.docker_conductor.as_deref(),
+        ];
+        let mut containers = Vec::new();
+        for container in ordered.into_iter().flatten() {
+            if !containers.contains(&container) {
+                containers.push(container);
+            }
+        }
+        containers
+    }
+
     /// Pauses op-conductor's control loop on a single node.
     pub async fn pause_node(node: &ConductorNodeConfig) -> anyhow::Result<String> {
         const TIMEOUT: Duration = Duration::from_secs(5);
@@ -764,10 +780,7 @@ pub async fn restart_conductor_node(
     node: ConductorNodeConfig,
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
-    // Dependency order: EL must be healthy before CL starts, CL before conductor.
-    let ordered: &[Option<&str>] =
-        &[node.docker_el.as_deref(), node.docker_cl.as_deref(), node.docker_conductor.as_deref()];
-    let containers: Vec<&str> = ordered.iter().filter_map(|c| *c).collect();
+    let containers = ConductorControl::restart_containers(&node);
 
     let outcome: anyhow::Result<String> = async {
         if containers.is_empty() {
@@ -1211,6 +1224,19 @@ mod tests {
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].name, "op-conductor-0");
         assert_eq!(nodes[1].name, "op-conductor-1");
+    }
+
+    #[test]
+    fn restart_containers_deduplicates_unified_node_container() {
+        let mut node = node("op-conductor-0", "sequencer-0");
+        node.docker_el = Some("base-builder".to_string());
+        node.docker_cl = Some("base-builder".to_string());
+        node.docker_conductor = Some("op-conductor-0".to_string());
+
+        assert_eq!(
+            ConductorControl::restart_containers(&node),
+            vec!["base-builder", "op-conductor-0"]
+        );
     }
 
     #[test]

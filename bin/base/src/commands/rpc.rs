@@ -432,8 +432,8 @@ mod tests {
 
         let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
 
-        assert!(launch_config.standard.enable_metering);
-        assert_eq!(launch_config.standard.metering_execution_time_us, Some(5_000_000));
+        assert!(launch_config.standard.metering.enable_metering);
+        assert_eq!(launch_config.standard.metering.metering_execution_time_us, Some(5_000_000));
     }
 
     #[test]
