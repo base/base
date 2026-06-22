@@ -4,10 +4,6 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened, labeled, unlabeled]
 
-concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
   # This allows posting comments and reviews
@@ -18,6 +14,9 @@ permissions:
 jobs:
   review:
     name: Review PR
+    concurrency:
+      group: claude-review-${{ github.event.pull_request.number }}-review
+      cancel-in-progress: true
     # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
     # It will not work on other runners
     # Skip for external contributor PRs (forks) — secrets and runner group are unavailable
@@ -106,6 +105,9 @@ jobs:
 
   ai-blocking-review:
     name: AI Blocking Review
+    concurrency:
+      group: claude-review-${{ github.event.pull_request.number }}-ai-blocking-review
+      cancel-in-progress: true
     # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
     # It will not work on other runners
     # Skip for external contributor PRs (forks) — secrets and runner group are unavailable

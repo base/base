@@ -58,56 +58,56 @@ else
     exit 1
   fi
 
-has_blocking_findings="$(jq -r '.has_blocking_findings' <<< "$REVIEW_JSON")"
-max_severity="$(jq -r '.max_severity' <<< "$REVIEW_JSON")"
-blocking_count="$(jq '[.findings[] | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' <<< "$REVIEW_JSON")"
-summary="$(jq -r '.summary // ""' <<< "$REVIEW_JSON")"
+  has_blocking_findings="$(jq -r '.has_blocking_findings' <<< "$REVIEW_JSON")"
+  max_severity="$(jq -r '.max_severity' <<< "$REVIEW_JSON")"
+  blocking_count="$(jq '[.findings[] | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' <<< "$REVIEW_JSON")"
+  summary="$(jq -r '.summary // ""' <<< "$REVIEW_JSON")"
 
-effective_has_blocking_findings="false"
-if [[ "$has_blocking_findings" == "true" || "$max_severity" != "NONE" || "$blocking_count" != "0" ]]; then
-  effective_has_blocking_findings="true"
-fi
-
-marker_payload="$(jq -cn \
-  --arg head_sha "$HEAD_SHA" \
-  --arg max_severity "$max_severity" \
-  --argjson has_blocking_findings "$effective_has_blocking_findings" \
-  '{head_sha: $head_sha, has_blocking_findings: $has_blocking_findings, max_severity: $max_severity, bypassed: false}')"
-
-{
-  printf '%s\n' "$marker"
-  printf '%s\n' "$marker_payload"
-  printf '%s\n\n' "-->"
-  printf '## AI Blocking Review\n\n'
-
-  if [[ "$effective_has_blocking_findings" == "true" ]]; then
-    printf 'Blocking findings were reported for `%s`.\n\n' "$HEAD_SHA"
-    if [[ -n "$summary" ]]; then
-      printf '%s\n\n' "$summary"
-    fi
-
-    rendered_findings="$(jq -r '
-      .findings[]
-      | select(.severity == "HIGH" or .severity == "CRITICAL")
-      | "### \(.severity): \(.title)\n\n" +
-        "- Location: `\(.path // "unknown")\(if (.line // null) then ":\(.line)" else "" end)`\n" +
-        "- Confidence: `\(.confidence // "unspecified")`\n\n" +
-        "**Evidence**\n\n\(.evidence // "Not provided")\n\n" +
-        "**Required fix**\n\n\(.required_fix // "Not provided")\n"
-    ' <<< "$REVIEW_JSON")"
-
-    if [[ -n "$rendered_findings" ]]; then
-      printf '%s\n' "$rendered_findings"
-    else
-      printf 'The structured review marked this PR as blocking, but did not include a renderable HIGH or CRITICAL finding. Treat this as fail-closed and rerun the review after checking the workflow logs.\n'
-    fi
-  else
-    printf 'No critical or high issues were reported for `%s`.\n\n' "$HEAD_SHA"
-    if [[ -n "$summary" ]]; then
-      printf '%s\n' "$summary"
-    fi
+  effective_has_blocking_findings="false"
+  if [[ "$has_blocking_findings" == "true" || "$max_severity" != "NONE" || "$blocking_count" != "0" ]]; then
+    effective_has_blocking_findings="true"
   fi
-} > "$body_file"
+
+  marker_payload="$(jq -cn \
+    --arg head_sha "$HEAD_SHA" \
+    --arg max_severity "$max_severity" \
+    --argjson has_blocking_findings "$effective_has_blocking_findings" \
+    '{head_sha: $head_sha, has_blocking_findings: $has_blocking_findings, max_severity: $max_severity, bypassed: false}')"
+
+  {
+    printf '%s\n' "$marker"
+    printf '%s\n' "$marker_payload"
+    printf '%s\n\n' "-->"
+    printf '## AI Blocking Review\n\n'
+
+    if [[ "$effective_has_blocking_findings" == "true" ]]; then
+      printf 'Blocking findings were reported for `%s`.\n\n' "$HEAD_SHA"
+      if [[ -n "$summary" ]]; then
+        printf '%s\n\n' "$summary"
+      fi
+
+      rendered_findings="$(jq -r '
+        .findings[]
+        | select(.severity == "HIGH" or .severity == "CRITICAL")
+        | "### \(.severity): \(.title)\n\n" +
+          "- Location: `\(.path // "unknown")\(if (.line // null) then ":\(.line)" else "" end)`\n" +
+          "- Confidence: `\(.confidence // "unspecified")`\n\n" +
+          "**Evidence**\n\n\(.evidence // "Not provided")\n\n" +
+          "**Required fix**\n\n\(.required_fix // "Not provided")\n"
+      ' <<< "$REVIEW_JSON")"
+
+      if [[ -n "$rendered_findings" ]]; then
+        printf '%s\n' "$rendered_findings"
+      else
+        printf 'The structured review marked this PR as blocking, but did not include a renderable HIGH or CRITICAL finding. Treat this as fail-closed and rerun the review after checking the workflow logs.\n'
+      fi
+    else
+      printf 'No critical or high issues were reported for `%s`.\n\n' "$HEAD_SHA"
+      if [[ -n "$summary" ]]; then
+        printf '%s\n' "$summary"
+      fi
+    fi
+  } > "$body_file"
 fi
 
 existing_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
