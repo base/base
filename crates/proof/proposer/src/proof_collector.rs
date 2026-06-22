@@ -23,8 +23,6 @@ use crate::{
 /// Mutable collector-side state.
 #[derive(Debug, Default)]
 pub struct ProofCollectorState {
-    /// Recovered chain state that the current cursor was derived from.
-    pub recovered: Option<RecoveredState>,
     /// Latest block the collector has submitted through.
     pub cursor: Option<RecoveredState>,
 }
@@ -148,8 +146,7 @@ where
         safe_head: u64,
         cancel: &CancellationToken,
     ) -> bool {
-        if state.recovered != Some(recovered) || state.cursor.is_none() {
-            state.recovered = Some(recovered);
+        if state.cursor != Some(recovered) {
             state.cursor = Some(recovered);
         }
 
@@ -189,10 +186,7 @@ where
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
                     Metrics::last_collected_block().set(target_block as f64);
 
-                    match self
-                        .submit_inline(target_block, &current, proof, state, cache, cancel)
-                        .await
-                    {
+                    match self.submit_inline(target_block, &current, proof, cache, cancel).await {
                         ControlFlow::Continue(recovered) => {
                             state.cursor = Some(recovered);
                             if recovered.l2_block_number > current.l2_block_number {
@@ -233,7 +227,6 @@ where
         target_block: u64,
         recovered: &RecoveredState,
         proof: ProofResult,
-        state: &mut ProofCollectorState,
         cache: &mut Option<ProofRecoveryCache>,
         cancel: &CancellationToken,
     ) -> ControlFlow<(), RecoveredState> {
@@ -318,10 +311,7 @@ where
                 }
                 Metrics::last_proposed_block().set(target_block as f64);
                 match self.recovery.recover_latest_state(cache).await {
-                    Ok(recovered) => {
-                        state.recovered = Some(recovered);
-                        ControlFlow::Continue(recovered)
-                    }
+                    Ok(recovered) => ControlFlow::Continue(recovered),
                     Err(e) => {
                         warn!(error = %e, "Failed to recover state after inline submit");
                         ControlFlow::Break(())
@@ -526,15 +516,13 @@ mod tests {
     #[tokio::test]
     async fn tick_resets_cursor_when_recovery_rewinds() {
         let orchestrator = make_orchestrator(Default::default());
-        let mut state =
-            ProofCollectorState { recovered: Some(recovered(300)), cursor: Some(recovered(500)) };
+        let mut state = ProofCollectorState { cursor: Some(recovered(500)) };
         let mut cache = cache();
         let cancel = CancellationToken::new();
 
         let result = orchestrator.tick(&mut state, &mut cache, recovered(100), 200, &cancel).await;
 
         assert!(result);
-        assert_eq!(state.recovered, Some(recovered(100)));
         assert_eq!(state.cursor, Some(recovered(100)));
     }
 
@@ -550,13 +538,11 @@ mod tests {
         let proposal = test_proposal(200);
         let proof =
             ProofResult::Tee { aggregate_proposal: proposal.clone(), proposals: vec![proposal] };
-        let mut state = ProofCollectorState::default();
         let mut cache = cache();
         let cancel = CancellationToken::new();
 
-        let effect = orchestrator
-            .submit_inline(200, &recovered(100), proof, &mut state, &mut cache, &cancel)
-            .await;
+        let effect =
+            orchestrator.submit_inline(200, &recovered(100), proof, &mut cache, &cancel).await;
 
         assert_eq!(effect, ControlFlow::Break(()));
     }
