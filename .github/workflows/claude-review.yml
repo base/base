@@ -167,6 +167,7 @@ jobs:
 
       - name: Update blocking review comment
         if: always() && steps.blocking-review.outputs.structured_output != ''
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -176,6 +177,7 @@ jobs:
         run: .github/scripts/update-ai-blocking-review-comment.sh
 
       - name: Enforce blocking review
+        if: always()
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_JSON: ${{ steps.blocking-review.outputs.structured_output }}
