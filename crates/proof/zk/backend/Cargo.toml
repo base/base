@@ -23,17 +23,22 @@ base-proof-succinct-client-utils.workspace = true
 base-proof-succinct-ethereum-host-utils.workspace = true
 
 # network
+url.workspace = true
 tonic.workspace = true
 alloy-primitives.workspace = true
 
 # sp1
 sp1-prover-types.workspace = true
+sp1-cluster-utils.workspace = true
 sp1-cluster-common.workspace = true
+sp1-cluster-artifact.workspace = true
 sp1-sdk = { workspace = true, features = ["network"] }
 
 # async
 backoff.workspace = true
 async-trait.workspace = true
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["macros"] }
 
 # error handling
 thiserror.workspace = true

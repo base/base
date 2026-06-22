@@ -5935,13 +5935,17 @@ dependencies = [
  "bincode 2.0.1",
  "serde",
  "serde_json",
+ "sp1-cluster-artifact",
  "sp1-cluster-common",
+ "sp1-cluster-utils",
  "sp1-prover-types",
  "sp1-sdk",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tonic 0.14.6",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -6220,8 +6224,10 @@ dependencies = [
  "clap",
  "eyre",
  "serde",
+ "tokio",
  "tokio-util",
  "tracing",
+ "url",
  "uuid",
 ]
 
