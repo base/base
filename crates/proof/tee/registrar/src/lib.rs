@@ -13,7 +13,7 @@ pub use discovery::AwsTargetGroupDiscovery;
 mod driver;
 pub use driver::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DiscoveryResolution,
-    DriverConfig, RegisterableSigner, RegistrationDriver,
+    DriverConfig, INSTANCE_CACHE_TTL_CYCLES, RegisterableSigner, RegistrationDriver,
 };
 
 mod error;
@@ -25,32 +25,20 @@ pub use metrics::RegistrarMetrics;
 mod prover;
 pub use prover::ProverClient;
 
-mod proof_handler;
-pub use proof_handler::{ProofHandler, ProofHandlerConfig};
-
-mod registration_manager;
-pub use registration_manager::RegistrationManager;
-
-mod registry;
-pub use registry::{RegistryClient, RegistryContractClient};
-
 mod signer_manager;
 pub use signer_manager::{
     DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration, ProofTaskSet,
-    SignerManager, SignerManagerConfig,
+    SignerManager,
 };
 
 mod service;
 pub use service::RegistrarConfig;
 
 mod traits;
-pub use traits::{InstanceDiscovery, SignerClient};
+pub use traits::{EnclaveEndpointClient, InstanceDiscovery};
 
 mod types;
-pub use types::{InstanceHealthStatus, ProverInstance, RegisteredSigner};
-
-mod verifier;
-pub use verifier::{NitroVerifierClient, NitroVerifierContractClient};
+pub use types::{InstanceHealthStatus, ProverInstance};
 
 #[cfg(test)]
 pub mod test_utils;

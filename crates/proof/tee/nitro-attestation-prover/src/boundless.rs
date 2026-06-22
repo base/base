@@ -79,11 +79,16 @@ pub struct BoundlessProverConfig {
     /// be considered fresh enough for on-chain submission.
     pub max_attestation_age: Duration,
     /// Optional minimum Boundless offer price for each submitted proof request.
+    /// Must be set together with [`offer_max_price`](Self::offer_max_price).
     pub offer_min_price: Option<Amount>,
     /// Optional maximum Boundless offer price for each submitted proof request.
+    /// Must be set together with [`offer_min_price`](Self::offer_min_price). When set, the
+    /// Boundless SDK uses it verbatim as the on-chain `maxPrice` and does not add the gas-cost
+    /// buffer it applies to SDK-derived max prices.
     pub offer_max_price: Option<Amount>,
     /// Optional duration in seconds for the Boundless offer price to
-    /// ramp from `offer_min_price` to `offer_max_price`.
+    /// ramp from its min price to max price. May be set independently
+    /// of explicit min/max prices.
     pub offer_ramp_up_period_secs: Option<u32>,
     /// Optional maximum time, in seconds, that a prover that locks a
     /// request has to deliver the proof before forfeiting its stake bond.
@@ -146,13 +151,18 @@ pub struct BoundlessProver {
     /// for clock skew and processing time.
     pub max_attestation_age: Duration,
     /// Optional minimum Boundless offer price for each submitted proof request.
+    /// Must be set together with [`offer_max_price`](Self::offer_max_price).
     pub offer_min_price: Option<Amount>,
     /// Optional maximum Boundless offer price for each submitted proof request.
+    /// Must be set together with [`offer_min_price`](Self::offer_min_price). When set, the
+    /// Boundless SDK uses it verbatim as the on-chain `maxPrice` and does not add the gas-cost
+    /// buffer it applies to SDK-derived max prices.
     pub offer_max_price: Option<Amount>,
     /// Optional duration in seconds for the Boundless offer price to
-    /// ramp from `offer_min_price` to `offer_max_price`. When unset
-    /// the Boundless SDK derives a cycle-count-based ramp; set to `0`
-    /// to eliminate the ramp entirely (max price offered immediately).
+    /// ramp from its min price to max price. May be set independently
+    /// of explicit min/max prices. When unset the Boundless SDK derives
+    /// a cycle-count-based ramp; set to `0` to eliminate the ramp
+    /// entirely (max price offered immediately).
     pub offer_ramp_up_period_secs: Option<u32>,
     /// Optional maximum time, in seconds, that a prover that locks a
     /// request has to deliver the proof before forfeiting its stake bond
@@ -212,7 +222,7 @@ impl fmt::Debug for BoundlessProver {
 
 impl BoundlessProver {
     /// Creates a Boundless prover.
-    pub fn new(config: BoundlessProverConfig) -> Self {
+    pub fn new(config: BoundlessProverConfig) -> Result<Self> {
         let BoundlessProverConfig {
             rpc_url,
             signer,
@@ -229,7 +239,9 @@ impl BoundlessProver {
             offer_bidding_start_delay_secs,
         } = config;
 
-        Self {
+        Self::validate_offer_prices(&offer_min_price, &offer_max_price)?;
+
+        Ok(Self {
             rpc_url,
             signer,
             verifier_program_url,
@@ -246,7 +258,25 @@ impl BoundlessProver {
             offer_bidding_start_delay_secs,
             submit_lock: Arc::new(Mutex::new(())),
             recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
+        })
+    }
+
+    fn validate_offer_prices(min_price: &Option<Amount>, max_price: &Option<Amount>) -> Result<()> {
+        match (min_price, max_price) {
+            (Some(min_price), Some(max_price)) if max_price.value < min_price.value => {
+                return Err(ProverError::Config(
+                    "offer_max_price must be greater than or equal to offer_min_price".into(),
+                ));
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(ProverError::Config(
+                    "offer_min_price and offer_max_price must be set together".into(),
+                ));
+            }
+            _ => {}
         }
+
+        Ok(())
     }
 
     /// Derives a deterministic `u32` index for a Boundless request ID
@@ -367,7 +397,9 @@ impl BoundlessProver {
     /// instead set by [`apply_bidding_start`](Self::apply_bidding_start)
     /// immediately before `client.submit_onchain` inside the
     /// `submit_lock` guard.
-    fn apply_offer_config(&self, params: RequestParams) -> RequestParams {
+    fn apply_offer_config(&self, params: RequestParams) -> Result<RequestParams> {
+        Self::validate_offer_prices(&self.offer_min_price, &self.offer_max_price)?;
+
         let mut offer = OfferParams::builder();
         if let Some(min_price) = &self.offer_min_price {
             offer.min_price(min_price.clone());
@@ -382,7 +414,7 @@ impl BoundlessProver {
             offer.lock_timeout(lock_timeout);
         }
 
-        params.with_offer(offer)
+        Ok(params.with_offer(offer))
     }
 
     /// Sets `Offer.rampUpStart` to `now_unix_secs() + offer_bidding_start_delay_secs`
@@ -624,7 +656,7 @@ impl BoundlessProver {
             .with_requirements(
                 RequirementParams::builder().predicate(Predicate::prefix_match(image_id, [])),
             );
-        let params = self.apply_offer_config(params);
+        let params = self.apply_offer_config(params)?;
 
         Ok((client, params))
     }
@@ -1126,16 +1158,14 @@ mod tests {
         Amount::parse(value, Some(Asset::ETH)).expect("valid ETH amount")
     }
 
-    #[fixture]
-    fn prover() -> BoundlessProver {
-        BoundlessProver {
+    fn prover_config() -> BoundlessProverConfig {
+        BoundlessProverConfig {
             rpc_url: Url::parse(TEST_RPC_URL).unwrap(),
             signer: PrivateKeySigner::from_str(TEST_PRIVATE_KEY).unwrap(),
             verifier_program_url: Url::parse(TEST_PROGRAM_URL).unwrap(),
             image_id: TEST_IMAGE_ID,
             poll_interval: TEST_POLL_INTERVAL,
             timeout: TEST_TIMEOUT,
-            trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX_LEN,
             max_recovery_attempts: TEST_MAX_RECOVERY_ATTEMPTS,
             max_attestation_age: TEST_MAX_ATTESTATION_AGE,
             offer_min_price: None,
@@ -1143,9 +1173,17 @@ mod tests {
             offer_ramp_up_period_secs: None,
             offer_lock_timeout_secs: None,
             offer_bidding_start_delay_secs: 0,
-            submit_lock: Arc::new(Mutex::new(())),
-            recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
+    }
+
+    #[fixture]
+    fn prover() -> BoundlessProver {
+        BoundlessProver::new(prover_config()).unwrap()
+    }
+
+    fn assert_config_error(error: ProverError, expected: &str) {
+        assert!(matches!(error, ProverError::Config(_)));
+        assert!(error.to_string().contains(expected), "got: {error}");
     }
 
     // ── Construction ────────────────────────────────────────────────────
@@ -1154,6 +1192,48 @@ mod tests {
     fn struct_construction(prover: BoundlessProver) {
         let debug = format!("{prover:?}");
         assert!(debug.contains("BoundlessProver"));
+    }
+
+    #[test]
+    fn new_accepts_ramp_up_period_without_prices() {
+        let mut config = prover_config();
+        config.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
+
+        let prover = BoundlessProver::new(config).unwrap();
+
+        assert_eq!(prover.offer_ramp_up_period_secs, Some(TEST_RAMP_UP_PERIOD_SECS));
+        assert!(prover.offer_min_price.is_none());
+        assert!(prover.offer_max_price.is_none());
+    }
+
+    #[test]
+    fn new_rejects_unpaired_offer_prices() {
+        for (min_price, max_price) in [
+            (Some(eth_amount(TEST_MIN_PRICE_ETH)), None),
+            (None, Some(eth_amount(TEST_MAX_PRICE_ETH))),
+        ] {
+            let mut config = prover_config();
+            config.offer_min_price = min_price;
+            config.offer_max_price = max_price;
+
+            let error = BoundlessProver::new(config).unwrap_err();
+
+            assert_config_error(error, "offer_min_price and offer_max_price must be set together");
+        }
+    }
+
+    #[test]
+    fn new_rejects_max_price_below_min_price() {
+        let mut config = prover_config();
+        config.offer_min_price = Some(eth_amount(TEST_MAX_PRICE_ETH));
+        config.offer_max_price = Some(eth_amount(TEST_MIN_PRICE_ETH));
+
+        let error = BoundlessProver::new(config).unwrap_err();
+
+        assert_config_error(
+            error,
+            "offer_max_price must be greater than or equal to offer_min_price",
+        );
     }
 
     // ── Field access ────────────────────────────────────────────────────
@@ -1185,7 +1265,7 @@ mod tests {
     /// immediately before on-chain submission.
     #[rstest]
     fn apply_offer_config_defaults_to_sdk(prover: BoundlessProver) {
-        let params = prover.apply_offer_config(RequestParams::new());
+        let params = prover.apply_offer_config(RequestParams::new()).unwrap();
 
         assert!(params.offer.ramp_up_period.is_none());
         assert!(params.offer.min_price.is_none());
@@ -1208,7 +1288,7 @@ mod tests {
         prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
         prover.offer_bidding_start_delay_secs = TEST_NON_ZERO_BIDDING_START_DELAY_SECS;
 
-        let params = prover.apply_offer_config(RequestParams::new());
+        let params = prover.apply_offer_config(RequestParams::new()).unwrap();
 
         assert_eq!(params.offer.min_price, Some(min_price));
         assert_eq!(params.offer.max_price, Some(max_price));
@@ -1220,12 +1300,34 @@ mod tests {
         );
     }
 
+    #[rstest]
+    fn apply_offer_config_rejects_unpaired_offer_prices(mut prover: BoundlessProver) {
+        prover.offer_min_price = Some(eth_amount(TEST_MIN_PRICE_ETH));
+
+        let error = prover.apply_offer_config(RequestParams::new()).unwrap_err();
+
+        assert_config_error(error, "offer_min_price and offer_max_price must be set together");
+    }
+
+    #[rstest]
+    fn apply_offer_config_rejects_max_price_below_min_price(mut prover: BoundlessProver) {
+        prover.offer_min_price = Some(eth_amount(TEST_MAX_PRICE_ETH));
+        prover.offer_max_price = Some(eth_amount(TEST_MIN_PRICE_ETH));
+
+        let error = prover.apply_offer_config(RequestParams::new()).unwrap_err();
+
+        assert_config_error(
+            error,
+            "offer_max_price must be greater than or equal to offer_min_price",
+        );
+    }
+
     /// `lock_timeout` can be set independently of price/ramp fields.
     #[rstest]
     fn apply_offer_config_sets_lock_timeout_alone(mut prover: BoundlessProver) {
         prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
 
-        let params = prover.apply_offer_config(RequestParams::new());
+        let params = prover.apply_offer_config(RequestParams::new()).unwrap();
 
         assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
         assert!(params.offer.ramp_up_period.is_none());
@@ -1281,7 +1383,7 @@ mod tests {
         prover.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
         prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
 
-        let params = prover.apply_offer_config(RequestParams::new());
+        let params = prover.apply_offer_config(RequestParams::new()).unwrap();
         let params = prover.apply_bidding_start(params);
 
         assert_eq!(params.offer.min_price, Some(min_price));

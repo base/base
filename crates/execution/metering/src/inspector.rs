@@ -1,9 +1,8 @@
 //! Custom EVM inspector for metering per-contract opcode and precompile gas usage.
 
-use alloy_primitives::{
-    Address,
-    map::{HashMap, HashSet},
-};
+use std::sync::Arc;
+
+use alloy_primitives::{Address, map::HashMap};
 use revm::{
     Inspector,
     context::ContextTr,
@@ -14,6 +13,8 @@ use revm::{
     },
 };
 use revm_bytecode::opcode::{self, OpCode};
+
+use crate::meter::MeteredOpcodes;
 
 /// Accumulated gas data for a single opcode executed by one contract.
 #[derive(Debug, Default, Clone, Copy)]
@@ -47,27 +48,22 @@ struct OpcodeFrame {
 /// is also the address used by storage opcodes. This keeps storage-related opcode costs separated
 /// by the contract whose storage context is being executed.
 ///
-/// When `metered_opcodes` is empty, `step`/`step_end` are no-ops to avoid
-/// per-opcode overhead when only precompile tracking is needed.
+/// When no opcodes are configured, `step`/`step_end` are no-ops to avoid per-opcode overhead when
+/// only precompile tracking is needed.
 #[derive(Debug)]
 pub(crate) struct MeteringInspector {
     opcode_gas: HashMap<(Address, OpCode), OpcodeGasUsage>,
     precompile_gas: HashMap<Address, PrecompileGasUsage>,
-    metered_precompiles: HashSet<Address>,
-    metered_opcodes: HashSet<OpCode>,
+    metered_opcodes: Arc<MeteredOpcodes>,
     opcode_frame: Option<OpcodeFrame>,
 }
 
 impl MeteringInspector {
-    /// Creates a new inspector that tracks the given precompile addresses and opcodes.
-    pub(crate) fn new(
-        metered_precompiles: HashSet<Address>,
-        metered_opcodes: HashSet<OpCode>,
-    ) -> Self {
+    /// Creates a new inspector that tracks the configured precompiles and opcodes.
+    pub(crate) fn new(metered_opcodes: Arc<MeteredOpcodes>) -> Self {
         Self {
             opcode_gas: HashMap::default(),
             precompile_gas: HashMap::default(),
-            metered_precompiles,
             metered_opcodes,
             opcode_frame: None,
         }
@@ -100,7 +96,7 @@ impl MeteringInspector {
         gas_limit: u64,
     ) {
         let Some(opcode) = OpCode::new(opcode_value) else { return };
-        if !self.metered_opcodes.contains(&opcode) {
+        if !self.metered_opcodes.opcodes.contains(&opcode) {
             return;
         }
 
@@ -116,13 +112,13 @@ where
     fn step(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let _ = context;
 
-        if self.metered_opcodes.is_empty() {
+        if self.metered_opcodes.opcodes.is_empty() {
             return;
         }
 
         let Some(opcode) = OpCode::new(interp.bytecode.opcode()) else { return };
         let contract_address = interp.input.target_address();
-        if !self.metered_opcodes.contains(&opcode) {
+        if !self.metered_opcodes.opcodes.contains(&opcode) {
             return;
         }
 
@@ -162,8 +158,12 @@ where
         };
         self.subtract_forwarded_gas(contract_address, opcode, inputs.gas_limit);
 
+        if !self.metered_opcodes.meters_any_precompile() {
+            return;
+        }
+
         let target = inputs.bytecode_address;
-        if self.metered_precompiles.contains(&target) {
+        if self.metered_opcodes.meters_precompile(target) {
             let gas_used = outcome.result.gas.total_gas_spent();
             let entry = self.precompile_gas.entry(target).or_default();
             entry.count = entry.count.saturating_add(1);

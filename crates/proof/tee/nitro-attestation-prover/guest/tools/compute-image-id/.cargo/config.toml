@@ -1,5 +1,5 @@
-# Override any rustflags inherited from parent .cargo/config.toml files
-# (e.g. the repo root's linker flags for lld/mold). This tool builds for
-# the host target and must not pick up cross-linker settings.
+# Ensure this tool uses default rustflags. It builds for the host target
+# and must not pick up any workspace-level rustflags that may be added
+# in the future.
 [build]
 rustflags = []

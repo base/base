@@ -15,6 +15,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
+use base_proof_contracts::{NitroEnclaveVerifierContractClient, TEEProverRegistryContractClient};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use tokio_util::sync::CancellationToken;
@@ -22,9 +23,8 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, CertManager, DriverConfig, NitroVerifierContractClient, ProverClient,
-    RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient, Result,
-    SignerManager, SignerManagerConfig,
+    AwsTargetGroupDiscovery, CertManager, DriverConfig, ProverClient, RegistrarError,
+    RegistrarMetrics, RegistrationDriver, Result, SignerManager,
 };
 
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -55,7 +55,7 @@ pub struct RegistrarConfig {
     pub max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     pub max_tx_retries: u32,
-    /// Delay between transaction submission retries.
+    /// Initial delay between transaction submission retries.
     pub tx_retry_delay: Duration,
     /// Grace window for registering recently launched unhealthy instances.
     pub unhealthy_registration_window: Duration,
@@ -202,8 +202,10 @@ impl RegistrarConfig {
         let discovery =
             AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arn, self.prover_port);
 
-        let registry =
-            RegistryContractClient::new(self.tee_prover_registry_address, self.l1_rpc_url.clone());
+        let registry = TEEProverRegistryContractClient::new(
+            self.tee_prover_registry_address,
+            self.l1_rpc_url.clone(),
+        );
 
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle =
@@ -213,17 +215,18 @@ impl RegistrarConfig {
             self.boundless_prover,
             registry,
             tx_manager.clone(),
-            SignerManagerConfig {
-                registry_address: self.tee_prover_registry_address,
-                max_concurrency: self.max_concurrency,
-                max_tx_retries: self.max_tx_retries,
-                tx_retry_delay: self.tx_retry_delay,
-            },
+            self.tee_prover_registry_address,
+            self.max_concurrency,
+            self.max_tx_retries,
+            self.tx_retry_delay,
         ));
         let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
             Some(CertManager::new(
                 CRL_FETCH_TIMEOUT,
-                Box::new(NitroVerifierContractClient::new(nitro_verifier_address, self.l1_rpc_url)),
+                Box::new(NitroEnclaveVerifierContractClient::new(
+                    nitro_verifier_address,
+                    self.l1_rpc_url,
+                )),
                 tx_manager,
             )?)
         } else {
@@ -315,7 +318,8 @@ mod tests {
                 offer_ramp_up_period_secs: None,
                 offer_lock_timeout_secs: None,
                 offer_bidding_start_delay_secs: 0,
-            }),
+            })
+            .unwrap(),
             poll_interval: Duration::from_secs(1),
             prover_timeout: Duration::from_secs(1),
             max_concurrency: 1,

@@ -8,18 +8,18 @@ use std::time::Duration;
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_proof_contracts::INitroEnclaveVerifier;
+use base_proof_contracts::{INitroEnclaveVerifier, NitroEnclaveVerifierClient};
 use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::{info, warn};
 
-use crate::{NitroVerifierClient, ProverInstance, RegistrarError, RegistrarMetrics, Result, crl};
+use crate::{ProverInstance, RegistrarError, RegistrarMetrics, Result, crl};
 
 /// Manages Nitro certificate revocation checks and revocation transaction submission.
 #[derive(Debug)]
 pub struct CertManager<T> {
     http_client: reqwest::Client,
-    nitro_verifier: Box<dyn NitroVerifierClient>,
+    nitro_verifier: Box<dyn NitroEnclaveVerifierClient>,
     tx_manager: T,
 }
 
@@ -34,7 +34,7 @@ where
     /// Returns an error if the CRL HTTP client cannot be built.
     pub fn new(
         fetch_timeout: Duration,
-        nitro_verifier: Box<dyn NitroVerifierClient>,
+        nitro_verifier: Box<dyn NitroEnclaveVerifierClient>,
         tx_manager: T,
     ) -> Result<Self> {
         let http_client = reqwest::Client::builder()
@@ -154,9 +154,10 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
+    use base_proof_contracts::ContractError;
 
     use super::*;
-    use crate::test_utils::{EP1, NoopNitroVerifier, NoopTxManager, healthy_prover_instance};
+    use crate::test_utils::{EP1, NoopTxManager, healthy_prover_instance};
 
     #[derive(Debug)]
     struct TestNitroVerifier {
@@ -166,21 +167,21 @@ mod tests {
     }
 
     #[async_trait]
-    impl NitroVerifierClient for TestNitroVerifier {
+    impl NitroEnclaveVerifierClient for TestNitroVerifier {
         fn address(&self) -> Address {
             Address::repeat_byte(0x42)
         }
 
-        async fn is_revoked(&self, cert_hash: B256) -> Result<bool> {
+        async fn is_revoked(&self, cert_hash: B256) -> std::result::Result<bool, ContractError> {
             self.calls.lock().unwrap().push(cert_hash);
             if self.fails {
-                return Err(RegistrarError::Config("rpc unavailable".into()));
+                return Err(ContractError::validation("rpc unavailable"));
             }
             Ok(self.revoked == Some(cert_hash))
         }
     }
 
-    fn manager(nitro_verifier: Box<dyn NitroVerifierClient>) -> CertManager<NoopTxManager> {
+    fn manager(nitro_verifier: Box<dyn NitroEnclaveVerifierClient>) -> CertManager<NoopTxManager> {
         CertManager::new(Duration::from_millis(10), nitro_verifier, NoopTxManager).unwrap()
     }
 
@@ -196,7 +197,11 @@ mod tests {
 
     #[tokio::test]
     async fn parse_failure_includes_instance_endpoint() {
-        let manager = manager(Box::new(NoopNitroVerifier));
+        let manager = manager(Box::new(TestNitroVerifier {
+            revoked: None,
+            fails: false,
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }));
 
         let err = manager
             .check_and_revoke_crls(b"not a cose attestation", &healthy_prover_instance(EP1))

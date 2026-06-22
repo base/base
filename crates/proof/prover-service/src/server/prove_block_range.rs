@@ -2,7 +2,9 @@ use base_prover_service_db::{
     ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
     canonical_session_id,
 };
-use base_prover_service_protocol::{ProveBlockRangeRequest, ProveBlockRangeResponse};
+use base_prover_service_protocol::{
+    ProofRequestIdCollisionMessage, ProveBlockRangeRequest, ProveBlockRangeResponse,
+};
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
 
@@ -61,9 +63,7 @@ impl ProverServiceServer {
                         mismatched_field = field,
                         "rejected ProveBlockRange: session_id already bound to a different request"
                     );
-                    failed_precondition(format!(
-                        "session_id {id} already exists with a different {field}"
-                    ))
+                    failed_precondition(ProofRequestIdCollisionMessage::for_field(id, field))
                 }
                 CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
                     warn!(

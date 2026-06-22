@@ -91,6 +91,8 @@ pub(crate) struct Cli {
     boundless_timeout: u64,
 
     /// Minimum Boundless offer price in ETH for each submitted proof request.
+    ///
+    /// Must be set together with `--boundless-max-price-eth`.
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"),
@@ -99,6 +101,11 @@ pub(crate) struct Cli {
     boundless_min_price_eth: Option<Amount>,
 
     /// Maximum Boundless offer price in ETH for each submitted proof request.
+    ///
+    /// Must be set together with `--boundless-min-price-eth` and be greater than or equal to it.
+    /// When set, the Boundless SDK uses this value verbatim as the on-chain `maxPrice` and does not
+    /// add the gas-cost buffer it applies to SDK-derived max prices. Include headroom for gas-price
+    /// volatility between request submission and fulfillment.
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"),
@@ -107,6 +114,10 @@ pub(crate) struct Cli {
     boundless_max_price_eth: Option<Amount>,
 
     /// Boundless offer price ramp duration in seconds.
+    ///
+    /// May be set independently of explicit min/max prices. When min/max prices are unset, this
+    /// overrides only the ramp duration while the Boundless SDK still derives prices from cycle
+    /// count.
     #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
     boundless_offer_ramp_up_period_secs: Option<u32>,
 
@@ -169,7 +180,7 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
 
-    /// Transaction submission retry delay in seconds.
+    /// Initial transaction submission retry delay in seconds.
     #[arg(
         long = "tx-retry-delay-secs",
         env = cli_env!("TX_RETRY_DELAY_SECS"),
@@ -215,7 +226,7 @@ fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
 }
 
 impl Cli {
-    pub(crate) fn config(self) -> Result<RegistrarConfig, RegistrarError> {
+    pub(crate) fn config(self) -> Result<RegistrarConfig, Box<RegistrarError>> {
         validate_health_port(self.health.port)?;
         validate_boundless_offer_prices(
             &self.boundless_min_price_eth,
@@ -229,9 +240,9 @@ impl Cli {
             aws_region: self.aws_region,
             prover_port: self.prover_port,
             signing: SignerConfig::try_from(self.signer)
-                .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?,
+                .map_err(|e| Box::new(RegistrarError::Config(format!("signer: {e}"))))?,
             tx_manager_config: TxManagerConfig::try_from(self.tx_manager)
-                .map_err(|e| RegistrarError::Config(format!("tx-manager: {e}")))?,
+                .map_err(|e| Box::new(RegistrarError::Config(format!("tx-manager: {e}"))))?,
             boundless_prover: BoundlessProver::new(BoundlessProverConfig {
                 rpc_url: self.boundless_rpc_url,
                 signer: self.boundless_fee_private_key,
@@ -246,7 +257,8 @@ impl Cli {
                 offer_ramp_up_period_secs: self.boundless_offer_ramp_up_period_secs,
                 offer_lock_timeout_secs: self.boundless_offer_lock_timeout_secs,
                 offer_bidding_start_delay_secs: self.boundless_offer_bidding_start_delay_secs,
-            }),
+            })
+            .map_err(|e| Box::new(RegistrarError::Config(format!("boundless prover: {e}"))))?,
             poll_interval: Duration::from_secs(self.poll_interval),
             prover_timeout: Duration::from_secs(self.prover_timeout),
             max_concurrency: self.max_concurrency,
@@ -261,9 +273,9 @@ impl Cli {
     }
 }
 
-fn validate_health_port(port: u16) -> Result<(), RegistrarError> {
+fn validate_health_port(port: u16) -> Result<(), Box<RegistrarError>> {
     if port == 0 {
-        return Err(RegistrarError::Config("health server port must be non-zero".into()));
+        return Err(Box::new(RegistrarError::Config("health server port must be non-zero".into())));
     }
 
     Ok(())
@@ -272,19 +284,19 @@ fn validate_health_port(port: u16) -> Result<(), RegistrarError> {
 fn validate_boundless_offer_prices(
     min_price: &Option<Amount>,
     max_price: &Option<Amount>,
-) -> Result<(), RegistrarError> {
+) -> Result<(), Box<RegistrarError>> {
     match (min_price, max_price) {
         (Some(min_price), Some(max_price)) if max_price.value < min_price.value => {
-            return Err(RegistrarError::Config(
+            return Err(Box::new(RegistrarError::Config(
                 "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
                     .into(),
-            ));
+            )));
         }
         (Some(_), None) | (None, Some(_)) => {
-            return Err(RegistrarError::Config(
+            return Err(Box::new(RegistrarError::Config(
                 "--boundless-min-price-eth and --boundless-max-price-eth must be set together"
                     .into(),
-            ));
+            )));
         }
         _ => {}
     }

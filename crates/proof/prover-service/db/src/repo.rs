@@ -144,15 +144,22 @@ impl ProofRequestRepo {
             l1_head: prepared.l1_head.as_deref(),
             intermediate_root_interval: prepared.intermediate_root_interval,
         };
-        if let Some(field) = params.first_mismatch(&row) {
-            tx.rollback().await?;
-            return Err(CreateProofRequestError::IdCollision { id: existing_id, field });
-        }
-
         let status_str: &str = row.get("status");
         let status = ProofStatus::try_from(status_str).map_err(|e| {
             sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
         })?;
+
+        let mismatch = match status {
+            ProofStatus::Failed => params.first_mismatch_allowing_l1_head_replacement(&row),
+            ProofStatus::Created
+            | ProofStatus::Pending
+            | ProofStatus::Running
+            | ProofStatus::Succeeded => params.first_mismatch(&row),
+        };
+        if let Some(field) = mismatch {
+            tx.rollback().await?;
+            return Err(CreateProofRequestError::IdCollision { id: existing_id, field });
+        }
 
         match status {
             ProofStatus::Created
@@ -190,6 +197,8 @@ impl ProofRequestRepo {
                     r#"
                     UPDATE proof_requests
                     SET status = $1,
+                        request_payload = $2,
+                        l1_head = $3,
                         job_status = 'PENDING',
                         retry_count = retry_count + 1,
                         error_message = NULL,
@@ -205,10 +214,12 @@ impl ProofRequestRepo {
                         claimed_at = NULL,
                         last_heartbeat_at = NULL,
                         attempt = 0
-                    WHERE id = $2
+                    WHERE id = $4
                     "#,
                 )
                 .bind(ProofStatus::Created.as_str())
+                .bind(&prepared.request_payload)
+                .bind(&prepared.l1_head)
                 .bind(existing_id)
                 .execute(&mut *tx)
                 .await?;
@@ -2193,6 +2204,22 @@ struct CreateRequestParams<'a> {
 impl CreateRequestParams<'_> {
     /// First field name that disagrees with `row`, or `None`. Stable for [`CreateProofRequestError::IdCollision`].
     fn first_mismatch(&self, row: &sqlx::postgres::PgRow) -> Option<&'static str> {
+        self.first_mismatch_with(row, RequestMismatchMode::Strict)
+    }
+
+    /// First non-L1-head field name that disagrees with `row`, or `None`.
+    fn first_mismatch_allowing_l1_head_replacement(
+        &self,
+        row: &sqlx::postgres::PgRow,
+    ) -> Option<&'static str> {
+        self.first_mismatch_with(row, RequestMismatchMode::AllowL1HeadReplacement)
+    }
+
+    fn first_mismatch_with(
+        &self,
+        row: &sqlx::postgres::PgRow,
+        mode: RequestMismatchMode,
+    ) -> Option<&'static str> {
         if row.get::<i64, _>("start_block_number") != self.start_block_number {
             return Some("start_block_number");
         }
@@ -2208,7 +2235,9 @@ impl CreateRequestParams<'_> {
         if row.get::<Option<&str>, _>("prover_address") != self.prover_address {
             return Some("prover_address");
         }
-        if row.get::<Option<&str>, _>("l1_head") != self.l1_head {
+        if mode == RequestMismatchMode::Strict
+            && row.get::<Option<&str>, _>("l1_head") != self.l1_head
+        {
             return Some("l1_head");
         }
         if row.get::<Option<i64>, _>("intermediate_root_interval")
@@ -2232,11 +2261,50 @@ impl CreateRequestParams<'_> {
             return Some("tee_kind");
         }
         if let Some(request_payload) = row.get::<Option<serde_json::Value>, _>("request_payload")
-            && request_payload != *self.request_payload
+            && !request_payload_matches(&request_payload, self.request_payload, mode)
         {
             return Some("request_payload");
         }
         None
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum RequestMismatchMode {
+    Strict,
+    AllowL1HeadReplacement,
+}
+
+fn request_payload_matches(
+    existing: &serde_json::Value,
+    incoming: &serde_json::Value,
+    mode: RequestMismatchMode,
+) -> bool {
+    match mode {
+        RequestMismatchMode::Strict => existing == incoming,
+        RequestMismatchMode::AllowL1HeadReplacement => {
+            payload_without_l1_head_fields(existing) == payload_without_l1_head_fields(incoming)
+        }
+    }
+}
+
+fn payload_without_l1_head_fields(value: &serde_json::Value) -> serde_json::Value {
+    let mut value = value.clone();
+    remove_l1_head_fields(&mut value);
+    value
+}
+
+fn remove_l1_head_fields(value: &mut serde_json::Value) {
+    if let Some(map) =
+        value.pointer_mut("/request/payload").and_then(serde_json::Value::as_object_mut)
+    {
+        map.remove("l1_head");
+    }
+    if let Some(map) =
+        value.pointer_mut("/request/payload/proof").and_then(serde_json::Value::as_object_mut)
+    {
+        map.remove("l1_head");
+        map.remove("l1_head_number");
     }
 }
 
@@ -2369,6 +2437,76 @@ mod tests {
             serde_json::from_value(prepared.request_payload).expect("payload should deserialize");
         assert_eq!(protocol_request.session_id, "tee-session");
         assert!(matches!(protocol_request.request, ProofRequestKind::Tee(_)));
+    }
+
+    #[test]
+    fn failed_requeue_payload_match_allows_only_l1_head_fields() {
+        let mut old = tee_protocol_request("tee-session");
+        let mut new_l1_head = tee_protocol_request("tee-session");
+        let mut new_image_hash = tee_protocol_request("tee-session");
+
+        let ProofRequestKind::Tee(request) = &mut old.request else {
+            panic!("expected TEE request");
+        };
+        request.proof.l1_head =
+            "0x0101010101010101010101010101010101010101010101010101010101010101".parse().unwrap();
+        request.proof.l1_head_number = 1;
+
+        let ProofRequestKind::Tee(request) = &mut new_l1_head.request else {
+            panic!("expected TEE request");
+        };
+        request.proof.l1_head =
+            "0x0202020202020202020202020202020202020202020202020202020202020202".parse().unwrap();
+        request.proof.l1_head_number = 2;
+
+        let ProofRequestKind::Tee(request) = &mut new_image_hash.request else {
+            panic!("expected TEE request");
+        };
+        request.proof.image_hash =
+            "0x0303030303030303030303030303030303030303030303030303030303030303".parse().unwrap();
+
+        let old = prepared_payload(old);
+        let new_l1_head = prepared_payload(new_l1_head);
+        let new_image_hash = prepared_payload(new_image_hash);
+        let mut old_unrelated_l1_head = old.clone();
+        let mut new_unrelated_l1_head = new_l1_head.clone();
+
+        old_unrelated_l1_head["request"]["payload"]["metadata"] =
+            serde_json::json!({ "l1_head": "old" });
+        new_unrelated_l1_head["request"]["payload"]["metadata"] =
+            serde_json::json!({ "l1_head": "new" });
+
+        assert!(request_payload_matches(
+            &old,
+            &new_l1_head,
+            RequestMismatchMode::AllowL1HeadReplacement,
+        ));
+        assert!(!request_payload_matches(&old, &new_l1_head, RequestMismatchMode::Strict,));
+        assert!(!request_payload_matches(
+            &old,
+            &new_image_hash,
+            RequestMismatchMode::AllowL1HeadReplacement,
+        ));
+        assert!(!request_payload_matches(
+            &old_unrelated_l1_head,
+            &new_unrelated_l1_head,
+            RequestMismatchMode::AllowL1HeadReplacement,
+        ));
+    }
+
+    fn tee_protocol_request(session_id: &str) -> ProtocolProofRequest {
+        ProtocolProofRequest {
+            session_id: session_id.to_owned(),
+            request: ProofRequestKind::Tee(TeeProofRequest {
+                proof: Default::default(),
+                tee_kind: ProtocolTeeKind::AwsNitro,
+            }),
+        }
+    }
+
+    fn prepared_payload(request: ProtocolProofRequest) -> serde_json::Value {
+        let create = CreateProofRequest::new(request).expect("request should validate");
+        PreparedProofRequest::try_from(create).expect("request should prepare").request_payload
     }
 
     #[test]

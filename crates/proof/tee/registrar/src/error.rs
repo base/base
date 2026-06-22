@@ -1,4 +1,5 @@
 use alloy_primitives::B256;
+use base_proof_contracts::ContractError;
 use base_proof_tee_nitro_attestation_prover::ProverError;
 use base_tx_manager::TxManagerError;
 use thiserror::Error;
@@ -28,15 +29,9 @@ pub enum RegistrarError {
     #[error("proof generation failed")]
     ProofGeneration(#[from] ProverError),
 
-    /// An onchain contract call failed.
-    #[error("contract call failed: {context}")]
-    ContractCall {
-        /// Description of the call that failed (e.g. `"registry.isValidSigner(0x1234…)"`).
-        context: String,
-        /// The underlying contract call error.
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
+    /// Shared contract client call failed.
+    #[error(transparent)]
+    Contract(#[from] ContractError),
 
     /// Transaction submission or confirmation failed (RPC, nonce, fee, timeout).
     #[error("transaction error")]

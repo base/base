@@ -1,30 +1,7 @@
 //! Aggregate verifier proof transaction inputs.
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_contracts::{
-    encode_challenge_calldata, encode_nullify_calldata, encode_verify_proposal_proof_calldata,
-};
-
-/// Inputs for `AggregateVerifier.verifyProposalProof(bytes)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifyProposalProofSubmission {
-    /// Dispute game contract address.
-    pub game_address: Address,
-    /// Type-prefixed proof bytes accepted by the dispute game.
-    pub proof_bytes: Bytes,
-}
-
-impl VerifyProposalProofSubmission {
-    /// Creates a proposal proof submission.
-    pub const fn new(game_address: Address, proof_bytes: Bytes) -> Self {
-        Self { game_address, proof_bytes }
-    }
-
-    /// Encodes calldata for `AggregateVerifier.verifyProposalProof(bytes)`.
-    pub fn calldata(&self) -> Bytes {
-        encode_verify_proposal_proof_calldata(self.proof_bytes.clone())
-    }
-}
+use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
 
 /// Inputs for dispute-game `challenge(bytes,uint256,bytes32)`.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -14,8 +14,6 @@ to detect new Nitro enclave instances, fetches their attestation documents via
 - **`service`** — [`RegistrarConfig`] runtime config and lifecycle runner.
 - **`error`** — [`RegistrarError`] enum covering all failure modes.
 - **`prover`** — [`ProverClient`] JSON-RPC client for polling prover signer endpoints.
-- **`signer_manager`** — [`SignerManager`] lifecycle management for signer proof tasks.
-- **`registration_manager`** — [`RegistrationManager`] execution path for a single signer registration.
-- **`proof_handler`** — [`ProofHandler`] handling for completed proofs and registration txs.
+- **`signer_manager`** — [`SignerManager`] lifecycle management for signer proof tasks and registration execution.
 - **`traits`** — [`InstanceDiscovery`] and attestation proof provider trait usage.
-- **`types`** — Core domain types: [`ProverInstance`], [`RegisteredSigner`].
+- **`types`** — Core domain types: [`ProverInstance`].
