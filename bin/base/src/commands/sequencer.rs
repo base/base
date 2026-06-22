@@ -69,7 +69,7 @@ impl SequencerCommand {
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
             let _upgrade_countdown_metrics = metrics_enabled
-                .then(|| CliMetrics::spawn_upgrade_countdown_recorder(&rollup_config));
+                .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
             let task_executor = ctx.task_executor.clone();
             let builder = execution.into_default_node_builder(ctx)?;
             let mut runner = BaseNodeRunner::new(rollup_args)
