@@ -186,8 +186,7 @@ where
                 ProofDispatchAttempt::Accepted(session_id)
             }
             Ok(session_id) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {}, got {}",
-                expected_session_id, session_id
+                "prover service returned mismatched session_id: expected {expected_session_id}, got {session_id}"
             ))),
             Err(error) => ProofDispatchAttempt::DispatchFailed(error),
         }
@@ -214,8 +213,7 @@ where
                 ProofDispatchAttempt::Accepted(session_id)
             }
             Ok(session_id) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {}, got {}",
-                expected_session_id, session_id
+                "prover service returned mismatched session_id: expected {expected_session_id}, got {session_id}"
             ))),
             Err(error) => ProofDispatchAttempt::DispatchFailed(error),
         }

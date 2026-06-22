@@ -43,7 +43,7 @@ impl ProposerProofAdapter {
     }
 
     /// Builds a prover-service request for a TEE proposal proof with a caller-supplied session id.
-    pub fn tee_prove_block_range_request_with_session_id(
+    pub const fn tee_prove_block_range_request_with_session_id(
         request: PrimitiveProofRequest,
         session_id: String,
     ) -> ProveBlockRangeRequest {

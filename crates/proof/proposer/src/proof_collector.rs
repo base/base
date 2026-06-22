@@ -985,8 +985,7 @@ where
                         "Prover service returned mismatched discard retry session id"
                     );
                     Some(ProposerError::Prover(format!(
-                        "prover service returned mismatched session_id: expected {}, got {}",
-                        session_id, accepted_session_id
+                        "prover service returned mismatched session_id: expected {session_id}, got {accepted_session_id}"
                     )))
                 }
                 Err(error) => Some(error),
