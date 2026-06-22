@@ -196,7 +196,7 @@ where
         let mut current = recovered;
         state.retry_counts.retain(|&target, _| target > current.l2_block_number);
 
-        let restart = loop {
+        loop {
             if cancel.is_cancelled() {
                 break false;
             }
@@ -339,9 +339,7 @@ where
                     break true;
                 }
             }
-        };
-
-        restart
+        }
     }
 
     async fn submit_inline(
