@@ -265,9 +265,31 @@ fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static
             config
                 .contract_upgrade_activation_timestamp(upgrade)
                 .filter(|activation_time| *activation_time == next_activation_time)
-                .map(|activation_time| (upgrade.contract_id(), activation_time.saturating_sub(now)))
+                .map(|activation_time| {
+                    (upgrade_metric_label(upgrade), activation_time.saturating_sub(now))
+                })
         })
         .collect()
+}
+
+const fn upgrade_metric_label(upgrade: BaseUpgrade) -> &'static str {
+    match upgrade {
+        BaseUpgrade::Bedrock => "Bedrock",
+        BaseUpgrade::Regolith => "Regolith",
+        BaseUpgrade::Canyon => "Canyon",
+        BaseUpgrade::Delta => "Delta",
+        BaseUpgrade::Ecotone => "Ecotone",
+        BaseUpgrade::Fjord => "Fjord",
+        BaseUpgrade::Granite => "Granite",
+        BaseUpgrade::Holocene => "Holocene",
+        BaseUpgrade::PectraBlobSchedule => "Pectra Blob Schedule",
+        BaseUpgrade::Isthmus => "Isthmus",
+        BaseUpgrade::Jovian => "Jovian",
+        BaseUpgrade::Azul => "Azul",
+        BaseUpgrade::Beryl => "Beryl",
+        BaseUpgrade::Cobalt => "Cobalt",
+        _ => upgrade.name(),
+    }
 }
 
 #[cfg(test)]
@@ -290,7 +312,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(seconds_until_next_upgrades(&config, 800), vec![("azul", 200)]);
+        assert_eq!(seconds_until_next_upgrades(&config, 800), vec![("Azul", 200)]);
     }
 
     #[test]
@@ -306,8 +328,8 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(seconds_until_next_upgrades(&config, 1_000), vec![("beryl", 0)]);
-        assert_eq!(seconds_until_next_upgrades(&config, 1_100), vec![("beryl", 0)]);
+        assert_eq!(seconds_until_next_upgrades(&config, 1_000), vec![("Beryl", 0)]);
+        assert_eq!(seconds_until_next_upgrades(&config, 1_100), vec![("Beryl", 0)]);
     }
 
     #[test]
@@ -343,7 +365,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(seconds_until_next_upgrades(&config, 900), vec![("azul", 100), ("beryl", 100)]);
+        assert_eq!(seconds_until_next_upgrades(&config, 900), vec![("Azul", 100), ("Beryl", 100)]);
     }
 
     #[test]
@@ -361,7 +383,7 @@ mod tests {
         let mut observed_upgrades = BTreeSet::new();
 
         CliMetrics::record_seconds_until_next_upgrade(&config, 900, &mut observed_upgrades);
-        assert!(observed_upgrades.contains("beryl"));
+        assert!(observed_upgrades.contains("Beryl"));
 
         CliMetrics::record_seconds_until_next_upgrade(
             &config,
@@ -369,5 +391,18 @@ mod tests {
             &mut observed_upgrades,
         );
         assert!(observed_upgrades.is_empty());
+    }
+
+    #[test]
+    fn upgrade_metric_label_matches_upgrade_activation_time_labels() {
+        let labels = BaseUpgrade::CONTRACT_VARIANTS
+            .into_iter()
+            .map(upgrade_metric_label)
+            .collect::<Vec<_>>();
+
+        let config_labels =
+            UpgradeConfig::default().iter().map(|(label, _)| label).collect::<Vec<_>>();
+
+        assert_eq!(labels, config_labels);
     }
 }
