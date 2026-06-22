@@ -42,10 +42,17 @@ pub use p2p::{
 mod pods;
 pub use pods::{PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, run_pods_poller};
 
+mod proofs;
+pub use proofs::{
+    LatestProposal, OnchainProofsReport, ProofsClient, ProofsGapReport, ProofsJobListRequest,
+    ProofsJobStatus, ProofsJobStatusParseError, ProofsProposal, ProofsSnapshot, ProverProofSummary,
+    ProverProofsPage, run_proofs_poller,
+};
+
 mod rollup;
 pub use rollup::{
-    LatestProposal, ProofsSnapshot, SyncStatusReport, ValidatorNodeStatus, fetch_safe_and_latest,
-    fetch_sync_status, run_proofs_poller, run_safe_head_poller, run_validator_poller,
+    SyncStatusReport, ValidatorNodeStatus, fetch_safe_and_latest, fetch_sync_status,
+    run_safe_head_poller, run_validator_poller,
 };
 
 mod txpool;

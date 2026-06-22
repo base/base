@@ -197,17 +197,17 @@ fn render_latest_proposal(frame: &mut Frame<'_>, area: Rect, snapshot: &ProofsSn
 
 fn render_proposal_lines(proposal: &LatestProposal) -> Vec<Line<'static>> {
     let status_str = match proposal.status {
-        0 => "IN_PROGRESS",
-        1 => "CHALLENGER_WINS",
-        2 => "DEFENDER_WINS",
-        _ => "UNKNOWN",
+        Some(0) => "IN_PROGRESS",
+        Some(1) => "CHALLENGER_WINS",
+        Some(2) => "DEFENDER_WINS",
+        Some(_) | None => "UNKNOWN",
     };
 
     let status_color = match proposal.status {
-        0 => Color::Yellow,
-        1 => Color::Red,
-        2 => Color::Green,
-        _ => Color::DarkGray,
+        Some(0) => Color::Yellow,
+        Some(1) => Color::Red,
+        Some(2) => Color::Green,
+        Some(_) | None => Color::DarkGray,
     };
 
     let created_str = chrono::DateTime::from_timestamp(proposal.created_at as i64, 0)
@@ -215,8 +215,8 @@ fn render_proposal_lines(proposal: &LatestProposal) -> Vec<Line<'static>> {
 
     vec![
         kv_line("Game address", &format!("{:#x}", proposal.game_address)),
-        kv_line("Proposed L2 block", &format_number(proposal.l2_block)),
-        kv_line("Root claim", &format!("{:#x}", proposal.root_claim)),
+        kv_line("Proposed L2 block", &fmt_opt_block(proposal.l2_block)),
+        kv_line("Root claim", &fmt_opt_hex(proposal.root_claim)),
         kv_line_colored("Status", status_str, status_color),
         kv_line("Created at", &created_str),
     ]
@@ -228,7 +228,7 @@ fn render_sync_gaps(frame: &mut Frame<'_>, area: Rect, snapshot: &ProofsSnapshot
         .borders(Borders::ALL)
         .border_style(Style::default().fg(COLOR_BASE_BLUE));
 
-    let proposed_l2 = snapshot.latest_proposal.as_ref().map(|p| p.l2_block);
+    let proposed_l2 = snapshot.latest_proposal.as_ref().and_then(|p| p.l2_block);
     let safe = snapshot.l2_safe_block;
     let latest = snapshot.l2_latest_block;
     let anchor = snapshot.anchor_l2_block;
@@ -310,6 +310,10 @@ fn gap_line(label: &str, blocks: u64) -> Line<'static> {
 
 fn fmt_opt_block(val: Option<u64>) -> String {
     val.map_or_else(|| "-".to_string(), format_number)
+}
+
+fn fmt_opt_hex(val: Option<impl std::fmt::LowerHex>) -> String {
+    val.map_or_else(|| "-".to_string(), |value| format!("{value:#x}"))
 }
 
 fn format_number(n: u64) -> String {

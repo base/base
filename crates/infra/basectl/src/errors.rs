@@ -418,6 +418,49 @@ impl From<NodeLookupError> for SequencerCommandError {
     }
 }
 
+/// Error returned by the `proofs` command group.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum ProofsCommandError {
+    /// Neither an on-chain proof-system source nor a prover-service source was configured.
+    #[error(
+        "proofs list needs proof contract addresses or a prover-service URL for '{config_name}'. \
+         Set `proofs.dispute_game_factory` and `proofs.anchor_state_registry`, pass both contract \
+         flags, set `proofs.prover_url`, or pass `--prover-url <url>`."
+    )]
+    MissingSource {
+        /// The config name selected for the command.
+        config_name: String,
+    },
+    /// A prover-only flag was supplied without a prover-service URL.
+    #[error(
+        "`{flag}` requires a prover-service source. Set `proofs.prover_url` in config or pass \
+         `--prover-url <url>`."
+    )]
+    MissingProverSource {
+        /// The prover-only flag supplied by the caller.
+        flag: &'static str,
+    },
+    /// Only one proof contract override was supplied.
+    #[error(
+        "`--dispute-game-factory` and `--anchor-state-registry` must be passed together when \
+         overriding on-chain proof contracts."
+    )]
+    PartialContractOverride,
+    /// The requested limit was outside the supported range.
+    #[error("`--limit` must be between 1 and 100")]
+    LimitOutOfRange {
+        /// The invalid limit supplied by the caller.
+        limit: u32,
+    },
+    /// The requested scan window was outside the supported range.
+    #[error("`--scan-window` must be between 1 and 1000")]
+    ScanWindowOutOfRange {
+        /// The invalid scan window supplied by the caller.
+        scan_window: u64,
+    },
+}
+
 /// Error returned by doctor argument validation.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]

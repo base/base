@@ -274,6 +274,60 @@ Safety notes:
   before reporting success so an acknowledged RPC is not confused with the node
   actually reaching the desired state.
 
+### `basectl proofs list`
+
+Lists proof-system state from L1 proof contracts, prover-service jobs, or both.
+The command is read-only and runs the on-chain and prover-service reads in
+parallel when both sources are configured.
+
+The on-chain report uses the selected config's `l1_rpc` and `rpc` values unless
+overridden with `--l1-rpc` or `--l2-rpc`. It requires both proof contract
+addresses, either from a config file's `proofs` section or from the command
+line. Partial contract overrides are rejected.
+
+```yaml
+proofs:
+  dispute_game_factory: "<DISPUTE_GAME_FACTORY_ADDRESS>"
+  anchor_state_registry: "<ANCHOR_STATE_REGISTRY_ADDRESS>"
+  prover_url: "<PROVER_SERVICE_URL>"
+```
+
+The on-chain report queries `AnchorStateRegistry`, `DisputeGameFactory`, recent
+dispute-game proxies, and L2 head tags. The prover report queries
+prover-service `list_proofs` and returns a paginated job list with proof type,
+status, timestamps, and TEE/ZK metadata when present.
+
+| Flag | Description |
+|------|-------------|
+| `--l1-rpc <URL>` | Override the L1 RPC URL used for proof-system contract reads. Defaults to the selected config's `l1_rpc`. |
+| `--l2-rpc <URL>` | Override the L2 RPC URL used for latest/safe/finalized head reads. Defaults to the selected config's `rpc`. |
+| `--dispute-game-factory <ADDRESS>` | Override the L1 `DisputeGameFactory` proxy address. Must be passed with `--anchor-state-registry`. |
+| `--anchor-state-registry <ADDRESS>` | Override the L1 `AnchorStateRegistry` proxy address. Must be passed with `--dispute-game-factory`. |
+| `--prover-url <URL>` | Prover-service JSON-RPC endpoint used to list submitted proof jobs. |
+| `--status <queued|running|succeeded|failed>` | Filter prover-service jobs by status. Requires a prover-service source. |
+| `--limit <N>` | Maximum number of on-chain proposals and prover jobs to show. Default `10`, maximum `100`. |
+| `--offset <N>` | Number of prover-service jobs to skip. Requires a prover-service source. |
+| `--scan-window <N>` | Number of factory games to scan backward for recent respected-game proposals. Default `50`, maximum `1000`. |
+| `--json` | Emit a humanized JSON report instead of pretty text. |
+
+Example using proof contract addresses and prover-service URL from the selected
+config:
+
+```sh
+basectl -c <CONFIG> proofs list --limit 5 --json
+```
+
+Example using explicit command-line overrides:
+
+```sh
+basectl -c <CONFIG> proofs list \
+  --dispute-game-factory <DISPUTE_GAME_FACTORY_ADDRESS> \
+  --anchor-state-registry <ANCHOR_STATE_REGISTRY_ADDRESS> \
+  --prover-url <PROVER_SERVICE_URL> \
+  --limit 5 \
+  --json
+```
+
 ### `basectl doctor`
 
 Runs read-only diagnostics for a single node and prints one row per check. The

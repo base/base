@@ -6689,6 +6689,8 @@ dependencies = [
  "base-consensus-peers",
  "base-consensus-rpc",
  "base-protocol",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
  "chrono",
  "crossterm",
  "dirs 6.0.0",

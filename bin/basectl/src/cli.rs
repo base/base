@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use alloy_primitives::Address;
-use basectl_cli::ViewId;
+use basectl_cli::{ProofsJobStatus, ViewId};
 use clap::{Args, Parser, Subcommand};
 use url::Url;
 
@@ -106,6 +106,12 @@ pub(crate) enum Commands {
     Sequencer {
         #[command(subcommand)]
         command: SequencerCommands,
+    },
+    /// Inspect proof-system state and prover-service jobs.
+    #[command(visible_alias = "proof")]
+    Proofs {
+        #[command(subcommand)]
+        command: ProofsCommands,
     },
     /// Run read-only diagnostics for a single node.
     Doctor(DoctorArgs),
@@ -437,6 +443,48 @@ pub(crate) struct SequencerNodeActionArgs {
     pub(crate) json: bool,
 }
 
+/// Proof-system inspection commands.
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProofsCommands {
+    /// List on-chain proof state and prover-service jobs.
+    List(ProofsListArgs),
+}
+
+/// Flags for `basectl proofs list`.
+#[derive(Debug, Args)]
+pub(crate) struct ProofsListArgs {
+    /// Override the L1 RPC URL used for proof-system contracts.
+    #[arg(long = "l1-rpc", value_name = "URL")]
+    pub(crate) l1_rpc: Option<Url>,
+    /// Override the L2 RPC URL used for chain-head reads.
+    #[arg(long = "l2-rpc", value_name = "URL")]
+    pub(crate) l2_rpc: Option<Url>,
+    /// Override the L1 `DisputeGameFactory` contract address.
+    #[arg(long = "dispute-game-factory", value_name = "ADDRESS")]
+    pub(crate) dispute_game_factory: Option<Address>,
+    /// Override the L1 `AnchorStateRegistry` contract address.
+    #[arg(long = "anchor-state-registry", value_name = "ADDRESS")]
+    pub(crate) anchor_state_registry: Option<Address>,
+    /// Prover-service JSON-RPC URL used to list submitted proof jobs.
+    #[arg(long = "prover-url", value_name = "URL")]
+    pub(crate) prover_url: Option<Url>,
+    /// Optional prover-service job status filter.
+    #[arg(long = "status", value_name = "queued|running|succeeded|failed")]
+    pub(crate) status: Option<ProofsJobStatus>,
+    /// Maximum number of on-chain proposals and prover jobs to show.
+    #[arg(long = "limit", value_name = "N", default_value_t = 10)]
+    pub(crate) limit: u32,
+    /// Number of prover-service jobs to skip.
+    #[arg(long = "offset", value_name = "N", default_value_t = 0)]
+    pub(crate) offset: u64,
+    /// Number of factory games to scan backward for recent proposals.
+    #[arg(long = "scan-window", value_name = "N", default_value_t = 50)]
+    pub(crate) scan_window: u64,
+    /// Emit humanized JSON instead of pretty text.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
 /// TUI monitor views.
 #[derive(Debug, Subcommand)]
 pub(crate) enum MonitorCommands {
@@ -695,6 +743,45 @@ mod tests {
             .is_ok()
         );
         assert!(try_parse(["basectl", "sequencer", "stop", "op-conductor-0", "--yes",]).is_ok());
+    }
+
+    #[test]
+    fn proofs_list_commands_parse() {
+        assert!(try_parse(["basectl", "proofs", "list"]).is_ok());
+        assert!(try_parse(["basectl", "proof", "list"]).is_ok());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "list",
+                "--l1-rpc",
+                "http://127.0.0.1:4545",
+                "--l2-rpc",
+                "http://127.0.0.1:7545",
+                "--dispute-game-factory",
+                "0x1111111111111111111111111111111111111111",
+                "--anchor-state-registry",
+                "0x2222222222222222222222222222222222222222",
+                "--prover-url",
+                "http://127.0.0.1:9876",
+                "--status",
+                "running",
+                "--limit",
+                "25",
+                "--offset",
+                "10",
+                "--scan-window",
+                "100",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_list_rejects_raw_flag() {
+        assert!(try_parse(["basectl", "proofs", "list", "--raw"]).is_err());
+        assert!(try_parse(["basectl", "proof", "list", "--json", "--raw"]).is_err());
     }
 
     #[test]

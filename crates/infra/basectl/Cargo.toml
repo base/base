@@ -27,6 +27,8 @@ base-consensus-gossip = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 base-common-precompiles = { workspace = true }
 base-common-flashblocks = { workspace = true }
+base-prover-service-client = { workspace = true }
+base-prover-service-protocol = { workspace = true }
 toml = { workspace = true, features = ["parse", "serde"] }
 url = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["std"] }

@@ -63,6 +63,9 @@ pub struct ProofsConfig {
     pub dispute_game_factory: Address,
     /// Address of the `AnchorStateRegistry` contract on L1.
     pub anchor_state_registry: Address,
+    /// Optional prover-service JSON-RPC endpoint for submitted proof jobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prover_url: Option<Url>,
 }
 
 /// Configuration for a single validator (non-sequencing) node in the local devnet.

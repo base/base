@@ -3,7 +3,7 @@
 use std::io::{self, Write};
 
 use anyhow::Result;
-use chrono::{DateTime, Local, SecondsFormat};
+use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::Serialize;
 
 /// JSON writer for non-TUI command output.
@@ -61,10 +61,21 @@ impl TimestampJson {
             .unwrap_or_else(|| secs.to_string());
         Self { unix: secs, utc, local }
     }
+
+    /// Builds a `TimestampJson` from a non-negative UTC timestamp.
+    ///
+    /// Pre-epoch timestamps are rejected instead of being coerced to Unix zero,
+    /// which would make the raw timestamp disagree with the rendered dates.
+    pub fn from_datetime_utc(dt: DateTime<Utc>) -> Self {
+        let unix = u64::try_from(dt.timestamp())
+            .expect("TimestampJson::from_datetime_utc requires a non-negative timestamp");
+        Self::from_unix(unix)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::{TimeZone, Utc};
     use serde_json::json;
 
     use super::{JsonOutput, TimestampJson};
@@ -101,5 +112,13 @@ mod tests {
         assert_eq!(oversize.unix, u64::MAX);
         assert_eq!(oversize.utc, u64::MAX.to_string());
         assert_eq!(oversize.local, u64::MAX.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "requires a non-negative timestamp")]
+    fn timestamp_json_rejects_pre_epoch_datetime() {
+        let dt = Utc.with_ymd_and_hms(1969, 12, 31, 23, 59, 59).single().unwrap();
+
+        let _ = TimestampJson::from_datetime_utc(dt);
     }
 }
