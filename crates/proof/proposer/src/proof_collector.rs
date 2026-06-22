@@ -49,6 +49,13 @@ enum TargetPoll {
     NotFound,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubmitInlineOutcome {
+    Recovered(RecoveredState),
+    SubmittedRecoveryFailed,
+    Restart,
+}
+
 impl<L1, R> std::fmt::Debug for ProofCollector<L1, R>
 where
     L1: L1Provider,
@@ -216,7 +223,10 @@ where
                 .copied()
                 .filter(|count| *count >= max_retries);
             if let Some(attempts) = exhausted_attempts {
-                debug!(target_block, attempts, "Collector retry budget already exhausted");
+                warn!(
+                    target_block,
+                    attempts, "Collector retry budget exhausted, waiting for operator intervention"
+                );
                 break false;
             }
 
@@ -243,7 +253,7 @@ where
                     Metrics::last_collected_block().set(target_block as f64);
 
                     match self.submit_inline(target_block, &current, proof, cache, cancel).await {
-                        Ok(Some(recovered)) => {
+                        Ok(SubmitInlineOutcome::Recovered(recovered)) => {
                             state.retry_counts.remove(&target_block);
                             if recovered.l2_block_number > current.l2_block_number {
                                 current = recovered;
@@ -251,15 +261,19 @@ where
                             }
                             break false;
                         }
-                        Ok(None) if cancel.is_cancelled() => break false,
+                        Ok(SubmitInlineOutcome::Restart) if cancel.is_cancelled() => break false,
+                        Ok(SubmitInlineOutcome::SubmittedRecoveryFailed) => {
+                            state.retry_counts.remove(&target_block);
+                            break true;
+                        }
                         Err(SubmitAction::RootMismatch) => break true,
-                        Ok(None) | Err(_) => {
+                        Ok(SubmitInlineOutcome::Restart) | Err(_) => {
                             let count = state.retry_counts.entry(target_block).or_insert(0);
                             if *count >= max_retries {
-                                debug!(
+                                warn!(
                                     target_block,
                                     attempts = *count,
-                                    "Inline submission retry budget already exhausted"
+                                    "Inline submission retry budget exhausted, waiting for operator intervention"
                                 );
                                 break false;
                             }
@@ -293,10 +307,10 @@ where
                 TargetPoll::Failed(error) => {
                     let count = state.retry_counts.entry(target_block).or_insert(0);
                     if *count >= max_retries {
-                        debug!(
+                        warn!(
                             target_block,
                             attempts = *count,
-                            "Proof collection retry budget already exhausted"
+                            "Proof collection retry budget exhausted, waiting for operator intervention"
                         );
                         break false;
                     }
@@ -337,7 +351,7 @@ where
         proof: ProofResult,
         cache: &mut Option<ProofRecoveryCache>,
         cancel: &CancellationToken,
-    ) -> Result<Option<RecoveredState>, SubmitAction> {
+    ) -> Result<SubmitInlineOutcome, SubmitAction> {
         let parent_address = recovered.parent_address;
         info!(target_block, parent_address = %parent_address, "Submitting proof inline");
 
@@ -361,12 +375,12 @@ where
                     timeout_secs = ?self.submit_timeout.map(|timeout| timeout.as_secs()),
                     "Inline submit timed out, restarting pipeline session"
                 );
-                return Ok(None);
+                return Ok(SubmitInlineOutcome::Restart);
             }
             None => {
                 submit_timer.disarm();
                 warn!(target_block, "Inline submit cancelled, restarting pipeline session");
-                return Ok(None);
+                return Ok(SubmitInlineOutcome::Restart);
             }
         };
 
@@ -421,19 +435,12 @@ where
 
         Metrics::last_proposed_block().set(target_block as f64);
         match self.recovery.recover_latest_state(cache).await {
-            Ok(recovered) => Ok(Some(recovered)),
+            Ok(recovered) => Ok(SubmitInlineOutcome::Recovered(recovered)),
             Err(e) => {
                 warn!(error = %e, "Failed to recover state after inline submit");
-                Ok(None)
+                Ok(SubmitInlineOutcome::SubmittedRecoveryFailed)
             }
         }
-    }
-}
-
-impl ProofCollectorState {
-    /// Creates empty collector state.
-    pub fn new() -> Self {
-        Self::default()
     }
 }
 
@@ -533,6 +540,7 @@ mod tests {
         output_proposer: Arc<dyn OutputProposer>,
         factory_client: MockDisputeGameFactory,
     ) -> ProofCollector<MockL1, MockRollupClient> {
+        let l1_client = Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() });
         let recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {
                 block_interval: BLOCK_INTERVAL,
@@ -552,7 +560,7 @@ mod tests {
         let submitter = ProofSubmitter::new(
             output_proposer,
             Arc::clone(&rollup_client),
-            Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() }),
+            l1_client,
             Arc::new(MockDisputeGameFactory::with_games(vec![])),
             Arc::new(MockAggregateVerifier::default()),
             ProofSubmitterConfig {
@@ -594,13 +602,13 @@ mod tests {
         let mut cache = None;
         let cancel = CancellationToken::new();
 
-        assert!(
+        assert!(matches!(
             orchestrator
                 .submit_inline(200, &recovered(100), proof, &mut cache, &cancel)
                 .await
-                .unwrap()
-                .is_none()
-        );
+                .unwrap(),
+            SubmitInlineOutcome::SubmittedRecoveryFailed
+        ));
     }
 
     #[tokio::test]
@@ -615,7 +623,7 @@ mod tests {
             MockDisputeGameFactory::with_games(vec![]),
         );
         let mut cache = cache();
-        let mut state = ProofCollectorState::new();
+        let mut state = ProofCollectorState::default();
         let cancel = CancellationToken::new();
 
         assert!(
@@ -652,7 +660,7 @@ mod tests {
             MockDisputeGameFactory::with_games(vec![]),
         );
         let mut cache = cache();
-        let mut state = ProofCollectorState::new();
+        let mut state = ProofCollectorState::default();
         let cancel = CancellationToken::new();
 
         let result = orchestrator
@@ -681,7 +689,7 @@ mod tests {
             MockDisputeGameFactory::with_games(vec![]),
         );
         let mut cache = cache();
-        let mut state = ProofCollectorState::new();
+        let mut state = ProofCollectorState::default();
         let cancel = CancellationToken::new();
 
         assert!(

@@ -72,7 +72,7 @@ where
             "Starting proving pipeline"
         );
 
-        let mut collector_state = ProofCollectorState::new();
+        let mut collector_state = ProofCollectorState::default();
         loop {
             // dispatcher_loop intentionally does not return; this branch keeps it
             // polled while collector_loop remains the session restart signal.

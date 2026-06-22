@@ -151,12 +151,12 @@ impl ProofRequestRepo {
         })?;
 
         let mismatch = match status {
-            ProofStatus::Failed => params.first_mismatch_allowing_l1_head_replacement(&row),
-            // Non-failed existing requests are replay-only; l1_head replacement is only for failed retries.
-            ProofStatus::Created
-            | ProofStatus::Pending
-            | ProofStatus::Running
-            | ProofStatus::Succeeded => params.first_mismatch(&row),
+            ProofStatus::Failed | ProofStatus::Succeeded => {
+                params.first_mismatch_allowing_l1_head_replacement(&row)
+            }
+            ProofStatus::Created | ProofStatus::Pending | ProofStatus::Running => {
+                params.first_mismatch(&row)
+            }
         };
         if let Some(field) = mismatch {
             tx.rollback().await?;
@@ -164,14 +164,11 @@ impl ProofRequestRepo {
         }
 
         match status {
-            ProofStatus::Created
-            | ProofStatus::Pending
-            | ProofStatus::Running
-            | ProofStatus::Succeeded => {
+            ProofStatus::Created | ProofStatus::Pending | ProofStatus::Running => {
                 tx.rollback().await?;
                 Ok(CreateProofRequestOutcome::Replayed(existing_id))
             }
-            ProofStatus::Failed => {
+            ProofStatus::Failed | ProofStatus::Succeeded => {
                 let retry_count: i32 = row.get("retry_count");
                 if retry_count >= max_retries {
                     tx.rollback().await?;
