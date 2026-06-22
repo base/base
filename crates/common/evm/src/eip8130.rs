@@ -44,7 +44,7 @@
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_evm::{Database as AlloyDatabase, EvmInternals};
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
@@ -248,6 +248,9 @@ impl Eip8130Executor {
         ctx.journal_mut().commit_tx();
         ctx.chain_mut().clear_tx_l1_cost();
 
+        // The gas refund is already folded into `gas_used` (via `net_used` in
+        // `settle_fees`), so the `refunded` counter is left 0; the per-phase
+        // receipt breakdown is deferred (see the module-level "Scope").
         let result_gas = ResultGas::new_with_state_gas(gas_used, 0, 0, 0);
         if calls.reverted {
             // The transaction is still included (nonce consumed, fee paid). Logs
@@ -702,9 +705,13 @@ impl Eip8130Executor {
     /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
     /// protocol revert: the 4-byte selector followed by the two 32-byte words.
     fn actor_policy_violation_data(actor_id: B256, target: Address) -> Bytes {
-        let selector = keccak256(b"ActorPolicyViolation(bytes32,address)");
+        // `keccak256(b"ActorPolicyViolation(bytes32,address)")[..4]`, hardcoded to
+        // avoid hashing on every policy-gate revert. The
+        // `actor_policy_violation_data_is_abi_encoded` test pins this against the
+        // canonical signature so it cannot silently drift.
+        const SELECTOR: [u8; 4] = [0x1f, 0x1c, 0x0d, 0x27];
         let mut out = Vec::with_capacity(4 + 32 + 32);
-        out.extend_from_slice(&selector[..4]);
+        out.extend_from_slice(&SELECTOR);
         out.extend_from_slice(actor_id.as_slice());
         out.extend_from_slice(target.into_word().as_slice());
         Bytes::from(out)
