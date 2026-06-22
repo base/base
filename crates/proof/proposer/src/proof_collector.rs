@@ -961,35 +961,38 @@ where
         };
         let session_id = ProposerProofAdapter::tee_discard_retry_session_id(&request, attempt);
 
-        let dispatch_error =
-            match self.dispatcher.dispatch_tee_with_session_id(request, session_id.clone()).await {
-                Ok(accepted_session_id) if accepted_session_id == session_id => {
-                    info!(
-                        target_block,
-                        session_id = %accepted_session_id,
-                        attempt,
-                        "Discard retry proof request accepted by prover service"
-                    );
-                    Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
-                    state.discard_retry_counts.insert(target_block, attempt);
-                    state.retry_sessions.insert(target_block, accepted_session_id);
-                    state.pending_discard_roots.remove(&target_block);
-                    state.counted_failed_sessions.remove(&target_block);
-                    None
-                }
-                Ok(accepted_session_id) => {
-                    error!(
-                        target_block,
-                        expected_session_id = %session_id,
-                        actual_session_id = %accepted_session_id,
-                        "Prover service returned mismatched discard retry session id"
-                    );
-                    Some(ProposerError::Prover(format!(
-                        "prover service returned mismatched session_id: expected {session_id}, got {accepted_session_id}"
-                    )))
-                }
-                Err(error) => Some(error),
-            };
+        let dispatch_error = match self
+            .dispatcher
+            .dispatch_tee_with_session_id(request, session_id.clone())
+            .await
+        {
+            Ok(accepted_session_id) if accepted_session_id == session_id => {
+                info!(
+                    target_block,
+                    session_id = %accepted_session_id,
+                    attempt,
+                    "Discard retry proof request accepted by prover service"
+                );
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
+                state.discard_retry_counts.insert(target_block, attempt);
+                state.retry_sessions.insert(target_block, accepted_session_id);
+                state.pending_discard_roots.remove(&target_block);
+                state.counted_failed_sessions.remove(&target_block);
+                None
+            }
+            Ok(accepted_session_id) => {
+                error!(
+                    target_block,
+                    expected_session_id = %session_id,
+                    actual_session_id = %accepted_session_id,
+                    "Prover service returned mismatched discard retry session id"
+                );
+                Some(ProposerError::Prover(format!(
+                    "prover service returned mismatched session_id: expected {session_id}, got {accepted_session_id}"
+                )))
+            }
+            Err(error) => Some(error),
+        };
 
         if let Some(error) = dispatch_error {
             Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
