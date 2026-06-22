@@ -43,7 +43,7 @@ pub struct ConsensusFollowNodeCommand {
 
 impl ConsensusFollowNodeCommand {
     /// Runs the standalone consensus follow-node command.
-    pub fn run(mut self, chain: ConsensusChainArgs) -> eyre::Result<()> {
+    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
@@ -60,7 +60,7 @@ impl ConsensusFollowNodeCommand {
         let rt = RuntimeManager::new().tokio_runtime()?;
         rt.block_on(async {
             LogConfig::from(self.logging.clone())
-                .init_with_trace_args(&mut self.traces, &["libp2p_gossipsub=error"])
+                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
         })?;
         rt.block_on(async move {
             tokio::select! {

@@ -116,7 +116,7 @@ impl LogConfig {
     /// This is the preferred entry point for binaries that want OTLP support.
     pub fn init_with_trace_args(
         &self,
-        trace_args: &mut reth_node_core::args::TraceArgs,
+        trace_args: &reth_node_core::args::TraceArgs,
         directives: &[&str],
     ) -> eyre::Result<()> {
         opentelemetry::global::set_text_map_propagator(
