@@ -332,13 +332,13 @@ fn print_read_pretty_to<W: Write>(
     for transaction in &report.transactions {
         writeln!(
             writer,
-            "  {pool:<7} sender={sender} nonce={nonce} hash={hash} to={to} value={value} gas={gas} fee={fee} input={input}B",
+            "  {pool:<7} sender={sender} nonce={nonce} hash={hash} to={to} value={value_wei} wei gas={gas} fee={fee} input={input}B",
             pool = transaction.pool.as_str(),
             sender = transaction.sender,
             nonce = transaction.nonce,
             hash = transaction.hash,
             to = format_destination(transaction.to),
-            value = format_value_wei(&transaction.value_wei),
+            value_wei = transaction.value_wei,
             gas = format_gas(transaction.gas_limit),
             fee = format_transaction_fee(transaction),
             input = transaction.input_bytes,
@@ -358,10 +358,6 @@ fn format_nonce_range(summary: &TxpoolSenderSummary) -> String {
 
 fn format_destination(to: Option<Address>) -> String {
     to.map_or_else(|| "create".to_string(), |to| to.to_string())
-}
-
-fn format_value_wei(value_wei: &str) -> String {
-    if value_wei == "1" { "1 wei".to_string() } else { format!("{value_wei} wei") }
 }
 
 fn format_transaction_fee(transaction: &TxpoolTransactionRow) -> String {
@@ -404,7 +400,7 @@ mod tests {
 
     use super::{
         TxpoolClearJson, TxpoolReadJson, format_destination, format_nonce_range,
-        format_transaction_fee, format_value_wei, print_read_pretty_to,
+        format_transaction_fee, print_read_pretty_to,
     };
 
     fn sample_report() -> TxpoolReport {
@@ -576,7 +572,6 @@ mod tests {
         };
 
         assert_eq!(format_destination(transaction.to), "create");
-        assert_eq!(format_value_wei(&transaction.value_wei), "1 wei");
         assert_eq!(format_transaction_fee(&transaction), "max=2.00 gwei priority=n/a");
     }
 }
