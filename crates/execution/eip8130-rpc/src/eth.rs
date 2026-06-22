@@ -83,18 +83,17 @@ where
 
         let block_id = block_number.unwrap_or_default();
 
-        // EIP-8130 surface. Any `nonce_key` (including `Some(0)`) is the
-        // client using the EIP-8130 RPC extension, so we gate the whole
-        // surface on Cobalt. Mirrors the txpool's `TxTypeNotSupported`
-        // rejection of EIP-8130 transactions pre-activation.
-        if let Some(key) = nonce_key {
+        // EIP-8130 channel read. Only `nonce_key != 0` uses the precompile
+        // path; `Some(0)` is the protocol nonce by EIP-8130's reservation
+        // and falls through to the standard resolution. The Cobalt gate
+        // lives here (not above) so the default hot path — absent
+        // `nonce_key` and `Some(0)` — is not slowed down by a sync header
+        // resolution.
+        if let Some(key) = nonce_key
+            && key != U256::ZERO
+        {
             Eip8130CobaltGate::check(&self.eth_api, block_id)?;
-
-            // Post-Cobalt: `Some(0)` is the protocol nonce by EIP-8130's
-            // reservation. Fall through to the standard resolution.
-            if key != U256::ZERO {
-                return ChannelNonceReader::read(&self.eth_api, address, key, block_id, None).await;
-            }
+            return ChannelNonceReader::read(&self.eth_api, address, key, block_id, None).await;
         }
 
         // Protocol nonce path. Standard reth resolution against

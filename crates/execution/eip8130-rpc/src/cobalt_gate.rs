@@ -17,10 +17,11 @@ use tracing::warn;
 /// activated at the requested block.
 ///
 /// Mirrors the txpool's Cobalt gate (which rejects EIP-8130 transactions
-/// with `TxTypeNotSupported` pre-activation) on the read side: an RPC
-/// `eth_getTransactionCount` call carrying any `nonce_key` is using the
-/// EIP-8130 RPC surface, regardless of value, and should error pre-Cobalt
-/// rather than silently delegating to the legacy path.
+/// with `TxTypeNotSupported` pre-activation) on the read side. Callers
+/// invoke this only on paths that actually consult the precompile (i.e.
+/// `nonce_key != 0`); requests with no `nonce_key` or `Some(0)` are
+/// indistinguishable from a legacy `eth_getTransactionCount` and bypass
+/// the gate to keep the hot path free of a sync header resolution.
 ///
 /// The block-of-query timestamp drives the gate, so historical queries
 /// against pre-Cobalt blocks are gated even when Cobalt is currently active.

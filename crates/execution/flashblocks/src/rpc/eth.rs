@@ -280,37 +280,30 @@ where
 
         let block_id = block_number.unwrap_or_default();
 
-        // EIP-8130 surface. Any `nonce_key` (including `Some(0)`) is the
-        // client using the EIP-8130 RPC extension, so we gate the whole
-        // surface on Cobalt. Mirrors the txpool's `TxTypeNotSupported`
-        // rejection of EIP-8130 transactions pre-activation.
-        if let Some(key) = nonce_key {
+        // EIP-8130 channel read. Only `nonce_key != 0` uses the precompile
+        // path.
+        if let Some(key) = nonce_key
+            && key != U256::ZERO
+        {
             Eip8130CobaltGate::check(&self.eth_api, block_id)?;
-
-            // Post-Cobalt: `Some(0)` is the protocol nonce by EIP-8130's
-            // reservation. Fall through to the legacy path so the
-            // flashblock pending delta is added (flashblocks does not
-            // track per-channel deltas).
-            if key != U256::ZERO {
-                Metrics::rpc_get_transaction_count().increment(1);
-                let (resolved_block, overrides) = if block_id.is_pending() {
-                    let pending_blocks = self.flashblocks_state.get_pending_blocks();
-                    (
-                        pending_blocks.get_canonical_block_number().into(),
-                        pending_blocks.get_state_overrides(),
-                    )
-                } else {
-                    (block_id, None)
-                };
-                return ChannelNonceReader::read(
-                    &self.eth_api,
-                    address,
-                    key,
-                    resolved_block,
-                    overrides.as_ref(),
+            Metrics::rpc_get_transaction_count().increment(1);
+            let (resolved_block, overrides) = if block_id.is_pending() {
+                let pending_blocks = self.flashblocks_state.get_pending_blocks();
+                (
+                    pending_blocks.get_canonical_block_number().into(),
+                    pending_blocks.get_state_overrides(),
                 )
-                .await;
-            }
+            } else {
+                (block_id, None)
+            };
+            return ChannelNonceReader::read(
+                &self.eth_api,
+                address,
+                key,
+                resolved_block,
+                overrides.as_ref(),
+            )
+            .await;
         }
 
         // Protocol nonce path. `canon + flashblock_delta` on pending,
