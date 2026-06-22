@@ -61,13 +61,12 @@ where
     }
 
     async fn poll_target(
-        &self,
+        proof_requester: &dyn ProofRequesterProvider,
         target_block: u64,
         claimed_l2_output_root: alloy_primitives::B256,
     ) -> TargetPoll {
         let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
-        let response = match self
-            .proof_requester
+        let response = match proof_requester
             .get_proof(GetProofRequest { session_id: session_id.clone() })
             .await
         {
@@ -174,7 +173,13 @@ where
                 break false;
             };
 
-            match self.poll_target(target_block, claimed_l2_output_root).await {
+            match Self::poll_target(
+                self.proof_requester.as_ref(),
+                target_block,
+                claimed_l2_output_root,
+            )
+            .await
+            {
                 TargetPoll::Ready { session_id, proof } => {
                     info!(target_block, session_id = %session_id, "Proof ready, submitting inline");
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
@@ -318,11 +323,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_proof_primitives::{ProofRequest, Proposal};
+    use rstest::rstest;
 
     use super::*;
     use crate::{
@@ -356,7 +360,7 @@ mod tests {
             _game_address: Address,
             _proposal: &Proposal,
         ) -> Result<(), ProposerError> {
-            Err(ProposerError::Submission(ProofSubmissionError::L1OriginTooOld))
+            unreachable!("discarding proposer should not attach existing games")
         }
     }
 
@@ -375,7 +379,7 @@ mod tests {
     fn rollup_client(block: u64, root: Option<B256>) -> Arc<MockRollupClient> {
         Arc::new(MockRollupClient {
             sync_status: test_sync_status(block, B256::ZERO),
-            output_roots: root.map_or_else(HashMap::new, |root| HashMap::from([(block, root)])),
+            output_roots: root.into_iter().map(|root| (block, root)).collect(),
             max_safe_block: None,
         })
     }
@@ -401,7 +405,6 @@ mod tests {
 
     struct OrchestratorParts {
         proof_requester: Arc<dyn ProofRequesterProvider>,
-        l1: Arc<MockL1>,
         rollup_client: Arc<MockRollupClient>,
         output_proposer: Arc<dyn OutputProposer>,
         intermediate_block_interval: u64,
@@ -414,7 +417,6 @@ mod tests {
         fn default() -> Self {
             Self {
                 proof_requester: Arc::new(MockProofRequester::default()),
-                l1: Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() }),
                 rollup_client: rollup_client(0, None),
                 output_proposer: Arc::new(MockOutputProposer),
                 intermediate_block_interval: 100,
@@ -443,7 +445,7 @@ mod tests {
         let submitter = ProofSubmitter::new(
             parts.output_proposer,
             Arc::clone(&parts.rollup_client),
-            parts.l1,
+            Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() }),
             Arc::new(MockDisputeGameFactory::with_games(vec![])),
             Arc::new(MockAggregateVerifier::default()),
             ProofSubmitterConfig {
@@ -488,36 +490,20 @@ mod tests {
         assert_eq!(effect, None);
     }
 
+    #[rstest]
+    #[case::missing(None)]
+    #[case::failed(Some("simulated proof failure"))]
     #[tokio::test]
-    async fn missing_session_restarts_pipeline_without_dispatching() {
+    async fn unavailable_session_restarts_pipeline_without_dispatching(
+        #[case] failure: Option<&'static str>,
+    ) {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester: requester.clone(),
-            rollup_client: rollup_client(target_block, Some(claimed_root)),
-            ..Default::default()
-        });
-        let mut cache = cache();
-        let cancel = CancellationToken::new();
-
-        let result = orchestrator.tick(&mut cache, recovered(100), target_block, &cancel).await;
-
-        assert!(result);
-        assert!(requester.requests.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn failed_session_restarts_pipeline_without_dispatching() {
-        let target_block = 200;
-        let claimed_root = B256::repeat_byte(target_block as u8);
-        let requester = Arc::new(MockProofRequester::default());
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
-        requester
-            .failed_sessions
-            .lock()
-            .unwrap()
-            .insert(session_id, "simulated proof failure".to_owned());
+        if let Some(message) = failure {
+            let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+            requester.failed_sessions.lock().unwrap().insert(session_id, message.to_owned());
+        }
         let orchestrator = make_orchestrator(OrchestratorParts {
             proof_requester: requester.clone(),
             rollup_client: rollup_client(target_block, Some(claimed_root)),
@@ -566,7 +552,6 @@ mod tests {
         let proof_requester = Arc::new(MockProofRequester::default());
         let target_block = 600u64;
         let canonical_root = B256::repeat_byte(0xcc);
-        let rollup_client = rollup_client(target_block, Some(canonical_root));
         let proof_request = ProofRequest {
             agreed_l2_output_root: B256::repeat_byte(0x03),
             ..proof_request(target_block, canonical_root, 300, 1200)
@@ -576,15 +561,14 @@ mod tests {
             .await
             .unwrap()
             .session_id;
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester,
-            l1: Arc::new(MockL1 { latest_block_number: 1200, ..Default::default() }),
-            rollup_client,
-            intermediate_block_interval: 300,
-            ..Default::default()
-        });
 
-        match orchestrator.poll_target(target_block, canonical_root).await {
+        match ProofCollector::<MockL1, MockRollupClient>::poll_target(
+            proof_requester.as_ref(),
+            target_block,
+            canonical_root,
+        )
+        .await
+        {
             TargetPoll::Ready { session_id, .. } => {
                 assert_eq!(session_id, expected_session_id);
             }
@@ -596,16 +580,14 @@ mod tests {
     async fn poll_returns_not_found_for_unknown_session() {
         let proof_requester = Arc::new(MockProofRequester::default());
         let target_block = 200u64;
-        let rollup_client = rollup_client(target_block, Some(B256::repeat_byte(0xaa)));
-        let orchestrator = make_orchestrator(OrchestratorParts {
-            proof_requester,
-            l1: Arc::new(MockL1 { latest_block_number: 1200, ..Default::default() }),
-            rollup_client,
-            intermediate_block_interval: 300,
-            ..Default::default()
-        });
 
-        match orchestrator.poll_target(target_block, B256::repeat_byte(0xaa)).await {
+        match ProofCollector::<MockL1, MockRollupClient>::poll_target(
+            proof_requester.as_ref(),
+            target_block,
+            B256::repeat_byte(0xaa),
+        )
+        .await
+        {
             TargetPoll::NotFound => {}
             other => panic!("expected NotFound, got {other:?}"),
         }
