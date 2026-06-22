@@ -163,6 +163,10 @@ mod tests {
             BaseTransactionError::MissingEnvelopedTx.to_string(),
             "missing enveloped transaction bytes for non-deposit transaction"
         );
+        assert_eq!(
+            BaseTransactionError::eip8130("nonce too low").to_string(),
+            "EIP-8130 transaction rejected: nonce too low"
+        );
     }
 
     #[cfg(feature = "serde")]
@@ -172,5 +176,17 @@ mod tests {
 
         let base_transaction_error: BaseTransactionError = serde_json::from_str(response).unwrap();
         assert_eq!(base_transaction_error, BaseTransactionError::DepositSystemTxPostRegolith);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_serialize_json_eip8130_error() {
+        let error = BaseTransactionError::Eip8130("payer balance too low".to_string());
+
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert_eq!(serialized, r#"{"Eip8130":"payer balance too low"}"#);
+
+        let round_trip: BaseTransactionError = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(round_trip, error);
     }
 }

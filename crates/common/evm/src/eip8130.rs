@@ -26,7 +26,6 @@
 
 use alloc::vec::Vec;
 
-use alloy_eips::eip2718::Encodable2718;
 use alloy_evm::{Database as AlloyDatabase, EvmInternals};
 use alloy_primitives::{Address, Bytes, U256};
 use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
@@ -117,10 +116,25 @@ impl Eip8130Executor {
         }
 
         let chain_id = ctx.cfg().chain_id();
-        let now: u64 = ctx.block().timestamp().saturating_to();
+        // Consensus-critical: a clamped timestamp would silently shift the expiry
+        // validation in the authorizer and nonce validator, so reject rather than
+        // saturate. Block timestamps never approach `u64::MAX` in practice.
+        let now: u64 = ctx
+            .block()
+            .timestamp()
+            .try_into()
+            .map_err(|_| BaseTransactionError::eip8130("block timestamp exceeds u64"))?;
         let base_fee: u128 = u128::from(ctx.block().basefee());
         let beneficiary = ctx.block().beneficiary();
-        let encoded = signed.encoded_2718();
+        // Reuse the original wire bytes captured during `from_encoded_tx` instead
+        // of re-encoding: this avoids an allocation and the assumption that
+        // re-encoding is byte-identical, which matters because the EIP-8130
+        // intrinsic-gas schedule meters the transaction size from these bytes.
+        let encoded = ctx
+            .tx()
+            .enveloped_tx()
+            .cloned()
+            .ok_or_else(|| BaseTransactionError::eip8130("missing enveloped transaction bytes"))?;
 
         // Guard every journal write so a late-stage rejection discards the whole
         // transaction's mutations.
@@ -255,7 +269,13 @@ impl Eip8130Executor {
                 sctx.set_code(delegation.account, code).map_err(BaseTransactionError::eip8130)?;
             }
 
-            // 5. Auto-delegate a code-less EOA sender to the default account.
+            // 5. Auto-delegate a code-less EOA sender to the default account so a
+            // basic account can dispatch its calls. This is unconditional for
+            // code-less EOA senders: an explicit delegation applied in step 4 with
+            // a non-zero target leaves non-empty code and is preserved here, but
+            // clearing the sender's delegation in the same transaction leaves it
+            // code-less and is intentionally re-delegated — a basic-account sender
+            // is always delegated to `DEFAULT_ACCOUNT`.
             let sender_auto_delegated = if sender_is_eoa
                 && sctx
                     .with_account_info(sender, |info| Ok(info.is_empty_code_hash()))
