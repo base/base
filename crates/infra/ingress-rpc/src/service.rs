@@ -56,6 +56,7 @@ pub struct IngressService {
     builder_tx: broadcast::Sender<MeterBundleResponse>,
     bundle_cache: Cache<B256, ()>,
     send_to_builder: bool,
+    allow_eip8130: bool,
 }
 
 impl std::fmt::Debug for IngressService {
@@ -91,6 +92,7 @@ impl IngressService {
             builder_tx,
             bundle_cache,
             send_to_builder: config.send_to_builder,
+            allow_eip8130: config.allow_eip8130,
         }
     }
 }
@@ -225,11 +227,16 @@ impl IngressService {
         let envelope = BaseTxEnvelope::decode_2718_exact(data.iter().as_slice())
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
 
-        if envelope.is_eip8130() {
-            // Mirror the rejection used by `BaseEthApi::send_raw_transaction` so both
-            // ingress surfaces return the same code (-32003, TransactionRejected) and
-            // the same wording. Message is sourced from `base-common-consensus` to
-            // prevent drift with `BaseInvalidTransactionError::Eip8130NotAccepted`.
+        if envelope.is_eip8130() && !self.allow_eip8130 {
+            // The proxy has no chain spec to Cobalt-gate locally, so by default it
+            // rejects 0x7B outright. Mirror the rejection used by
+            // `BaseEthApi::send_raw_transaction` so both ingress surfaces return the
+            // same code (-32003, TransactionRejected) and the same wording. Message
+            // is sourced from `base-common-consensus` to prevent drift with
+            // `BaseInvalidTransactionError::Eip8130NotAccepted`.
+            //
+            // When `allow_eip8130` is set (Cobalt-active networks), 0x7B is forwarded
+            // and the downstream node's Cobalt gate is the source of truth.
             return Err(rpc_err(
                 EthRpcErrorCode::TransactionRejected.code(),
                 EIP8130_REJECTION_MSG,
@@ -325,6 +332,10 @@ mod tests {
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{U256, address, bytes};
+    use base_common_consensus::{Eip8130Signed, TxEip8130};
+
     use super::*;
     use crate::Config;
 
@@ -345,11 +356,69 @@ mod tests {
             bundle_cache_ttl: 20,
             audit_channel_capacity: 512,
             send_to_builder: false,
+            allow_eip8130: false,
             audit_batch_max_size: 100,
             audit_batch_max_wait_ms: 1000,
             audit_rpc_timeout_secs: 5,
             audit_rpc_url: Url::parse("http://localhost:9000").unwrap(),
         }
+    }
+
+    fn build_service(config: Config) -> IngressService {
+        let provider: RootProvider<Base> =
+            RootProvider::new_http("http://localhost:1".parse().unwrap());
+        let providers =
+            Providers { mempool: provider.clone(), simulation: provider, raw_tx_forward: None };
+        let (audit_tx, _audit_rx) = mpsc::channel(8);
+        let (builder_tx, _builder_rx) = broadcast::channel(1);
+        IngressService::new(providers, audit_tx, builder_tx, config)
+    }
+
+    /// Encodes a configured-actor (explicit sender) EIP-8130 transaction so it
+    /// recovers without ecrecover. Only the `0x7B` type byte matters for the
+    /// proxy gate, which runs before recovery.
+    fn encoded_eip8130_tx() -> Bytes {
+        let tx = TxEip8130 {
+            chain_id: 11,
+            sender: Some(address!("0x00000000000000000000000000000000000000aa")),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 1,
+            gas_limit: 21_000,
+            account_changes: vec![],
+            calls: vec![],
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signed = Eip8130Signed::new(tx, bytes!("deadbeef"), Bytes::new());
+        BaseTxEnvelope::Eip8130(signed).encoded_2718().into()
+    }
+
+    #[tokio::test]
+    async fn eip8130_rejected_by_default() {
+        let mock_server = MockServer::start().await;
+        let mut config = create_test_config(&mock_server);
+        config.allow_eip8130 = false;
+        let service = build_service(config);
+
+        let err = service.get_tx(&encoded_eip8130_tx()).await.unwrap_err();
+        assert_eq!(err.code(), EthRpcErrorCode::TransactionRejected.code());
+        assert_eq!(err.message(), EIP8130_REJECTION_MSG);
+    }
+
+    #[tokio::test]
+    async fn eip8130_forwarded_when_flag_enabled() {
+        let mock_server = MockServer::start().await;
+        let mut config = create_test_config(&mock_server);
+        config.allow_eip8130 = true;
+        let service = build_service(config);
+
+        // The proxy gate is lifted, so the 0x7B tx decodes/recovers and is handed
+        // on; the downstream node owns the authoritative Cobalt gate.
+        let recovered = service.get_tx(&encoded_eip8130_tx()).await.expect("gate lifted");
+        assert!(recovered.is_eip8130());
     }
 
     #[tokio::test]

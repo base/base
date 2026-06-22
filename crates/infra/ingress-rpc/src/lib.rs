@@ -118,6 +118,18 @@ pub struct Config {
     /// Enable sending to builder
     #[arg(long, env = "TIPS_INGRESS_SEND_TO_BUILDER", default_value = "false")]
     pub send_to_builder: bool,
+
+    /// Allow EIP-8130 (account-abstraction, type `0x7B`) transactions through the
+    /// ingress proxy.
+    ///
+    /// The proxy is a stateless forwarder with no chain spec, so it cannot
+    /// Cobalt-gate locally. When enabled it forwards `0x7B` transactions and
+    /// defers the authoritative Cobalt gate to the downstream node
+    /// (`BaseEthApi::send_raw_transaction`), which rejects them before Cobalt is
+    /// active. Leave disabled for mainnet/sepolia ingress; enable only on
+    /// Cobalt-active networks (e.g. a devnet).
+    #[arg(long, env = "TIPS_INGRESS_ALLOW_EIP8130", default_value = "false")]
+    pub allow_eip8130: bool,
 }
 
 /// Maximum number of concurrent RPC calls per builder URL.

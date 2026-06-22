@@ -489,8 +489,8 @@ const DEVNET: ChainConfig = ChainConfig {
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
     azul_timestamp: Some(0),
-    beryl_timestamp: None,
-    cobalt_timestamp: None,
+    beryl_timestamp: Some(0),
+    cobalt_timestamp: Some(0),
 
     genesis_l1_hash: B256::ZERO,
     genesis_l1_number: 0,
@@ -625,5 +625,16 @@ mod tests {
         assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_780_678_800));
         assert_eq!(ChainConfig::zeronet().cobalt_timestamp, None);
         assert_eq!(ChainConfig::zeronet().upgrade_config().base.cobalt, None);
+    }
+
+    #[test]
+    fn devnet_has_all_forks_active_at_genesis() {
+        // The local devnet runs every fork from genesis so it can exercise the
+        // latest features (incl. EIP-8130, gated behind Cobalt) without a wait.
+        let devnet = ChainConfig::devnet();
+        assert_eq!(devnet.azul_timestamp, Some(0));
+        assert_eq!(devnet.beryl_timestamp, Some(0));
+        assert_eq!(devnet.cobalt_timestamp, Some(0));
+        assert_eq!(devnet.upgrade_config().base.cobalt, Some(0));
     }
 }
