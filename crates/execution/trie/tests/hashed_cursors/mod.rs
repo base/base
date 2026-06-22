@@ -35,7 +35,7 @@ fn storage_exact<S: BaseProofsStore>(
 /// Test store and retrieve single account
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_and_retrieve_single_account<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -61,7 +61,7 @@ fn test_store_and_retrieve_single_account<S: BaseProofsStore + BaseProofsInitial
 /// Test account cursor navigation
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_account_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -99,7 +99,6 @@ fn test_account_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateSto
 
 /// Test that a `RocksDB` cursor reads from the snapshot captured when it is created.
 #[test]
-#[ignore = "RocksDB read path not yet implemented; will be enabled in a later PR"]
 #[serial]
 fn test_rocksdb_account_cursor_uses_creation_snapshot() -> Result<(), BaseProofsStorageError> {
     let storage = create_rocksdb_proofs_storage();
@@ -156,7 +155,7 @@ fn test_rocksdb_account_cursor_uses_creation_snapshot() -> Result<(), BaseProofs
 /// Test account block versioning
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_account_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -188,7 +187,7 @@ fn test_account_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStor
 /// Test store and retrieve storage
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_and_retrieve_storage<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -219,7 +218,7 @@ fn test_store_and_retrieve_storage<S: BaseProofsStore + BaseProofsInitialStateSt
 /// Test storage cursor navigation
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -252,7 +251,7 @@ fn test_storage_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateSto
 /// Test storage account isolation
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_account_isolation<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -288,7 +287,7 @@ fn test_storage_account_isolation<S: BaseProofsStore + BaseProofsInitialStateSto
 /// Test storage block versioning
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -316,7 +315,7 @@ fn test_storage_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStor
 /// Test storage zero value deletion
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_zero_value_deletion<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -356,7 +355,7 @@ fn test_storage_zero_value_deletion<S: BaseProofsStore + BaseProofsInitialStateS
 /// Test that zero values are skipped during iteration
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_cursor_skips_zero_values<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -406,7 +405,7 @@ fn test_storage_cursor_skips_zero_values<S: BaseProofsStore + BaseProofsInitialS
 /// Test empty cursors
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_empty_cursors<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -427,7 +426,7 @@ fn test_empty_cursors<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test cursor boundary conditions
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_cursor_boundary_conditions<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -457,7 +456,7 @@ fn test_cursor_boundary_conditions<S: BaseProofsStore + BaseProofsInitialStateSt
 /// Test large batch operations
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_large_batch_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -492,7 +491,7 @@ fn test_large_batch_operations<S: BaseProofsStore + BaseProofsInitialStateStore>
 
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_exact_account_reads_do_not_return_lower_bound_neighbor<
     S: BaseProofsStore + BaseProofsInitialStateStore,
@@ -519,7 +518,7 @@ fn test_exact_account_reads_do_not_return_lower_bound_neighbor<
 
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_exact_storage_reads_do_not_return_lower_bound_neighbor<
     S: BaseProofsStore + BaseProofsInitialStateStore,
@@ -545,7 +544,7 @@ fn test_exact_storage_reads_do_not_return_lower_bound_neighbor<
 
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage() => ignore; "Rocksdb")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_exact_reads_hide_deleted_account_and_zero_storage<
     S: BaseProofsStore + BaseProofsInitialStateStore,
@@ -577,7 +576,6 @@ fn test_exact_reads_hide_deleted_account_and_zero_storage<
 }
 
 #[test]
-#[ignore = "RocksDB read path not yet implemented; will be enabled in a later PR"]
 #[serial]
 fn test_rocksdb_exact_reads_use_supplied_snapshot() -> Result<(), BaseProofsStorageError> {
     let storage = create_rocksdb_proofs_storage();
@@ -639,7 +637,6 @@ fn test_rocksdb_exact_reads_use_supplied_snapshot() -> Result<(), BaseProofsStor
 }
 
 #[test]
-#[ignore = "RocksDB read path not yet implemented; will be enabled in a later PR"]
 #[serial]
 fn test_rocksdb_exact_lookup_finds_latest_version_at_or_below_bound()
 -> Result<(), BaseProofsStorageError> {
@@ -677,7 +674,6 @@ fn test_rocksdb_exact_lookup_finds_latest_version_at_or_below_bound()
 }
 
 #[test]
-#[ignore = "RocksDB read path not yet implemented; will be enabled in a later PR"]
 #[serial]
 fn test_rocksdb_exact_lookup_returns_none_when_versions_are_above_bound()
 -> Result<(), BaseProofsStorageError> {

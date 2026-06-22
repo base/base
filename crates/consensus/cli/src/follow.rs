@@ -49,12 +49,19 @@ impl ConsensusFollowNodeCommand {
         })?;
 
         let args = ConsensusFollowNodeArgs::new(chain, self.args);
-        if self.metrics.enabled {
+        let metrics_config = if self.metrics.enabled {
             let cfg = args.load_rollup_config()?;
             CliMetrics::init_rollup_config(&cfg);
-        }
+            Some(cfg)
+        } else {
+            None
+        };
 
-        RuntimeManager::new().run_until_ctrl_c(args.start())
+        RuntimeManager::new().run_until_ctrl_c(async move {
+            let _upgrade_countdown_metrics =
+                metrics_config.map(CliMetrics::spawn_upgrade_countdown_recorder);
+            args.start().await
+        })
     }
 }
 

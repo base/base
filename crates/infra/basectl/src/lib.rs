@@ -37,19 +37,21 @@ mod errors;
 pub use errors::{
     BlockRefParseError, ConductorCommandError, DoctorArgsError, NodeLookupError, P2pCommandError,
     P2pTargetError, SequencerCommandError, StateConvergenceTimeoutError, SyncStatusCommandError,
+    TxpoolCommandError,
 };
 
 mod rpc;
 pub use rpc::{
-    BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, ClInfoReport,
-    ConductorClusterSnapshot, ConductorControl, ConductorFanoutReport, ConductorNodeFailure,
-    ConductorNodeStatus, ConductorPollUpdate, DiscoveryInfo, ElInfoReport, InitialBacklog,
-    L1BlockInfo, L1ConnectionMode, LatestProposal, NodeEndpoint, NodeInfoReport, PausedPeers,
-    PeerListReport, PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus, PodsPoller,
-    PodsSnapshot, ProofsSnapshot, RawInfoReport, RawPeerCounts, RawPeersReport,
-    SEQUENCER_ACTIVE_RPC_TIMEOUT, SyncStatusReport, TimestampedFlashblock, TxSummary,
-    ValidatorNodeStatus, add_peer, ban_peer, conductor_pause_all_nodes, conductor_pause_node,
-    conductor_resume_all_nodes, conductor_resume_node, connect_peer,
+    BacklogBlock, BacklogFetchResult, BacklogProgress, BaseTxpoolContent, BaseTxpoolContentFrom,
+    BlockDaInfo, ClInfoReport, ConductorClusterSnapshot, ConductorControl, ConductorFanoutReport,
+    ConductorNodeFailure, ConductorNodeStatus, ConductorPollUpdate, DiscoveryInfo, ElInfoReport,
+    InitialBacklog, L1BlockInfo, L1ConnectionMode, LatestProposal, NodeEndpoint, NodeInfoReport,
+    PausedPeers, PeerListReport, PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus,
+    PodsPoller, PodsSnapshot, ProofsSnapshot, RawInfoReport, RawPeerCounts, RawPeersReport,
+    SEQUENCER_ACTIVE_RPC_TIMEOUT, SyncStatusReport, TimestampedFlashblock, TxSummary, TxpoolClient,
+    TxpoolCounts, TxpoolReport, TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool,
+    TxpoolTransactionRow, ValidatorNodeStatus, add_peer, ban_peer, conductor_pause_all_nodes,
+    conductor_pause_node, conductor_resume_all_nodes, conductor_resume_node, connect_peer,
     decode_flashblock_transactions, disconnect_peer, fetch_block, fetch_block_transactions,
     fetch_cl_info, fetch_connected_peers, fetch_el_info, fetch_full_system_config, fetch_info,
     fetch_initial_backlog_with_progress, fetch_l1_block_number, fetch_l2_block_number,

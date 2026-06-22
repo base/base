@@ -232,11 +232,9 @@ impl ProposerService {
             tee_image_hash: config.tee_image_hash,
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
-        let proof_collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&proof_requester),
-            Arc::clone(&rollup_client),
-        );
-        let proof_dispatcher = ProofDispatcher::aws_nitro(
+        let proof_collector =
+            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
+        let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::clone(&l1_client),
             Arc::clone(&l2_client),

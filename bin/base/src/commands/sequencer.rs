@@ -6,10 +6,12 @@ use base_builder_cli::Args as BuilderArgs;
 use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
 use base_consensus_cli::{
-    ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedSequencerConsensusNodeConfigArgs,
+    CliMetrics, ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedSequencerConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_cli::{ExecutionNodeConfigArgs, chainspec::chain_value_parser};
+use base_execution_cli::{
+    ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
+};
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use clap::Args;
@@ -40,7 +42,11 @@ pub(crate) struct SequencerCommand {
 
 impl SequencerCommand {
     /// Runs the `sequencer` flavor with execution, builder, and consensus in one process.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
+    pub(crate) fn run(
+        self,
+        resolved_chain: ResolvedChainConfig,
+        metrics_enabled: bool,
+    ) -> eyre::Result<()> {
         let execution_chain = match self.execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
@@ -48,6 +54,9 @@ impl SequencerCommand {
         let consensus_chain = resolved_chain.consensus_chain_args();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, self.consensus.into());
         let rollup_config = consensus_args.load_rollup_config()?;
+        if metrics_enabled {
+            CliMetrics::init_rollup_config(&rollup_config);
+        }
 
         let rollup_args = self.builder.rollup_args.clone();
         let sequencer_rpc = rollup_args.sequencer.clone();
@@ -61,15 +70,28 @@ impl SequencerCommand {
         let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+            let _upgrade_countdown_metrics = metrics_enabled
+                .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
             let task_executor = ctx.task_executor.clone();
             let builder = execution.into_default_node_builder(ctx)?;
-            let mut runner = BaseNodeRunner::new(rollup_args)
+            // Execution upgrade-signal polling remains independently configured from consensus,
+            // so this path still relies on an explicit `--upgrade-signal.l1-rpc` when enabled.
+            let builder = StandardBaseRethNode::apply_initial_upgrade_signal_from_rollup_args(
+                builder,
+                &rollup_args,
+            )
+            .await?;
+            let mut runner = BaseNodeRunner::new(rollup_args.clone())
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
                 .with_service_builder(FlashblocksServiceBuilder(builder_config));
             runner.install_ext::<MeteringStoreExtension>(metering_provider);
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
             runner.install_ext::<BuilderApiExtension>(());
+            StandardBaseRethNode::install_upgrade_signal_metrics_extension(
+                &mut runner,
+                &rollup_args,
+            )?;
 
             let launched = runner.launch(builder).await?;
             let handle = launched.handle;

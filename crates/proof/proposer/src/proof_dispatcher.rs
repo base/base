@@ -7,15 +7,12 @@ use alloy_primitives::{Address, B256};
 use base_proof_primitives::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::TeeKind;
+use base_prover_service_protocol::ProveBlockRangeRequest;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    Metrics,
-    driver::RecoveredState,
-    error::ProposerError,
-    proof_adapter::{DispatchedProof, ProofRequesterDispatcher, ProposerProofAdapter},
+    Metrics, driver::RecoveredState, error::ProposerError, proof_adapter::ProposerProofAdapter,
 };
 
 /// Static parameters needed to build proposer proof requests.
@@ -55,7 +52,7 @@ pub enum ProofDispatchOutcome {
 #[derive(Debug)]
 pub enum ProofDispatchAttempt {
     /// The request was accepted by prover-service.
-    Accepted(DispatchedProof),
+    Accepted(String),
     /// The request could not be built from local RPC data.
     BuildFailed(ProposerError),
     /// The request reached prover-service but dispatch failed.
@@ -73,7 +70,7 @@ where
     L2: L2Provider,
     R: RollupProvider,
 {
-    dispatcher: ProofRequesterDispatcher,
+    proof_requester: Arc<dyn ProofRequesterProvider>,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
@@ -87,10 +84,7 @@ where
     R: RollupProvider,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofDispatcher")
-            .field("dispatcher", &self.dispatcher)
-            .field("config", &self.config)
-            .finish_non_exhaustive()
+        f.debug_struct("ProofDispatcher").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
@@ -102,7 +96,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            dispatcher: self.dispatcher.clone(),
+            proof_requester: Arc::clone(&self.proof_requester),
             l1_client: Arc::clone(&self.l1_client),
             l2_client: Arc::clone(&self.l2_client),
             rollup_client: Arc::clone(&self.rollup_client),
@@ -117,26 +111,15 @@ where
     L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
-    /// Creates an AWS Nitro TEE proof dispatcher.
-    pub fn aws_nitro(
+    /// Creates a proof dispatcher.
+    pub fn new(
         proof_requester: Arc<dyn ProofRequesterProvider>,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
         config: ProofDispatcherConfig,
     ) -> Self {
-        Self {
-            dispatcher: ProofRequesterDispatcher::aws_nitro(proof_requester),
-            l1_client,
-            l2_client,
-            rollup_client,
-            config,
-        }
-    }
-
-    /// Returns the inner prover-service dispatcher.
-    pub const fn requester_dispatcher(&self) -> &ProofRequesterDispatcher {
-        &self.dispatcher
+        Self { proof_requester, l1_client, l2_client, rollup_client, config }
     }
 
     /// Builds a proof request for `target_block` using `recovered` as the agreed parent.
@@ -190,23 +173,20 @@ where
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
     ) -> ProofDispatchAttempt {
-        let expected_session_id = ProposerProofAdapter::tee_session_id_for_root(
-            claimed_l2_output_root,
-            self.dispatcher.tee_kind(),
-        );
+        let expected_session_id =
+            ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
         let request =
             match self.build_request(target_block, recovered, claimed_l2_output_root).await {
                 Ok(request) => request,
                 Err(error) => return ProofDispatchAttempt::BuildFailed(error),
             };
 
-        match self.dispatcher.dispatch_tee(request).await {
-            Ok(dispatched) if dispatched.session_id == expected_session_id => {
-                ProofDispatchAttempt::Accepted(dispatched)
+        match self.dispatch_tee(request).await {
+            Ok(session_id) if session_id == expected_session_id => {
+                ProofDispatchAttempt::Accepted(session_id)
             }
-            Ok(dispatched) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {}, got {}",
-                expected_session_id, dispatched.session_id
+            Ok(session_id) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
+                "prover service returned mismatched session_id: expected {expected_session_id}, got {session_id}"
             ))),
             Err(error) => ProofDispatchAttempt::DispatchFailed(error),
         }
@@ -218,7 +198,6 @@ where
         target_block: u64,
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
-        tee_kind: TeeKind,
         attempt: u32,
     ) -> ProofDispatchAttempt {
         let request =
@@ -226,20 +205,58 @@ where
                 Ok(request) => request,
                 Err(error) => return ProofDispatchAttempt::BuildFailed(error),
             };
-        let session_id =
-            ProposerProofAdapter::tee_discard_retry_session_id(&request, tee_kind, attempt);
+        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(&request, attempt);
         let expected_session_id = session_id.clone();
 
-        match self.dispatcher.dispatch_tee_with_session_id(request, session_id).await {
-            Ok(dispatched) if dispatched.session_id == expected_session_id => {
-                ProofDispatchAttempt::Accepted(dispatched)
+        match self.dispatch_tee_with_session_id(request, session_id).await {
+            Ok(session_id) if session_id == expected_session_id => {
+                ProofDispatchAttempt::Accepted(session_id)
             }
-            Ok(dispatched) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {}, got {}",
-                expected_session_id, dispatched.session_id
+            Ok(session_id) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
+                "prover service returned mismatched session_id: expected {expected_session_id}, got {session_id}"
             ))),
             Err(error) => ProofDispatchAttempt::DispatchFailed(error),
         }
+    }
+
+    /// Submits a TEE proof request under an explicit session id.
+    pub async fn dispatch_tee_with_session_id(
+        &self,
+        request: ProofRequest,
+        session_id: String,
+    ) -> Result<String, ProposerError> {
+        let request = ProposerProofAdapter::tee_prove_block_range_request_with_session_id(
+            request, session_id,
+        );
+        self.dispatch_prepared(request).await
+    }
+
+    async fn dispatch_tee(&self, request: ProofRequest) -> Result<String, ProposerError> {
+        let request = ProposerProofAdapter::tee_prove_block_range_request(request);
+        self.dispatch_prepared(request).await
+    }
+
+    async fn dispatch_prepared(
+        &self,
+        request: ProveBlockRangeRequest,
+    ) -> Result<String, ProposerError> {
+        let session_id = request.proof.session_id.clone();
+        let response = match self.proof_requester.prove_block_range(request).await {
+            Ok(response) => response,
+            Err(e) if e.is_l1_head_conflict_for_session(&session_id) => {
+                debug!(
+                    session_id = %session_id,
+                    "prover-service already has this TEE proof session with a different l1_head"
+                );
+                return Ok(session_id);
+            }
+            Err(e) => return Err(ProposerError::Prover(e.to_string())),
+        };
+        debug!(
+            session_id = %response.session_id,
+            "dispatched TEE proof request"
+        );
+        Ok(response.session_id)
     }
 
     /// Dispatches every target from the current dispatcher cursor up to `safe_head`.
@@ -326,10 +343,10 @@ where
         count_dispatch_failure: bool,
     ) -> ProofDispatchOutcome {
         match self.dispatch_for(target_block, recovered, claimed_l2_output_root).await {
-            ProofDispatchAttempt::Accepted(dispatched) => {
+            ProofDispatchAttempt::Accepted(session_id) => {
                 info!(
                     target_block,
-                    session_id = %dispatched.session_id,
+                    session_id = %session_id,
                     from_block = recovered.l2_block_number,
                     "Proof request accepted by prover service"
                 );
@@ -446,8 +463,9 @@ mod tests {
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
         GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-        ProveBlockRangeRequest, ProveBlockRangeResponse,
+        ProofRequestIdCollisionMessage, ProveBlockRangeRequest, ProveBlockRangeResponse,
     };
+    use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
     use super::*;
     use crate::test_utils::{
@@ -459,6 +477,9 @@ mod tests {
         session_id: String,
     }
 
+    #[derive(Debug)]
+    struct L1HeadConflictRequester;
+
     #[async_trait]
     impl ProofRequesterProvider for MismatchedProofRequester {
         async fn prove_block_range(
@@ -466,6 +487,35 @@ mod tests {
             _request: ProveBlockRangeRequest,
         ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
             Ok(ProveBlockRangeResponse { session_id: self.session_id.clone() })
+        }
+
+        async fn get_proof(
+            &self,
+            _request: GetProofRequest,
+        ) -> Result<GetProofResponse, ProverServiceClientError> {
+            unimplemented!("dispatcher tests do not poll proofs")
+        }
+
+        async fn list_proofs(
+            &self,
+            _request: ListProofsRequest,
+        ) -> Result<ListProofsResponse, ProverServiceClientError> {
+            unimplemented!("dispatcher tests do not list proofs")
+        }
+    }
+
+    #[async_trait]
+    impl ProofRequesterProvider for L1HeadConflictRequester {
+        async fn prove_block_range(
+            &self,
+            request: ProveBlockRangeRequest,
+        ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+            let session_id = request.proof.session_id;
+            Err(ProverServiceClientError::from(JsonRpcClientError::Call(ErrorObjectOwned::owned(
+                ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+                ProofRequestIdCollisionMessage::for_field(session_id, "l1_head"),
+                None::<()>,
+            ))))
         }
 
         async fn get_proof(
@@ -501,7 +551,7 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        ProofDispatcher::aws_nitro(
+        ProofDispatcher::new(
             requester,
             l1,
             l2,
@@ -528,15 +578,12 @@ mod tests {
         let claimed_root = B256::repeat_byte(0xaa);
 
         let outcome = dispatcher.dispatch_for(200, &recovered(), claimed_root).await;
-        let ProofDispatchAttempt::Accepted(dispatched) = outcome else {
+        let ProofDispatchAttempt::Accepted(session_id) = outcome else {
             panic!("expected accepted dispatch")
         };
 
-        assert_eq!(
-            dispatched.session_id,
-            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro)
-        );
-        assert!(requester.requests.lock().unwrap().contains_key(&dispatched.session_id));
+        assert_eq!(session_id, ProposerProofAdapter::tee_session_id_for_root(claimed_root));
+        assert!(requester.requests.lock().unwrap().contains_key(&session_id));
     }
 
     #[tokio::test]
@@ -551,6 +598,19 @@ mod tests {
             panic!("expected mismatched session id to fail dispatch")
         };
         assert!(message.contains("mismatched session_id"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_for_accepts_existing_l1_head_conflict() {
+        let dispatcher = dispatcher_for_requester(Arc::new(L1HeadConflictRequester));
+        let claimed_root = B256::repeat_byte(0xaa);
+
+        let outcome = dispatcher.dispatch_for(200, &recovered(), claimed_root).await;
+
+        let ProofDispatchAttempt::Accepted(session_id) = outcome else {
+            panic!("expected accepted dispatch")
+        };
+        assert_eq!(session_id, ProposerProofAdapter::tee_session_id_for_root(claimed_root));
     }
 
     #[tokio::test]
@@ -624,17 +684,12 @@ mod tests {
         let (dispatcher, _requester) = dispatcher();
         let claimed_root = B256::repeat_byte(0xaa);
 
-        let outcome = dispatcher
-            .dispatch_discard_retry(200, &recovered(), claimed_root, TeeKind::AwsNitro, 1)
-            .await;
-        let ProofDispatchAttempt::Accepted(dispatched) = outcome else {
+        let outcome = dispatcher.dispatch_discard_retry(200, &recovered(), claimed_root, 1).await;
+        let ProofDispatchAttempt::Accepted(session_id) = outcome else {
             panic!("expected accepted dispatch")
         };
 
-        assert_ne!(
-            dispatched.session_id,
-            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro)
-        );
+        assert_ne!(session_id, ProposerProofAdapter::tee_session_id_for_root(claimed_root));
     }
 
     #[test]

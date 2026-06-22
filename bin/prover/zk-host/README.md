@@ -3,5 +3,5 @@
 ZK prover-service worker host binary.
 
 This binary is the CLI entry point for the ZK worker host. The worker loop is
-intentionally wired in later PRs after the shared worker crate and ZK host
-orchestration are available.
+wired through `base-proof-zk-host` and currently supports the mock and dry-run
+ZK proving backends.

@@ -18,7 +18,7 @@ mod output_proposer;
 pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
 
 mod proof_adapter;
-pub use proof_adapter::{DispatchedProof, ProofRequesterDispatcher, ProposerProofAdapter};
+pub use proof_adapter::ProposerProofAdapter;
 
 mod proposal_intervals;
 pub use proposal_intervals::ProposalIntervals;

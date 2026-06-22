@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use alloy_primitives::Address;
 use basectl_cli::ViewId;
 use clap::{Args, Parser, Subcommand};
 use url::Url;
@@ -90,6 +91,11 @@ pub(crate) enum Commands {
     P2p {
         #[command(subcommand)]
         command: P2pCommands,
+    },
+    /// Inspect and clear execution-layer txpool contents.
+    Txpool {
+        #[command(subcommand)]
+        command: TxpoolCommands,
     },
     /// Inspect and control an HA conductor cluster.
     Conductor {
@@ -249,6 +255,59 @@ pub(crate) struct DestructiveClBulkArgs {
     /// their YAML config).
     #[arg(long = "cl-rpc", value_name = "URL")]
     pub(crate) cl_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
+}
+
+/// Transaction-pool inspection and destructive clearing commands.
+#[derive(Debug, Subcommand)]
+pub(crate) enum TxpoolCommands {
+    /// Show pending txpool transactions.
+    Pending(TxpoolReadArgs),
+    /// Show queued txpool transactions.
+    Queued(TxpoolReadArgs),
+    /// Show pending and queued txpool transactions.
+    All(TxpoolReadArgs),
+    /// Clear the txpool or drop every transaction for one sender.
+    Clear(TxpoolClearArgs),
+}
+
+/// Shared flags for read-only `basectl txpool` subcommands.
+#[derive(Debug, Args)]
+pub(crate) struct TxpoolReadArgs {
+    /// Optional sender address to filter at the RPC layer.
+    #[arg(value_name = "SENDER")]
+    pub(crate) sender: Option<Address>,
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field. Pass this flag to query a
+    /// single node directly.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub(crate) el_rpc: Option<Url>,
+    /// Emit humanized JSON instead of pretty text.
+    #[arg(long)]
+    pub(crate) json: bool,
+    /// With `--json`, emit the txpool wire shape instead of the humanized summary.
+    #[arg(long, requires = "json")]
+    pub(crate) raw: bool,
+}
+
+/// Flags for destructive `basectl txpool clear`.
+#[derive(Debug, Args)]
+pub(crate) struct TxpoolClearArgs {
+    /// Sender address whose txpool transactions should be dropped.
+    #[arg(long, value_name = "ADDRESS")]
+    pub(crate) sender: Option<Address>,
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field. Destructive txpool calls
+    /// usually require an admin-enabled node RPC.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub(crate) el_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]
     pub(crate) yes: bool,
@@ -485,6 +544,88 @@ mod tests {
             ])
             .is_ok()
         );
+    }
+
+    #[test]
+    fn txpool_commands_parse() {
+        assert!(try_parse(["basectl", "txpool", "pending"]).is_ok());
+        assert!(
+            try_parse([
+                "basectl",
+                "txpool",
+                "pending",
+                "0x1111111111111111111111111111111111111111",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "txpool",
+                "queued",
+                "--el-rpc",
+                "http://127.0.0.1:8545",
+                "--json",
+            ])
+            .is_ok()
+        );
+        assert!(
+            try_parse([
+                "basectl",
+                "txpool",
+                "all",
+                "0x1111111111111111111111111111111111111111",
+                "--json",
+                "--raw",
+            ])
+            .is_ok()
+        );
+        assert!(try_parse(["basectl", "txpool", "clear", "--yes"]).is_ok());
+        assert!(
+            try_parse([
+                "basectl",
+                "txpool",
+                "clear",
+                "--sender",
+                "0x1111111111111111111111111111111111111111",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn txpool_raw_requires_json() {
+        assert!(try_parse(["basectl", "txpool", "pending", "--raw"]).is_err());
+        assert!(
+            try_parse([
+                "basectl",
+                "txpool",
+                "queued",
+                "0x1111111111111111111111111111111111111111",
+                "--raw",
+            ])
+            .is_err()
+        );
+        assert!(try_parse(["basectl", "txpool", "all", "--json", "--raw"]).is_ok());
+    }
+
+    #[test]
+    fn destructive_txpool_json_requires_yes() {
+        assert!(try_parse(["basectl", "txpool", "clear", "--json"]).is_err());
+        assert!(
+            try_parse([
+                "basectl",
+                "txpool",
+                "clear",
+                "--sender",
+                "0x1111111111111111111111111111111111111111",
+                "--json",
+            ])
+            .is_err()
+        );
+        assert!(try_parse(["basectl", "txpool", "clear", "--yes", "--json"]).is_ok());
     }
 
     #[test]

@@ -1031,9 +1031,10 @@ impl LoadRunner {
         );
 
         info!(url = %self.config.query_rpc, "starting block watcher");
+        let receipt_provider = RootProvider::<Base>::new_http(self.config.query_rpc.clone());
         let block_watcher_task = Some(
             BlockWatcher::new(
-                RootProvider::<Base>::new_http(self.config.query_rpc.clone()),
+                receipt_provider.clone(),
                 results_tracker.clone(),
                 self.cancel_token.clone(),
             )
@@ -1043,6 +1044,9 @@ impl LoadRunner {
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
         let initial_avg_gas = self.estimate_avg_gas();
+        // Seed the collector so live throughput (rolling GPS) and rate-limiter
+        // feedback have a non-zero gas figure before canonical receipt gas lands.
+        self.collector.set_estimated_gas(initial_avg_gas);
         let mut rate_limiter = RateLimiter::new(self.config.target_gps, initial_avg_gas);
         let start = Instant::now();
         let mut current_account_idx = 0usize;
@@ -1170,14 +1174,11 @@ impl LoadRunner {
                 let submitted = self.collector.submitted_count();
                 let confirmed = self.collector.confirmed_count();
                 let failed = self.collector.failed_count();
-                let reverted = self.collector.reverted_count();
                 let in_flight = results_tracker.total_in_flight();
                 let pending = results_tracker.pending_count();
                 let senders_blocked = results_tracker.senders_at_limit(max_in_flight_per_sender);
                 let total_queued: u64 = queued_per_sender.values().sum();
                 let (p50, p99) = self.collector.rolling_p50_p99();
-                let (block_receipt_delay_p50, block_receipt_delay_p99) =
-                    self.collector.rolling_block_receipt_delay_p50_p99();
                 let (flashblocks_p50, flashblocks_p99) =
                     self.collector.rolling_flashblocks_p50_p99();
                 info!(
@@ -1185,7 +1186,6 @@ impl LoadRunner {
                     submitted,
                     confirmed,
                     failed,
-                    reverted,
                     in_flight,
                     pending,
                     total_queued,
@@ -1193,8 +1193,6 @@ impl LoadRunner {
                     base_fee = self.base_fee,
                     p50_ms = p50.as_millis() as u64,
                     p99_ms = p99.as_millis() as u64,
-                    block_receipt_delay_p50_ms = block_receipt_delay_p50.as_millis() as u64,
-                    block_receipt_delay_p99_ms = block_receipt_delay_p99.as_millis() as u64,
                     flashblocks_p50_ms = flashblocks_p50.as_millis() as u64,
                     flashblocks_p99_ms = flashblocks_p99.as_millis() as u64,
                     "progress"
@@ -1424,11 +1422,29 @@ impl LoadRunner {
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
-        Ok(self.collector.summarize(
-            last_confirmed_at,
-            self.config.duration,
-            self.config_summary.clone(),
-        ))
+        // Fetch canonical receipts in a single batch pass, scoped to only the blocks
+        // our transactions landed in, to backfill gas and revert status. This can be
+        // slow on large runs, so notify the user before starting.
+        let landed_blocks = results_tracker.landed_block_numbers();
+        if !landed_blocks.is_empty() {
+            println!(
+                "Fetching receipts for {} block(s) to compute gas and reverts (this may take a while)...",
+                landed_blocks.len()
+            );
+            let receipt_fetch_start = Instant::now();
+            let receipts = BlockWatcher::fetch_receipts(&receipt_provider, &landed_blocks).await;
+            let receipts_by_hash: HashMap<TxHash, _> =
+                receipts.into_iter().map(|receipt| (receipt.tx_hash, receipt)).collect();
+            self.collector.apply_receipts(&receipts_by_hash);
+            info!(
+                blocks = landed_blocks.len(),
+                receipts = receipts_by_hash.len(),
+                elapsed_secs = receipt_fetch_start.elapsed().as_secs_f64(),
+                "end-of-run receipt pass complete"
+            );
+        }
+
+        Ok(self.collector.summarize(last_confirmed_at, self.config_summary.clone()))
     }
 
     fn build_snapshot(
@@ -1439,8 +1455,6 @@ impl LoadRunner {
         account_count: usize,
     ) -> DisplaySnapshot {
         let (p50, p99) = self.collector.rolling_p50_p99();
-        let (block_receipt_delay_p50, block_receipt_delay_p99) =
-            self.collector.rolling_block_receipt_delay_p50_p99();
         let (flashblocks_p50, flashblocks_p99) = self.collector.rolling_flashblocks_p50_p99();
         DisplaySnapshot {
             elapsed: start.elapsed(),
@@ -1448,7 +1462,6 @@ impl LoadRunner {
             submitted: self.collector.submitted_count(),
             confirmed: self.collector.confirmed_count(),
             failed: self.collector.failed_count(),
-            reverted: self.collector.reverted_count(),
             in_flight: results_tracker.total_in_flight(),
             senders_blocked: results_tracker.senders_at_limit(max_in_flight_per_sender),
             total_senders: account_count,
@@ -1456,8 +1469,6 @@ impl LoadRunner {
             rolling_gps: self.collector.rolling_gps(),
             p50_latency: p50,
             p99_latency: p99,
-            block_receipt_delay_p50,
-            block_receipt_delay_p99,
             flashblocks_p50_latency: flashblocks_p50,
             flashblocks_p99_latency: flashblocks_p99,
             gas_price_gwei: self.base_fee as f64 / 1e9,

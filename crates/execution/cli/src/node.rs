@@ -4,6 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeBuilder, LaunchedBaseNode};
+use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::{Args, value_parser};
 use reth_cli_runner::CliContext;
 use reth_db::init_db;
@@ -147,7 +148,11 @@ impl ExecutionNodeConfigArgs {
             node_config.network.max_outbound_peers = Some(DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS);
         }
 
-        ExecutionNodeRuntimeConfig { node_config, with_unused_ports }
+        ExecutionNodeRuntimeConfig {
+            node_config,
+            with_unused_ports,
+            upgrade_signal_startup: UpgradeSignalStartupMode::ReadAndApply,
+        }
     }
 }
 
@@ -171,6 +176,7 @@ impl ExecutionNodeArgs {
             node_config: runtime.node_config,
             standard: self.standard.into(),
             with_unused_ports: runtime.with_unused_ports,
+            upgrade_signal_startup: runtime.upgrade_signal_startup,
         }
     }
 }
@@ -182,6 +188,8 @@ pub struct ExecutionNodeRuntimeConfig {
     pub node_config: NodeConfig<BaseChainSpec>,
     /// Whether all ports should be assigned by the OS.
     pub with_unused_ports: bool,
+    /// Whether this launch should perform its own upgrade-signal startup read.
+    pub upgrade_signal_startup: UpgradeSignalStartupMode,
 }
 
 impl ExecutionNodeRuntimeConfig {
@@ -198,6 +206,12 @@ impl ExecutionNodeRuntimeConfig {
     /// Enables authenticated Engine API over IPC.
     pub const fn with_auth_ipc(mut self) -> Self {
         Self::enable_auth_ipc(&mut self.node_config);
+        self
+    }
+
+    /// Marks the upgrade-signal startup schedule as already applied by the caller.
+    pub const fn with_upgrade_signal_startup_already_applied(mut self) -> Self {
+        self.upgrade_signal_startup = UpgradeSignalStartupMode::AlreadyApplied;
         self
     }
 
@@ -256,18 +270,29 @@ pub struct ExecutionNodeLaunchConfig {
     pub standard: StandardNodeArgs,
     /// Whether all ports should be assigned by the OS.
     pub with_unused_ports: bool,
+    /// Whether this launch should perform its own upgrade-signal startup read.
+    pub upgrade_signal_startup: UpgradeSignalStartupMode,
 }
 
 impl ExecutionNodeLaunchConfig {
     /// Converts this standard launch config into the shared runtime config plus standard args.
     pub fn into_runtime_config(self) -> (ExecutionNodeRuntimeConfig, StandardNodeArgs) {
-        let Self { node_config, standard, with_unused_ports } = self;
-        (ExecutionNodeRuntimeConfig { node_config, with_unused_ports }, standard)
+        let Self { node_config, standard, with_unused_ports, upgrade_signal_startup } = self;
+        (
+            ExecutionNodeRuntimeConfig { node_config, with_unused_ports, upgrade_signal_startup },
+            standard,
+        )
     }
 
     /// Enables authenticated Engine API over IPC.
     pub const fn with_auth_ipc(mut self) -> Self {
         ExecutionNodeRuntimeConfig::enable_auth_ipc(&mut self.node_config);
+        self
+    }
+
+    /// Marks the upgrade-signal startup schedule as already applied by the caller.
+    pub const fn with_upgrade_signal_startup_already_applied(mut self) -> Self {
+        self.upgrade_signal_startup = UpgradeSignalStartupMode::AlreadyApplied;
         self
     }
 
@@ -282,8 +307,14 @@ impl ExecutionNodeLaunchConfig {
         Rpc: RpcModuleValidator,
     {
         let (execution, standard) = self.into_runtime_config();
+        let upgrade_signal_startup = execution.upgrade_signal_startup;
         let builder = execution.into_node_builder::<Rpc>(ctx)?;
-        crate::StandardBaseRethNode::launch(builder, standard).await
+        crate::StandardBaseRethNode::launch_with_upgrade_signal_startup(
+            builder,
+            standard,
+            upgrade_signal_startup,
+        )
+        .await
     }
 
     /// Launches the execution node with the default RPC module validator.

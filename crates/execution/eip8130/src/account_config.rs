@@ -102,6 +102,17 @@ impl AccountConfigurationStorage<'_> {
         self.policy_manager.at(&actor_id).at(&account).read()
     }
 
+    /// Reads only the stored policy *commitment* slot for `(account, actor_id)`,
+    /// the single-SLOAD read a policy manager performs to validate a dispatched
+    /// 8130 transaction against the actor's signed commitment. The
+    /// `_authorizeActor`/`_revokeActor` invariant is that this slot is non-zero
+    /// iff the actor has a non-zero `policy_type` (across both self homes), so a
+    /// zero return unambiguously means "no policy / no actor". Mirrors
+    /// `AccountConfiguration.getPolicyCommitment`.
+    pub fn get_policy_commitment(&self, account: Address, actor_id: B256) -> Result<B256> {
+        self.policy_commitment.at(&actor_id).at(&account).read()
+    }
+
     /// Returns the per-account [`AccountState`] (sequences + lock fields).
     pub fn get_account_state(&self, account: Address) -> Result<AccountState> {
         Ok(AccountState::from_word(self.account_state.at(&account).read()?))
@@ -145,6 +156,46 @@ impl AccountConfigurationStorage<'_> {
         let mut word = [0u8; 32];
         word[..20].copy_from_slice(account.as_slice());
         B256::from(word)
+    }
+
+    /// Writes `config` to the `(account, actor_id)` `actor_config` slot. Writing
+    /// [`ActorConfig::EMPTY`] zeroes the slot, mirroring Solidity `delete`.
+    pub fn set_actor_config(
+        &mut self,
+        account: Address,
+        actor_id: B256,
+        config: ActorConfig,
+    ) -> Result<()> {
+        self.actor_config.at_mut(&actor_id).at_mut(&account).write(config.to_word())
+    }
+
+    /// Clears the `(account, actor_id)` `actor_config` slot (Solidity `delete`).
+    pub fn clear_actor_config(&mut self, account: Address, actor_id: B256) -> Result<()> {
+        self.set_actor_config(account, actor_id, ActorConfig::EMPTY)
+    }
+
+    /// Writes the packed [`AccountState`] word for `account`.
+    pub fn set_account_state(&mut self, account: Address, state: AccountState) -> Result<()> {
+        self.account_state.at_mut(&account).write(state.to_word())
+    }
+
+    /// Writes the `(account, actor_id)` policy slots. A zero `manager` /
+    /// `commitment` zeroes its slot, so passing both zero mirrors the Solidity
+    /// `delete` of an actor's policy on revoke.
+    pub fn set_policy(
+        &mut self,
+        account: Address,
+        actor_id: B256,
+        manager: Address,
+        commitment: B256,
+    ) -> Result<()> {
+        self.policy_manager.at_mut(&actor_id).at_mut(&account).write(manager)?;
+        self.policy_commitment.at_mut(&actor_id).at_mut(&account).write(commitment)
+    }
+
+    /// Clears both policy slots for `(account, actor_id)` (Solidity `delete`).
+    pub fn clear_policy(&mut self, account: Address, actor_id: B256) -> Result<()> {
+        self.set_policy(account, actor_id, Address::ZERO, B256::ZERO)
     }
 }
 
@@ -196,6 +247,23 @@ impl ActorConfig {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.authenticator == Address::ZERO
+    }
+
+    /// Packs this config into its raw storage word — the exact inverse of
+    /// [`Self::from_word`].
+    ///
+    /// `expiry` must fit in `uint48` (the storage field width); higher bytes are
+    /// dropped. Values sourced from [`Self::from_word`] or ABI decoding always
+    /// satisfy this, so the `debug_assert!` only guards hand-constructed misuse.
+    #[must_use]
+    pub fn to_word(&self) -> U256 {
+        debug_assert!(self.expiry >> 48 == 0, "expiry exceeds uint48 storage width");
+        let mut b = [0u8; 32];
+        b[12..32].copy_from_slice(self.authenticator.as_slice());
+        b[11] = self.scope;
+        b[5..11].copy_from_slice(&self.expiry.to_be_bytes()[2..]); // uint48: low 6 bytes
+        b[4] = self.policy_type;
+        U256::from_be_bytes(b)
     }
 }
 
@@ -281,6 +349,32 @@ impl AccountState {
     #[must_use]
     pub const fn default_eoa_revoked(&self) -> bool {
         self.flags & Eip8130Constants::DEFAULT_EOA_REVOKED != 0
+    }
+
+    /// Packs this state into its raw storage word — the exact inverse of
+    /// [`Self::from_word`].
+    ///
+    /// `unlocks_at` must fit in `uint40` and `default_eoa_expiry` in `uint48`
+    /// (their storage field widths); higher bytes are dropped. Values sourced
+    /// from [`Self::from_word`] or ABI decoding always satisfy this, so the
+    /// `debug_assert!`s only guard hand-constructed misuse.
+    #[must_use]
+    pub fn to_word(&self) -> U256 {
+        debug_assert!(self.unlocks_at >> 40 == 0, "unlocks_at exceeds uint40 storage width");
+        debug_assert!(
+            self.default_eoa_expiry >> 48 == 0,
+            "default_eoa_expiry exceeds uint48 storage width"
+        );
+        let mut b = [0u8; 32];
+        b[24..32].copy_from_slice(&self.multichain_sequence.to_be_bytes());
+        b[16..24].copy_from_slice(&self.local_sequence.to_be_bytes());
+        b[11..16].copy_from_slice(&self.unlocks_at.to_be_bytes()[3..]); // uint40: low 5 bytes
+        b[9..11].copy_from_slice(&self.unlock_delay.to_be_bytes());
+        b[8] = self.flags;
+        b[7] = self.default_eoa_scope;
+        b[6] = self.default_eoa_policy_type;
+        b[0..6].copy_from_slice(&self.default_eoa_expiry.to_be_bytes()[2..]); // uint48: low 6 bytes
+        U256::from_be_bytes(b)
     }
 }
 
@@ -554,6 +648,37 @@ mod tests {
             assert!(!acc.is_locked(ACCOUNT, 0).unwrap());
             assert!(!acc.get_lock_status(ACCOUNT, 0).unwrap().has_initiated_unlock);
         });
+    }
+
+    #[test]
+    fn actor_config_to_word_inverts_from_word_and_matches_packing() {
+        let authenticator = address!("0x1234567890abcDEF1234567890aBcdef12345678");
+        let config =
+            ActorConfig::from_word(pack_actor_config(authenticator, 0xAB, (1u64 << 48) - 1, 0xCD));
+        // to_word matches the independent Solidity packing, and round-trips.
+        assert_eq!(
+            config.to_word(),
+            pack_actor_config(authenticator, 0xAB, (1u64 << 48) - 1, 0xCD)
+        );
+        assert_eq!(ActorConfig::from_word(config.to_word()), config);
+        assert_eq!(ActorConfig::EMPTY.to_word(), U256::ZERO);
+    }
+
+    #[test]
+    fn account_state_to_word_inverts_from_word_and_matches_packing() {
+        let word = pack_account_state(
+            7,
+            3,
+            (1u64 << 40) - 1,
+            0xBEEF,
+            Eip8130Constants::DEFAULT_EOA_REVOKED,
+            0xAB,
+            0xCD,
+            (1u64 << 48) - 1,
+        );
+        let state = AccountState::from_word(word);
+        assert_eq!(state.to_word(), word);
+        assert_eq!(AccountState::from_word(state.to_word()), state);
     }
 
     #[test]

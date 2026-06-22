@@ -47,3 +47,9 @@ pub use rollup::{
     LatestProposal, ProofsSnapshot, SyncStatusReport, ValidatorNodeStatus, fetch_safe_and_latest,
     fetch_sync_status, run_proofs_poller, run_safe_head_poller, run_validator_poller,
 };
+
+mod txpool;
+pub use txpool::{
+    BaseTxpoolContent, BaseTxpoolContentFrom, TxpoolClient, TxpoolCounts, TxpoolReport,
+    TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow,
+};

@@ -1,4 +1,4 @@
-//! Metrics definitions and convenience helpers for the ZK prover service.
+//! Metrics definitions and convenience helpers for the prover service.
 //!
 //! Uses the `metrics` crate facade (`counter!`, `histogram!`) so the exporter
 //! backend is determined by the binary (e.g. Prometheus, `DogStatsD`).
@@ -11,22 +11,22 @@ use metrics::{counter, describe_counter, describe_histogram, histogram};
 // ---------------------------------------------------------------------------
 
 /// Unified RPC request counter. Tags: method, success, `status_code`
-pub const REQUESTS: &str = "zk_prover_service.requests";
+pub const REQUESTS: &str = "prover_service.requests";
 /// RPC response latency in milliseconds. Tags: method, success
-pub const RESPONSE_LATENCY_MS: &str = "zk_prover_service.response_latency_ms";
+pub const RESPONSE_LATENCY_MS: &str = "prover_service.response_latency_ms";
 /// Time spent in witness generation only. Tags: `proof_type`, success
-pub const WITNESS_GENERATION_DURATION_MS: &str = "zk_prover_service.witness_generation_duration_ms";
+pub const WITNESS_GENERATION_DURATION_MS: &str = "prover_service.witness_generation_duration_ms";
 /// End-to-end wall-clock duration from proof request creation to completion.
 /// Tags: `proof_type`, status
-pub const PROOF_REQUEST_DURATION_MS: &str = "zk_prover_service.proof_request_duration_ms";
+pub const PROOF_REQUEST_DURATION_MS: &str = "prover_service.proof_request_duration_ms";
 /// Terminal proof request outcomes. Tags: `proof_type`, status (succeeded/failed)
-pub const PROOF_REQUESTS_COMPLETED: &str = "zk_prover_service.proof_requests_completed";
+pub const PROOF_REQUESTS_COMPLETED: &str = "prover_service.proof_requests_completed";
 /// Stuck requests detected and failed. Tags: `proof_type`
-pub const STUCK_REQUESTS: &str = "zk_prover_service.stuck_requests";
+pub const STUCK_REQUESTS: &str = "prover_service.stuck_requests";
 /// Stuck requests retried (reset to CREATED). Tags: `proof_type`
-pub const RETRIED_REQUESTS: &str = "zk_prover_service.retried_requests";
+pub const RETRIED_REQUESTS: &str = "prover_service.retried_requests";
 /// Worker jobs terminally failed by a background reaper. Tags: `reason`, `proof_type`
-pub const WORKER_JOBS_FAILED: &str = "zk_prover_service.worker_jobs_failed";
+pub const WORKER_JOBS_FAILED: &str = "prover_service.worker_jobs_failed";
 
 // ---------------------------------------------------------------------------
 // ProverMetrics — metric descriptions (called once at init)

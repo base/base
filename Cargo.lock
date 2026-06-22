@@ -4398,12 +4398,15 @@ name = "base-execution-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-eips 2.0.5",
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
  "axum 0.8.9",
  "backon",
  "base-bundle-extension",
  "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-genesis",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -4417,10 +4420,12 @@ dependencies = [
  "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",
+ "base-upgrade-signal",
  "clap",
  "eyre",
  "futures",
  "humantime",
+ "jsonrpsee",
  "proptest",
  "reqwest 0.13.4",
  "reth-chainspec",
@@ -5069,6 +5074,7 @@ dependencies = [
  "base-execution-trie",
  "base-execution-txpool",
  "base-node-core",
+ "base-upgrade-signal",
  "clap",
  "eyre",
  "futures",
@@ -5161,6 +5167,25 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.23",
  "url",
+]
+
+[[package]]
+name = "base-observability-events"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-metrics",
+ "chrono",
+ "eyre",
+ "hex",
+ "metrics",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -6187,10 +6212,16 @@ name = "base-prover-zk-host"
 version = "0.0.0"
 dependencies = [
  "base-cli-utils",
+ "base-proof-worker",
+ "base-proof-zk-backend",
+ "base-proof-zk-host",
+ "base-prover-service-client",
  "clap",
  "eyre",
  "serde",
+ "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6681,6 +6712,7 @@ dependencies = [
  "alloy-provider 2.0.5",
  "alloy-rpc-client 2.0.5",
  "alloy-rpc-types-eth 2.0.5",
+ "alloy-rpc-types-txpool",
  "alloy-sol-types",
  "alloy-transport 2.0.5",
  "alloy-transport-http 2.0.5",

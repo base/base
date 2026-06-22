@@ -21,7 +21,7 @@ use base_proof_primitives::ProofResult;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
-use base_prover_service_protocol::{GetProofRequest, GetProofResponse, ProofStatus, TeeKind};
+use base_prover_service_protocol::{GetProofRequest, GetProofResponse, ProofStatus};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -160,43 +160,28 @@ pub enum TargetPoll {
 pub struct ProofCollector<R> {
     proof_requester: Arc<dyn ProofRequesterProvider>,
     rollup_client: Arc<R>,
-    tee_kind: TeeKind,
 }
 
 impl<R> std::fmt::Debug for ProofCollector<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofCollector").field("tee_kind", &self.tee_kind).finish_non_exhaustive()
+        f.debug_struct("ProofCollector").finish_non_exhaustive()
     }
 }
 
 impl<R: RollupProvider + 'static> ProofCollector<R> {
-    /// Creates a TEE proof collector for single-target AWS Nitro polling.
-    pub fn target_poller_aws_nitro(
-        proof_requester: Arc<dyn ProofRequesterProvider>,
-        rollup_client: Arc<R>,
-    ) -> Self {
-        Self::new(proof_requester, rollup_client, TeeKind::AwsNitro)
-    }
-
-    /// Creates a proof collector for the given TEE implementation.
+    /// Creates a proof collector.
     pub const fn new(
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<R>,
-        tee_kind: TeeKind,
     ) -> Self {
-        Self { proof_requester, rollup_client, tee_kind }
-    }
-
-    /// Returns the TEE implementation this collector polls proofs for.
-    pub const fn tee_kind(&self) -> TeeKind {
-        self.tee_kind
+        Self { proof_requester, rollup_client }
     }
 
     /// Polls the prover service for the proof of `target_block`.
     ///
     /// Returns a [`TargetPoll`] describing the next action the caller should
     /// take. The session ID is derived deterministically from the canonical
-    /// L2 output root at `target_block` and the configured TEE kind, so a
+    /// L2 output root at `target_block` and the AWS Nitro TEE label, so a
     /// freshly constructed collector can rediscover an in-flight session
     /// dispatched by a previous proposer instance.
     pub async fn poll(&self, target_block: u64) -> TargetPoll {
@@ -213,8 +198,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
             }
         };
 
-        let session_id =
-            ProposerProofAdapter::tee_session_id_for_root(output.output_root, self.tee_kind);
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(output.output_root);
 
         let response = match self.get_proof(session_id.clone()).await {
             Ok(response) => response,
@@ -332,7 +316,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                         return TargetPoll::Failed { session_id, claimed_l2_output_root, error };
                     }
                 };
-                match ProposerProofAdapter::tee_proof_result(result, self.tee_kind) {
+                match ProposerProofAdapter::tee_proof_result(result) {
                     Ok(proof) => TargetPoll::Ready { session_id, proof },
                     Err(decode_error) => {
                         let claimed_l2_output_root =
@@ -420,7 +404,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                         return TargetPoll::Failed { session_id, claimed_l2_output_root, error };
                     }
                 };
-                match ProposerProofAdapter::tee_proof_result(result, self.tee_kind) {
+                match ProposerProofAdapter::tee_proof_result(result) {
                     Ok(proof) => TargetPoll::Ready { session_id, proof },
                     Err(error) => TargetPoll::Failed { session_id, claimed_l2_output_root, error },
                 }
@@ -888,10 +872,10 @@ where
         count_dispatch_failure: bool,
     ) -> bool {
         match self.dispatcher.dispatch_for(target_block, recovered, claimed_l2_output_root).await {
-            ProofDispatchAttempt::Accepted(dispatched) => {
+            ProofDispatchAttempt::Accepted(session_id) => {
                 info!(
                     target_block,
-                    session_id = %dispatched.session_id,
+                    session_id = %session_id,
                     from_block = recovered.l2_block_number,
                     "Proof request accepted by prover service"
                 );
@@ -975,42 +959,36 @@ where
                 return false;
             }
         };
-        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(
-            &request,
-            self.collector.tee_kind(),
-            attempt,
-        );
+        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(&request, attempt);
 
         let dispatch_error = match self
             .dispatcher
-            .requester_dispatcher()
             .dispatch_tee_with_session_id(request, session_id.clone())
             .await
         {
-            Ok(dispatched) if dispatched.session_id == session_id => {
+            Ok(accepted_session_id) if accepted_session_id == session_id => {
                 info!(
                     target_block,
-                    session_id = %dispatched.session_id,
+                    session_id = %accepted_session_id,
                     attempt,
                     "Discard retry proof request accepted by prover service"
                 );
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
                 state.discard_retry_counts.insert(target_block, attempt);
-                state.retry_sessions.insert(target_block, dispatched.session_id);
+                state.retry_sessions.insert(target_block, accepted_session_id);
                 state.pending_discard_roots.remove(&target_block);
                 state.counted_failed_sessions.remove(&target_block);
                 None
             }
-            Ok(dispatched) => {
+            Ok(accepted_session_id) => {
                 error!(
                     target_block,
                     expected_session_id = %session_id,
-                    actual_session_id = %dispatched.session_id,
+                    actual_session_id = %accepted_session_id,
                     "Prover service returned mismatched discard retry session id"
                 );
                 Some(ProposerError::Prover(format!(
-                    "prover service returned mismatched session_id: expected {}, got {}",
-                    session_id, dispatched.session_id
+                    "prover service returned mismatched session_id: expected {session_id}, got {accepted_session_id}"
                 )))
             }
             Err(error) => Some(error),
@@ -1073,7 +1051,7 @@ mod tests {
     use super::*;
     use crate::{
         output_proposer::OutputProposer,
-        proof_adapter::{ProofRequesterDispatcher, ProposerProofAdapter},
+        proof_adapter::ProposerProofAdapter,
         proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
         proof_recovery::ProofRecoveryConfig,
         proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
@@ -1305,11 +1283,9 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&proof_requester),
-            Arc::clone(&rollup_client),
-        );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let collector =
+            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
+        let dispatcher = ProofDispatcher::new(
             proof_requester,
             Arc::clone(&l1),
             l2,
@@ -1376,11 +1352,9 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&proof_requester),
-            Arc::clone(&rollup_client),
-        );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let collector =
+            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
+        let dispatcher = ProofDispatcher::new(
             proof_requester,
             Arc::clone(&l1),
             l2,
@@ -1461,11 +1435,8 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&requester),
-            Arc::clone(&rollup_client),
-        );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
+        let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
@@ -1526,11 +1497,8 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(MismatchedProofRequester);
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&requester),
-            Arc::clone(&rollup_client),
-        );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
+        let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
@@ -1590,8 +1558,7 @@ mod tests {
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let session_id =
-            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro);
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
         proof_requester
             .failed_sessions
             .lock()
@@ -1602,11 +1569,11 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector = ProofCollector::target_poller_aws_nitro(
+        let collector = ProofCollector::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
         );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             l1,
             l2,
@@ -1664,11 +1631,8 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&requester),
-            Arc::clone(&rollup_client),
-        );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
+        let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
@@ -1731,11 +1695,8 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&requester),
-            Arc::clone(&rollup_client),
-        );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
+        let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
@@ -1810,17 +1771,15 @@ mod tests {
             l1_head_number: 1000,
             image_hash: B256::repeat_byte(0x05),
         };
-        ProofRequesterDispatcher::aws_nitro(
-            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>
-        )
-        .dispatch_tee(request)
-        .await
-        .expect("test setup should dispatch root session");
-        let collector = ProofCollector::target_poller_aws_nitro(
+        proof_requester
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(request))
+            .await
+            .expect("test setup should dispatch root session");
+        let collector = ProofCollector::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
         );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&l1),
             l2,
@@ -1870,8 +1829,7 @@ mod tests {
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let session_id =
-            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro);
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
         proof_requester
             .failed_sessions
             .lock()
@@ -1882,11 +1840,11 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector = ProofCollector::target_poller_aws_nitro(
+        let collector = ProofCollector::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
         );
-        let dispatcher = ProofDispatcher::aws_nitro(
+        let dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&l1),
             l2,
@@ -1946,9 +1904,8 @@ mod tests {
             max_safe_block: None,
         });
 
-        // First "run": dispatch a TEE proof for `target_block` via a dispatcher
-        // that shares the prover-service stub.
-        let dispatcher = ProofRequesterDispatcher::aws_nitro(Arc::clone(&proof_requester));
+        // First "run": dispatch a TEE proof for `target_block` against the shared
+        // prover-service stub.
         let proof_request = base_proof_primitives::ProofRequest {
             l1_head: B256::repeat_byte(0x01),
             agreed_l2_head_hash: B256::repeat_byte(0x02),
@@ -1960,16 +1917,15 @@ mod tests {
             l1_head_number: 1200,
             image_hash: B256::repeat_byte(0x05),
         };
-        let dispatched = dispatcher.dispatch_tee(proof_request).await.unwrap();
-        let expected_session_id = dispatched.session_id.clone();
-        // Drop the dispatcher to simulate the prior proposer process exiting.
-        drop(dispatcher);
-
+        let expected_session_id = proof_requester
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .await
+            .unwrap()
+            .session_id;
         // "Restart": build a fresh collector with no in-memory dispatch state.
         // It must rederive the session id from the canonical chain root and
         // recover the in-flight session.
-        let collector =
-            ProofCollector::target_poller_aws_nitro(Arc::clone(&proof_requester), rollup_client);
+        let collector = ProofCollector::new(Arc::clone(&proof_requester), rollup_client);
 
         match collector.poll(target_block).await {
             TargetPoll::Ready { session_id, .. } => {
@@ -1994,7 +1950,7 @@ mod tests {
             max_safe_block: None,
         });
 
-        let collector = ProofCollector::target_poller_aws_nitro(proof_requester, rollup_client);
+        let collector = ProofCollector::new(proof_requester, rollup_client);
         match collector.poll(target_block).await {
             TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
                 assert!(!session_id.is_empty());

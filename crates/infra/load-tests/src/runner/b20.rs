@@ -1,7 +1,7 @@
 //! B-20 precompile token lifecycle for load tests: creation, role grants,
 //! minting during setup, and burning during teardown.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -11,12 +11,9 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory};
 use futures::{StreamExt, stream};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
-use super::{
-    LoadRunner, SubmissionPipeline, TxType,
-    load_runner::{BATCH_SIZE, FUNDING_CONCURRENCY},
-};
+use super::{LoadRunner, SubmissionPipeline, TxType, load_runner::FUNDING_CONCURRENCY};
 use crate::{
     BaselineError, Result,
     config::WorkloadConfig,
@@ -27,6 +24,18 @@ impl LoadRunner {
     /// Returns `true` if any configured transaction type is [`TxType::B20`].
     pub fn needs_b20_setup(&self) -> bool {
         self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20 { .. }))
+    }
+
+    /// Builds the fatal error returned when a funder nonce gap could not be cleared on-chain.
+    ///
+    /// The funder is reused across runs, so a leftover gap bricks future runs until the missing
+    /// nonce is mined. The message tells the operator to regenerate the funding seed.
+    fn nonce_gap_error(funder: Address) -> BaselineError {
+        BaselineError::Transaction(format!(
+            "funder {funder} has an uncleared nonce gap from a failed B-20 setup submission; \
+             this account is reused across runs and future runs will stall until the gap is \
+             filled — regenerate the funding seed for a clean run"
+        ))
     }
 
     /// Creates a B-20 token via the factory, grants `MINT_ROLE` and `BURN_ROLE` to all senders,
@@ -146,12 +155,12 @@ impl LoadRunner {
         let total_grants = 1 + sender_addresses.len() * roles.len();
         let pb = self.progress_bar(total_grants as u64, "Granting B-20 roles");
 
-        let mut grant_txs: Vec<TransactionRequest> = Vec::with_capacity(total_grants);
+        let mut grant_txs: Vec<(TransactionRequest, u64)> = Vec::with_capacity(total_grants);
 
         // Funder needs MINT_ROLE to execute Phase 3 mints.
         let funder_mint_grant =
             IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: funder_address };
-        grant_txs.push(
+        grant_txs.push((
             TransactionRequest::default()
                 .with_to(token)
                 .with_input(Bytes::from(funder_mint_grant.abi_encode()))
@@ -160,13 +169,14 @@ impl LoadRunner {
                 .with_gas_limit(b20_gas_limit)
                 .with_max_fee_per_gas(max_fee)
                 .with_max_priority_fee_per_gas(max_priority_fee),
-        );
+            nonce,
+        ));
         nonce += 1;
 
         for &sender in &sender_addresses {
             for &role in &roles {
                 let call = IB20::grantRoleCall { role, account: sender };
-                grant_txs.push(
+                grant_txs.push((
                     TransactionRequest::default()
                         .with_to(token)
                         .with_input(Bytes::from(call.abi_encode()))
@@ -175,37 +185,86 @@ impl LoadRunner {
                         .with_gas_limit(b20_gas_limit)
                         .with_max_fee_per_gas(max_fee)
                         .with_max_priority_fee_per_gas(max_priority_fee),
-                );
+                    nonce,
+                ));
                 nonce += 1;
             }
         }
 
+        // Pipeline: submit all grant txs first, then collect receipts.
+        // Decoupling submission from confirmation gives ~6x speedup.
+        // Submission is sequential, so a send failure at nonce N means N+1.. are not yet
+        // submitted; we backfill N with a noop so the txs we keep submitting are still accepted.
+        // If the noop send also fails the gap is unfillable, so we stop to avoid stranding higher
+        // nonces. The funder is reused across runs, so the noop must actually be mined to clear
+        // the gap; if it doesn't, we abort before the main receipt collection (whose higher-nonce
+        // txs could never confirm and would hang, since alloy has no default receipt timeout).
         let mut grant_failed = 0usize;
-        let mut txs_remaining = grant_txs.into_iter().peekable();
-        while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
-            let send_futs = batch.into_iter().map(|tx| {
-                let provider = Arc::clone(&funder_provider);
-                async move {
-                    let pending = provider.send_transaction(tx).await?;
-                    pending.get_receipt().await
+        let mut gap_cleared = true;
+        let mut pending_txs = Vec::with_capacity(total_grants);
+        let mut noop_pending = Vec::new();
+        for (tx, tx_nonce) in grant_txs {
+            match funder_provider.send_transaction(tx).await {
+                Ok(pending) => pending_txs.push(pending),
+                Err(e) => {
+                    warn!(error = %e, nonce = tx_nonce, "B-20 role grant submission failed");
+                    grant_failed += 1;
+                    pb.inc(1);
+                    let noop = TransactionRequest::default()
+                        .with_to(funder_address)
+                        .with_value(U256::ZERO)
+                        .with_nonce(tx_nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(21_000)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+                    match funder_provider.send_transaction(noop).await {
+                        Ok(pending) => noop_pending.push((tx_nonce, pending)),
+                        Err(noop_err) => {
+                            error!(error = %noop_err, nonce = tx_nonce, "noop backfill failed, aborting grant submission");
+                            gap_cleared = false;
+                            break;
+                        }
+                    }
                 }
-            });
+            }
+        }
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
-            while let Some(result) = send_stream.next().await {
-                match result {
-                    Ok(receipt) if receipt.status() => pb.inc(1),
-                    Ok(receipt) => {
-                        warn!(tx_hash = %receipt.transaction_hash, "B-20 role grant reverted");
-                        grant_failed += 1;
-                        pb.inc(1);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "B-20 role grant failed");
-                        grant_failed += 1;
-                        pb.inc(1);
-                    }
+        for (tx_nonce, pending) in noop_pending {
+            match tokio::time::timeout(Duration::from_secs(60), pending.get_receipt()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    warn!(error = %e, nonce = tx_nonce, "noop backfill receipt failed");
+                    gap_cleared = false;
+                }
+                Err(_) => {
+                    warn!(nonce = tx_nonce, "noop backfill receipt timed out after 60s");
+                    gap_cleared = false;
+                }
+            }
+        }
+
+        if !gap_cleared {
+            pb.finish_and_clear();
+            return Err(Self::nonce_gap_error(funder_address));
+        }
+
+        let receipt_futs = pending_txs.into_iter().map(|pending| async move {
+            pending.with_timeout(Some(Duration::from_secs(120))).get_receipt().await
+        });
+        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(FUNDING_CONCURRENCY);
+        while let Some(result) = receipt_stream.next().await {
+            match result {
+                Ok(receipt) if receipt.status() => pb.inc(1),
+                Ok(receipt) => {
+                    warn!(tx_hash = %receipt.transaction_hash, "B-20 role grant reverted");
+                    grant_failed += 1;
+                    pb.inc(1);
+                }
+                Err(e) => {
+                    warn!(error = %e, "B-20 role grant receipt failed");
+                    grant_failed += 1;
+                    pb.inc(1);
                 }
             }
         }
@@ -223,7 +282,7 @@ impl LoadRunner {
         let total_mints = sender_addresses.len();
         let pb_mint = self.progress_bar(total_mints as u64, "Minting B-20 tokens");
 
-        let mint_txs: Vec<(TransactionRequest, Address)> = sender_addresses
+        let mint_txs: Vec<(TransactionRequest, Address, u64)> = sender_addresses
             .iter()
             .map(|&sender| {
                 let call = IB20::mintCall { to: sender, amount: amount_per_sender };
@@ -235,49 +294,81 @@ impl LoadRunner {
                     .with_gas_limit(b20_gas_limit)
                     .with_max_fee_per_gas(max_fee)
                     .with_max_priority_fee_per_gas(max_priority_fee);
+                let tx_nonce = nonce;
                 nonce += 1;
-                (tx, sender)
+                (tx, sender, tx_nonce)
             })
             .collect();
 
         let mut mint_failed = 0usize;
-        let mut txs_remaining = mint_txs.into_iter().peekable();
-
-        while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
-            let send_futs = batch.into_iter().map(|(tx, sender)| {
-                let provider = Arc::clone(&funder_provider);
-                async move {
-                    match provider.send_transaction(tx).await {
-                        Ok(pending) => {
-                            let receipt = pending
-                                .get_receipt()
-                                .await
-                                .map_err(|e| eyre::eyre!("mint receipt failed: {e}"))?;
-                            Ok::<_, eyre::Report>((receipt, sender))
+        let mut gap_cleared = true;
+        let mut pending_mints = Vec::with_capacity(total_mints);
+        let mut noop_pending = Vec::new();
+        for (tx, sender, tx_nonce) in mint_txs {
+            match funder_provider.send_transaction(tx).await {
+                Ok(pending) => pending_mints.push((pending, sender)),
+                Err(e) => {
+                    warn!(to = %sender, error = %e, nonce = tx_nonce, "B-20 mint submission failed");
+                    mint_failed += 1;
+                    pb_mint.inc(1);
+                    let noop = TransactionRequest::default()
+                        .with_to(funder_address)
+                        .with_value(U256::ZERO)
+                        .with_nonce(tx_nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(21_000)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+                    match funder_provider.send_transaction(noop).await {
+                        Ok(pending) => noop_pending.push((tx_nonce, pending)),
+                        Err(noop_err) => {
+                            error!(error = %noop_err, nonce = tx_nonce, "noop backfill failed, aborting mint submission");
+                            gap_cleared = false;
+                            break;
                         }
-                        Err(e) => Err(eyre::eyre!("mint send failed: {e}")),
                     }
                 }
-            });
+            }
+        }
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
-            while let Some(result) = send_stream.next().await {
-                match result {
-                    Ok((receipt, sender)) if receipt.status() => {
-                        debug!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint confirmed");
-                        pb_mint.inc(1);
-                    }
-                    Ok((receipt, sender)) => {
-                        warn!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint reverted");
-                        mint_failed += 1;
-                        pb_mint.inc(1);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "B-20 mint failed");
-                        mint_failed += 1;
-                        pb_mint.inc(1);
-                    }
+        for (tx_nonce, pending) in noop_pending {
+            match tokio::time::timeout(Duration::from_secs(60), pending.get_receipt()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    warn!(error = %e, nonce = tx_nonce, "noop backfill receipt failed");
+                    gap_cleared = false;
+                }
+                Err(_) => {
+                    warn!(nonce = tx_nonce, "noop backfill receipt timed out after 60s");
+                    gap_cleared = false;
+                }
+            }
+        }
+
+        if !gap_cleared {
+            pb_mint.finish_and_clear();
+            return Err(Self::nonce_gap_error(funder_address));
+        }
+
+        let receipt_futs = pending_mints.into_iter().map(|(pending, sender)| async move {
+            (pending.with_timeout(Some(Duration::from_secs(120))).get_receipt().await, sender)
+        });
+        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(FUNDING_CONCURRENCY);
+        while let Some((result, sender)) = receipt_stream.next().await {
+            match result {
+                Ok(receipt) if receipt.status() => {
+                    debug!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint confirmed");
+                    pb_mint.inc(1);
+                }
+                Ok(receipt) => {
+                    warn!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint reverted");
+                    mint_failed += 1;
+                    pb_mint.inc(1);
+                }
+                Err(e) => {
+                    warn!(to = %sender, error = %e, "B-20 mint receipt failed");
+                    mint_failed += 1;
+                    pb_mint.inc(1);
                 }
             }
         }
@@ -366,12 +457,14 @@ impl LoadRunner {
             return Ok(());
         }
 
-        // Phase 2: Build burn txs — each sender burns their own balance.
+        // Phase 2: Burn each sender's balance. Each sender signs its own single tx, so the
+        // nonce streams are independent — pipelining submission and receipt collection is safe
+        // and a failed send strands nothing downstream.
         let pb = self.progress_bar(senders_with_balance.len() as u64, "Burning B-20 tokens");
         let mut burn_failed = 0usize;
         let mut burn_count = 0usize;
 
-        let burn_futs: Vec<_> = senders_with_balance
+        let submit_futs: Vec<_> = senders_with_balance
             .into_iter()
             .filter_map(|(sender, balance)| {
                 let signer = signers.get(&sender)?.clone();
@@ -397,29 +490,52 @@ impl LoadRunner {
                         .with_max_priority_fee_per_gas(max_priority_fee);
 
                     match provider.send_transaction(tx).await {
-                        Ok(pending) => match pending.get_receipt().await {
-                            Ok(receipt) => Ok((sender, balance, receipt)),
-                            Err(e) => Err((sender, eyre::eyre!("receipt failed: {e}"))),
-                        },
+                        Ok(pending) => Ok((sender, balance, pending)),
                         Err(e) => Err((sender, eyre::eyre!("send failed: {e}"))),
                     }
                 })
             })
             .collect();
 
-        let mut burn_stream = stream::iter(burn_futs).buffer_unordered(BATCH_SIZE);
-        while let Some(result) = burn_stream.next().await {
+        let submit_results: Vec<_> =
+            stream::iter(submit_futs).buffer_unordered(FUNDING_CONCURRENCY).collect().await;
+
+        let mut receipt_futs = Vec::with_capacity(submit_results.len());
+        for result in submit_results {
             match result {
-                Ok((sender, balance, receipt)) if receipt.status() => {
-                    debug!(sender = %sender, amount = %balance, tx_hash = %receipt.transaction_hash, "B-20 burn confirmed");
-                    burn_count += 1;
-                }
-                Ok((sender, _, receipt)) => {
-                    warn!(sender = %sender, tx_hash = %receipt.transaction_hash, "B-20 burn reverted");
-                    burn_failed += 1;
+                Ok((sender, balance, pending)) => {
+                    receipt_futs.push(async move {
+                        (
+                            sender,
+                            balance,
+                            pending
+                                .with_timeout(Some(Duration::from_secs(120)))
+                                .get_receipt()
+                                .await,
+                        )
+                    });
                 }
                 Err((sender, e)) => {
                     warn!(sender = %sender, error = %e, "B-20 burn failed");
+                    burn_failed += 1;
+                    pb.inc(1);
+                }
+            }
+        }
+
+        let mut receipt_stream = stream::iter(receipt_futs).buffer_unordered(FUNDING_CONCURRENCY);
+        while let Some((sender, balance, result)) = receipt_stream.next().await {
+            match result {
+                Ok(receipt) if receipt.status() => {
+                    debug!(sender = %sender, amount = %balance, tx_hash = %receipt.transaction_hash, "B-20 burn confirmed");
+                    burn_count += 1;
+                }
+                Ok(receipt) => {
+                    warn!(sender = %sender, tx_hash = %receipt.transaction_hash, "B-20 burn reverted");
+                    burn_failed += 1;
+                }
+                Err(e) => {
+                    warn!(sender = %sender, error = %e, "B-20 burn receipt failed");
                     burn_failed += 1;
                 }
             }

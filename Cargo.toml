@@ -179,6 +179,7 @@ base-common-consensus = { path = "crates/common/consensus", default-features = f
 base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
+base-observability-events = { path = "crates/common/observability-events", default-features = false }
 
 # Builder
 base-builder-cli = { path = "crates/builder/cli" }
@@ -343,6 +344,7 @@ alloy-consensus = { version = "2.0.5", default-features = false }
 alloy-sol-types = { version = "1.6.0", default-features = false }
 alloy-primitives = { version = "1.6.0", default-features = false }
 alloy-rpc-types-eth = { version = "2.0.5", default-features = false }
+alloy-rpc-types-txpool = { version = "2.0.5", default-features = false }
 alloy-rpc-types-debug = { version = "2.0.5", default-features = false }
 alloy-rpc-types-engine = { version = "2.0.5", default-features = false }
 alloy-network-primitives = { version = "2.0.5", default-features = false }

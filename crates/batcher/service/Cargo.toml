@@ -41,7 +41,6 @@ jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 metrics = [
 	"base-batcher-core/metrics",
 	"base-batcher-encoder/metrics",
-	"base-consensus-rpc/metrics",
 	"base-tx-manager/metrics",
 ]
 
