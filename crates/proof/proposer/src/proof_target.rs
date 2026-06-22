@@ -16,13 +16,17 @@ impl ProofTarget {
             return None;
         }
 
-        current_block.checked_add(block_interval).map_or_else(
-            || {
-                error!(current_block, block_interval, "Overflow computing next target block");
-                None
-            },
-            Some,
-        )
+        current_block
+            .checked_div(block_interval)
+            .and_then(|block| block.checked_add(1))
+            .and_then(|block| block.checked_mul(block_interval))
+            .map_or_else(
+                || {
+                    error!(current_block, block_interval, "Overflow computing next target block");
+                    None
+                },
+                Some,
+            )
     }
 
     /// Fetches the canonical output root for a proposal target.
@@ -46,5 +50,26 @@ impl ProofTarget {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_block_returns_none_for_zero_interval() {
+        assert_eq!(ProofTarget::next_block(100, 0), None);
+    }
+
+    #[test]
+    fn next_block_returns_next_aligned_boundary() {
+        assert_eq!(ProofTarget::next_block(100, 100), Some(200));
+        assert_eq!(ProofTarget::next_block(150, 100), Some(200));
+    }
+
+    #[test]
+    fn next_block_returns_none_on_overflow() {
+        assert_eq!(ProofTarget::next_block(u64::MAX, 1), None);
     }
 }

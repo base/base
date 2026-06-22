@@ -267,6 +267,16 @@ where
                             break true;
                         }
                         Err(SubmitAction::RootMismatch) => break true,
+                        Err(SubmitAction::Discard(error)) => {
+                            state.retry_counts.remove(&target_block);
+                            Metrics::proof_retries_total().increment(1);
+                            warn!(
+                                target_block,
+                                error = %error,
+                                "Proof discarded, restarting pipeline to request a fresh proof"
+                            );
+                            break true;
+                        }
                         Ok(SubmitInlineOutcome::Restart) | Err(_) => {
                             let count = state.retry_counts.entry(target_block).or_insert(0);
                             if *count >= max_retries {
@@ -634,7 +644,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discarded_proof_counts_against_retry_budget() {
+    async fn discarded_proof_restarts_without_counting_retry_budget() {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
@@ -665,8 +675,8 @@ mod tests {
             .tick(&mut state, &mut cache, recovered(100), target_block, 1, &cancel)
             .await;
 
-        assert!(!result);
-        assert_eq!(state.retry_counts, HashMap::from([(target_block, 1)]));
+        assert!(result);
+        assert!(state.retry_counts.is_empty());
     }
 
     #[tokio::test]

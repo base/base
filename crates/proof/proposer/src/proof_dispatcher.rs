@@ -655,11 +655,6 @@ mod tests {
     }
 
     #[test]
-    fn next_block_returns_none_for_zero_interval() {
-        assert_eq!(ProofTarget::next_block(100, 0), None);
-    }
-
-    #[test]
     fn handle_proof_failure_clears_cursor_on_retry_exhaustion() {
         let mut state = ProofDispatcherState::new();
         state.cursor = Some(RecoveredState {
