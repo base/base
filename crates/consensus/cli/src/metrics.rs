@@ -2,11 +2,11 @@
 
 use std::{
     collections::BTreeSet,
-    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use base_common_genesis::{BaseUpgrade, RollupConfig};
+use tokio::task::JoinHandle;
 
 use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
 
@@ -184,20 +184,24 @@ impl CliMetrics {
             let time: f64 = activation_time.map(|t| t as f64).unwrap_or(-1f64);
             metrics::gauge!(Self::UPGRADE_ACTIVATION_TIMES, "upgrade" => upgrade_name).set(time);
         }
-
-        Self::spawn_upgrade_countdown_recorder(config.clone());
     }
 
-    fn spawn_upgrade_countdown_recorder(config: RollupConfig) {
-        thread::spawn(move || {
+    /// Starts the periodic recorder for the next scheduled upgrade countdown metric.
+    ///
+    /// This must be called from an active Tokio runtime. The static rollup config metrics are
+    /// initialized before the runtime exists in some CLI paths, so the dynamic countdown recorder is
+    /// started separately by the async command entrypoints.
+    pub fn spawn_upgrade_countdown_recorder(config: RollupConfig) -> JoinHandle<()> {
+        tokio::spawn(async move {
             let mut observed_upgrades = BTreeSet::new();
+            let mut interval = tokio::time::interval(UPGRADE_COUNTDOWN_REFRESH_INTERVAL);
 
             loop {
+                interval.tick().await;
                 let now = current_unix_timestamp();
                 Self::record_seconds_until_next_upgrade(&config, now, &mut observed_upgrades);
-                thread::sleep(UPGRADE_COUNTDOWN_REFRESH_INTERVAL);
             }
-        });
+        })
     }
 
     fn record_seconds_until_next_upgrade(
@@ -215,15 +219,23 @@ impl CliMetrics {
                 .set(seconds_until_activation as f64);
         }
 
-        for upgrade in observed_upgrades.difference(&current_upgrades) {
+        let stale_upgrades =
+            observed_upgrades.difference(&current_upgrades).copied().collect::<Vec<_>>();
+
+        for upgrade in &stale_upgrades {
             metrics::gauge!(Self::SECONDS_UNTIL_NEXT_UPGRADE, "upgrade" => *upgrade)
                 .set(NO_UPCOMING_UPGRADE_SECONDS);
+        }
+        for upgrade in stale_upgrades {
+            observed_upgrades.remove(upgrade);
         }
     }
 }
 
 const UPGRADE_COUNTDOWN_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const UPGRADE_ACTIVATION_GRACE_SECONDS: u64 = 15 * 60;
+// Use a large reset value, not `-1`, so Datadog `<= 1d/1h/0` countdown monitors recover after the
+// activation grace window instead of alerting on an unscheduled sentinel.
 const NO_UPCOMING_UPGRADE_SECONDS: f64 = 4_294_967_295.0;
 
 fn current_unix_timestamp() -> u64 {
@@ -332,5 +344,30 @@ mod tests {
         };
 
         assert_eq!(seconds_until_next_upgrades(&config, 900), vec![("azul", 100), ("beryl", 100)]);
+    }
+
+    #[test]
+    fn record_seconds_until_next_upgrade_drains_stale_upgrades() {
+        let config = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: base_common_genesis::BaseUpgradeConfig {
+                    beryl: Some(1_000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut observed_upgrades = BTreeSet::new();
+
+        CliMetrics::record_seconds_until_next_upgrade(&config, 900, &mut observed_upgrades);
+        assert!(observed_upgrades.contains("beryl"));
+
+        CliMetrics::record_seconds_until_next_upgrade(
+            &config,
+            1_000 + UPGRADE_ACTIVATION_GRACE_SECONDS + 1,
+            &mut observed_upgrades,
+        );
+        assert!(observed_upgrades.is_empty());
     }
 }

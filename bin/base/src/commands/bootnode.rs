@@ -36,6 +36,8 @@ impl BootnodeCommand {
         CliMetrics::init_bootnode_p2p(&self.consensus);
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|_| async move {
+            let _upgrade_countdown_metrics =
+                CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
             let chain_id = rollup_config.l2_chain_id.id();
             self.consensus.check_ports()?;
 
