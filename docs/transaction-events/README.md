@@ -78,8 +78,9 @@ because the receiver only knows a skipped count, while
 when ingress still has the original `tx_hash`.
 
 Producer-specific fields belong in `data`. Do not write raw transaction bytes,
-calldata, full request bodies, API keys, secrets, authorization headers, raw
-forwarding headers, or raw client IP forwarding chains.
+calldata, full request bodies, API keys, secrets, private keys, bearer tokens,
+authorization headers, raw forwarding headers, or raw client IP forwarding
+chains.
 
 Collector sidecars may add deployment-specific source metadata under
 `data.observability_source` before shipping events to `audit-archiver`.
@@ -87,8 +88,11 @@ Collector sidecars may add deployment-specific source metadata under
 contract does not validate its shape.
 
 The Rust `TransactionEvent::validate` helper rejects the wrong schema version,
-empty `event_id`, and known unsafe `data` keys such as `raw_tx`, `calldata`,
-`authorization`, `api_key`, `headers`, and `x-forwarded-for`.
+empty `event_id`, and a small exact unsafe `data` key denylist such as `raw_tx`,
+`calldata`, `request_body`, `authorization`, `api_key`, `headers`, and
+`x-forwarded-for`. Vector collector pipelines should reject broader
+case/delimiter variants such as `rawTransaction`, `requestBody`, `secret_key`,
+and `privateKey` before ingest.
 
 ## Local Devnet Verification
 

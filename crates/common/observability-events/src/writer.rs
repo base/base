@@ -419,6 +419,43 @@ mod tests {
     }
 
     #[test]
+    fn validation_rejects_forbidden_data_keys_exactly() {
+        for key in [
+            "raw_transaction",
+            "raw_tx",
+            "calldata",
+            "request_body",
+            "authorization",
+            "api_key",
+            "headers",
+        ] {
+            let mut event = sample_event();
+            event.data = Map::from_iter([(key.to_string(), json!("redacted"))]);
+
+            assert!(
+                matches!(
+                    event.validate(),
+                    Err(TransactionEventValidationError::ForbiddenDataKey(rejected)) if rejected == key
+                ),
+                "expected {key} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validation_allows_transaction_summary_keys() {
+        let mut event = sample_event();
+        event.data = Map::from_iter([
+            ("tx_hash".to_string(), json!("0x1234")),
+            ("payload_id".to_string(), json!("0x01")),
+            ("meter_bundle_response".to_string(), json!({ "totalGasUsed": 21000 })),
+            ("observability_source".to_string(), json!({ "container_name": "execution" })),
+        ]);
+
+        event.validate().unwrap();
+    }
+
+    #[test]
     fn validation_rejects_excessive_data_depth() {
         let mut value = json!("leaf");
         for _ in 0..=16 {

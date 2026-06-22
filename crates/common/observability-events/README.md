@@ -28,8 +28,10 @@ Required envelope fields are `schema_version`, `event_id`, `event_time`,
 whenever available: `tx_hash`, `block_hash`/`block_number`, or `payload_id`.
 
 Producer-specific fields belong in `data`. Do not put raw transaction bytes,
-calldata, full request bodies, API keys, secrets, or raw forwarding headers in
-transaction events.
+calldata, full request bodies, API keys, secrets, private keys, tokens, or raw
+forwarding headers in transaction events. Rust validation rejects a small exact
+denylist; collector pipelines should enforce broader key-pattern filtering before
+ingest.
 
 The writer is best-effort after initialization. Runtime write or flush failures
 are reported through metrics and logs, but they do not block transaction-serving
