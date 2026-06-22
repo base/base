@@ -378,7 +378,6 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_metrics_extension(&mut runner, &rollup_args)?;
-        let flashblocks_enabled = flashblocks_config.is_some();
         let eip8130_rpc_mode = if flashblocks_config.is_some() {
             Eip8130RpcMode::Defer
         } else {
