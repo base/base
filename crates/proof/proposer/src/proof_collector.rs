@@ -356,13 +356,12 @@ where
                                 true,
                             )
                             .await;
-                    } else {
-                        debug!(
-                            target_block,
-                            claimed_l2_output_root = %claimed_l2_output_root,
-                            "No prover-service session for target, waiting for dispatcher"
-                        );
                     }
+                    debug!(
+                        target_block,
+                        claimed_l2_output_root = %claimed_l2_output_root,
+                        "No prover-service session for target, waiting for dispatcher"
+                    );
                     break false;
                 }
                 TargetPoll::Failed { session_id, error } => {
@@ -377,9 +376,7 @@ where
                     if !state.handle_proof_failure(target_block, error, self.max_retries, cache) {
                         break true;
                     }
-                    if state
-                        .target(target_block)
-                        .and_then(|target| target.retry_session.as_ref())
+                    if state.target(target_block).and_then(|target| target.retry_session.as_ref())
                         == Some(&session_id)
                     {
                         let dispatch = self
