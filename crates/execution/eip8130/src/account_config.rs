@@ -102,6 +102,17 @@ impl AccountConfigurationStorage<'_> {
         self.policy_manager.at(&actor_id).at(&account).read()
     }
 
+    /// Reads only the stored policy *commitment* slot for `(account, actor_id)`,
+    /// the single-SLOAD read a policy manager performs to validate a dispatched
+    /// 8130 transaction against the actor's signed commitment. The
+    /// `_authorizeActor`/`_revokeActor` invariant is that this slot is non-zero
+    /// iff the actor has a non-zero `policy_type` (across both self homes), so a
+    /// zero return unambiguously means "no policy / no actor". Mirrors
+    /// `AccountConfiguration.getPolicyCommitment`.
+    pub fn get_policy_commitment(&self, account: Address, actor_id: B256) -> Result<B256> {
+        self.policy_commitment.at(&actor_id).at(&account).read()
+    }
+
     /// Returns the per-account [`AccountState`] (sequences + lock fields).
     pub fn get_account_state(&self, account: Address) -> Result<AccountState> {
         Ok(AccountState::from_word(self.account_state.at(&account).read()?))

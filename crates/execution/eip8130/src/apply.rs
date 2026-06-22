@@ -76,20 +76,6 @@ pub enum ApplyError {
     #[error("policy data does not match policy type")]
     MalformedPolicyData,
 
-    /// Authorizing an actor whose `actor_config` slot is already populated.
-    /// Mirrors `require(_actorConfig[actorId][account].authenticator == 0)`.
-    #[error("actor {actor_id} is already authorized")]
-    ActorAlreadyAuthorized {
-        /// The actor id whose slot was already populated.
-        actor_id: B256,
-    },
-
-    /// Re-authorizing the secp256k1 self key while it is live and non-trivially
-    /// scoped; it must be revoked first. Mirrors `_authorizeActor`'s self k1
-    /// re-authorize guard.
-    #[error("live scoped secp256k1 self key must be revoked before re-authorization")]
-    SelfReauthorizeForbidden,
-
     /// Revoking an actor that is not currently authorized. Mirrors
     /// `_revokeActor`'s `require(isActor(...))`.
     #[error("actor {actor_id} is not authorized and cannot be revoked")]
@@ -297,8 +283,11 @@ impl AccountChangeApplier {
     }
 
     /// Authorizes (writes) one actor against `account`. Mirrors `_authorizeActor`,
-    /// including the mutually-exclusive secp256k1-self vs non-k1-self homes and
-    /// the policy slots.
+    /// which is an **upsert**: authorizing an already-configured `actor_id`
+    /// overwrites its config in place (the end state equals revoke-then-authorize;
+    /// observers see another `ActorAuthorized`, last-write-wins). Handles the
+    /// mutually-exclusive secp256k1-self vs non-k1-self homes and resets the
+    /// policy slots so stale policy can't leak.
     pub fn authorize_actor(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,
@@ -326,14 +315,8 @@ impl AccountChangeApplier {
         if actor_id == self_id {
             let mut state = storage.get_account_state(account)?;
             if config.authenticator == Eip8130Constants::K1_AUTHENTICATOR {
-                // Re-authorize only from a disabled self (flag set) or the
-                // unconfigured implicit owner (all-zero inline config).
-                let inline_trivial = state.default_eoa_scope == 0
-                    && state.default_eoa_policy_type == 0
-                    && state.default_eoa_expiry == 0;
-                if !(state.default_eoa_revoked() || inline_trivial) {
-                    return Err(ApplyError::SelfReauthorizeForbidden);
-                }
+                // Upsert: overwrite a live self in place (no re-authorize guard);
+                // the end state equals revoke-then-authorize.
                 // Mutual exclusion: drop any non-k1 self and move into the inline home.
                 storage.clear_actor_config(account, actor_id)?;
                 state.default_eoa_scope = config.scope;
@@ -341,9 +324,7 @@ impl AccountChangeApplier {
                 state.default_eoa_expiry = config.expiry;
                 state.flags &= !Eip8130Constants::DEFAULT_EOA_REVOKED;
             } else {
-                if !storage.get_actor_config(account, actor_id)?.is_empty() {
-                    return Err(ApplyError::ActorAlreadyAuthorized { actor_id });
-                }
+                // Upsert: overwrite any existing non-k1 self in place.
                 storage.set_actor_config(account, actor_id, config)?;
                 // Mutual exclusion: disable and clear the inline k1 self.
                 state.flags |= Eip8130Constants::DEFAULT_EOA_REVOKED;
@@ -358,10 +339,11 @@ impl AccountChangeApplier {
             return Ok(());
         }
 
-        // Non-self actor: a single `actor_config` home, required empty.
-        if !storage.get_actor_config(account, actor_id)?.is_empty() {
-            return Err(ApplyError::ActorAlreadyAuthorized { actor_id });
-        }
+        // Non-self actor: a single `actor_config` home. Upsert: overwrite in
+        // place. `set_policy` writes both policy slots (zero clears), resetting
+        // any stale policy so an actor moving policy-bearing -> none can't leak
+        // state, preserving the "commitment non-zero iff policy_type non-zero"
+        // invariant.
         storage.set_actor_config(account, actor_id, config)?;
         storage.set_policy(account, actor_id, manager, commitment)?;
         Ok(())
@@ -399,7 +381,14 @@ impl AccountChangeApplier {
         entry: &CreateEntry,
     ) -> Result<CreatedAccount, ApplyError> {
         let address = Self::compute_address(entry.user_salt, &entry.code, &entry.initial_actors)?;
-        if storage.is_initialized(address)? {
+        // Block re-initialization of an account that already holds EIP-8130 state.
+        // `local_sequence` doubles as the created/imported flag; `multichain_sequence`
+        // additionally guards an account that established state via a global
+        // (chain_id 0) config change without ever being created/imported. This must
+        // be explicit now that `authorize_actor` is an upsert and no longer reverts
+        // on a duplicate initial actor (mirrors `createAccount`'s guard).
+        let mut state = storage.get_account_state(address)?;
+        if state.local_sequence != 0 || state.multichain_sequence != 0 {
             return Err(ApplyError::AlreadyCreated { account: address });
         }
 
@@ -407,7 +396,6 @@ impl AccountChangeApplier {
         // (a created account has contract code, so the recovered==account path is
         // unreachable). Written before initializing actors so a self-actorId k1
         // initial actor can re-enable the inline self.
-        let mut state = storage.get_account_state(address)?;
         state.local_sequence = 1;
         state.flags = Eip8130Constants::DEFAULT_EOA_REVOKED;
         storage.set_account_state(address, state)?;
@@ -617,11 +605,10 @@ mod tests {
             assert_eq!(acc.get_actor_config(ACCOUNT, NON_SELF).unwrap(), config);
             assert!(acc.is_actor(ACCOUNT, NON_SELF).unwrap());
 
-            // Re-authorizing an occupied slot is rejected.
-            assert_eq!(
-                AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]),
-                Err(ApplyError::ActorAlreadyAuthorized { actor_id: NON_SELF })
-            );
+            // Upsert: re-authorizing an occupied slot overwrites it in place.
+            let rescoped = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_PAYER);
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, rescoped, &[]).unwrap();
+            assert_eq!(acc.get_actor_config(ACCOUNT, NON_SELF).unwrap(), rescoped);
 
             // Revoke clears the slot.
             AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF).unwrap();
@@ -684,6 +671,33 @@ mod tests {
     }
 
     #[test]
+    fn reauthorize_to_policy_none_clears_policy_slots() {
+        with_storage(|acc| {
+            let mut data = Vec::new();
+            data.extend_from_slice(MANAGER.as_slice());
+            data.extend_from_slice(COMMITMENT.as_slice());
+
+            // Authorize a policy-bearing actor; policy slots populated.
+            let gated = ActorConfig {
+                authenticator: AUTHENTICATOR,
+                scope: Eip8130Constants::SCOPE_SENDER,
+                expiry: 0,
+                policy_type: 1,
+            };
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, gated, &data).unwrap();
+            assert_eq!(acc.get_policy(ACCOUNT, NON_SELF).unwrap(), (1, MANAGER, COMMITMENT));
+
+            // Upsert the same actor down to no policy: the stale manager/commitment
+            // must be cleared (commitment-non-zero-iff-policy_type invariant).
+            let ungated_cfg = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, ungated_cfg, &[])
+                .unwrap();
+            assert_eq!(acc.get_policy(ACCOUNT, NON_SELF).unwrap(), (0, Address::ZERO, B256::ZERO));
+            assert_eq!(acc.get_policy_manager(ACCOUNT, NON_SELF).unwrap(), Address::ZERO);
+        });
+    }
+
+    #[test]
     fn authorize_self_k1_enables_inline_and_revoke_disables() {
         with_storage(|acc| {
             let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
@@ -696,11 +710,13 @@ mod tests {
             // No explicit actor_config slot is used for the k1 self.
             assert!(acc.get_actor_config(ACCOUNT, self_id).unwrap().is_empty());
 
-            // Re-authorizing a live, non-trivially-scoped self is rejected.
-            assert_eq!(
-                AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, scoped, &[]),
-                Err(ApplyError::SelfReauthorizeForbidden)
-            );
+            // Upsert: re-authorizing a live self rescopes the inline config in
+            // place (no prior revoke required).
+            let rescoped = ungated(K1, Eip8130Constants::SCOPE_PAYER);
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, rescoped, &[]).unwrap();
+            let state = acc.get_account_state(ACCOUNT).unwrap();
+            assert!(!state.default_eoa_revoked());
+            assert_eq!(state.default_eoa_scope, Eip8130Constants::SCOPE_PAYER);
 
             // Revoke sets the flag and clears the inline config.
             AccountChangeApplier::revoke_actor(acc, ACCOUNT, self_id).unwrap();
@@ -790,6 +806,40 @@ mod tests {
             );
 
             // Re-creating the same account is rejected.
+            assert_eq!(
+                AccountChangeApplier::apply_create(acc, &entry),
+                Err(ApplyError::AlreadyCreated { account: expected })
+            );
+        });
+    }
+
+    #[test]
+    fn create_rejected_when_account_has_only_multichain_state() {
+        with_storage(|acc| {
+            let entry = CreateEntry {
+                user_salt: b256!(
+                    "0x3333333333333333333333333333333333333333333333333333333333333333"
+                ),
+                code: Bytes::from_static(&[0x60, 0x00]),
+                initial_actors: vec![InitialActor {
+                    actor_id: NON_SELF,
+                    authenticator: AUTHENTICATOR,
+                }],
+            };
+            let expected = AccountChangeApplier::compute_address(
+                entry.user_salt,
+                &entry.code,
+                &entry.initial_actors,
+            )
+            .unwrap();
+
+            // Account established global (chain_id 0) state without ever being
+            // created/imported: local_sequence == 0 but multichain_sequence != 0.
+            let mut state = acc.get_account_state(expected).unwrap();
+            state.multichain_sequence = 1;
+            acc.set_account_state(expected, state).unwrap();
+
+            // create must still reject (the guard checks both sequences).
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &entry),
                 Err(ApplyError::AlreadyCreated { account: expected })
