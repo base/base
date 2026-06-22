@@ -16,10 +16,24 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-# CLI
-eyre.workspace = true
-tracing.workspace = true
+# base
 base-cli-utils.workspace = true
+base-proof-worker.workspace = true
+base-proof-zk-host.workspace = true
+base-proof-zk-backend.workspace = true
+base-prover-service-client.workspace = true
+
+# CLI / errors
+eyre.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 # Required by base-cli-utils logging and metrics macro expansions.
 serde = { workspace = true, features = ["derive", "std"] }
+
+# async
+tokio-util.workspace = true
+
+# misc
+uuid = { workspace = true, features = ["v4"] }
+
+# observability
+tracing.workspace = true
