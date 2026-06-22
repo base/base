@@ -304,7 +304,7 @@ status, timestamps, and TEE/ZK metadata when present.
 | `--dispute-game-factory <ADDRESS>` | Override the L1 `DisputeGameFactory` proxy address. Must be passed with `--anchor-state-registry`. |
 | `--anchor-state-registry <ADDRESS>` | Override the L1 `AnchorStateRegistry` proxy address. Must be passed with `--dispute-game-factory`. |
 | `--prover-url <URL>` | Prover-service JSON-RPC endpoint used to list submitted proof jobs. |
-| `--status <queued|running|succeeded|failed>` | Filter prover-service jobs by status. Requires a prover-service source. |
+| `--status <STATUS>` | Filter prover-service jobs by status: `queued`, `running`, `succeeded`, or `failed`. Requires a prover-service source. |
 | `--limit <N>` | Maximum number of on-chain proposals and prover jobs to show. Default `10`, maximum `100`. |
 | `--offset <N>` | Number of prover-service jobs to skip. Requires a prover-service source. |
 | `--scan-window <N>` | Number of factory games to scan backward for recent respected-game proposals. Default `50`, maximum `1000`. |
