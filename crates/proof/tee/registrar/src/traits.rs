@@ -25,8 +25,7 @@ pub trait InstanceDiscovery: Send + Sync {
 /// substitute a mock to avoid real HTTP calls.
 ///
 /// Implementations must return public keys and attestations in the same stable
-/// signer order across calls for a given endpoint. The registrar pairs each
-/// attestation response with the public-key response by index.
+/// signer order for a given endpoint.
 ///
 /// The `endpoint` parameter is a [`Url`] (e.g. `http://10.0.1.5:8000/`).
 pub trait EnclaveEndpointClient: Send + Sync {
@@ -38,10 +37,11 @@ pub trait EnclaveEndpointClient: Send + Sync {
 
     /// Fetches the raw Nitro attestation document for each enclave signer at the given endpoint.
     ///
-    /// The optional nonce binds the attestation to a specific request for replay protection.
+    /// The optional `nonces` vector must have one entry per signer in the same
+    /// order returned by [`signer_public_key`](Self::signer_public_key).
     fn signer_attestation<'a>(
         &'a self,
         endpoint: &'a Url,
-        nonce: Option<Vec<u8>>,
+        nonces: Option<Vec<Vec<u8>>>,
     ) -> impl Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a;
 }

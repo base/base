@@ -65,11 +65,11 @@ impl EnclaveEndpointClient for ProverClient {
     async fn signer_attestation(
         &self,
         endpoint: &Url,
-        nonce: Option<Vec<u8>>,
+        nonces: Option<Vec<Vec<u8>>>,
     ) -> Result<Vec<Vec<u8>>> {
         debug!(endpoint = %endpoint, "fetching signer attestations");
         let client = self.build_client(endpoint)?;
-        client.signer_attestation(None, nonce).await.map_err(|e| RegistrarError::ProverClient {
+        client.signer_attestation(None, nonces).await.map_err(|e| RegistrarError::ProverClient {
             instance: endpoint.to_string(),
             source: Box::new(e),
         })
