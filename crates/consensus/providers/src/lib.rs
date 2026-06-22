@@ -32,5 +32,8 @@ pub use conf_depth::{ConfDepthProvider, L1HeadNumber};
 mod l2_chain_provider;
 pub use l2_chain_provider::{AlloyL2ChainProvider, AlloyL2ChainProviderError};
 
+mod alt_da;
+pub use alt_da::HttpAltDaResolver;
+
 mod pipeline;
 pub use pipeline::OnlinePipeline;

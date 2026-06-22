@@ -120,6 +120,17 @@ pub enum ClientError {
     /// PUT response had a malformed generic commitment prefix.
     #[error("alt-da put returned malformed commitment prefix")]
     InvalidCommitment,
+    /// GET found no object for the requested commitment.
+    #[error("alt-da get: commitment not found")]
+    NotFound,
+    /// GET response body exceeds [`crate::MAX_OBJECT_BYTES`].
+    #[error("alt-da get response too large: {size} bytes (max {max})")]
+    ResponseTooLarge {
+        /// Response body size in bytes.
+        size: usize,
+        /// Configured maximum object size in bytes.
+        max: usize,
+    },
 }
 
 impl From<CommitmentError> for ClientError {
