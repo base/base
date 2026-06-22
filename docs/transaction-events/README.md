@@ -116,6 +116,10 @@ JSONL events from ingress, proxyd, txpool tracing, and builder producers, and
 verifies `audit-archiver` can read the persisted events back from Postgres by
 transaction hash.
 
+For local Vector health, alert or inspect `component_discarded_events_total`.
+`parse_transaction_events` drops malformed JSONL lines, and
+`validate_transaction_events` drops parsed events with unsafe `data` keys.
+
 ## Producer Values
 
 - `base-reth-node`

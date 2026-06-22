@@ -44,11 +44,24 @@ transforms:
         "event_source_file": source_file
       }
 
+  validate_transaction_events:
+    type: remap
+    inputs:
+      - parse_transaction_events
+    drop_on_error: true
+    reroute_dropped: true
+    source: |-
+      unsafe_data_key_regex = r'(?i)"(?:body|headers|secret|secrets|calldata|authorization|raw[_-]?transactions?|raw[_-]?transaction[_-]?(?:bytes|body|payload)|raw[_-]?txs?|raw[_-]?tx[_-]?(?:bytes|body|payload)|transaction[_-]?(?:body|payload)|tx[_-]?(?:body|payload)|request[_-]?body|x[_-]?forwarded[_-]?for|forwarded[_-]?headers|api[_-]?keys?|secret[_-]?keys?|private[_-]?keys?|bearer[_-]?tokens?)"\s*:'
+      data_json = encode_json(.data)
+      if match(data_json, unsafe_data_key_regex) {
+        abort "transaction event data contains unsafe key"
+      }
+
 sinks:
   audit_archiver:
     type: http
     inputs:
-      - parse_transaction_events
+      - validate_transaction_events
     uri: http://audit-archiver:9100/v1/transaction-events/batch
     method: post
     request:
@@ -75,6 +88,7 @@ sinks:
     type: console
     inputs:
       - parse_transaction_events.dropped
+      - validate_transaction_events.dropped
     target: stderr
     encoding:
       codec: json
