@@ -44,7 +44,6 @@ jobs:
         with:
           free-disk: "true"
           foundry: "true"
-          mold: "true"
           native-deps: "true"
           rust-cache-shared-key: "base-std-fork-tests"
 

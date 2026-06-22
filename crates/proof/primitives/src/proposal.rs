@@ -108,14 +108,22 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{address, b256};
+    use rstest::rstest;
 
     use super::*;
 
-    #[cfg(feature = "serde")]
+    const PROOF_DATA_V_INDEX: usize = 1 + 32 + 32 + ECDSA_SIGNATURE_LENGTH - 1;
+
+    fn signature_with_v(v: u8) -> Bytes {
+        let mut signature = vec![0xab; ECDSA_SIGNATURE_LENGTH];
+        signature[ECDSA_SIGNATURE_LENGTH - 1] = v;
+        Bytes::from(signature)
+    }
+
     fn sample_proposal() -> Proposal {
         Proposal {
             output_root: b256!("0000000000000000000000000000000000000000000000000000000000000001"),
-            signature: Bytes::from(vec![0xab; 65]),
+            signature: signature_with_v(0),
             l1_origin_hash: b256!(
                 "0000000000000000000000000000000000000000000000000000000000000002"
             ),
@@ -170,6 +178,28 @@ mod tests {
 
         let json = serde_json::to_string(&proposal).unwrap();
         assert!(json.contains("\"l2_block_number\":0"));
+    }
+
+    fn proposal_with_v(v: u8) -> Proposal {
+        Proposal { signature: signature_with_v(v), ..sample_proposal() }
+    }
+
+    #[rstest]
+    #[case::v_zero_adjusted_to_27(0, Some(27))]
+    #[case::v_one_adjusted_to_28(1, Some(28))]
+    #[case::v_27_unchanged(27, Some(27))]
+    #[case::v_28_unchanged(28, Some(28))]
+    #[case::v_5_rejected(5, None)]
+    fn test_build_proof_data_v_value(#[case] input_v: u8, #[case] expected_v: Option<u8>) {
+        match (expected_v, proposal_with_v(input_v).build_proof_data()) {
+            (Some(expected_v), Ok(proof)) => {
+                assert_eq!(proof[PROOF_DATA_V_INDEX], expected_v);
+            }
+            (None, Err(CryptoError::InvalidVValue(v))) => {
+                assert_eq!(v, input_v);
+            }
+            (expected, result) => panic!("expected {expected:?}, got {result:?}"),
+        }
     }
 
     fn test_journal() -> ProofJournal {

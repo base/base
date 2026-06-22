@@ -33,7 +33,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           sp1: "true"
           rust-cache-shared-key: "stable"

@@ -13,7 +13,7 @@ pub use discovery::AwsTargetGroupDiscovery;
 mod driver;
 pub use driver::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DiscoveryResolution,
-    DriverConfig, RegisterableSigner, RegistrationDriver,
+    DriverConfig, INSTANCE_CACHE_TTL_CYCLES, RegisterableSigner, RegistrationDriver,
 };
 
 mod error;

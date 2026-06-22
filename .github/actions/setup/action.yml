@@ -20,9 +20,6 @@ inputs:
   sp1-version:
     description: SP1 release tag used when sp1 is enabled (matches etc/just/succinct.just)
     default: "v6.2.3"
-  mold:
-    description: Install mold linker
-    default: "false"
   native-deps:
     description: Install native build dependencies (clang, llvm, etc.)
     default: "false"
@@ -96,10 +93,6 @@ runs:
       uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
       with:
         components: ${{ inputs.components }}
-
-    - name: Install mold
-      if: inputs.mold == 'true'
-      uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
     - name: Setup sccache
       uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
