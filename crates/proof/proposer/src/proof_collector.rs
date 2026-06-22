@@ -267,7 +267,7 @@ where
                 warn!(target_block, "Output root mismatch at submit time, restarting pipeline");
                 Metrics::root_mismatch_total().increment(1);
                 *cache = None;
-                None
+                return None;
             }
             Err(SubmitAction::Failed(error)) => {
                 submit_timer.disarm();
@@ -285,7 +285,7 @@ where
                 } else {
                     warn!(target_block, error = %error, "Submission failed, restarting pipeline");
                 }
-                None
+                return None;
             }
             Err(SubmitAction::Discard(error)) => {
                 submit_timer.disarm();
@@ -295,27 +295,27 @@ where
                     error = %error,
                     "Proof discarded by submitter, restarting pipeline to request it again"
                 );
-                None
+                return None;
             }
-            action @ (Ok(()) | Err(SubmitAction::GameAlreadyExists)) => {
-                if matches!(action, Err(SubmitAction::GameAlreadyExists)) {
-                    submit_timer.disarm();
-                    info!(target_block, "Game already exists onchain");
-                    if let Some(cached) = cache.as_mut() {
-                        cached.game_count = cached.game_count.saturating_sub(1);
-                    }
-                } else {
-                    drop(submit_timer);
-                    info!(target_block, "Submission successful");
+            Ok(()) => {
+                drop(submit_timer);
+                info!(target_block, "Submission successful");
+            }
+            Err(SubmitAction::GameAlreadyExists) => {
+                submit_timer.disarm();
+                info!(target_block, "Game already exists onchain");
+                if let Some(cached) = cache.as_mut() {
+                    cached.game_count = cached.game_count.saturating_sub(1);
                 }
-                Metrics::last_proposed_block().set(target_block as f64);
-                match self.recovery.recover_latest_state(cache).await {
-                    Ok(recovered) => Some(recovered),
-                    Err(e) => {
-                        warn!(error = %e, "Failed to recover state after inline submit");
-                        None
-                    }
-                }
+            }
+        }
+
+        Metrics::last_proposed_block().set(target_block as f64);
+        match self.recovery.recover_latest_state(cache).await {
+            Ok(recovered) => Some(recovered),
+            Err(e) => {
+                warn!(error = %e, "Failed to recover state after inline submit");
+                None
             }
         }
     }
@@ -445,10 +445,12 @@ mod tests {
         let mut cache = cache();
         let cancel = CancellationToken::new();
 
-        let effect =
-            orchestrator.submit_inline(200, &recovered(100), proof, &mut cache, &cancel).await;
-
-        assert_eq!(effect, None);
+        assert!(
+            orchestrator
+                .submit_inline(200, &recovered(100), proof, &mut cache, &cancel)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -523,18 +525,16 @@ mod tests {
             .unwrap()
             .session_id;
 
-        match ProofCollector::<MockL1, MockRollupClient>::poll_target(
+        let poll = ProofCollector::<MockL1, MockRollupClient>::poll_target(
             proof_requester.as_ref(),
             target_block,
             canonical_root,
         )
-        .await
-        {
-            TargetPoll::Ready { session_id, .. } => {
-                assert_eq!(session_id, expected_session_id);
-            }
-            other => panic!("expected Ready, got {other:?}"),
-        }
+        .await;
+        let TargetPoll::Ready { session_id, .. } = poll else {
+            panic!("expected Ready, got {poll:?}");
+        };
+        assert_eq!(session_id, expected_session_id);
     }
 
     #[tokio::test]
@@ -542,15 +542,13 @@ mod tests {
         let proof_requester = Arc::new(MockProofRequester::default());
         let target_block = 200u64;
 
-        match ProofCollector::<MockL1, MockRollupClient>::poll_target(
+        let poll = ProofCollector::<MockL1, MockRollupClient>::poll_target(
             proof_requester.as_ref(),
             target_block,
             B256::repeat_byte(0xaa),
         )
-        .await
-        {
-            TargetPoll::NotFound => {}
-            other => panic!("expected NotFound, got {other:?}"),
-        }
+        .await;
+
+        assert!(matches!(&poll, TargetPoll::NotFound), "expected NotFound, got {poll:?}");
     }
 }
