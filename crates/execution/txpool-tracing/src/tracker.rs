@@ -576,7 +576,7 @@ impl Pool {
     }
 }
 
-fn transaction_event_type(event: TxEvent) -> TransactionEventType {
+const fn transaction_event_type(event: TxEvent) -> TransactionEventType {
     match event {
         TxEvent::Pending => TransactionEventType::Pending,
         TxEvent::Queued => TransactionEventType::Queued,
