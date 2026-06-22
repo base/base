@@ -28,8 +28,7 @@ pub use proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig}
 
 mod proof_collector;
 pub use proof_collector::{
-    ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig, ProofCollectorState,
-    ProofSubmitEffect, TargetPoll,
+    ProofCollectorOrchestrator, ProofCollectorState, ProofCollectorTargetState,
 };
 
 mod proof_dispatcher;

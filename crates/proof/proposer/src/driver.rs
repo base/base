@@ -247,9 +247,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig, ProofDispatcher,
-        ProofDispatcherConfig, ProofRecovery, ProofRecoveryConfig, ProofSubmitter,
-        ProofSubmitterConfig,
+        ProofCollectorOrchestrator, ProofDispatcher, ProofDispatcherConfig, ProofRecovery,
+        ProofRecoveryConfig, ProofSubmitter, ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
@@ -260,7 +259,7 @@ mod tests {
     fn test_pipeline_handle(
         global_cancel: CancellationToken,
     ) -> PipelineHandle<MockL1, MockL2, MockRollupClient> {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
@@ -290,8 +289,6 @@ mod tests {
             ..Default::default()
         };
 
-        let proof_collector =
-            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup));
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::clone(&l1),
@@ -333,15 +330,13 @@ mod tests {
             factory,
         ));
         let proof_collector_orchestrator = ProofCollectorOrchestrator::new(
-            proof_collector,
+            Arc::clone(&proof_requester),
             proof_dispatcher.clone(),
             proof_submitter,
             Arc::clone(&proof_recovery),
-            ProofCollectorRuntimeConfig {
-                block_interval: config.block_interval,
-                max_retries: config.max_retries,
-                submit_timeout: config.submit_timeout,
-            },
+            config.block_interval,
+            config.max_retries,
+            config.submit_timeout,
         );
         let pipeline = ProvingPipeline::new(
             config,

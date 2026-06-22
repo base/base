@@ -59,6 +59,17 @@ pub enum ProofDispatchAttempt {
     DispatchFailed(ProposerError),
 }
 
+impl ProofDispatchAttempt {
+    /// Returns the metrics outcome label for this dispatch attempt.
+    pub const fn metric_label(&self) -> &'static str {
+        match self {
+            Self::Accepted(_) => Metrics::DISPATCH_OUTCOME_ACCEPTED,
+            Self::BuildFailed(_) => Metrics::DISPATCH_OUTCOME_BUILD_FAILED,
+            Self::DispatchFailed(_) => Metrics::DISPATCH_OUTCOME_FAILED,
+        }
+    }
+}
+
 /// Builds and dispatches proposer TEE proof requests.
 ///
 /// This type intentionally holds only shared clients and static config. Mutable
@@ -342,7 +353,10 @@ where
         max_retries: u32,
         count_dispatch_failure: bool,
     ) -> ProofDispatchOutcome {
-        match self.dispatch_for(target_block, recovered, claimed_l2_output_root).await {
+        let dispatch = self.dispatch_for(target_block, recovered, claimed_l2_output_root).await;
+        Metrics::proof_dispatch_total(dispatch.metric_label()).increment(1);
+
+        match dispatch {
             ProofDispatchAttempt::Accepted(session_id) => {
                 info!(
                     target_block,
@@ -350,7 +364,6 @@ where
                     from_block = recovered.l2_block_number,
                     "Proof request accepted by prover service"
                 );
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
                 ProofDispatchOutcome::Accepted
             }
             ProofDispatchAttempt::BuildFailed(error) => {
@@ -359,11 +372,9 @@ where
                     error = %error,
                     "Failed to build proof request, will retry next iteration"
                 );
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
                 ProofDispatchOutcome::Skipped
             }
             ProofDispatchAttempt::DispatchFailed(error) => {
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
                 if count_dispatch_failure {
                     if state.handle_proof_failure(target_block, error, max_retries) {
                         ProofDispatchOutcome::Skipped
@@ -559,7 +570,7 @@ mod tests {
     fn dispatcher_for_requester(
         requester: Arc<dyn ProofRequesterProvider>,
     ) -> ProofDispatcher<MockL1, MockL2, MockRollupClient> {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() });
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
