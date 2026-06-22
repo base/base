@@ -409,7 +409,7 @@ where
                                     error = %error,
                                     "Failed to build proof request for root retry"
                                 );
-                                break true;
+                                break false;
                             }
                             ProofDispatchAttempt::DispatchFailed(error) => {
                                 warn!(
@@ -417,7 +417,7 @@ where
                                     error = %error,
                                     "Immediate re-dispatch failed after failed proof session"
                                 );
-                                break true;
+                                break false;
                             }
                         }
                     }
@@ -606,7 +606,6 @@ where
                 if state.handle_proof_failure(target_block, error, self.max_retries, cache) {
                     false
                 } else {
-                    let _ = state.target.take_if(|(block, _)| *block == target_block);
                     true
                 }
             }
@@ -960,7 +959,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn root_retry_build_failure_restarts_without_exhausting_retry_budget() {
+    async fn root_retry_build_failure_waits_with_retry_state() {
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
         let orchestrator = make_orchestrator(OrchestratorParts {
@@ -977,7 +976,32 @@ mod tests {
         let result =
             orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
 
-        assert!(result);
+        assert!(!result);
+        let target = state.target(target_block).expect("target state");
+        assert_eq!(target.retry_count, 1);
+        assert!(cache.is_some());
+    }
+
+    #[tokio::test]
+    async fn root_retry_dispatch_failure_waits_with_retry_state() {
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(target_block as u8);
+        let proof_requester = failed_session_requester(claimed_root);
+        proof_requester.reject_prove.store(true, Ordering::SeqCst);
+        let orchestrator = make_orchestrator(OrchestratorParts {
+            proof_requester,
+            rollup_client: rollup_client(target_block, Some(claimed_root)),
+            max_retries: 2,
+            ..Default::default()
+        });
+        let mut state = ProofCollectorState::default();
+        let mut cache = cache();
+        let cancel = CancellationToken::new();
+
+        let result =
+            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+
+        assert!(!result);
         let target = state.target(target_block).expect("target state");
         assert_eq!(target.retry_count, 1);
         assert!(cache.is_some());
