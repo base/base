@@ -35,9 +35,9 @@ pub struct ProofCollectorState {
 /// Collector retry state for a single target block.
 #[derive(Debug, Default)]
 pub struct ProofCollectorTargetState {
-    /// Proof/dispatch retry count.
+    /// Proof polling and dispatch transport retry count.
     pub retry_count: u32,
-    /// Discard-specific retry count.
+    /// Accepted discard-specific proof retry count.
     pub discard_retry_count: u32,
     /// Active retry-specific prover-service session.
     pub retry_session: Option<String>,
@@ -71,6 +71,7 @@ enum TargetPoll {
     Ready { session_id: String, proof: ProofResult },
     Failed { session_id: String, error: ProposerError },
     Pending,
+    Transient,
     NotFound,
 }
 
@@ -87,28 +88,25 @@ impl ProofCollectorState {
         Metrics::errors_total(error.metric_label()).increment(1);
         Metrics::proof_retries_total().increment(1);
 
-        let state = self.target_for(target);
-        state.retry_count += 1;
-        if state.retry_count >= max_retries {
+        let attempts = {
+            let state = self.target_for(target);
+            state.retry_count += 1;
+            state.retry_count
+        };
+        if attempts >= max_retries {
             error!(
                 target_block = target,
-                attempts = state.retry_count,
+                attempts,
                 error = %error,
                 "Proof failed after max retries, dropping cached recovery"
             );
-            state.retry_count = 0;
-            if state.discard_retry_count == 0
-                && state.retry_session.is_none()
-                && state.pending_discard_root.is_none()
-            {
-                self.target = None;
-            }
+            let _ = self.target.take_if(|(block, _)| *block == target);
             *cache = None;
             false
         } else {
             warn!(
                 target_block = target,
-                attempt = state.retry_count,
+                attempt = attempts,
                 error = %error,
                 "Proof failed, re-dispatching"
             );
@@ -181,13 +179,13 @@ where
                 return TargetPoll::NotFound;
             }
             Err(e) => {
-                debug!(
+                warn!(
                     target_block,
                     session_id = %session_id,
                     error = %e,
                     "Transient failure polling prover service",
                 );
-                return TargetPoll::Pending;
+                return TargetPoll::Transient;
             }
         };
 
@@ -336,7 +334,7 @@ where
                         }
                     }
                 }
-                TargetPoll::Pending => break false,
+                TargetPoll::Pending | TargetPoll::Transient => break false,
                 TargetPoll::NotFound => {
                     if state
                         .target(target_block)
@@ -567,6 +565,7 @@ where
         }
 
         let attempt = current_attempt + 1;
+        // Keep the root before dispatch so restart can retry a failed discard dispatch.
         state.target_for(target_block).pending_discard_root = Some(claimed_l2_output_root);
 
         let dispatch = self
@@ -1052,6 +1051,46 @@ mod tests {
             ..Default::default()
         });
         let mut state = ProofCollectorState::default();
+        let mut cache = cache();
+        let cancel = CancellationToken::new();
+
+        let result =
+            orchestrator.tick(&mut state, &mut cache, recovered(100), target_block, &cancel).await;
+
+        assert!(result);
+        assert!(cache.is_none());
+        assert!(state.target.is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_discard_retry_session_exhaustion_clears_target() {
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(target_block as u8);
+        let request = proof_request(target_block, claimed_root, 100, 1000);
+        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(&request, 1);
+        let requester = Arc::new(MockProofRequester::default());
+        requester
+            .failed_sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.clone(), "simulated proof failure".to_owned());
+        let orchestrator = make_orchestrator(OrchestratorParts {
+            proof_requester: requester,
+            rollup_client: rollup_client(target_block, Some(claimed_root)),
+            max_retries: 1,
+            ..Default::default()
+        });
+        let mut state = ProofCollectorState {
+            target: Some((
+                target_block,
+                ProofCollectorTargetState {
+                    retry_session: Some(session_id),
+                    discard_retry_count: 1,
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
         let mut cache = cache();
         let cancel = CancellationToken::new();
 
