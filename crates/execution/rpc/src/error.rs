@@ -6,6 +6,8 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
+use base_common_chains::Upgrades;
+use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_common_evm::{BaseHaltReason, BaseTransactionError};
 use base_execution_evm::BaseBlockExecutionError;
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
@@ -76,13 +78,14 @@ pub enum BaseInvalidTransactionError {
     #[error("missing enveloped transaction bytes")]
     MissingEnvelopedTx,
     /// An EIP-8130 (account-abstraction) transaction was submitted via
-    /// `eth_sendRawTransaction` and rejected at the RPC ingress boundary.
+    /// `eth_sendRawTransaction` before the Cobalt upgrade is active and rejected
+    /// at the RPC ingress boundary.
     ///
     /// The transaction type byte (`0x7B`) is recognised by the consensus layer for
-    /// decoding/serialization purposes, but no validation, mempool admission, or
-    /// execution path exists yet. The rejection is unconditional (not gated on any
-    /// fork activation) and is mirrored by the txpool validator so EIP-8130
-    /// transactions are also dropped if they arrive over devp2p.
+    /// decoding/serialization purposes, but EIP-8130 is only admissible once Cobalt
+    /// is active (see [`BaseInvalidTransactionError::check_eip8130_rpc_admission`]).
+    /// This mirrors the txpool validator's Cobalt gate so EIP-8130 transactions are
+    /// rejected consistently whether they arrive over RPC or devp2p.
     #[error("{}", base_common_consensus::EIP8130_REJECTION_MSG)]
     Eip8130NotAccepted,
     /// An EIP-8130 (account-abstraction) transaction was rejected during its
@@ -90,6 +93,31 @@ pub enum BaseInvalidTransactionError {
     /// account-change apply). The string carries the underlying rejection reason.
     #[error("EIP-8130 transaction rejected: {0}")]
     Eip8130Rejected(String),
+}
+
+impl BaseInvalidTransactionError {
+    /// Cobalt-gates EIP-8130 (account-abstraction) admission at the RPC ingress
+    /// boundary.
+    ///
+    /// Returns `Err(`[`Eip8130NotAccepted`]`)` for a type `0x7B` transaction
+    /// submitted before Cobalt is active at `head_timestamp`, and `Ok(())`
+    /// otherwise (including for every non-EIP-8130 transaction type, which is
+    /// never gated). This mirrors the txpool validator's Cobalt gate so the two
+    /// ingress surfaces accept and reject EIP-8130 transactions identically.
+    ///
+    /// [`Eip8130NotAccepted`]: BaseInvalidTransactionError::Eip8130NotAccepted
+    pub fn check_eip8130_rpc_admission(
+        tx_type: u8,
+        chain_spec: &impl Upgrades,
+        head_timestamp: u64,
+    ) -> Result<(), Self> {
+        if tx_type == EIP8130_TX_TYPE_ID
+            && !chain_spec.is_cobalt_active_at_timestamp(head_timestamp)
+        {
+            return Err(Self::Eip8130NotAccepted);
+        }
+        Ok(())
+    }
 }
 
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -209,5 +237,50 @@ impl From<BlockError> for BaseEthApiError {
 impl From<Infallible> for BaseEthApiError {
     fn from(value: Infallible) -> Self {
         match value {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_execution_chainspec::BaseChainSpecBuilder;
+
+    use super::*;
+
+    const HEAD_TIMESTAMP: u64 = 1_000;
+
+    #[test]
+    fn rejects_eip8130_before_cobalt() {
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().isthmus_activated().build();
+        let err = BaseInvalidTransactionError::check_eip8130_rpc_admission(
+            EIP8130_TX_TYPE_ID,
+            &chain_spec,
+            HEAD_TIMESTAMP,
+        )
+        .expect_err("EIP-8130 must be rejected before Cobalt");
+        assert!(matches!(err, BaseInvalidTransactionError::Eip8130NotAccepted));
+    }
+
+    #[test]
+    fn accepts_eip8130_after_cobalt() {
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
+        assert!(
+            BaseInvalidTransactionError::check_eip8130_rpc_admission(
+                EIP8130_TX_TYPE_ID,
+                &chain_spec,
+                HEAD_TIMESTAMP,
+            )
+            .is_ok(),
+            "EIP-8130 must be admitted once Cobalt is active"
+        );
+    }
+
+    #[test]
+    fn never_gates_non_eip8130_transactions() {
+        // Legacy (0x00) transactions are admitted even before Cobalt is active.
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().isthmus_activated().build();
+        assert!(
+            BaseInvalidTransactionError::check_eip8130_rpc_admission(0, &chain_spec, HEAD_TIMESTAMP)
+                .is_ok()
+        );
     }
 }

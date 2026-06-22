@@ -310,15 +310,16 @@ mod tests {
     use alloc::{string::ToString, vec};
 
     use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
-    use alloy_eips::eip2718::WithEncoded;
+    use alloy_eips::eip2718::{Encodable2718, WithEncoded};
     use alloy_evm::{
         EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
     };
     use alloy_hardforks::ForkCondition;
-    use alloy_primitives::{Address, Signature, U256, uint};
+    use alloy_primitives::{Address, B256, Bytes, Signature, U256, address, keccak256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
-    use base_common_consensus::{BaseTxEnvelope, Predeploys};
+    use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, Eip8130Signed, Predeploys, TxEip8130};
     use base_common_genesis::BaseUpgrade;
+    use k256::ecdsa::SigningKey;
     use revm::{
         Context,
         context::BlockEnv,
@@ -358,6 +359,101 @@ mod tests {
         // make sure we can use both `WithEncoded` and transaction itself as inputs.
         let _ = executor.execute_transaction(&tx);
         let _ = executor.execute_transaction(&tx_with_encoded);
+    }
+
+    /// Derives the EOA address controlled by a k256 signing key.
+    fn eoa_address(key: &SigningKey) -> Address {
+        let point = key.verifying_key().to_encoded_point(false);
+        Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
+    }
+
+    /// 65-byte `r || s || v` signature (`v` in `{27, 28}`) over `hash`.
+    fn eoa_sig(key: &SigningKey, hash: B256) -> Bytes {
+        let (signature, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
+        let mut out = vec![0u8; 65];
+        out[..64].copy_from_slice(&signature.to_bytes());
+        out[64] = recid.to_byte() + 27;
+        Bytes::from(out)
+    }
+
+    /// End-to-end inclusion: an EOA self-pay EIP-8130 (account-abstraction)
+    /// transaction executed through [`BaseBlockExecutor`] — the same path used by
+    /// both payload building and block import — on a Cobalt-active spec. Asserts
+    /// the transaction is included with a successful, EIP-8130-typed receipt.
+    #[test]
+    fn eip8130_transaction_is_included_with_typed_receipt() {
+        const CHAIN_ID: u64 = 8453;
+        const HEAD_TIMESTAMP: u64 = 1_000;
+        const BASE_FEE: u64 = 1_000_000_000;
+        const GAS_LIMIT: u64 = 30_000_000;
+        const BENEFICIARY: Address = address!("0x00000000000000000000000000000000000000bb");
+
+        let key = SigningKey::from_slice(&[0x55; 32]).unwrap();
+        let sender = eoa_address(&key);
+
+        // EOA self-pay (no explicit sender/payer): the sender both authorizes and
+        // funds the transaction, with no account changes and no calls.
+        let tx = TxEip8130 {
+            chain_id: CHAIN_ID,
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 5_000_000_000,
+            gas_limit: 1_000_000,
+            account_changes: vec![],
+            calls: vec![],
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signed = Eip8130Signed::new(tx.clone(), eoa_sig(&key, tx.sender_signature_hash()), Bytes::new());
+        let recovered = Recovered::new_unchecked(BaseTxEnvelope::Eip8130(signed), sender);
+        let tx_with_encoded = WithEncoded::new(recovered.encoded_2718().into(), recovered);
+
+        // Fund the sender for the worst-case fee charge.
+        let mut db = revm::database::State::builder().with_database(InMemoryDB::default()).build();
+        db.insert_account(
+            sender,
+            AccountInfo { balance: U256::from(10u64).pow(U256::from(18u64)), ..Default::default() },
+        );
+
+        // Cobalt active so EIP-8130 routes through the enshrined executor.
+        let upgrades = ChainUpgrades::new(
+            BaseUpgrade::mainnet()
+                .into_iter()
+                .chain(vec![(BaseUpgrade::Cobalt, ForkCondition::Timestamp(0))]),
+        );
+        let receipt_builder = AlloyReceiptBuilder::default();
+
+        let ctx = Context::base()
+            .with_db(&mut db)
+            .with_block(BlockEnv {
+                number: U256::from(1u64),
+                timestamp: U256::from(HEAD_TIMESTAMP),
+                basefee: BASE_FEE,
+                gas_limit: GAS_LIMIT,
+                beneficiary: BENEFICIARY,
+                ..Default::default()
+            })
+            .modify_cfg_chained(|cfg| {
+                cfg.spec = BaseSpecId::new(BaseUpgrade::Cobalt);
+                cfg.chain_id = CHAIN_ID;
+            });
+        let evm = ctx.build_with_inspector(NoOpInspector {});
+        let mut executor =
+            BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default(), &upgrades, &receipt_builder);
+
+        executor
+            .execute_transaction(&tx_with_encoded)
+            .expect("the EIP-8130 transaction should be included in the block");
+
+        let receipt = executor.receipts().last().expect("a receipt was produced");
+        assert!(
+            matches!(receipt, BaseReceiptEnvelope::Eip8130(_)),
+            "the receipt must be typed as EIP-8130, got {receipt:?}",
+        );
+        assert!(receipt.status(), "the included EIP-8130 transaction should have succeeded");
     }
 
     fn prepare_jovian_db(da_footprint_gas_scalar: u16) -> revm::database::State<InMemoryDB> {

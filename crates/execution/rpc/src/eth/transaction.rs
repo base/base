@@ -6,12 +6,14 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::Typed2718;
+use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
+use base_common_chains::Upgrades;
 use base_common_consensus::{
-    BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
+    BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt,
 };
+use reth_chainspec::ChainSpecProvider;
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{Recovered, SignedTransaction, SignerRecoverable, WithEncoded};
@@ -21,7 +23,9 @@ use reth_rpc_eth_api::{
     helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
-use reth_storage_api::{ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError};
+use reth_storage_api::{
+    BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError,
+};
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
 };
@@ -31,7 +35,7 @@ use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerC
 
 impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
-    N: RpcNodeCore,
+    N: RpcNodeCore<Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>>,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
@@ -50,9 +54,20 @@ where
     ) -> Result<B256, Self::Error> {
         let (tx, recovered) = tx.split();
 
-        if recovered.ty() == EIP8130_TX_TYPE_ID {
-            return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
-        }
+        // Cobalt-gate EIP-8130 (account-abstraction) admission so the RPC ingress
+        // and the txpool validator agree: rejected before Cobalt, accepted once
+        // active. The block-of-head timestamp drives the gate.
+        let head_timestamp = self
+            .provider()
+            .latest_header()
+            .map_err(Self::Error::from_eth_err)?
+            .map(|header| header.timestamp())
+            .unwrap_or_default();
+        BaseInvalidTransactionError::check_eip8130_rpc_admission(
+            recovered.ty(),
+            self.provider().chain_spec().as_ref(),
+            head_timestamp,
+        )?;
 
         // broadcast raw transaction to subscribers if there is any.
         self.eth_api().broadcast_raw_transaction(tx.clone());
