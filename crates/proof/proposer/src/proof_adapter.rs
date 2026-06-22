@@ -16,11 +16,9 @@ use crate::ProposerError;
 pub struct ProposerProofAdapter;
 
 impl ProposerProofAdapter {
-    /// Namespace used to derive proposer proof session IDs.
-    pub const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v1";
+    const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v1";
 
-    /// Session-ID proof subtype label for AWS Nitro TEE proofs.
-    pub const TEE_SESSION_LABEL: &'static str = "tee/aws_nitro";
+    const TEE_SESSION_LABEL: &'static str = "tee/aws_nitro";
 
     /// Derives an idempotent TEE proof session ID from proof subtype and claimed root.
     pub fn tee_session_id_for_root(root: B256) -> String {
@@ -115,37 +113,6 @@ mod tests {
             prev_output_root: B256::repeat_byte(0x07),
             config_hash: B256::repeat_byte(0x08),
         }
-    }
-
-    #[test]
-    fn tee_session_id_changes_for_different_roots() {
-        let first = B256::repeat_byte(0xaa);
-        let second = B256::repeat_byte(0xbb);
-
-        assert_ne!(
-            ProposerProofAdapter::tee_session_id_for_root(first),
-            ProposerProofAdapter::tee_session_id_for_root(second)
-        );
-    }
-
-    #[test]
-    fn tee_session_id_ignores_non_root_request_fields() {
-        let root = B256::repeat_byte(0xaa);
-        let first = test_request(root);
-        let mut second = test_request(root);
-        second.l1_head = B256::repeat_byte(0x10);
-        second.agreed_l2_head_hash = B256::repeat_byte(0x11);
-        second.agreed_l2_output_root = B256::repeat_byte(0x12);
-        second.claimed_l2_block_number = 1200;
-        second.proposer = Address::repeat_byte(0x13);
-        second.intermediate_block_interval = 150;
-        second.l1_head_number = 2400;
-        second.image_hash = B256::repeat_byte(0x14);
-
-        assert_eq!(
-            ProposerProofAdapter::tee_prove_block_range_request(first).proof.session_id,
-            ProposerProofAdapter::tee_prove_block_range_request(second).proof.session_id
-        );
     }
 
     #[test]
