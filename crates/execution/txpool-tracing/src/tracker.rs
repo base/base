@@ -9,7 +9,7 @@ use std::{
 use alloy_primitives::{B256, TxHash};
 use base_flashblocks::PendingBlocks;
 use base_observability_events::{
-    TransactionEventProducer, TransactionEventType, TransactionEventWriter, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use chrono::Local;
 use lru::LruCache;
@@ -35,8 +35,6 @@ pub struct Tracker {
     nonce_summaries: LruCache<NonceSlot, NonceSummary>,
     /// Enable `info` logs for transaction tracing.
     enable_logs: bool,
-    /// Optional durable transaction event journal writer.
-    event_writer: Option<TransactionEventWriter>,
     /// Optional node role label included in journal event data.
     node_role: Option<String>,
 }
@@ -54,15 +52,11 @@ impl Tracker {
 
     /// Create a new tracker.
     pub fn new(enable_logs: bool) -> Self {
-        Self::new_with_event_writer(enable_logs, None, None)
+        Self::new_with_node_role(enable_logs, None)
     }
 
-    /// Create a new tracker with an optional durable transaction event journal writer.
-    pub fn new_with_event_writer(
-        enable_logs: bool,
-        event_writer: Option<TransactionEventWriter>,
-        node_role: Option<String>,
-    ) -> Self {
+    /// Create a new tracker with an optional node role label.
+    pub fn new_with_node_role(enable_logs: bool, node_role: Option<String>) -> Self {
         let cache_size = NonZeroUsize::new(Self::MAX_SIZE).expect("non zero");
         Self {
             txs: LruCache::new(cache_size),
@@ -70,7 +64,6 @@ impl Tracker {
             tx_nonce_slots: LruCache::new(cache_size),
             nonce_summaries: LruCache::new(cache_size),
             enable_logs,
-            event_writer,
             node_role,
         }
     }
@@ -477,10 +470,6 @@ impl Tracker {
         event_index: usize,
         event_data: TxpoolEventData,
     ) {
-        let Some(writer) = &self.event_writer else {
-            return;
-        };
-
         let event_type = transaction_event_type(txpool_event);
         let mut data = Map::from_iter([
             ("event_source".to_string(), json!(Self::EVENT_SOURCE)),
@@ -521,7 +510,6 @@ impl Tracker {
         }
 
         let _ = transaction_event!(
-            writer: Some(writer),
             producer: TransactionEventProducer::BaseRethNode,
             event_type: event_type,
             tx_hash: tx_hash,
@@ -587,30 +575,9 @@ mod tests {
     use alloy_primitives::Address;
     use base_flashblocks::FlashblocksAPI;
     use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
-    use base_observability_events::{
-        DEFAULT_QUEUE_CAPACITY, TransactionEventProducer, TransactionEventWriterConfig,
-    };
     use base_test_utils::Account;
-    use serde_json::Value;
-    use tokio::time;
 
     use super::*;
-
-    fn writer_config(
-        enabled: bool,
-        file_path: std::path::PathBuf,
-        network: &str,
-    ) -> TransactionEventWriterConfig {
-        TransactionEventWriterConfig {
-            enabled,
-            file_path,
-            queue_capacity: DEFAULT_QUEUE_CAPACITY,
-            flush_interval: Duration::from_millis(10),
-            required: true,
-            producer: TransactionEventProducer::BaseRethNode,
-            network: network.to_string(),
-        }
-    }
 
     #[test]
     fn test_transaction_inserted_pending() {
@@ -648,50 +615,6 @@ mod tests {
             TransactionEventType::QueuedToPending
         );
         assert_eq!(transaction_event_type(TxEvent::Overflowed), TransactionEventType::Overflowed);
-    }
-
-    #[tokio::test]
-    async fn transaction_event_journal_disabled_does_not_create_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("transaction-events.jsonl");
-        let writer =
-            TransactionEventWriter::disabled(writer_config(false, path.clone(), "base-mainnet"));
-        let mut tracker =
-            Tracker::new_with_event_writer(false, Some(writer), Some("mempool".into()));
-
-        tracker.transaction_inserted(TxHash::random(), TxEvent::Pending);
-        time::sleep(Duration::from_millis(20)).await;
-
-        assert!(!path.exists());
-    }
-
-    #[tokio::test]
-    async fn transaction_event_journal_enabled_writes_pending_event() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("transaction-events.jsonl");
-        let writer =
-            TransactionEventWriter::from_config(writer_config(true, path.clone(), "base-mainnet"))
-                .await
-                .unwrap();
-        let mut tracker =
-            Tracker::new_with_event_writer(false, Some(writer.clone()), Some("mempool".into()));
-        let tx_hash = TxHash::repeat_byte(0x42);
-
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        time::sleep(Duration::from_millis(50)).await;
-
-        let contents = std::fs::read_to_string(path).unwrap();
-        let line = contents.lines().next().expect("journal should contain one event");
-        let value: Value = serde_json::from_str(line).unwrap();
-
-        assert_eq!(value["schema_version"], "transaction-event/v1");
-        assert_eq!(value["producer"], "base-reth-node");
-        assert_eq!(value["event_type"], "TXPOOL_PENDING");
-        assert_eq!(value["network"], "base-mainnet");
-        assert_eq!(value["tx_hash"], format!("{tx_hash:#x}"));
-        assert_eq!(value["data"]["event_source"], Tracker::EVENT_SOURCE);
-        assert_eq!(value["data"]["node_role"], "mempool");
-        assert_eq!(value["data"]["pool"], "pending");
     }
 
     #[test]

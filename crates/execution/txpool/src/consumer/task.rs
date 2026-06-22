@@ -112,7 +112,6 @@ where
             ("resend_after_ms".to_string(), json!(self.config.resend_after.as_millis() as u64)),
         ]);
         let _ = transaction_event!(
-            writer: self.config.transaction_event_writer.as_ref(),
             producer: TransactionEventProducer::BaseRethNode,
             event_type: event_type,
             tx_hash: tx_hash,

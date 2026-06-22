@@ -3,7 +3,6 @@
 use std::{sync::Arc, time::Instant};
 
 use base_flashblocks::{FlashblocksAPI, PendingBlocks};
-use base_observability_events::TransactionEventWriter;
 use futures::StreamExt;
 use reth_node_api::NodePrimitives;
 use reth_provider::CanonStateNotification;
@@ -23,7 +22,6 @@ pub async fn tracex_subscription<N, Pool, FB>(
     flashblocks_api: Arc<FB>,
     pool: Pool,
     enable_logs: bool,
-    event_writer: Option<TransactionEventWriter>,
     node_role: Option<String>,
 ) where
     N: NodePrimitives,
@@ -31,7 +29,7 @@ pub async fn tracex_subscription<N, Pool, FB>(
     FB: FlashblocksAPI + 'static,
 {
     debug!(target: "tracex", "Starting transaction tracking subscription");
-    let mut tracker = Tracker::new_with_event_writer(enable_logs, event_writer, node_role);
+    let mut tracker = Tracker::new_with_node_role(enable_logs, node_role);
 
     // Subscribe to events from the mempool.
     let mut all_events_stream = pool.all_transactions_event_listener();

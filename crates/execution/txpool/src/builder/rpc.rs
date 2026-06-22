@@ -5,7 +5,7 @@ use alloy_eips::Decodable2718;
 use alloy_primitives::TxHash;
 use base_common_consensus::BaseTransactionSigned;
 use base_observability_events::{
-    TransactionEventProducer, TransactionEventType, TransactionEventWriter, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use jsonrpsee::{
     core::RpcResult,
@@ -41,21 +41,12 @@ pub trait BuilderApi {
 #[derive(Debug)]
 pub struct BuilderApiImpl<P> {
     pool: P,
-    transaction_event_writer: Option<TransactionEventWriter>,
 }
 
 impl<P> BuilderApiImpl<P> {
     /// Creates a new handler backed by the given transaction pool.
     pub const fn new(pool: P) -> Self {
-        Self { pool, transaction_event_writer: None }
-    }
-
-    /// Creates a new handler with a durable transaction event writer.
-    pub const fn new_with_transaction_event_writer(
-        pool: P,
-        transaction_event_writer: Option<TransactionEventWriter>,
-    ) -> Self {
-        Self { pool, transaction_event_writer }
+        Self { pool }
     }
 }
 
@@ -140,7 +131,6 @@ impl<P> BuilderApiImpl<P> {
             .or_insert_with(|| json!("base_insertValidatedTransaction"));
 
         let _ = transaction_event!(
-            writer: self.transaction_event_writer.as_ref(),
             producer: TransactionEventProducer::BaseBuilder,
             event_type: event_type,
             maybe_tx_hash: tx_hash,

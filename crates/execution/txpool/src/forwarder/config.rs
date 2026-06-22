@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use base_observability_events::TransactionEventWriter;
 use url::Url;
 
 /// Configuration for the transaction forwarder.
@@ -24,8 +23,6 @@ pub struct ForwarderConfig {
     pub retry_backoff: Duration,
     /// Per-request timeout for the HTTP client.
     pub request_timeout: Duration,
-    /// Optional durable transaction event journal writer.
-    pub transaction_event_writer: Option<TransactionEventWriter>,
 }
 
 impl Default for ForwarderConfig {
@@ -37,7 +34,6 @@ impl Default for ForwarderConfig {
             max_retries: 3,
             retry_backoff: Duration::from_millis(100),
             request_timeout: Duration::from_secs(1),
-            transaction_event_writer: None,
         }
     }
 }
@@ -76,12 +72,6 @@ impl ForwarderConfig {
     /// Sets the per-request HTTP timeout.
     pub const fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
-        self
-    }
-
-    /// Sets the transaction event writer.
-    pub fn with_transaction_event_writer(mut self, writer: Option<TransactionEventWriter>) -> Self {
-        self.transaction_event_writer = writer;
         self
     }
 }

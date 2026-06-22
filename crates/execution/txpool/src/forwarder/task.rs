@@ -403,7 +403,6 @@ where
         let attempt_id = data.get("attempt").cloned().unwrap_or(serde_json::Value::Null);
 
         let _ = transaction_event!(
-            writer: self.config.transaction_event_writer.as_ref(),
             producer: TransactionEventProducer::BaseRethNode,
             event_type: event_type,
             maybe_tx_hash: tx_hash,
