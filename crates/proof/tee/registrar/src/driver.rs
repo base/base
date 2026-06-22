@@ -392,8 +392,10 @@ mod tests {
         keys: HashMap<Url, Vec<Vec<u8>>>,
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
-        requested_nonces: Arc<Mutex<Vec<Option<Vec<Vec<u8>>>>>>,
+        requested_nonces: RequestedNonces,
     }
+
+    type RequestedNonces = Arc<Mutex<Vec<Option<Vec<Vec<u8>>>>>>;
 
     impl MockEnclaveEndpointClient {
         fn from_keys(entries: &[(&str, &[u8; 32])]) -> Self {
