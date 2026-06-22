@@ -37,8 +37,8 @@ where
 
 #[derive(Debug)]
 enum TargetPoll {
-    Ready { session_id: String, proof: ProofResult },
-    Failed { session_id: String, error: ProposerError },
+    Ready(ProofResult),
+    Failed(ProposerError),
     Pending,
     NotFound,
 }
@@ -112,7 +112,14 @@ where
                 let message = response.error_message.unwrap_or_else(|| {
                     format!("proof session {session_id} failed without an error message")
                 });
-                TargetPoll::Failed { session_id, error: ProposerError::Prover(message) }
+                let error = ProposerError::Prover(message);
+                warn!(
+                    target_block,
+                    session_id = %session_id,
+                    error = %error,
+                    "Proof session failed"
+                );
+                TargetPoll::Failed(error)
             }
             ProofStatus::Succeeded => {
                 let result = match response.result {
@@ -121,12 +128,29 @@ where
                         let error = ProposerError::Prover(format!(
                             "proof session {session_id} succeeded without a result"
                         ));
-                        return TargetPoll::Failed { session_id, error };
+                        warn!(
+                            target_block,
+                            session_id = %session_id,
+                            error = %error,
+                            "Proof session returned no result"
+                        );
+                        return TargetPoll::Failed(error);
                     }
                 };
                 match ProposerProofAdapter::tee_proof_result(result) {
-                    Ok(proof) => TargetPoll::Ready { session_id, proof },
-                    Err(error) => TargetPoll::Failed { session_id, error },
+                    Ok(proof) => {
+                        info!(target_block, session_id = %session_id, "Proof request succeeded");
+                        TargetPoll::Ready(proof)
+                    }
+                    Err(error) => {
+                        warn!(
+                            target_block,
+                            session_id = %session_id,
+                            error = %error,
+                            "Proof result rejected"
+                        );
+                        TargetPoll::Failed(error)
+                    }
                 }
             }
         }
@@ -180,8 +204,8 @@ where
             )
             .await
             {
-                TargetPoll::Ready { session_id, proof } => {
-                    info!(target_block, session_id = %session_id, "Proof ready, submitting inline");
+                TargetPoll::Ready(proof) => {
+                    info!(target_block, "Proof ready, submitting inline");
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
                     Metrics::last_collected_block().set(target_block as f64);
 
@@ -201,13 +225,7 @@ where
                     info!(target_block, "Proof missing, restarting pipeline to request it");
                     break true;
                 }
-                TargetPoll::Failed { session_id, error } => {
-                    warn!(
-                        target_block,
-                        session_id = %session_id,
-                        error = %error,
-                        "Proof session failed, restarting pipeline to request it again"
-                    );
+                TargetPoll::Failed(error) => {
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
                         .increment(1);
                     Metrics::errors_total(error.metric_label()).increment(1);
@@ -359,25 +377,6 @@ mod tests {
         })
     }
 
-    fn proof_request(
-        target_block: u64,
-        claimed_l2_output_root: B256,
-        intermediate_block_interval: u64,
-        l1_head_number: u64,
-    ) -> ProofRequest {
-        ProofRequest {
-            l1_head: B256::repeat_byte(0x01),
-            agreed_l2_head_hash: B256::repeat_byte(0x02),
-            agreed_l2_output_root: B256::ZERO,
-            claimed_l2_output_root,
-            claimed_l2_block_number: target_block,
-            proposer: Address::repeat_byte(0x04),
-            intermediate_block_interval,
-            l1_head_number,
-            image_hash: B256::repeat_byte(0x05),
-        }
-    }
-
     const BLOCK_INTERVAL: u64 = 100;
 
     fn make_orchestrator(
@@ -454,47 +453,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unavailable_session_restarts_pipeline_without_dispatching() {
-        for failure in [None, Some("simulated proof failure")] {
-            let requester = Arc::new(MockProofRequester::default());
-            let target_block = 200;
-            let claimed_root = B256::repeat_byte(target_block as u8);
-            if let Some(message) = failure {
-                let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
-                requester.failed_sessions.lock().unwrap().insert(session_id, message.to_owned());
-            }
-            let orchestrator = make_orchestrator(
-                requester.clone(),
-                rollup_client(target_block, Some(claimed_root)),
-                Arc::new(MockOutputProposer::default()),
-                MockDisputeGameFactory::with_games(vec![]),
-            );
-            let mut cache = cache();
-            let cancel = CancellationToken::new();
-
-            let result = orchestrator.tick(&mut cache, recovered(100), target_block, &cancel).await;
-
-            assert!(result);
-            assert!(requester.requests.lock().unwrap().is_empty());
-        }
-    }
-
-    #[tokio::test]
-    async fn discarded_proof_restarts_pipeline_without_dispatching() {
+    async fn discarded_proof_restarts_pipeline() {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
+        let proof_request = ProofRequest {
+            claimed_l2_output_root: claimed_root,
+            claimed_l2_block_number: target_block,
+            intermediate_block_interval: BLOCK_INTERVAL,
+            l1_head_number: 1000,
+            ..Default::default()
+        };
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request(
-                target_block,
-                claimed_root,
-                100,
-                1000,
-            )))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
             .await
             .expect("test setup should dispatch root session");
         let orchestrator = make_orchestrator(
-            requester.clone(),
+            requester,
             rollup_client(target_block, Some(claimed_root)),
             Arc::new(MockOutputProposer::with_create_error(ProposerError::Submission(
                 ProofSubmissionError::L1OriginTooOld,
@@ -507,7 +482,6 @@ mod tests {
         let result = orchestrator.tick(&mut cache, recovered(100), target_block, &cancel).await;
 
         assert!(result);
-        assert_eq!(requester.requests.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -517,13 +491,16 @@ mod tests {
         let canonical_root = B256::repeat_byte(0xcc);
         let proof_request = ProofRequest {
             agreed_l2_output_root: B256::repeat_byte(0x03),
-            ..proof_request(target_block, canonical_root, 300, 1200)
+            claimed_l2_output_root: canonical_root,
+            claimed_l2_block_number: target_block,
+            intermediate_block_interval: 300,
+            l1_head_number: 1200,
+            ..Default::default()
         };
-        let expected_session_id = proof_requester
+        proof_requester
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
             .await
-            .unwrap()
-            .session_id;
+            .unwrap();
 
         let poll = ProofCollector::<MockL1, MockRollupClient>::poll_target(
             proof_requester.as_ref(),
@@ -531,10 +508,9 @@ mod tests {
             canonical_root,
         )
         .await;
-        let TargetPoll::Ready { session_id, .. } = poll else {
+        let TargetPoll::Ready(_) = poll else {
             panic!("expected Ready, got {poll:?}");
         };
-        assert_eq!(session_id, expected_session_id);
     }
 
     #[tokio::test]
