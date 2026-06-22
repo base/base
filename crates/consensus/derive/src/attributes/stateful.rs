@@ -171,6 +171,7 @@ where
             &sys_config,
             sequence_number,
             &l1_header,
+            l2_parent.block_info.timestamp,
             next_l2_time,
         )
         .map_err(|e| {

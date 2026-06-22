@@ -167,7 +167,7 @@ impl RecentTxScanner {
                 Batch::Single(sb) => sb.timestamp,
                 Batch::Span(sb) => sb.final_timestamp(),
             };
-            let relative = rollup_config.block_number_from_timestamp(last_timestamp);
+            let relative = rollup_config.block_number_lower_bound_from_timestamp(last_timestamp);
             let l2_block = rollup_config.genesis.l2.number + relative;
             *highest_l2 = Some(highest_l2.map_or(l2_block, |h| h.max(l2_block)));
         }

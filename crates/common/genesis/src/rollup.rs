@@ -170,6 +170,7 @@ macro_rules! rollup_fork_methods {
     ($(
         $active:ident,
         $first:ident,
+        $first_with_parent:ident,
         [$($timestamp:tt)+],
         $name:literal
         $(, implies $next:ident)?;
@@ -184,6 +185,15 @@ macro_rules! rollup_fork_methods {
             pub fn $first(&self, timestamp: u64) -> bool {
                 self.$active(timestamp)
                     && !self.$active(timestamp.saturating_sub(self.block_time))
+            }
+
+            #[doc = concat!(
+                "Returns true if the block at `timestamp` is the first ",
+                $name,
+                " block when compared against the actual parent timestamp.",
+            )]
+            pub fn $first_with_parent(&self, timestamp: u64, parent_timestamp: u64) -> bool {
+                self.$active(timestamp) && !self.$active(parent_timestamp)
             }
         )*
     };
@@ -251,74 +261,87 @@ impl RollupConfig {
     rollup_fork_methods! {
         is_regolith_active,
         is_first_regolith_block,
+        is_first_regolith_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Regolith)],
         "Regolith",
         implies is_canyon_active;
 
         is_canyon_active,
         is_first_canyon_block,
+        is_first_canyon_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Canyon)],
         "Canyon",
         implies is_delta_active;
 
         is_delta_active,
         is_first_delta_block,
+        is_first_delta_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Delta)],
         "Delta",
         implies is_ecotone_active;
 
         is_ecotone_active,
         is_first_ecotone_block,
+        is_first_ecotone_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Ecotone)],
         "Ecotone",
         implies is_fjord_active;
 
         is_fjord_active,
         is_first_fjord_block,
+        is_first_fjord_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Fjord)],
         "Fjord",
         implies is_granite_active;
 
         is_granite_active,
         is_first_granite_block,
+        is_first_granite_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Granite)],
         "Granite",
         implies is_holocene_active;
 
         is_holocene_active,
         is_first_holocene_block,
+        is_first_holocene_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Holocene)],
         "Holocene",
         implies is_isthmus_active;
 
         is_pectra_blob_schedule_active,
         is_first_pectra_blob_schedule_block,
+        is_first_pectra_blob_schedule_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)],
         "pectra blob schedule";
 
         is_isthmus_active,
         is_first_isthmus_block,
+        is_first_isthmus_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Isthmus)],
         "Isthmus",
         implies is_jovian_active;
 
         is_jovian_active,
         is_first_jovian_block,
+        is_first_jovian_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Jovian)],
         "Jovian";
 
         is_base_azul_active,
         is_first_base_azul_block,
+        is_first_base_azul_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Azul)],
         "Base Azul";
 
         is_beryl_active,
         is_first_beryl_block,
+        is_first_beryl_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Beryl)],
         "Beryl";
 
         is_cobalt_active,
         is_first_cobalt_block,
+        is_first_cobalt_block_with_parent,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt)],
         "Cobalt";
     }
@@ -349,12 +372,12 @@ impl RollupConfig {
             self.channel_timeout
         }
     }
-    /// Computes a block number from a timestamp, relative to the L2 genesis time and the block
-    /// time.
+    /// Computes the lower-bound block number for a timestamp, relative to the L2 genesis time and
+    /// the block time.
     ///
-    /// This function assumes that the timestamp is aligned with the block time, and uses floor
-    /// division in its computation.
-    pub const fn block_number_from_timestamp(&self, timestamp: u64) -> u64 {
+    /// This uses floor division, so multiple blocks can share the same seconds-denominated
+    /// timestamp while still mapping to the same lower bound.
+    pub const fn block_number_lower_bound_from_timestamp(&self, timestamp: u64) -> u64 {
         timestamp.saturating_sub(self.genesis.l2_time).saturating_div(self.block_time)
     }
 
@@ -426,6 +449,37 @@ impl RollupConfig {
         } else if self.is_first_beryl_block(timestamp) {
             tracing::info!(target: "upgrades", block_number, "Activating beryl upgrade");
         } else if self.is_first_cobalt_block(timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating cobalt upgrade");
+        }
+    }
+
+    /// Logs upgrade activation when the caller knows the actual parent timestamp.
+    pub fn log_upgrade_activation_with_parent_timestamp(
+        &self,
+        block_number: u64,
+        timestamp: u64,
+        parent_timestamp: u64,
+    ) {
+        if self.is_first_ecotone_block_with_parent(timestamp, parent_timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating ecotone upgrade");
+        } else if self.is_first_fjord_block_with_parent(timestamp, parent_timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating fjord upgrade");
+        } else if self.is_first_granite_block_with_parent(timestamp, parent_timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating granite upgrade");
+        } else if self.is_first_holocene_block_with_parent(timestamp, parent_timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating holocene upgrade");
+        } else if self.is_first_isthmus_block_with_parent(timestamp, parent_timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating isthmus upgrade");
+        } else if self.is_first_jovian_block_with_parent(timestamp, parent_timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
+        } else if self.is_first_base_azul_block_with_parent(timestamp, parent_timestamp) {
+            for line in Self::AZUL_ACTIVATION_BANNER.lines() {
+                tracing::info!(target: "upgrades", "{line}");
+            }
+            tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
+        } else if self.is_first_beryl_block_with_parent(timestamp, parent_timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating beryl upgrade");
+        } else if self.is_first_cobalt_block_with_parent(timestamp, parent_timestamp) {
             tracing::info!(target: "upgrades", block_number, "Activating cobalt upgrade");
         }
     }
@@ -569,6 +623,56 @@ mod tests {
         assert!(!cfg.is_first_cobalt_block(128));
         assert!(cfg.is_first_cobalt_block(130));
         assert!(!cfg.is_first_cobalt_block(132));
+    }
+
+    #[test]
+    fn test_is_first_fork_block_with_parent_timestamp() {
+        let cfg = RollupConfig {
+            upgrades: UpgradeConfig {
+                regolith_time: Some(10),
+                canyon_time: Some(20),
+                delta_time: Some(30),
+                ecotone_time: Some(40),
+                fjord_time: Some(50),
+                granite_time: Some(60),
+                holocene_time: Some(70),
+                pectra_blob_schedule_time: Some(80),
+                isthmus_time: Some(90),
+                jovian_time: Some(100),
+                base: BaseUpgradeConfig { azul: Some(110), beryl: Some(120), cobalt: Some(130) },
+            },
+            block_time: 2,
+            ..Default::default()
+        };
+
+        assert!(cfg.is_first_regolith_block_with_parent(10, 8));
+        assert!(cfg.is_first_canyon_block_with_parent(20, 18));
+        assert!(cfg.is_first_delta_block_with_parent(30, 28));
+        assert!(cfg.is_first_ecotone_block_with_parent(40, 38));
+        assert!(cfg.is_first_fjord_block_with_parent(50, 48));
+        assert!(cfg.is_first_granite_block_with_parent(60, 58));
+        assert!(cfg.is_first_holocene_block_with_parent(70, 68));
+        assert!(cfg.is_first_pectra_blob_schedule_block_with_parent(80, 78));
+        assert!(cfg.is_first_isthmus_block_with_parent(90, 88));
+        assert!(cfg.is_first_jovian_block_with_parent(100, 98));
+        assert!(cfg.is_first_base_azul_block_with_parent(110, 108));
+        assert!(cfg.is_first_beryl_block_with_parent(120, 118));
+        assert!(cfg.is_first_cobalt_block_with_parent(130, 128));
+    }
+
+    #[test]
+    fn test_first_beryl_block_with_parent_timestamp_handles_same_second_boundary() {
+        let cfg = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { azul: Some(110), beryl: Some(120), cobalt: None },
+                ..Default::default()
+            },
+            block_time: 2,
+            ..Default::default()
+        };
+
+        assert!(cfg.is_first_beryl_block_with_parent(120, 118));
+        assert!(!cfg.is_first_beryl_block_with_parent(120, 120));
     }
 
     #[test]
@@ -910,14 +1014,14 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_block_number_from_time() {
+    fn test_compute_block_number_lower_bound_from_time() {
         let cfg = RollupConfig {
             genesis: ChainGenesis { l2_time: 10, ..Default::default() },
             block_time: 2,
             ..Default::default()
         };
 
-        assert_eq!(cfg.block_number_from_timestamp(20), 5);
-        assert_eq!(cfg.block_number_from_timestamp(30), 10);
+        assert_eq!(cfg.block_number_lower_bound_from_timestamp(20), 5);
+        assert_eq!(cfg.block_number_lower_bound_from_timestamp(30), 10);
     }
 }

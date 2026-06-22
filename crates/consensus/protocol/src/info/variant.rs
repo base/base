@@ -48,13 +48,14 @@ impl L1BlockInfoTx {
         system_config: &SystemConfig,
         sequence_number: u64,
         l1_header: &Header,
+        l2_parent_block_time: u64,
         l2_block_time: u64,
     ) -> Result<Self, BlockInfoError> {
         // In the first block of Ecotone, the L1Block contract has not been upgraded yet due to the
         // upgrade transactions being placed after the L1 info transaction. Because of this,
         // for the first block of Ecotone, we send a Bedrock style L1 block info transaction
         if !rollup_config.is_ecotone_active(l2_block_time)
-            || rollup_config.is_first_ecotone_block(l2_block_time)
+            || rollup_config.is_first_ecotone_block_with_parent(l2_block_time, l2_parent_block_time)
         {
             return Ok(Self::Bedrock(L1BlockInfoBedrock::new(
                 l1_header.number,
@@ -117,7 +118,7 @@ impl L1BlockInfoTx {
         let base_fee = l1_header.base_fee_per_gas.unwrap_or(0);
 
         if rollup_config.is_jovian_active(l2_block_time)
-            && !rollup_config.is_first_jovian_block(l2_block_time)
+            && !rollup_config.is_first_jovian_block_with_parent(l2_block_time, l2_parent_block_time)
         {
             let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
             let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();
@@ -146,7 +147,8 @@ impl L1BlockInfoTx {
         }
 
         if rollup_config.is_isthmus_active(l2_block_time)
-            && !rollup_config.is_first_isthmus_block(l2_block_time)
+            && !rollup_config
+                .is_first_isthmus_block_with_parent(l2_block_time, l2_parent_block_time)
         {
             let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
             let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();
@@ -188,6 +190,7 @@ impl L1BlockInfoTx {
         system_config: &SystemConfig,
         sequence_number: u64,
         l1_header: &Header,
+        l2_parent_block_time: u64,
         l2_block_time: u64,
     ) -> Result<(Self, Sealed<TxDeposit>), BlockInfoError> {
         let l1_info = Self::try_new(
@@ -196,6 +199,7 @@ impl L1BlockInfoTx {
             system_config,
             sequence_number,
             l1_header,
+            l2_parent_block_time,
             l2_block_time,
         )?;
 
@@ -720,7 +724,7 @@ mod tests {
         let system_config = SystemConfig::default();
         let sequence_number = 0;
         let l1_header = Header::default();
-        let l2_block_time = 0;
+        let l2_block_time = 0u64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -728,6 +732,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -756,7 +761,7 @@ mod tests {
         let system_config = SystemConfig::default();
         let sequence_number = 0;
         let l1_header = Header::default();
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -764,6 +769,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -794,6 +800,32 @@ mod tests {
             u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
         assert_eq!(l1_info.blob_base_fee_scalar(), blob_base_fee_scalar);
         assert_eq!(l1_info.base_fee_scalar(), base_fee_scalar);
+    }
+
+    #[test]
+    fn test_try_new_ecotone_same_second_boundary_uses_parent_timestamp() {
+        let l2_block_time = 0xFFu64;
+        let rollup_config = RollupConfig {
+            upgrades: UpgradeConfig { ecotone_time: Some(l2_block_time), ..Default::default() },
+            ..Default::default()
+        };
+        let l1_config = Sepolia::l1_config();
+        let system_config = SystemConfig::default();
+        let sequence_number = 0;
+        let l1_header = Header::default();
+
+        let l1_info = L1BlockInfoTx::try_new(
+            &rollup_config,
+            &l1_config,
+            &system_config,
+            sequence_number,
+            &l1_header,
+            l2_block_time,
+            l2_block_time,
+        )
+        .unwrap();
+
+        assert!(matches!(l1_info, L1BlockInfoTx::Ecotone(_)));
     }
 
     #[rstest]
@@ -827,7 +859,7 @@ mod tests {
             requests_hash: Some(B256::ZERO),
             ..Default::default()
         };
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -835,6 +867,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -902,7 +935,7 @@ mod tests {
             requests_hash: Some(B256::ZERO),
             ..Default::default()
         };
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -910,6 +943,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -969,7 +1003,7 @@ mod tests {
             base_fee_per_gas: Some(10445852825),
             ..Default::default()
         };
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -977,6 +1011,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -1034,7 +1069,7 @@ mod tests {
             base_fee_per_gas: Some(10445852825),
             ..Default::default()
         };
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let (l1_info, deposit_tx) = L1BlockInfoTx::try_new_with_deposit_tx(
             &rollup_config,
@@ -1042,6 +1077,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
