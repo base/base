@@ -60,24 +60,22 @@ impl ProposerProofAdapter {
 
     /// Converts a prover-service TEE proof result into the proposer proof result type.
     pub fn tee_proof_result(result: ProofResult) -> Result<PrimitiveProofResult, ProposerError> {
-        match result {
-            ProofResult::Tee(result) => {
-                if result.tee_kind != TeeKind::AwsNitro {
-                    return Err(ProposerError::Prover(format!(
-                        "expected TEE proof result from AwsNitro, got {:?}",
-                        result.tee_kind
-                    )));
-                }
-
-                Ok(PrimitiveProofResult::Tee {
-                    aggregate_proposal: result.aggregate_proposal,
-                    proposals: result.proposals,
-                })
-            }
-            ProofResult::Compressed(_) | ProofResult::SnarkGroth16(_) => Err(
-                ProposerError::Prover("expected TEE proof result, got non-TEE proof result".into()),
-            ),
+        let ProofResult::Tee(result) = result else {
+            return Err(ProposerError::Prover(
+                "expected TEE proof result, got non-TEE proof result".into(),
+            ));
+        };
+        if result.tee_kind != TeeKind::AwsNitro {
+            return Err(ProposerError::Prover(format!(
+                "expected TEE proof result from AwsNitro, got {:?}",
+                result.tee_kind
+            )));
         }
+
+        Ok(PrimitiveProofResult::Tee {
+            aggregate_proposal: result.aggregate_proposal,
+            proposals: result.proposals,
+        })
     }
 }
 
@@ -120,19 +118,14 @@ mod tests {
         let first = test_request(B256::repeat_byte(0xaa));
         let mut second = first.clone();
         second.l1_head_number += 1;
+        let retry_id = ProposerProofAdapter::tee_discard_retry_session_id(&first, 1);
 
         assert_ne!(
-            ProposerProofAdapter::tee_discard_retry_session_id(&first, 1),
+            retry_id,
             ProposerProofAdapter::tee_session_id_for_root(first.claimed_l2_output_root),
         );
-        assert_ne!(
-            ProposerProofAdapter::tee_discard_retry_session_id(&first, 1),
-            ProposerProofAdapter::tee_discard_retry_session_id(&first, 2),
-        );
-        assert_ne!(
-            ProposerProofAdapter::tee_discard_retry_session_id(&first, 1),
-            ProposerProofAdapter::tee_discard_retry_session_id(&second, 1),
-        );
+        assert_ne!(retry_id, ProposerProofAdapter::tee_discard_retry_session_id(&first, 2),);
+        assert_ne!(retry_id, ProposerProofAdapter::tee_discard_retry_session_id(&second, 1),);
     }
 
     #[test]
