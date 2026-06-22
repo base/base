@@ -128,7 +128,11 @@ mod tests {
     use base_execution_chainspec::BaseChainSpec;
     use clap::Parser;
 
-    use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};
+    use crate::{
+        cli::BaseCli,
+        commands::BaseCommand,
+        config::{BuiltInChain, ChainArg},
+    };
 
     const RPC_FORWARDING_ENDPOINT_ENV: &str = "OP_RETH_SEQUENCER_HTTP";
     const RPC_FORWARDING_ENDPOINT_ENV_CHILD_TEST: &str =
@@ -229,7 +233,7 @@ mod tests {
             "-vvv",
         ]);
 
-        assert!(matches!(cli.chain, ChainArg::File(_)));
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Dev)));
         let BaseCommand::Rpc(rpc) = cli.command else {
             panic!("expected rpc command");
         };
@@ -413,12 +417,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_rpc_metering_args() {
-        let err =
-            BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--enable-metering"])).unwrap_err();
+    fn parses_rpc_metering_args() {
+        let cli = BaseCli::parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--enable-metering",
+            "--metering.execution-time-us",
+            "5000000",
+        ]));
 
-        let rendered = err.to_string();
-        assert!(rendered.contains("--enable-metering"));
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+
+        let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
+
+        assert!(launch_config.standard.enable_metering);
+        assert_eq!(launch_config.standard.metering_execution_time_us, Some(5_000_000));
     }
 
     #[test]

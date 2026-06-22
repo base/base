@@ -110,12 +110,12 @@ pub struct ConductorNodeConfig {
     /// If set, the TUI can restart this container with `r`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker_conductor: Option<String>,
-    /// Docker container name for the EL (execution layer) process.
+    /// Docker container name for the EL (execution layer) process or unified node.
     ///
     /// If set, the TUI can restart this container with `r`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker_el: Option<String>,
-    /// Docker container name for the CL (consensus layer) process.
+    /// Docker container name for the CL (consensus layer) process or unified node.
     ///
     /// If set, the TUI can restart this container with `r`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -554,7 +554,7 @@ impl MonitoringConfig {
                     el_rpc: Some(Url::parse("http://localhost:7545").unwrap()),
                     docker_conductor: Some("op-conductor-0".to_string()),
                     docker_el: Some("base-builder".to_string()),
-                    docker_cl: Some("base-builder-cl".to_string()),
+                    docker_cl: Some("base-builder".to_string()),
                     flashblocks_ws: Some(Url::parse("ws://localhost:7111").unwrap()),
                 },
                 ConductorNodeConfig {
@@ -566,7 +566,7 @@ impl MonitoringConfig {
                     el_rpc: Some(Url::parse("http://localhost:10545").unwrap()),
                     docker_conductor: Some("op-conductor-1".to_string()),
                     docker_el: Some("base-sequencer-1".to_string()),
-                    docker_cl: Some("base-sequencer-1-cl".to_string()),
+                    docker_cl: Some("base-sequencer-1".to_string()),
                     flashblocks_ws: Some(Url::parse("ws://localhost:10111").unwrap()),
                 },
                 ConductorNodeConfig {
@@ -578,18 +578,18 @@ impl MonitoringConfig {
                     el_rpc: Some(Url::parse("http://localhost:11545").unwrap()),
                     docker_conductor: Some("op-conductor-2".to_string()),
                     docker_el: Some("base-sequencer-2".to_string()),
-                    docker_cl: Some("base-sequencer-2-cl".to_string()),
+                    docker_cl: Some("base-sequencer-2".to_string()),
                     flashblocks_ws: Some(Url::parse("ws://localhost:11111").unwrap()),
                 },
             ]),
             validators: Some(vec![
                 ValidatorNodeConfig {
                     name: "base-client".to_string(),
-                    binary: Some("/app/base-client + /app/base-consensus".to_string()),
+                    binary: Some("/app/base".to_string()),
                     cl_rpc: Url::parse("http://localhost:8549").unwrap(),
                     el_rpc: Some(Url::parse("http://localhost:8545").unwrap()),
                     docker_el: Some("base-client".to_string()),
-                    docker_cl: Some("base-client-cl".to_string()),
+                    docker_cl: Some("base-client".to_string()),
                 },
                 ValidatorNodeConfig {
                     name: "base-rpc".to_string(),
@@ -759,11 +759,11 @@ mod tests {
         let validators = devnet.validators.expect("devnet should include validator/RPC node");
         assert_eq!(validators.len(), 2);
         assert_eq!(validators[0].name, "base-client");
-        assert_eq!(validators[0].binary.as_deref(), Some("/app/base-client + /app/base-consensus"));
+        assert_eq!(validators[0].binary.as_deref(), Some("/app/base"));
         assert_eq!(validators[0].cl_rpc.as_str(), "http://localhost:8549/");
         assert_eq!(validators[0].el_rpc.as_ref().unwrap().as_str(), "http://localhost:8545/");
         assert_eq!(validators[0].docker_el.as_deref(), Some("base-client"));
-        assert_eq!(validators[0].docker_cl.as_deref(), Some("base-client-cl"));
+        assert_eq!(validators[0].docker_cl.as_deref(), Some("base-client"));
         assert_eq!(validators[1].name, "base-rpc");
         assert_eq!(validators[1].binary.as_deref(), Some("/app/base"));
         assert_eq!(validators[1].cl_rpc.as_str(), "http://localhost:8649/");

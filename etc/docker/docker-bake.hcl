@@ -23,15 +23,12 @@ variable "PLATFORM_PAIR" {
 }
 
 group "default" {
-  targets = ["client"]
+  targets = ["base"]
 }
 
 group "rust-services" {
   targets = [
     "base",
-    "client",
-    "builder",
-    "consensus",
     "proposer",
     "websocket-proxy",
     "ingress-rpc",
@@ -42,14 +39,11 @@ group "rust-services" {
 }
 
 group "devnet" {
-  targets = ["builder", "consensus", "client", "base", "batcher", "zk-prover"]
+  targets = ["base", "batcher", "zk-prover"]
 }
 
 group "ingress" {
   targets = [
-    "builder",
-    "consensus",
-    "client",
     "base",
     "ingress-rpc",
     "audit-archiver",
@@ -67,36 +61,10 @@ target "_rust-service-common" {
   cache-from = ["type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}"]
 }
 
-target "client" {
-  inherits = ["_rust-service-common"]
-  target = "client"
-  tags = ["base-reth-node:local"]
-}
-
 target "base" {
   inherits = ["_rust-service-common"]
   target = "base"
   tags = ["base:local"]
-}
-
-target "builder" {
-  inherits = ["_rust-service-common"]
-  target = "builder"
-  tags = ["base-builder:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-builder-${PLATFORM_PAIR}",
-  ]
-}
-
-target "consensus" {
-  inherits = ["_rust-service-common"]
-  target = "consensus"
-  tags = ["base-consensus:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-consensus-${PLATFORM_PAIR}",
-  ]
 }
 
 target "proposer" {

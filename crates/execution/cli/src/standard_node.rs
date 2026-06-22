@@ -171,6 +171,47 @@ pub struct RpcStandardNodeArgs {
         value_name = "ENABLE_TRANSACTION_TRACING_LOGS"
     )]
     pub enable_transaction_tracing_logs: bool,
+
+    /// Enable metering RPC for transaction bundle simulation.
+    #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
+    pub enable_metering: bool,
+
+    /// Whole-block gas budget for priority fee estimation.
+    #[arg(
+        long = "metering.gas-limit",
+        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
+    )]
+    pub metering_gas_limit: Option<u64>,
+
+    /// Per-flashblock execution time budget in microseconds for priority fee estimation.
+    #[arg(long = "metering.execution-time-us", requires = "enable_metering")]
+    pub metering_execution_time_us: Option<u64>,
+
+    /// Whole-block state root computation budget in microseconds for priority fee estimation.
+    #[arg(
+        long = "metering.state-root-time-us",
+        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
+    )]
+    pub metering_state_root_time_us: Option<u64>,
+
+    /// Whole-block data availability byte budget for priority fee estimation.
+    #[arg(
+        long = "metering.da-bytes",
+        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
+    )]
+    pub metering_da_bytes: Option<u64>,
+
+    /// Target number of tx-pool flashblocks the builder budgets per block.
+    ///
+    /// This excludes the base flashblock at index `0` and is required when gas, state root
+    /// time, or DA estimation is enabled.
+    #[arg(long = "metering.target-flashblocks-per-block", requires = "enable_metering")]
+    pub metering_target_flashblocks_per_block: Option<usize>,
+
+    /// Comma-separated list of EVM opcodes to track for gas metering
+    /// (e.g., "SSTORE,SLOAD,KECCAK256"). Precompile gas is always tracked.
+    #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
+    pub metering_metered_opcodes: Vec<String>,
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
@@ -179,15 +220,23 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             args.rollup_args.sequencer.clone_from(&args.rpc_forwarding_endpoint);
         }
 
+        let enable_metering = args.enable_metering;
+        let metering_gas_limit = args.metering_gas_limit;
+        let metering_execution_time_us = args.metering_execution_time_us;
+        let metering_state_root_time_us = args.metering_state_root_time_us;
+        let metering_da_bytes = args.metering_da_bytes;
+        let metering_target_flashblocks_per_block = args.metering_target_flashblocks_per_block;
+        let metering_metered_opcodes = args.metering_metered_opcodes.clone();
+
         Self {
             rpc: args,
-            enable_metering: false,
-            metering_gas_limit: None,
-            metering_execution_time_us: None,
-            metering_state_root_time_us: None,
-            metering_da_bytes: None,
-            metering_target_flashblocks_per_block: None,
-            metering_metered_opcodes: Vec::new(),
+            enable_metering,
+            metering_gas_limit,
+            metering_execution_time_us,
+            metering_state_root_time_us,
+            metering_da_bytes,
+            metering_target_flashblocks_per_block,
+            metering_metered_opcodes,
             enable_tx_forwarding: false,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
@@ -444,6 +493,13 @@ mod tests {
             flashblocks_ping_interval: Duration::from_secs(30),
             enable_transaction_tracing: false,
             enable_transaction_tracing_logs: false,
+            enable_metering: false,
+            metering_gas_limit: None,
+            metering_execution_time_us: None,
+            metering_state_root_time_us: None,
+            metering_da_bytes: None,
+            metering_target_flashblocks_per_block: None,
+            metering_metered_opcodes: Vec::new(),
         }
     }
 
