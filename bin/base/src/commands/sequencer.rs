@@ -299,7 +299,7 @@ mod tests {
             SEQUENCER_KEY,
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.hardfork-id",
+            "--upgrade-signal.upgrade-id",
             "azul",
         ]));
 
@@ -316,7 +316,7 @@ mod tests {
                 .map(|address| address.to_string()),
             Some("0x0000000000000000000000000000000000000001".to_string())
         );
-        assert_eq!(sequencer.builder.rollup_args.upgrade_signal.hardfork_ids, ["azul"]);
+        assert_eq!(sequencer.builder.rollup_args.upgrade_signal.upgrade_ids, ["azul"]);
     }
 
     #[test]

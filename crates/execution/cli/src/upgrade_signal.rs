@@ -68,7 +68,7 @@ impl ExecutionUpgradeSignal {
             UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, schedule, chain_spec)?;
         summary.log("execution chain spec");
 
-        Ok(summary.applied_hardforks)
+        Ok(summary.applied_upgrades)
     }
 
     /// Validates that a runtime schedule can be applied to this execution chain spec.
@@ -101,7 +101,7 @@ impl ExecutionUpgradeSignal {
                     return Err(ErrorObject::owned(
                         -32003,
                         "failed to refresh upgrade signal",
-                        Some(error.to_string()),
+                        None::<()>,
                     ));
                 }
                 let summary = UpgradeSignalRuntimeApplier::apply_schedule(
@@ -112,10 +112,10 @@ impl ExecutionUpgradeSignal {
                     target: "upgrade_signal",
                     chain_id = summary.chain_id,
                     l1_block_number = ?summary.l1_block_number,
-                    applied_hardforks = summary.applied_hardforks,
-                    cleared_hardforks = summary.cleared_hardforks,
-                    ignored_hardforks = summary.ignored_hardforks,
-                    configured_hardforks = summary.configured_hardforks,
+                    applied_upgrades = summary.applied_upgrades,
+                    cleared_upgrades = summary.cleared_upgrades,
+                    ignored_upgrades = summary.ignored_upgrades,
+                    configured_upgrades = summary.configured_upgrades,
                     "refreshed execution runtime upgrade signal"
                 );
                 Ok(summary)
@@ -126,11 +126,7 @@ impl ExecutionUpgradeSignal {
                     error = %error,
                     "failed to refresh execution runtime upgrade signal"
                 );
-                Err(ErrorObject::owned(
-                    -32003,
-                    "failed to refresh upgrade signal",
-                    Some(error.to_string()),
-                ))
+                Err(ErrorObject::owned(-32003, "failed to refresh upgrade signal", None::<()>))
             }
         }
     }
@@ -202,13 +198,13 @@ impl ExecutionUpgradeSignalMetricsExtension {
     pub async fn poll_l1_signal(
         monitor: &mut UpgradeSignalMonitor,
         reader: &AlloyUpgradeSignalReader,
-        hardfork_ids: &[BaseUpgrade],
+        upgrade_ids: &[BaseUpgrade],
     ) {
-        let updated_hardforks = monitor.poll(reader, hardfork_ids).await;
-        if updated_hardforks > 0 {
+        let updated_upgrades = monitor.poll(reader, upgrade_ids).await;
+        if updated_upgrades > 0 {
             info!(
                 target: "upgrade_signal",
-                updated_hardforks,
+                updated_upgrades,
                 "observed live L1 upgrade signal update"
             );
         }
@@ -236,9 +232,9 @@ impl BaseNodeExtension for ExecutionUpgradeSignalMetricsExtension {
             let reader = config
                 .signal_config
                 .reader(RootProvider::new_http(config.l1_rpc.clone()));
-            let hardfork_ids = config.signal_config.hardfork_ids;
+            let upgrade_ids = config.signal_config.upgrade_ids;
             let mut monitor =
-                UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution, &hardfork_ids);
+                UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution, &upgrade_ids);
             let executor = ctx.task_executor;
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
@@ -253,7 +249,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalMetricsExtension {
                             _ = interval.tick() => {
                                 tokio::select! {
                                     _ = &mut signal => break,
-                                    _ = Self::poll_l1_signal(&mut monitor, &reader, &hardfork_ids) => {}
+                                    _ = Self::poll_l1_signal(&mut monitor, &reader, &upgrade_ids) => {}
                                 }
                             }
                         }
@@ -286,8 +282,8 @@ mod tests {
         UpgradeSignalSchedule::new(
             signals
                 .iter()
-                .map(|(hardfork_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
-                    hardfork_id: *hardfork_id,
+                .map(|(upgrade_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
+                    upgrade_id: *upgrade_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: Default::default(),
                     l1_block_number: 1,

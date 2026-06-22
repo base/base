@@ -17,7 +17,7 @@ pub struct UpgradeSignalMetricsActor {
     /// L1 upgrade signal reader.
     pub reader: AlloyUpgradeSignalReader,
     /// Contract-backed upgrades read from the L1 contract.
-    pub hardfork_ids: Vec<BaseUpgrade>,
+    pub upgrade_ids: Vec<BaseUpgrade>,
     /// Live metrics state.
     pub monitor: UpgradeSignalMonitor,
     /// Cancellation token shared with the rollup node.
@@ -33,14 +33,14 @@ impl UpgradeSignalMetricsActor {
     ) -> Self {
         let reader = config.reader(l1_provider);
         let monitor =
-            UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus, &config.hardfork_ids);
+            UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus, &config.upgrade_ids);
 
-        Self { reader, hardfork_ids: config.hardfork_ids, monitor, cancellation }
+        Self { reader, upgrade_ids: config.upgrade_ids, monitor, cancellation }
     }
 
     /// Polls L1 upgrade signal state and records metrics without mutating local config.
     pub async fn poll_l1_signal(&mut self) {
-        let updated_signals = self.monitor.poll(&self.reader, &self.hardfork_ids).await;
+        let updated_signals = self.monitor.poll(&self.reader, &self.upgrade_ids).await;
         if updated_signals > 0 {
             info!(
                 target: "upgrade_signal",

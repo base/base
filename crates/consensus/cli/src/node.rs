@@ -488,7 +488,7 @@ impl ConsensusNodeArgs {
             .unwrap_or_else(|never| match never {});
         summary.log("rollup config");
 
-        summary.applied_hardforks
+        summary.applied_upgrades
     }
 
     /// Returns the runtime validation context for the selected standalone consensus chain.
@@ -620,7 +620,7 @@ mod tests {
             "http://localhost:8551",
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.hardfork-id",
+            "--upgrade-signal.upgrade-id",
             "azul",
         ])
         .args;
@@ -629,15 +629,15 @@ mod tests {
             args.upgrade_signal.contract_address,
             Some(address!("0000000000000000000000000000000000000001"))
         );
-        assert_eq!(args.upgrade_signal.hardfork_ids, ["azul"]);
+        assert_eq!(args.upgrade_signal.upgrade_ids, ["azul"]);
     }
 
     fn upgrade_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
             signals
                 .iter()
-                .map(|(hardfork_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
-                    hardfork_id: *hardfork_id,
+                .map(|(upgrade_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
+                    upgrade_id: *upgrade_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: U256::from(7),
                     l1_block_number: 1,

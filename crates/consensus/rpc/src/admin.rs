@@ -238,10 +238,10 @@ where
                     target: "upgrade_signal",
                     chain_id = summary.chain_id,
                     l1_block_number = ?summary.l1_block_number,
-                    applied_hardforks = summary.applied_hardforks,
-                    cleared_hardforks = summary.cleared_hardforks,
-                    ignored_hardforks = summary.ignored_hardforks,
-                    configured_hardforks = summary.configured_hardforks,
+                    applied_upgrades = summary.applied_upgrades,
+                    cleared_upgrades = summary.cleared_upgrades,
+                    ignored_upgrades = summary.ignored_upgrades,
+                    configured_upgrades = summary.configured_upgrades,
                     "refreshed consensus runtime upgrade signal"
                 );
                 Ok(summary)

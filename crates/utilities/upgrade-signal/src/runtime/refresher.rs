@@ -16,7 +16,7 @@ pub struct UpgradeSignalRefresher {
     pub config: UpgradeSignalConfig,
     /// L1 upgrade signal reader.
     pub reader: AlloyUpgradeSignalReader,
-    /// L2 chain ID whose runtime fork view is updated.
+    /// L2 chain ID whose runtime upgrade view is updated.
     pub chain_id: u64,
     /// Runtime schedule validation context.
     pub runtime_validation: UpgradeSignalRuntimeValidation,
@@ -62,10 +62,10 @@ impl UpgradeSignalRefresher {
             target: "upgrade_signal",
             chain_id = summary.chain_id,
             l1_block_number = ?summary.l1_block_number,
-            applied_hardforks = summary.applied_hardforks,
-            cleared_hardforks = summary.cleared_hardforks,
-            ignored_hardforks = summary.ignored_hardforks,
-            configured_hardforks = summary.configured_hardforks,
+            applied_upgrades = summary.applied_upgrades,
+            cleared_upgrades = summary.cleared_upgrades,
+            ignored_upgrades = summary.ignored_upgrades,
+            configured_upgrades = summary.configured_upgrades,
             "applied runtime upgrade signal schedule"
         );
 

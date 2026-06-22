@@ -14,7 +14,7 @@ pub use config::{
 };
 
 mod contract;
-pub use contract::{AlloyUpgradeSignalReader, IUpgradeSignal};
+pub use contract::AlloyUpgradeSignalReader;
 
 mod error;
 pub use error::UpgradeSignalError;
@@ -30,7 +30,4 @@ pub use runtime::{
 };
 
 mod state;
-pub use state::{
-    UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalSchedule, UpgradeSignalState,
-    UpgradeSignalStateUpdate,
-};
+pub use state::{UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalSchedule};
