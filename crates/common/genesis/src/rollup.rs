@@ -428,58 +428,43 @@ impl RollupConfig {
     const AZUL_ACTIVATION_BANNER: &str = include_str!("../static/azul_activation_banner.txt");
 
     /// Logs upgrade activation when building or processing the first block of a fork.
-    pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64) {
-        if self.is_first_ecotone_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating ecotone upgrade");
-        } else if self.is_first_fjord_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating fjord upgrade");
-        } else if self.is_first_granite_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating granite upgrade");
-        } else if self.is_first_holocene_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating holocene upgrade");
-        } else if self.is_first_isthmus_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating isthmus upgrade");
-        } else if self.is_first_jovian_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
-        } else if self.is_first_base_azul_block(timestamp) {
-            for line in Self::AZUL_ACTIVATION_BANNER.lines() {
-                tracing::info!(target: "upgrades", "{line}");
-            }
-            tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
-        } else if self.is_first_beryl_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating beryl upgrade");
-        } else if self.is_first_cobalt_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating cobalt upgrade");
-        }
-    }
-
-    /// Logs upgrade activation when the caller knows the actual parent timestamp.
-    pub fn log_upgrade_activation_with_parent_timestamp(
+    pub fn log_upgrade_activation(
         &self,
         block_number: u64,
         timestamp: u64,
-        parent_timestamp: u64,
+        parent_timestamp: Option<u64>,
     ) {
-        if self.is_first_ecotone_block_with_parent(timestamp, parent_timestamp) {
+        let is_first = |with_parent: fn(&Self, u64, u64) -> bool,
+                        estimated: fn(&Self, u64) -> bool| {
+            parent_timestamp
+                .map(|parent| with_parent(self, timestamp, parent))
+                .unwrap_or_else(|| estimated(self, timestamp))
+        };
+
+        if is_first(Self::is_first_ecotone_block_with_parent, Self::is_first_ecotone_block) {
             tracing::info!(target: "upgrades", block_number, "Activating ecotone upgrade");
-        } else if self.is_first_fjord_block_with_parent(timestamp, parent_timestamp) {
+        } else if is_first(Self::is_first_fjord_block_with_parent, Self::is_first_fjord_block) {
             tracing::info!(target: "upgrades", block_number, "Activating fjord upgrade");
-        } else if self.is_first_granite_block_with_parent(timestamp, parent_timestamp) {
+        } else if is_first(Self::is_first_granite_block_with_parent, Self::is_first_granite_block) {
             tracing::info!(target: "upgrades", block_number, "Activating granite upgrade");
-        } else if self.is_first_holocene_block_with_parent(timestamp, parent_timestamp) {
+        } else if is_first(Self::is_first_holocene_block_with_parent, Self::is_first_holocene_block)
+        {
             tracing::info!(target: "upgrades", block_number, "Activating holocene upgrade");
-        } else if self.is_first_isthmus_block_with_parent(timestamp, parent_timestamp) {
+        } else if is_first(Self::is_first_isthmus_block_with_parent, Self::is_first_isthmus_block) {
             tracing::info!(target: "upgrades", block_number, "Activating isthmus upgrade");
-        } else if self.is_first_jovian_block_with_parent(timestamp, parent_timestamp) {
+        } else if is_first(Self::is_first_jovian_block_with_parent, Self::is_first_jovian_block) {
             tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
-        } else if self.is_first_base_azul_block_with_parent(timestamp, parent_timestamp) {
+        } else if is_first(
+            Self::is_first_base_azul_block_with_parent,
+            Self::is_first_base_azul_block,
+        ) {
             for line in Self::AZUL_ACTIVATION_BANNER.lines() {
                 tracing::info!(target: "upgrades", "{line}");
             }
             tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
-        } else if self.is_first_beryl_block_with_parent(timestamp, parent_timestamp) {
+        } else if is_first(Self::is_first_beryl_block_with_parent, Self::is_first_beryl_block) {
             tracing::info!(target: "upgrades", block_number, "Activating beryl upgrade");
-        } else if self.is_first_cobalt_block_with_parent(timestamp, parent_timestamp) {
+        } else if is_first(Self::is_first_cobalt_block_with_parent, Self::is_first_cobalt_block) {
             tracing::info!(target: "upgrades", block_number, "Activating cobalt upgrade");
         }
     }

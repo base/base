@@ -199,10 +199,10 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             }
         };
 
-        self.rollup_config.log_upgrade_activation_with_parent_timestamp(
+        self.rollup_config.log_upgrade_activation(
             unsafe_head.block_info.number.saturating_add(1),
             attributes.payload_attributes.timestamp,
-            unsafe_head.block_info.timestamp,
+            Some(unsafe_head.block_info.timestamp),
         );
         let activator = PoolActivation::new(Arc::clone(&self.rollup_config));
         attributes.no_tx_pool = Some(!activator.is_enabled(
