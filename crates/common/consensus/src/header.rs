@@ -291,6 +291,35 @@ impl BaseHeader {
             U256::from(slot_number).encode(out);
         }
     }
+
+    fn decode_optional_upstream_field<T: Decodable>(
+        buf: &mut &[u8],
+        started_len: usize,
+        payload_length: usize,
+    ) -> alloy_rlp::Result<Option<T>> {
+        if Self::has_next_upstream_optional_field(buf, started_len, payload_length) {
+            T::decode(buf).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn has_next_upstream_optional_field(
+        buf: &[u8],
+        started_len: usize,
+        payload_length: usize,
+    ) -> bool {
+        Self::has_remaining_payload(buf, started_len, payload_length)
+            && !Self::next_payload_item_is_list(buf)
+    }
+
+    fn has_remaining_payload(buf: &[u8], started_len: usize, payload_length: usize) -> bool {
+        started_len - buf.len() < payload_length
+    }
+
+    fn next_payload_item_is_list(buf: &[u8]) -> bool {
+        buf.first().is_some_and(|first| *first >= 0xC0)
+    }
 }
 
 impl From<Header> for BaseHeader {
@@ -481,57 +510,48 @@ impl Decodable for BaseHeader {
         };
 
         // After the mandatory fields, the upstream Ethereum [`Header`] writes a contiguous
-        // suffix of fork-specific optional fields. The Base millisecond trailer is encoded as
-        // a single-element RLP list and is always written last, so we can disambiguate it
-        // from a missing intermediate optional field by peeking for an RLP list header.
-        let has_more = |buf: &&[u8]| started_len - buf.len() < rlp_head.payload_length;
-        let is_trailer = |buf: &&[u8]| -> bool { buf.first().is_some_and(|b| *b >= 0xC0) };
+        // suffix of fork-specific optional fields. Those upstream suffix fields currently
+        // encode as RLP strings, while the Base millisecond trailer is encoded as a
+        // single-element RLP list and always written last, so we can stop decoding upstream
+        // fields as soon as the next payload item is a list.
+        inner.base_fee_per_gas =
+            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
+        inner.withdrawals_root =
+            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
+        inner.blob_gas_used =
+            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
+        inner.excess_blob_gas =
+            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
+        inner.parent_beacon_block_root =
+            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
+        inner.requests_hash =
+            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
+        inner.block_access_list_hash =
+            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
+        inner.slot_number =
+            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
 
-        if has_more(buf) && !is_trailer(buf) {
-            inner.base_fee_per_gas = Some(u64::decode(buf)?);
-        }
-        if has_more(buf) && !is_trailer(buf) {
-            inner.withdrawals_root = Some(Decodable::decode(buf)?);
-        }
-        if has_more(buf) && !is_trailer(buf) {
-            inner.blob_gas_used = Some(u64::decode(buf)?);
-        }
-        if has_more(buf) && !is_trailer(buf) {
-            inner.excess_blob_gas = Some(u64::decode(buf)?);
-        }
-        if has_more(buf) && !is_trailer(buf) {
-            inner.parent_beacon_block_root = Some(B256::decode(buf)?);
-        }
-        if has_more(buf) && !is_trailer(buf) {
-            inner.requests_hash = Some(B256::decode(buf)?);
-        }
-        if has_more(buf) && !is_trailer(buf) {
-            inner.block_access_list_hash = Some(B256::decode(buf)?);
-        }
-        if has_more(buf) && !is_trailer(buf) {
-            inner.slot_number = Some(u64::decode(buf)?);
-        }
-
-        let timestamp_millis_part = if has_more(buf) {
-            let trailer_head = alloy_rlp::Header::decode(buf)?;
-            if !trailer_head.list {
-                return Err(alloy_rlp::Error::UnexpectedString);
-            }
-            let trailer_started = buf.len();
-            let part = u16::decode(buf)?;
-            if trailer_started - buf.len() != trailer_head.payload_length {
-                return Err(alloy_rlp::Error::ListLengthMismatch {
-                    expected: trailer_head.payload_length,
-                    got: trailer_started - buf.len(),
-                });
-            }
-            Self::validate_timestamp_millis_part(part).map_err(|_| {
-                alloy_rlp::Error::Custom("invalid base header timestamp_millis_part")
-            })?;
-            Some(part)
-        } else {
-            None
-        };
+        let timestamp_millis_part =
+            if Self::has_remaining_payload(buf, started_len, rlp_head.payload_length) {
+                let trailer_head = alloy_rlp::Header::decode(buf)?;
+                if !trailer_head.list {
+                    return Err(alloy_rlp::Error::UnexpectedString);
+                }
+                let trailer_started = buf.len();
+                let part = u16::decode(buf)?;
+                if trailer_started - buf.len() != trailer_head.payload_length {
+                    return Err(alloy_rlp::Error::ListLengthMismatch {
+                        expected: trailer_head.payload_length,
+                        got: trailer_started - buf.len(),
+                    });
+                }
+                Self::validate_timestamp_millis_part(part).map_err(|_| {
+                    alloy_rlp::Error::Custom("invalid base header timestamp_millis_part")
+                })?;
+                Some(part)
+            } else {
+                None
+            };
 
         let consumed = started_len - buf.len();
         if consumed != rlp_head.payload_length {
@@ -745,6 +765,23 @@ mod tests {
             assert_eq!(slice.len(), rlp_header.payload_length);
             assert_eq!(base_header.length(), encoded.len());
         }
+    }
+
+    #[test]
+    fn upstream_optional_suffix_fields_encode_as_rlp_strings() {
+        let mut encoded = Vec::new();
+        U256::from(1u64).encode(&mut encoded);
+        assert!(encoded.first().is_some_and(|first| *first < 0xC0));
+
+        encoded.clear();
+        B256::ZERO.encode(&mut encoded);
+        assert!(encoded.first().is_some_and(|first| *first < 0xC0));
+
+        encoded.clear();
+        let millis_part = 200u16;
+        alloy_rlp::Header { list: true, payload_length: millis_part.length() }.encode(&mut encoded);
+        millis_part.encode(&mut encoded);
+        assert!(encoded.first().is_some_and(|first| *first >= 0xC0));
     }
 
     #[test]
