@@ -45,7 +45,7 @@ impl ProposerProofAdapter {
     }
 
     /// Builds a prover-service request for a TEE proposal proof with a caller-supplied session id.
-    pub const fn tee_prove_block_range_request_with_session_id(
+    pub fn tee_prove_block_range_request_with_session_id(
         request: PrimitiveProofRequest,
         session_id: String,
     ) -> ProveBlockRangeRequest {
@@ -76,12 +76,9 @@ impl ProposerProofAdapter {
                     proposals: result.proposals,
                 })
             }
-            ProofResult::Compressed(_) => {
-                Err(ProposerError::Prover("expected TEE proof result, got Compressed".to_owned()))
-            }
-            ProofResult::SnarkGroth16(_) => {
-                Err(ProposerError::Prover("expected TEE proof result, got SnarkGroth16".to_owned()))
-            }
+            ProofResult::Compressed(_) | ProofResult::SnarkGroth16(_) => Err(
+                ProposerError::Prover("expected TEE proof result, got non-TEE proof result".into()),
+            ),
         }
     }
 }
