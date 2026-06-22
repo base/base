@@ -645,7 +645,7 @@ impl ProofRequestRepo {
                 serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
 
             return Ok(if existing.result_payload.as_ref() == Some(&result_payload) {
-                SubmitProofOutcome::Completed(existing)
+                SubmitProofOutcome::AlreadyCompleted(existing)
             } else {
                 SubmitProofOutcome::ResultConflict { job: existing }
             });
@@ -725,7 +725,7 @@ impl ProofRequestRepo {
             }
 
             return Ok(if job.result_payload.as_ref() == Some(&result_payload) {
-                SubmitProofOutcome::Completed(job)
+                SubmitProofOutcome::AlreadyCompleted(job)
             } else {
                 SubmitProofOutcome::ResultConflict { job }
             });
@@ -852,7 +852,8 @@ impl ProofRequestRepo {
         .await?;
 
         if retry_count >= max_retries {
-            sqlx::query(
+            let columns = PROOF_JOB_RETURNING_COLUMNS;
+            let sql = format!(
                 r#"
                 UPDATE proof_requests
                 SET status = $1,
@@ -865,16 +866,22 @@ impl ProofRequestRepo {
                     claimed_at = NULL,
                     last_heartbeat_at = NULL
                 WHERE id = $3
+                RETURNING {columns}
                 "#,
-            )
-            .bind(ProofStatus::Failed.as_str())
-            .bind(format!("{error_message} (max retries exceeded after {retry_count} attempts)"))
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+            );
+
+            let row = sqlx::query(&sql)
+                .bind(ProofStatus::Failed.as_str())
+                .bind(format!(
+                    "{error_message} (max retries exceeded after {retry_count} attempts)"
+                ))
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+            let job = row_to_proof_job(&row)?;
 
             tx.commit().await?;
-            return Ok(RetryOutcome::PermanentlyFailed);
+            return Ok(RetryOutcome::PermanentlyFailed(Box::new(job)));
         }
 
         sqlx::query(

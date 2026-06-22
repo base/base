@@ -3,7 +3,7 @@
 //! Uses the `metrics` crate facade (`counter!`, `histogram!`) so the exporter
 //! backend is determined by the binary (e.g. Prometheus, `DogStatsD`).
 
-use base_prover_service_db::{ApiProofType, ProofType};
+use base_prover_service_db::{ApiProofType, ProofJob, ProofType};
 use metrics::{counter, describe_counter, describe_histogram, histogram};
 
 // ---------------------------------------------------------------------------
@@ -27,6 +27,11 @@ pub const STUCK_REQUESTS: &str = "prover_service.stuck_requests";
 pub const RETRIED_REQUESTS: &str = "prover_service.retried_requests";
 /// Worker jobs terminally failed by a background reaper. Tags: `reason`, `proof_type`
 pub const WORKER_JOBS_FAILED: &str = "prover_service.worker_jobs_failed";
+
+/// Terminal success status label.
+pub const PROOF_STATUS_SUCCEEDED: &str = "succeeded";
+/// Terminal failure status label.
+pub const PROOF_STATUS_FAILED: &str = "failed";
 
 // ---------------------------------------------------------------------------
 // ProverMetrics — metric descriptions (called once at init)
@@ -129,6 +134,23 @@ pub fn inc_worker_jobs_failed(reason: &str, proof_type: &str) {
     .increment(1);
 }
 
+/// Record terminal outcome and duration metrics for a proof job.
+pub fn record_terminal_proof_job(status: &str, job: &ProofJob) {
+    let proof_type = api_proof_type_label(job.api_proof_type);
+    inc_proof_requests_completed(status, proof_type);
+
+    if let Some(completed_at) = job.completed_at {
+        let duration_ms = (completed_at - job.created_at).num_milliseconds().max(0) as f64;
+        record_proof_request_duration(proof_type, status, duration_ms);
+    } else {
+        tracing::warn!(
+            proof_request_id = %job.id,
+            status = %status,
+            "terminal proof job missing completed_at timestamp"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
@@ -147,5 +169,145 @@ pub const fn api_proof_type_label(proof_type: ApiProofType) -> &'static str {
         ApiProofType::Compressed => "compressed",
         ApiProofType::SnarkGroth16 => "snark_groth16",
         ApiProofType::Tee => "tee",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_prover_service_db::{ApiProofType, ProofJobStatus};
+    use chrono::{Duration, Utc};
+    use metrics_util::{
+        MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
+    use uuid::Uuid;
+
+    use super::*;
+
+    #[test]
+    fn terminal_proof_job_records_outcome_and_duration() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let created_at = Utc::now();
+        let completed_at = created_at + Duration::milliseconds(2500);
+        let job = proof_job(created_at, Some(completed_at));
+
+        metrics::with_local_recorder(&recorder, || {
+            record_terminal_proof_job(PROOF_STATUS_SUCCEEDED, &job);
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(
+            snapshot.iter().find_map(|(ck, _, _, value)| {
+                if ck.kind() != MetricKind::Counter || ck.key().name() != PROOF_REQUESTS_COMPLETED {
+                    return None;
+                }
+                if !ck
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "status" && label.value() == PROOF_STATUS_SUCCEEDED)
+                {
+                    return None;
+                }
+                if !ck
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "proof_type" && label.value() == "tee")
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Counter(value) => Some(*value),
+                    _ => None,
+                }
+            }),
+            Some(1),
+        );
+        assert!(
+            snapshot.iter().any(|(ck, _, _, value)| {
+                ck.kind() == MetricKind::Histogram
+                    && ck.key().name() == PROOF_REQUEST_DURATION_MS
+                    && ck.key().labels().any(|label| {
+                        label.key() == "status" && label.value() == PROOF_STATUS_SUCCEEDED
+                    })
+                    && ck
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "proof_type" && label.value() == "tee")
+                    && matches!(value, DebugValue::Histogram(_))
+            }),
+            "terminal completion should record proof duration",
+        );
+    }
+
+    #[test]
+    fn terminal_proof_job_negative_duration_records_zero_duration() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let created_at = Utc::now();
+        let completed_at = created_at - Duration::milliseconds(1);
+        let job = proof_job(created_at, Some(completed_at));
+
+        metrics::with_local_recorder(&recorder, || {
+            record_terminal_proof_job(PROOF_STATUS_SUCCEEDED, &job);
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(
+            snapshot.iter().find_map(|(ck, _, _, value)| {
+                if ck.kind() != MetricKind::Histogram
+                    || ck.key().name() != PROOF_REQUEST_DURATION_MS
+                {
+                    return None;
+                }
+                if !ck
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "status" && label.value() == PROOF_STATUS_SUCCEEDED)
+                {
+                    return None;
+                }
+                if !ck
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "proof_type" && label.value() == "tee")
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Histogram(values) => {
+                        Some(values.iter().map(|value| (*value).into_inner()).collect::<Vec<_>>())
+                    }
+                    _ => None,
+                }
+            }),
+            Some(vec![0.0]),
+        );
+    }
+
+    fn proof_job(
+        created_at: chrono::DateTime<Utc>,
+        completed_at: Option<chrono::DateTime<Utc>>,
+    ) -> ProofJob {
+        ProofJob {
+            id: Uuid::new_v4(),
+            session_id: "session-1".to_owned(),
+            request_payload: serde_json::Value::Null,
+            api_proof_type: ApiProofType::Tee,
+            zk_vm: None,
+            tee_kind: None,
+            job_status: ProofJobStatus::Succeeded,
+            attempt: 1,
+            worker_id: Some("worker-1".to_owned()),
+            lock_id: Some(Uuid::new_v4()),
+            lock_expires_at: None,
+            claimed_at: None,
+            last_heartbeat_at: None,
+            error_message: None,
+            result_payload: None,
+            created_at,
+            updated_at: completed_at.unwrap_or(created_at),
+            completed_at,
+        }
     }
 }

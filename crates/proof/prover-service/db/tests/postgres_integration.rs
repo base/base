@@ -842,7 +842,7 @@ async fn test_retry_or_fail_stuck_request_retries() {
     .unwrap();
 
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::Retried);
+    assert!(matches!(outcome, RetryOutcome::Retried));
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Created);
@@ -872,7 +872,7 @@ async fn test_retry_or_fail_stuck_request_retries_tee_request() {
     );
 
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::Retried);
+    assert!(matches!(outcome, RetryOutcome::Retried));
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Created);
@@ -892,7 +892,7 @@ async fn test_retry_or_fail_stuck_request_exhausted() {
     for i in 0..3 {
         repo.atomic_claim_task(id).await.unwrap();
         let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
-        assert_eq!(outcome, RetryOutcome::Retried, "retry {i} should succeed");
+        assert!(matches!(outcome, RetryOutcome::Retried), "retry {i} should succeed");
     }
 
     // retry_count is now 3, claim once more
@@ -900,7 +900,12 @@ async fn test_retry_or_fail_stuck_request_exhausted() {
 
     // This time should permanently fail (retry_count >= max_retries)
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::PermanentlyFailed);
+    let RetryOutcome::PermanentlyFailed(job) = outcome else {
+        panic!("expected permanent failure outcome");
+    };
+    assert_eq!(job.id, id);
+    assert_eq!(job.job_status, ProofJobStatus::Failed);
+    assert!(job.completed_at.is_some());
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Failed);
@@ -918,7 +923,7 @@ async fn test_retry_or_fail_stuck_request_wrong_state() {
 
     // Request is RUNNING, not PENDING — should be skipped
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::Skipped);
+    assert!(matches!(outcome, RetryOutcome::Skipped));
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Running); // unchanged
@@ -965,7 +970,7 @@ async fn test_retry_or_fail_stuck_request_requeues_migration_parked_running_requ
     let outcome =
         repo.retry_or_fail_stuck_request(id, 3, "migration-parked RUNNING request").await.unwrap();
 
-    assert_eq!(outcome, RetryOutcome::Retried);
+    assert!(matches!(outcome, RetryOutcome::Retried));
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Created);
@@ -1661,7 +1666,7 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
         })
         .await
         .unwrap();
-    let SubmitProofOutcome::Completed(replayed) = replay else {
+    let SubmitProofOutcome::AlreadyCompleted(replayed) = replay else {
         panic!("identical retry should be idempotent");
     };
     assert_eq!(replayed.job_status, ProofJobStatus::Succeeded);

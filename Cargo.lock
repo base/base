@@ -6084,6 +6084,7 @@ dependencies = [
  "chrono",
  "jsonrpsee",
  "metrics",
+ "metrics-util",
  "rstest",
  "serde_json",
  "tokio",

@@ -197,12 +197,12 @@ impl TryFrom<&str> for SessionType {
 }
 
 /// Outcome of attempting to retry or fail a stuck proof request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum RetryOutcome {
     /// Request was reset to CREATED with incremented `retry_count`.
     Retried,
     /// Request was permanently marked FAILED (max retries exceeded).
-    PermanentlyFailed,
+    PermanentlyFailed(Box<ProofJob>),
     /// Request was no longer in PENDING state (already claimed or transitioned).
     Skipped,
 }
@@ -1048,8 +1048,10 @@ pub struct CompleteClaimedProofJob {
 /// Outcome of attempting to complete a worker proof job.
 #[derive(Debug, Clone)]
 pub enum SubmitProofOutcome {
-    /// Submit succeeded.
+    /// Submit succeeded and transitioned the job to terminal success.
     Completed(ProofJob),
+    /// Submit replayed an already completed result from the same worker/lock.
+    AlreadyCompleted(ProofJob),
     /// The submitted result does not match the claimed job's proof type or
     /// capability discriminator. The stored job is left unchanged.
     ResultMismatch {
