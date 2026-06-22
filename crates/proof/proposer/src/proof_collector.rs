@@ -169,14 +169,6 @@ impl<R> std::fmt::Debug for ProofCollector<R> {
 }
 
 impl<R: RollupProvider + 'static> ProofCollector<R> {
-    /// Creates a TEE proof collector for single-target AWS Nitro polling.
-    pub fn target_poller_aws_nitro(
-        proof_requester: Arc<dyn ProofRequesterProvider>,
-        rollup_client: Arc<R>,
-    ) -> Self {
-        Self::new(proof_requester, rollup_client)
-    }
-
     /// Creates a proof collector.
     pub const fn new(
         proof_requester: Arc<dyn ProofRequesterProvider>,
@@ -189,7 +181,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
     ///
     /// Returns a [`TargetPoll`] describing the next action the caller should
     /// take. The session ID is derived deterministically from the canonical
-    /// L2 output root at `target_block` and the configured TEE kind, so a
+    /// L2 output root at `target_block` and the AWS Nitro TEE label, so a
     /// freshly constructed collector can rediscover an in-flight session
     /// dispatched by a previous proposer instance.
     pub async fn poll(&self, target_block: u64) -> TargetPoll {
@@ -1289,10 +1281,8 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&proof_requester),
-            Arc::clone(&rollup_client),
-        );
+        let collector =
+            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
         let dispatcher = ProofDispatcher::aws_nitro(
             proof_requester,
             Arc::clone(&l1),
@@ -1360,10 +1350,8 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&proof_requester),
-            Arc::clone(&rollup_client),
-        );
+        let collector =
+            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
         let dispatcher = ProofDispatcher::aws_nitro(
             proof_requester,
             Arc::clone(&l1),
@@ -1445,10 +1433,7 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&requester),
-            Arc::clone(&rollup_client),
-        );
+        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
         let dispatcher = ProofDispatcher::aws_nitro(
             requester,
             Arc::clone(&l1),
@@ -1510,10 +1495,7 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(MismatchedProofRequester);
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&requester),
-            Arc::clone(&rollup_client),
-        );
+        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
         let dispatcher = ProofDispatcher::aws_nitro(
             requester,
             Arc::clone(&l1),
@@ -1585,7 +1567,7 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector = ProofCollector::target_poller_aws_nitro(
+        let collector = ProofCollector::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
         );
@@ -1647,10 +1629,7 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&requester),
-            Arc::clone(&rollup_client),
-        );
+        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
         let dispatcher = ProofDispatcher::aws_nitro(
             requester,
             Arc::clone(&l1),
@@ -1714,10 +1693,7 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
-        let collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&requester),
-            Arc::clone(&rollup_client),
-        );
+        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
         let dispatcher = ProofDispatcher::aws_nitro(
             requester,
             Arc::clone(&l1),
@@ -1797,7 +1773,7 @@ mod tests {
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(request))
             .await
             .expect("test setup should dispatch root session");
-        let collector = ProofCollector::target_poller_aws_nitro(
+        let collector = ProofCollector::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
         );
@@ -1862,7 +1838,7 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector = ProofCollector::target_poller_aws_nitro(
+        let collector = ProofCollector::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
         );
@@ -1947,8 +1923,7 @@ mod tests {
         // "Restart": build a fresh collector with no in-memory dispatch state.
         // It must rederive the session id from the canonical chain root and
         // recover the in-flight session.
-        let collector =
-            ProofCollector::target_poller_aws_nitro(Arc::clone(&proof_requester), rollup_client);
+        let collector = ProofCollector::new(Arc::clone(&proof_requester), rollup_client);
 
         match collector.poll(target_block).await {
             TargetPoll::Ready { session_id, .. } => {
@@ -1973,7 +1948,7 @@ mod tests {
             max_safe_block: None,
         });
 
-        let collector = ProofCollector::target_poller_aws_nitro(proof_requester, rollup_client);
+        let collector = ProofCollector::new(proof_requester, rollup_client);
         match collector.poll(target_block).await {
             TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
                 assert!(!session_id.is_empty());

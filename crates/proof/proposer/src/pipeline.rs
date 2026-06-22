@@ -280,10 +280,8 @@ mod tests {
                 output_fetch_concurrency: config.recovery_scan_concurrency,
             },
         );
-        let proof_collector = ProofCollector::target_poller_aws_nitro(
-            Arc::clone(&proof_requester),
-            Arc::clone(&rollup),
-        );
+        let proof_collector =
+            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup));
         let proof_collector_orchestrator = ProofCollectorOrchestrator::new(
             proof_collector,
             proof_dispatcher.clone(),
