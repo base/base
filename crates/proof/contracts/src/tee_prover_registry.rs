@@ -56,14 +56,6 @@ sol! {
     }
 }
 
-/// Returns a human-readable name for known `TEEProverRegistry` custom-error
-/// revert data.
-pub fn decode_tee_prover_registry_revert(data: &[u8]) -> Option<&'static str> {
-    data.get(..4)
-        .and_then(|selector| selector.try_into().ok())
-        .and_then(ITEEProverRegistry::ITEEProverRegistryErrors::name_by_selector)
-}
-
 /// Reads registration state from the on-chain `TEEProverRegistry`.
 #[async_trait]
 pub trait TEEProverRegistryClient: Send + Sync {
@@ -118,7 +110,7 @@ impl TEEProverRegistryClient for TEEProverRegistryContractClient {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes};
-    use alloy_sol_types::{SolCall, SolError};
+    use alloy_sol_types::SolCall;
 
     use super::*;
 
@@ -150,34 +142,5 @@ mod tests {
         assert_ne!(ITEEProverRegistry::isValidSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isRegisteredSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::getRegisteredSignersCall::SELECTOR, [0u8; 4]);
-    }
-
-    #[test]
-    fn known_custom_errors_decode() {
-        for (selector, name) in [
-            (ITEEProverRegistry::AttestationTooOld::SELECTOR, "AttestationTooOld"),
-            (
-                ITEEProverRegistry::AttestationVerificationFailed::SELECTOR,
-                "AttestationVerificationFailed",
-            ),
-            (ITEEProverRegistry::InvalidPublicKey::SELECTOR, "InvalidPublicKey"),
-            (ITEEProverRegistry::PCR0NotFound::SELECTOR, "PCR0NotFound"),
-            (ITEEProverRegistry::DisputeGameFactoryNotSet::SELECTOR, "DisputeGameFactoryNotSet"),
-            (ITEEProverRegistry::ImageHashReadFailed::SELECTOR, "ImageHashReadFailed"),
-            (ITEEProverRegistry::InvalidGameType::SELECTOR, "InvalidGameType"),
-        ] {
-            assert_eq!(decode_tee_prover_registry_revert(&selector), Some(name));
-
-            let mut data = selector.to_vec();
-            data.extend_from_slice(&[0xAA; 32]);
-            assert_eq!(decode_tee_prover_registry_revert(&data), Some(name));
-        }
-    }
-
-    #[test]
-    fn unknown_custom_errors_do_not_decode() {
-        assert_eq!(decode_tee_prover_registry_revert(&[]), None);
-        assert_eq!(decode_tee_prover_registry_revert(&[0x00, 0x01, 0x02]), None);
-        assert_eq!(decode_tee_prover_registry_revert(&[0xFF; 4]), None);
     }
 }

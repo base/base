@@ -11,9 +11,7 @@ use std::{
 
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
-use base_proof_contracts::{
-    ITEEProverRegistry, TEEProverRegistryClient, decode_tee_prover_registry_revert,
-};
+use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
@@ -302,7 +300,11 @@ where
                             if let TxManagerError::ExecutionReverted { data, .. } = &e {
                                 let registry_error = data
                                     .as_ref()
-                                    .and_then(|d| decode_tee_prover_registry_revert(d.as_ref()));
+                                    .and_then(|d| d.get(..4))
+                                    .and_then(|selector| selector.try_into().ok())
+                                    .and_then(
+                                        ITEEProverRegistry::ITEEProverRegistryErrors::name_by_selector,
+                                    );
                                 warn!(
                                     signer = %signer_address,
                                     registry_error = ?registry_error,
