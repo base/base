@@ -868,52 +868,35 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn register_signer_uses_exponential_backoff_between_tx_retries() {
-        let manager = SignerManager::new(
-            RecordingProofProvider::default(),
-            MockRegistry::default(),
-            RecordingTxManager::with_errors(vec![
-                TxManagerError::Rpc("transient 1".into()),
-                TxManagerError::Rpc("transient 2".into()),
-                TxManagerError::Rpc("transient 3".into()),
-            ]),
-            TEST_REGISTRY_ADDRESS,
-            DEFAULT_MAX_CONCURRENCY,
-            3,
-            Duration::from_secs(1),
-        );
-        let start = tokio::time::Instant::now();
+    async fn register_signer_backs_off_between_tx_retries() {
+        for (case, max_retries, retry_delay, errors, expected_sends, expected_elapsed) in [
+            ("exponential", 3, Duration::from_secs(1), 3, 4, Duration::from_secs(7)),
+            ("capped", 4, Duration::from_secs(30), 4, 5, Duration::from_secs(210)),
+        ] {
+            let manager = SignerManager::new(
+                RecordingProofProvider::default(),
+                MockRegistry::default(),
+                RecordingTxManager::with_errors(
+                    (1..=errors)
+                        .map(|retry| TxManagerError::Rpc(format!("transient {retry}")))
+                        .collect(),
+                ),
+                TEST_REGISTRY_ADDRESS,
+                DEFAULT_MAX_CONCURRENCY,
+                max_retries,
+                retry_delay,
+            );
+            let start = tokio::time::Instant::now();
 
-        let result = register(&manager, &CancellationToken::new()).await;
+            let result = register(&manager, &CancellationToken::new()).await;
 
-        assert!(result.is_ok(), "retryable errors should eventually succeed: {result:?}");
-        assert_eq!(manager.tx_manager.send_count(), 4);
-        assert_eq!(start.elapsed(), Duration::from_secs(7));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn register_signer_caps_exponential_backoff_between_tx_retries() {
-        let manager = SignerManager::new(
-            RecordingProofProvider::default(),
-            MockRegistry::default(),
-            RecordingTxManager::with_errors(vec![
-                TxManagerError::Rpc("transient 1".into()),
-                TxManagerError::Rpc("transient 2".into()),
-                TxManagerError::Rpc("transient 3".into()),
-                TxManagerError::Rpc("transient 4".into()),
-            ]),
-            TEST_REGISTRY_ADDRESS,
-            DEFAULT_MAX_CONCURRENCY,
-            4,
-            Duration::from_secs(30),
-        );
-        let start = tokio::time::Instant::now();
-
-        let result = register(&manager, &CancellationToken::new()).await;
-
-        assert!(result.is_ok(), "retryable errors should eventually succeed: {result:?}");
-        assert_eq!(manager.tx_manager.send_count(), 5);
-        assert_eq!(start.elapsed(), Duration::from_secs(210));
+            assert!(
+                result.is_ok(),
+                "{case}: retryable errors should eventually succeed: {result:?}"
+            );
+            assert_eq!(manager.tx_manager.send_count(), expected_sends, "{case}");
+            assert_eq!(start.elapsed(), expected_elapsed, "{case}");
+        }
     }
 
     #[tokio::test(start_paused = true)]
