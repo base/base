@@ -3,9 +3,8 @@ use std::{collections::VecDeque, sync::Arc, time::Instant};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
 use base_observability_events::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
-use chrono::Utc;
 use jsonrpsee::{
     core::{
         ClientError,
@@ -398,39 +397,22 @@ where
         tx_hash: Option<TxHash>,
         mut data: Map<String, serde_json::Value>,
     ) {
-        let Some(writer) = self.config.transaction_event_writer.as_ref() else {
-            return;
-        };
-
         data.entry("target".to_string()).or_insert_with(|| json!("builder_forwarder"));
         data.entry("rpc_method".to_string())
             .or_insert_with(|| json!("base_insertValidatedTransaction"));
+        let attempt_id = data.get("attempt").cloned().unwrap_or(serde_json::Value::Null);
 
-        let event_time = Utc::now();
-        let mut event_id = EventIdBuilder::new()
-            .part("producer", TransactionEventProducer::BaseRethNode)
-            .part("event_type", event_type)
-            .part("builder_url", self.url_label.as_ref())
-            .part("event_time", event_time.timestamp_nanos_opt().unwrap_or_default());
-        if let Some(tx_hash) = tx_hash {
-            event_id = event_id.part("tx_hash", tx_hash);
-        }
-
-        let mut event = TransactionEvent::new(
-            event_id.finish(),
-            event_time,
-            TransactionEventProducer::BaseRethNode,
-            event_type,
-        )
-        .with_network(writer.network())
-        .with_data(data);
-        if let Some(tx_hash) = tx_hash {
-            event = event.with_tx_hash(tx_hash);
-        }
-
-        if let Err(err) = writer.try_write(&event) {
-            debug!(error = %err, event_type = %event_type, "transaction event not written");
-        }
+        let _ = transaction_event!(
+            writer: self.config.transaction_event_writer.as_ref(),
+            producer: TransactionEventProducer::BaseRethNode,
+            event_type: event_type,
+            maybe_tx_hash: tx_hash,
+            id: {
+                "builder_url" => self.url_label.as_ref(),
+                "attempt" => attempt_id,
+            },
+            data: data,
+        );
     }
 }
 

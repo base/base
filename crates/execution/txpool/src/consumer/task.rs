@@ -2,14 +2,13 @@ use std::{fmt, sync::Arc};
 
 use alloy_primitives::TxHash;
 use base_observability_events::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
-use chrono::Utc;
 use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
 use serde_json::{Map, json};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace};
+use tracing::{info, trace};
 
 use super::{config::ConsumerConfig, metrics::Metrics, validator::RecentlySent};
 
@@ -105,37 +104,23 @@ where
     }
 
     fn emit_builder_consumed_event(&self, tx_hash: TxHash, iterator_index: u64) {
-        let Some(writer) = self.config.transaction_event_writer.as_ref() else {
-            return;
-        };
-
         let event_type = TransactionEventType::TxpoolBuilderConsumed;
-        let event_time = Utc::now();
         let data = Map::from_iter([
             ("source".to_string(), json!("best_transactions")),
             ("target".to_string(), json!("builder_forwarder")),
             ("iterator_index".to_string(), json!(iterator_index)),
             ("resend_after_ms".to_string(), json!(self.config.resend_after.as_millis() as u64)),
         ]);
-        let event_id = EventIdBuilder::new()
-            .part("producer", TransactionEventProducer::BaseRethNode)
-            .part("event_type", event_type)
-            .part("tx_hash", tx_hash)
-            .part("event_time", event_time.timestamp_nanos_opt().unwrap_or_default())
-            .finish();
-        let event = TransactionEvent::new(
-            event_id,
-            event_time,
-            TransactionEventProducer::BaseRethNode,
-            event_type,
-        )
-        .with_network(writer.network())
-        .with_tx_hash(tx_hash)
-        .with_data(data);
-
-        if let Err(err) = writer.try_write(&event) {
-            debug!(error = %err, event_type = %event_type, "transaction event not written");
-        }
+        let _ = transaction_event!(
+            writer: self.config.transaction_event_writer.as_ref(),
+            producer: TransactionEventProducer::BaseRethNode,
+            event_type: event_type,
+            tx_hash: tx_hash,
+            id: {
+                "iterator_index" => iterator_index,
+            },
+            data: data,
+        );
     }
 }
 

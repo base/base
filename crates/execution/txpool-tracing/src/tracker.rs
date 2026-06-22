@@ -9,10 +9,9 @@ use std::{
 use alloy_primitives::{B256, TxHash};
 use base_flashblocks::PendingBlocks;
 use base_observability_events::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
-    TransactionEventWriter,
+    TransactionEventProducer, TransactionEventType, TransactionEventWriter, transaction_event,
 };
-use chrono::{Local, Utc};
+use chrono::Local;
 use lru::LruCache;
 use reth_node_api::{BlockBody, NodePrimitives};
 use reth_primitives_traits::{AlloyBlockHeader, transaction::TxHashRef};
@@ -521,31 +520,18 @@ impl Tracker {
             data.insert("block_number".to_string(), json!(inclusion.block_number));
         }
 
-        let event_id = EventIdBuilder::new()
-            .part("producer", TransactionEventProducer::BaseRethNode)
-            .part("event_type", event_type)
-            .part("tx_hash", tx_hash)
-            .part("event_index", event_index)
-            .finish();
-
-        let mut event = TransactionEvent::new(
-            event_id,
-            Utc::now(),
-            TransactionEventProducer::BaseRethNode,
-            event_type,
-        )
-        .with_network(writer.network())
-        .with_tx_hash(tx_hash)
-        .with_data(data);
-
-        if let Some(inclusion) = event_data.inclusion {
-            event.block_hash = Some(inclusion.block_hash);
-            event.block_number = Some(inclusion.block_number);
-        }
-
-        if let Err(err) = writer.try_write(&event) {
-            debug!(target: "tracex", error = %err, tx_hash = ?tx_hash, event = %txpool_event, "Failed to enqueue transaction event journal entry");
-        }
+        let _ = transaction_event!(
+            writer: Some(writer),
+            producer: TransactionEventProducer::BaseRethNode,
+            event_type: event_type,
+            tx_hash: tx_hash,
+            maybe_block_hash: event_data.inclusion.map(|inclusion| inclusion.block_hash),
+            maybe_block_number: event_data.inclusion.map(|inclusion| inclusion.block_number),
+            id: {
+                "event_index" => event_index,
+            },
+            data: data,
+        );
     }
 }
 
