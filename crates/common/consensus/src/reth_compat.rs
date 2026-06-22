@@ -576,7 +576,7 @@ pub struct BaseHeaderExt {
     pub block_access_list_hash: Option<B256>,
     /// EIP-7843 slot number.
     pub slot_number: Option<u64>,
-    /// Post-Beryl millisecond subsecond component (Base-specific).
+    /// Optional millisecond subsecond component (Base-specific).
     ///
     /// Stored as `u64` because reth-codecs only implements [`Compact`] for `u8`/`u64`/`u128`;
     /// the value is always in the range `0..1000` and is converted to/from `u16` at the

@@ -18,7 +18,7 @@ pub struct BaseHeaderResponse<H = Header> {
     /// Standard Ethereum header response fields.
     #[serde(flatten)]
     pub inner: H,
-    /// Full Unix timestamp in milliseconds for post-Beryl Base blocks.
+    /// Full Unix timestamp in milliseconds when the sub-second component is present.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub timestamp_ms: Option<u64>,
     /// Sub-second millisecond component of the block timestamp.
