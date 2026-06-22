@@ -12,7 +12,7 @@
 //! All storage access goes through a gas-free [`JournalStorageProvider`], so the
 //! enshrined schedule is the single source of gas accounting (no EIP-2929/2200
 //! double-counting). The executor is invoked from
-//! [`BaseEvm::transact_one`](crate::BaseEvm) when the transaction is an EIP-8130
+//! [`BaseEvm::transact_raw`](crate::BaseEvm) when the transaction is an EIP-8130
 //! transaction, bypassing the mainnet single-frame handler.
 //!
 //! # Scope
