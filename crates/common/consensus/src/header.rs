@@ -12,7 +12,7 @@ use alloy_rlp::{BufMut, Decodable, Encodable, length_of_length};
 /// Number of milliseconds in one Unix timestamp second.
 pub const TIMESTAMP_MILLIS_PER_SECOND: u16 = 1_000;
 
-/// Base block cadence in milliseconds after Beryl.
+/// Base block cadence in milliseconds when the sub-second timestamp component is used.
 pub const BASE_BLOCK_TIME_MILLIS: u16 = 200;
 
 /// Valid millisecond subsecond components for 200ms Base headers.
@@ -21,8 +21,8 @@ pub const VALID_TIMESTAMP_MILLIS_PARTS: [u16; 5] = [0, 200, 400, 600, 800];
 /// Error returned when a header millisecond timestamp component is invalid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TimestampMillisPartError {
-    /// Post-Beryl validation requires a millisecond component.
-    #[error("timestamp millisecond part is required after Beryl")]
+    /// Validation requires a millisecond component.
+    #[error("timestamp millisecond part is required")]
     MissingPart,
 
     /// Millisecond component is not aligned to the 200ms cadence.
@@ -58,10 +58,10 @@ pub enum TimestampMillisPartError {
     NonSlotAlignedDelta(u64),
 }
 
-/// Base header wrapper with an optional post-Beryl millisecond timestamp component.
+/// Base header wrapper with an optional millisecond timestamp component.
 ///
 /// `BaseHeader` is the canonical Base block header: it wraps the upstream Ethereum
-/// [`Header`] fields and adds an optional post-Beryl `timestamp_millis_part`
+/// [`Header`] fields and adds an optional `timestamp_millis_part`
 /// committed by the header hash. When `timestamp_millis_part` is `None`, the RLP
 /// encoding, hash, and reth `Compact` bytes are byte-identical to the upstream
 /// [`Header`].
@@ -72,7 +72,7 @@ pub struct BaseHeader {
     /// Standard Ethereum execution header fields.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub inner: Header,
-    /// Post-Beryl millisecond subsecond component committed by the header hash.
+    /// Optional millisecond subsecond component committed by the header hash.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub timestamp_millis_part: Option<u16>,
 }
@@ -111,7 +111,7 @@ impl BaseHeader {
         }
     }
 
-    /// Returns the canonical post-Beryl timestamp in milliseconds when present.
+    /// Returns the canonical timestamp in milliseconds when the sub-second component is present.
     pub fn timestamp_millis(&self) -> Result<Option<u64>, TimestampMillisPartError> {
         let Some(part) = self.timestamp_millis_part else {
             return Ok(None);
@@ -126,12 +126,12 @@ impl BaseHeader {
         Ok(Some(timestamp_seconds + u64::from(part)))
     }
 
-    /// Returns the canonical post-Beryl timestamp in milliseconds.
+    /// Returns the canonical timestamp in milliseconds.
     pub fn required_timestamp_millis(&self) -> Result<u64, TimestampMillisPartError> {
         self.timestamp_millis()?.ok_or(TimestampMillisPartError::MissingPart)
     }
 
-    /// Validates a child Base header timestamp against its parent for post-Beryl blocks.
+    /// Validates a child Base header timestamp against its parent.
     pub fn validate_timestamp_millis_after(
         &self,
         parent: &Self,
@@ -579,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn timestamp_millis_is_absent_before_beryl() {
+    fn timestamp_millis_is_absent_when_part_is_missing() {
         let header = Header { timestamp: 1_234, ..Default::default() };
         let base_header = BaseHeader::new(header, None).unwrap();
 
