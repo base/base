@@ -3,7 +3,7 @@ set -euo pipefail
 
 marker="<!-- CLAUDE_BLOCKING_REVIEW:v1"
 
-required_vars=(GITHUB_REPOSITORY PR_NUMBER HEAD_SHA REVIEW_JSON)
+required_vars=(GITHUB_REPOSITORY PR_NUMBER HEAD_SHA)
 for var in "${required_vars[@]}"; do
   if [[ -z "${!var:-}" ]]; then
     echo "$var is required" >&2
@@ -11,23 +11,52 @@ for var in "${required_vars[@]}"; do
   fi
 done
 
-if ! jq -e . >/dev/null <<< "$REVIEW_JSON"; then
-  echo "REVIEW_JSON is not valid JSON" >&2
-  exit 1
-fi
-
-if ! jq -e --arg head_sha "$HEAD_SHA" '
-  (.head_sha == $head_sha) and
-  (.has_blocking_findings | type == "boolean") and
-  (.findings | type == "array") and
-  (.max_severity == "NONE" or .max_severity == "HIGH" or .max_severity == "CRITICAL")
-' >/dev/null <<< "$REVIEW_JSON"; then
-  echo "Blocking review result is malformed or stale" >&2
-  exit 1
-fi
+bypass_label="${BYPASS_LABEL:-ai-review-override}"
+pr_labels_json="${PR_LABELS_JSON:-[]}"
 
 body_file="$(mktemp)"
 trap 'rm -f "$body_file"' EXIT
+
+has_bypass_label() {
+  jq -e --arg label "$bypass_label" '
+    type == "array" and any(.[]; . == $label)
+  ' >/dev/null 2>&1 <<< "$pr_labels_json"
+}
+
+if has_bypass_label; then
+  marker_payload="$(jq -cn \
+    --arg head_sha "$HEAD_SHA" \
+    --arg bypass_label "$bypass_label" \
+    '{head_sha: $head_sha, bypassed: true, bypass_label: $bypass_label}')"
+
+  {
+    printf '%s\n' "$marker"
+    printf '%s\n' "$marker_payload"
+    printf '%s\n\n' "-->"
+    printf '## AI Blocking Review\n\n'
+    printf 'AI blocking review enforcement was bypassed for `%s` because the `%s` label is present.\n\n' "$HEAD_SHA" "$bypass_label"
+    printf 'Remove the `%s` label to rerun the required AI blocking review gate.\n' "$bypass_label"
+  } > "$body_file"
+else
+  if [[ -z "${REVIEW_JSON:-}" ]]; then
+    echo "REVIEW_JSON is required when the bypass label is absent" >&2
+    exit 1
+  fi
+
+  if ! jq -e . >/dev/null <<< "$REVIEW_JSON"; then
+    echo "REVIEW_JSON is not valid JSON" >&2
+    exit 1
+  fi
+
+  if ! jq -e --arg head_sha "$HEAD_SHA" '
+    (.head_sha == $head_sha) and
+    (.has_blocking_findings | type == "boolean") and
+    (.findings | type == "array") and
+    (.max_severity == "NONE" or .max_severity == "HIGH" or .max_severity == "CRITICAL")
+  ' >/dev/null <<< "$REVIEW_JSON"; then
+    echo "Blocking review result is malformed or stale" >&2
+    exit 1
+  fi
 
 has_blocking_findings="$(jq -r '.has_blocking_findings' <<< "$REVIEW_JSON")"
 max_severity="$(jq -r '.max_severity' <<< "$REVIEW_JSON")"
@@ -43,7 +72,7 @@ marker_payload="$(jq -cn \
   --arg head_sha "$HEAD_SHA" \
   --arg max_severity "$max_severity" \
   --argjson has_blocking_findings "$effective_has_blocking_findings" \
-  '{head_sha: $head_sha, has_blocking_findings: $has_blocking_findings, max_severity: $max_severity}')"
+  '{head_sha: $head_sha, has_blocking_findings: $has_blocking_findings, max_severity: $max_severity, bypassed: false}')"
 
 {
   printf '%s\n' "$marker"
@@ -79,6 +108,7 @@ marker_payload="$(jq -cn \
     fi
   fi
 } > "$body_file"
+fi
 
 existing_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
   --paginate \

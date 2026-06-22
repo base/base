@@ -2,7 +2,7 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, synchronize, ready_for_review, reopened, labeled, unlabeled]
 
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
@@ -21,7 +21,7 @@ jobs:
     # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
     # It will not work on other runners
     # Skip for external contributor PRs (forks) — secrets and runner group are unavailable
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled' && github.event.action != 'unlabeled'
     runs-on:
       group: BaseRunnerGroup
     steps:
@@ -132,6 +132,7 @@ jobs:
 
       - name: Run blocking AI review
         id: blocking-review
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'ai-review-override') }}
         uses: anthropics/claude-code-action@1b8ee3b94104046d71fde52ec3557651ad8c0d71 # v1.0.29
         env:
           ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
@@ -166,7 +167,7 @@ jobs:
             --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*)"
 
       - name: Update blocking review comment
-        if: always() && steps.blocking-review.outputs.structured_output != ''
+        if: always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -174,6 +175,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_JSON: ${{ steps.blocking-review.outputs.structured_output }}
+          BYPASS_LABEL: ai-review-override
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: .github/scripts/update-ai-blocking-review-comment.sh
 
       - name: Enforce blocking review
@@ -181,4 +184,6 @@ jobs:
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEW_JSON: ${{ steps.blocking-review.outputs.structured_output }}
+          BYPASS_LABEL: ai-review-override
+          PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: .github/scripts/enforce-ai-blocking-review.sh

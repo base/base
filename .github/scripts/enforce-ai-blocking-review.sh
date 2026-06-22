@@ -6,18 +6,35 @@ if [[ -z "${HEAD_SHA:-}" ]]; then
   exit 1
 fi
 
-if [[ -z "${REVIEW_JSON:-}" ]]; then
-  echo "REVIEW_JSON is required" >&2
-  exit 1
-fi
-
 summary_file="${GITHUB_STEP_SUMMARY:-}"
+bypass_label="${BYPASS_LABEL:-ai-review-override}"
+pr_labels_json="${PR_LABELS_JSON:-[]}"
 
 write_summary() {
   if [[ -n "$summary_file" ]]; then
     printf '%s\n' "$@" >> "$summary_file"
   fi
 }
+
+has_bypass_label() {
+  jq -e --arg label "$bypass_label" '
+    type == "array" and any(.[]; . == $label)
+  ' >/dev/null 2>&1 <<< "$pr_labels_json"
+}
+
+if has_bypass_label; then
+  write_summary \
+    "## AI Blocking Review" \
+    "" \
+    "AI blocking review enforcement was bypassed for \`$HEAD_SHA\` because the \`$bypass_label\` label is present."
+  exit 0
+fi
+
+if [[ -z "${REVIEW_JSON:-}" ]]; then
+  write_summary "## AI Blocking Review" "" "The blocking review did not return structured output."
+  echo "REVIEW_JSON is required" >&2
+  exit 1
+fi
 
 if ! jq -e . >/dev/null <<< "$REVIEW_JSON"; then
   write_summary "## AI Blocking Review" "" "The blocking review did not return valid JSON."
