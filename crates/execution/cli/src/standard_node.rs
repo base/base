@@ -326,7 +326,7 @@ impl StandardBaseRethNode {
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
 
-        // Feature extensions.
+        // Feature extensions (FlashblocksExtension must be last - uses replace_configured).
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig {
             sequencer_rpc: args.rpc.rollup_args.sequencer.clone(),
         });
@@ -365,9 +365,9 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
         runner.install_ext::<TxForwardingExtension>((&args).into());
-        runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_metrics_extension(&mut runner, &rollup_args)?;
+        runner.install_ext::<FlashblocksExtension>(flashblocks_config);
 
         Ok(runner)
     }
