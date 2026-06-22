@@ -459,10 +459,9 @@ where
             return;
         }
 
-        self.rollup.log_upgrade_activation(
+        self.rollup.log_upgrade_activation_estimated(
             envelope.execution_payload.block_number(),
             envelope.execution_payload.timestamp(),
-            None,
         );
     }
 

@@ -166,6 +166,42 @@ impl EthereumHardforks for RollupConfig {
     }
 }
 
+#[derive(Clone, Copy)]
+enum UpgradeActivationLog {
+    Ecotone,
+    Fjord,
+    Granite,
+    Holocene,
+    Isthmus,
+    Jovian,
+    Azul,
+    Beryl,
+    Cobalt,
+}
+
+impl UpgradeActivationLog {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Ecotone => "ecotone",
+            Self::Fjord => "fjord",
+            Self::Granite => "granite",
+            Self::Holocene => "holocene",
+            Self::Isthmus => "isthmus",
+            Self::Jovian => "jovian",
+            Self::Azul => "azul",
+            Self::Beryl => "beryl",
+            Self::Cobalt => "cobalt",
+        }
+    }
+
+    const fn banner(self) -> Option<&'static str> {
+        match self {
+            Self::Azul => Some(RollupConfig::AZUL_ACTIVATION_BANNER),
+            _ => None,
+        }
+    }
+}
+
 macro_rules! rollup_fork_methods {
     ($(
         $active:ident,
@@ -427,45 +463,81 @@ impl RollupConfig {
     /// The activation banner for the Base Azul hardfork, printed when the first block of the fork is built or processed.
     const AZUL_ACTIVATION_BANNER: &str = include_str!("../static/azul_activation_banner.txt");
 
-    /// Logs upgrade activation when building or processing the first block of a fork.
-    pub fn log_upgrade_activation(
-        &self,
-        block_number: u64,
-        timestamp: u64,
-        parent_timestamp: Option<u64>,
-    ) {
-        let is_first = |with_parent: fn(&Self, u64, u64) -> bool,
-                        estimated: fn(&Self, u64) -> bool| {
-            parent_timestamp
-                .map(|parent| with_parent(self, timestamp, parent))
-                .unwrap_or_else(|| estimated(self, timestamp))
-        };
-
-        if is_first(Self::is_first_ecotone_block_with_parent, Self::is_first_ecotone_block) {
-            tracing::info!(target: "upgrades", block_number, "Activating ecotone upgrade");
-        } else if is_first(Self::is_first_fjord_block_with_parent, Self::is_first_fjord_block) {
-            tracing::info!(target: "upgrades", block_number, "Activating fjord upgrade");
-        } else if is_first(Self::is_first_granite_block_with_parent, Self::is_first_granite_block) {
-            tracing::info!(target: "upgrades", block_number, "Activating granite upgrade");
-        } else if is_first(Self::is_first_holocene_block_with_parent, Self::is_first_holocene_block)
-        {
-            tracing::info!(target: "upgrades", block_number, "Activating holocene upgrade");
-        } else if is_first(Self::is_first_isthmus_block_with_parent, Self::is_first_isthmus_block) {
-            tracing::info!(target: "upgrades", block_number, "Activating isthmus upgrade");
-        } else if is_first(Self::is_first_jovian_block_with_parent, Self::is_first_jovian_block) {
-            tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
-        } else if is_first(
-            Self::is_first_base_azul_block_with_parent,
-            Self::is_first_base_azul_block,
-        ) {
-            for line in Self::AZUL_ACTIVATION_BANNER.lines() {
+    fn emit_upgrade_activation(&self, block_number: u64, activation: UpgradeActivationLog) {
+        if let Some(banner) = activation.banner() {
+            for line in banner.lines() {
                 tracing::info!(target: "upgrades", "{line}");
             }
-            tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
-        } else if is_first(Self::is_first_beryl_block_with_parent, Self::is_first_beryl_block) {
-            tracing::info!(target: "upgrades", block_number, "Activating beryl upgrade");
-        } else if is_first(Self::is_first_cobalt_block_with_parent, Self::is_first_cobalt_block) {
-            tracing::info!(target: "upgrades", block_number, "Activating cobalt upgrade");
+        }
+
+        tracing::info!(target: "upgrades", block_number, upgrade = activation.name(), "Activated upgrade");
+    }
+
+    fn first_upgrade_activation_estimated(&self, timestamp: u64) -> Option<UpgradeActivationLog> {
+        if self.is_first_ecotone_block(timestamp) {
+            Some(UpgradeActivationLog::Ecotone)
+        } else if self.is_first_fjord_block(timestamp) {
+            Some(UpgradeActivationLog::Fjord)
+        } else if self.is_first_granite_block(timestamp) {
+            Some(UpgradeActivationLog::Granite)
+        } else if self.is_first_holocene_block(timestamp) {
+            Some(UpgradeActivationLog::Holocene)
+        } else if self.is_first_isthmus_block(timestamp) {
+            Some(UpgradeActivationLog::Isthmus)
+        } else if self.is_first_jovian_block(timestamp) {
+            Some(UpgradeActivationLog::Jovian)
+        } else if self.is_first_base_azul_block(timestamp) {
+            Some(UpgradeActivationLog::Azul)
+        } else if self.is_first_beryl_block(timestamp) {
+            Some(UpgradeActivationLog::Beryl)
+        } else if self.is_first_cobalt_block(timestamp) {
+            Some(UpgradeActivationLog::Cobalt)
+        } else {
+            None
+        }
+    }
+
+    fn first_upgrade_activation_with_parent(
+        &self,
+        timestamp: u64,
+        parent_timestamp: u64,
+    ) -> Option<UpgradeActivationLog> {
+        if self.is_first_ecotone_block_with_parent(timestamp, parent_timestamp) {
+            Some(UpgradeActivationLog::Ecotone)
+        } else if self.is_first_fjord_block_with_parent(timestamp, parent_timestamp) {
+            Some(UpgradeActivationLog::Fjord)
+        } else if self.is_first_granite_block_with_parent(timestamp, parent_timestamp) {
+            Some(UpgradeActivationLog::Granite)
+        } else if self.is_first_holocene_block_with_parent(timestamp, parent_timestamp) {
+            Some(UpgradeActivationLog::Holocene)
+        } else if self.is_first_isthmus_block_with_parent(timestamp, parent_timestamp) {
+            Some(UpgradeActivationLog::Isthmus)
+        } else if self.is_first_jovian_block_with_parent(timestamp, parent_timestamp) {
+            Some(UpgradeActivationLog::Jovian)
+        } else if self.is_first_base_azul_block_with_parent(timestamp, parent_timestamp) {
+            Some(UpgradeActivationLog::Azul)
+        } else if self.is_first_beryl_block_with_parent(timestamp, parent_timestamp) {
+            Some(UpgradeActivationLog::Beryl)
+        } else if self.is_first_cobalt_block_with_parent(timestamp, parent_timestamp) {
+            Some(UpgradeActivationLog::Cobalt)
+        } else {
+            None
+        }
+    }
+
+    /// Logs upgrade activation when the caller knows the actual parent timestamp.
+    pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64, parent_timestamp: u64) {
+        if let Some(activation) =
+            self.first_upgrade_activation_with_parent(timestamp, parent_timestamp)
+        {
+            self.emit_upgrade_activation(block_number, activation);
+        }
+    }
+
+    /// Logs upgrade activation using block-time estimation when the parent timestamp is unknown.
+    pub fn log_upgrade_activation_estimated(&self, block_number: u64, timestamp: u64) {
+        if let Some(activation) = self.first_upgrade_activation_estimated(timestamp) {
+            self.emit_upgrade_activation(block_number, activation);
         }
     }
 }
