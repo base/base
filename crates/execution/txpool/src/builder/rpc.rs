@@ -53,7 +53,7 @@ impl<P> BuilderApiImpl<P> {
     }
 
     /// Creates a new handler with a durable transaction event writer.
-    pub fn new_with_transaction_event_writer(
+    pub const fn new_with_transaction_event_writer(
         pool: P,
         transaction_event_writer: Option<TransactionEventWriter>,
     ) -> Self {
