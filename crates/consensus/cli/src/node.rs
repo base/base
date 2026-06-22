@@ -12,6 +12,7 @@ use clap::Args;
 use eyre::Context;
 use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use url::Url;
 
