@@ -12,7 +12,7 @@ use std::{
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
-use base_proof_tee_nitro_attestation_prover::{AttestationProof, AttestationProofProvider};
+use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_proof_tee_nitro_verifier::VerifierJournal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
@@ -253,10 +253,9 @@ where
             Err(e) => return Err(e.into()),
         };
 
-        if let Err(e) = self.ensure_proof_fresh(signer_address, &proof) {
-            self.proof_provider.block_recovery_for_signer(signer_address);
-            return Err(e);
-        }
+        let journal = VerifierJournal::decode(&proof.output)
+            .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
+        let attestation_timestamp = journal.timestamp;
         drop(proof_permit);
 
         let calldata = Bytes::from(
@@ -286,6 +285,7 @@ where
                 if signer_cancel.is_cancelled() {
                     return Ok(());
                 }
+                self.ensure_attestation_fresh(signer_address, attestation_timestamp)?;
 
                 // Do not wrap send in run_until_cancelled: dropping it after nonce
                 // acquisition can leave a nonce gap.
@@ -375,20 +375,17 @@ where
         Ok(())
     }
 
-    fn ensure_proof_fresh(&self, signer: Address, proof: &AttestationProof) -> Result<()> {
-        let journal = VerifierJournal::decode(&proof.output)
-            .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
-        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
-        let age_ms = now_ms.saturating_sub(u128::from(journal.timestamp));
-        let age_ms = u64::try_from(age_ms).unwrap_or(u64::MAX);
-        let age = Duration::from_millis(age_ms);
+    fn ensure_attestation_fresh(&self, signer: Address, timestamp_ms: u64) -> Result<()> {
+        let now_ms =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let age = Duration::from_millis(now_ms.saturating_sub(timestamp_ms));
 
         if age > self.max_attestation_age {
             warn!(
                 signer = %signer,
                 age_secs = age.as_secs(),
                 max_age_secs = self.max_attestation_age.as_secs(),
-                timestamp_ms = journal.timestamp,
+                timestamp_ms,
                 "pre-submission freshness check failed"
             );
             return Err(RegistrarError::StaleAttestationProof {
@@ -749,6 +746,24 @@ mod tests {
         registry: MockRegistry,
         tx_manager: T,
     ) -> SignerManager<RecordingProofProvider, MockRegistry, T> {
+        manager_with_config(
+            proof_provider,
+            registry,
+            tx_manager,
+            DEFAULT_MAX_TX_RETRIES,
+            Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            TEST_MAX_ATTESTATION_AGE,
+        )
+    }
+
+    fn manager_with_config<T>(
+        proof_provider: RecordingProofProvider,
+        registry: MockRegistry,
+        tx_manager: T,
+        max_tx_retries: u32,
+        tx_retry_delay: Duration,
+        max_attestation_age: Duration,
+    ) -> SignerManager<RecordingProofProvider, MockRegistry, T> {
         SignerManager::new(
             proof_provider,
             registry,
@@ -756,9 +771,9 @@ mod tests {
             SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
-                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
-                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+                max_tx_retries,
+                tx_retry_delay,
+                max_attestation_age,
             },
         )
     }
@@ -976,7 +991,29 @@ mod tests {
             "stale proof should fail before submission: {result:?}"
         );
         assert_eq!(manager.tx_manager.send_count(), 0, "stale proof must not submit a tx");
-        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+        assert!(proof_provider.blocked_signers.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn register_signer_rechecks_freshness_before_retry_send() {
+        let proof_provider = RecordingProofProvider::default();
+        let manager = manager_with_config(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::with_errors(vec![TxManagerError::Rpc("transient".into())]),
+            DEFAULT_MAX_TX_RETRIES,
+            Duration::from_millis(50),
+            Duration::from_millis(20),
+        );
+
+        let result = register(&manager, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::StaleAttestationProof { signer, .. }) if signer == SIGNER_A),
+            "proof should become stale before retry submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 1, "stale retry must not submit again");
+        assert!(proof_provider.blocked_signers.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -998,7 +1035,7 @@ mod tests {
             "invalid proof journal should fail before submission: {result:?}"
         );
         assert_eq!(manager.tx_manager.send_count(), 0, "invalid proof must not submit a tx");
-        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+        assert!(proof_provider.blocked_signers.lock().unwrap().is_empty());
     }
 
     #[tokio::test(start_paused = true)]
