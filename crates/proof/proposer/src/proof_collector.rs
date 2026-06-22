@@ -210,6 +210,16 @@ where
                 break false;
             }
 
+            let exhausted_attempts = state
+                .retry_counts
+                .get(&target_block)
+                .copied()
+                .filter(|count| *count >= max_retries);
+            if let Some(attempts) = exhausted_attempts {
+                debug!(target_block, attempts, "Collector retry budget already exhausted");
+                break false;
+            }
+
             let Some(claimed_l2_output_root) = ProofTarget::canonical_output_root(
                 self.rollup_client.as_ref(),
                 target_block,
@@ -228,20 +238,49 @@ where
             .await
             {
                 TargetPoll::Ready(proof) => {
-                    state.retry_counts.remove(&target_block);
                     info!(target_block, "Proof ready, submitting inline");
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
                     Metrics::last_collected_block().set(target_block as f64);
 
                     match self.submit_inline(target_block, &current, proof, cache, cancel).await {
                         Some(recovered) => {
+                            state.retry_counts.remove(&target_block);
                             if recovered.l2_block_number > current.l2_block_number {
                                 current = recovered;
                                 continue;
                             }
                             break false;
                         }
-                        None => break true,
+                        None if cancel.is_cancelled() => break false,
+                        None => {
+                            let count = state.retry_counts.entry(target_block).or_insert(0);
+                            if *count >= max_retries {
+                                debug!(
+                                    target_block,
+                                    attempts = *count,
+                                    "Inline submission retry budget already exhausted"
+                                );
+                                break false;
+                            }
+
+                            *count = count.saturating_add(1);
+                            if *count >= max_retries {
+                                error!(
+                                    target_block,
+                                    attempts = *count,
+                                    "Inline submission failed after max retries"
+                                );
+                                break false;
+                            }
+
+                            Metrics::proof_retries_total().increment(1);
+                            warn!(
+                                target_block,
+                                attempt = *count,
+                                "Inline submission failed, restarting pipeline"
+                            );
+                            break true;
+                        }
                     }
                 }
                 TargetPoll::Pending => break false,
@@ -251,10 +290,19 @@ where
                     break true;
                 }
                 TargetPoll::Failed(error) => {
+                    let count = state.retry_counts.entry(target_block).or_insert(0);
+                    if *count >= max_retries {
+                        debug!(
+                            target_block,
+                            attempts = *count,
+                            "Proof collection retry budget already exhausted"
+                        );
+                        break false;
+                    }
+
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
                         .increment(1);
                     Metrics::errors_total(error.metric_label()).increment(1);
-                    let count = state.retry_counts.entry(target_block).or_insert(0);
                     *count = count.saturating_add(1);
                     if *count >= max_retries {
                         error!(
@@ -504,7 +552,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discarded_proof_restarts_pipeline() {
+    async fn discarded_proof_counts_against_retry_budget() {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
@@ -532,10 +580,11 @@ mod tests {
         let cancel = CancellationToken::new();
 
         let result = orchestrator
-            .tick(&mut state, &mut cache, recovered(100), target_block, 8, &cancel)
+            .tick(&mut state, &mut cache, recovered(100), target_block, 1, &cancel)
             .await;
 
-        assert!(result);
+        assert!(!result);
+        assert_eq!(state.retry_counts, HashMap::from([(target_block, 1)]));
     }
 
     #[tokio::test]
@@ -564,6 +613,12 @@ mod tests {
                 .tick(&mut state, &mut cache, recovered(100), target_block, 2, &cancel)
                 .await
         );
+        assert!(
+            !orchestrator
+                .tick(&mut state, &mut cache, recovered(100), target_block, 2, &cancel)
+                .await
+        );
+        assert_eq!(state.retry_counts, HashMap::from([(target_block, 2)]));
         assert!(
             !orchestrator
                 .tick(&mut state, &mut cache, recovered(100), target_block, 2, &cancel)
