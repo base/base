@@ -279,34 +279,35 @@ where
             }
         };
 
+        if !matches!(result, Ok(())) {
+            submit_timer.disarm();
+        }
+
         match result {
             Err(SubmitAction::RootMismatch) => {
-                submit_timer.disarm();
                 warn!(target_block, "Output root mismatch at submit time, restarting pipeline");
                 Metrics::root_mismatch_total().increment(1);
                 *cache = None;
                 return None;
             }
             Err(SubmitAction::Failed(error)) => {
-                submit_timer.disarm();
                 Metrics::errors_total(error.metric_label()).increment(1);
-                if matches!(
+                let invalid_parent_game = matches!(
                     error,
                     ProposerError::Submission(ProofSubmissionError::InvalidParentGame)
-                ) {
-                    warn!(
-                        target_block,
-                        error = %error,
-                        "Submission rejected: parent game invalid, restarting pipeline"
-                    );
+                );
+                warn!(
+                    target_block,
+                    error = %error,
+                    invalid_parent_game,
+                    "Submission failed, restarting pipeline"
+                );
+                if invalid_parent_game {
                     *cache = None;
-                } else {
-                    warn!(target_block, error = %error, "Submission failed, restarting pipeline");
                 }
                 return None;
             }
             Err(SubmitAction::Discard(error)) => {
-                submit_timer.disarm();
                 Metrics::errors_total(error.metric_label()).increment(1);
                 warn!(
                     target_block,
@@ -320,7 +321,6 @@ where
                 info!(target_block, "Submission successful");
             }
             Err(SubmitAction::GameAlreadyExists) => {
-                submit_timer.disarm();
                 info!(target_block, "Game already exists onchain");
                 if let Some(cached) = cache.as_mut() {
                     cached.game_count = cached.game_count.saturating_sub(1);
