@@ -10,6 +10,12 @@
 mod event;
 pub use event::*;
 
+mod emit;
+pub use emit::{
+    GlobalTransactionEventWriterInitStatus, TransactionEventBuilder, TransactionEventEmitOutcome,
+    global_transaction_event_writer, init_global_transaction_event_writer,
+};
+
 mod id;
 pub use id::EventIdBuilder;
 
