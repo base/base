@@ -425,7 +425,7 @@ where
             #[cfg(feature = "std")]
             {
                 self.inner.ctx.set_tx(tx);
-                let result = Eip8130Executor::execute(self.ctx_mut())?;
+                let result = Eip8130Executor::execute(self)?;
                 let state = self.inner.ctx.journal_mut().finalize();
                 return Ok(ResultAndState::new(result, state));
             }
