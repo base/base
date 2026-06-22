@@ -177,7 +177,7 @@ impl BaseHeader {
     }
 
     fn header_payload_length(&self) -> usize {
-        let mut length = base_header_payload_length(&self.inner);
+        let mut length = Self::inner_header_payload_length(&self.inner);
 
         if let Some(timestamp_millis_part) = self.timestamp_millis_part {
             // The millisecond trailer is encoded as a single-element RLP list so the decoder
@@ -187,6 +187,109 @@ impl BaseHeader {
         }
 
         length
+    }
+
+    fn inner_header_payload_length(header: &Header) -> usize {
+        let mut length = 0;
+        length += header.parent_hash.length();
+        length += header.ommers_hash.length();
+        length += header.beneficiary.length();
+        length += header.state_root.length();
+        length += header.transactions_root.length();
+        length += header.receipts_root.length();
+        length += header.logs_bloom.length();
+        length += header.difficulty.length();
+        length += U256::from(header.number).length();
+        length += U256::from(header.gas_limit).length();
+        length += U256::from(header.gas_used).length();
+        length += header.timestamp.length();
+        length += header.extra_data.length();
+        length += header.mix_hash.length();
+        length += header.nonce.length();
+
+        if let Some(base_fee) = header.base_fee_per_gas {
+            length += U256::from(base_fee).length();
+        }
+
+        if let Some(root) = header.withdrawals_root {
+            length += root.length();
+        }
+
+        if let Some(blob_gas_used) = header.blob_gas_used {
+            length += U256::from(blob_gas_used).length();
+        }
+
+        if let Some(excess_blob_gas) = header.excess_blob_gas {
+            length += U256::from(excess_blob_gas).length();
+        }
+
+        if let Some(parent_beacon_block_root) = header.parent_beacon_block_root {
+            length += parent_beacon_block_root.length();
+        }
+
+        if let Some(requests_hash) = header.requests_hash {
+            length += requests_hash.length();
+        }
+
+        if let Some(block_access_list_hash) = header.block_access_list_hash {
+            length += block_access_list_hash.length();
+        }
+
+        if let Some(slot_number) = header.slot_number {
+            length += U256::from(slot_number).length();
+        }
+
+        length
+    }
+
+    fn encode_inner_header(header: &Header, out: &mut dyn BufMut) {
+        header.parent_hash.encode(out);
+        header.ommers_hash.encode(out);
+        header.beneficiary.encode(out);
+        header.state_root.encode(out);
+        header.transactions_root.encode(out);
+        header.receipts_root.encode(out);
+        header.logs_bloom.encode(out);
+        header.difficulty.encode(out);
+        U256::from(header.number).encode(out);
+        U256::from(header.gas_limit).encode(out);
+        U256::from(header.gas_used).encode(out);
+        header.timestamp.encode(out);
+        header.extra_data.encode(out);
+        header.mix_hash.encode(out);
+        header.nonce.encode(out);
+
+        if let Some(base_fee) = header.base_fee_per_gas {
+            U256::from(base_fee).encode(out);
+        }
+
+        if let Some(root) = header.withdrawals_root {
+            root.encode(out);
+        }
+
+        if let Some(blob_gas_used) = header.blob_gas_used {
+            U256::from(blob_gas_used).encode(out);
+        }
+
+        if let Some(excess_blob_gas) = header.excess_blob_gas {
+            U256::from(excess_blob_gas).encode(out);
+        }
+
+        if let Some(parent_beacon_block_root) = header.parent_beacon_block_root {
+            parent_beacon_block_root.encode(out);
+        }
+
+        if let Some(requests_hash) = header.requests_hash {
+            requests_hash.encode(out);
+        }
+
+        if let Some(block_access_list_hash) = header.block_access_list_hash {
+            block_access_list_hash.encode(out);
+        }
+
+        if let Some(slot_number) = header.slot_number {
+            U256::from(slot_number).encode(out);
+        }
     }
 }
 
@@ -326,7 +429,7 @@ impl Encodable for BaseHeader {
         let list_header =
             alloy_rlp::Header { list: true, payload_length: self.header_payload_length() };
         list_header.encode(out);
-        encode_inner_header(&self.inner, out);
+        Self::encode_inner_header(&self.inner, out);
 
         if let Some(timestamp_millis_part) = self.timestamp_millis_part {
             // Wrap in a single-element list (`[u16]`) so the trailer cannot be confused with a
@@ -438,109 +541,6 @@ impl Decodable for BaseHeader {
             });
         }
         Ok(Self { inner, timestamp_millis_part })
-    }
-}
-
-fn base_header_payload_length(header: &Header) -> usize {
-    let mut length = 0;
-    length += header.parent_hash.length();
-    length += header.ommers_hash.length();
-    length += header.beneficiary.length();
-    length += header.state_root.length();
-    length += header.transactions_root.length();
-    length += header.receipts_root.length();
-    length += header.logs_bloom.length();
-    length += header.difficulty.length();
-    length += U256::from(header.number).length();
-    length += U256::from(header.gas_limit).length();
-    length += U256::from(header.gas_used).length();
-    length += header.timestamp.length();
-    length += header.extra_data.length();
-    length += header.mix_hash.length();
-    length += header.nonce.length();
-
-    if let Some(base_fee) = header.base_fee_per_gas {
-        length += U256::from(base_fee).length();
-    }
-
-    if let Some(root) = header.withdrawals_root {
-        length += root.length();
-    }
-
-    if let Some(blob_gas_used) = header.blob_gas_used {
-        length += U256::from(blob_gas_used).length();
-    }
-
-    if let Some(excess_blob_gas) = header.excess_blob_gas {
-        length += U256::from(excess_blob_gas).length();
-    }
-
-    if let Some(parent_beacon_block_root) = header.parent_beacon_block_root {
-        length += parent_beacon_block_root.length();
-    }
-
-    if let Some(requests_hash) = header.requests_hash {
-        length += requests_hash.length();
-    }
-
-    if let Some(block_access_list_hash) = header.block_access_list_hash {
-        length += block_access_list_hash.length();
-    }
-
-    if let Some(slot_number) = header.slot_number {
-        length += U256::from(slot_number).length();
-    }
-
-    length
-}
-
-fn encode_inner_header(header: &Header, out: &mut dyn BufMut) {
-    header.parent_hash.encode(out);
-    header.ommers_hash.encode(out);
-    header.beneficiary.encode(out);
-    header.state_root.encode(out);
-    header.transactions_root.encode(out);
-    header.receipts_root.encode(out);
-    header.logs_bloom.encode(out);
-    header.difficulty.encode(out);
-    U256::from(header.number).encode(out);
-    U256::from(header.gas_limit).encode(out);
-    U256::from(header.gas_used).encode(out);
-    header.timestamp.encode(out);
-    header.extra_data.encode(out);
-    header.mix_hash.encode(out);
-    header.nonce.encode(out);
-
-    if let Some(base_fee) = header.base_fee_per_gas {
-        U256::from(base_fee).encode(out);
-    }
-
-    if let Some(root) = header.withdrawals_root {
-        root.encode(out);
-    }
-
-    if let Some(blob_gas_used) = header.blob_gas_used {
-        U256::from(blob_gas_used).encode(out);
-    }
-
-    if let Some(excess_blob_gas) = header.excess_blob_gas {
-        U256::from(excess_blob_gas).encode(out);
-    }
-
-    if let Some(parent_beacon_block_root) = header.parent_beacon_block_root {
-        parent_beacon_block_root.encode(out);
-    }
-
-    if let Some(requests_hash) = header.requests_hash {
-        requests_hash.encode(out);
-    }
-
-    if let Some(block_access_list_hash) = header.block_access_list_hash {
-        block_access_list_hash.encode(out);
-    }
-
-    if let Some(slot_number) = header.slot_number {
-        U256::from(slot_number).encode(out);
     }
 }
 
@@ -726,6 +726,24 @@ mod tests {
             let decoded = BaseHeader::decode(&mut slice).unwrap();
             assert!(slice.is_empty(), "decoder must consume the entire RLP list for part={part}");
             assert_eq!(decoded, base_header);
+        }
+    }
+
+    #[test]
+    fn rlp_header_payload_length_matches_encoded_bytes() {
+        for millis_part in [None, Some(0), Some(200), Some(800)] {
+            let header = sample_post_subsecond_header();
+            let base_header = BaseHeader::new(header, millis_part).unwrap();
+            let mut encoded = Vec::new();
+            base_header.encode(&mut encoded);
+
+            let mut slice = encoded.as_slice();
+            let rlp_header = alloy_rlp::Header::decode(&mut slice).unwrap();
+
+            assert!(rlp_header.list);
+            assert_eq!(base_header.header_payload_length(), rlp_header.payload_length);
+            assert_eq!(slice.len(), rlp_header.payload_length);
+            assert_eq!(base_header.length(), encoded.len());
         }
     }
 
