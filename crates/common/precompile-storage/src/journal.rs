@@ -54,6 +54,11 @@ impl<'a> JournalStorageProvider<'a> {
     /// `caller`. Block metadata (number, timestamp, chain id, beneficiary,
     /// origin) is snapshotted from the journal's block/transaction environment.
     pub fn new(internals: EvmInternals<'a>, caller: Address) -> Self {
+        // Truncating to `u64` is safe: EVM block numbers are bounded far below
+        // `u64::MAX` and `block_env().number()` is only `U256` for ABI uniformity.
+        // (Unlike the block *timestamp*, which the EIP-8130 executor converts with
+        // a checked `try_into` because it feeds consensus-critical expiry checks,
+        // the block number here only backs the `block_number()` getter.)
         let block_number = internals.block_env().number().to::<u64>();
         let timestamp = internals.block_env().timestamp();
         let chain_id = internals.chain_id();
@@ -96,14 +101,15 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
-        let info = {
-            let state_load = self
-                .internals
-                .load_account(address)
-                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-            state_load.data.info.clone()
-        };
-        f(&info);
+        // Pass the journal's borrowed `AccountInfo` straight to the callback. The
+        // callback cannot re-enter the provider (it has no `self` access), so the
+        // outstanding borrow is safe and we avoid cloning the full `AccountInfo`
+        // (including a potentially large `code` `Bytecode`) on every read.
+        let state_load = self
+            .internals
+            .load_account(address)
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+        f(&state_load.data.info);
         Ok(())
     }
 
@@ -122,8 +128,39 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         self.internals
             .sstore(address, key, value)
-            .map(|_| ())
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+
+        // EIP-161 guard for enshrined system storage. `sstore` writes only the
+        // storage trie; it never sets nonce/balance/code, so the target account
+        // can remain EIP-161-"empty" (no code, zero nonce, zero balance) even
+        // after it holds storage. End-of-block state clearing reaps a
+        // touched-and-empty account together with its storage, which would
+        // silently discard the persistent state the enshrined EIP-8130 path
+        // writes — the 2D-nonce channels in the native `NonceManager` precompile
+        // (which carries no code on any chain), and the account configuration in
+        // the `AccountConfiguration` system account on a chain where it is
+        // enshrined rather than deployed. Bump the nonce to 1 the first time a
+        // non-zero value materializes storage on an otherwise-empty account so it
+        // survives clearing; once non-empty (including any chain where the target
+        // is a deployed contract with code) this is a no-op. The bump is
+        // journaled, so an enclosing checkpoint revert (e.g. a rejected EIP-8130
+        // transaction) rolls it back together with the write.
+        if !value.is_zero() {
+            let is_empty = {
+                let state_load = self
+                    .internals
+                    .load_account(address)
+                    .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+                state_load.data.info.is_empty()
+            };
+            if is_empty {
+                self.internals
+                    .bump_nonce(address)
+                    .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            }
+        }
+
+        Ok(())
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
@@ -261,5 +298,79 @@ mod tests {
         assert_eq!(provider.state_gas_used(), 0);
         assert_eq!(provider.gas_refunded(), 0);
         assert!(!provider.is_static());
+    }
+
+    fn nonce_of(provider: &mut JournalStorageProvider<'_>, address: Address) -> u64 {
+        let mut nonce = 0;
+        provider.with_account_info(address, &mut |info| nonce = info.nonce).unwrap();
+        nonce
+    }
+
+    /// A non-zero store onto an EIP-161-empty account bumps its nonce to 1, so the
+    /// account is no longer "empty" and end-of-block state clearing will not reap
+    /// it (and discard the enshrined storage written to it).
+    #[test]
+    fn sstore_materializes_empty_account_to_survive_state_clearing() {
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+
+        assert_eq!(nonce_of(&mut provider, ADDR), 0, "account starts empty");
+        provider.sstore(ADDR, U256::from(1u64), U256::from(42u64)).unwrap();
+        assert_eq!(
+            nonce_of(&mut provider, ADDR),
+            1,
+            "a non-zero store must materialize the account (nonce bumped to 1)"
+        );
+    }
+
+    /// The materialization fires once: subsequent stores see a non-empty account
+    /// and must not keep incrementing the nonce.
+    #[test]
+    fn repeated_sstore_bumps_nonce_only_once() {
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+
+        provider.sstore(ADDR, U256::from(1u64), U256::from(42u64)).unwrap();
+        provider.sstore(ADDR, U256::from(2u64), U256::from(43u64)).unwrap();
+        assert_eq!(
+            nonce_of(&mut provider, ADDR),
+            1,
+            "the account is materialized once; later stores must not keep incrementing"
+        );
+    }
+
+    /// A zero-value store does not materialize an otherwise-empty account: there is
+    /// no persistent data to protect, so the account stays clearable.
+    #[test]
+    fn sstore_zero_value_does_not_materialize_empty_account() {
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+
+        provider.sstore(ADDR, U256::from(1u64), U256::ZERO).unwrap();
+        assert_eq!(
+            nonce_of(&mut provider, ADDR),
+            0,
+            "a zero store writes no persistent data, so the account is left empty"
+        );
+    }
+
+    /// An account that already carries code (e.g. a deployed system contract) is
+    /// not EIP-161-empty, so the guard leaves its nonce untouched.
+    #[test]
+    fn sstore_does_not_bump_nonce_of_account_with_code() {
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+
+        provider.set_code(ADDR, Bytecode::new_raw([0x60u8, 0x00].as_ref().into())).unwrap();
+        provider.sstore(ADDR, U256::from(1u64), U256::from(42u64)).unwrap();
+        assert_eq!(
+            nonce_of(&mut provider, ADDR),
+            0,
+            "an account with code is already non-empty; the guard must not bump its nonce"
+        );
     }
 }
