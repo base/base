@@ -20,8 +20,8 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationStorage, ActorAuthorizer, AuthenticatorDispatch,
-    DispatchOutcome, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceError, NonceMode,
-    NonceValidator, Operation, ResolvedActor, TransactionAuthorizer, TxAuthError,
+    AuthorizeError, DispatchOutcome, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceError,
+    NonceMode, NonceValidator, Operation, ResolvedActor, TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{BasePrecompileError, PrecompileStorageProvider, StorageCtx};
 use parking_lot::RwLock;
@@ -401,11 +401,8 @@ where
                 Ok(state) => state,
                 Err(err) => return TransactionValidationOutcome::Invalid(transaction, err),
             };
-            let propagate = match origin {
-                TransactionOrigin::External => true,
-                TransactionOrigin::Local => true,
-                TransactionOrigin::Private => false,
-            };
+            let propagate =
+                matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             let outcome = TransactionValidationOutcome::Valid {
                 balance: state.payer_balance_after_auth,
                 state_nonce: state.sender_nonce,
@@ -431,35 +428,42 @@ where
     ) -> Result<Eip8130ValidationState, InvalidPoolTransactionError> {
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
-        let state = self
-            .client()
-            .latest()
-            .map_err(|_| Self::eip8130_error("state provider unavailable"))?;
+        let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
 
         let (sender, payer, sender_actor) = StorageCtx::enter(&mut storage, |ctx| {
-            if let Some(create) =
-                signed.tx().account_changes.first().and_then(|change| match change {
+            signed
+                .tx()
+                .account_changes
+                .first()
+                .and_then(|change| match change {
                     AccountChange::Create(create) => Some(create),
                     _ => None,
                 })
-            {
-                Self::validate_eip8130_create_sender(signed, create, ctx)
-            } else {
-                let account_config = AccountConfigurationStorage::new(ctx);
-                TransactionAuthorizer::authorize(signed, &account_config, local_chain_id, now)
-                    .map(|authorized| {
-                        let sender = authorized.actors.sender.account;
-                        let payer = authorized.actors.payer.map_or(sender, |actor| actor.account);
-                        (sender, payer, Some(authorized.actors.sender.resolved))
-                    })
-                    .map_err(Self::map_tx_auth_error)
-            }
+                .map_or_else(
+                    || {
+                        let account_config = AccountConfigurationStorage::new(ctx);
+                        TransactionAuthorizer::authorize(
+                            signed,
+                            &account_config,
+                            local_chain_id,
+                            now,
+                        )
+                        .map(|authorized| {
+                            let sender = authorized.actors.sender.account;
+                            let payer =
+                                authorized.actors.payer.map_or(sender, |actor| actor.account);
+                            (sender, payer, Some(authorized.actors.sender.resolved))
+                        })
+                        .map_err(Self::map_tx_auth_error)
+                    },
+                    |create| Self::validate_eip8130_create_sender(signed, create, ctx),
+                )
         })?;
 
         let sender_account = state
             .basic_account(&sender)
-            .map_err(|_| Self::eip8130_error("sender account read failed"))?
+            .map_err(|error| Self::state_read_error(error, "sender account read failed"))?
             .unwrap_or_default();
         let protocol_nonce = sender_account.nonce;
         if signed
@@ -496,9 +500,9 @@ where
         })?;
 
         let (nonce_key_first_use, sender_nonce) =
-            self.eip8130_nonce_state(signed, sender, protocol_nonce)?;
+            self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
         let sender_auto_delegated = !Self::account_has_code(&*state, sender)
-            .map_err(|_| Self::eip8130_error("sender code read failed"))?
+            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
             && !signed.tx().account_changes.iter().any(|change| {
                 matches!(change, AccountChange::Create(_) | AccountChange::Delegation(_))
             });
@@ -514,7 +518,7 @@ where
 
         let payer_account = state
             .basic_account(&payer)
-            .map_err(|_| Self::eip8130_error("payer account read failed"))?
+            .map_err(|error| Self::state_read_error(error, "payer account read failed"))?
             .unwrap_or_default();
         FeeCheck::validate_balance(
             payer_account.balance,
@@ -607,7 +611,7 @@ where
             return Err(Self::eip8130_error("create sender nonce is non-zero"));
         }
         if Self::account_has_code(state, sender)
-            .map_err(|_| Self::eip8130_error("sender code read failed"))?
+            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
         {
             return Err(Self::eip8130_error("create sender already has code"));
         }
@@ -639,7 +643,7 @@ where
             return Err(Self::eip8130_error("delegation requires CONFIG scope"));
         }
         if !Self::account_code_empty_or_delegated(state, sender)
-            .map_err(|_| Self::eip8130_error("sender code read failed"))?
+            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
         {
             return Err(Self::eip8130_error("delegation sender has non-delegation code"));
         }
@@ -678,6 +682,9 @@ where
 
     fn eip8130_nonce_state(
         &self,
+        state: &dyn StateProvider,
+        local_chain_id: u64,
+        now: u64,
         signed: &Eip8130Signed,
         sender: Address,
         protocol_nonce: u64,
@@ -689,18 +696,12 @@ where
         if nonce_key.is_zero() {
             return Ok((protocol_nonce == 0, protocol_nonce));
         }
-        let local_chain_id = self.inner.chain_spec().chain().id();
-        let now = self.block_timestamp();
-        let state = self
-            .client()
-            .latest()
-            .map_err(|_| Self::eip8130_error("state provider unavailable"))?;
-        let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
+        let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
         StorageCtx::enter(&mut storage, |ctx| {
             NonceManagerStorage::new(ctx)
                 .get_nonce(sender, nonce_key)
                 .map(|nonce| (nonce == 0, nonce))
-                .map_err(|_| Self::eip8130_error("nonce manager read failed"))
+                .map_err(|error| Self::precompile_storage_error(error, "nonce manager read failed"))
         })
     }
 
@@ -738,8 +739,32 @@ where
         encoded
     }
 
-    fn map_tx_auth_error(_error: TxAuthError) -> InvalidPoolTransactionError {
-        Self::eip8130_error("actor authorization failed")
+    fn map_tx_auth_error(error: TxAuthError) -> InvalidPoolTransactionError {
+        tracing::debug!(error = ?error, "EIP-8130 actor authorization failed");
+        let reason = match error {
+            TxAuthError::Authorize(AuthorizeError::Authenticate(_)) => {
+                "actor authentication failed"
+            }
+            TxAuthError::Authorize(AuthorizeError::Storage(_)) => {
+                "account configuration read failed"
+            }
+            TxAuthError::Authorize(AuthorizeError::ZeroActor) => "actor id is zero",
+            TxAuthError::Authorize(AuthorizeError::NotBound { .. }) => "actor is not bound",
+            TxAuthError::Authorize(AuthorizeError::DefaultEoaRevoked { .. }) => {
+                "default EOA actor is revoked"
+            }
+            TxAuthError::Authorize(AuthorizeError::Expired { .. }) => "actor credential expired",
+            TxAuthError::Authorize(AuthorizeError::NestedSignatureScope { .. }) => {
+                "delegate nested actor lacks SIGNATURE scope"
+            }
+            TxAuthError::SenderRecovery => "EOA sender recovery failed",
+            TxAuthError::Scope { .. } => "actor scope insufficient",
+            TxAuthError::AccountLocked => "account is locked",
+            TxAuthError::ConfigChainId { .. } => "config change targets a foreign chain",
+            TxAuthError::ConfigSequence { .. } => "config change sequence mismatch",
+            TxAuthError::ConfigSequenceOverflow => "config change sequence overflow",
+        };
+        Self::eip8130_error(reason)
     }
 
     fn map_nonce_error(error: NonceError) -> InvalidPoolTransactionError {
@@ -754,6 +779,27 @@ where
 
     fn eip8130_error(reason: &'static str) -> InvalidPoolTransactionError {
         InvalidPoolTransactionError::other(BaseTxPoolError::Eip8130Validation { reason })
+    }
+
+    fn provider_unavailable(error: impl core::fmt::Display) -> InvalidPoolTransactionError {
+        tracing::debug!(error = %error, "EIP-8130 state provider unavailable");
+        Self::eip8130_error("state provider unavailable")
+    }
+
+    fn state_read_error(
+        error: impl core::fmt::Display,
+        reason: &'static str,
+    ) -> InvalidPoolTransactionError {
+        tracing::debug!(error = %error, reason = reason, "EIP-8130 state read failed");
+        Self::eip8130_error(reason)
+    }
+
+    fn precompile_storage_error(
+        error: impl core::fmt::Display,
+        reason: &'static str,
+    ) -> InvalidPoolTransactionError {
+        tracing::debug!(error = %error, reason = reason, "EIP-8130 precompile storage read failed");
+        Self::eip8130_error(reason)
     }
 
     /// Runs the mempool admission checks that apply to EIP-8130 (account

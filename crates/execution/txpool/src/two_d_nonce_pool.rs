@@ -237,7 +237,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             next_nonce: state_nonce,
             transactions: BTreeMap::new(),
         });
-        if state_nonce > lane.next_nonce {
+        // Keep the lane anchored to the state view used by validation. This may
+        // move backward after a reorg lowers the on-chain channel nonce, allowing
+        // now-valid transactions to be accepted instead of treating them as
+        // already executed under the pre-reorg lane cursor.
+        if state_nonce != lane.next_nonce {
             lane.next_nonce = state_nonce;
         }
         let pending_len_before = lane.consecutive_pending_len();
