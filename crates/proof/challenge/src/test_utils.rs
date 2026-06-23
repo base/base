@@ -770,11 +770,9 @@ impl ProofRequesterProvider for MockZkProofProvider {
 
     async fn delete_proof_request(
         &self,
-        request: DeleteProofRequest,
+        _request: DeleteProofRequest,
     ) -> Result<(), ProverServiceClientError> {
-        let mut state = self.state.lock().unwrap();
-        state.prove_block_range_log.retain(|entry| entry.proof.session_id != request.session_id);
-        Ok(())
+        unimplemented!("tests do not delete proofs")
     }
 
     async fn list_proofs(

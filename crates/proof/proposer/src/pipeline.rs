@@ -9,7 +9,7 @@ use tracing::info;
 use crate::{
     Metrics,
     driver::DriverConfig,
-    proof_collector::{ProofCollectorOrchestrator, ProofCollectorState},
+    proof_collector::ProofCollector,
     proof_dispatcher::{ProofDispatcher, ProofDispatcherState},
     proof_recovery::{ProofRecovery, ProofRecoveryCache},
 };
@@ -19,7 +19,6 @@ use crate::{
 /// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
 /// Submit failures restart both tasks from onchain state; dispatcher retry
 /// exhaustion clears dispatcher recovery state without interrupting collection.
-#[derive(Debug)]
 pub struct ProvingPipeline<L1, L2, R>
 where
     L1: L1Provider + 'static,
@@ -29,7 +28,18 @@ where
     config: DriverConfig,
     proof_dispatcher: ProofDispatcher<L1, L2, R>,
     proof_recovery: Arc<ProofRecovery<R>>,
-    proof_collector_orchestrator: ProofCollectorOrchestrator<L1, L2, R>,
+    proof_collector: ProofCollector<L1, R>,
+}
+
+impl<L1, L2, R> std::fmt::Debug for ProvingPipeline<L1, L2, R>
+where
+    L1: L1Provider + 'static,
+    L2: L2Provider + 'static,
+    R: RollupProvider + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProvingPipeline").field("config", &self.config).finish_non_exhaustive()
+    }
 }
 
 impl<L1, L2, R> ProvingPipeline<L1, L2, R>
@@ -43,9 +53,9 @@ where
         config: DriverConfig,
         proof_dispatcher: ProofDispatcher<L1, L2, R>,
         proof_recovery: Arc<ProofRecovery<R>>,
-        proof_collector_orchestrator: ProofCollectorOrchestrator<L1, L2, R>,
+        proof_collector: ProofCollector<L1, R>,
     ) -> Self {
-        Self { config, proof_dispatcher, proof_recovery, proof_collector_orchestrator }
+        Self { config, proof_dispatcher, proof_recovery, proof_collector }
     }
 
     /// Runs the proving pipeline until cancelled.
@@ -121,7 +131,6 @@ where
 
     async fn collector_loop(&self, cancel: &CancellationToken) {
         let mut cache: Option<ProofRecoveryCache> = None;
-        let mut state = ProofCollectorState::new();
 
         loop {
             let restart = {
@@ -133,10 +142,7 @@ where
                     Metrics::safe_head().set(safe_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-                    self.proof_collector_orchestrator
-                        .tick(&mut state, &mut cache, recovered, safe_head, cancel)
-                        .await
-                        .is_break()
+                    self.proof_collector.tick(recovered, safe_head, cancel).await
                 } else {
                     false
                 }
@@ -174,8 +180,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        OutputProposer, ProofCollector, ProofCollectorRuntimeConfig, ProofDispatcherConfig,
-        ProofRecoveryConfig, ProofSubmitter, ProofSubmitterConfig,
+        OutputProposer, ProofDispatcherConfig, ProofRecoveryConfig, ProofSubmitter,
+        ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
@@ -224,7 +230,7 @@ mod tests {
         let requester = Arc::new(RejectingProofRequester::default());
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::<RejectingProofRequester>::clone(&requester);
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() });
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
@@ -239,7 +245,7 @@ mod tests {
         let factory: Arc<dyn DisputeGameFactoryClient> =
             Arc::new(MockDisputeGameFactory::with_games(vec![]));
         let verifier = Arc::new(MockAggregateVerifier::default());
-        let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer);
+        let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer::default());
         let config = DriverConfig {
             poll_interval: Duration::from_millis(10),
             max_retries: 1,
@@ -287,25 +293,15 @@ mod tests {
                 output_fetch_concurrency: config.recovery_scan_concurrency,
             },
         );
-        let proof_collector =
-            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup));
-        let proof_collector_orchestrator = ProofCollectorOrchestrator::new(
-            proof_collector,
-            proof_dispatcher.clone(),
+        let proof_collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup),
             proof_submitter,
-            Arc::clone(&proof_recovery),
-            ProofCollectorRuntimeConfig {
-                block_interval: config.block_interval,
-                max_retries: config.max_retries,
-                submit_timeout: config.submit_timeout,
-            },
+            config.block_interval,
+            config.submit_timeout,
         );
-        let pipeline = ProvingPipeline::new(
-            config,
-            proof_dispatcher,
-            proof_recovery,
-            proof_collector_orchestrator,
-        );
+        let pipeline =
+            ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);
         let cancel = CancellationToken::new();
 
         assert!(
