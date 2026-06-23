@@ -1,3 +1,7 @@
+//! Transaction event emission helpers and process-global writer access.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use alloy_primitives::{B256, TxHash};
 use chrono::Utc;
 use serde_json::{Map, Value};
@@ -31,27 +35,45 @@ pub enum TransactionEventEmitOutcome {
     NotConfigured,
 }
 
-/// Initializes the process-global transaction event writer.
-pub async fn init_global_transaction_event_writer(
-    config: Option<TransactionEventWriterConfig>,
-) -> eyre::Result<GlobalTransactionEventWriterInitStatus> {
-    let Some(config) = config else {
-        return Ok(GlobalTransactionEventWriterInitStatus::NotConfigured);
-    };
-    if !config.enabled {
-        return Ok(GlobalTransactionEventWriterInitStatus::NotConfigured);
+/// Process-global transaction event writer access.
+#[derive(Debug)]
+pub struct GlobalTransactionEventWriter;
+
+impl GlobalTransactionEventWriter {
+    /// Initializes the process-global transaction event writer.
+    pub async fn init(
+        config: Option<TransactionEventWriterConfig>,
+    ) -> eyre::Result<GlobalTransactionEventWriterInitStatus> {
+        let Some(config) = config else {
+            return Ok(GlobalTransactionEventWriterInitStatus::NotConfigured);
+        };
+        if !config.enabled {
+            return Ok(GlobalTransactionEventWriterInitStatus::NotConfigured);
+        }
+
+        if GLOBAL_TRANSACTION_EVENT_WRITER.get().is_some() {
+            return Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized);
+        }
+
+        let initialized = AtomicBool::new(false);
+        GLOBAL_TRANSACTION_EVENT_WRITER
+            .get_or_try_init(|| async {
+                initialized.store(true, Ordering::Relaxed);
+                TransactionEventWriter::from_config(config).await
+            })
+            .await?;
+
+        if initialized.load(Ordering::Relaxed) {
+            Ok(GlobalTransactionEventWriterInitStatus::Initialized)
+        } else {
+            Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized)
+        }
     }
 
-    let writer = TransactionEventWriter::from_config(config).await?;
-    match GLOBAL_TRANSACTION_EVENT_WRITER.set(writer) {
-        Ok(()) => Ok(GlobalTransactionEventWriterInitStatus::Initialized),
-        Err(_) => Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized),
+    /// Returns the process-global transaction event writer, if configured.
+    pub fn get() -> Option<&'static TransactionEventWriter> {
+        GLOBAL_TRANSACTION_EVENT_WRITER.get()
     }
-}
-
-/// Returns the process-global transaction event writer, if configured.
-pub fn global_transaction_event_writer() -> Option<&'static TransactionEventWriter> {
-    GLOBAL_TRANSACTION_EVENT_WRITER.get()
 }
 
 /// Builder for emitting a transaction event through an optional writer.
@@ -165,15 +187,15 @@ impl TransactionEventBuilder {
         self
     }
 
-    /// Builds an event for the given writer without writing it.
-    pub fn build(self, writer: &TransactionEventWriter) -> TransactionEvent {
+    /// Builds an event for the given network label without writing it.
+    pub fn build_with_network(self, network: &str) -> TransactionEvent {
         let mut event = TransactionEvent::new(
             self.event_id.finish(),
             Utc::now(),
             self.producer,
             self.event_type,
         )
-        .with_network(writer.network())
+        .with_network(network)
         .with_data(self.data);
 
         event.tx_hash = self.tx_hash;
@@ -182,6 +204,11 @@ impl TransactionEventBuilder {
         event.payload_id = self.payload_id;
         event.request_id = self.request_id;
         event
+    }
+
+    /// Builds an event for the given writer without writing it.
+    pub fn build(self, writer: &TransactionEventWriter) -> TransactionEvent {
+        self.build_with_network(writer.network())
     }
 
     /// Emits the event through an explicit writer.
@@ -199,7 +226,7 @@ impl TransactionEventBuilder {
 
     /// Emits the event through the process-global writer, if configured.
     pub fn emit_global(self) -> Result<TransactionEventEmitOutcome, WriteEventError> {
-        let Some(writer) = global_transaction_event_writer() else {
+        let Some(writer) = GlobalTransactionEventWriter::get() else {
             return Ok(TransactionEventEmitOutcome::NotConfigured);
         };
 
@@ -235,7 +262,7 @@ macro_rules! transaction_event {
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
             $($(.id_part($id_name, $id_value))*)?
-            $($(.data_field($data_name, serde_json::json!($data_value)))*)?;
+            $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
         builder.emit_global()
     }};
     (
@@ -292,7 +319,7 @@ macro_rules! transaction_event {
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
             $($(.id_part($id_name, $id_value))*)?
-            $($(.data_field($data_name, serde_json::json!($data_value)))*)?;
+            $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
         match $writer {
             Some(writer) => builder.emit_to(writer),
             None => Ok($crate::TransactionEventEmitOutcome::NotConfigured),
