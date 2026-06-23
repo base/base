@@ -570,6 +570,11 @@ impl Eip8130Executor {
                 });
             }
 
+            // revm's `checkpoint_commit` merges the phase savepoint into its
+            // parent without finalizing the journal entries, so a committed phase
+            // is still rolled back if the outer checkpoint (taken in `execute`)
+            // later reverts — e.g. when a subsequent phase surfaces a database
+            // error. Committed phases are only durable once `commit_tx` runs.
             evm.ctx_mut().journal_mut().checkpoint_commit();
             refund = refund.saturating_add(phase_refund);
         }
@@ -673,7 +678,11 @@ impl Eip8130Executor {
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         // Gas drawn from `gas_limit`: sender-intrinsic plus the gas consumed by
-        // calls, less the refund capped at EIP-3529's `gas_used / 5`.
+        // calls, less the refund capped at EIP-3529's `gas_used / 5`. The cap
+        // denominator (`gross_used`) includes `sender_intrinsic` even though that
+        // is a fixed charge with no SSTORE/SELFDESTRUCT refund of its own; this
+        // matches the mainnet refund-cap convention, where intrinsic gas counts
+        // toward `gas_used` in the `gas_used / 5` ceiling.
         let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
         let refund = calls.refund.min(gross_used / MAX_REFUND_QUOTIENT);
         let net_used = gross_used.saturating_sub(refund);
