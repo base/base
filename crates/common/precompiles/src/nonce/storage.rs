@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageKey};
 
 use crate::INonceManager;
 
@@ -50,6 +50,14 @@ impl NonceManagerStorage<'_> {
     /// system precompiles).
     pub const ADDRESS: Address = address!("813000000000000000000000000000000000aa01");
 
+    /// Base storage slot of the `nonces` mapping under this contract's
+    /// ERC-7201 namespace.
+    ///
+    /// Re-exported from the macro-generated `slots` module so off-chain
+    /// readers (e.g. RPC) can derive `nonces[account][nonce_key]` slots
+    /// without instantiating the precompile. Pair with [`Self::nonce_slot`].
+    pub const NONCES_BASE_SLOT: U256 = slots::NONCES;
+
     /// Capacity of the expiring-nonce ring buffer.
     ///
     /// Sized to absorb a sustained burst (~10k TPS for ~30s) so that, by the time
@@ -75,6 +83,26 @@ impl NonceManagerStorage<'_> {
             return Err(BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}));
         }
         self.nonces.at(&account).at(&nonce_key).read()
+    }
+
+    /// Returns the EVM storage slot that holds the 2D channel nonce for
+    /// `nonces[account][nonce_key]`.
+    ///
+    /// Off-chain dual of [`Self::get_nonce`]: same preconditions, same error
+    /// for `nonce_key == 0`, but does not read storage. Intended for off-chain
+    /// readers (e.g. an RPC `eth_getTransactionCount` extension) that want to
+    /// look up a channel nonce via `storage_at` without instantiating the
+    /// precompile. The decoded value at this slot is a `u64` right-aligned in
+    /// the slot's low 8 bytes.
+    ///
+    /// # Errors
+    /// - [`INonceManager::ProtocolNonceNotSupported`] — `nonce_key` is `0`, the
+    ///   protocol nonce, which is stored in account state and must be read from there.
+    pub fn nonce_slot(account: Address, nonce_key: U256) -> Result<U256> {
+        if nonce_key == Self::PROTOCOL_NONCE_KEY {
+            return Err(BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}));
+        }
+        Ok(nonce_key.mapping_slot(account.mapping_slot(Self::NONCES_BASE_SLOT)))
     }
 
     /// Increments the 2D nonce for `account` at `nonce_key`, returning the new
@@ -215,7 +243,7 @@ impl NonceManagerStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
     use base_precompile_storage::{
-        BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx,
+        BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx, StorageKey,
     };
 
     use crate::{INonceManager, nonce::storage::NonceManagerStorage};
@@ -401,5 +429,56 @@ mod tests {
             mgr.check_and_mark_expiring_nonce(B256::repeat_byte(0x88), valid_before).unwrap();
             assert_eq!(mgr.expiring_nonce_ring_ptr.read().unwrap(), 1);
         });
+    }
+
+    #[test]
+    fn nonce_slot_matches_handler_chain() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let nonce_key = U256::from(42);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mgr = NonceManagerStorage::new(ctx);
+            let inner_base = mgr.nonces.at(&ACCOUNT_A).slot();
+            let expected = nonce_key.mapping_slot(inner_base);
+            assert_eq!(NonceManagerStorage::nonce_slot(ACCOUNT_A, nonce_key).unwrap(), expected);
+        });
+    }
+
+    #[test]
+    fn nonce_slot_locates_value_written_via_precompile() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let nonce_key = U256::from(7);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut mgr = NonceManagerStorage::new(ctx);
+            for _ in 0..3 {
+                mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap();
+            }
+        });
+
+        let slot = NonceManagerStorage::nonce_slot(ACCOUNT_A, nonce_key).unwrap();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let word = ctx.sload(NonceManagerStorage::ADDRESS, slot).unwrap();
+            // u64 leaf is right-aligned in the slot (Solidity packing).
+            let bytes = word.to_be_bytes::<32>();
+            let nonce = u64::from_be_bytes(bytes[24..32].try_into().unwrap());
+            assert_eq!(nonce, 3);
+        });
+    }
+
+    #[test]
+    fn nonce_slot_distinct_per_account_and_key() {
+        let key_a = U256::from(1);
+        let key_b = U256::from(2);
+        let slot_a1 = NonceManagerStorage::nonce_slot(ACCOUNT_A, key_a).unwrap();
+        let slot_a2 = NonceManagerStorage::nonce_slot(ACCOUNT_A, key_b).unwrap();
+        let slot_b1 = NonceManagerStorage::nonce_slot(ACCOUNT_B, key_a).unwrap();
+        assert_ne!(slot_a1, slot_a2);
+        assert_ne!(slot_a1, slot_b1);
+        assert_ne!(slot_a2, slot_b1);
+    }
+
+    #[test]
+    fn nonce_slot_rejects_protocol_nonce() {
+        let err = NonceManagerStorage::nonce_slot(ACCOUNT_A, U256::ZERO).unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}));
     }
 }

@@ -110,14 +110,14 @@ impl StatusPoller {
                         );
                         metrics::inc_retried_requests(proof_type_label);
                     }
-                    Ok(RetryOutcome::PermanentlyFailed) => {
+                    Ok(RetryOutcome::PermanentlyFailed(job)) => {
                         error!(
                             proof_request_id = %request.id,
                             retry_count = request.retry_count,
                             "Permanently failing stuck request — max retries exceeded"
                         );
                         metrics::inc_stuck_requests(proof_type_label);
-                        metrics::inc_proof_requests_completed("failed", proof_type_label);
+                        metrics::record_terminal_proof_job(metrics::PROOF_STATUS_FAILED, &job);
                     }
                     Ok(RetryOutcome::Skipped) => {
                         warn!(
@@ -167,7 +167,7 @@ impl StatusPoller {
         for job in jobs {
             let proof_type = metrics::api_proof_type_label(job.api_proof_type);
             metrics::inc_worker_jobs_failed(reason, proof_type);
-            metrics::inc_proof_requests_completed("failed", proof_type);
+            metrics::record_terminal_proof_job(metrics::PROOF_STATUS_FAILED, job);
         }
     }
 }

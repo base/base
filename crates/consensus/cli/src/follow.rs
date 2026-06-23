@@ -12,6 +12,7 @@ use base_consensus_node::{
 use base_consensus_providers::OnlineBeaconClient;
 use base_consensus_rpc::RpcBuilder;
 use clap::Args;
+use reth_node_core::args::TraceArgs;
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -31,6 +32,10 @@ pub struct ConsensusFollowNodeCommand {
     #[command(flatten)]
     pub metrics: MetricsArgs,
 
+    /// `OpenTelemetry` tracing export configuration.
+    #[command(flatten)]
+    pub traces: TraceArgs,
+
     /// Follow-node arguments.
     #[command(flatten)]
     pub args: ConsensusFollowNodeConfigArgs,
@@ -39,22 +44,38 @@ pub struct ConsensusFollowNodeCommand {
 impl ConsensusFollowNodeCommand {
     /// Runs the standalone consensus follow-node command.
     pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::init_tracing!(
-            LogConfig::from(self.logging.clone()),
-            ["libp2p_gossipsub=error"]
-        )?;
-
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
 
         let args = ConsensusFollowNodeArgs::new(chain, self.args);
-        if self.metrics.enabled {
+        let metrics_config = if self.metrics.enabled {
             let cfg = args.load_rollup_config()?;
             CliMetrics::init_rollup_config(&cfg);
-        }
+            Some(cfg)
+        } else {
+            None
+        };
 
-        RuntimeManager::new().run_until_ctrl_c(args.start())
+        let rt = RuntimeManager::new().tokio_runtime()?;
+        rt.block_on(async {
+            LogConfig::from(self.logging.clone())
+                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
+        })?;
+        rt.block_on(async move {
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
+                    Ok(())
+                }
+                res = async move {
+                    let _upgrade_countdown_metrics =
+                        metrics_config.map(CliMetrics::spawn_upgrade_countdown_recorder);
+                    args.start().await
+                } => res,
+            }
+        })
     }
 }
 

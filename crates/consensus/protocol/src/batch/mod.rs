@@ -33,7 +33,7 @@ mod r#type;
 pub use r#type::BatchType;
 
 mod reader;
-pub use reader::{BatchReader, DecompressionError};
+pub use reader::{BatchReader, BatchReaderError, DecompressionError};
 
 mod tx;
 pub use tx::BatchTransaction;

@@ -15,20 +15,46 @@ use base_proof_succinct_proof_utils::{ClusterArtifactStore, ClusterProofConfig};
 use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{ProofResult, ZkProofResult, ZkVm};
 use serde::{Deserialize, Serialize};
-use sp1_cluster_common::proto::{
-    ExecutionFailureCause, ExecutionStatus, ProofRequest as ClusterProtoProofRequest,
-    ProofRequestCreateRequest, ProofRequestGetRequest, ProofRequestStatus,
+use sp1_cluster_common::{
+    client::ClusterServiceClient,
+    proto::{
+        ExecutionFailureCause, ExecutionStatus, ProofRequest as ClusterProtoProofRequest,
+        ProofRequestCreateRequest, ProofRequestGetRequest, ProofRequestStatus,
+    },
 };
 use sp1_prover_types::{Artifact, ArtifactClient as _, ArtifactType};
 use sp1_sdk::{ProofFromNetwork, SP1ProofWithPublicValues, SP1Stdin};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::succinct::{L1HeadSource, OpSuccinctWitnessProvider, WitnessParams};
+use crate::succinct::{
+    L1HeadSource, OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
+    SuccinctZkProverBuilder, WitnessParams,
+};
 
 macro_rules! backend_error {
     ($($arg:tt)*) => {
         ZkProverError::Backend(std::io::Error::other(format!($($arg)*)).into())
     };
+}
+
+/// SP1 cluster backend settings.
+#[derive(Clone, Debug)]
+pub struct SuccinctClusterBackendConfig {
+    /// Shared RPC settings.
+    pub rpc: SuccinctRpcConfig,
+    /// SP1 cluster gRPC endpoint.
+    pub cluster_rpc: String,
+    /// S3 artifact store bucket.
+    pub s3_bucket: String,
+    /// S3 artifact store region.
+    pub s3_region: String,
+    /// Proof timeout.
+    pub timeout: Duration,
+    /// Cycle limit for range proof requests.
+    pub range_cycle_limit: u64,
+    /// Gas limit for range proof requests.
+    pub range_gas_limit: u64,
 }
 
 /// Configuration for [`ClusterZkProver`].
@@ -103,6 +129,124 @@ impl ClusterZkProver {
     /// Create a cluster prover with a witness provider and cluster config.
     pub const fn new(provider: OpSuccinctWitnessProvider, config: ClusterZkProverConfig) -> Self {
         Self { provider, config }
+    }
+
+    /// Builds an SP1 cluster backend.
+    pub async fn build_until_cancelled(
+        config: SuccinctClusterBackendConfig,
+        cancel: &CancellationToken,
+    ) -> Result<Option<Arc<dyn ZkProver>>, SuccinctZkProverBuildError> {
+        let SuccinctClusterBackendConfig {
+            rpc,
+            cluster_rpc,
+            s3_bucket,
+            s3_region,
+            timeout,
+            range_cycle_limit,
+            range_gas_limit,
+        } = config;
+        let base_consensus_url = rpc.base_consensus_rpc.as_str().to_owned();
+        let l1_node_url = rpc.l1_rpc.as_str().to_owned();
+        let default_sequence_window = rpc.default_sequence_window;
+
+        info!(backend = "cluster", "using Succinct SP1 cluster backend");
+        let Some(provider) = SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
+        else {
+            return Ok(None);
+        };
+        let Some((artifact_store, artifact_store_config)) =
+            Self::s3_artifact_store(s3_bucket, s3_region, cancel).await?
+        else {
+            return Ok(None);
+        };
+        let Some(service_client) = SuccinctZkProverBuilder::complete_unless_cancelled(
+            cancel,
+            async {
+                // The upstream constructor consumes the endpoint string, and the proof config
+                // needs to retain it for request submission.
+                ClusterServiceClient::new(cluster_rpc.clone()).await.map_err(|error| {
+                    SuccinctZkProverBuildError::boxed_operation(
+                        "failed to create SP1 cluster client",
+                        error.into(),
+                    )
+                })
+            },
+            "sp1_cluster_client",
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        let prover_config = ClusterZkProverConfig {
+            base_consensus_url,
+            l1_node_url,
+            default_sequence_window,
+            cluster: Arc::new(ClusterProofConfig {
+                cluster_rpc,
+                artifact_store,
+                artifact_store_config,
+                service_client,
+            }),
+            timeout,
+            range_cycle_limit,
+            range_gas_limit,
+        };
+
+        Ok(Some(Arc::new(Self::new(provider, prover_config))))
+    }
+
+    /// Builds S3 artifact storage for SP1 cluster requests.
+    pub async fn s3_artifact_store(
+        bucket: String,
+        region: String,
+        cancel: &CancellationToken,
+    ) -> Result<
+        Option<(ClusterArtifactStore, sp1_cluster_utils::ArtifactStoreConfig)>,
+        SuccinctZkProverBuildError,
+    > {
+        info!("using S3 artifact storage");
+        let Some(download_client) = SuccinctZkProverBuilder::complete_unless_cancelled(
+            cancel,
+            async {
+                Ok(sp1_cluster_artifact::s3::S3ArtifactClient::create_s3_sdk_download_client(
+                    region.clone(),
+                )
+                .await)
+            },
+            "s3_download_client",
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        let download_mode = sp1_cluster_artifact::s3::S3DownloadMode::AwsSDK(download_client);
+        let bucket_for_config = bucket.clone();
+        let region_for_config = region.clone();
+        let Some(client) = SuccinctZkProverBuilder::complete_unless_cancelled(
+            cancel,
+            async move {
+                Ok(sp1_cluster_artifact::s3::S3ArtifactClient::new(
+                    region,
+                    bucket,
+                    32,
+                    download_mode,
+                )
+                .await)
+            },
+            "s3_artifact_client",
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some((
+            ClusterArtifactStore::S3(client),
+            sp1_cluster_utils::ArtifactStoreConfig::S3 {
+                bucket: bucket_for_config,
+                region: region_for_config,
+            },
+        )))
     }
 
     /// Build the cluster proof id for a prover-service session attempt.

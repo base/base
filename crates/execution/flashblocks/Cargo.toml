@@ -16,6 +16,7 @@ workspace = true
 base-common-flashblocks.workspace = true
 alloy-evm = { workspace = true, features = ["std"] }
 base-common-evm = { workspace = true, features = ["std"] }
+base-execution-eip8130-rpc.workspace = true
 
 # reth
 reth-rpc.workspace = true

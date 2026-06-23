@@ -1,7 +1,7 @@
 //! Result tracking for submitted transactions and inclusion observations.
 
 use std::{
-    collections::{HashMap, VecDeque, hash_map::Entry},
+    collections::{BTreeSet, HashMap, VecDeque, hash_map::Entry},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -11,8 +11,6 @@ use parking_lot::RwLock;
 
 use crate::metrics::TransactionMetrics;
 
-/// Maximum canonical receipt entries retained from recent blocks.
-const MAX_RECEIPT_CACHE_SIZE: usize = 100_000;
 /// Maximum flashblock entries retained from recent stream events.
 const MAX_FLASHBLOCK_CACHE_SIZE: usize = 50_000;
 
@@ -30,13 +28,14 @@ pub struct SentTransaction {
 pub struct BlockObservation {
     /// Canonical block number.
     pub number: u64,
-    /// Local instant corresponding to the block timestamp, when available.
-    pub block_time: Option<Instant>,
-    /// Local time when the load-test process observed the block.
+    /// Local time when the load-test process observed the block. Used as the
+    /// landing time for transactions first seen in this block.
     pub observed_at: Instant,
 }
 
-/// Canonical receipt data observed for a transaction in a block.
+/// Canonical receipt data for a transaction, fetched in a single batch pass at the
+/// end of the load test (not during the run). Used to backfill gas, effective gas
+/// price, and revert status.
 #[derive(Debug, Clone, Copy)]
 pub struct BlockReceipt {
     /// Transaction hash.
@@ -69,13 +68,14 @@ pub struct ResultsTracker {
 #[derive(Debug)]
 struct ResultsTrackerInner {
     pending: HashMap<TxHash, PendingTransaction>,
-    block_receipts: HashMap<TxHash, BlockReceiptInclusion>,
     flashblocks: HashMap<TxHash, Instant>,
-    receipt_eviction_queue: VecDeque<TxHash>,
     flashblock_eviction_queue: VecDeque<TxHash>,
     unreported_confirmations: VecDeque<TransactionMetrics>,
     in_flight_per_sender: HashMap<Address, u64>,
     total_in_flight: u64,
+    /// Block numbers in which at least one of our transactions landed, used to scope
+    /// the end-of-run `eth_getBlockReceipts` pass to only relevant blocks.
+    landed_blocks: BTreeSet<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,16 +86,6 @@ struct PendingTransaction {
     in_flight_released: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct BlockReceiptInclusion {
-    observed_at: Instant,
-    block_time: Option<Instant>,
-    block_number: u64,
-    gas_used: u64,
-    effective_gas_price: u128,
-    success: bool,
-}
-
 impl ResultsTracker {
     /// Creates a new tracker for the given sender addresses.
     pub fn new(sender_addresses: &[Address]) -> Self {
@@ -104,13 +94,12 @@ impl ResultsTracker {
         Self {
             inner: Arc::new(RwLock::new(ResultsTrackerInner {
                 pending: HashMap::new(),
-                block_receipts: HashMap::new(),
                 flashblocks: HashMap::new(),
-                receipt_eviction_queue: VecDeque::new(),
                 flashblock_eviction_queue: VecDeque::new(),
                 unreported_confirmations: VecDeque::new(),
                 in_flight_per_sender,
                 total_in_flight: 0,
+                landed_blocks: BTreeSet::new(),
             })),
         }
     }
@@ -139,7 +128,6 @@ impl ResultsTracker {
                 .and_modify(|count| *count = count.saturating_add(1))
                 .or_insert(1);
             inner.total_in_flight = inner.total_in_flight.saturating_add(1);
-            inner.confirm_if_ready(transaction.tx_hash);
         }
     }
 
@@ -169,28 +157,20 @@ impl ResultsTracker {
         inner.evict_flashblocks();
     }
 
-    /// Records a newly observed canonical block and its receipts.
-    pub fn on_new_block(&self, block: BlockObservation, receipts: Vec<BlockReceipt>) {
+    /// Records the transaction hashes observed in a newly polled canonical block.
+    ///
+    /// This is the in-run landing detector: the first time one of our pending
+    /// transactions is seen in a block's transaction list, its landing latency
+    /// (submit -> first-seen, which includes the block poll + scan cost) is recorded,
+    /// its block number is captured, and a [`TransactionMetrics`] entry is emitted.
+    /// Gas, effective gas price, and revert status are left at defaults here and
+    /// backfilled later by the end-of-run receipt pass.
+    pub fn on_new_block_hashes(&self, block: BlockObservation, tx_hashes: Vec<TxHash>) {
         let mut inner = self.inner.write();
 
-        for receipt in receipts {
-            let inclusion = BlockReceiptInclusion {
-                observed_at: block.observed_at,
-                block_time: block.block_time,
-                block_number: receipt.block_number,
-                gas_used: receipt.gas_used,
-                effective_gas_price: receipt.effective_gas_price,
-                success: receipt.success,
-            };
-
-            if let Entry::Vacant(e) = inner.block_receipts.entry(receipt.tx_hash) {
-                e.insert(inclusion);
-                inner.receipt_eviction_queue.push_back(receipt.tx_hash);
-            }
-            inner.confirm_if_ready(receipt.tx_hash);
+        for tx_hash in tx_hashes {
+            inner.land_if_pending(tx_hash, &block);
         }
-
-        inner.evict_block_receipts();
     }
 
     /// Expires submitted transactions that were not observed in a canonical block.
@@ -247,23 +227,26 @@ impl ResultsTracker {
     pub fn senders_at_limit(&self, limit: u64) -> usize {
         self.inner.read().in_flight_per_sender.values().filter(|&&count| count >= limit).count()
     }
+
+    /// Returns the sorted set of block numbers in which our transactions landed.
+    ///
+    /// Used to scope the end-of-run `eth_getBlockReceipts` pass to only the blocks
+    /// that actually contained our transactions.
+    pub fn landed_block_numbers(&self) -> Vec<u64> {
+        self.inner.read().landed_blocks.iter().copied().collect()
+    }
 }
 
 impl ResultsTrackerInner {
-    fn confirm_if_ready(&mut self, tx_hash: TxHash) {
-        let Some(receipt) = self.block_receipts.get(&tx_hash).copied() else {
-            return;
-        };
+    /// Records the first observation of `tx_hash` in a polled block, emitting its
+    /// landing metrics. Idempotent: a tx is removed from `pending` on first landing,
+    /// so later blocks containing the same hash are ignored.
+    fn land_if_pending(&mut self, tx_hash: TxHash, block: &BlockObservation) {
         let Some(pending) = self.pending.remove(&tx_hash) else {
             return;
         };
 
-        let block_latency = receipt
-            .block_time
-            .map(|block_time| block_time.saturating_duration_since(pending.submit_time));
-        let block_receipt_delay = receipt
-            .block_time
-            .map(|block_time| receipt.observed_at.saturating_duration_since(block_time));
+        let block_latency = block.observed_at.checked_duration_since(pending.submit_time);
         let flashblocks_latency = self
             .flashblocks
             .remove(&tx_hash)
@@ -273,15 +256,13 @@ impl ResultsTrackerInner {
             tx_hash,
             block_latency,
             flashblocks_latency,
-            receipt.gas_used,
-            receipt.effective_gas_price,
-            Some(receipt.block_number),
+            0,
+            0,
+            Some(block.number),
         );
-        metrics.block_receipt_delay = block_receipt_delay;
-        metrics.confirmed_at = Some(receipt.observed_at);
-        metrics.reverted = !receipt.success;
+        metrics.confirmed_at = Some(block.observed_at);
 
-        self.block_receipts.remove(&tx_hash);
+        self.landed_blocks.insert(block.number);
         if !pending.in_flight_released {
             self.decrement_in_flight(&pending.from);
         }
@@ -293,17 +274,6 @@ impl ResultsTrackerInner {
             *count = count.saturating_sub(1);
         }
         self.total_in_flight = self.total_in_flight.saturating_sub(1);
-    }
-
-    fn evict_block_receipts(&mut self) {
-        while self.block_receipts.len() > MAX_RECEIPT_CACHE_SIZE {
-            match self.receipt_eviction_queue.pop_front() {
-                Some(old) => {
-                    self.block_receipts.remove(&old);
-                }
-                None => break,
-            }
-        }
     }
 
     fn evict_flashblocks(&mut self) {
@@ -324,68 +294,46 @@ mod tests {
 
     use super::*;
 
+    fn block_at(number: u64, observed_at: Instant) -> BlockObservation {
+        BlockObservation { number, observed_at }
+    }
+
     #[test]
-    fn confirms_pending_transaction_from_block_receipt() {
+    fn confirms_pending_transaction_from_block_hashes() {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(1);
         let tracker = ResultsTracker::new(&[from]);
 
         tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
-        let block_time = Instant::now() + Duration::from_millis(50);
-        tracker.on_new_block(
-            BlockObservation {
-                number: 7,
-                block_time: Some(block_time),
-                observed_at: block_time + Duration::from_millis(250),
-            },
-            vec![BlockReceipt {
-                tx_hash,
-                block_number: 7,
-                gas_used: 21_000,
-                effective_gas_price: 1_000_000_000,
-                success: true,
-            }],
-        );
+        let observed_at = Instant::now() + Duration::from_millis(250);
+        tracker.on_new_block_hashes(block_at(7, observed_at), vec![tx_hash]);
 
         let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics.len(), 1, "landed tx should produce exactly one metric");
         assert_eq!(metrics[0].tx_hash, tx_hash);
-        assert_eq!(metrics[0].block_number, Some(7));
-        assert_eq!(metrics[0].gas_used, 21_000);
-        assert!(!metrics[0].reverted);
-        assert_eq!(metrics[0].block_receipt_delay, Some(Duration::from_millis(250)));
-        assert_eq!(tracker.total_in_flight(), 0);
+        assert_eq!(metrics[0].block_number, Some(7), "block number from polled block");
+        assert!(metrics[0].block_latency.is_some(), "landing latency must be recorded");
+        assert_eq!(metrics[0].gas_used, 0, "gas backfilled later by receipt pass");
+        assert!(!metrics[0].reverted, "revert backfilled later by receipt pass");
+        assert_eq!(tracker.landed_block_numbers(), vec![7], "block 7 tracked for receipt pass");
+        assert_eq!(tracker.total_in_flight(), 0, "landing releases in-flight slot");
     }
 
     #[test]
-    fn marks_reverted_transaction() {
+    fn second_block_with_same_hash_is_ignored() {
         let from = address!("0000000000000000000000000000000000000001");
-        let tx_hash = TxHash::repeat_byte(3);
+        let tx_hash = TxHash::repeat_byte(7);
         let tracker = ResultsTracker::new(&[from]);
 
         tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
-        let block_time = Instant::now() + Duration::from_millis(50);
-        tracker.on_new_block(
-            BlockObservation {
-                number: 9,
-                block_time: Some(block_time),
-                observed_at: block_time + Duration::from_millis(100),
-            },
-            vec![BlockReceipt {
-                tx_hash,
-                block_number: 9,
-                gas_used: 45_000,
-                effective_gas_price: 1_000_000_000,
-                success: false,
-            }],
-        );
+        let now = Instant::now();
+        tracker.on_new_block_hashes(block_at(11, now + Duration::from_millis(100)), vec![tx_hash]);
+        tracker.on_new_block_hashes(block_at(12, now + Duration::from_millis(300)), vec![tx_hash]);
 
         let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1, "reverted tx should still produce metrics");
-        assert_eq!(metrics[0].tx_hash, tx_hash);
-        assert!(metrics[0].reverted, "reverted flag should be set");
-        assert_eq!(metrics[0].gas_used, 45_000);
-        assert_eq!(tracker.total_in_flight(), 0);
+        assert_eq!(metrics.len(), 1, "tx should land exactly once despite reappearing");
+        assert_eq!(metrics[0].block_number, Some(11), "first-seen block wins");
+        assert_eq!(tracker.landed_block_numbers(), vec![11], "only first block tracked");
     }
 
     #[test]
@@ -395,30 +343,20 @@ mod tests {
         let tracker = ResultsTracker::new(&[from]);
 
         tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
-        tracker
-            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
-        tracker.on_new_block(
-            BlockObservation {
-                number: 8,
-                block_time: Some(Instant::now()),
-                observed_at: Instant::now(),
-            },
-            vec![BlockReceipt {
-                tx_hash,
-                block_number: 8,
-                gas_used: 21_000,
-                effective_gas_price: 1_000_000_000,
-                success: true,
-            }],
-        );
+        let now = Instant::now();
+        tracker.on_new_flashblock(vec![FlashblockInclusion {
+            tx_hash,
+            included_at: now + Duration::from_millis(50),
+        }]);
+        tracker.on_new_block_hashes(block_at(8, now + Duration::from_millis(200)), vec![tx_hash]);
 
         let metrics = tracker.drain_confirmed_metrics();
         assert_eq!(metrics.len(), 1);
-        assert!(metrics[0].flashblocks_latency.is_some());
+        assert!(metrics[0].flashblocks_latency.is_some(), "FB latency joined at landing");
     }
 
     #[test]
-    fn flashblock_releases_in_flight_before_block_receipt() {
+    fn flashblock_releases_in_flight_before_block_landing() {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(4);
         let tracker = ResultsTracker::new(&[from]);
@@ -432,26 +370,12 @@ mod tests {
         assert_eq!(tracker.total_in_flight(), 0, "flashblock should release in-flight slot");
         assert_eq!(tracker.in_flight_for(&from), 0);
 
-        // Block receipt arrives later — should not double-decrement.
-        let block_time = Instant::now() + Duration::from_millis(500);
-        tracker.on_new_block(
-            BlockObservation {
-                number: 10,
-                block_time: Some(block_time),
-                observed_at: block_time + Duration::from_millis(100),
-            },
-            vec![BlockReceipt {
-                tx_hash,
-                block_number: 10,
-                gas_used: 112_000,
-                effective_gas_price: 1_000_000_000,
-                success: true,
-            }],
-        );
+        let observed_at = Instant::now() + Duration::from_millis(500);
+        tracker.on_new_block_hashes(block_at(10, observed_at), vec![tx_hash]);
 
-        assert_eq!(tracker.total_in_flight(), 0, "block receipt should not double-decrement");
+        assert_eq!(tracker.total_in_flight(), 0, "block landing should not double-decrement");
         let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1, "metrics should still be produced from block receipt");
+        assert_eq!(metrics.len(), 1, "metrics should still be produced from block landing");
         assert!(metrics[0].flashblocks_latency.is_some());
     }
 

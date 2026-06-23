@@ -157,7 +157,9 @@ impl SingleBatch {
 
         // If this is the first block in the jovian upgrade, and the batch contains any
         // transactions, it must be dropped.
-        if cfg.is_first_jovian_block(self.timestamp) && !self.transactions.is_empty() {
+        if cfg.is_first_jovian_block(self.timestamp, l2_safe_head.block_info.timestamp)
+            && !self.transactions.is_empty()
+        {
             warn!(
                 target: "single_batch",
                 "Sequencer included user transactions in jovian transition block. Dropping batch."

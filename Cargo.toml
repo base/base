@@ -50,13 +50,11 @@ members = [
   "crates/proof/challenge",
   "crates/proof/succinct/utils/client",
   "crates/proof/succinct/utils/host",
-  "crates/proof/succinct/utils/build",
   "crates/proof/succinct/utils/proof",
-  "crates/proof/succinct/utils/signer",
   "crates/proof/succinct/utils/elfs",
   "crates/proof/succinct/utils/ethereum/client",
   "crates/proof/succinct/utils/ethereum/host",
-  "crates/proof/succinct/scripts/*",
+  "crates/proof/succinct/scripts",
 
   "crates/utilities/*",
   "crates/batcher/*",
@@ -179,6 +177,7 @@ base-common-consensus = { path = "crates/common/consensus", default-features = f
 base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
+base-observability-events = { path = "crates/common/observability-events", default-features = false }
 
 # Builder
 base-builder-cli = { path = "crates/builder/cli" }
@@ -223,6 +222,8 @@ base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
+base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc" }
+base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl" }
@@ -266,13 +267,10 @@ base-proof-tee-nitro-attestation-prover = { path = "crates/proof/tee/nitro-attes
 
 # Succinct (OP Succinct / SP1 proving)
 base-proof-succinct-elfs = { path = "crates/proof/succinct/utils/elfs" }
-base-proof-succinct-prove = { path = "crates/proof/succinct/scripts/prove" }
-base-proof-succinct-scripts = { path = "crates/proof/succinct/scripts/utils" }
+base-proof-succinct-scripts = { path = "crates/proof/succinct/scripts" }
 base-proof-succinct-host-utils = { path = "crates/proof/succinct/utils/host" }
-base-proof-succinct-build-utils = { path = "crates/proof/succinct/utils/build" }
 base-proof-succinct-proof-utils = { path = "crates/proof/succinct/utils/proof" }
 base-proof-succinct-client-utils = { path = "crates/proof/succinct/utils/client" }
-base-proof-succinct-signer-utils = { path = "crates/proof/succinct/utils/signer" }
 base-proof-succinct-ethereum-host-utils = { path = "crates/proof/succinct/utils/ethereum/host" }
 base-proof-succinct-ethereum-client-utils = { path = "crates/proof/succinct/utils/ethereum/client" }
 
@@ -343,6 +341,7 @@ alloy-consensus = { version = "2.0.5", default-features = false }
 alloy-sol-types = { version = "1.6.0", default-features = false }
 alloy-primitives = { version = "1.6.0", default-features = false }
 alloy-rpc-types-eth = { version = "2.0.5", default-features = false }
+alloy-rpc-types-txpool = { version = "2.0.5", default-features = false }
 alloy-rpc-types-debug = { version = "2.0.5", default-features = false }
 alloy-rpc-types-engine = { version = "2.0.5", default-features = false }
 alloy-network-primitives = { version = "2.0.5", default-features = false }
@@ -473,7 +472,6 @@ risc0-ethereum-contracts = "3.0.1"
 risc0-zkvm = { version = "^3.0", default-features = false }
 
 # SP1 v6.2.1 (Hypercube) — used by crates/proof/succinct
-sp1-build = "=6.2.1"
 sp1-prover-types = "=6.2.1"
 sp1-sdk = { version = "=6.2.1" }
 sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
@@ -592,6 +590,7 @@ ambassador = "0.4.2"
 miniz_oxide = "0.9.0"
 parking_lot = "0.12.3"
 opentelemetry = "0.31"
+opentelemetry-http = { version = "0.31", default-features = false }
 cargo_metadata = "0.18.1"
 tracing-indicatif = "0.3"
 tikv-jemallocator = "0.6"

@@ -111,3 +111,23 @@ pub fn build_test_genesis_azul() -> Genesis {
     genesis.config.extra_fields.insert("base".to_string(), serde_json::json!({ "azul": 0 }));
     genesis
 }
+
+/// Builds a test genesis with Base Azul, Beryl, and Cobalt all enabled at
+/// timestamp 0.
+///
+/// Extends [`build_test_genesis_azul`] with:
+/// - Base Beryl and Cobalt activation at timestamp 0
+/// - `activationAdminAddress` set to the [`Account::Deployer`] address (required
+///   once Beryl is active)
+pub fn build_test_genesis_cobalt() -> Genesis {
+    let mut genesis = build_test_genesis_azul();
+    genesis
+        .config
+        .extra_fields
+        .insert("base".to_string(), serde_json::json!({ "azul": 0, "beryl": 0, "cobalt": 0 }));
+    genesis.config.extra_fields.insert(
+        "activationAdminAddress".to_string(),
+        serde_json::json!(Account::Deployer.address()),
+    );
+    genesis
+}

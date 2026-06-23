@@ -16,6 +16,30 @@ sol! {
     /// `TEEProverRegistry` contract interface.
     #[sol(rpc)]
     interface ITEEProverRegistry {
+        /// Thrown when the attestation document is too old.
+        error AttestationTooOld();
+
+        /// Thrown when the ZK attestation verification fails.
+        error AttestationVerificationFailed();
+
+        /// Thrown when the attestation's public key is malformed.
+        error InvalidPublicKey();
+
+        /// Thrown when PCR0 is not found in the attestation's PCR list.
+        error PCR0NotFound();
+
+        /// Thrown when the attestation PCR0 does not match the expected image.
+        error PCR0Mismatch();
+
+        /// Thrown when the dispute game factory is not configured.
+        error DisputeGameFactoryNotSet();
+
+        /// Thrown when reading `TEE_IMAGE_HASH` from the `AggregateVerifier` fails.
+        error ImageHashReadFailed();
+
+        /// Thrown when the selected game type has no `TEE_IMAGE_HASH`.
+        error InvalidGameType();
+
         /// Registers a signer using a ZK-proven AWS Nitro attestation.
         function registerSigner(bytes calldata output, bytes calldata proofBytes) external;
 

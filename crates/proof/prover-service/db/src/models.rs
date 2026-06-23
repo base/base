@@ -197,12 +197,12 @@ impl TryFrom<&str> for SessionType {
 }
 
 /// Outcome of attempting to retry or fail a stuck proof request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum RetryOutcome {
     /// Request was reset to CREATED with incremented `retry_count`.
     Retried,
     /// Request was permanently marked FAILED (max retries exceeded).
-    PermanentlyFailed,
+    PermanentlyFailed(Box<ProofJob>),
     /// Request was no longer in PENDING state (already claimed or transitioned).
     Skipped,
 }
@@ -212,13 +212,12 @@ pub enum RetryOutcome {
 pub enum CreateProofRequestOutcome {
     /// A new proof request row was inserted.
     Created(Uuid),
-    /// An existing terminal `FAILED` row was reset to `CREATED` and a fresh
-    /// worker job was made claimable again.
+    /// An existing failed row was reset to `CREATED` and a fresh worker job
+    /// was made claimable again.
     Requeued(Uuid),
-    /// An existing non-terminal or `SUCCEEDED` row was returned unchanged for
-    /// idempotent replay.
+    /// An existing non-failed row was returned unchanged for idempotent replay.
     Replayed(Uuid),
-    /// An existing terminal `FAILED` row is at the retry cap; no requeue.
+    /// An existing failed row is at the retry cap; no requeue.
     RetryExhausted(Uuid),
 }
 
@@ -232,6 +231,17 @@ impl CreateProofRequestOutcome {
             | Self::RetryExhausted(id) => *id,
         }
     }
+}
+
+/// Outcome of deleting a completed proof request by session id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteProofRequestOutcome {
+    /// A terminal proof request was deleted.
+    Deleted,
+    /// No proof request exists for the session id.
+    NotFound,
+    /// The proof request exists but is not terminal.
+    NotCompleted(ProofStatus),
 }
 
 /// Errors returned while creating proof requests.
@@ -1048,8 +1058,10 @@ pub struct CompleteClaimedProofJob {
 /// Outcome of attempting to complete a worker proof job.
 #[derive(Debug, Clone)]
 pub enum SubmitProofOutcome {
-    /// Submit succeeded.
+    /// Submit succeeded and transitioned the job to terminal success.
     Completed(ProofJob),
+    /// Submit replayed an already completed result from the same worker/lock.
+    AlreadyCompleted(ProofJob),
     /// The submitted result does not match the claimed job's proof type or
     /// capability discriminator. The stored job is left unchanged.
     ResultMismatch {

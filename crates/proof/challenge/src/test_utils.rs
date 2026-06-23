@@ -25,8 +25,9 @@ use base_proof_contracts::{
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ProofResult as ApiProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
+    DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
+    ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkGroth16ProofResult,
+    ZkProofResult, ZkVm,
 };
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 
@@ -766,6 +767,16 @@ impl ProofRequesterProvider for MockZkProofProvider {
             result,
         })
     }
+
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<(), ProverServiceClientError> {
+        let mut state = self.state.lock().unwrap();
+        state.prove_block_range_log.retain(|entry| entry.proof.session_id != request.session_id);
+        Ok(())
+    }
+
     async fn list_proofs(
         &self,
         _request: base_prover_service_protocol::ListProofsRequest,

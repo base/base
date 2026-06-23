@@ -13,7 +13,7 @@ pub use discovery::AwsTargetGroupDiscovery;
 mod driver;
 pub use driver::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DiscoveryResolution,
-    DriverConfig, RegisterableSigner, RegistrationDriver,
+    DriverConfig, INSTANCE_CACHE_TTL_CYCLES, RegisterableSigner, RegistrationDriver,
 };
 
 mod error;
@@ -28,7 +28,7 @@ pub use prover::ProverClient;
 mod signer_manager;
 pub use signer_manager::{
     DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration, ProofTaskSet,
-    SignerManager,
+    SignerManager, SignerManagerConfig,
 };
 
 mod service;

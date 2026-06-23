@@ -72,12 +72,12 @@ async fn batcher_blob_da_end_to_end() {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-blob packing (many frames → many blob sidecars in one L1 block)
+// Multi-blob packing (many frames, many blob sidecars in one L1 block)
 // ---------------------------------------------------------------------------
 
 /// Force channel fragmentation via a tiny `max_frame_size`, then verify that
-/// all resulting frames are packed into a single blob sidecar in one L1 block
-/// and that the derivation pipeline can reconstruct the L2 block from it.
+/// the resulting frames are submitted as multiple blob sidecars in one L1 block
+/// and that the derivation pipeline can reconstruct the L2 block from them.
 #[tokio::test]
 async fn batcher_multi_blob_packing() {
     let batcher_cfg = BatcherConfig {
@@ -96,13 +96,12 @@ async fn batcher_multi_blob_packing() {
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
 
-    // With frame packing, all frames from the fragmented channel are packed
-    // into a single blob payload in one L1 transaction — exactly one blob sidecar.
-    assert_eq!(
-        h.l1.tip().blob_sidecars.len(),
-        1,
-        "expected all frames packed into one blob sidecar, got {}",
-        h.l1.tip().blob_sidecars.len()
+    // Blob DA maps each fragmented frame to its own blob sidecar. The miner
+    // includes all pending blob transactions in the same L1 block.
+    let sidecar_count = h.l1.tip().blob_sidecars.len();
+    assert!(
+        sidecar_count > 1,
+        "expected fragmented frames to produce multiple blob sidecars, got {sidecar_count}"
     );
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(

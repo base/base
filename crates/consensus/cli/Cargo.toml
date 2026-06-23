@@ -28,6 +28,7 @@ base-common-genesis.workspace = true
 base-consensus-disc = { workspace = true, features = ["metrics"] }
 base-consensus-node = { workspace = true, features = ["metrics"] }
 base-consensus-providers = { workspace = true, features = ["metrics"] }
+reth-node-core.workspace = true
 
 # alloy
 alloy-signer.workspace = true
@@ -60,9 +61,14 @@ dirs.workspace = true
 strum.workspace = true
 metrics.workspace = true
 serde.workspace = true
+
 thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true
 tempfile.workspace = true
+
+[features]
+default = [ "otlp" ]
+otlp = [ "base-cli-utils/otlp", "reth-node-core/otlp" ]

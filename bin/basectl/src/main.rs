@@ -9,6 +9,7 @@ mod helpers;
 mod p2p;
 mod sequencer;
 mod sync_status;
+mod txpool;
 
 use basectl_cli::{MonitoringConfig, ViewId, run_app, run_flashblocks_json};
 use clap::{CommandFactory, Parser};
@@ -56,6 +57,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(cli::Commands::P2p { command }) => {
             p2p::run(MonitoringConfig::load(config).await?, command).await
+        }
+        Some(cli::Commands::Txpool { command }) => {
+            txpool::run(MonitoringConfig::load(config).await?, command).await
         }
         Some(cli::Commands::Conductor { command }) => {
             if conductor::run(MonitoringConfig::load(config).await?, conductor_rpc, command)

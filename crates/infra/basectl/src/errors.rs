@@ -195,6 +195,64 @@ pub enum SyncStatusCommandError {
     },
 }
 
+/// Error returned by txpool RPC helpers and command execution.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum TxpoolCommandError {
+    /// The txpool HTTP client could not be built.
+    #[error("failed to build txpool HTTP client for {rpc}: {message}")]
+    BuildHttpClient {
+        /// The execution-layer RPC URL selected for the command.
+        rpc: String,
+        /// The client construction error message.
+        message: String,
+    },
+    /// The txpool admin client could not be built.
+    #[error("failed to build txpool admin client for {rpc}: {message}")]
+    BuildAdminClient {
+        /// The execution-layer RPC URL selected for the command.
+        rpc: String,
+        /// The client construction error message.
+        message: String,
+    },
+    /// The selected RPC does not expose the requested txpool namespace method.
+    #[error("txpool RPC method `{method}` is not exposed by {rpc}")]
+    TxpoolMethodUnavailable {
+        /// The execution-layer RPC URL selected for the command.
+        rpc: String,
+        /// The unavailable txpool RPC method.
+        method: &'static str,
+    },
+    /// The selected RPC does not expose the requested admin namespace method.
+    #[error("admin RPC method `{method}` is not exposed by {rpc}")]
+    AdminMethodUnavailable {
+        /// The execution-layer RPC URL selected for the command.
+        rpc: String,
+        /// The unavailable admin RPC method.
+        method: &'static str,
+    },
+    /// A txpool namespace RPC call failed for a reason other than method availability.
+    #[error("txpool RPC method `{method}` failed on {rpc}: {message}")]
+    TxpoolRpc {
+        /// The execution-layer RPC URL selected for the command.
+        rpc: String,
+        /// The txpool RPC method that failed.
+        method: &'static str,
+        /// The RPC error message.
+        message: String,
+    },
+    /// An admin namespace RPC call failed for a reason other than method availability.
+    #[error("admin RPC method `{method}` failed on {rpc}: {message}")]
+    AdminRpc {
+        /// The execution-layer RPC URL selected for the command.
+        rpc: String,
+        /// The admin RPC method that failed.
+        method: &'static str,
+        /// The RPC error message.
+        message: String,
+    },
+}
+
 /// Error returned by the `conductor` command group.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]

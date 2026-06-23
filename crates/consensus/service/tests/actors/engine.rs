@@ -17,6 +17,7 @@ use base_consensus_node::{
 };
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use jsonrpsee::types::ErrorCode;
+use opentelemetry::Context;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -87,6 +88,7 @@ async fn full_public_rpc_queue_does_not_block_engine_processing_requests() {
         .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
             attributes,
             result_tx: payload_id_tx,
+            otel_cx: Context::new(),
         })))
         .await
         .expect("failed to enqueue build request");

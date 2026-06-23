@@ -180,10 +180,13 @@ macro_rules! rollup_fork_methods {
                 self.$($timestamp)+.is_some_and(|t| timestamp >= t) $(|| self.$next(timestamp))?
             }
 
-            #[doc = concat!("Returns true if the timestamp marks the first ", $name, " block.")]
-            pub fn $first(&self, timestamp: u64) -> bool {
-                self.$active(timestamp)
-                    && !self.$active(timestamp.saturating_sub(self.block_time))
+            #[doc = concat!(
+                "Returns true if the block at `timestamp` is the first ",
+                $name,
+                " block when compared against the parent timestamp.",
+            )]
+            pub fn $first(&self, timestamp: u64, parent_timestamp: u64) -> bool {
+                self.$active(timestamp) && !self.$active(parent_timestamp)
             }
         )*
     };
@@ -349,12 +352,12 @@ impl RollupConfig {
             self.channel_timeout
         }
     }
-    /// Computes a block number from a timestamp, relative to the L2 genesis time and the block
-    /// time.
+    /// Computes the lower-bound block number for a timestamp, relative to the L2 genesis time and
+    /// the block time.
     ///
-    /// This function assumes that the timestamp is aligned with the block time, and uses floor
-    /// division in its computation.
-    pub const fn block_number_from_timestamp(&self, timestamp: u64) -> u64 {
+    /// This uses floor division, so multiple blocks can share the same seconds-denominated
+    /// timestamp while still mapping to the same lower bound.
+    pub const fn block_number_lower_bound_from_timestamp(&self, timestamp: u64) -> u64 {
         timestamp.saturating_sub(self.genesis.l2_time).saturating_div(self.block_time)
     }
 
@@ -404,30 +407,41 @@ impl RollupConfig {
     /// The activation banner for the Base Azul hardfork, printed when the first block of the fork is built or processed.
     const AZUL_ACTIVATION_BANNER: &str = include_str!("../static/azul_activation_banner.txt");
 
-    /// Logs upgrade activation when building or processing the first block of a fork.
-    pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64) {
-        if self.is_first_ecotone_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating ecotone upgrade");
-        } else if self.is_first_fjord_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating fjord upgrade");
-        } else if self.is_first_granite_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating granite upgrade");
-        } else if self.is_first_holocene_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating holocene upgrade");
-        } else if self.is_first_isthmus_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating isthmus upgrade");
-        } else if self.is_first_jovian_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
-        } else if self.is_first_base_azul_block(timestamp) {
+    /// Logs upgrade activation when the caller knows the actual parent timestamp.
+    pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64, parent_timestamp: u64) {
+        let upgrade = if self.is_first_ecotone_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Ecotone)
+        } else if self.is_first_fjord_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Fjord)
+        } else if self.is_first_granite_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Granite)
+        } else if self.is_first_holocene_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Holocene)
+        } else if self.is_first_isthmus_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Isthmus)
+        } else if self.is_first_jovian_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Jovian)
+        } else if self.is_first_base_azul_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Azul)
+        } else if self.is_first_beryl_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Beryl)
+        } else if self.is_first_cobalt_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Cobalt)
+        } else {
+            None
+        };
+
+        let Some(upgrade) = upgrade else {
+            return;
+        };
+
+        if let BaseUpgrade::Azul = upgrade {
             for line in Self::AZUL_ACTIVATION_BANNER.lines() {
                 tracing::info!(target: "upgrades", "{line}");
             }
-            tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
-        } else if self.is_first_beryl_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating beryl upgrade");
-        } else if self.is_first_cobalt_block(timestamp) {
-            tracing::info!(target: "upgrades", block_number, "Activating cobalt upgrade");
         }
+
+        tracing::info!(target: "upgrades", block_number, upgrade = upgrade.contract_id(), "Activated upgrade");
     }
 }
 
@@ -506,69 +520,84 @@ mod tests {
         };
 
         // Regolith
-        assert!(!cfg.is_first_regolith_block(8));
-        assert!(cfg.is_first_regolith_block(10));
-        assert!(!cfg.is_first_regolith_block(12));
+        assert!(!cfg.is_first_regolith_block(8, 6));
+        assert!(cfg.is_first_regolith_block(10, 8));
+        assert!(!cfg.is_first_regolith_block(12, 10));
 
         // Canyon
-        assert!(!cfg.is_first_canyon_block(18));
-        assert!(cfg.is_first_canyon_block(20));
-        assert!(!cfg.is_first_canyon_block(22));
+        assert!(!cfg.is_first_canyon_block(18, 16));
+        assert!(cfg.is_first_canyon_block(20, 18));
+        assert!(!cfg.is_first_canyon_block(22, 20));
 
         // Delta
-        assert!(!cfg.is_first_delta_block(28));
-        assert!(cfg.is_first_delta_block(30));
-        assert!(!cfg.is_first_delta_block(32));
+        assert!(!cfg.is_first_delta_block(28, 26));
+        assert!(cfg.is_first_delta_block(30, 28));
+        assert!(!cfg.is_first_delta_block(32, 30));
 
         // Ecotone
-        assert!(!cfg.is_first_ecotone_block(38));
-        assert!(cfg.is_first_ecotone_block(40));
-        assert!(!cfg.is_first_ecotone_block(42));
+        assert!(!cfg.is_first_ecotone_block(38, 36));
+        assert!(cfg.is_first_ecotone_block(40, 38));
+        assert!(!cfg.is_first_ecotone_block(42, 40));
 
         // Fjord
-        assert!(!cfg.is_first_fjord_block(48));
-        assert!(cfg.is_first_fjord_block(50));
-        assert!(!cfg.is_first_fjord_block(52));
+        assert!(!cfg.is_first_fjord_block(48, 46));
+        assert!(cfg.is_first_fjord_block(50, 48));
+        assert!(!cfg.is_first_fjord_block(52, 50));
 
         // Granite
-        assert!(!cfg.is_first_granite_block(58));
-        assert!(cfg.is_first_granite_block(60));
-        assert!(!cfg.is_first_granite_block(62));
+        assert!(!cfg.is_first_granite_block(58, 56));
+        assert!(cfg.is_first_granite_block(60, 58));
+        assert!(!cfg.is_first_granite_block(62, 60));
 
         // Holocene
-        assert!(!cfg.is_first_holocene_block(68));
-        assert!(cfg.is_first_holocene_block(70));
-        assert!(!cfg.is_first_holocene_block(72));
+        assert!(!cfg.is_first_holocene_block(68, 66));
+        assert!(cfg.is_first_holocene_block(70, 68));
+        assert!(!cfg.is_first_holocene_block(72, 70));
 
         // Pectra blob schedule
-        assert!(!cfg.is_first_pectra_blob_schedule_block(78));
-        assert!(cfg.is_first_pectra_blob_schedule_block(80));
-        assert!(!cfg.is_first_pectra_blob_schedule_block(82));
+        assert!(!cfg.is_first_pectra_blob_schedule_block(78, 76));
+        assert!(cfg.is_first_pectra_blob_schedule_block(80, 78));
+        assert!(!cfg.is_first_pectra_blob_schedule_block(82, 80));
 
         // Isthmus
-        assert!(!cfg.is_first_isthmus_block(88));
-        assert!(cfg.is_first_isthmus_block(90));
-        assert!(!cfg.is_first_isthmus_block(92));
+        assert!(!cfg.is_first_isthmus_block(88, 86));
+        assert!(cfg.is_first_isthmus_block(90, 88));
+        assert!(!cfg.is_first_isthmus_block(92, 90));
 
         // Jovian
-        assert!(!cfg.is_first_jovian_block(98));
-        assert!(cfg.is_first_jovian_block(100));
-        assert!(!cfg.is_first_jovian_block(102));
+        assert!(!cfg.is_first_jovian_block(98, 96));
+        assert!(cfg.is_first_jovian_block(100, 98));
+        assert!(!cfg.is_first_jovian_block(102, 100));
 
         // Base Azul
-        assert!(!cfg.is_first_base_azul_block(108));
-        assert!(cfg.is_first_base_azul_block(110));
-        assert!(!cfg.is_first_base_azul_block(112));
+        assert!(!cfg.is_first_base_azul_block(108, 106));
+        assert!(cfg.is_first_base_azul_block(110, 108));
+        assert!(!cfg.is_first_base_azul_block(112, 110));
 
         // Beryl
-        assert!(!cfg.is_first_beryl_block(118));
-        assert!(cfg.is_first_beryl_block(120));
-        assert!(!cfg.is_first_beryl_block(122));
+        assert!(!cfg.is_first_beryl_block(118, 116));
+        assert!(cfg.is_first_beryl_block(120, 118));
+        assert!(!cfg.is_first_beryl_block(122, 120));
 
         // Cobalt
-        assert!(!cfg.is_first_cobalt_block(128));
-        assert!(cfg.is_first_cobalt_block(130));
-        assert!(!cfg.is_first_cobalt_block(132));
+        assert!(!cfg.is_first_cobalt_block(128, 126));
+        assert!(cfg.is_first_cobalt_block(130, 128));
+        assert!(!cfg.is_first_cobalt_block(132, 130));
+    }
+
+    #[test]
+    fn test_first_beryl_block_handles_same_second_boundary() {
+        let cfg = RollupConfig {
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { azul: Some(110), beryl: Some(120), cobalt: None },
+                ..Default::default()
+            },
+            block_time: 2,
+            ..Default::default()
+        };
+
+        assert!(cfg.is_first_beryl_block(120, 118));
+        assert!(!cfg.is_first_beryl_block(120, 120));
     }
 
     #[test]
@@ -910,14 +939,14 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_block_number_from_time() {
+    fn test_compute_block_number_lower_bound_from_time() {
         let cfg = RollupConfig {
             genesis: ChainGenesis { l2_time: 10, ..Default::default() },
             block_time: 2,
             ..Default::default()
         };
 
-        assert_eq!(cfg.block_number_from_timestamp(20), 5);
-        assert_eq!(cfg.block_number_from_timestamp(30), 10);
+        assert_eq!(cfg.block_number_lower_bound_from_timestamp(20), 5);
+        assert_eq!(cfg.block_number_lower_bound_from_timestamp(30), 10);
     }
 }

@@ -24,10 +24,9 @@ pub struct SubmissionStats<'a> {
 pub struct TransactionMetrics {
     /// Transaction hash.
     pub tx_hash: TxHash,
-    /// Time from submission to block production.
+    /// Time from submission to first observation in a polled block (includes the
+    /// block poll + scan cost).
     pub block_latency: Option<Duration>,
-    /// Time from block production to receipt observation by the block watcher.
-    pub block_receipt_delay: Option<Duration>,
     /// Time from submission to sequencer acceptance.
     pub flashblocks_latency: Option<Duration>,
     /// Gas used by the transaction.
@@ -56,7 +55,6 @@ impl TransactionMetrics {
         Self {
             tx_hash,
             block_latency,
-            block_receipt_delay: None,
             flashblocks_latency,
             gas_used,
             gas_price,
@@ -189,76 +187,6 @@ impl BlockRange {
         }
         Some(BLOCK_INTERVAL * (self.block_count - 1) as u32)
     }
-}
-
-/// Throughput + latency over the clean reporting window (the expected first
-/// portion of the test, before any inclusion tail).
-///
-/// The observed window is defined as transactions confirmed in blocks
-/// `[first_block, first_block + expected_block_count - 1]`, where
-/// `expected_block_count = reference_duration.as_secs() / BLOCK_INTERVAL` and
-/// `reference_duration` is the configured test duration when known and
-/// falls back to the observed wall-clock duration otherwise.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ObservedWindowMetrics {
-    /// Expected observed-window block count = `reference_duration.as_secs() / BLOCK_INTERVAL`.
-    /// For a 30s test this is 15.
-    pub expected_block_count: u64,
-    /// Block range of confirmed transactions that fell inside the observed
-    /// window. May be smaller than `expected_block_count` blocks if inclusion
-    /// gaps left some expected blocks empty of test txs.
-    pub block_range: BlockRange,
-    /// Expected observed-window wall-time = `expected_block_count * BLOCK_INTERVAL`.
-    /// For a 30s test (15 expected blocks at 2s/block), this is 30s of L2 time.
-    /// Used as the denominator for `tps` and `gps`.
-    pub duration: Duration,
-    /// Confirmed transactions inside the observed window.
-    pub confirmed_count: u64,
-    /// Transactions per second = `confirmed_count / duration.as_secs_f64()`
-    /// (denominator is the expected observed-window in L2 wall-time).
-    pub tps: f64,
-    /// Gas per second over the observed window (same denominator as `tps`).
-    pub gps: f64,
-    /// Block production latency (submit→inclusion) for observed-window transactions.
-    pub block_latency: LatencyMetrics,
-    /// Delay between block production and receipt observation by the block
-    /// watcher, for observed-window transactions.
-    pub block_receipt_delay: LatencyMetrics,
-    /// Flashblocks sequencer latency for observed-window transactions.
-    pub flashblocks_latency: FlashblocksLatencyMetrics,
-}
-
-/// Inclusion-delay metrics for transactions that landed past the observed
-/// window — i.e. straggler receipts that the chain produced well after the
-/// clean reporting window.
-///
-/// A transaction is "tail" iff its block number is strictly greater than
-/// `observed_window_end_block` (the upper bound of the observed window).
-/// Only populated when `configured_duration` is provided to
-/// `MetricsAggregator::summarize`; continuous runs produce `None`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TailMetrics {
-    /// Upper bound of the observed window =
-    /// `first_block + observed_window_expected_block_count - 1`. Transactions
-    /// with `block_number > observed_window_end_block` are classified as tail.
-    /// `None` when the dataset is empty.
-    pub observed_window_end_block: Option<u64>,
-    /// Number of confirmed transactions in the tail.
-    pub count: u64,
-    /// Tail count as a percentage of total confirmed transactions.
-    pub confirmed_pct: f64,
-    /// Block range covered by the tail.
-    pub block_range: BlockRange,
-    /// Per-tx wall-time the block landed past `observed_window_end_block`,
-    /// derived from `(block_number - observed_window_end_block) * BLOCK_INTERVAL`.
-    pub time_past_observed_window: LatencyMetrics,
-    /// Submit→inclusion latency for tail transactions only.
-    pub block_latency: LatencyMetrics,
-    /// Delay between block production and receipt observation by the block
-    /// watcher, for tail transactions only.
-    pub block_receipt_delay: LatencyMetrics,
-    /// Flashblocks sequencer latency for tail transactions only.
-    pub flashblocks_latency: FlashblocksLatencyMetrics,
 }
 
 /// Aggregated flashblocks latency percentiles.

@@ -1,0 +1,37 @@
+[package]
+name = "base-execution-eip8130-rpc-node"
+description = "BaseNodeExtension wiring for the standalone EIP-8130 eth_getTransactionCount override"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-node-runner.workspace = true
+base-execution-eip8130-rpc.workspace = true
+
+# misc
+tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+# base
+base-test-utils.workspace = true
+base-common-consensus.workspace = true
+base-execution-chainspec.workspace = true
+base-node-runner = { workspace = true, features = ["test-utils"] }
+
+# alloy
+alloy-primitives.workspace = true
+alloy-rpc-client.workspace = true
+
+# misc
+eyre.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -1,9 +1,8 @@
-//! Recovers proposer on-chain state from submitted dispute games.
+//! Recovers proposer onchain state from submitted dispute games.
 
 use std::{collections::HashMap, sync::Arc};
 
 use alloy_primitives::{Address, B256};
-use async_trait::async_trait;
 use base_proof_contracts::{
     AnchorStateRegistryClient, DisputeGameFactoryClient, encode_extra_data,
 };
@@ -35,77 +34,45 @@ pub struct ProofRecoveryConfig {
 pub struct ProofRecoveryCache {
     /// Factory `game_count` at the time of the walk.
     pub game_count: u64,
-    /// Recovered on-chain state from the walk.
+    /// Recovered onchain state from the walk.
     pub state: RecoveredState,
 }
 
-/// Recovery hook used by collector orchestration after successful submissions.
-#[async_trait]
-pub trait ProofCollectorRecoveryProvider: Send + Sync {
-    /// Refreshes the recovery cache and returns the latest on-chain state.
-    async fn recover_latest_state(
-        &self,
-        cache: &mut Option<ProofRecoveryCache>,
-    ) -> std::result::Result<RecoveredState, ProposerError>;
-}
-
 /// Recovers the latest submitted proposer state from L1 and rollup RPCs.
-pub struct ProofRecovery<R, ASR, F>
+pub struct ProofRecovery<R>
 where
     R: RollupProvider,
-    ASR: AnchorStateRegistryClient,
-    F: DisputeGameFactoryClient,
 {
     config: ProofRecoveryConfig,
     rollup_client: Arc<R>,
-    anchor_registry: Arc<ASR>,
-    factory_client: Arc<F>,
+    anchor_registry: Arc<dyn AnchorStateRegistryClient>,
+    factory_client: Arc<dyn DisputeGameFactoryClient>,
 }
 
-impl<R, ASR, F> std::fmt::Debug for ProofRecovery<R, ASR, F>
+impl<R> std::fmt::Debug for ProofRecovery<R>
 where
     R: RollupProvider,
-    ASR: AnchorStateRegistryClient,
-    F: DisputeGameFactoryClient,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProofRecovery").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
-impl<R, ASR, F> Clone for ProofRecovery<R, ASR, F>
+impl<R> ProofRecovery<R>
 where
     R: RollupProvider,
-    ASR: AnchorStateRegistryClient,
-    F: DisputeGameFactoryClient,
-{
-    fn clone(&self) -> Self {
-        Self {
-            config: self.config,
-            rollup_client: Arc::clone(&self.rollup_client),
-            anchor_registry: Arc::clone(&self.anchor_registry),
-            factory_client: Arc::clone(&self.factory_client),
-        }
-    }
-}
-
-impl<R, ASR, F> ProofRecovery<R, ASR, F>
-where
-    R: RollupProvider,
-    ASR: AnchorStateRegistryClient,
-    F: DisputeGameFactoryClient,
 {
     /// Creates a proposer recovery helper.
-    pub const fn new(
+    pub fn new(
         config: ProofRecoveryConfig,
         rollup_client: Arc<R>,
-        anchor_registry: Arc<ASR>,
-        factory_client: Arc<F>,
+        anchor_registry: Arc<dyn AnchorStateRegistryClient>,
+        factory_client: Arc<dyn DisputeGameFactoryClient>,
     ) -> Self {
         Self { config, rollup_client, anchor_registry, factory_client }
     }
 
-    /// Attempts to recover on-chain state and fetch the safe head.
+    /// Attempts to recover onchain state and fetch the safe head.
     ///
     /// Returns `None` if either step fails (logged as warnings), allowing the
     /// caller to fall through to the poll-tick sleep.
@@ -148,7 +115,7 @@ where
             let state = match self.recover_latest_state(cache).await {
                 Ok(s) => s,
                 Err(e) => {
-                    warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
+                    warn!(error = %e, "Failed to recover onchain state, retrying next tick");
                     return None;
                 }
             };
@@ -162,7 +129,7 @@ where
         let state = match state_result {
             Ok(s) => s,
             Err(e) => {
-                warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
+                warn!(error = %e, "Failed to recover onchain state, retrying next tick");
                 return None;
             }
         };
@@ -178,7 +145,7 @@ where
         Some((state, safe_head))
     }
 
-    /// Recovers the latest on-chain state using a deterministic forward walk
+    /// Recovers the latest onchain state using a deterministic forward walk
     /// from the anchor root.
     ///
     /// # Strategy
@@ -190,7 +157,7 @@ where
     /// 3. Forward walk. Walk from the anchor block, stepping by
     ///    `block_interval`, and use UUID-based `games()` lookups to find the
     ///    latest submitted game.
-    async fn recover_latest_state(
+    pub async fn recover_latest_state(
         &self,
         cache: &mut Option<ProofRecoveryCache>,
     ) -> std::result::Result<RecoveredState, ProposerError> {
@@ -416,21 +383,6 @@ where
     }
 }
 
-#[async_trait]
-impl<R, ASR, F> ProofCollectorRecoveryProvider for ProofRecovery<R, ASR, F>
-where
-    R: RollupProvider + 'static,
-    ASR: AnchorStateRegistryClient + 'static,
-    F: DisputeGameFactoryClient + 'static,
-{
-    async fn recover_latest_state(
-        &self,
-        cache: &mut Option<ProofRecoveryCache>,
-    ) -> std::result::Result<RecoveredState, ProposerError> {
-        Self::recover_latest_state(self, cache).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, sync::Arc};
@@ -452,8 +404,7 @@ mod tests {
     const TEST_BLOCK_INTERVAL: u64 = 512;
     const TEST_ANCHOR_BLOCK: u64 = 0;
 
-    type TestRecovery =
-        ProofRecovery<MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>;
+    type TestRecovery = ProofRecovery<MockRollupClient>;
 
     #[derive(Debug)]
     struct SnapshotOnlyAnchorStateRegistry {

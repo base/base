@@ -8,11 +8,12 @@ use uuid::Uuid;
 use crate::{
     ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult,
     CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    CreateProofRequestValidationError, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
-    HeartbeatProofJob, JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
-    ProofRequestPage, ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome,
-    SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
-    WorkerSessionUpsert, ZkVmKind, canonical_session_id,
+    CreateProofRequestValidationError, CreateProofSession, DeleteProofRequestOutcome,
+    FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, JobLockState, ProofJob,
+    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
+    ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType,
+    SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
+    canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -151,6 +152,7 @@ impl ProofRequestRepo {
 
         let mismatch = match status {
             ProofStatus::Failed => params.first_mismatch_allowing_l1_head_replacement(&row),
+            // Non-failed existing requests are replay-only; l1_head replacement is only for failed retries.
             ProofStatus::Created
             | ProofStatus::Pending
             | ProofStatus::Running
@@ -228,6 +230,53 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Requeued(existing_id))
             }
         }
+    }
+
+    /// Delete a terminal proof request by public session id.
+    pub async fn delete_proof_request_by_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<DeleteProofRequestOutcome> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT id, status
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Ok(DeleteProofRequestOutcome::NotFound);
+        };
+
+        let status_str: &str = row.get("status");
+        let status = ProofStatus::try_from(status_str).map_err(|e| {
+            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
+        })?;
+        if !matches!(status, ProofStatus::Succeeded | ProofStatus::Failed) {
+            tx.rollback().await?;
+            return Ok(DeleteProofRequestOutcome::NotCompleted(status));
+        }
+
+        let id: Uuid = row.get("id");
+        // Outbox rows do not cascade; proof_sessions rows cascade from proof_requests.
+        sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM proof_requests WHERE id = $1").bind(id).execute(&mut *tx).await?;
+
+        tx.commit().await?;
+        Ok(DeleteProofRequestOutcome::Deleted)
     }
 
     /// Get a proof request by ID
@@ -645,7 +694,7 @@ impl ProofRequestRepo {
                 serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
 
             return Ok(if existing.result_payload.as_ref() == Some(&result_payload) {
-                SubmitProofOutcome::Completed(existing)
+                SubmitProofOutcome::AlreadyCompleted(existing)
             } else {
                 SubmitProofOutcome::ResultConflict { job: existing }
             });
@@ -725,7 +774,7 @@ impl ProofRequestRepo {
             }
 
             return Ok(if job.result_payload.as_ref() == Some(&result_payload) {
-                SubmitProofOutcome::Completed(job)
+                SubmitProofOutcome::AlreadyCompleted(job)
             } else {
                 SubmitProofOutcome::ResultConflict { job }
             });
@@ -852,7 +901,8 @@ impl ProofRequestRepo {
         .await?;
 
         if retry_count >= max_retries {
-            sqlx::query(
+            let columns = PROOF_JOB_RETURNING_COLUMNS;
+            let sql = format!(
                 r#"
                 UPDATE proof_requests
                 SET status = $1,
@@ -865,16 +915,22 @@ impl ProofRequestRepo {
                     claimed_at = NULL,
                     last_heartbeat_at = NULL
                 WHERE id = $3
+                RETURNING {columns}
                 "#,
-            )
-            .bind(ProofStatus::Failed.as_str())
-            .bind(format!("{error_message} (max retries exceeded after {retry_count} attempts)"))
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+            );
+
+            let row = sqlx::query(&sql)
+                .bind(ProofStatus::Failed.as_str())
+                .bind(format!(
+                    "{error_message} (max retries exceeded after {retry_count} attempts)"
+                ))
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+            let job = row_to_proof_job(&row)?;
 
             tx.commit().await?;
-            return Ok(RetryOutcome::PermanentlyFailed);
+            return Ok(RetryOutcome::PermanentlyFailed(Box::new(job)));
         }
 
         sqlx::query(

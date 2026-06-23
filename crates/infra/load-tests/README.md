@@ -70,9 +70,12 @@ duration: "30s"
 distributed across the configured HTTP endpoints.
 `txpool_nodes` is optional and defaults to an empty list; when present, the load tester calls
 `admin_dropSenderTransactions` for every sender address on every configured node before funding.
-Canonical confirmation and gas metrics are collected by polling `query_rpc` for new blocks and
-fetching `eth_getBlockReceipts` for each observed block, so `query_rpc` must support
-`eth_getBlockReceipts`.
+Transaction landing is detected by polling `query_rpc` with `eth_getBlockByNumber` every 500ms and
+matching submitted transaction hashes against each block's transaction list; the recorded block
+latency therefore includes the block poll and scan cost. Gas usage and revert status are backfilled
+in a single `eth_getBlockReceipts` batch pass at the very end of the run, scoped only to the blocks
+that contained our transactions, so `query_rpc` must support `eth_getBlockReceipts`. Receipt-fetch
+delay is measured for logging but is no longer included in the JSON output.
 
 ### Available Configs
 

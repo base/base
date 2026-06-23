@@ -20,6 +20,7 @@ url.workspace = true
 eyre.workspace = true
 base-protocol.workspace = true
 base-cli-utils.workspace = true
+base-tx-manager.workspace = true
 base-batcher-core.workspace = true
 alloy-signer-local.workspace = true
 tracing = { workspace = true, features = ["std"] }

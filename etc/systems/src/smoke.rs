@@ -15,7 +15,7 @@ use url::Url;
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
     l1::{L1ContainerConfig, L1Stack, L1StackConfig},
-    l2::{L2ContainerConfig, L2Stack, L2StackConfig},
+    l2::{L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig},
     setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
     system_config::StableSystemTestConfig,
 };
@@ -134,6 +134,7 @@ pub struct SystemTestStackBuilder {
     stable_config: Option<StableSystemTestConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
     verifier_l1_confs: u64,
+    client_consensus_mode: L2ClientConsensusMode,
 }
 
 impl SystemTestStackBuilder {
@@ -202,6 +203,12 @@ impl SystemTestStackBuilder {
     /// client (validator) node's derivation pipeline.
     pub const fn with_verifier_l1_confs(mut self, confs: u64) -> Self {
         self.verifier_l1_confs = confs;
+        self
+    }
+
+    /// Runs the L2 client consensus node in follow mode against the builder RPC.
+    pub const fn with_follow_mode_client_consensus(mut self) -> Self {
+        self.client_consensus_mode = L2ClientConsensusMode::Follow;
         self
     }
 
@@ -316,6 +323,7 @@ impl SystemTestStackBuilder {
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
+            client_consensus_mode: self.client_consensus_mode,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

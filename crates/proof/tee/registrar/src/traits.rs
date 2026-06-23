@@ -25,7 +25,8 @@ pub trait InstanceDiscovery: Send + Sync {
 /// substitute a mock to avoid real HTTP calls.
 ///
 /// Implementations must return public keys and attestations in the same stable
-/// signer order for a given endpoint.
+/// signer order across calls for a given endpoint. The registrar pairs each
+/// attestation response with the public-key response by index.
 ///
 /// The `endpoint` parameter is a [`Url`] (e.g. `http://10.0.1.5:8000/`).
 pub trait EnclaveEndpointClient: Send + Sync {

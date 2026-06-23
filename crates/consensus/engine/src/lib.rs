@@ -24,6 +24,9 @@ pub use attributes::{AttributesMatch, AttributesMismatch};
 mod client;
 pub use client::{BaseEngineClient, EngineClient, EngineClientBuilder, EngineClientError};
 
+mod trace_layer;
+pub use trace_layer::{TraceContextLayer, TraceContextService};
+
 mod ws_connect;
 pub use ws_connect::JwtWsConnect;
 

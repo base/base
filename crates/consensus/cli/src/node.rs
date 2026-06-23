@@ -10,6 +10,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
 use clap::Args;
 use eyre::Context;
+use reth_node_core::args::TraceArgs;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -41,6 +42,10 @@ pub struct ConsensusNodeCommand {
     #[command(flatten)]
     pub metrics: MetricsArgs,
 
+    /// `OpenTelemetry` tracing export configuration.
+    #[command(flatten)]
+    pub traces: TraceArgs,
+
     /// Consensus node arguments.
     #[command(flatten)]
     pub args: ConsensusNodeConfigArgs,
@@ -49,11 +54,6 @@ pub struct ConsensusNodeCommand {
 impl ConsensusNodeCommand {
     /// Runs the standalone consensus node command.
     pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::init_tracing!(
-            LogConfig::from(self.logging.clone()),
-            ["libp2p_gossipsub=error"]
-        )?;
-
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
@@ -65,7 +65,28 @@ impl ConsensusNodeCommand {
             CliMetrics::init_p2p(&args.config.p2p_flags);
         }
 
-        RuntimeManager::new().run_until_ctrl_c(args.start_with_overrides(cfg, Default::default()))
+        let metrics_enabled = self.metrics.enabled;
+        let rt = RuntimeManager::new().tokio_runtime()?;
+        // Build the subscriber — including the gRPC OTLP layer — inside the main runtime
+        // so tonic's transport channel lives for the full program lifetime (reth pattern).
+        rt.block_on(async {
+            LogConfig::from(self.logging.clone())
+                .init_with_trace_args(&self.traces, &["libp2p_gossipsub=error"])
+        })?;
+        rt.block_on(async move {
+            tokio::select! {
+                biased;
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
+                    Ok(())
+                }
+                res = async move {
+                    let _upgrade_countdown_metrics = metrics_enabled
+                        .then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
+                    args.start_with_overrides(cfg, Default::default()).await
+                } => res,
+            }
+        })
     }
 }
 

@@ -1,4 +1,6 @@
-use alloy_primitives::B256;
+use std::time::Duration;
+
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::ContractError;
 use base_proof_tee_nitro_attestation_prover::ProverError;
 use base_tx_manager::TxManagerError;
@@ -47,6 +49,26 @@ pub enum RegistrarError {
     /// Generated proof journal failed registrar-side validation.
     #[error("invalid attestation proof: {0}")]
     InvalidAttestationProof(String),
+
+    /// Generated proof journal could not be decoded before submission.
+    #[error("proof journal could not be decoded: {reason}")]
+    InvalidProofJournal {
+        /// Decode failure details.
+        reason: String,
+    },
+
+    /// Generated proof is too old for on-chain registration.
+    #[error(
+        "attestation proof for signer {signer} is too old: age {age:?} exceeds max {max_age:?}"
+    )]
+    StaleAttestationProof {
+        /// Signer whose registration proof was stale.
+        signer: Address,
+        /// Proof age at the final pre-submission check.
+        age: Duration,
+        /// Maximum age configured for registrar-side submission.
+        max_age: Duration,
+    },
 
     /// Configuration is invalid.
     #[error("config error: {0}")]
