@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use backon::Retryable;
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiClient,
+    DeleteProofRequest, DeleteProofResponse, GetProofRequest, GetProofResponse, ListProofsRequest,
+    ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiClient,
 };
 use base_retry::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
@@ -31,6 +31,12 @@ pub trait ProofRequesterProvider: Send + Sync {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError>;
+
+    /// Delete a completed proof request so the same session id can be retried.
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<DeleteProofResponse, ProverServiceClientError>;
 
     /// List submitted proof requests.
     async fn list_proofs(
@@ -138,6 +144,30 @@ impl ProofRequesterClient {
         .await
     }
 
+    /// Delete a completed proof request so the same session id can be retried.
+    pub async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<DeleteProofResponse, ProverServiceClientError> {
+        debug!(session_id = %request.session_id, "deleting proof");
+        (|| {
+            let request = request.clone();
+
+            async move { Ok(self.inner.delete_proof_request(request).await?) }
+        })
+        .retry(self.retry.to_backoff_builder())
+        .when(ProverServiceClientError::is_retryable)
+        .notify(|error, delay| {
+            warn!(
+                session_id = %request.session_id,
+                backoff_ms = delay.as_millis(),
+                error = %error,
+                "delete proof failed; retrying"
+            );
+        })
+        .await
+    }
+
     /// List submitted proof requests.
     pub async fn list_proofs(
         &self,
@@ -182,6 +212,13 @@ impl ProofRequesterProvider for ProofRequesterClient {
         Self::get_proof(self, request).await
     }
 
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<DeleteProofResponse, ProverServiceClientError> {
+        Self::delete_proof_request(self, request).await
+    }
+
     async fn list_proofs(
         &self,
         request: ListProofsRequest,
@@ -204,10 +241,10 @@ mod tests {
 
     use async_trait::async_trait;
     use base_prover_service_protocol::{
-        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequest,
-        ProofRequestKind, ProofResult, ProofStatus, ProofSummary, ProofType,
-        ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkProofRequest,
-        ZkProofResult, ZkVm,
+        DeleteProofRequest, DeleteProofResponse, GetProofRequest, GetProofResponse,
+        ListProofsRequest, ListProofsResponse, ProofRequest, ProofRequestKind, ProofResult,
+        ProofStatus, ProofSummary, ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse,
+        ProverRequesterApiServer, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use base_retry::RetryConfig;
     use chrono::Utc;
@@ -244,6 +281,7 @@ mod tests {
     struct MockRequesterState {
         prove_request: Option<ProveBlockRangeRequest>,
         get_request: Option<GetProofRequest>,
+        delete_request: Option<DeleteProofRequest>,
         list_request: Option<ListProofsRequest>,
     }
 
@@ -380,6 +418,15 @@ mod tests {
             })
         }
 
+        async fn delete_proof_request(
+            &self,
+            request: DeleteProofRequest,
+        ) -> RpcResult<DeleteProofResponse> {
+            self.state.lock().expect("state lock should not be poisoned").delete_request =
+                Some(request);
+            Ok(DeleteProofResponse { deleted: true })
+        }
+
         async fn list_proofs(&self, request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
             self.state.lock().expect("state lock should not be poisoned").list_request =
                 Some(request);
@@ -440,6 +487,13 @@ mod tests {
             other => panic!("unexpected proof result variant: {other:?}"),
         }
 
+        let delete_request = DeleteProofRequest { session_id: "session-get".to_owned() };
+        let delete_response = provider
+            .delete_proof_request(delete_request.clone())
+            .await
+            .expect("delete_proof_request should succeed");
+        assert!(delete_response.deleted);
+
         let list_request =
             ListProofsRequest { offset: 7, limit: 25, status_filter: Some(ProofStatus::Succeeded) };
         let list_response =
@@ -452,6 +506,7 @@ mod tests {
             let state = api.state.lock().expect("state lock should not be poisoned");
             assert_eq!(state.prove_request.as_ref(), Some(&prove_request));
             assert_eq!(state.get_request.as_ref(), Some(&get_request));
+            assert_eq!(state.delete_request.as_ref(), Some(&delete_request));
             assert_eq!(state.list_request, Some(list_request));
         }
 

@@ -8,11 +8,12 @@ use uuid::Uuid;
 use crate::{
     ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult,
     CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    CreateProofRequestValidationError, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
-    HeartbeatProofJob, JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
-    ProofRequestPage, ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome,
-    SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
-    WorkerSessionUpsert, ZkVmKind, canonical_session_id,
+    CreateProofRequestValidationError, CreateProofSession, DeleteProofRequestOutcome,
+    FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, JobLockState, ProofJob,
+    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
+    ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType,
+    SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
+    canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -151,10 +152,10 @@ impl ProofRequestRepo {
 
         let mismatch = match status {
             ProofStatus::Failed => params.first_mismatch_allowing_l1_head_replacement(&row),
-            ProofStatus::Created
-            | ProofStatus::Pending
-            | ProofStatus::Running
-            | ProofStatus::Succeeded => params.first_mismatch(&row),
+            ProofStatus::Created | ProofStatus::Pending | ProofStatus::Running => {
+                params.first_mismatch(&row)
+            }
+            ProofStatus::Succeeded => params.first_mismatch(&row),
         };
         if let Some(field) = mismatch {
             tx.rollback().await?;
@@ -228,6 +229,53 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Requeued(existing_id))
             }
         }
+    }
+
+    /// Delete a terminal proof request by public session id.
+    pub async fn delete_proof_request_by_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<DeleteProofRequestOutcome> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT id, status
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Ok(DeleteProofRequestOutcome::NotFound);
+        };
+
+        let status_str: &str = row.get("status");
+        let status = ProofStatus::try_from(status_str).map_err(|e| {
+            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
+        })?;
+        if !matches!(status, ProofStatus::Succeeded | ProofStatus::Failed) {
+            tx.rollback().await?;
+            return Ok(DeleteProofRequestOutcome::NotCompleted(status));
+        }
+
+        let id: Uuid = row.get("id");
+        // Outbox rows do not cascade; proof_sessions rows cascade from proof_requests.
+        sqlx::query("DELETE FROM proof_request_outbox WHERE proof_request_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM proof_requests WHERE id = $1").bind(id).execute(&mut *tx).await?;
+
+        tx.commit().await?;
+        Ok(DeleteProofRequestOutcome::Deleted)
     }
 
     /// Get a proof request by ID

@@ -212,13 +212,12 @@ pub enum RetryOutcome {
 pub enum CreateProofRequestOutcome {
     /// A new proof request row was inserted.
     Created(Uuid),
-    /// An existing terminal `FAILED` row was reset to `CREATED` and a fresh
-    /// worker job was made claimable again.
+    /// An existing failed row was reset to `CREATED` and a fresh worker job
+    /// was made claimable again.
     Requeued(Uuid),
-    /// An existing non-terminal or `SUCCEEDED` row was returned unchanged for
-    /// idempotent replay.
+    /// An existing non-failed row was returned unchanged for idempotent replay.
     Replayed(Uuid),
-    /// An existing terminal `FAILED` row is at the retry cap; no requeue.
+    /// An existing failed row is at the retry cap; no requeue.
     RetryExhausted(Uuid),
 }
 
@@ -232,6 +231,17 @@ impl CreateProofRequestOutcome {
             | Self::RetryExhausted(id) => *id,
         }
     }
+}
+
+/// Outcome of deleting a completed proof request by session id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteProofRequestOutcome {
+    /// A terminal proof request was deleted.
+    Deleted,
+    /// No proof request exists for the session id.
+    NotFound,
+    /// The proof request exists but is not terminal.
+    NotCompleted(ProofStatus),
 }
 
 /// Errors returned while creating proof requests.
