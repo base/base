@@ -1209,71 +1209,51 @@ async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_delete_proof_request_by_session_id_deletes_succeeded_row() {
+async fn test_delete_proof_request_by_session_id_deletes_terminal_rows() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
 
-    let explicit_id = Uuid::new_v4();
-    let mut req = compressed_request();
-    set_request_session_id(&mut req, explicit_id.to_string());
+    for status in ["SUCCEEDED", "FAILED"] {
+        let explicit_id = Uuid::new_v4();
+        let mut req = compressed_request();
+        set_request_session_id(&mut req, explicit_id.to_string());
 
-    let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
-    assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
+        let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+        assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
 
-    sqlx::query(
-        "INSERT INTO proof_request_outbox (proof_request_id, request_params) VALUES ($1, '{}'::jsonb)",
-    )
-    .bind(explicit_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "UPDATE proof_requests SET status = 'SUCCEEDED', job_status = 'SUCCEEDED', \
-         result_payload = '{}'::jsonb, completed_at = NOW() WHERE id = $1",
-    )
-    .bind(explicit_id)
-    .execute(&pool)
-    .await
-    .unwrap();
+        sqlx::query(
+            "INSERT INTO proof_request_outbox (proof_request_id, request_params) VALUES ($1, '{}'::jsonb)",
+        )
+        .bind(explicit_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE proof_requests SET status = $1, job_status = $1, \
+             result_payload = CASE WHEN $1 = 'SUCCEEDED' THEN '{}'::jsonb ELSE NULL END, \
+             error_message = CASE WHEN $1 = 'FAILED' THEN 'simulated failure' ELSE NULL END, \
+             completed_at = NOW() WHERE id = $2",
+        )
+        .bind(status)
+        .bind(explicit_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
-    let outcome = repo.delete_proof_request_by_session_id(&explicit_id.to_string()).await.unwrap();
-    assert_eq!(outcome, DeleteProofRequestOutcome::Deleted);
-    assert!(repo.get(explicit_id).await.unwrap().is_none());
+        let outcome =
+            repo.delete_proof_request_by_session_id(&explicit_id.to_string()).await.unwrap();
+        assert_eq!(outcome, DeleteProofRequestOutcome::Deleted);
+        assert!(repo.get(explicit_id).await.unwrap().is_none());
 
-    let outbox_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM proof_request_outbox WHERE proof_request_id = $1")
-            .bind(explicit_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(outbox_count, 0);
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_delete_proof_request_by_session_id_deletes_failed_row() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool.clone());
-
-    let explicit_id = Uuid::new_v4();
-    let mut req = compressed_request();
-    set_request_session_id(&mut req, explicit_id.to_string());
-
-    let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
-    assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
-
-    sqlx::query(
-        "UPDATE proof_requests SET status = 'FAILED', job_status = 'FAILED', \
-         error_message = 'simulated failure', completed_at = NOW() WHERE id = $1",
-    )
-    .bind(explicit_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let outcome = repo.delete_proof_request_by_session_id(&explicit_id.to_string()).await.unwrap();
-    assert_eq!(outcome, DeleteProofRequestOutcome::Deleted);
-    assert!(repo.get(explicit_id).await.unwrap().is_none());
+        let outbox_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM proof_request_outbox WHERE proof_request_id = $1",
+        )
+        .bind(explicit_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(outbox_count, 0);
+    }
 }
 
 #[tokio::test]

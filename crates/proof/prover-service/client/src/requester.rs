@@ -264,7 +264,6 @@ mod tests {
     enum ScriptedOutcome {
         Retryable,
         Fatal,
-        AlreadyDeleted,
         Success,
     }
 
@@ -395,9 +394,6 @@ mod tests {
                 Some(ScriptedOutcome::Fatal) => {
                     Err(invalid_params_error("scripted prove_block_range fatal failure"))
                 }
-                Some(ScriptedOutcome::AlreadyDeleted) => {
-                    panic!("AlreadyDeleted is only valid for delete_proof_request")
-                }
                 None | Some(ScriptedOutcome::Success) => {
                     Ok(ProveBlockRangeResponse { session_id: request.proof.session_id })
                 }
@@ -415,9 +411,6 @@ mod tests {
                     "session_id {} is invalid",
                     request.session_id
                 )));
-            }
-            if let Some(ScriptedOutcome::AlreadyDeleted) = scripted {
-                panic!("AlreadyDeleted is only valid for delete_proof_request");
             }
 
             if self.reject_get_proof || matches!(scripted, Some(ScriptedOutcome::Retryable)) {
@@ -453,7 +446,6 @@ mod tests {
                 Some(ScriptedOutcome::Fatal) => {
                     Err(invalid_params_error("scripted delete_proof_request fatal failure"))
                 }
-                Some(ScriptedOutcome::AlreadyDeleted) => Ok(DeleteProofResponse { deleted: false }),
                 None | Some(ScriptedOutcome::Success) => Ok(DeleteProofResponse { deleted: true }),
             }
         }
@@ -639,7 +631,7 @@ mod tests {
     #[tokio::test]
     async fn requester_retries_retryable_delete_until_success() {
         let api = MockRequesterApi::new();
-        api.queue_delete_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::AlreadyDeleted]);
+        api.queue_delete_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
         let api_clone = api.clone();
         let server = RunningRequesterServer::spawn_with_retry(api, fast_retry_config()).await;
 
@@ -649,7 +641,7 @@ mod tests {
             .await
             .expect("delete_proof_request should succeed after retry");
 
-        assert!(!response.deleted);
+        assert!(response.deleted);
         assert_eq!(api_clone.delete_calls(), 2);
 
         server.shutdown().await;
