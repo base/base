@@ -1,0 +1,3 @@
+{"body": "@eric-ships My apologies — I need to walk back the off-by-4 claim. The offset `[100..132]` is **correct**. I was misreading the ABI encoding: the dynamic offset `0x60` (96) is relative to the start of the tuple (calldata[4]), not calldata[0], so `4 + 96 = 100` puts the array length at `[100..132]`. The fix and the test are both right.
+
+For the other two points (placement and comparison), you mentioned you'd address them. Are those still planned?"}

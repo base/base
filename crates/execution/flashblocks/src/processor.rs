@@ -236,6 +236,10 @@ where
 
                 // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
+                if flashblocks.is_empty() {
+                    self.clear_live_state();
+                    return Ok(None);
+                }
                 self.build_pending_state(None, &flashblocks)
             }
             ReconciliationStrategy::DepthLimitExceeded { depth, max_depth } => {
@@ -246,6 +250,10 @@ where
                 );
 
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
+                if flashblocks.is_empty() {
+                    self.clear_live_state();
+                    return Ok(None);
+                }
                 self.build_pending_state(None, &flashblocks)
             }
             ReconciliationStrategy::Continue => {
