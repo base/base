@@ -99,7 +99,7 @@ impl ProverServiceServer {
             CreateProofRequestOutcome::Requeued(id) => {
                 info!(
                     proof_request_id = %id,
-                    "Requeued terminal proof request"
+                    "Requeued previously failed proof request"
                 );
             }
             CreateProofRequestOutcome::Replayed(id) => {
