@@ -39,7 +39,7 @@ impl ProofTarget {
             Err(e) => {
                 warn!(
                     target_block,
-                    caller,
+                    caller = %caller,
                     error = %e,
                     "Failed to fetch canonical output root"
                 );
