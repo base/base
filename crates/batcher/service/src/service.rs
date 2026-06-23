@@ -603,6 +603,8 @@ impl BatcherService {
                             if changed.is_err() {
                                 break;
                             }
+                            // Prometheus gauges are f64, so large U256 wei balances lose integer
+                            // precision during conversion. This is acceptable for an ether gauge.
                             let balance_ether =
                                 f64::from(*balance_rx.borrow_and_update()) / WEI_PER_ETHER;
                             BatcherMetrics::balance().set(balance_ether);

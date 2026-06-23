@@ -228,7 +228,9 @@ where
         loop {
             match self.pipeline.step() {
                 Ok(StepResult::Idle) => break,
-                Ok(StepResult::BlockEncoded | StepResult::ChannelClosed) => {
+                Ok(
+                    StepResult::BlockEncoded | StepResult::SpanFlushed | StepResult::ChannelClosed,
+                ) => {
                     steps += 1;
                     budget -= 1;
                     if budget == 0 {

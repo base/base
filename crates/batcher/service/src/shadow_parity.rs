@@ -171,6 +171,13 @@ impl ShadowParityMonitor {
             beacon_configured = self.config.l1_beacon_url.is_some(),
             "shadow parity monitor running"
         );
+        if self.config.canonical_batcher.is_none() {
+            warn!(
+                canonical_inbox = %self.config.canonical_inbox,
+                start_depth = %self.config.start_depth,
+                "shadow parity monitor starting without canonical batcher sender filter"
+            );
+        }
 
         let mut next_l1 = loop {
             match self.initial_l1_block().await {

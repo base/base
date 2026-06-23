@@ -150,7 +150,7 @@ impl BatchEncoder {
         loop {
             match self.step()? {
                 StepResult::Idle => break,
-                StepResult::BlockEncoded | StepResult::ChannelClosed => {}
+                StepResult::BlockEncoded | StepResult::SpanFlushed | StepResult::ChannelClosed => {}
             }
         }
         self.close_current_channel("force")?;
@@ -206,10 +206,12 @@ impl BatchEncoder {
             self.open_new_channel(self.block_cursor.saturating_sub(total));
         }
 
-        let add_result = self.current_channel.as_mut().map_or_else(
-            || Err(base_comp::ChannelOutError::ChannelClosed),
-            |open| open.out.add_batch(Batch::Span(span_batch)),
-        );
+        let add_result = self
+            .current_channel
+            .as_mut()
+            .expect("channel exists after optional open_new_channel")
+            .out
+            .add_batch(Batch::Span(span_batch));
 
         match add_result {
             Ok(()) => {
@@ -559,7 +561,7 @@ impl BatchPipeline for BatchEncoder {
                 if !self.try_flush_span_or_close("size_full")? {
                     return Ok(StepResult::ChannelClosed);
                 }
-                return Ok(StepResult::BlockEncoded);
+                return Ok(StepResult::SpanFlushed);
             }
 
             return Ok(StepResult::Idle);
@@ -890,13 +892,13 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn advance_l1_head(&mut self, l1_block: u64) {
-        if self.deferred_step_error.is_some() {
-            return;
-        }
         if l1_block <= self.l1_head {
             return;
         }
         self.l1_head = l1_block;
+        if self.deferred_step_error.is_some() {
+            return;
+        }
         if let Err(error) = self.check_channel_timeout() {
             self.defer_step_error(error, "advance_l1_head");
         }
@@ -1851,7 +1853,7 @@ mod tests {
         assert_eq!(encoder.ready_channels[0].encoded_block_range, 0..1);
         assert_eq!(encoder.span_accumulator.len(), 2);
 
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.step().unwrap(), StepResult::SpanFlushed);
         let open = encoder.current_channel.as_ref().expect("fresh channel should be open");
         assert_eq!(open.block_start, 1);
         assert_eq!(open.blocks_added, 2);
@@ -1940,6 +1942,12 @@ mod tests {
         encoder.advance_l1_head(1);
 
         assert!(encoder.deferred_step_error.is_some());
+        assert_eq!(encoder.l1_head, 1);
+        encoder.advance_l1_head(2);
+        assert_eq!(
+            encoder.l1_head, 2,
+            "L1 head updates should be retained while a step error is deferred"
+        );
         let err = encoder.step().expect_err("deferred timeout flush error should halt");
         assert!(matches!(err, StepError::SpanBatchBuildFailed { blocks: 2, .. }));
         assert!(encoder.deferred_step_error.is_none());

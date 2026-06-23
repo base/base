@@ -8,6 +8,8 @@ use base_protocol::SpanBatchError;
 pub enum StepResult {
     /// One block was encoded into the current channel.
     BlockEncoded,
+    /// A pending span batch was flushed into a channel without consuming another block.
+    SpanFlushed,
     /// The current channel reached a closure trigger and was moved to the submission queue.
     ChannelClosed,
     /// No work available: no pending blocks and all open channels are already at capacity
