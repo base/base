@@ -9,7 +9,10 @@ use base_consensus_derive::{AltDaCommitmentResolver, AltDaResolverError};
 use base_protocol::BLOB_MAX_DATA_SIZE;
 use url::Url;
 
-/// Max bytes accepted from a single resolve, matching the DA server's object cap.
+/// Max bytes accepted from a single resolve. Must stay in sync with
+/// `base_alt_da::MAX_OBJECT_BYTES` (both are `8 * BLOB_MAX_DATA_SIZE`); the value is duplicated
+/// rather than imported because the consensus layer cannot depend on the infra `base-alt-da`
+/// crate (see `etc/scripts/ci/check-crate-deps.sh`).
 const MAX_RESOLVE_BYTES: usize = 8 * BLOB_MAX_DATA_SIZE;
 
 /// Resolves commitments by calling the alt-DA server's `GET /get/0x{commitment}` endpoint.
@@ -63,7 +66,8 @@ impl AltDaCommitmentResolver for HttpAltDaResolver {
         // Reject oversized responses up front by Content-Length, then stream chunks with a
         // running cap so a misconfigured or malicious DA server cannot OOM the node by sending
         // an arbitrarily large body. Mirrors `base_alt_da::Client::get`.
-        if let Some(len) = resp.content_length()
+        let content_len = resp.content_length();
+        if let Some(len) = content_len
             && len as usize > MAX_RESOLVE_BYTES
         {
             return Err(AltDaResolverError::Resolve(format!(
@@ -71,7 +75,8 @@ impl AltDaCommitmentResolver for HttpAltDaResolver {
             )));
         }
 
-        let mut bytes = Vec::new();
+        // Pre-size to the Content-Length when known; it is already validated <= MAX_RESOLVE_BYTES.
+        let mut bytes = Vec::with_capacity(content_len.unwrap_or(0) as usize);
         let mut response = resp;
         while let Some(chunk) =
             response.chunk().await.map_err(|e| AltDaResolverError::Resolve(e.to_string()))?

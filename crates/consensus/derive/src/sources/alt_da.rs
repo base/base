@@ -27,8 +27,11 @@ pub enum AltDaResolverError {
 
 impl From<AltDaResolverError> for PipelineErrorKind {
     fn from(err: AltDaResolverError) -> Self {
-        // A failed or missing resolve is treated as temporary so the node retries rather than
-        // halting. The DA server may be briefly unavailable or the object not yet visible.
+        // Both NotFound and transport/server errors map to a temporary error so derivation
+        // retries rather than halting. The batcher posts a commitment to L1 only after a
+        // successful S3 PUT, so any committed pointer has a backing object; a NotFound at
+        // derivation time is therefore transient (read-after-write visibility or a brief DA
+        // server outage), not a permanently missing object.
         PipelineError::Provider(err.to_string()).temp()
     }
 }
