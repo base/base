@@ -305,11 +305,8 @@ where
             Err(SubmitAction::RootMismatch) => {
                 Metrics::root_mismatch_total().increment(1);
                 warn!(target_block, "Output root mismatch at submit time");
-                return if self.delete_proof_request(session_id, target_block).await {
-                    SubmitOutcome::Restart
-                } else {
-                    SubmitOutcome::Idle
-                };
+                self.delete_proof_request(session_id, target_block).await;
+                return SubmitOutcome::Restart;
             }
             Err(SubmitAction::GameAlreadyExists) => {
                 info!(target_block, "Game already exists onchain");
@@ -385,7 +382,7 @@ mod tests {
         OutputProposer, ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockDisputeGameFactory, MockL1, MockOutputProposer,
-            MockProofRequester, MockRollupClient, test_sync_status,
+            MockProofRequester, MockRollupClient, test_proposal, test_sync_status,
         },
     };
 
@@ -619,6 +616,49 @@ mod tests {
         let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
 
         assert!(!restart);
+        assert!(requester.requests.lock().unwrap().contains_key(&session_id));
+    }
+
+    #[tokio::test]
+    async fn root_mismatch_restarts_even_when_delete_fails() {
+        let requester = Arc::new(MockProofRequester::default());
+        requester.reject_delete.store(true, std::sync::atomic::Ordering::SeqCst);
+        let target_block = 200;
+        let stale_root = B256::repeat_byte(0xaa);
+        let fresh_root = B256::repeat_byte(0xbb);
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(stale_root);
+        let proof_request = ProofRequest {
+            claimed_l2_output_root: stale_root,
+            claimed_l2_block_number: target_block,
+            intermediate_block_interval: BLOCK_INTERVAL,
+            l1_head_number: 1000,
+            ..Default::default()
+        };
+        requester
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .await
+            .expect("test setup should dispatch stale root session");
+        let collector = make_collector(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            rollup_client(target_block, Some(fresh_root)),
+            Arc::new(MockOutputProposer::default()),
+        );
+
+        let mut aggregate_proposal = test_proposal(target_block);
+        aggregate_proposal.output_root = stale_root;
+        let proof = ProofResult::Tee { aggregate_proposal, proposals: vec![] };
+
+        let outcome = collector
+            .submit_proof(
+                target_block,
+                &session_id,
+                proof,
+                Address::ZERO,
+                &CancellationToken::new(),
+            )
+            .await;
+
+        assert_eq!(outcome, SubmitOutcome::Restart);
         assert!(requester.requests.lock().unwrap().contains_key(&session_id));
     }
 
