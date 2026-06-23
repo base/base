@@ -5,9 +5,7 @@ use std::sync::Arc;
 
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_observability_events::{
-    TransactionEventWriterConfig, init_global_transaction_event_writer,
-};
+use base_observability_events::{GlobalTransactionEventWriter, TransactionEventWriterConfig};
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::{info, warn};
@@ -70,7 +68,7 @@ impl BaseNodeExtension for TxPoolExtension {
                 flashblocks_config.as_ref().map(|cfg| Arc::clone(&cfg.state)).unwrap_or_default();
 
             tokio::spawn(async move {
-                if let Err(err) = init_global_transaction_event_writer(writer_config).await {
+                if let Err(err) = GlobalTransactionEventWriter::init(writer_config).await {
                     warn!(error = %err, "transaction event journal disabled");
                 }
 
