@@ -28,7 +28,7 @@
   "multiproofConfigHash": "${MULTIPROOF_CONFIG_HASH}",
   "multiproofGameType": 621,
   "multiproofGenesisBlockNumber": 0,
-  "multiproofGenesisOutputRoot": "0x0000000000000000000000000000000000000000000000000000000000000001",
+  "multiproofGenesisOutputRoot": "${MULTIPROOF_GENESIS_OUTPUT_ROOT}",
   "multiproofIntermediateBlockInterval": 10,
   "slowFinalizationDelay": 0,
   "fastFinalizationDelay": 0,
