@@ -20,7 +20,7 @@ use super::{LoadRunner, SubmissionPipeline, TxType, load_runner::FUNDING_CONCURR
 use crate::{
     BaselineError, Result,
     rpc::{BaseFeeExt, RpcResultExt, WalletProvider, create_wallet_provider},
-    workload::b20_token_for,
+    workload::{b20_salt_for, b20_token_for},
 };
 
 /// Gas limit for a `createB20` tx (token creation plus the self-grant and self-mint init calls).
@@ -35,7 +35,7 @@ const REPLACEMENT_FEE_MULTIPLIER: u128 = 3;
 impl LoadRunner {
     /// Returns `true` if any configured transaction type is [`TxType::B20`].
     pub fn needs_b20_setup(&self) -> bool {
-        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20 { .. }))
+        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
     }
 
     /// Creates a per-sender B-20 ASSET token, with each sender minting its own supply.
@@ -86,7 +86,7 @@ impl LoadRunner {
                 // Build the create tx for this sender's own token. The init calls run with factory
                 // privilege, so the grant and mint bypass the normal role checks: the sender ends
                 // up holding BURN_ROLE and `amount_per_sender` of its own supply.
-                let salt = crate::workload::b20_salt_for(sender, run_salt);
+                let salt = b20_salt_for(sender, run_salt);
                 let create_params = IB20Factory::B20AssetCreateParams {
                     version: params_version,
                     name: "Load Test B20".to_string(),
@@ -182,7 +182,7 @@ impl LoadRunner {
             return Err(BaselineError::Transaction(format!(
                 "{failed}/{total} per-sender B-20 token setups failed (first: {detail}). \
                  Likely cause: B-20 ASSET feature not activated on this chain, \
-                 or a factory validation error."
+                 a factory validation error, or clear the txpool and try again."
             )));
         }
 

@@ -221,7 +221,7 @@ impl LoadRunner {
                     );
                     generator = generator.with_payload(payload, weight_pct);
                 }
-                TxType::B20 { contract: _ } => {
+                TxType::B20 => {
                     // Each sender transfers its own per-run token; the payload derives the token
                     // from the run salt, which is only known after B-20 setup runs. Before setup
                     // (salt None) the payload is intentionally not installed.
@@ -304,7 +304,7 @@ impl LoadRunner {
                 TxType::Transfer => 21_000,
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
-                TxType::B20 { .. } => 100_000,
+                TxType::B20 => 100_000,
                 TxType::Precompile { target, iterations, blake2f_rounds, .. } => {
                     let per_call = match target {
                         PrecompileId::Identity | PrecompileId::Bn254Add => 22_000,
@@ -677,7 +677,7 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
-                | TxType::B20 { .. }
+                | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
             }
@@ -696,7 +696,7 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
-                | TxType::B20 { .. }
+                | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
             }
@@ -990,7 +990,7 @@ impl LoadRunner {
     #[instrument(skip(self), fields(target_gps = self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
         if self.b20_run_salt.is_none()
-            && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20 { .. }))
+            && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
         {
             return Err(BaselineError::Config(
                 "b20 run salt not set; call setup_b20_tokens before run".into(),
