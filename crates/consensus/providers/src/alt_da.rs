@@ -6,14 +6,11 @@ use std::time::Duration;
 use alloy_primitives::{Bytes, hex};
 use async_trait::async_trait;
 use base_consensus_derive::{AltDaCommitmentResolver, AltDaResolverError};
-use base_protocol::BLOB_MAX_DATA_SIZE;
+use base_protocol::MAX_DA_OBJECT_BYTES;
 use url::Url;
 
-/// Max bytes accepted from a single resolve. Must stay in sync with
-/// `base_alt_da::MAX_OBJECT_BYTES` (both are `8 * BLOB_MAX_DATA_SIZE`); the value is duplicated
-/// rather than imported because the consensus layer cannot depend on the infra `base-alt-da`
-/// crate (see `etc/scripts/ci/check-crate-deps.sh`).
-const MAX_RESOLVE_BYTES: usize = 8 * BLOB_MAX_DATA_SIZE;
+/// Max error-response body bytes preserved for diagnostics on a non-success status.
+const MAX_ERROR_BODY_BYTES: usize = 256;
 
 /// Resolves commitments by calling the alt-DA server's `GET /get/0x{commitment}` endpoint.
 ///
@@ -59,10 +56,14 @@ impl AltDaCommitmentResolver for HttpAltDaResolver {
             return Err(AltDaResolverError::NotFound);
         }
         if !status.is_success() {
-            return Err(AltDaResolverError::Resolve(format!(
-                "unexpected status {}",
-                status.as_u16()
-            )));
+            // Preserve a bounded snippet of the server's error body for diagnostics, matching
+            // `base_alt_da::Client::get`.
+            let code = status.as_u16();
+            let mut detail = read_bounded_error_body(resp).await;
+            if detail.is_empty() {
+                detail = "(no response body)".into();
+            }
+            return Err(AltDaResolverError::Resolve(format!("unexpected status {code}: {detail}")));
         }
 
         // Reject oversized responses up front by Content-Length, then stream chunks with a
@@ -70,22 +71,22 @@ impl AltDaCommitmentResolver for HttpAltDaResolver {
         // an arbitrarily large body. Mirrors `base_alt_da::Client::get`.
         let content_len = resp.content_length();
         if let Some(len) = content_len
-            && len as usize > MAX_RESOLVE_BYTES
+            && len as usize > MAX_DA_OBJECT_BYTES
         {
             return Err(AltDaResolverError::Resolve(format!(
-                "response too large: content-length {len} (max {MAX_RESOLVE_BYTES})"
+                "response too large: content-length {len} (max {MAX_DA_OBJECT_BYTES})"
             )));
         }
 
-        // Pre-size to the Content-Length when known; it is already validated <= MAX_RESOLVE_BYTES.
+        // Pre-size to the Content-Length when known; it is already validated <= MAX_DA_OBJECT_BYTES.
         let mut bytes = Vec::with_capacity(content_len.unwrap_or(0) as usize);
         let mut response = resp;
         while let Some(chunk) =
             response.chunk().await.map_err(|e| AltDaResolverError::Resolve(e.to_string()))?
         {
-            if bytes.len() + chunk.len() > MAX_RESOLVE_BYTES {
+            if bytes.len() + chunk.len() > MAX_DA_OBJECT_BYTES {
                 return Err(AltDaResolverError::Resolve(format!(
-                    "response too large: {} bytes (max {MAX_RESOLVE_BYTES})",
+                    "response too large: {} bytes (max {MAX_DA_OBJECT_BYTES})",
                     bytes.len() + chunk.len()
                 )));
             }
@@ -93,4 +94,18 @@ impl AltDaCommitmentResolver for HttpAltDaResolver {
         }
         Ok(Bytes::from(bytes))
     }
+}
+
+/// Read up to [`MAX_ERROR_BODY_BYTES`] of a non-success response body for diagnostics.
+async fn read_bounded_error_body(mut resp: reqwest::Response) -> String {
+    let mut bytes = Vec::new();
+    while let Ok(Some(chunk)) = resp.chunk().await {
+        let remaining = MAX_ERROR_BODY_BYTES.saturating_sub(bytes.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        bytes.extend_from_slice(&chunk[..take]);
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
 }

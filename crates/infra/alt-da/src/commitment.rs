@@ -10,7 +10,9 @@ pub const GENERIC_COMMITMENT_TYPE: u8 = 0x01;
 /// Generic commitment sentinel byte (`0xff`).
 pub const GENERIC_COMMITMENT_SENTINEL: u8 = 0xff;
 /// Encoded generic commitment length in bytes.
-pub const GENERIC_COMMITMENT_LEN: usize = 34;
+///
+/// Single source of truth: [`base_protocol::GENERIC_COMMITMENT_LEN`].
+pub const GENERIC_COMMITMENT_LEN: usize = base_protocol::GENERIC_COMMITMENT_LEN;
 /// Max decoded commitment bytes (generic format is always 34).
 const MAX_COMMITMENT_LEN: usize = GENERIC_COMMITMENT_LEN;
 

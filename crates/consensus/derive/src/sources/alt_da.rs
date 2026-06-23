@@ -9,7 +9,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, DERIVATION_VERSION_1};
+use base_protocol::{BlockInfo, DERIVATION_VERSION_1, GENERIC_COMMITMENT_LEN};
 use thiserror::Error;
 
 use crate::{DataAvailabilityProvider, PipelineError, PipelineErrorKind, PipelineResult};
@@ -27,12 +27,16 @@ pub enum AltDaResolverError {
 
 impl From<AltDaResolverError> for PipelineErrorKind {
     fn from(err: AltDaResolverError) -> Self {
-        // Both NotFound and transport/server errors map to a temporary error so derivation
-        // retries rather than halting. The batcher posts a commitment to L1 only after a
-        // successful S3 PUT, so any committed pointer has a backing object; a NotFound at
-        // derivation time is therefore transient (read-after-write visibility or a brief DA
-        // server outage), not a permanently missing object.
-        PipelineError::Provider(err.to_string()).temp()
+        let msg = err.to_string();
+        match err {
+            // A 404 is permanent in our model: the batcher posts a commitment to L1 only after a
+            // successful S3 PUT, and S3 is read-after-write consistent, so a missing object means
+            // real data loss or corruption. Halt with a diagnostic instead of retrying forever
+            // (the pending-commitment buffer would otherwise spin on the same item indefinitely).
+            AltDaResolverError::NotFound => PipelineError::Provider(msg).crit(),
+            // Transport errors, timeouts, and 5xx responses are transient; retry.
+            AltDaResolverError::Resolve(_) => PipelineError::Provider(msg).temp(),
+        }
     }
 }
 
@@ -107,6 +111,13 @@ where
                 let data = self.inner.next(block_ref, batcher_addr).await?;
                 match data.first() {
                     Some(&DERIVATION_VERSION_1) => {
+                        // A valid commitment tx is the version byte plus the fixed-size generic
+                        // commitment. Skip malformed lengths (e.g. a bare 0x01) so they are not
+                        // buffered and retried against the DA server forever.
+                        if data.len() != 1 + GENERIC_COMMITMENT_LEN {
+                            warn!(len = data.len(), "alt-da: skipping malformed commitment tx");
+                            continue;
+                        }
                         let commitment = Bytes::copy_from_slice(&data[1..]);
                         self.pending = Some(commitment.clone());
                         commitment
@@ -204,12 +215,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_not_found_is_temporary() {
+    async fn resolve_not_found_is_critical() {
         let resolver: DynAltDaResolver = Arc::new(MockResolver { map: BTreeMap::new() });
         let inner = MockInner { items: VecDeque::from([l1_commitment(&[0xbb; 34])]) };
         let mut src = AltDaDataSource::new(inner, Some(resolver));
         let err = src.next(&BlockInfo::default(), Address::ZERO).await.unwrap_err();
-        assert!(matches!(err, PipelineErrorKind::Temporary(_)));
+        assert!(matches!(err, PipelineErrorKind::Critical(_)));
+    }
+
+    #[tokio::test]
+    async fn skips_malformed_commitment_tx() {
+        // A bare 0x01 with no commitment payload must be skipped, not buffered and retried.
+        let commitment = vec![0xaa; 34];
+        let stored = Bytes::from(vec![0x00, 1, 2, 3]);
+        let mut map = BTreeMap::new();
+        map.insert(commitment.clone(), stored.clone());
+        let resolver: DynAltDaResolver = Arc::new(MockResolver { map });
+        let inner = MockInner {
+            items: VecDeque::from([
+                Bytes::from(vec![DERIVATION_VERSION_1]),
+                l1_commitment(&commitment),
+            ]),
+        };
+        let mut src = AltDaDataSource::new(inner, Some(resolver));
+        let out = src.next(&BlockInfo::default(), Address::ZERO).await.unwrap();
+        assert_eq!(out, stored);
     }
 
     #[derive(Debug)]
