@@ -14,7 +14,7 @@ const AGGREGATION_SESSION_LABEL: &str = "aggregation";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Groth16RangeProofRequest {
     /// Stable parent session identifier for the logical Groth16 proof flow.
-    pub session_id: String,
+    pub parent_session_id: String,
     /// ZK range proof parameters.
     pub proof: ZkProofRequest,
     /// On-chain prover address to embed in the Groth16 aggregation proof.
@@ -24,21 +24,21 @@ pub struct Groth16RangeProofRequest {
 impl Groth16RangeProofRequest {
     /// Create a logical Groth16 range proof request.
     pub fn new(
-        session_id: impl Into<String>,
+        parent_session_id: impl Into<String>,
         proof: ZkProofRequest,
         prover_address: Address,
     ) -> Self {
-        Self { session_id: session_id.into(), proof, prover_address }
+        Self { parent_session_id: parent_session_id.into(), proof, prover_address }
     }
 
     /// Return the child session id used for the range proof stage.
     pub fn range_session_id(&self) -> String {
-        format!("{}:{RANGE_SESSION_LABEL}", self.session_id)
+        format!("{}:{RANGE_SESSION_LABEL}", self.parent_session_id)
     }
 
     /// Return the child session id used for the Groth16 aggregation proof stage.
     pub fn aggregation_session_id(&self) -> String {
-        format!("{}:{AGGREGATION_SESSION_LABEL}", self.session_id)
+        format!("{}:{AGGREGATION_SESSION_LABEL}", self.parent_session_id)
     }
 
     /// Build the prover-service request for the compressed range proof stage.
