@@ -31,8 +31,10 @@ impl HttpAltDaResolver {
         let mut base = server;
         base.set_query(None);
         base.set_fragment(None);
+        // 60s matches base_alt_da::Client, which calls the same DA server endpoint, so the
+        // two derivation paths do not time out at different points during dual-write.
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| AltDaResolverError::Resolve(e.to_string()))?;
         Ok(Self { base, http })

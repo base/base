@@ -57,7 +57,8 @@ impl Client {
             return Err(ClientError::UnexpectedStatus { status: status.as_u16(), detail });
         }
 
-        if let Some(len) = resp.content_length()
+        let content_len = resp.content_length();
+        if let Some(len) = content_len
             && len as usize > crate::MAX_OBJECT_BYTES
         {
             return Err(ClientError::ResponseTooLarge {
@@ -66,7 +67,8 @@ impl Client {
             });
         }
 
-        let mut bytes = Vec::new();
+        // Pre-size to the Content-Length when known; it is already validated <= MAX_OBJECT_BYTES.
+        let mut bytes = Vec::with_capacity(content_len.unwrap_or(0) as usize);
         let mut response = resp;
         while let Some(chunk) = response.chunk().await? {
             if bytes.len() + chunk.len() > crate::MAX_OBJECT_BYTES {

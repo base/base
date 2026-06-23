@@ -63,12 +63,19 @@ pub type DynAltDaResolver = Arc<dyn AltDaCommitmentResolver>;
 pub struct AltDaDataSource<D> {
     inner: D,
     resolver: Option<DynAltDaResolver>,
+    /// A commitment popped from the inner source but not yet resolved.
+    ///
+    /// Resolution happens after the item is consumed from the inner source, so a transient
+    /// resolve failure must not drop the batch. The commitment is buffered here and retried at
+    /// the top of the next `next()` call before any new inner item is pulled, preserving
+    /// at-least-once delivery so the safe head stays in sync with the calldata path.
+    pending: Option<Bytes>,
 }
 
 impl<D> AltDaDataSource<D> {
     /// Wrap `inner`. A `None` resolver is pass-through; `Some` enables alt-DA-only mode.
     pub const fn new(inner: D, resolver: Option<DynAltDaResolver>) -> Self {
-        Self { inner, resolver }
+        Self { inner, resolver, pending: None }
     }
 }
 
@@ -84,25 +91,44 @@ where
         block_ref: &BlockInfo,
         batcher_addr: Address,
     ) -> PipelineResult<Self::Item> {
+        // Clone the resolver handle (a cheap Arc) so the inner source and `pending` can be
+        // borrowed mutably below. No resolver means transparent pass-through.
+        let Some(resolver) = self.resolver.clone() else {
+            return self.inner.next(block_ref, batcher_addr).await;
+        };
+
         loop {
-            let data = self.inner.next(block_ref, batcher_addr).await?;
-            let Some(resolver) = &self.resolver else {
-                return Ok(data);
-            };
-            match data.first() {
-                Some(&DERIVATION_VERSION_1) => {
-                    let bytes = resolver.resolve(&data[1..]).await?;
-                    return Ok(bytes);
+            // Retry a previously-popped commitment before pulling a new inner item, so a
+            // transient resolve failure replays the same commitment instead of dropping the
+            // batch (the inner item was already consumed when it was popped).
+            let commitment = if let Some(commitment) = self.pending.clone() {
+                commitment
+            } else {
+                let data = self.inner.next(block_ref, batcher_addr).await?;
+                match data.first() {
+                    Some(&DERIVATION_VERSION_1) => {
+                        let commitment = Bytes::copy_from_slice(&data[1..]);
+                        self.pending = Some(commitment.clone());
+                        commitment
+                    }
+                    // Alt-DA mode ignores inline calldata/blob frames and any empty item; pull
+                    // the next item. Termination relies on the inner source returning Eof once
+                    // the block's data is exhausted.
+                    other => {
+                        trace!(first_byte = ?other, "alt-da: skipping non-commitment item");
+                        continue;
+                    }
                 }
-                // Alt-DA mode ignores inline calldata/blob frames (Some(_)) and any empty item
-                // (None); pull the next item. Termination relies on the inner source returning
-                // Eof once the block's data is exhausted.
-                Some(_) | None => continue,
-            }
+            };
+
+            let bytes = resolver.resolve(&commitment).await?;
+            self.pending = None;
+            return Ok(bytes);
         }
     }
 
     fn clear(&mut self) {
+        self.pending = None;
         self.inner.clear();
     }
 }
@@ -184,5 +210,44 @@ mod tests {
         let mut src = AltDaDataSource::new(inner, Some(resolver));
         let err = src.next(&BlockInfo::default(), Address::ZERO).await.unwrap_err();
         assert!(matches!(err, PipelineErrorKind::Temporary(_)));
+    }
+
+    #[derive(Debug)]
+    struct FlakyResolver {
+        calls: core::sync::atomic::AtomicUsize,
+        bytes: Bytes,
+    }
+
+    #[async_trait]
+    impl AltDaCommitmentResolver for FlakyResolver {
+        async fn resolve(&self, _commitment: &[u8]) -> Result<Bytes, AltDaResolverError> {
+            let n = self.calls.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+            if n == 0 {
+                Err(AltDaResolverError::Resolve("transient".into()))
+            } else {
+                Ok(self.bytes.clone())
+            }
+        }
+    }
+
+    // A transient resolve failure must retry the same commitment, not drop the batch: the inner
+    // item is already consumed when popped, so without buffering the batch would be skipped.
+    #[tokio::test]
+    async fn retries_same_commitment_after_transient_failure() {
+        let stored = Bytes::from(vec![0x00, 5, 5, 5]);
+        let resolver: DynAltDaResolver = Arc::new(FlakyResolver {
+            calls: core::sync::atomic::AtomicUsize::new(0),
+            bytes: stored.clone(),
+        });
+        // Inner yields a single commitment, then Eof.
+        let inner = MockInner { items: VecDeque::from([l1_commitment(&[0xcc; 34])]) };
+        let mut src = AltDaDataSource::new(inner, Some(resolver));
+
+        let err = src.next(&BlockInfo::default(), Address::ZERO).await.unwrap_err();
+        assert!(matches!(err, PipelineErrorKind::Temporary(_)));
+
+        // The commitment is retried (inner is now empty) and resolves on the second attempt.
+        let out = src.next(&BlockInfo::default(), Address::ZERO).await.unwrap();
+        assert_eq!(out, stored);
     }
 }
