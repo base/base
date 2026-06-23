@@ -1,5 +1,8 @@
 //! Step result and error types for the batcher pipeline.
 
+use base_comp::{BatchComposeError, ChannelOutError};
+use base_protocol::SpanBatchError;
+
 /// Result of a [`BatchPipeline::step`](crate::BatchPipeline::step) call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepResult {
@@ -28,6 +31,26 @@ pub enum StepError {
         cursor: usize,
         /// Underlying composition error.
         #[source]
-        source: base_comp::BatchComposeError,
+        source: BatchComposeError,
+    },
+    /// The accumulated span batch could not be built.
+    #[error("span batch build failed for {blocks} accumulated blocks: {source}")]
+    SpanBatchBuildFailed {
+        /// Number of L2 blocks in the span accumulator.
+        blocks: usize,
+        /// Underlying span batch construction error.
+        #[source]
+        source: SpanBatchError,
+    },
+    /// The accumulated span batch could not fit in a fresh channel.
+    #[error(
+        "span batch with {blocks} accumulated blocks was rejected by an empty channel: {source}"
+    )]
+    SpanBatchRejectedByEmptyChannel {
+        /// Number of L2 blocks in the span accumulator.
+        blocks: usize,
+        /// Underlying channel rejection.
+        #[source]
+        source: ChannelOutError,
     },
 }
