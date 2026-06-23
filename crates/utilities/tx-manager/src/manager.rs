@@ -35,7 +35,6 @@
 
 use std::{
     fmt::Debug,
-    future::IntoFuture,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -63,8 +62,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager,
-    RpcErrorClassifier, SendHandle, SendResponse, SendState, SignerConfig, TxCandidate, TxManager,
-    TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
+    RpcErrorClassifier, RuntimeTimeout, SendHandle, SendResponse, SendState, SignerConfig,
+    TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
 };
 
 /// Number of wei in one gwei (10^9), as `f64` for fractional-precision
@@ -281,7 +280,7 @@ where
         // Cross-validate chain_id against the provider to catch
         // misconfiguration early rather than failing at tx submission.
         let provider_chain_id =
-            Self::timeout_with(&runtime, config.network_timeout, provider.get_chain_id())
+            RuntimeTimeout::run(&runtime, config.network_timeout, provider.get_chain_id())
                 .await
                 .map_err(|_| TxManagerError::Rpc("get_chain_id timed out".into()))?
                 .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
@@ -373,26 +372,6 @@ where
             self.metrics.record_rpc_error();
         }
         err
-    }
-
-    /// Runs `future` until completion or until `duration` elapses on the
-    /// configured runtime.
-    async fn timeout_with<Rt, F>(
-        runtime: &Rt,
-        duration: Duration,
-        future: F,
-    ) -> Result<F::Output, ()>
-    where
-        Rt: Runtime,
-        F: IntoFuture,
-        F::IntoFuture: Send,
-    {
-        let future = future.into_future();
-        tokio::select! {
-            biased;
-            output = future => Ok(output),
-            _ = runtime.sleep(duration) => Err(()),
-        }
     }
 
     /// Checks that `fee` does not exceed the configured ceiling relative to
@@ -556,19 +535,19 @@ where
     /// Returns [`TxManagerError::Rpc`] if any provider call fails.
     async fn suggest_gas_price_caps_for(&self, is_blob: bool) -> TxManagerResult<GasPriceCaps> {
         // Query tip cap, latest block, and (optionally) blob base fee concurrently.
-        let tip_fut = Self::timeout_with(
+        let tip_fut = RuntimeTimeout::run(
             &self.runtime,
             self.config.network_timeout,
             self.provider.get_max_priority_fee_per_gas(),
         );
-        let block_fut = Self::timeout_with(
+        let block_fut = RuntimeTimeout::run(
             &self.runtime,
             self.config.network_timeout,
             self.provider.get_block_by_number(BlockNumberOrTag::Latest),
         );
 
         let (tip_result, block_result, blob_fee_result) = if is_blob {
-            let blob_fut = Self::timeout_with(
+            let blob_fut = RuntimeTimeout::run(
                 &self.runtime,
                 self.config.network_timeout,
                 self.provider.get_blob_base_fee(),
@@ -869,7 +848,7 @@ where
         // `max_fee_per_blob_gas` remain so intrinsic-gas accounting is
         // correct.
         let sidecar_stash = tx_request.sidecar.take();
-        let estimated = Self::timeout_with(
+        let estimated = RuntimeTimeout::run(
             &self.runtime,
             self.config.network_timeout,
             self.provider.estimate_gas(tx_request.clone()),
@@ -1010,7 +989,7 @@ where
         let result = if self.config.tx_send_timeout.is_zero() {
             self.send_event_loop(&candidate, &send_state, nonce_override).await
         } else {
-            Self::timeout_with(
+            RuntimeTimeout::run(
                 &self.runtime,
                 self.config.tx_send_timeout,
                 self.send_event_loop(&candidate, &send_state, nonce_override),
@@ -1407,7 +1386,7 @@ where
         raw_tx: &Bytes,
         last_tx_hash: Option<B256>,
     ) -> TxManagerResult<B256> {
-        let result = Self::timeout_with(
+        let result = RuntimeTimeout::run(
             &self.runtime,
             self.config.network_timeout,
             self.provider.send_raw_transaction(raw_tx),
@@ -1663,8 +1642,12 @@ where
         // below ensures the receipt is on the canonical chain, so call order
         // no longer matters for reorg safety.
         let (tip_result, receipt_result) = tokio::join!(
-            Self::timeout_with(runtime, network_timeout, provider.get_block_number()),
-            Self::timeout_with(runtime, network_timeout, provider.get_transaction_receipt(tx_hash)),
+            RuntimeTimeout::run(runtime, network_timeout, provider.get_block_number()),
+            RuntimeTimeout::run(
+                runtime,
+                network_timeout,
+                provider.get_transaction_receipt(tx_hash)
+            ),
         );
 
         let tip_height = tip_result
@@ -1704,7 +1687,7 @@ where
             }
         };
 
-        let canonical_block = Self::timeout_with(
+        let canonical_block = RuntimeTimeout::run(
             runtime,
             network_timeout,
             provider.get_block_by_number(BlockNumberOrTag::Number(tx_block)),

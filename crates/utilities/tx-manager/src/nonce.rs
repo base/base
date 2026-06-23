@@ -1,6 +1,6 @@
 //! Nonce allocation and tracking.
 
-use std::{collections::BTreeSet, future::IntoFuture, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_provider::Provider;
@@ -8,7 +8,7 @@ use base_runtime::{Runtime, TokioRuntime};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, info, warn};
 
-use crate::TxManagerError;
+use crate::{RuntimeTimeout, TxManagerError};
 
 /// Internal state tracked by [`NonceManager`].
 ///
@@ -104,21 +104,6 @@ where
         self
     }
 
-    /// Runs `future` until completion or until `duration` elapses on the
-    /// configured runtime.
-    async fn timeout<F>(&self, duration: Duration, future: F) -> Result<F::Output, ()>
-    where
-        F: IntoFuture,
-        F::IntoFuture: Send,
-    {
-        let future = future.into_future();
-        tokio::select! {
-            biased;
-            output = future => Ok(output),
-            _ = self.runtime.sleep(duration) => Err(()),
-        }
-    }
-
     /// Maximum number of retry attempts when `reset()` races with
     /// `next_nonce()`, clearing the cache between the RPC fetch and
     /// lock re-acquisition.
@@ -173,8 +158,7 @@ where
             } else {
                 self.provider.get_transaction_count(self.address)
             };
-            let fetched = self
-                .timeout(self.rpc_timeout, count_fut)
+            let fetched = RuntimeTimeout::run(&self.runtime, self.rpc_timeout, count_fut)
                 .await
                 .map_err(|_| {
                     warn!(

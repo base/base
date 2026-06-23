@@ -33,6 +33,9 @@ pub use traits::{SendHandle, SendResponse, TxManager};
 mod nonce;
 pub use nonce::{NonceGuard, NonceManager, NonceState};
 
+mod runtime_timeout;
+pub use runtime_timeout::RuntimeTimeout;
+
 mod manager;
 pub use manager::{PreparedTx, SimpleTxManager};
 
