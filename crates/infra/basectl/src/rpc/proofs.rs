@@ -60,7 +60,7 @@ impl ProofsClient {
     /// Fetches a combined on-chain proof-system report from L1/L2 RPCs.
     #[must_use = "callers should handle the fetched on-chain proof report"]
     pub async fn fetch_onchain_report(
-        proofs_config: ProofsConfig,
+        proofs_config: &ProofsConfig,
         l1_rpc: &Url,
         l2_rpc: &Url,
         scan_window: u64,
@@ -469,8 +469,7 @@ pub async fn run_proofs_poller(
         interval.tick().await;
 
         let report =
-            ProofsClient::fetch_onchain_report(proofs_config.clone(), &l1_rpc, &l2_rpc, 50, 1)
-                .await;
+            ProofsClient::fetch_onchain_report(&proofs_config, &l1_rpc, &l2_rpc, 50, 1).await;
         let snapshot = match report {
             Ok(report) => ProofsSnapshot::from(report),
             Err(error) => {

@@ -37,7 +37,7 @@ async fn run_list(config: MonitoringConfig, args: ProofsListArgs) -> Result<Comm
             match &request.onchain {
                 Some(source) => SourceResult::from_result(
                     ProofsClient::fetch_onchain_report(
-                        source.contracts.clone(),
+                        &source.contracts,
                         &source.l1_rpc,
                         &source.l2_rpc,
                         request.scan_window,
