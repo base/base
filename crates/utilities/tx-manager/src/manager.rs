@@ -1555,10 +1555,16 @@ where
         Rt: Runtime,
     {
         let deadline = runtime.now() + config.confirmation_timeout;
-        let mut poll_interval = runtime.interval(config.receipt_query_interval);
+        let mut poll_immediately = true;
 
         loop {
-            poll_interval.next().await;
+            if poll_immediately {
+                poll_immediately = false;
+            } else {
+                // Keep the previous MissedTickBehavior::Delay semantics:
+                // slow receipt queries do not accumulate immediate catch-up ticks.
+                runtime.sleep(config.receipt_query_interval).await;
+            }
 
             match Self::query_receipt_with_runtime(
                 runtime,
