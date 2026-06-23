@@ -44,6 +44,11 @@ TEE_IMAGE_HASH="${TEE_IMAGE_HASH:-0x00000000000000000000000000000000000000000000
 # When true, SystemDeploy skips the AggregateVerifier; the register-aggregate-verifier one-shot
 # deploys + registers it after L2 genesis with the real config hash (see devnet-l3-env).
 MULTIPROOF_DEFER_REGISTRATION="${MULTIPROOF_DEFER_REGISTRATION:-false}"
+# Anchor (L2 genesis output root) seeded into the AnchorStateRegistry. The real value is only
+# known after L2 genesis, so the main deploy uses a non-zero placeholder (required to pass
+# SystemDeploy's startingAnchorRoot validation) and the register-aggregate-verifier one-shot
+# recomputes the real root and initializes the registry. Exported for envsubst (Step 1).
+export MULTIPROOF_GENESIS_OUTPUT_ROOT="${MULTIPROOF_GENESIS_OUTPUT_ROOT:-0x0000000000000000000000000000000000000000000000000000000000000001}"
 
 if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
