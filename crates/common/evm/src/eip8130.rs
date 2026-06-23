@@ -203,14 +203,14 @@ impl Eip8130Executor {
         // transaction's mutations.
         let checkpoint = ctx.journal_mut().checkpoint();
 
-        let outcome = match Self::authorize_and_apply(ctx, &signed, &encoded, chain_id, now, base_fee)
-        {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                ctx.journal_mut().checkpoint_revert(checkpoint);
-                return Err(err.into());
-            }
-        };
+        let outcome =
+            match Self::authorize_and_apply(ctx, &signed, &encoded, chain_id, now, base_fee) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    ctx.journal_mut().checkpoint_revert(checkpoint);
+                    return Err(err.into());
+                }
+            };
 
         // Pre-charge the payer the worst-case fee (so `calls` cannot spend the
         // gas reservation), publish the transaction context, and run `calls`.
@@ -231,14 +231,14 @@ impl Eip8130Executor {
         };
 
         let ctx = evm.ctx_mut();
-        let gas_used = match Self::settle_fees(ctx, &outcome, &calls, prepay, &encoded, spec, beneficiary)
-        {
-            Ok(gas_used) => gas_used,
-            Err(err) => {
-                ctx.journal_mut().checkpoint_revert(checkpoint);
-                return Err(err);
-            }
-        };
+        let gas_used =
+            match Self::settle_fees(ctx, &outcome, &calls, prepay, &encoded, spec, beneficiary) {
+                Ok(gas_used) => gas_used,
+                Err(err) => {
+                    ctx.journal_mut().checkpoint_revert(checkpoint);
+                    return Err(err);
+                }
+            };
 
         let logs = ctx.journal_mut().take_logs();
 
@@ -447,8 +447,8 @@ impl Eip8130Executor {
     ) -> Result<U256, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+        BaseContext<DB>:
+            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         ctx.tx.base.caller = outcome.sender;
 
@@ -648,8 +648,8 @@ impl Eip8130Executor {
     ) -> Result<u64, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+        BaseContext<DB>:
+            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         // Gas drawn from `gas_limit`: sender-intrinsic plus the gas consumed by
         // calls, less the refund capped at EIP-3529's `gas_used / 5`.
@@ -1005,8 +1005,7 @@ mod tests {
         tx.calls = vec![vec![Call { to: forbidden, data: Bytes::new() }]];
         let signed = configured_signed(tx, &signer);
 
-        let mut evm =
-            evm_with(U256::from(10u64).pow(U256::from(18u64)), account);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), account);
         seed_gated_sender(&mut evm, account, signer_addr, allowed);
 
         let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
@@ -1030,8 +1029,11 @@ mod tests {
         tx.calls = vec![vec![Call { to: allowed, data: Bytes::new() }]];
         let signed = configured_signed(tx, &signer);
 
-        let mut evm =
-            evm_with_accounts(U256::from(10u64).pow(U256::from(18u64)), account, &[(allowed, bytes!("00"))]);
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            account,
+            &[(allowed, bytes!("00"))],
+        );
         seed_gated_sender(&mut evm, account, signer_addr, allowed);
 
         let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should execute");
