@@ -18,7 +18,8 @@ x-conductor-base: &conductor-base
   image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-conductor:v0.9.2
   entrypoint: ["op-conductor"]
 
-x-sequencer-healthcheck: &sequencer-healthcheck
+x-node-healthcheck: &node-healthcheck
+  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
   interval: 250ms
   timeout: 1s
   retries: 240
@@ -45,6 +46,8 @@ services:
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
       - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
       - BASE_NODE_CONDUCTOR_RPC=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
+      - NODE_HEALTHCHECK_HTTP_PORT=${L2_BUILDER_HTTP_PORT}
+      - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BUILDER_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-builder
 
   base-batcher:
@@ -97,6 +100,8 @@ services:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
       - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
+      - NODE_HEALTHCHECK_HTTP_PORT=${L2_SEQ1_HTTP_PORT}
+      - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_SEQ1_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-sequencer-1
     command:
       - sequencer
@@ -176,8 +181,7 @@ services:
       - Off
       - -vvv
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:${L2_SEQ1_HTTP_PORT} >/dev/null && curl -sf http://localhost:${L2_SEQ1_CL_RPC_PORT}/healthz >/dev/null"]
-      <<: *sequencer-healthcheck
+      <<: *node-healthcheck
     networks:
       default:
         ipv4_address: ${L2_SEQ1_ADVERTISE_IP}
@@ -205,6 +209,8 @@ services:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
       - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
+      - NODE_HEALTHCHECK_HTTP_PORT=${L2_SEQ2_HTTP_PORT}
+      - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_SEQ2_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-sequencer-2
     command:
       - sequencer
@@ -284,8 +290,7 @@ services:
       - Off
       - -vvv
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:${L2_SEQ2_HTTP_PORT} >/dev/null && curl -sf http://localhost:${L2_SEQ2_CL_RPC_PORT}/healthz >/dev/null"]
-      <<: *sequencer-healthcheck
+      <<: *node-healthcheck
     networks:
       default:
         ipv4_address: ${L2_SEQ2_ADVERTISE_IP}
