@@ -1,11 +1,6 @@
 //! HTTP ingest path for transaction observability events.
 
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -123,7 +118,7 @@ pub struct TransactionEventInsertOutcome {
 /// Query limits for read APIs.
 pub const DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 500;
 /// Hard maximum query result count for read APIs.
-pub(crate) const MAX_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 2_000;
+pub const MAX_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 2_000;
 const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events";
 static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -241,6 +236,7 @@ pub struct PgTransactionEventSink {
 impl PgTransactionEventSink {
     /// Connects to Postgres without running migrations.
     pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
+        let max_connections = max_connections.max(1);
         // RDS IAM auth tokens are only validated when a connection opens; open
         // connections remain usable after token expiry. sqlx does not expose a
         // pre-connect password callback, so the IAM-auth deployment path passes
@@ -249,7 +245,7 @@ impl PgTransactionEventSink {
         // restarted so a new token is minted before rebuilding the pool.
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
-            .min_connections(max_connections)
+            .min_connections(1)
             .max_lifetime(None)
             .idle_timeout(None)
             .connect(database_url)
@@ -398,10 +394,23 @@ impl PgTransactionEventSink {
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
-            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+            "WITH bundle_events AS ( \
+                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+                network, tx_hash, block_hash, block_number, payload_id, request_id, data \
+                FROM transaction_events \
+                WHERE data ? 'bundle_hash' AND data->>'bundle_hash' = $1 \
+                UNION ALL \
+                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
+                network, tx_hash, block_hash, block_number, payload_id, request_id, data \
+                FROM transaction_events \
+                WHERE data ? 'bundle_id' AND data->>'bundle_id' = $1 \
+             ), deduped AS ( \
+                SELECT DISTINCT ON (event_id) * FROM bundle_events \
+                ORDER BY event_id, event_time ASC, ingested_at ASC \
+             ) \
+             SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
              network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-             FROM transaction_events \
-             WHERE data->>'bundle_hash' = $1 OR data->>'bundle_id' = $1 \
+             FROM deduped \
              ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
              LIMIT $2",
         )
@@ -453,21 +462,26 @@ fn record_from_row(row: sqlx::postgres::PgRow) -> Result<TransactionEventRecord>
     let block_number = block_number.map(u64::try_from).transpose()?;
     let data: Value = row.try_get("data")?;
 
-    let raw_event = serde_json::json!({
-        "schema_version": row.try_get::<String, _>("schema_version")?,
-        "event_id": row.try_get::<String, _>("event_id")?,
-        "event_time": row.try_get::<DateTime<Utc>, _>("event_time")?,
-        "producer": row.try_get::<String, _>("producer")?,
-        "event_type": row.try_get::<String, _>("event_type")?,
-        "network": row.try_get::<Option<String>, _>("network")?,
-        "tx_hash": row.try_get::<Option<String>, _>("tx_hash")?,
-        "block_hash": row.try_get::<Option<String>, _>("block_hash")?,
-        "block_number": block_number,
-        "payload_id": row.try_get::<Option<String>, _>("payload_id")?,
-        "request_id": row.try_get::<Option<String>, _>("request_id")?,
-        "data": data,
-    });
-    let event = serde_json::from_value(raw_event)?;
+    let event = TransactionEvent {
+        schema_version: row.try_get("schema_version")?,
+        event_id: row.try_get("event_id")?,
+        event_time: row.try_get("event_time")?,
+        producer: serde_json::from_value(Value::String(row.try_get("producer")?))?,
+        event_type: serde_json::from_value(Value::String(row.try_get("event_type")?))?,
+        network: row.try_get("network")?,
+        tx_hash: row
+            .try_get::<Option<String>, _>("tx_hash")?
+            .map(|hash| hash.parse())
+            .transpose()?,
+        block_hash: row
+            .try_get::<Option<String>, _>("block_hash")?
+            .map(|hash| hash.parse())
+            .transpose()?,
+        block_number,
+        payload_id: row.try_get("payload_id")?,
+        request_id: row.try_get("request_id")?,
+        data: data.as_object().cloned().unwrap_or_default(),
+    };
     Ok(TransactionEventRecord { event, ingested_at: row.try_get("ingested_at")? })
 }
 
@@ -481,33 +495,46 @@ impl TransactionEventSink for PgTransactionEventSink {
             return Ok(TransactionEventInsertOutcome { inserted_event_ids: HashSet::new() });
         }
 
+        let block_numbers: Vec<Option<i64>> = events
+            .iter()
+            .map(|event| {
+                event
+                    .block_number
+                    .map(i64::try_from)
+                    .transpose()
+                    .map_err(|err| TransactionEventStorageError::new(err.into()))
+            })
+            .collect::<std::result::Result<_, _>>()?;
+
         let mut query_builder = QueryBuilder::new(
             "INSERT INTO transaction_events \
              (event_id, schema_version, event_time, producer, event_type, network, tx_hash, \
               block_hash, block_number, payload_id, request_id, data) ",
         );
 
-        query_builder.push_values(events, |mut row, event| {
-            let tx_hash = event.tx_hash.map(|hash| hash.to_string());
-            let block_hash = event.block_hash.map(|hash| hash.to_string());
-            let block_number = event.block_number.and_then(|number| i64::try_from(number).ok());
-            let producer = event.producer.to_string();
-            let event_type = event.event_type.to_string();
-            let data = Value::Object(event.data.clone());
+        query_builder.push_values(
+            events.iter().zip(block_numbers),
+            |mut row, (event, block_number)| {
+                let tx_hash = event.tx_hash.map(|hash| hash.to_string());
+                let block_hash = event.block_hash.map(|hash| hash.to_string());
+                let producer = event.producer.to_string();
+                let event_type = event.event_type.to_string();
+                let data = Value::Object(event.data.clone());
 
-            row.push_bind(&event.event_id)
-                .push_bind(&event.schema_version)
-                .push_bind(event.event_time)
-                .push_bind(producer)
-                .push_bind(event_type)
-                .push_bind(&event.network)
-                .push_bind(tx_hash)
-                .push_bind(block_hash)
-                .push_bind(block_number)
-                .push_bind(&event.payload_id)
-                .push_bind(&event.request_id)
-                .push_bind(data);
-        });
+                row.push_bind(&event.event_id)
+                    .push_bind(&event.schema_version)
+                    .push_bind(event.event_time)
+                    .push_bind(producer)
+                    .push_bind(event_type)
+                    .push_bind(&event.network)
+                    .push_bind(tx_hash)
+                    .push_bind(block_hash)
+                    .push_bind(block_number)
+                    .push_bind(&event.payload_id)
+                    .push_bind(&event.request_id)
+                    .push_bind(data);
+            },
+        );
 
         query_builder.push(" ON CONFLICT (event_id) DO NOTHING RETURNING event_id");
 
@@ -529,7 +556,11 @@ struct TransactionEventIngestState {
     config: TransactionEventIngestConfig,
 }
 
-/// Starts the transaction event HTTP ingest server.
+/// Starts a standalone transaction event HTTP ingest server.
+///
+/// The audit-archiver binary usually mounts [`transaction_event_router`] onto
+/// its existing HTTP/RPC listener instead. This helper is kept for tests or
+/// deployments that need only the Vector-facing ingest endpoint.
 pub async fn serve_transaction_event_ingest(
     sink: Arc<dyn TransactionEventSink>,
     config: TransactionEventIngestConfig,
@@ -573,7 +604,7 @@ async fn ingest_transaction_event_batch(
     state: &TransactionEventIngestState,
     body: Bytes,
 ) -> (StatusCode, Json<TransactionEventBatchResponse>) {
-    let events = match parse_transaction_event_ndjson(&body) {
+    let events = match parse_transaction_event_ndjson(&body, state.config.max_batch_size) {
         Ok(events) => events,
         Err(reason) => {
             Metrics::transaction_events_rejected().increment(1);
@@ -714,8 +745,7 @@ async fn ingest_transaction_event_batch(
     Metrics::transaction_events_duplicate().increment(db_duplicates as u64);
 
     let inserted_event_ids = insert_outcome.inserted_event_ids;
-    let mut accepted_by_event_id: HashMap<String, bool> =
-        inserted_event_ids.iter().map(|event_id| (event_id.clone(), true)).collect();
+    let mut accepted_ids = inserted_event_ids.clone();
 
     for result in &mut results {
         if result.status != TransactionEventItemStatus::Accepted {
@@ -726,7 +756,7 @@ async fn ingest_transaction_event_batch(
             continue;
         };
 
-        if accepted_by_event_id.remove(event_id).is_none() {
+        if !accepted_ids.remove(event_id) {
             result.status = TransactionEventItemStatus::Duplicate;
             result.reason = Some("duplicate event_id".to_string());
         }
@@ -736,7 +766,16 @@ async fn ingest_transaction_event_batch(
     (StatusCode::OK, Json(response))
 }
 
-fn parse_transaction_event_ndjson(body: &[u8]) -> std::result::Result<Vec<Value>, String> {
+#[derive(Debug, Clone)]
+struct RawTransactionEvent {
+    value: Value,
+    byte_len: usize,
+}
+
+fn parse_transaction_event_ndjson(
+    body: &[u8],
+    max_batch_size: usize,
+) -> std::result::Result<Vec<RawTransactionEvent>, String> {
     let body =
         std::str::from_utf8(body).map_err(|err| format!("request body is not UTF-8: {err}"))?;
 
@@ -745,6 +784,9 @@ fn parse_transaction_event_ndjson(body: &[u8]) -> std::result::Result<Vec<Value>
         let line = line.trim();
         if line.is_empty() {
             continue;
+        }
+        if events.len() >= max_batch_size {
+            return Err(format!("batch size exceeds maximum {max_batch_size}"));
         }
 
         let value: Value = serde_json::from_str(line).map_err(|err| {
@@ -762,7 +804,7 @@ fn parse_transaction_event_ndjson(body: &[u8]) -> std::result::Result<Vec<Value>
                 line_index + 1
             ));
         }
-        events.push(value);
+        events.push(RawTransactionEvent { value, byte_len: line.len() });
     }
     Ok(events)
 }
@@ -774,27 +816,23 @@ struct ValidationRejection {
 }
 
 fn validate_transaction_event(
-    raw_event: Value,
+    raw_event: RawTransactionEvent,
     config: &TransactionEventIngestConfig,
 ) -> std::result::Result<TransactionEvent, ValidationRejection> {
-    let event_id = raw_event.get("event_id").and_then(Value::as_str).map(ToString::to_string);
+    let event_id = raw_event.value.get("event_id").and_then(Value::as_str).map(ToString::to_string);
 
-    let event_size = serde_json::to_vec(&raw_event).map_err(|err| ValidationRejection {
-        event_id: event_id.clone(),
-        reason: format!("event is not serializable JSON: {err}"),
-    })?;
-    if event_size.len() > config.max_event_bytes {
+    if raw_event.byte_len > config.max_event_bytes {
         return Err(ValidationRejection {
             event_id,
             reason: format!(
                 "event size {} exceeds maximum {} bytes",
-                event_size.len(),
-                config.max_event_bytes
+                raw_event.byte_len, config.max_event_bytes
             ),
         });
     }
 
     let data_size = raw_event
+        .value
         .get("data")
         .map(serde_json::to_vec)
         .transpose()
@@ -814,7 +852,7 @@ fn validate_transaction_event(
     }
 
     let event: TransactionEvent =
-        serde_json::from_value(raw_event).map_err(|err| ValidationRejection {
+        serde_json::from_value(raw_event.value).map_err(|err| ValidationRejection {
             event_id: event_id.clone(),
             reason: format!("invalid transaction event envelope: {err}"),
         })?;
@@ -936,6 +974,11 @@ mod tests {
         Bytes::from(body)
     }
 
+    fn raw_event(value: Value) -> RawTransactionEvent {
+        let byte_len = serde_json::to_string(&value).unwrap().len();
+        RawTransactionEvent { value, byte_len }
+    }
+
     #[tokio::test]
     async fn accepts_valid_ndjson_batch() {
         let state = state(Arc::new(FakeSink::default()));
@@ -1020,7 +1063,7 @@ mod tests {
         let mut raw = event("event-1");
         raw["data"] = json!({ "authorization": "Bearer token" });
 
-        let rejection = validate_transaction_event(raw, &config()).unwrap_err();
+        let rejection = validate_transaction_event(raw_event(raw), &config()).unwrap_err();
 
         assert!(rejection.reason.contains("forbidden key authorization"));
     }
@@ -1032,8 +1075,25 @@ mod tests {
         data.insert("large".to_string(), Value::String("x".repeat(2048)));
         raw["data"] = Value::Object(data);
 
-        let rejection = validate_transaction_event(raw, &config()).unwrap_err();
+        let rejection = validate_transaction_event(raw_event(raw), &config()).unwrap_err();
 
         assert!(rejection.reason.contains("data size"));
+    }
+
+    #[tokio::test]
+    async fn rejects_too_many_ndjson_events_before_validation() {
+        let mut config = config();
+        config.max_batch_size = 1;
+        let state = TransactionEventIngestState { sink: Arc::new(FakeSink::default()), config };
+
+        let (status, Json(response)) = ingest_transaction_event_batch(
+            &state,
+            ndjson(vec![event("event-1"), event("event-2")]),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
+        assert!(response.results[0].reason.as_deref().unwrap().contains("batch size"));
     }
 }

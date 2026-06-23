@@ -33,6 +33,10 @@ CREATE INDEX IF NOT EXISTS transaction_events_payload_id_event_time_idx
 CREATE INDEX IF NOT EXISTS transaction_events_producer_event_type_event_time_idx
     ON transaction_events (producer, event_type, event_time);
 
+CREATE INDEX IF NOT EXISTS transaction_events_rejected_event_time_idx
+    ON transaction_events (event_type, event_time DESC)
+    WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED');
+
 CREATE INDEX IF NOT EXISTS transaction_events_bundle_hash_event_time_idx
     ON transaction_events ((data->>'bundle_hash'), event_time)
     WHERE data ? 'bundle_hash';

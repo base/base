@@ -333,7 +333,12 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
 }
 
 fn internal_rpc_error(error: anyhow::Error) -> ErrorObjectOwned {
-    ErrorObjectOwned::owned(ErrorCode::InternalError.code(), error.to_string(), None::<()>)
+    error!(error = %error, "transaction event query failed");
+    ErrorObjectOwned::owned(
+        ErrorCode::InternalError.code(),
+        "internal server error".to_string(),
+        None::<()>,
+    )
 }
 
 #[cfg(test)]

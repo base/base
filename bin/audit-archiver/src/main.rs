@@ -44,6 +44,10 @@ enum Command {
     Migrate,
 }
 
+/// Postgres migration action for the `migrate` command.
+///
+/// Only `up` is supported because audit-archiver migrations are intended to be
+/// forward-only operational changes.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum MigrationDirection {
     Up,
@@ -239,15 +243,16 @@ async fn run_server(args: Args) -> Result<()> {
     if let Some(sink) = transaction_event_sink.clone() {
         rpc_module = rpc_module.with_transaction_event_store(sink);
     }
+    // The jsonrpsee service is driven by the axum listener below. Keep the
+    // stop handle passed into the service builder; axum owns the HTTP server
+    // lifecycle for this combined RPC and transaction-event endpoint.
     let (rpc_stop_handle, _rpc_server_handle) = stop_channel();
     let rpc_service =
         ServerBuilder::default().to_service_builder().build(rpc_module.into_rpc(), rpc_stop_handle);
     let rpc_service = ServiceBuilder::new()
         .layer(HandleErrorLayer::new(|error: BoxError| async move {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("audit archiver RPC service error: {error}"),
-            )
+            error!(error = %error, "audit archiver RPC service error");
+            (StatusCode::INTERNAL_SERVER_ERROR, "internal server error".to_string())
         }))
         .service(rpc_service);
 
@@ -311,7 +316,7 @@ async fn readyz_handler(State(state): State<HealthState>) -> Response {
         Ok(()) => (StatusCode::OK, "ready\n".to_string()).into_response(),
         Err(err) => {
             error!(error = %err, "audit archiver readiness check failed");
-            (StatusCode::SERVICE_UNAVAILABLE, format!("{err}\n")).into_response()
+            (StatusCode::SERVICE_UNAVAILABLE, "not ready\n".to_string()).into_response()
         }
     }
 }
