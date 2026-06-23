@@ -28,10 +28,13 @@ RUN go build -o /go/bin/eth2-val-tools .
 # The foundry image is Ubuntu-based and multi-arch (amd64/arm64)
 FROM ghcr.io/foundry-rs/foundry:v1.7.1 AS contracts-builder
 
-# base/contracts l3-changes commit (PRIV-1997, #345) that adds SystemDeploy's deferred
-# AggregateVerifier registration (registerAggregateVerifier) and Artifacts.load for the
-# re-entrant post-genesis registration flow.
-ARG CONTRACTS_COMMIT=65dd69c69b3cb118341e89ed43377e01e75bcc6e
+# base/contracts l3-changes commit (PRIV-2006, #349) that defers AnchorStateRegistry
+# initialization out of genesis and seeds it with the real L3 genesis output root during
+# registerAggregateVerifier. Builds on the deferred AggregateVerifier registration (#345)
+# and the dev-multiproof Base Sepolia support (#348). Required by the post-genesis
+# register-aggregate-verifier.sh flow; without it the anchor stays the 0x..01 placeholder
+# and the TEE prover rejects proofs ("Output root does not match L2 head").
+ARG CONTRACTS_COMMIT=cd6c8a2d8b84a08fa7b4650b1c3a7d348dbd4922
 
 # git is pre-installed in the foundry image (Ubuntu 22.04)
 RUN git config --global user.email "docker@build" && \
