@@ -4,11 +4,11 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_provider::Provider;
-use base_runtime::{Runtime, TokioRuntime};
+use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, info, warn};
 
-use crate::{RuntimeTimeout, TxManagerError};
+use crate::TxManagerError;
 
 /// Internal state tracked by [`NonceManager`].
 ///

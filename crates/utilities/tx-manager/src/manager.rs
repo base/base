@@ -55,15 +55,15 @@ use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
-use base_runtime::{Runtime, TokioRuntime};
+use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
     BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager,
-    RpcErrorClassifier, RuntimeTimeout, SendHandle, SendResponse, SendState, SignerConfig,
-    TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
+    RpcErrorClassifier, SendHandle, SendResponse, SendState, SignerConfig, TxCandidate, TxManager,
+    TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
 };
 
 /// Number of wei in one gwei (10^9), as `f64` for fractional-precision
@@ -1494,28 +1494,34 @@ where
         tx_hash: B256,
         receipt_tx: mpsc::Sender<TransactionReceipt>,
     ) {
-        let provider = self.provider.clone();
-        let config = self.config.clone();
-        let runtime = self.runtime.clone();
-        let closed = Arc::clone(&self.closed);
+        let manager = self.clone();
         self.runtime.spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
-            let receipt = Self::wait_mined_with_runtime(
-                &runtime,
-                &send_state,
-                &provider,
-                tx_hash,
-                &config,
-                &closed,
-            )
-            .await;
+            let receipt = manager.wait_mined_for_tx(&send_state, tx_hash).await;
             if let Some(receipt) = receipt {
                 let _ = receipt_tx.send(receipt).await;
             }
 
             debug!(tx_hash = %tx_hash, "receipt polling ended");
         });
+    }
+
+    /// Polls for a transaction receipt using this manager's configured runtime.
+    async fn wait_mined_for_tx(
+        &self,
+        send_state: &SendState,
+        tx_hash: B256,
+    ) -> Option<TransactionReceipt> {
+        Self::wait_mined_using_runtime(
+            &self.runtime,
+            send_state,
+            &self.provider,
+            tx_hash,
+            &self.config,
+            &self.closed,
+        )
+        .await
     }
 
     /// Polls for a transaction receipt at `receipt_query_interval` until
@@ -1531,7 +1537,7 @@ where
         config: &TxManagerConfig,
         closed: &AtomicBool,
     ) -> Option<TransactionReceipt> {
-        Self::wait_mined_with_runtime(
+        Self::wait_mined_using_runtime(
             &TokioRuntime::new(),
             send_state,
             provider,
@@ -1542,8 +1548,8 @@ where
         .await
     }
 
-    /// Runtime-backed variant of [`wait_mined`](Self::wait_mined).
-    pub async fn wait_mined_with_runtime<Rt>(
+    /// Runtime-backed implementation of [`wait_mined`](Self::wait_mined).
+    async fn wait_mined_using_runtime<Rt>(
         runtime: &Rt,
         send_state: &SendState,
         provider: &P,
@@ -1566,7 +1572,7 @@ where
                 runtime.sleep(config.receipt_query_interval).await;
             }
 
-            match Self::query_receipt_with_runtime(
+            match Self::query_receipt_using_runtime(
                 runtime,
                 send_state,
                 provider,
@@ -1622,7 +1628,7 @@ where
         num_confirmations: u64,
         network_timeout: Duration,
     ) -> TxManagerResult<Option<TransactionReceipt>> {
-        Self::query_receipt_with_runtime(
+        Self::query_receipt_using_runtime(
             &TokioRuntime::new(),
             send_state,
             provider,
@@ -1633,8 +1639,8 @@ where
         .await
     }
 
-    /// Runtime-backed variant of [`query_receipt`](Self::query_receipt).
-    pub async fn query_receipt_with_runtime<Rt>(
+    /// Runtime-backed implementation of [`query_receipt`](Self::query_receipt).
+    async fn query_receipt_using_runtime<Rt>(
         runtime: &Rt,
         send_state: &SendState,
         provider: &P,
@@ -1807,7 +1813,8 @@ mod tests {
 
     use super::{BumpState, PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
-        GasPriceCaps, NoopTxMetrics, SendState, TxCandidate, TxManagerConfig, TxManagerError,
+        GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate, TxManagerConfig,
+        TxManagerError,
     };
 
     async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -1846,24 +1853,31 @@ mod tests {
             }
             let provider = ProviderBuilder::new().connect_mocked_client(asserter);
             let send_state = SendState::new(3).expect("send state should be valid");
-            let closed = AtomicBool::new(false);
             let config = TxManagerConfig {
                 receipt_query_interval: Duration::from_secs(1),
                 confirmation_timeout: Duration::from_secs(3),
                 network_timeout: Duration::from_secs(30),
                 ..TxManagerConfig::default()
             };
+            let wallet = EthereumWallet::from(PrivateKeySigner::random());
+            let nonce_manager = NonceManager::with_runtime(
+                ctx.clone(),
+                provider.clone(),
+                Address::ZERO,
+                config.network_timeout,
+            );
+            let manager = SimpleTxManager {
+                provider,
+                runtime: ctx.clone(),
+                wallet,
+                config,
+                nonce_manager,
+                chain_id: 1,
+                closed: Arc::new(AtomicBool::new(false)),
+                metrics: Arc::new(NoopTxMetrics),
+            };
 
-            let receipt =
-                SimpleTxManager::<_, base_runtime::TokioRuntime>::wait_mined_with_runtime(
-                    &ctx,
-                    &send_state,
-                    &provider,
-                    B256::with_last_byte(1),
-                    &config,
-                    &closed,
-                )
-                .await;
+            let receipt = manager.wait_mined_for_tx(&send_state, B256::with_last_byte(1)).await;
 
             assert!(receipt.is_none(), "receipt polling should stop at confirmation timeout");
             assert_eq!(ctx.now(), Duration::from_secs(3));
