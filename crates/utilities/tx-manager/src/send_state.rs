@@ -148,12 +148,6 @@ impl SendState {
     ///    bump cycle, not by aborting (which would leak a pre-reserved nonce
     ///    and stall publication on lower nonces still live on L1).
     /// 7. Otherwise, returns `None`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the state has an unpublished runtime-relative mempool
-    /// deadline. Use [`Self::critical_error_at`] when a runtime-backed
-    /// deadline has been set.
     #[must_use]
     pub fn critical_error(&self) -> Option<TxManagerError> {
         self.critical_error_with(None)
@@ -185,17 +179,17 @@ impl SendState {
         }
         if !inner.has_published
             && let Some(deadline) = inner.mempool_deadline
-            && match deadline {
-                MempoolDeadline::Runtime(deadline) => runtime_now.map_or_else(
-                    || {
-                        panic!("runtime-relative mempool deadline requires critical_error_at");
-                    },
-                    |now| now >= deadline,
-                ),
-                MempoolDeadline::WallClock(deadline) => Instant::now() >= deadline,
-            }
         {
-            return Some(TxManagerError::MempoolDeadlineExpired);
+            let expired = match deadline {
+                MempoolDeadline::Runtime(deadline) => match runtime_now {
+                    Some(now) => now >= deadline,
+                    None => return Some(TxManagerError::RuntimeMempoolDeadlineMissingTimestamp),
+                },
+                MempoolDeadline::WallClock(deadline) => Instant::now() >= deadline,
+            };
+            if expired {
+                return Some(TxManagerError::MempoolDeadlineExpired);
+            }
         }
 
         None
@@ -513,12 +507,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "runtime-relative mempool deadline requires critical_error_at")]
-    fn runtime_mempool_deadline_requires_runtime_timestamp() {
+    fn runtime_mempool_deadline_without_runtime_timestamp_returns_error() {
         let state = SendState::new(3).unwrap();
         state.set_runtime_mempool_deadline(Duration::from_secs(1));
 
-        let _ = state.critical_error();
+        assert_eq!(
+            state.critical_error(),
+            Some(TxManagerError::RuntimeMempoolDeadlineMissingTimestamp),
+        );
+        assert!(!state.take_bump_fees(), "state remains usable after the configuration error",);
+        assert!(state.critical_error_at(Duration::ZERO).is_none());
+        assert_eq!(
+            state.critical_error_at(Duration::from_secs(1)),
+            Some(TxManagerError::MempoolDeadlineExpired),
+        );
     }
 
     // ── Pre-publish immediate abort ─────────────────────────────────────
