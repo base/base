@@ -173,7 +173,7 @@ impl TestRollupConfigBuilder {
     ///
     /// Cobalt is a standalone Base-specific fork, independent of the inherited fork cascade.
     pub const fn with_cobalt_at(mut self, t: u64) -> Self {
-        self.config.hardforks.base.cobalt = Some(t);
+        self.config.upgrades.base.cobalt = Some(t);
         self
     }
 
