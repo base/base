@@ -17,8 +17,8 @@ use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::RuntimeManager;
 use base_load_tests::{
     AccountPool, BaselineError, FundedAccount, LoadRunner, LoadTestDisplay, MetricsSummary,
-    QueryProvider, RealTokenSetup, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
-    create_wallet_provider,
+    QueryProvider, RealTokenSetup, ReceiptCoverage, Result as LoadResult, RpcProviders,
+    RpcResultExt, TestConfig, create_wallet_provider,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use eyre::{Result, bail};
@@ -290,6 +290,13 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             summary.throughput.success_rate()
         );
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
+        let rc: &ReceiptCoverage = &summary.receipt_coverage;
+        if !rc.is_complete() {
+            println!(
+                "Receipts: INCOMPLETE - gas/revert metrics are partial: receipts missing for {} of {} block(s), {} of {} confirmed tx(s) not enriched",
+                rc.blocks_failed, rc.blocks_total, rc.transactions_missing, rc.transactions_total
+            );
+        }
         let br = &summary.block_range;
         match (br.first_block, br.last_block) {
             (Some(first), Some(last)) => {

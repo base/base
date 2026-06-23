@@ -31,6 +31,7 @@ impl<'a> MetricsAggregator<'a> {
         submission: SubmissionStats<'_>,
         throughput_samples: &[ThroughputSample],
         config: Option<ConfigSummary>,
+        receipt_coverage: ReceiptCoverage,
     ) -> MetricsSummary {
         let mut top_failure_reasons: Vec<(String, u64)> =
             submission.failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
@@ -59,6 +60,7 @@ impl<'a> MetricsAggregator<'a> {
             gas: Self::compute_gas(self.transactions),
             block_range,
             top_failure_reasons,
+            receipt_coverage,
         }
     }
 
@@ -240,11 +242,41 @@ pub struct MetricsSummary {
     pub block_range: BlockRange,
     /// Top failure reasons sorted by count descending (max 3).
     pub top_failure_reasons: Vec<(String, u64)>,
+    /// Coverage of the end-of-run receipt pass. Signals whether gas and revert
+    /// metrics are complete or partial.
+    pub receipt_coverage: ReceiptCoverage,
 }
 
 impl MetricsSummary {
     /// Serializes the summary to JSON.
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
+    }
+}
+
+/// Coverage of the end-of-run `eth_getBlockReceipts` enrichment pass.
+///
+/// When `blocks_failed > 0` or `transactions_missing > 0`, gas and revert metrics in
+/// the summary are partial: failed blocks contribute no receipts, and confirmed
+/// transactions without a matching receipt stay at `gas_used = 0` and `reverted = false`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct ReceiptCoverage {
+    /// Blocks the receipt pass attempted to fetch.
+    pub blocks_total: u64,
+    /// Blocks whose `eth_getBlockReceipts` call failed (timeout, RPC error, or empty).
+    pub blocks_failed: u64,
+    /// Confirmed transactions the receipt pass tried to enrich.
+    pub transactions_total: u64,
+    /// Confirmed transactions backfilled from a matching receipt.
+    pub transactions_matched: u64,
+    /// Confirmed transactions left at default gas/revert because no receipt matched.
+    pub transactions_missing: u64,
+}
+
+impl ReceiptCoverage {
+    /// Returns `true` when every block was fetched and every confirmed transaction
+    /// was matched to a receipt, so gas and revert metrics are complete.
+    pub const fn is_complete(&self) -> bool {
+        self.blocks_failed == 0 && self.transactions_missing == 0
     }
 }

@@ -1432,12 +1432,14 @@ impl LoadRunner {
                 landed_blocks.len()
             );
             let receipt_fetch_start = Instant::now();
-            let receipts = BlockWatcher::fetch_receipts(&receipt_provider, &landed_blocks).await;
+            let (receipts, failed_blocks) =
+                BlockWatcher::fetch_receipts(&receipt_provider, &landed_blocks).await;
             let receipts_by_hash: HashMap<TxHash, _> =
                 receipts.into_iter().map(|receipt| (receipt.tx_hash, receipt)).collect();
-            self.collector.apply_receipts(&receipts_by_hash);
+            self.collector.apply_receipts(&receipts_by_hash, landed_blocks.len(), failed_blocks);
             info!(
                 blocks = landed_blocks.len(),
+                failed_blocks,
                 receipts = receipts_by_hash.len(),
                 elapsed_secs = receipt_fetch_start.elapsed().as_secs_f64(),
                 "end-of-run receipt pass complete"

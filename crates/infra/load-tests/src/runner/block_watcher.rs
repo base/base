@@ -167,49 +167,64 @@ impl BlockWatcher {
 
     /// Fetches canonical receipts for the given block numbers in a single batch pass.
     ///
-    /// Returns one [`BlockReceipt`] per transaction across all requested blocks.
-    /// Intended for the end-of-run enrichment pass, where the caller already knows
-    /// exactly which blocks contain its transactions, so receipts are fetched only
-    /// for those blocks.
+    /// Returns the [`BlockReceipt`]s for every transaction across all requested blocks,
+    /// plus the count of blocks whose `eth_getBlockReceipts` call failed (timeout, RPC
+    /// error, or missing receipts). A non-zero failed count means the receipt data is
+    /// incomplete, so downstream gas/revert metrics are partial. Intended for the
+    /// end-of-run enrichment pass, where the caller already knows exactly which blocks
+    /// contain its transactions, so receipts are fetched only for those blocks.
     pub async fn fetch_receipts(
         provider: &RootProvider<Base>,
         block_numbers: &[u64],
-    ) -> Vec<BlockReceipt> {
-        stream::iter(block_numbers.iter().copied())
+    ) -> (Vec<BlockReceipt>, usize) {
+        let per_block: Vec<(Vec<BlockReceipt>, bool)> = stream::iter(block_numbers.iter().copied())
             .map(|block_number| Self::fetch_block_receipts(provider, block_number))
             .buffer_unordered(RECEIPT_FETCH_CONCURRENCY)
-            .flat_map(stream::iter)
             .collect()
-            .await
+            .await;
+
+        let mut receipts = Vec::new();
+        let mut failed_blocks = 0;
+        for (block_receipts, failed) in per_block {
+            if failed {
+                failed_blocks += 1;
+            }
+            receipts.extend(block_receipts);
+        }
+        (receipts, failed_blocks)
     }
 
     /// Fetches the canonical receipts for a single block, mapping each into a
-    /// [`BlockReceipt`]. Returns an empty vector on timeout, RPC error, or missing
-    /// receipts (logged as a warning) so a single bad block cannot fail the pass.
+    /// [`BlockReceipt`]. On timeout, RPC error, or missing receipts (logged as a
+    /// warning) returns `(empty vec, true)` so a single bad block cannot fail the pass
+    /// while still being counted as a failed fetch by the caller.
     async fn fetch_block_receipts(
         provider: &RootProvider<Base>,
         block_number: u64,
-    ) -> Vec<BlockReceipt> {
+    ) -> (Vec<BlockReceipt>, bool) {
         let block_id = BlockId::Number(BlockNumberOrTag::Number(block_number));
         match tokio::time::timeout(RECEIPT_RPC_TIMEOUT, provider.get_block_receipts(block_id)).await
         {
-            Ok(Ok(Some(receipts))) => receipts
-                .into_iter()
-                .map(|receipt| BlockReceipt {
-                    tx_hash: receipt.transaction_hash(),
-                    block_number: receipt.block_number().unwrap_or(block_number),
-                    gas_used: receipt.gas_used(),
-                    effective_gas_price: receipt.effective_gas_price(),
-                    success: receipt.status(),
-                })
-                .collect(),
+            Ok(Ok(Some(receipts))) => {
+                let mapped = receipts
+                    .into_iter()
+                    .map(|receipt| BlockReceipt {
+                        tx_hash: receipt.transaction_hash(),
+                        block_number: receipt.block_number().unwrap_or(block_number),
+                        gas_used: receipt.gas_used(),
+                        effective_gas_price: receipt.effective_gas_price(),
+                        success: receipt.status(),
+                    })
+                    .collect();
+                (mapped, false)
+            }
             Ok(Ok(None)) => {
                 warn!(block = block_number, "eth_getBlockReceipts returned no receipts");
-                Vec::new()
+                (Vec::new(), true)
             }
             Ok(Err(e)) => {
                 warn!(block = block_number, error = %e, "eth_getBlockReceipts failed");
-                Vec::new()
+                (Vec::new(), true)
             }
             Err(_) => {
                 warn!(
@@ -217,7 +232,7 @@ impl BlockWatcher {
                     timeout_secs = RECEIPT_RPC_TIMEOUT.as_secs(),
                     "eth_getBlockReceipts timed out"
                 );
-                Vec::new()
+                (Vec::new(), true)
             }
         }
     }

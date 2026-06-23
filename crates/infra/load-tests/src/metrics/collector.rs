@@ -4,11 +4,11 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::{
-    ConfigSummary, MetricsAggregator, MetricsSummary, RollingWindow, SubmissionStats,
-    ThroughputSample, TransactionMetrics,
+    ConfigSummary, MetricsAggregator, MetricsSummary, ReceiptCoverage, RollingWindow,
+    SubmissionStats, ThroughputSample, TransactionMetrics,
 };
 use crate::runner::BlockReceipt;
 
@@ -27,6 +27,9 @@ pub struct MetricsCollector {
     /// still pending. Canonical gas arrives only in the end-of-run receipt pass, so
     /// without this the rolling GPS would read 0 for the whole run.
     estimated_gas: u64,
+    /// Coverage of the end-of-run receipt pass, populated by [`Self::apply_receipts`].
+    /// Signals whether the final gas/revert metrics are complete or partial.
+    receipt_coverage: ReceiptCoverage,
 }
 
 impl MetricsCollector {
@@ -42,6 +45,7 @@ impl MetricsCollector {
             flashblocks_rolling: RollingWindow::new(),
             throughput_samples: Vec::new(),
             estimated_gas: 0,
+            receipt_coverage: ReceiptCoverage::default(),
         }
     }
 
@@ -85,8 +89,16 @@ impl MetricsCollector {
     /// from the end-of-run canonical receipt pass.
     ///
     /// Receipts are keyed by transaction hash. Landed transactions without a matching
-    /// receipt keep their default gas (0) and `reverted = false`.
-    pub fn apply_receipts(&mut self, receipts: &HashMap<TxHash, BlockReceipt>) {
+    /// receipt keep their default gas (0) and `reverted = false`. `blocks_total` and
+    /// `blocks_failed` come from the fetch pass and, together with the per-transaction
+    /// match counts computed here, populate the [`ReceiptCoverage`] surfaced in the
+    /// summary so partial gas/revert data is visible to the user.
+    pub fn apply_receipts(
+        &mut self,
+        receipts: &HashMap<TxHash, BlockReceipt>,
+        blocks_total: usize,
+        blocks_failed: usize,
+    ) {
         let mut reverted = 0;
         let mut matched = 0;
         for tx in &mut self.transactions {
@@ -102,7 +114,27 @@ impl MetricsCollector {
             matched += 1;
         }
         self.reverted_count = reverted;
-        debug!(matched, total = self.transactions.len(), reverted, "applied end-of-run receipts");
+        let total = self.transactions.len();
+        let missing = total - matched;
+        self.receipt_coverage = ReceiptCoverage {
+            blocks_total: blocks_total as u64,
+            blocks_failed: blocks_failed as u64,
+            transactions_total: total as u64,
+            transactions_matched: matched as u64,
+            transactions_missing: missing as u64,
+        };
+        if missing > 0 || blocks_failed > 0 {
+            warn!(
+                matched,
+                missing,
+                total,
+                blocks_failed,
+                blocks_total,
+                "end-of-run receipt pass incomplete: gas and revert metrics are partial"
+            );
+        } else {
+            debug!(matched, total, reverted, "applied end-of-run receipts");
+        }
     }
 
     /// Records a failed transaction with a categorized reason.
@@ -156,6 +188,7 @@ impl MetricsCollector {
             },
             &self.throughput_samples,
             config,
+            self.receipt_coverage,
         )
     }
 
@@ -170,6 +203,7 @@ impl MetricsCollector {
         self.flashblocks_rolling = RollingWindow::new();
         self.throughput_samples.clear();
         self.estimated_gas = 0;
+        self.receipt_coverage = ReceiptCoverage::default();
     }
 
     /// Snapshots the current rolling TPS and GPS with elapsed time for timeseries output.
@@ -265,12 +299,15 @@ mod tests {
             (ok_hash, receipt(ok_hash, 21_000, true)),
             (bad_hash, receipt(bad_hash, 45_000, false)),
         ]);
-        collector.apply_receipts(&receipts);
+        collector.apply_receipts(&receipts, 1, 0);
 
         let summary = collector.summarize(Duration::from_secs(1), None);
         assert_eq!(summary.gas.total_gas, 66_000, "gas backfilled from receipts");
         assert_eq!(summary.throughput.total_reverted, 1, "exactly one tx reverted");
         assert_eq!(collector.reverted_count(), 1, "reverted_count set by apply_receipts");
+        assert!(summary.receipt_coverage.is_complete(), "all txs matched, no failed blocks");
+        assert_eq!(summary.receipt_coverage.transactions_matched, 2, "both txs enriched");
+        assert_eq!(summary.receipt_coverage.transactions_missing, 0, "no missing receipts");
     }
 
     #[test]
@@ -282,12 +319,34 @@ mod tests {
         collector.record_confirmed(landed(unmatched_hash, 7));
 
         let receipts = HashMap::from([(landed_hash, receipt(landed_hash, 30_000, true))]);
-        collector.apply_receipts(&receipts);
+        collector.apply_receipts(&receipts, 1, 0);
 
         let summary = collector.summarize(Duration::from_secs(1), None);
         assert_eq!(summary.gas.total_gas, 30_000, "only matched tx contributes gas");
         assert_eq!(summary.throughput.total_reverted, 0, "no reverts");
         assert_eq!(collector.reverted_count(), 0, "unmatched tx stays non-reverted");
+        let rc = summary.receipt_coverage;
+        assert!(!rc.is_complete(), "one tx missing a receipt makes coverage incomplete");
+        assert_eq!(rc.transactions_total, 2, "two confirmed txs");
+        assert_eq!(rc.transactions_matched, 1, "exactly one tx enriched");
+        assert_eq!(rc.transactions_missing, 1, "exactly one tx missing a receipt");
+        assert_eq!(rc.blocks_failed, 0, "no block fetch failures in this case");
+    }
+
+    #[test]
+    fn apply_receipts_records_failed_block_coverage() {
+        let landed_hash = TxHash::repeat_byte(5);
+        let mut collector = MetricsCollector::new();
+        collector.record_confirmed(landed(landed_hash, 9));
+
+        collector.apply_receipts(&HashMap::new(), 2, 2);
+
+        let rc = collector.summarize(Duration::from_secs(1), None).receipt_coverage;
+        assert!(!rc.is_complete(), "all blocks failed → coverage incomplete");
+        assert_eq!(rc.blocks_total, 2, "two blocks attempted");
+        assert_eq!(rc.blocks_failed, 2, "both block fetches failed");
+        assert_eq!(rc.transactions_missing, 1, "the single confirmed tx got no receipt");
+        assert_eq!(rc.transactions_matched, 0, "no txs enriched");
     }
 
     #[test]
