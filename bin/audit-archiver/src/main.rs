@@ -8,7 +8,6 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     PgTransactionEventSink, RpcEventReader, S3EventReaderWriter, TransactionEventIngestConfig,
-    transaction_event_router,
 };
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
@@ -259,7 +258,6 @@ async fn run_server(args: Args) -> Result<()> {
     let health_router = health_router(transaction_event_sink.clone());
     let http_app = if let Some(sink) = transaction_event_sink {
         let config = TransactionEventIngestConfig {
-            listen_addr: rpc_addr,
             path: args.transaction_event_http_path.clone(),
             max_batch_size: args.transaction_event_max_batch_size,
             max_event_bytes: args.transaction_event_max_event_bytes,
@@ -268,9 +266,7 @@ async fn run_server(args: Args) -> Result<()> {
         };
         let path = config.path.clone();
         info!(rpc_addr = %rpc_addr, %path, "transaction event HTTP ingest enabled on audit RPC server");
-        transaction_event_router(Arc::new(sink), config)
-            .merge(health_router)
-            .fallback_service(rpc_service)
+        config.into_router(Arc::new(sink)).merge(health_router).fallback_service(rpc_service)
     } else {
         info!("transaction event HTTP ingest disabled; TIPS_AUDIT_POSTGRES_URL is not set");
         health_router.fallback_service(rpc_service)

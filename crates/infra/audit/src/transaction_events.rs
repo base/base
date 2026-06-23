@@ -1,6 +1,6 @@
 //! HTTP ingest path for transaction observability events.
 
-use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Instant};
+use std::{collections::HashSet, sync::Arc, time::Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -52,8 +52,6 @@ pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
 /// Configuration for transaction event HTTP ingest.
 #[derive(Debug, Clone)]
 pub struct TransactionEventIngestConfig {
-    /// HTTP listen address.
-    pub listen_addr: SocketAddr,
     /// HTTP path.
     pub path: String,
     /// Maximum events per request.
@@ -134,7 +132,7 @@ const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction even
 static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// Required sqlx migration version for transaction event storage.
-pub fn required_transaction_event_migration_version() -> Result<i64, &'static str> {
+fn required_transaction_event_migration_version() -> Result<i64, &'static str> {
     let mut matching_migrations = TRANSACTION_EVENT_MIGRATOR.iter().filter(|migration| {
         migration.description.as_ref() == REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION
     });
@@ -252,6 +250,11 @@ pub struct PgTransactionEventSink {
 }
 
 impl PgTransactionEventSink {
+    /// Required sqlx migration version for transaction event storage.
+    pub fn required_migration_version() -> Result<i64, &'static str> {
+        required_transaction_event_migration_version()
+    }
+
     /// Connects to Postgres without running migrations.
     pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
         let max_connections = max_connections.max(1);
@@ -599,24 +602,24 @@ struct TransactionEventIngestState {
     config: TransactionEventIngestConfig,
 }
 
-/// Builds the Vector-facing transaction event ingest router.
-///
-/// The route-specific request body limit is applied only to this router, so it
-/// can be mounted alongside other HTTP services without changing their limits.
-pub fn transaction_event_router(
-    sink: Arc<dyn TransactionEventSink>,
-    mut config: TransactionEventIngestConfig,
-) -> Router {
-    config.max_batch_size = config.max_batch_size.min(MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE);
-    let max_request_bytes = config.max_request_bytes;
-    let path = config.path.clone();
-    let state = Arc::new(TransactionEventIngestState { sink, config });
+impl TransactionEventIngestConfig {
+    /// Builds the Vector-facing transaction event ingest router.
+    ///
+    /// The route-specific request body limit is applied only to this router, so
+    /// it can be mounted alongside other HTTP services without changing their
+    /// limits.
+    pub fn into_router(mut self, sink: Arc<dyn TransactionEventSink>) -> Router {
+        self.max_batch_size = self.max_batch_size.min(MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE);
+        let max_request_bytes = self.max_request_bytes;
+        let path = self.path.clone();
+        let state = Arc::new(TransactionEventIngestState { sink, config: self });
 
-    Router::new()
-        .route(&path, post(transaction_event_batch_handler))
-        .layer(DefaultBodyLimit::disable())
-        .layer(RequestBodyLimitLayer::new(max_request_bytes))
-        .with_state(state)
+        Router::new()
+            .route(&path, post(transaction_event_batch_handler))
+            .layer(DefaultBodyLimit::disable())
+            .layer(RequestBodyLimitLayer::new(max_request_bytes))
+            .with_state(state)
+    }
 }
 
 async fn transaction_event_batch_handler(
@@ -668,28 +671,6 @@ async fn ingest_transaction_event_batch(
                     event_id: None,
                     status: TransactionEventItemStatus::Rejected,
                     reason: Some("batch must contain at least one event".to_string()),
-                }],
-            }),
-        );
-    }
-
-    if events.len() > state.config.max_batch_size {
-        Metrics::transaction_events_rejected().increment(metric_len_u64(events.len()));
-        return (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json(TransactionEventBatchResponse {
-                status: TransactionEventBatchStatus::Rejected,
-                accepted: 0,
-                duplicate: 0,
-                rejected: events.len(),
-                results: vec![TransactionEventItemResult {
-                    event_id: None,
-                    status: TransactionEventItemStatus::Rejected,
-                    reason: Some(format!(
-                        "batch size {} exceeds maximum {}",
-                        events.len(),
-                        state.config.max_batch_size
-                    )),
                 }],
             }),
         );
@@ -966,7 +947,6 @@ mod tests {
 
     fn config() -> TransactionEventIngestConfig {
         TransactionEventIngestConfig {
-            listen_addr: "127.0.0.1:0".parse().unwrap(),
             path: DEFAULT_TRANSACTION_EVENT_BATCH_PATH.to_string(),
             max_batch_size: 10,
             max_event_bytes: 4096,

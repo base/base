@@ -11,7 +11,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use audit_archiver_lib::{
     PgTransactionEventSink, TransactionEventSchemaReadinessError, TransactionEventSink,
-    required_transaction_event_migration_version,
 };
 use base_observability_events::TransactionEvent;
 use chrono::Utc;
@@ -90,7 +89,7 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
         .await?;
     let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
     let expected_version =
-        required_transaction_event_migration_version().map_err(anyhow::Error::msg)?;
+        PgTransactionEventSink::required_migration_version().map_err(anyhow::Error::msg)?;
 
     let err = sink.check_schema_ready().await.unwrap_err();
     assert!(matches!(
@@ -107,7 +106,7 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
 #[test]
 fn transaction_events_migration_version_matches_sqlx_migration_metadata() -> anyhow::Result<()> {
     assert_eq!(
-        required_transaction_event_migration_version().map_err(anyhow::Error::msg)?,
+        PgTransactionEventSink::required_migration_version().map_err(anyhow::Error::msg)?,
         1,
         "001_transaction_events.sql should resolve to sqlx migration version 1"
     );
@@ -126,7 +125,7 @@ async fn transaction_events_ready_after_required_migration() -> anyhow::Result<(
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
     let applied: (bool,) =
         sqlx::query_as("SELECT success FROM _sqlx_migrations WHERE version = $1")
-            .bind(required_transaction_event_migration_version().map_err(anyhow::Error::msg)?)
+            .bind(PgTransactionEventSink::required_migration_version().map_err(anyhow::Error::msg)?)
             .fetch_one(&pool)
             .await?;
     assert!(applied.0);
