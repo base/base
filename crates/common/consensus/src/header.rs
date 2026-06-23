@@ -292,18 +292,6 @@ impl BaseHeader {
         }
     }
 
-    fn decode_optional_upstream_field<T: Decodable>(
-        buf: &mut &[u8],
-        started_len: usize,
-        payload_length: usize,
-    ) -> alloy_rlp::Result<Option<T>> {
-        if Self::has_next_upstream_optional_field(buf, started_len, payload_length) {
-            T::decode(buf).map(Some)
-        } else {
-            Ok(None)
-        }
-    }
-
     fn has_next_upstream_optional_field(
         buf: &[u8],
         started_len: usize,
@@ -514,22 +502,37 @@ impl Decodable for BaseHeader {
         // encode as RLP strings, while the Base millisecond trailer is encoded as a
         // single-element RLP list and always written last, so we can stop decoding upstream
         // fields as soon as the next payload item is a list.
-        inner.base_fee_per_gas =
-            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
-        inner.withdrawals_root =
-            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
-        inner.blob_gas_used =
-            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
-        inner.excess_blob_gas =
-            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
-        inner.parent_beacon_block_root =
-            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
-        inner.requests_hash =
-            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
-        inner.block_access_list_hash =
-            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
-        inner.slot_number =
-            Self::decode_optional_upstream_field(buf, started_len, rlp_head.payload_length)?;
+        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
+            inner.base_fee_per_gas = Some(u64::decode(buf)?);
+        }
+
+        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
+            inner.withdrawals_root = Some(Decodable::decode(buf)?);
+        }
+
+        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
+            inner.blob_gas_used = Some(u64::decode(buf)?);
+        }
+
+        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
+            inner.excess_blob_gas = Some(u64::decode(buf)?);
+        }
+
+        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
+            inner.parent_beacon_block_root = Some(B256::decode(buf)?);
+        }
+
+        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
+            inner.requests_hash = Some(B256::decode(buf)?);
+        }
+
+        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
+            inner.block_access_list_hash = Some(B256::decode(buf)?);
+        }
+
+        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
+            inner.slot_number = Some(u64::decode(buf)?);
+        }
 
         let timestamp_millis_part =
             if Self::has_remaining_payload(buf, started_len, rlp_head.payload_length) {
