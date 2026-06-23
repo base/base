@@ -1,6 +1,10 @@
 //! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar.
 
-use std::{collections::HashMap, fmt, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    sync::Arc,
+};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
@@ -146,16 +150,32 @@ where
 
     fn nonce_free_replay_already_seen(&self, transaction: &T) -> Option<TxHash> {
         let replay_id = transaction.eip8130_nonce_free_replay_id()?;
-        let hash = self.nonce_free_replays.read().get(&replay_id).copied()?;
+        let mut index = self.nonce_free_replays.write();
+        let hash = index.get(&replay_id).copied()?;
         if self.protocol_pool.get(&hash).is_some() {
             return Some(hash);
         }
-        self.nonce_free_replays.write().remove(&replay_id);
+        index.remove(&replay_id);
         None
     }
 
     fn track_nonce_free_replay_id(&self, replay_id: B256, hash: TxHash) {
         self.nonce_free_replays.write().insert(replay_id, hash);
+        self.reconcile_nonce_free_replays_if_needed();
+    }
+
+    fn reconcile_nonce_free_replays_if_needed(&self) {
+        let pool_size = self.protocol_pool.pool_size().total;
+        if self.nonce_free_replays.read().len() <= pool_size {
+            return;
+        }
+        let mut rebuilt = HashMap::new();
+        for transaction in self.protocol_pool.pooled_transactions() {
+            if let Some(replay_id) = transaction.transaction.eip8130_nonce_free_replay_id() {
+                rebuilt.insert(replay_id, *transaction.hash());
+            }
+        }
+        *self.nonce_free_replays.write() = rebuilt;
     }
 
     fn untrack_nonce_free_replays(&self, transactions: &[Arc<ValidPoolTransaction<T>>]) {
@@ -168,6 +188,7 @@ where
     }
 
     fn untrack_nonce_free_hashes(&self, hashes: &[TxHash]) {
+        let hashes = hashes.iter().collect::<HashSet<_>>();
         let mut index = self.nonce_free_replays.write();
         index.retain(|_, indexed_hash| !hashes.contains(indexed_hash));
     }

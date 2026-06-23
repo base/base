@@ -889,7 +889,7 @@ mod tests {
         pool.lanes
             .insert(lane_id, NonceLane { next_nonce: u64::MAX, transactions: BTreeMap::new() });
 
-        let outcome = pool.insert_validated(transaction, 0).unwrap();
+        let outcome = pool.insert_validated(transaction, u64::MAX).unwrap();
 
         assert!(matches!(outcome.outcome.state, AddedTransactionState::Pending));
     }
@@ -967,7 +967,7 @@ mod tests {
 
         let replacement =
             valid_pool_transaction(signed_channel_tx(&signer, U256::from(11), 2, 850));
-        let error = pool.insert_validated(replacement, 0).unwrap_err();
+        let error = pool.insert_validated(replacement, 3).unwrap_err();
         assert!(matches!(error.kind, PoolErrorKind::InvalidTransaction(_)));
     }
 

@@ -422,6 +422,10 @@ where
     /// and payer balance. This deliberately bypasses the inner Eth validator for
     /// EIP-8130 because configured senders may be smart contracts and sponsored
     /// transactions charge a payer instead of the sender.
+    ///
+    /// The `validate_one_with_state` snapshot is only an `AccountInfoReader`; EIP-8130 needs
+    /// storage/code reads for account config, nonce channels, and delegation checks, so this path
+    /// takes its own full state snapshot.
     fn validate_eip8130_full(
         &self,
         signed: &Eip8130Signed,
@@ -840,12 +844,8 @@ where
         }
         signed
             .recover_eoa_sender()
-            .map_err(|_| {
-                InvalidPoolTransactionError::from(InvalidTransactionError::TxTypeNotSupported)
-            })?
-            .ok_or_else(|| {
-                InvalidPoolTransactionError::from(InvalidTransactionError::TxTypeNotSupported)
-            })?;
+            .map_err(|_| Self::eip8130_error("EOA sender signature recovery failed"))?
+            .ok_or_else(|| Self::eip8130_error("EOA sender signature recovery failed"))?;
         Ok(())
     }
 
