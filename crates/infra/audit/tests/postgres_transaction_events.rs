@@ -10,7 +10,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use audit_archiver_lib::{
-    PgTransactionEventSink, TransactionEventSchemaReadinessError, TransactionEventSink,
+    MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink,
+    TransactionEventSchemaReadinessError, TransactionEventSink,
 };
 use base_observability_events::TransactionEvent;
 use chrono::Utc;
@@ -129,6 +130,31 @@ async fn transaction_events_ready_after_required_migration() -> anyhow::Result<(
             .fetch_one(&pool)
             .await?;
     assert!(applied.0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_sink_chunks_large_direct_inserts() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let event_count = MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE + 1;
+    let event_prefix = unique_event_id();
+    let events =
+        (0..event_count).map(|index| event(&format!("{event_prefix}-{index}"))).collect::<Vec<_>>();
+
+    let outcome = sink.insert_events(&events).await?;
+
+    assert_eq!(outcome.inserted_event_ids.len(), event_count);
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM transaction_events WHERE event_id LIKE $1")
+            .bind(format!("{event_prefix}-%"))
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(count.0, i64::try_from(event_count)?);
 
     Ok(())
 }

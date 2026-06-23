@@ -344,6 +344,62 @@ impl PgTransactionEventSink {
         }
     }
 
+    async fn insert_event_chunk(
+        &self,
+        events: &[TransactionEvent],
+    ) -> std::result::Result<HashSet<String>, TransactionEventStorageError> {
+        let block_numbers: Vec<Option<i64>> = events
+            .iter()
+            .map(|event| {
+                event
+                    .block_number
+                    .map(i64::try_from)
+                    .transpose()
+                    .map_err(|err| TransactionEventStorageError::new(err.into()))
+            })
+            .collect::<std::result::Result<_, _>>()?;
+
+        let mut query_builder = QueryBuilder::new(
+            "INSERT INTO transaction_events \
+             (event_id, schema_version, event_time, producer, event_type, network, tx_hash, \
+              block_hash, block_number, payload_id, request_id, data) ",
+        );
+
+        query_builder.push_values(
+            events.iter().zip(block_numbers),
+            |mut row, (event, block_number)| {
+                let tx_hash = event.tx_hash.map(|hash| hash.to_string());
+                let block_hash = event.block_hash.map(|hash| hash.to_string());
+                let producer = event.producer.to_string();
+                let event_type = event.event_type.to_string();
+                let data = Value::Object(event.data.clone());
+
+                row.push_bind(&event.event_id)
+                    .push_bind(&event.schema_version)
+                    .push_bind(event.event_time)
+                    .push_bind(producer)
+                    .push_bind(event_type)
+                    .push_bind(&event.network)
+                    .push_bind(tx_hash)
+                    .push_bind(block_hash)
+                    .push_bind(block_number)
+                    .push_bind(&event.payload_id)
+                    .push_bind(&event.request_id)
+                    .push_bind(data);
+            },
+        );
+
+        query_builder.push(" ON CONFLICT (event_id) DO NOTHING RETURNING event_id");
+
+        let rows: Vec<(String,)> = query_builder
+            .build_query_as()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|source| TransactionEventStorageError::new(source.into()))?;
+
+        Ok(rows.into_iter().map(|(event_id,)| event_id).collect())
+    }
+
     /// Returns events for one transaction hash sorted by event time.
     pub async fn events_by_transaction_hash(
         &self,
@@ -541,58 +597,12 @@ impl TransactionEventSink for PgTransactionEventSink {
             return Ok(TransactionEventInsertOutcome { inserted_event_ids: HashSet::new() });
         }
 
-        let block_numbers: Vec<Option<i64>> = events
-            .iter()
-            .map(|event| {
-                event
-                    .block_number
-                    .map(i64::try_from)
-                    .transpose()
-                    .map_err(|err| TransactionEventStorageError::new(err.into()))
-            })
-            .collect::<std::result::Result<_, _>>()?;
+        let mut inserted_event_ids = HashSet::new();
+        for chunk in events.chunks(MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE) {
+            inserted_event_ids.extend(self.insert_event_chunk(chunk).await?);
+        }
 
-        let mut query_builder = QueryBuilder::new(
-            "INSERT INTO transaction_events \
-             (event_id, schema_version, event_time, producer, event_type, network, tx_hash, \
-              block_hash, block_number, payload_id, request_id, data) ",
-        );
-
-        query_builder.push_values(
-            events.iter().zip(block_numbers),
-            |mut row, (event, block_number)| {
-                let tx_hash = event.tx_hash.map(|hash| hash.to_string());
-                let block_hash = event.block_hash.map(|hash| hash.to_string());
-                let producer = event.producer.to_string();
-                let event_type = event.event_type.to_string();
-                let data = Value::Object(event.data.clone());
-
-                row.push_bind(&event.event_id)
-                    .push_bind(&event.schema_version)
-                    .push_bind(event.event_time)
-                    .push_bind(producer)
-                    .push_bind(event_type)
-                    .push_bind(&event.network)
-                    .push_bind(tx_hash)
-                    .push_bind(block_hash)
-                    .push_bind(block_number)
-                    .push_bind(&event.payload_id)
-                    .push_bind(&event.request_id)
-                    .push_bind(data);
-            },
-        );
-
-        query_builder.push(" ON CONFLICT (event_id) DO NOTHING RETURNING event_id");
-
-        let rows: Vec<(String,)> = query_builder
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|source| TransactionEventStorageError::new(source.into()))?;
-
-        Ok(TransactionEventInsertOutcome {
-            inserted_event_ids: rows.into_iter().map(|(event_id,)| event_id).collect(),
-        })
+        Ok(TransactionEventInsertOutcome { inserted_event_ids })
     }
 }
 
