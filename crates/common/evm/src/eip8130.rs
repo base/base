@@ -644,6 +644,13 @@ impl Eip8130Executor {
             charged_new_account_state_gas: false,
         }));
 
+        // Mirror the mainnet handler's first-frame init: wrap the
+        // `LocalContext`'s shared memory buffer rather than allocating a fresh
+        // one. The buffer is an `Rc<RefCell<Vec<u8>>>` owned by the context for
+        // the EVM's lifetime, so this `Rc::clone` is a refcount bump (not a heap
+        // allocation) and every call reuses the same backing allocation, growing
+        // it to the high-water mark across calls. The per-tx buffer is reclaimed
+        // by the `local_mut().clear()` after `commit_tx` in `execute`.
         let ctx = evm.ctx_mut();
         let mut memory =
             SharedMemory::new_with_buffer(Rc::clone(ctx.local().shared_memory_buffer()));
