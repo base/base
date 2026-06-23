@@ -284,7 +284,11 @@ where
             }
             Err(SubmitAction::Discard(error)) => {
                 Metrics::errors_total(error.metric_label()).increment(1);
-                warn!(target_block, error = %error, "Submission failed");
+                warn!(
+                    target_block,
+                    error = %error,
+                    "Submission discarded, deleting proof request for re-prove"
+                );
                 return self.delete_proof_request(session_id, target_block).await;
             }
         }
