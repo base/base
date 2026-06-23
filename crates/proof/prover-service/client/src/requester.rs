@@ -260,10 +260,11 @@ mod tests {
 
     /// Outcome script for a single requester call when the test wants to drive
     /// retry behavior. The server returns the head of the queue per call.
-    #[derive(Debug)]
+    #[derive(Clone, Copy, Debug)]
     enum ScriptedOutcome {
         Retryable,
         Fatal,
+        AlreadyDeleted,
         Success,
     }
 
@@ -273,8 +274,10 @@ mod tests {
         reject_get_proof: bool,
         prove_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
         get_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        delete_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
         prove_calls: Arc<AtomicU32>,
         get_calls: Arc<AtomicU32>,
+        delete_calls: Arc<AtomicU32>,
     }
 
     #[derive(Debug, Default)]
@@ -298,8 +301,10 @@ mod tests {
                 reject_get_proof: false,
                 prove_script: Arc::new(Mutex::new(VecDeque::new())),
                 get_script: Arc::new(Mutex::new(VecDeque::new())),
+                delete_script: Arc::new(Mutex::new(VecDeque::new())),
                 prove_calls: Arc::new(AtomicU32::new(0)),
                 get_calls: Arc::new(AtomicU32::new(0)),
+                delete_calls: Arc::new(AtomicU32::new(0)),
             }
         }
 
@@ -317,12 +322,20 @@ mod tests {
             self.get_script.lock().expect("script lock").extend(outcomes);
         }
 
+        fn queue_delete_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
+            self.delete_script.lock().expect("script lock").extend(outcomes);
+        }
+
         fn prove_calls(&self) -> u32 {
             self.prove_calls.load(Ordering::SeqCst)
         }
 
         fn get_calls(&self) -> u32 {
             self.get_calls.load(Ordering::SeqCst)
+        }
+
+        fn delete_calls(&self) -> u32 {
+            self.delete_calls.load(Ordering::SeqCst)
         }
     }
 
@@ -382,6 +395,9 @@ mod tests {
                 Some(ScriptedOutcome::Fatal) => {
                     Err(invalid_params_error("scripted prove_block_range fatal failure"))
                 }
+                Some(ScriptedOutcome::AlreadyDeleted) => {
+                    panic!("AlreadyDeleted is only valid for delete_proof_request")
+                }
                 None | Some(ScriptedOutcome::Success) => {
                     Ok(ProveBlockRangeResponse { session_id: request.proof.session_id })
                 }
@@ -399,6 +415,9 @@ mod tests {
                     "session_id {} is invalid",
                     request.session_id
                 )));
+            }
+            if let Some(ScriptedOutcome::AlreadyDeleted) = scripted {
+                panic!("AlreadyDeleted is only valid for delete_proof_request");
             }
 
             if self.reject_get_proof || matches!(scripted, Some(ScriptedOutcome::Retryable)) {
@@ -422,9 +441,21 @@ mod tests {
             &self,
             request: DeleteProofRequest,
         ) -> RpcResult<DeleteProofResponse> {
+            self.delete_calls.fetch_add(1, Ordering::SeqCst);
             self.state.lock().expect("state lock should not be poisoned").delete_request =
                 Some(request);
-            Ok(DeleteProofResponse { deleted: true })
+
+            let scripted = self.delete_script.lock().expect("script lock").pop_front();
+            match scripted {
+                Some(ScriptedOutcome::Retryable) => {
+                    Err(unavailable_error("scripted delete_proof_request retryable failure"))
+                }
+                Some(ScriptedOutcome::Fatal) => {
+                    Err(invalid_params_error("scripted delete_proof_request fatal failure"))
+                }
+                Some(ScriptedOutcome::AlreadyDeleted) => Ok(DeleteProofResponse { deleted: false }),
+                None | Some(ScriptedOutcome::Success) => Ok(DeleteProofResponse { deleted: true }),
+            }
         }
 
         async fn list_proofs(&self, request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
@@ -601,6 +632,25 @@ mod tests {
 
         assert!(!err.is_retryable());
         assert_eq!(api_clone.get_calls(), 1);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn requester_retries_retryable_delete_until_success() {
+        let api = MockRequesterApi::new();
+        api.queue_delete_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::AlreadyDeleted]);
+        let api_clone = api.clone();
+        let server = RunningRequesterServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let response = server
+            .client
+            .delete_proof_request(DeleteProofRequest { session_id: "session-delete".to_owned() })
+            .await
+            .expect("delete_proof_request should succeed after retry");
+
+        assert!(!response.deleted);
+        assert_eq!(api_clone.delete_calls(), 2);
 
         server.shutdown().await;
     }

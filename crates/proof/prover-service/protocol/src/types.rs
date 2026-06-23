@@ -101,7 +101,7 @@ pub struct DeleteProofRequest {
 /// Response returned after deleting a completed proof request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteProofResponse {
-    /// Whether a completed proof request was deleted.
+    /// Whether a completed proof request was found and deleted.
     pub deleted: bool,
 }
 

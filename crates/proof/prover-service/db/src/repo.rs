@@ -155,6 +155,7 @@ impl ProofRequestRepo {
             ProofStatus::Created | ProofStatus::Pending | ProofStatus::Running => {
                 params.first_mismatch(&row)
             }
+            // Succeeded requests are replay-only; l1_head replacement is only for failed retries.
             ProofStatus::Succeeded => params.first_mismatch(&row),
         };
         if let Some(field) = mismatch {

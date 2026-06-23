@@ -4,8 +4,7 @@ use jsonrpsee::core::RpcResult;
 use tracing::info;
 
 use crate::server::{
-    ProverServiceServer, failed_precondition, internal, invalid_argument, not_found,
-    record_rpc_result,
+    ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
 };
 
 impl ProverServiceServer {
@@ -32,9 +31,7 @@ impl ProverServiceServer {
                 info!(session_id = %session_id, "Deleted terminal proof request");
                 Ok(DeleteProofResponse { deleted: true })
             }
-            Ok(DeleteProofRequestOutcome::NotFound) => {
-                Err(not_found(format!("session_id {session_id}: proof request not found")))
-            }
+            Ok(DeleteProofRequestOutcome::NotFound) => Ok(DeleteProofResponse { deleted: false }),
             Ok(DeleteProofRequestOutcome::NotCompleted(status)) => {
                 Err(failed_precondition(format!(
                     "session_id {session_id}: proof request status is {}, expected SUCCEEDED or FAILED",
