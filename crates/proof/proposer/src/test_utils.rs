@@ -56,8 +56,8 @@ impl L1Provider for MockL1 {
     ) -> RpcResult<alloy_rpc_types_eth::Header> {
         Ok(alloy_rpc_types_eth::Header { hash: B256::repeat_byte(0x11), ..Default::default() })
     }
-    async fn header_by_hash(&self, _: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
-        unimplemented!()
+    async fn header_by_hash(&self, hash: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
+        Ok(alloy_rpc_types_eth::Header { hash, ..Default::default() })
     }
     async fn block_receipts(
         &self,

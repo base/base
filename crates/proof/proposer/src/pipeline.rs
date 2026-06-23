@@ -254,6 +254,7 @@ mod tests {
             Arc::clone(&rollup),
             ProofDispatcherConfig {
                 proposer_address: config.proposer_address,
+                allow_non_finalized: config.allow_non_finalized,
                 intermediate_block_interval: config.intermediate_block_interval,
                 tee_image_hash: config.tee_image_hash,
             },

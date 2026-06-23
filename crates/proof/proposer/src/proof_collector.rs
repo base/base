@@ -1181,7 +1181,7 @@ mod tests {
             &self,
             _: B256,
         ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
-            unimplemented!("tests do not fetch L1 headers by hash")
+            Err(base_proof_rpc::RpcError::Transport("simulated L1 outage".into()))
         }
 
         async fn block_receipts(
@@ -1306,6 +1306,7 @@ mod tests {
             Arc::clone(&rollup_client),
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: false,
                 intermediate_block_interval: 300,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
@@ -1375,6 +1376,7 @@ mod tests {
             Arc::clone(&rollup_client),
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: false,
                 intermediate_block_interval: 100,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
@@ -1457,6 +1459,7 @@ mod tests {
             Arc::clone(&rollup_client),
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: false,
                 intermediate_block_interval: 100,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
@@ -1519,6 +1522,7 @@ mod tests {
             Arc::clone(&rollup_client),
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: false,
                 intermediate_block_interval: 100,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
@@ -1594,6 +1598,7 @@ mod tests {
             Arc::clone(&rollup_client),
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: false,
                 intermediate_block_interval: 100,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
@@ -1653,6 +1658,7 @@ mod tests {
             Arc::clone(&rollup_client),
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: false,
                 intermediate_block_interval: 100,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
@@ -1717,6 +1723,7 @@ mod tests {
             Arc::clone(&rollup_client),
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: false,
                 intermediate_block_interval: 100,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
@@ -1800,6 +1807,7 @@ mod tests {
             Arc::clone(&rollup_client),
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: false,
                 intermediate_block_interval: 100,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
@@ -1865,6 +1873,7 @@ mod tests {
             Arc::clone(&rollup_client),
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: false,
                 intermediate_block_interval: 100,
                 tee_image_hash: B256::repeat_byte(0x05),
             },
