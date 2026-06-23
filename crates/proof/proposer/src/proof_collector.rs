@@ -116,7 +116,13 @@ where
                 {
                     Ok(Some(proof)) => proof,
                     Ok(None) => return false,
-                    Err(_) => {
+                    Err(error) => {
+                        warn!(
+                            target_block,
+                            session_id = %session_id,
+                            error = %error,
+                            "Deleting proof request after proof collection failure"
+                        );
                         return self.delete_proof_request(&session_id, target_block).await;
                     }
                 };

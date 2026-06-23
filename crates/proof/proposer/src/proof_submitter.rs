@@ -19,10 +19,10 @@
 //! state. The pipeline enforces single-flight submission via its own join set,
 //! while the submitter focuses on per-proposal validation and the L1 call.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, B256, Signature, keccak256};
+use alloy_primitives::{Address, B256, Bytes, Signature, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
     AggregateVerifierClient, DisputeGameFactoryClient, ITEEProverRegistry, encode_extra_data,
@@ -37,6 +37,9 @@ use crate::{
     Metrics, RecoveredState, error::ProposerError, output_proposer::OutputProposer,
     proposal_intervals::ProposalIntervals,
 };
+
+const RECENT_GAME_LOOKUP_MAX_ATTEMPTS: usize = 3;
+const RECENT_GAME_LOOKUP_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 /// Internal action returned to the pipeline after a single submission attempt.
 ///
@@ -313,27 +316,26 @@ where
                 info!(target_block, "Dispute game created successfully");
                 Metrics::l2_output_proposals_total().increment(1);
                 let game_address = self
-                    .factory_client
-                    .games(self.config.game_type, aggregate_proposal.output_root, extra_data)
-                    .await
-                    .map_err(|e| {
-                        SubmitAction::Failed(ProposerError::Contract(format!(
-                            "matching game lookup after create failed: {e}"
-                        )))
-                    })?;
-                if game_address.is_zero() {
+                    .lookup_recent_game(
+                        aggregate_proposal.output_root,
+                        &extra_data,
+                        target_block,
+                        "create",
+                    )
+                    .await?;
+                if let Some(game_address) = game_address {
+                    Ok(Some(RecoveredState {
+                        parent_address: game_address,
+                        output_root: aggregate_proposal.output_root,
+                        l2_block_number: target_block,
+                    }))
+                } else {
                     warn!(
                         target_block,
                         output_root = ?aggregate_proposal.output_root,
                         "Created dispute game was not found by UUID lookup"
                     );
                     Ok(None)
-                } else {
-                    Ok(Some(RecoveredState {
-                        parent_address: game_address,
-                        output_root: aggregate_proposal.output_root,
-                        l2_block_number: target_block,
-                    }))
                 }
             }
             Err(e) => {
@@ -341,15 +343,14 @@ where
                     drop(propose_timer);
                     info!(target_block, "Game already exists, checking fresh state from chain");
                     let raced_game = self
-                        .factory_client
-                        .games(self.config.game_type, aggregate_proposal.output_root, extra_data)
-                        .await
-                        .map_err(|e| {
-                            SubmitAction::Failed(ProposerError::Contract(format!(
-                                "matching game lookup after duplicate create failed: {e}"
-                            )))
-                        })?;
-                    if raced_game != Address::ZERO {
+                        .lookup_recent_game(
+                            aggregate_proposal.output_root,
+                            &extra_data,
+                            target_block,
+                            "duplicate_create",
+                        )
+                        .await?;
+                    if let Some(raced_game) = raced_game {
                         return self
                             .attach_existing_game_proof(
                                 raced_game,
@@ -396,6 +397,67 @@ where
                 }
             }
         }
+    }
+
+    async fn lookup_recent_game(
+        &self,
+        output_root: B256,
+        extra_data: &Bytes,
+        target_block: u64,
+        lookup_context: &'static str,
+    ) -> Result<Option<Address>, SubmitAction> {
+        for attempt in 1..=RECENT_GAME_LOOKUP_MAX_ATTEMPTS {
+            match self
+                .factory_client
+                .games(self.config.game_type, output_root, extra_data.clone())
+                .await
+            {
+                Ok(game_address) if game_address != Address::ZERO => {
+                    if attempt > 1 {
+                        info!(
+                            target_block,
+                            output_root = ?output_root,
+                            game_address = %game_address,
+                            attempt,
+                            lookup_context,
+                            "Dispute game found by UUID lookup after retry"
+                        );
+                    }
+                    return Ok(Some(game_address));
+                }
+                Ok(_) if attempt < RECENT_GAME_LOOKUP_MAX_ATTEMPTS => {
+                    debug!(
+                        target_block,
+                        output_root = ?output_root,
+                        attempt,
+                        max_attempts = RECENT_GAME_LOOKUP_MAX_ATTEMPTS,
+                        lookup_context,
+                        "Dispute game not found by UUID lookup, retrying"
+                    );
+                }
+                Ok(_) => return Ok(None),
+                Err(error) if attempt < RECENT_GAME_LOOKUP_MAX_ATTEMPTS => {
+                    warn!(
+                        target_block,
+                        output_root = ?output_root,
+                        attempt,
+                        max_attempts = RECENT_GAME_LOOKUP_MAX_ATTEMPTS,
+                        lookup_context,
+                        error = %error,
+                        "Dispute game UUID lookup failed, retrying"
+                    );
+                }
+                Err(error) => {
+                    return Err(SubmitAction::Failed(ProposerError::Contract(format!(
+                        "matching game lookup after {lookup_context} failed: {error}"
+                    ))));
+                }
+            }
+
+            tokio::time::sleep(RECENT_GAME_LOOKUP_RETRY_DELAY).await;
+        }
+
+        Ok(None)
     }
 
     async fn attach_existing_game_proof(
@@ -791,6 +853,27 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(*output.created.lock().unwrap(), 1);
         assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn submit_retries_created_game_lookup() {
+        let game_address = Address::repeat_byte(0xAA);
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter = submitter_with_factory(
+            Arc::clone(&output),
+            Arc::new(SequentialGameFactory::new([Address::ZERO, Address::ZERO, game_address])),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        let recovered = result.unwrap().expect("game address should be recovered after retry");
+        assert_eq!(recovered.parent_address, game_address);
+        assert_eq!(recovered.l2_block_number, TEST_BLOCK_INTERVAL);
+        assert_eq!(*output.created.lock().unwrap(), 1);
+        assert!(output.verified.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
