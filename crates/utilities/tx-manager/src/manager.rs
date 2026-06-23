@@ -979,8 +979,9 @@ where
 
         // Set mempool deadline if configured.
         if !self.config.tx_not_in_mempool_timeout.is_zero() {
-            send_state
-                .set_mempool_deadline(self.runtime.now() + self.config.tx_not_in_mempool_timeout);
+            send_state.set_runtime_mempool_deadline(
+                self.runtime.now() + self.config.tx_not_in_mempool_timeout,
+            );
         }
 
         let start = self.runtime.now();

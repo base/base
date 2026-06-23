@@ -237,10 +237,14 @@ impl SendState {
         std::mem::take(&mut inner.bump_fees)
     }
 
-    /// Sets the mempool inclusion deadline.
-    pub fn set_mempool_deadline(&self, deadline: Duration) {
+    /// Sets the runtime-relative mempool inclusion deadline.
+    ///
+    /// `absolute_deadline` is an absolute timestamp from the runtime clock,
+    /// not a relative timeout duration. Callers should pass `runtime.now() +
+    /// timeout`.
+    pub fn set_runtime_mempool_deadline(&self, absolute_deadline: Duration) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.mempool_deadline = Some(MempoolDeadline::Runtime(deadline));
+        inner.mempool_deadline = Some(MempoolDeadline::Runtime(absolute_deadline));
     }
 
     /// Sets the mempool inclusion deadline from wall-clock time.
@@ -512,7 +516,7 @@ mod tests {
     #[should_panic(expected = "runtime-relative mempool deadline requires critical_error_at")]
     fn runtime_mempool_deadline_requires_runtime_timestamp() {
         let state = SendState::new(3).unwrap();
-        state.set_mempool_deadline(Duration::from_secs(1));
+        state.set_runtime_mempool_deadline(Duration::from_secs(1));
 
         let _ = state.critical_error();
     }
