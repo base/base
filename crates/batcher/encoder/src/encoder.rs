@@ -383,6 +383,12 @@ impl BatchEncoder {
         );
         if self.deferred_step_error.is_none() {
             self.deferred_step_error = Some(error);
+        } else {
+            warn!(
+                dropped_error = %error,
+                operation = %operation,
+                "dropping additional deferred encoder error; earlier error takes precedence"
+            );
         }
     }
 
@@ -1951,6 +1957,41 @@ mod tests {
         let err = encoder.step().expect_err("deferred timeout flush error should halt");
         assert!(matches!(err, StepError::SpanBatchBuildFailed { blocks: 2, .. }));
         assert!(encoder.deferred_step_error.is_none());
+    }
+
+    #[test]
+    fn test_deferred_step_error_keeps_first_error() {
+        let config = EncoderConfig { batch_type: BatchType::Span, ..EncoderConfig::default() };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+        encoder.span_accumulator = vec![
+            (SingleBatch { timestamp: 1, ..Default::default() }, 0),
+            (
+                SingleBatch {
+                    timestamp: 2,
+                    transactions: vec![Bytes::from_static(b"not-a-valid-transaction")],
+                    ..Default::default()
+                },
+                1,
+            ),
+        ];
+        let first =
+            encoder.build_span_batch().expect_err("first invalid span accumulator should fail");
+        encoder.span_accumulator.push((
+            SingleBatch {
+                timestamp: 3,
+                transactions: vec![Bytes::from_static(b"also-not-a-valid-transaction")],
+                ..Default::default()
+            },
+            2,
+        ));
+        let second =
+            encoder.build_span_batch().expect_err("second invalid span accumulator should fail");
+
+        encoder.defer_step_error(first, "force_close_channel");
+        encoder.defer_step_error(second, "advance_l1_head");
+
+        let err = encoder.step().expect_err("first deferred error should halt");
+        assert!(matches!(err, StepError::SpanBatchBuildFailed { blocks: 2, .. }));
     }
 
     /// Span batches encode their timestamp relative to the rollup genesis timestamp.

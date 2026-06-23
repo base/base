@@ -266,15 +266,18 @@ impl ShadowParityMonitor {
             && previous.number.saturating_add(1) == block_info.number
             && previous.hash != block_info.parent_hash
         {
-            let reorg_depth = block_info.number.saturating_sub(previous.number).max(1);
-            let rewind_depth = reorg_depth.saturating_add(1).min(self.config.start_depth);
+            // A consecutive parent mismatch proves one replaced parent at this point.
+            // Deeper reorgs are handled conservatively by resetting state and
+            // re-detecting additional parent mismatches as the monitor rewinds.
+            let parent_mismatch_depth = 1u64;
+            let rewind_depth = parent_mismatch_depth.saturating_add(1).min(self.config.start_depth);
             let rewind_to = block_info.number.saturating_sub(rewind_depth);
             warn!(
                 l1_block = %block_number,
                 previous_l1_block = %previous.number,
                 expected_parent = %previous.hash,
                 actual_parent = %block_info.parent_hash,
-                reorg_depth = %reorg_depth,
+                parent_mismatch_depth = %parent_mismatch_depth,
                 rewind_depth = %rewind_depth,
                 rewind_to = %rewind_to,
                 "L1 reorg detected; resetting shadow parity state"
