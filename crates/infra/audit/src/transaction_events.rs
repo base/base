@@ -167,11 +167,13 @@ pub struct RejectedTransactionEventQuery {
 #[derive(Debug, thiserror::Error)]
 #[error("transaction event storage error: {source}")]
 pub struct TransactionEventStorageError {
-    source: anyhow::Error,
+    /// Underlying storage error.
+    pub source: anyhow::Error,
 }
 
 impl TransactionEventStorageError {
-    fn new(source: anyhow::Error) -> Self {
+    /// Creates a storage error from an underlying error.
+    pub const fn new(source: anyhow::Error) -> Self {
         Self { source }
     }
 }
@@ -480,7 +482,10 @@ fn record_from_row(row: sqlx::postgres::PgRow) -> Result<TransactionEventRecord>
         block_number,
         payload_id: row.try_get("payload_id")?,
         request_id: row.try_get("request_id")?,
-        data: data.as_object().cloned().unwrap_or_default(),
+        data: data
+            .as_object()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("transaction event data column is not a JSON object"))?,
     };
     Ok(TransactionEventRecord { event, ingested_at: row.try_get("ingested_at")? })
 }
