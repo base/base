@@ -12,12 +12,13 @@ extern crate alloc;
 
 mod batch;
 pub use batch::{
-    Batch, BatchDecodingError, BatchDropReason, BatchEncodingError, BatchReader, BatchTransaction,
-    BatchType, BatchValidationProvider, BatchValidity, BatchWithInclusionBlock, DecompressionError,
-    RawSpanBatch, SingleBatch, SpanBatch, SpanBatchBits, SpanBatchEip1559TransactionData,
-    SpanBatchEip2930TransactionData, SpanBatchEip7702TransactionData, SpanBatchElement,
-    SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix,
-    SpanBatchTransactionData, SpanBatchTransactions, SpanDecodingError,
+    Batch, BatchDecodingError, BatchDropReason, BatchEncodingError, BatchReader, BatchReaderError,
+    BatchTransaction, BatchType, BatchValidationProvider, BatchValidity, BatchWithInclusionBlock,
+    DecompressionError, RawSpanBatch, SingleBatch, SpanBatch, SpanBatchBits,
+    SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
+    SpanBatchEip7702TransactionData, SpanBatchElement, SpanBatchError,
+    SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix, SpanBatchTransactionData,
+    SpanBatchTransactions, SpanDecodingError,
 };
 
 mod brotli;

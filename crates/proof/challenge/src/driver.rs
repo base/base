@@ -420,8 +420,12 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         //   starting_block + interval * (i + 1)
         let checkpoint_block = candidate.checkpoint_start_block(challenged_index + 1)?;
 
-        let expected_root = match self.validator.compute_output_root(checkpoint_block).await {
-            Ok(root) => root,
+        let validation = match self
+            .validator
+            .validate_claimed_root_at_block(game_address, checkpoint_block, on_chain_root)
+            .await
+        {
+            Ok(result) => result,
             Err(ValidatorError::BlockNotAvailable { .. }) => {
                 debug!(
                     game = %game_address,
@@ -443,12 +447,12 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
         // If the onchain root at the challenged index does not match the
         // locally computed root, the ZK challenge was legitimate — skip.
-        if on_chain_root != expected_root {
+        if !validation.is_valid {
             debug!(
                 game = %game_address,
                 challenged_index = challenged_index,
                 on_chain = %on_chain_root,
-                expected = %expected_root,
+                expected = %validation.expected_root,
                 "ZK challenge is legitimate (challenged root was wrong), skipping"
             );
             return Ok(());
@@ -463,8 +467,13 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
         ChallengerMetrics::fraudulent_zk_challenge_detected_total().increment(1);
 
-        self.initiate_zk_proof(candidate, challenged_index, on_chain_root, DisputeIntent::Nullify)
-            .await
+        self.initiate_zk_proof(
+            candidate,
+            challenged_index,
+            validation.expected_root,
+            DisputeIntent::Nullify,
+        )
+        .await
     }
 
     /// Attempts TEE-first proof sourcing with ZK fallback.

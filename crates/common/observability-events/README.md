@@ -20,6 +20,10 @@ stdout/stderr and the normal Kubernetes log pipeline.
 - **`TransactionEventWriter`**: Non-blocking JSONL append writer with bounded
   queueing, dropped-event metrics, write-error metrics, queue depth, and bytes
   written metrics.
+- **`TransactionEventBuilder`** and **`transaction_event!`**: Helpers for
+  producer call sites that use the process-global transaction event writer while
+  filling common envelope fields such as `event_time`, `network`, join keys,
+  deterministic event IDs, and write-failure logging.
 
 ## Contract Notes
 

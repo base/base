@@ -15,6 +15,11 @@ use crate::TxManagerError;
 /// Used by [`SimpleTxManager::new`](crate::SimpleTxManager::new) to build the
 /// wallet internally, centralising wallet construction logic so that call
 /// sites do not need to duplicate private-key parsing or remote-signer setup.
+///
+/// Cloning this config clones local private-key material for [`Self::Local`].
+/// Keep clones limited to startup wiring; use [`Self::address`] when only the
+/// sender address is needed.
+#[derive(Clone)]
 pub enum SignerConfig {
     /// Local signer backed by a secp256k1 private key.
     Local(PrivateKeySigner),

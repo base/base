@@ -1,8 +1,10 @@
 //! Hybrid L1 head source that races a subscription stream against interval-based polling.
 
+use std::{marker::PhantomData, time::Duration};
+
 use async_trait::async_trait;
+use base_runtime::Clock;
 use futures::{StreamExt, stream::BoxStream};
-use tokio::time::{Duration, Interval, interval};
 
 use crate::{L1HeadEvent, L1HeadPolling, L1HeadSource, L1HeadSubscription, SourceError};
 
@@ -11,7 +13,7 @@ use crate::{L1HeadEvent, L1HeadPolling, L1HeadSource, L1HeadSubscription, Source
 /// Deduplicates head numbers so that the same block number is only reported once.
 /// Stale reads (same or lower block number than last reported) are also silently dropped.
 #[derive(derive_more::Debug)]
-pub struct HybridL1HeadSource<S, P> {
+pub struct HybridL1HeadSource<S, P, C> {
     /// The head number stream returned by `S::take_stream`.
     ///
     /// Declared before `_subscription` so it is dropped first, ensuring the
@@ -26,15 +28,19 @@ pub struct HybridL1HeadSource<S, P> {
     poller: P,
     /// Polling interval timer.
     #[debug(skip)]
-    interval: Interval,
+    interval: BoxStream<'static, ()>,
+    /// Runtime clock type marker.
+    #[debug(skip)]
+    _clock: PhantomData<C>,
     /// Last reported head number for deduplication.
     last_head: Option<u64>,
 }
 
-impl<S, P> HybridL1HeadSource<S, P>
+impl<S, P, C> HybridL1HeadSource<S, P, C>
 where
     S: L1HeadSubscription,
     P: L1HeadPolling,
+    C: Clock,
 {
     /// Create a new hybrid L1 head source.
     ///
@@ -42,13 +48,15 @@ where
     /// number stream, then retains the subscription to keep any underlying
     /// resources (e.g. a WebSocket provider) alive. Combines the stream with a
     /// poller that fires at `poll_interval`.
-    pub fn new(mut subscription: S, poller: P, poll_interval: Duration) -> Self {
+    pub fn new(clock: C, mut subscription: S, poller: P, poll_interval: Duration) -> Self {
         let sub = subscription.take_stream();
+        let interval = clock.interval(poll_interval);
         Self {
             sub,
             _subscription: subscription,
             poller,
-            interval: interval(poll_interval),
+            interval,
+            _clock: PhantomData,
             last_head: None,
         }
     }
@@ -67,10 +75,11 @@ where
 }
 
 #[async_trait]
-impl<S, P> L1HeadSource for HybridL1HeadSource<S, P>
+impl<S, P, C> L1HeadSource for HybridL1HeadSource<S, P, C>
 where
     S: L1HeadSubscription,
     P: L1HeadPolling,
+    C: Clock,
 {
     async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
         loop {
@@ -87,7 +96,7 @@ where
                         None => return Err(SourceError::Closed),
                     }
                 }
-                _ = self.interval.tick() => {
+                _ = self.interval.next() => {
                     match self.poller.latest_head().await {
                         Ok(n) => {
                             if let Some(event) = self.process(n) {
@@ -110,8 +119,8 @@ where
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
+    use base_runtime::{Config, Runner};
     use futures::{StreamExt, stream::BoxStream};
-    use tokio::time::Duration;
 
     use super::*;
 
@@ -132,65 +141,92 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_hybrid_l1_new_head() {
-        let stream = futures::stream::once(async { Ok(5u64) });
-        let mut source = HybridL1HeadSource::new(
-            StreamSub(stream.boxed()),
-            FixedPoller(10),
-            Duration::from_secs(100),
-        );
+    #[test]
+    fn test_hybrid_l1_new_head() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let stream = futures::stream::once(async { Ok(5u64) });
+            let mut source = HybridL1HeadSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                FixedPoller(5),
+                Duration::from_secs(100),
+            );
 
-        let event = source.next().await.unwrap();
-        assert_eq!(event, L1HeadEvent::NewHead(5));
+            let event = source.next().await.unwrap();
+            assert_eq!(event, L1HeadEvent::NewHead(5));
+        });
     }
 
-    #[tokio::test]
-    async fn test_hybrid_l1_duplicate_skipped() {
-        let stream = futures::stream::iter(vec![Ok(5u64), Ok(5u64)]);
-        let mut source = HybridL1HeadSource::new(
-            StreamSub(stream.boxed()),
-            FixedPoller(5),
-            Duration::from_secs(100),
-        );
+    #[test]
+    fn test_hybrid_l1_duplicate_skipped() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let stream = futures::stream::iter(vec![Ok(5u64), Ok(5u64)]);
+            let mut source = HybridL1HeadSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                FixedPoller(5),
+                Duration::from_secs(100),
+            );
 
-        let event = source.next().await.unwrap();
-        assert_eq!(event, L1HeadEvent::NewHead(5));
+            let event = source.next().await.unwrap();
+            assert_eq!(event, L1HeadEvent::NewHead(5));
 
-        // Second identical value is skipped; stream exhausted → Closed.
-        let err = source.next().await.unwrap_err();
-        assert!(matches!(err, SourceError::Closed));
+            // Second identical value is skipped; stream exhausted -> Closed.
+            let err = source.next().await.unwrap_err();
+            assert!(matches!(err, SourceError::Closed));
+        });
     }
 
-    #[tokio::test]
-    async fn test_hybrid_l1_stale_dropped() {
-        // Deliver 10, then 9 (stale), then stream closes.
-        let stream = futures::stream::iter(vec![Ok(10u64), Ok(9u64)]);
-        let mut source = HybridL1HeadSource::new(
-            StreamSub(stream.boxed()),
-            FixedPoller(3),
-            Duration::from_secs(100),
-        );
+    #[test]
+    fn test_hybrid_l1_stale_dropped() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            // Deliver 10, then 9 (stale), then stream closes.
+            let stream = futures::stream::iter(vec![Ok(10u64), Ok(9u64)]);
+            let mut source = HybridL1HeadSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                FixedPoller(3),
+                Duration::from_secs(100),
+            );
 
-        let event = source.next().await.unwrap();
-        assert_eq!(event, L1HeadEvent::NewHead(10));
+            let event = source.next().await.unwrap();
+            assert_eq!(event, L1HeadEvent::NewHead(10));
 
-        // 9 < 10 — stale, skipped. Stream exhausted → Closed.
-        let err = source.next().await.unwrap_err();
-        assert!(matches!(err, SourceError::Closed));
+            // 9 < 10: stale, skipped. Stream exhausted -> Closed.
+            let err = source.next().await.unwrap_err();
+            assert!(matches!(err, SourceError::Closed));
+        });
     }
 
-    #[tokio::test]
-    async fn test_hybrid_l1_stream_error() {
-        let stream =
-            futures::stream::once(async { Err(SourceError::Provider("rpc down".to_string())) });
-        let mut source = HybridL1HeadSource::new(
-            StreamSub(stream.boxed()),
-            FixedPoller(1),
-            Duration::from_secs(100),
-        );
+    #[test]
+    fn test_hybrid_l1_stream_error() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let stream =
+                futures::stream::once(async { Err(SourceError::Provider("rpc down".to_string())) });
+            let mut source = HybridL1HeadSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                FixedPoller(1),
+                Duration::from_secs(100),
+            );
 
-        let err = source.next().await.unwrap_err();
-        assert!(matches!(err, SourceError::Provider(_)));
+            let err = source.next().await.unwrap_err();
+            assert!(matches!(err, SourceError::Provider(_)));
+        });
+    }
+
+    #[test]
+    fn test_hybrid_l1_polling_uses_virtual_time() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut source = HybridL1HeadSource::new(
+                ctx,
+                StreamSub(futures::stream::pending().boxed()),
+                FixedPoller(12),
+                Duration::from_secs(10),
+            );
+
+            let event = source.next().await.unwrap();
+            assert_eq!(event, L1HeadEvent::NewHead(12));
+        });
     }
 }

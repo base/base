@@ -23,7 +23,7 @@ use base_proof_primitives::Proposal;
 use base_proof_rpc::{BaseBlock, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+    DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
     PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind as ApiProofRequestKind,
     ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
     TeeKind, TeeProofResult,
@@ -497,6 +497,15 @@ impl ProofRequesterProvider for MockProofRequester {
                 tee_kind: TeeKind::AwsNitro,
             })),
         })
+    }
+
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<(), ProverServiceClientError> {
+        self.requests.lock().unwrap().remove(&request.session_id);
+        self.failed_sessions.lock().unwrap().remove(&request.session_id);
+        Ok(())
     }
 
     async fn list_proofs(
