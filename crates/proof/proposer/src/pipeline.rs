@@ -1,6 +1,9 @@
 //! Proving pipeline for the proposer.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use tokio_util::sync::CancellationToken;
@@ -75,6 +78,8 @@ where
         );
 
         loop {
+            let dispatched_through = Arc::new(AtomicU64::new(0));
+
             // dispatcher_loop intentionally does not return; this branch keeps it
             // polled while collector_loop remains the session restart signal.
             // Dropping either loop mid-tick is safe: the next recovery walk
@@ -82,8 +87,8 @@ where
             let restart = tokio::select! {
                 biased;
                 () = cancel.cancelled() => false,
-                () = self.dispatcher_loop(&cancel) => true,
-                () = self.collector_loop(&cancel) => true,
+                () = self.dispatcher_loop(&cancel, Arc::clone(&dispatched_through)) => true,
+                () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
             };
 
             if !restart {
@@ -96,7 +101,11 @@ where
         info!("Proving pipeline stopped");
     }
 
-    async fn dispatcher_loop(&self, cancel: &CancellationToken) {
+    async fn dispatcher_loop(
+        &self,
+        cancel: &CancellationToken,
+        dispatched_through: Arc<AtomicU64>,
+    ) {
         let mut cache: Option<ProofRecoveryCache> = None;
         let mut state = ProofDispatcherState::new();
 
@@ -110,7 +119,7 @@ where
                     Metrics::safe_head().set(safe_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-                    if self
+                    let drop_recovery_cache = self
                         .proof_dispatcher
                         .tick(
                             &mut state,
@@ -120,9 +129,15 @@ where
                             self.config.max_retries,
                             cancel,
                         )
-                        .await
-                    {
+                        .await;
+
+                    if let Some(cursor) = state.cursor {
+                        dispatched_through.store(cursor.l2_block_number, Ordering::Relaxed);
+                    }
+
+                    if drop_recovery_cache {
                         cache = None;
+                        dispatched_through.store(0, Ordering::Relaxed);
                     }
                 }
             }
@@ -131,7 +146,7 @@ where
         }
     }
 
-    async fn collector_loop(&self, cancel: &CancellationToken) {
+    async fn collector_loop(&self, cancel: &CancellationToken, dispatched_through: Arc<AtomicU64>) {
         let mut cache: Option<ProofRecoveryCache> = None;
         let mut cursor_source: Option<RecoveredState> = None;
         let mut cursor: Option<RecoveredState> = None;
@@ -153,7 +168,14 @@ where
 
                     let current =
                         cursor.as_mut().expect("collector cursor initialized from recovered state");
-                    self.proof_collector.tick(current, safe_head, cancel).await
+                    self.proof_collector
+                        .tick(
+                            current,
+                            safe_head,
+                            dispatched_through.load(Ordering::Relaxed),
+                            cancel,
+                        )
+                        .await
                 } else {
                     false
                 }
@@ -316,9 +338,12 @@ mod tests {
         let cancel = CancellationToken::new();
 
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), pipeline.dispatcher_loop(&cancel))
-                .await
-                .is_err(),
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                pipeline.dispatcher_loop(&cancel, Arc::new(AtomicU64::new(0)))
+            )
+            .await
+            .is_err(),
             "dispatcher retry exhaustion should not end the dispatcher loop"
         );
         assert!(

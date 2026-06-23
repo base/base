@@ -68,10 +68,14 @@ where
     ///
     /// Returns `true` when the pipeline should drop stale recovery caches and
     /// reload state from chain immediately.
+    ///
+    /// `dispatched_through` is the highest target block accepted by the
+    /// dispatcher in the current pipeline session.
     pub async fn tick(
         &self,
         current: &mut RecoveredState,
         safe_head: u64,
+        dispatched_through: u64,
         cancel: &CancellationToken,
     ) -> bool {
         if cancel.is_cancelled() {
@@ -110,22 +114,26 @@ where
             };
 
             let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
-            let proof =
-                match Self::poll_proof(self.proof_requester.as_ref(), target_block, &session_id)
-                    .await
-                {
-                    Ok(Some(proof)) => proof,
-                    Ok(None) => return false,
-                    Err(error) => {
-                        warn!(
-                            target_block,
-                            session_id = %session_id,
-                            error = %error,
-                            "Deleting proof request after proof collection failure"
-                        );
-                        return self.delete_proof_request(&session_id, target_block).await;
-                    }
-                };
+            let proof = match Self::poll_proof(
+                self.proof_requester.as_ref(),
+                target_block,
+                &session_id,
+                target_block <= dispatched_through,
+            )
+            .await
+            {
+                Ok(Some(proof)) => proof,
+                Ok(None) => return false,
+                Err(error) => {
+                    warn!(
+                        target_block,
+                        session_id = %session_id,
+                        error = %error,
+                        "Deleting proof request after proof collection failure"
+                    );
+                    return self.delete_proof_request(&session_id, target_block).await;
+                }
+            };
 
             match self
                 .submit_proof(target_block, &session_id, proof, current.parent_address, cancel)
@@ -142,6 +150,7 @@ where
         proof_requester: &dyn ProofRequesterProvider,
         target_block: u64,
         session_id: &str,
+        request_dispatched: bool,
     ) -> Result<Option<ProofResult>, ProposerError> {
         let response = match proof_requester
             .get_proof(GetProofRequest { session_id: session_id.to_owned() })
@@ -149,12 +158,25 @@ where
         {
             Ok(response) => response,
             Err(e) if e.is_not_found() => {
-                debug!(
+                if !request_dispatched {
+                    debug!(
+                        target_block,
+                        session_id = %session_id,
+                        "Proof request not dispatched yet"
+                    );
+                    return Ok(None);
+                }
+
+                let error = ProposerError::Prover(format!("proof session {session_id} not found"));
+                Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED).increment(1);
+                Metrics::errors_total(error.metric_label()).increment(1);
+                warn!(
                     target_block,
                     session_id = %session_id,
-                    "Proof request not found yet"
+                    error = %error,
+                    "Proof request missing"
                 );
-                return Ok(None);
+                return Err(error);
             }
             Err(e) => {
                 Metrics::errors_total("prover").increment(1);
@@ -451,7 +473,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_waits_when_proof_is_missing() {
+    async fn tick_waits_when_proof_session_was_not_dispatched() {
         let target_block = 200;
         let collector = make_collector(
             Arc::new(MockProofRequester::default()),
@@ -460,9 +482,29 @@ mod tests {
         );
 
         let mut current = recovered(100);
-        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
+        let dispatched_through = current.l2_block_number;
+        let restart = collector
+            .tick(&mut current, target_block, dispatched_through, &CancellationToken::new())
+            .await;
 
         assert!(!restart);
+    }
+
+    #[tokio::test]
+    async fn tick_restarts_when_proof_session_is_missing() {
+        let target_block = 200;
+        let collector = make_collector(
+            Arc::new(MockProofRequester::default()),
+            rollup_client(target_block, Some(B256::repeat_byte(0xaa))),
+            Arc::new(MockOutputProposer::default()),
+        );
+
+        let mut current = recovered(100);
+        let restart = collector
+            .tick(&mut current, target_block, target_block, &CancellationToken::new())
+            .await;
+
+        assert!(restart);
     }
 
     #[tokio::test]
@@ -488,13 +530,15 @@ mod tests {
         );
 
         let mut current = recovered(100);
-        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
+        let restart = collector
+            .tick(&mut current, target_block, target_block, &CancellationToken::new())
+            .await;
 
         assert!(restart);
     }
 
     #[tokio::test]
-    async fn tick_collects_ready_proofs_until_next_proof_is_missing() {
+    async fn tick_collects_ready_proofs_and_restarts_when_next_session_is_missing() {
         let requester = Arc::new(MockProofRequester::default());
         let first_target = 200;
         let second_target = 300;
@@ -547,9 +591,9 @@ mod tests {
         );
         let mut current = recovered(100);
 
-        let restart = collector.tick(&mut current, 400, &CancellationToken::new()).await;
+        let restart = collector.tick(&mut current, 400, 400, &CancellationToken::new()).await;
 
-        assert!(!restart);
+        assert!(restart);
         assert_eq!(current.l2_block_number, second_target);
         assert_eq!(current.parent_address, second_game);
     }
@@ -580,7 +624,9 @@ mod tests {
         );
 
         let mut current = recovered(100);
-        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
+        let restart = collector
+            .tick(&mut current, target_block, target_block, &CancellationToken::new())
+            .await;
 
         assert!(restart);
         assert!(!requester.requests.lock().unwrap().contains_key(&session_id));
@@ -613,7 +659,9 @@ mod tests {
         );
 
         let mut current = recovered(100);
-        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
+        let restart = collector
+            .tick(&mut current, target_block, target_block, &CancellationToken::new())
+            .await;
 
         assert!(!restart);
         assert!(requester.requests.lock().unwrap().contains_key(&session_id));
@@ -680,7 +728,9 @@ mod tests {
         );
 
         let mut current = recovered(100);
-        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
+        let restart = collector
+            .tick(&mut current, target_block, target_block, &CancellationToken::new())
+            .await;
 
         assert!(restart);
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&session_id));
