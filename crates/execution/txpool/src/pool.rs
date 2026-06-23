@@ -141,6 +141,17 @@ where
         transaction.eip8130_nonce_channel_key().is_some()
     }
 
+    fn nonce_free_replay_already_seen(&self, transaction: &T) -> Option<TxHash> {
+        let replay_id = transaction.eip8130_nonce_free_replay_id()?;
+        self.protocol_pool
+            .pooled_transactions()
+            .into_iter()
+            .find(|candidate| {
+                candidate.transaction.eip8130_nonce_free_replay_id() == Some(replay_id)
+            })
+            .map(|candidate| *candidate.hash())
+    }
+
     fn partition_hashes_by_pool(&self, hashes: Vec<TxHash>) -> (Vec<TxHash>, Vec<TxHash>) {
         let nonce_pool = self.nonce_pool.read();
         let mut protocol_hashes = Vec::with_capacity(hashes.len());
@@ -172,7 +183,13 @@ where
         origin: TransactionOrigin,
     ) -> PoolResult<AddedTransactionOutcome> {
         match validated {
-            TransactionValidationOutcome::Valid { transaction, propagate, authorities, .. } => {
+            TransactionValidationOutcome::Valid {
+                transaction,
+                propagate,
+                authorities,
+                state_nonce,
+                ..
+            } => {
                 // Keep the sidecar lock order consistent everywhere: nonce_pool before listeners.
                 let mut nonce_pool = self.nonce_pool.write();
                 let mut listeners = self.listeners.write();
@@ -183,7 +200,7 @@ where
                     authorities,
                     &mut nonce_pool,
                 );
-                let outcome = nonce_pool.insert_validated(validated)?;
+                let outcome = nonce_pool.insert_validated(validated, state_nonce)?;
                 listeners.on_inserted(&nonce_pool, &outcome);
                 Ok(outcome.outcome)
             }
@@ -316,6 +333,12 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<TransactionEvents> {
+        if self.nonce_free_replay_already_seen(&transaction).is_some() {
+            return Err(reth_transaction_pool::error::PoolError::new(
+                *transaction.hash(),
+                reth_transaction_pool::error::PoolErrorKind::AlreadyImported,
+            ));
+        }
         if !self.is_sidecar_transaction(&transaction) {
             return self.protocol_pool.add_transaction_and_subscribe(origin, transaction).await;
         }
@@ -334,6 +357,12 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<AddedTransactionOutcome> {
+        if self.nonce_free_replay_already_seen(&transaction).is_some() {
+            return Err(reth_transaction_pool::error::PoolError::new(
+                *transaction.hash(),
+                reth_transaction_pool::error::PoolErrorKind::AlreadyImported,
+            ));
+        }
         if self.is_sidecar_transaction(&transaction) {
             self.add_sidecar_transaction(origin, transaction).await
         } else {
@@ -1193,7 +1222,7 @@ mod tests {
         let hash = *transaction.hash();
 
         let mut events = listeners.subscribe_hash(hash).0;
-        let outcome = nonce_pool.insert_validated(transaction).unwrap();
+        let outcome = nonce_pool.insert_validated(transaction, 0).unwrap();
         listeners.on_inserted(&nonce_pool, &outcome);
 
         assert!(matches!(events.next().await, Some(TransactionEvent::Pending)));
@@ -1211,13 +1240,13 @@ mod tests {
         let middle = valid_pool_transaction(signed_channel_tx(&signer, U256::from(1), 1, 900));
         let middle_hash = *middle.hash();
 
-        nonce_pool.insert_validated(first).unwrap();
-        nonce_pool.insert_validated(queued).unwrap();
+        nonce_pool.insert_validated(first, 0).unwrap();
+        nonce_pool.insert_validated(queued, 0).unwrap();
 
         let mut pending = listeners.subscribe_pending(TransactionListenerKind::All);
         let mut queued_events = listeners.subscribe_hash(queued_hash).0;
 
-        let outcome = nonce_pool.insert_validated(middle).unwrap();
+        let outcome = nonce_pool.insert_validated(middle, 0).unwrap();
         listeners.on_inserted(&nonce_pool, &outcome);
 
         assert_eq!(pending.recv().await, Some(middle_hash));
