@@ -151,7 +151,7 @@ impl<T> SourceResult<T> {
     fn from_result(result: Result<T>) -> Self {
         match result {
             Ok(value) => Self::Available(value),
-            Err(error) => Self::Error(error.to_string()),
+            Err(error) => Self::Error(format!("{error:#}")),
         }
     }
 
@@ -627,6 +627,7 @@ const fn proposal_status_label(status: Option<u8>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256};
+    use anyhow::{Context, anyhow};
     use basectl_cli::{
         MonitoringConfig, OnchainProofsReport, ProofsCommandError, ProofsConfig, ProofsGapReport,
         ProofsJobStatus, ProofsProposal,
@@ -770,6 +771,19 @@ mod tests {
         assert!(value.get("prover").is_some());
         assert_eq!(value["onchain"]["status"], "available");
         assert_eq!(value["prover"]["status"], "skipped");
+    }
+
+    #[test]
+    fn source_result_preserves_anyhow_error_chain() {
+        let result = Err::<(), _>(anyhow!("transport refused"))
+            .context("connecting to L1 RPC at http://127.0.0.1:1");
+
+        let SourceResult::Error(error) = SourceResult::from_result(result) else {
+            panic!("expected error result");
+        };
+
+        assert!(error.contains("connecting to L1 RPC at http://127.0.0.1:1"));
+        assert!(error.contains("transport refused"));
     }
 
     #[test]

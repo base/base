@@ -51,6 +51,24 @@ sol! {
 #[derive(Debug, Clone, Copy)]
 pub struct ProofsClient;
 
+/// Contract addresses required for on-chain proof-system reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofsContracts {
+    /// Address of the `DisputeGameFactory` contract on L1.
+    pub dispute_game_factory: Address,
+    /// Address of the `AnchorStateRegistry` contract on L1.
+    pub anchor_state_registry: Address,
+}
+
+impl From<&ProofsConfig> for ProofsContracts {
+    fn from(config: &ProofsConfig) -> Self {
+        Self {
+            dispute_game_factory: config.dispute_game_factory,
+            anchor_state_registry: config.anchor_state_registry,
+        }
+    }
+}
+
 impl ProofsClient {
     /// Maximum number of on-chain proof proposals returned by one report request.
     pub const MAX_ONCHAIN_REPORT_LIMIT: u32 = 100;
@@ -60,12 +78,14 @@ impl ProofsClient {
     /// Fetches a combined on-chain proof-system report from L1/L2 RPCs.
     #[must_use = "callers should handle the fetched on-chain proof report"]
     pub async fn fetch_onchain_report(
-        proofs_config: &ProofsConfig,
+        proofs_contracts: impl Into<ProofsContracts>,
         l1_rpc: &Url,
         l2_rpc: &Url,
         scan_window: u64,
         limit: u32,
     ) -> Result<OnchainProofsReport> {
+        let proofs_contracts = proofs_contracts.into();
+
         ensure!(
             (1..=Self::MAX_ONCHAIN_SCAN_WINDOW).contains(&scan_window),
             "proof on-chain report scan window must be between 1 and {}",
@@ -94,8 +114,9 @@ impl ProofsClient {
             .network::<Base>()
             .connect_client(RpcClient::new(transport, false));
 
-        let asr = IAnchorStateRegistry::new(proofs_config.anchor_state_registry, &*l1_provider);
-        let factory = IDisputeGameFactory::new(proofs_config.dispute_game_factory, &*l1_provider);
+        let asr = IAnchorStateRegistry::new(proofs_contracts.anchor_state_registry, &*l1_provider);
+        let factory =
+            IDisputeGameFactory::new(proofs_contracts.dispute_game_factory, &*l1_provider);
 
         fetch_onchain_report_from_providers(
             &asr,
@@ -458,7 +479,7 @@ impl ProofsJobListRequest {
 
 /// Polls proof system state at regular intervals and sends snapshots to the TUI.
 pub async fn run_proofs_poller(
-    proofs_config: ProofsConfig,
+    proofs_contracts: ProofsContracts,
     l1_rpc: Url,
     l2_rpc: Url,
     tx: mpsc::Sender<ProofsSnapshot>,
@@ -469,7 +490,7 @@ pub async fn run_proofs_poller(
         interval.tick().await;
 
         let report =
-            ProofsClient::fetch_onchain_report(&proofs_config, &l1_rpc, &l2_rpc, 50, 1).await;
+            ProofsClient::fetch_onchain_report(proofs_contracts, &l1_rpc, &l2_rpc, 50, 1).await;
         let snapshot = match report {
             Ok(report) => ProofsSnapshot::from(report),
             Err(error) => {

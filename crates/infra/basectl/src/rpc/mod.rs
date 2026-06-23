@@ -44,9 +44,9 @@ pub use pods::{PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, run_pods_pol
 
 mod proofs;
 pub use proofs::{
-    LatestProposal, OnchainProofsReport, ProofsClient, ProofsGapReport, ProofsJobListRequest,
-    ProofsJobStatus, ProofsJobStatusParseError, ProofsProposal, ProofsSnapshot, ProverProofSummary,
-    ProverProofsPage, run_proofs_poller,
+    LatestProposal, OnchainProofsReport, ProofsClient, ProofsContracts, ProofsGapReport,
+    ProofsJobListRequest, ProofsJobStatus, ProofsJobStatusParseError, ProofsProposal,
+    ProofsSnapshot, ProverProofSummary, ProverProofsPage, run_proofs_poller,
 };
 
 mod rollup;
