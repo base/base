@@ -40,9 +40,9 @@ pub enum EngineQueries {
     },
     /// Subscribe to engine state updates via a watch channel receiver.
     StateReceiver(Sender<tokio::sync::watch::Receiver<EngineState>>),
-    /// Development API: Subscribe to task queue length updates.
+    /// Development API: Subscribe to the removed queue length shim.
     QueueLengthReceiver(Sender<tokio::sync::watch::Receiver<usize>>),
-    /// Development API: Get the current number of pending tasks in the queue.
+    /// Development API: Get the removed queue length shim, which always returns `0`.
     TaskQueueLength(Sender<usize>),
 }
 
@@ -71,7 +71,6 @@ impl EngineQueries {
     pub async fn handle<EngineClient_: EngineClient>(
         self,
         state_recv: &tokio::sync::watch::Receiver<EngineState>,
-        queue_length_recv: &tokio::sync::watch::Receiver<usize>,
         client: &Arc<EngineClient_>,
         rollup_config: &Arc<RollupConfig>,
     ) -> Result<(), EngineQueriesError> {
@@ -136,16 +135,52 @@ impl EngineQueries {
             Self::StateReceiver(subscription) => subscription
                 .send(state_recv.clone())
                 .map_err(|_| EngineQueriesError::OutputChannelClosed),
-            Self::QueueLengthReceiver(subscription) => subscription
-                .send(queue_length_recv.clone())
-                .map_err(|_| EngineQueriesError::OutputChannelClosed),
+            Self::QueueLengthReceiver(subscription) => {
+                let (_, queue_length_recv) = tokio::sync::watch::channel(0);
+                subscription
+                    .send(queue_length_recv)
+                    .map_err(|_| EngineQueriesError::OutputChannelClosed)
+            }
             Self::TaskQueueLength(sender) => {
-                let queue_length = *queue_length_recv.borrow();
-                if sender.send(queue_length).is_err() {
+                if sender.send(0).is_err() {
                     warn!(target: "engine", "Failed to send task queue length response");
                 }
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::{oneshot, watch};
+
+    use super::*;
+    use crate::test_utils::test_engine_client_builder;
+
+    #[tokio::test]
+    async fn removed_task_queue_queries_return_zero() {
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let client = Arc::new(test_engine_client_builder().build());
+        let rollup_config = Arc::new(RollupConfig::default());
+
+        let (length_tx, length_rx) = oneshot::channel();
+        EngineQueries::TaskQueueLength(length_tx)
+            .handle(&state_rx, &client, &rollup_config)
+            .await
+            .expect("task queue length query should succeed");
+        assert_eq!(length_rx.await.expect("length response should be sent"), 0);
+
+        let (receiver_tx, receiver_rx) = oneshot::channel();
+        EngineQueries::QueueLengthReceiver(receiver_tx)
+            .handle(&state_rx, &client, &rollup_config)
+            .await
+            .expect("queue length receiver query should succeed");
+        let receiver = receiver_rx.await.expect("receiver response should be sent");
+        assert_eq!(*receiver.borrow(), 0);
+
+        drop(state_tx);
     }
 }
