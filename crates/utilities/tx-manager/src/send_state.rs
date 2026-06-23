@@ -186,12 +186,12 @@ impl SendState {
         if !inner.has_published
             && let Some(deadline) = inner.mempool_deadline
             && match deadline {
-                MempoolDeadline::Runtime(deadline) => match runtime_now {
-                    Some(now) => now >= deadline,
-                    None => {
+                MempoolDeadline::Runtime(deadline) => runtime_now.map_or_else(
+                    || {
                         panic!("runtime-relative mempool deadline requires critical_error_at");
-                    }
-                },
+                    },
+                    |now| now >= deadline,
+                ),
                 MempoolDeadline::WallClock(deadline) => Instant::now() >= deadline,
             }
         {
