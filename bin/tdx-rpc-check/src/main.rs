@@ -11,7 +11,7 @@ use std::{
 const RPC_URLS: &[&str] = &[
     "https://c3-chainproxy-eth-hoodi-full-dev.cbhq.net",
     "https://base-zeronet-reth-proofs-donotuse.cbhq.net:8545",
-    "https://base-prover-service-dev.cbhq.net:9090",
+    "https://base-prover-service-dev.aws-dev.cbhq.net:9090",
 ];
 const BODY_LIMIT: usize = 2048;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
