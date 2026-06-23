@@ -84,12 +84,6 @@ impl<C: SafeHeadProvider> SafeHeadPoller<C> {
     pub fn spawn(self, runtime: TokioRuntime) -> tokio::task::JoinHandle<()> {
         tokio::spawn(self.run(runtime))
     }
-
-    /// Spawn the polling loop on an injected runtime.
-    pub fn spawn_with_runtime<R: Runtime>(self, runtime: R) {
-        let task_runtime = runtime.clone();
-        std::mem::drop(runtime.spawn(self.run(task_runtime)));
-    }
 }
 
 #[cfg(test)]

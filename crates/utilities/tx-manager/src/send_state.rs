@@ -148,6 +148,12 @@ impl SendState {
     ///    bump cycle, not by aborting (which would leak a pre-reserved nonce
     ///    and stall publication on lower nonces still live on L1).
     /// 7. Otherwise, returns `None`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the state has an unpublished runtime-relative mempool
+    /// deadline. Use [`Self::critical_error_at`] when a runtime-backed
+    /// deadline has been set.
     #[must_use]
     pub fn critical_error(&self) -> Option<TxManagerError> {
         self.critical_error_with(None)
@@ -180,9 +186,12 @@ impl SendState {
         if !inner.has_published
             && let Some(deadline) = inner.mempool_deadline
             && match deadline {
-                MempoolDeadline::Runtime(deadline) => {
-                    runtime_now.is_some_and(|now| now >= deadline)
-                }
+                MempoolDeadline::Runtime(deadline) => match runtime_now {
+                    Some(now) => now >= deadline,
+                    None => {
+                        panic!("runtime-relative mempool deadline requires critical_error_at");
+                    }
+                },
                 MempoolDeadline::WallClock(deadline) => Instant::now() >= deadline,
             }
         {
@@ -497,6 +506,15 @@ mod tests {
         let state = SendState::new(3).unwrap();
         state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
         assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
+    }
+
+    #[test]
+    #[should_panic(expected = "runtime-relative mempool deadline requires critical_error_at")]
+    fn runtime_mempool_deadline_requires_runtime_timestamp() {
+        let state = SendState::new(3).unwrap();
+        state.set_mempool_deadline(Duration::from_secs(1));
+
+        let _ = state.critical_error();
     }
 
     // ── Pre-publish immediate abort ─────────────────────────────────────
