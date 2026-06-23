@@ -117,6 +117,7 @@ serde = [
 	"alloy-eips/serde",
 	"base-common-chains/serde",
 	"base-common-consensus/serde",
+	"base-common-genesis/serde",
 	"base-execution-chainspec/serde",
 	"reth-network/serde",
 	"secp256k1/serde",

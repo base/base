@@ -56,5 +56,6 @@ client = [
 metrics = [
 	"base-consensus-engine/metrics",
 	"base-consensus-gossip/metrics",
+	"base-upgrade-signal/metrics",
 	"libp2p/metrics",
 ]

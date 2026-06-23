@@ -50,13 +50,14 @@ base-common-consensus = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = [ "metrics", "std" ]
-metrics = [ "base-common-evm/metrics" ]
+metrics = [ "base-common-evm/metrics", "reth-evm/metrics" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
 	"alloy-evm/std",
 	"alloy-genesis/std",
 	"alloy-primitives/std",
+	"alloy-rpc-types-eth?/std",
 	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-evm/std",
