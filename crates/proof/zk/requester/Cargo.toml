@@ -1,0 +1,26 @@
+[package]
+name = "base-proof-zk-requester"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Proof
+base-prover-service-client.workspace = true
+base-prover-service-protocol.workspace = true
+
+# Primitives
+alloy-primitives.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
