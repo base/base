@@ -323,20 +323,23 @@ where
                         "create",
                     )
                     .await?;
-                if let Some(game_address) = game_address {
-                    Ok(Some(RecoveredState {
-                        parent_address: game_address,
-                        output_root: aggregate_proposal.output_root,
-                        l2_block_number: target_block,
-                    }))
-                } else {
-                    warn!(
-                        target_block,
-                        output_root = ?aggregate_proposal.output_root,
-                        "Created dispute game was not found by UUID lookup"
-                    );
-                    Ok(None)
-                }
+                game_address.map_or_else(
+                    || {
+                        warn!(
+                            target_block,
+                            output_root = ?aggregate_proposal.output_root,
+                            "Created dispute game was not found by UUID lookup"
+                        );
+                        Ok(None)
+                    },
+                    |game_address| {
+                        Ok(Some(RecoveredState {
+                            parent_address: game_address,
+                            output_root: aggregate_proposal.output_root,
+                            l2_block_number: target_block,
+                        }))
+                    },
+                )
             }
             Err(e) => {
                 if matches!(e, ProposerError::Submission(ProofSubmissionError::GameAlreadyExists)) {
@@ -419,7 +422,7 @@ where
                             output_root = ?output_root,
                             game_address = %game_address,
                             attempt,
-                            lookup_context,
+                            lookup_context = %lookup_context,
                             "Dispute game found by UUID lookup after retry"
                         );
                     }
@@ -431,7 +434,7 @@ where
                         output_root = ?output_root,
                         attempt,
                         max_attempts = RECENT_GAME_LOOKUP_MAX_ATTEMPTS,
-                        lookup_context,
+                        lookup_context = %lookup_context,
                         "Dispute game not found by UUID lookup, retrying"
                     );
                 }
@@ -442,7 +445,7 @@ where
                         output_root = ?output_root,
                         attempt,
                         max_attempts = RECENT_GAME_LOOKUP_MAX_ATTEMPTS,
-                        lookup_context,
+                        lookup_context = %lookup_context,
                         error = %error,
                         "Dispute game UUID lookup failed, retrying"
                     );
