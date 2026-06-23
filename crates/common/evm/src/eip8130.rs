@@ -58,7 +58,7 @@ use revm::{
         Block, Cfg, ContextTr, JournalTr,
         result::{EVMError, ExecutionResult, Output, ResultGas, SuccessReason},
     },
-    handler::{EthFrame, FrameResult, Handler, PrecompileProvider},
+    handler::{EthFrame, EvmTr, FrameResult, Handler, PrecompileProvider},
     interpreter::{
         CallInput, CallInputs, CallScheme, CallValue, FrameInput, InterpreterResult, SharedMemory,
         interpreter::EthInterpreter, interpreter_action::FrameInit,
@@ -218,6 +218,10 @@ impl Eip8130Executor {
             Ok(prepay) => prepay,
             Err(err) => {
                 ctx.journal_mut().checkpoint_revert(checkpoint);
+                // `prepay` may have cached this tx's L1 cost; clear it so the next
+                // transaction in the block recomputes (parity with the mainnet
+                // handler's `catch_error` cleanup).
+                ctx.chain_mut().clear_tx_l1_cost();
                 return Err(err);
             }
         };
@@ -225,7 +229,9 @@ impl Eip8130Executor {
         let calls = match Self::execute_calls(evm, &signed, &outcome) {
             Ok(calls) => calls,
             Err(err) => {
-                evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
+                let ctx = evm.ctx_mut();
+                ctx.journal_mut().checkpoint_revert(checkpoint);
+                ctx.chain_mut().clear_tx_l1_cost();
                 return Err(err);
             }
         };
@@ -236,6 +242,7 @@ impl Eip8130Executor {
                 Ok(gas_used) => gas_used,
                 Err(err) => {
                     ctx.journal_mut().checkpoint_revert(checkpoint);
+                    ctx.chain_mut().clear_tx_l1_cost();
                     return Err(err);
                 }
             };
@@ -247,6 +254,13 @@ impl Eip8130Executor {
         ctx.journal_mut().checkpoint_commit();
         ctx.journal_mut().commit_tx();
         ctx.chain_mut().clear_tx_l1_cost();
+
+        // Parity with the mainnet handler's post-commit cleanup: reclaim the
+        // `LocalContext` shared-memory buffer and drain the frame stack so no
+        // stale state leaks into the next transaction when the `BaseEvm` is
+        // reused across a block.
+        evm.ctx().local_mut().clear();
+        evm.frame_stack().clear();
 
         // The gas refund is already folded into `gas_used` (via `net_used` in
         // `settle_fees`), so the `refunded` counter is left 0; the per-phase
@@ -527,7 +541,14 @@ impl Eip8130Executor {
 
                 let frame = Self::run_call(evm, outcome.sender, call.to, call.data.clone(), pool)?;
                 let gas = frame.gas();
-                pool = pool.saturating_sub(gas.total_gas_spent());
+                // `run_call` caps the frame at `pool`, so a call can never report
+                // spending more than the pool held; treat a violation of that EVM
+                // invariant as a hard error rather than silently clamping to 0.
+                pool = pool.checked_sub(gas.total_gas_spent()).ok_or_else(|| {
+                    BaseTransactionError::eip8130(
+                        "EIP-8130 call consumed more gas than the phase pool contained",
+                    )
+                })?;
 
                 let result = frame.interpreter_result().result;
                 if result.is_ok() {
@@ -686,7 +707,13 @@ impl Eip8130Executor {
         {
             let mut payer_acc =
                 ctx.journal_mut().load_account_mut(outcome.payer).map_err(EVMError::Database)?;
-            let balance = payer_acc.balance().saturating_add(refund_amount);
+            // Consistent with the checked-arithmetic discipline used elsewhere in
+            // this file: `refund_amount <= prepay <= original_balance`, so the sum
+            // cannot overflow, but surface a violation rather than minting ETH by
+            // clamping to `U256::MAX`.
+            let balance = payer_acc.balance().checked_add(refund_amount).ok_or_else(|| {
+                BaseTransactionError::eip8130("EIP-8130 payer refund balance overflow")
+            })?;
             payer_acc.set_balance(balance);
         }
 
