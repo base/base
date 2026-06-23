@@ -89,13 +89,15 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
     pool.execute(sqlx::query("CREATE TABLE _sqlx_migrations (version BIGINT, success BOOLEAN)"))
         .await?;
     let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let expected_version =
+        required_transaction_event_migration_version().map_err(anyhow::Error::msg)?;
 
     let err = sink.check_schema_ready().await.unwrap_err();
     assert!(matches!(
         err,
         TransactionEventSchemaReadinessError::RequiredMigrationMissing {
             required_version
-        } if required_version == required_transaction_event_migration_version()
+        } if required_version == expected_version
     ));
     assert!(err.to_string().contains("001_transaction_events.sql"));
 
@@ -103,12 +105,13 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
 }
 
 #[test]
-fn transaction_events_migration_version_matches_sqlx_migration_metadata() {
+fn transaction_events_migration_version_matches_sqlx_migration_metadata() -> anyhow::Result<()> {
     assert_eq!(
-        required_transaction_event_migration_version(),
+        required_transaction_event_migration_version().map_err(anyhow::Error::msg)?,
         1,
         "001_transaction_events.sql should resolve to sqlx migration version 1"
     );
+    Ok(())
 }
 
 #[tokio::test]
@@ -123,7 +126,7 @@ async fn transaction_events_ready_after_required_migration() -> anyhow::Result<(
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
     let applied: (bool,) =
         sqlx::query_as("SELECT success FROM _sqlx_migrations WHERE version = $1")
-            .bind(required_transaction_event_migration_version())
+            .bind(required_transaction_event_migration_version().map_err(anyhow::Error::msg)?)
             .fetch_one(&pool)
             .await?;
     assert!(applied.0);

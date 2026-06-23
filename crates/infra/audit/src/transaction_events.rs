@@ -43,6 +43,12 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES: usize = 128 * 1024;
 /// Default maximum request body size for the HTTP endpoint.
 pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 
+/// Maximum events inserted in one Postgres statement.
+///
+/// Each row uses 12 bind parameters, so this stays below Postgres' 65,535 bind
+/// parameter limit with room for future columns.
+pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
+
 /// Configuration for transaction event HTTP ingest.
 #[derive(Debug, Clone)]
 pub struct TransactionEventIngestConfig {
@@ -128,18 +134,17 @@ const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction even
 static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// Required sqlx migration version for transaction event storage.
-pub fn required_transaction_event_migration_version() -> i64 {
+pub fn required_transaction_event_migration_version() -> Result<i64, &'static str> {
     let mut matching_migrations = TRANSACTION_EVENT_MIGRATOR.iter().filter(|migration| {
         migration.description.as_ref() == REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION
     });
-    let migration = matching_migrations.next().expect(
+    let migration = matching_migrations.next().ok_or(
         "transaction event migration 001_transaction_events.sql must be embedded in audit migrator",
-    );
-    assert!(
-        matching_migrations.next().is_none(),
-        "transaction event migration description must be unique"
-    );
-    migration.version
+    )?;
+    if matching_migrations.next().is_some() {
+        return Err("transaction event migration description must be unique");
+    }
+    Ok(migration.version)
 }
 
 /// Persisted transaction event row returned by audit read APIs.
@@ -222,6 +227,12 @@ pub enum TransactionEventSchemaReadinessError {
         #[source]
         source: sqlx::Error,
     },
+    /// The embedded sqlx migration metadata is internally inconsistent.
+    #[error("transaction-event Postgres schema readiness metadata is invalid: {reason}")]
+    MigrationMetadataInvalid {
+        /// Static metadata error.
+        reason: &'static str,
+    },
 }
 
 /// Durable sink for transaction observability events.
@@ -291,7 +302,10 @@ impl PgTransactionEventSink {
             return Err(TransactionEventSchemaReadinessError::MigrationTableMissing);
         }
 
-        let required_version = required_transaction_event_migration_version();
+        let required_version =
+            required_transaction_event_migration_version().map_err(|source| {
+                TransactionEventSchemaReadinessError::MigrationMetadataInvalid { reason: source }
+            })?;
         let migration_applied: Option<bool> =
             sqlx::query_scalar("SELECT success FROM _sqlx_migrations WHERE version = $1")
                 .bind(required_version)
@@ -506,6 +520,14 @@ fn parse_transaction_event_type(event_type: String) -> Result<TransactionEventTy
     Ok(TransactionEventType::deserialize(deserializer)?)
 }
 
+fn metric_len_u64(len: usize) -> u64 {
+    u64::try_from(len).unwrap_or(u64::MAX)
+}
+
+fn metric_len_f64(len: usize) -> f64 {
+    f64::from(u32::try_from(len).unwrap_or(u32::MAX))
+}
+
 #[async_trait]
 impl TransactionEventSink for PgTransactionEventSink {
     async fn insert_events(
@@ -583,8 +605,9 @@ struct TransactionEventIngestState {
 /// can be mounted alongside other HTTP services without changing their limits.
 pub fn transaction_event_router(
     sink: Arc<dyn TransactionEventSink>,
-    config: TransactionEventIngestConfig,
+    mut config: TransactionEventIngestConfig,
 ) -> Router {
+    config.max_batch_size = config.max_batch_size.min(MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE);
     let max_request_bytes = config.max_request_bytes;
     let path = config.path.clone();
     let state = Arc::new(TransactionEventIngestState { sink, config });
@@ -628,8 +651,8 @@ async fn ingest_transaction_event_batch(
         }
     };
 
-    Metrics::transaction_event_batch_size().record(events.len() as f64);
-    Metrics::transaction_events_received().increment(events.len() as u64);
+    Metrics::transaction_event_batch_size().record(metric_len_f64(events.len()));
+    Metrics::transaction_events_received().increment(metric_len_u64(events.len()));
 
     let mut results = Vec::with_capacity(events.len());
     if events.is_empty() {
@@ -651,7 +674,7 @@ async fn ingest_transaction_event_batch(
     }
 
     if events.len() > state.config.max_batch_size {
-        Metrics::transaction_events_rejected().increment(events.len() as u64);
+        Metrics::transaction_events_rejected().increment(metric_len_u64(events.len()));
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(TransactionEventBatchResponse {
@@ -718,7 +741,8 @@ async fn ingest_transaction_event_batch(
         Err(err) => {
             Metrics::transaction_event_batch_write_duration()
                 .record(write_start.elapsed().as_secs_f64());
-            Metrics::transaction_events_database_failures().increment(valid_events.len() as u64);
+            Metrics::transaction_events_database_failures()
+                .increment(metric_len_u64(valid_events.len()));
             error!(
                 error = %err,
                 batch_size = valid_events.len(),
@@ -744,8 +768,8 @@ async fn ingest_transaction_event_batch(
 
     let persisted = insert_outcome.inserted_event_ids.len();
     let db_duplicates = valid_events.len().saturating_sub(persisted);
-    Metrics::transaction_events_persisted().increment(persisted as u64);
-    Metrics::transaction_events_duplicate().increment(db_duplicates as u64);
+    Metrics::transaction_events_persisted().increment(metric_len_u64(persisted));
+    Metrics::transaction_events_duplicate().increment(metric_len_u64(db_duplicates));
 
     let inserted_event_ids = insert_outcome.inserted_event_ids;
     let mut accepted_ids = inserted_event_ids.clone();
@@ -779,6 +803,9 @@ fn parse_transaction_event_ndjson(
     body: &[u8],
     max_batch_size: usize,
 ) -> std::result::Result<Vec<RawTransactionEvent>, String> {
+    // The axum body limit bounds this request to max_request_bytes before this
+    // point. Vector sends bounded batches, so parsing the full NDJSON request in
+    // memory is acceptable; we still stop as soon as max_batch_size is exceeded.
     let body =
         std::str::from_utf8(body).map_err(|err| format!("request body is not UTF-8: {err}"))?;
 
