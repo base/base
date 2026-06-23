@@ -1214,24 +1214,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-signer-gcp"
-version = "2.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bdfd6d63ce90e92e1c364eedea75213b4e8e616f18dec773ea793c523653299"
-dependencies = [
- "alloy-consensus 2.0.5",
- "alloy-network 2.0.5",
- "alloy-primitives",
- "alloy-signer 2.0.5",
- "async-trait",
- "gcloud-sdk",
- "k256",
- "spki",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
 name = "alloy-signer-local"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5509,14 +5491,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-succinct-build-utils"
-version = "0.0.0"
-dependencies = [
- "cargo_metadata 0.18.1",
- "sp1-build",
-]
-
-[[package]]
 name = "base-proof-succinct-client-utils"
 version = "0.0.0"
 dependencies = [
@@ -5669,90 +5643,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-succinct-prove"
-version = "0.0.0"
-dependencies = [
- "alloy-contract 2.0.5",
- "alloy-eips 2.0.5",
- "alloy-network 2.0.5",
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-signer-local 2.0.5",
- "alloy-sol-types",
- "alloy-transport-http 2.0.5",
- "anyhow",
- "base-proof-preimage",
- "base-proof-succinct-build-utils",
- "base-proof-succinct-client-utils",
- "base-proof-succinct-elfs",
- "base-proof-succinct-host-utils",
- "base-proof-succinct-proof-utils",
- "base-proof-succinct-scripts",
- "cfg-if",
- "clap",
- "csv",
- "dotenv",
- "gag",
- "reqwest 0.12.28",
- "rustls 0.23.40",
- "serde_json",
- "sp1-cluster-utils",
- "sp1-sdk",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-proof-succinct-scripts"
 version = "0.0.0"
 dependencies = [
- "alloy-eips 2.0.5",
- "alloy-network 2.0.5",
  "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-signer-local 2.0.5",
- "alloy-sol-types",
- "alloy-transport-http 2.0.5",
  "anyhow",
- "base-proof-succinct-build-utils",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",
- "base-proof-succinct-host-utils",
  "base-proof-succinct-proof-utils",
  "bincode 2.0.1",
- "cargo_metadata 0.18.1",
  "clap",
- "csv",
- "dotenv",
- "futures",
- "log",
- "rayon",
- "serde",
  "serde_json",
  "sp1-sdk",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "base-proof-succinct-signer-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.0.5",
- "alloy-eips 2.0.5",
- "alloy-network 2.0.5",
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-rpc-types-eth 2.0.5",
- "alloy-signer 2.0.5",
- "alloy-signer-gcp",
- "alloy-signer-local 2.0.5",
- "alloy-transport-http 2.0.5",
- "anyhow",
- "base-proof-succinct-host-utils",
- "dotenv",
- "rustls 0.23.40",
  "tokio",
 ]
 
@@ -8301,27 +8203,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "csv"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52cd9d68cf7efc6ddfaaee42e7288d3a99d613d4b50f76ce9827ae0c6e14f938"
-dependencies = [
- "csv-core",
- "itoa",
- "ryu",
- "serde_core",
-]
-
-[[package]]
-name = "csv-core"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "ctor"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9035,12 +8916,6 @@ checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
 ]
-
-[[package]]
-name = "dotenv"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 
 [[package]]
 name = "dotenvy"
@@ -10056,48 +9931,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42012b0f064e01aa58b545fe3727f90f7dd4020f4a3ea735b50344965f5a57e9"
 
 [[package]]
-name = "gag"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a713bee13966e9fbffdf7193af71d54a6b35a0bb34997cd6c9519ebeb5005972"
-dependencies = [
- "filedescriptor",
- "tempfile",
-]
-
-[[package]]
 name = "gcd"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d758ba1b47b00caf47f24925c0074ecb20d6dfcffe7f6d53395c0465674841a"
-
-[[package]]
-name = "gcloud-sdk"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b5b58d8683fa308be9bc58caece4972315a0b2547f9da16962511f0915d5b53"
-dependencies = [
- "async-trait",
- "bytes",
- "chrono",
- "futures",
- "hyper 1.10.1",
- "jsonwebtoken",
- "once_cell",
- "prost 0.14.4",
- "prost-types 0.14.4",
- "reqwest 0.13.4",
- "secret-vault-value",
- "serde",
- "serde_json",
- "tokio",
- "tonic 0.14.6",
- "tonic-prost",
- "tower 0.5.3",
- "tower-layer",
- "tracing",
- "url",
-]
 
 [[package]]
 name = "gdbstub"
@@ -16274,13 +16111,11 @@ dependencies = [
  "http-body-util",
  "hyper 1.10.1",
  "hyper-rustls 0.27.9",
- "hyper-tls",
  "hyper-util",
  "js-sys",
  "log",
  "mime",
  "mime_guess",
- "native-tls",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -16292,7 +16127,6 @@ dependencies = [
  "serde_urlencoded",
  "sync_wrapper 1.0.2",
  "tokio",
- "tokio-native-tls",
  "tokio-rustls 0.26.4",
  "tokio-util",
  "tower 0.5.3",
@@ -20430,17 +20264,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "secret-vault-value"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "471de2a3d4b361569b862e04491696237381641ae5808f8e69ea08de991cd306"
-dependencies = [
- "serde",
- "serde_json",
- "zeroize",
-]
-
-[[package]]
 name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -23482,13 +23305,11 @@ dependencies = [
  "socket2 0.6.4",
  "sync_wrapper 1.0.2",
  "tokio",
- "tokio-rustls 0.26.4",
  "tokio-stream",
  "tower 0.5.3",
  "tower-layer",
  "tower-service",
  "tracing",
- "webpki-roots 1.0.7",
 ]
 
 [[package]]
