@@ -39,7 +39,8 @@ pub use block::{BlockInfo, FromBlockError, L2BlockInfo};
 mod frame;
 pub use frame::{
     BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, DERIVATION_VERSION_0, DERIVATION_VERSION_1,
-    Frame, FrameDecodingError, FrameParseError, MAX_BLOB_FRAME_SIZE,
+    Frame, FrameDecodingError, FrameParseError, GENERIC_COMMITMENT_LEN, MAX_BLOB_FRAME_SIZE,
+    MAX_DA_OBJECT_BYTES,
 };
 
 mod utils;

@@ -8,9 +8,9 @@ use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{
-    DerivationPipeline, EthereumDataSource, OriginProvider, Pipeline, PipelineBuilder,
-    PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, ResetSignal, Signal,
-    SignalReceiver, StatefulAttributesBuilder, StepResult,
+    AltDaDataSource, DerivationPipeline, DynAltDaResolver, EthereumDataSource, OriginProvider,
+    Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult, PolledAttributesQueueStage,
+    ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
@@ -29,8 +29,8 @@ type OnlinePolledDerivationPipeline = DerivationPipeline<
     AlloyL2ChainProvider,
 >;
 
-/// An RPC-backed Ethereum data source.
-type OnlineDataProvider = EthereumDataSource<ConfDepthProvider, L1BlobProvider>;
+/// An RPC-backed Ethereum data source, wrapped to optionally resolve alt-DA commitments.
+type OnlineDataProvider = AltDaDataSource<EthereumDataSource<ConfDepthProvider, L1BlobProvider>>;
 
 /// An RPC-backed payload attributes builder for the `AttributesQueue` stage of the derivation
 /// pipeline.
@@ -55,6 +55,7 @@ impl OnlinePipeline {
         l2_chain_provider: AlloyL2ChainProvider,
         l1_head_number: L1HeadNumber,
         verifier_l1_confs: u64,
+        alt_da_resolver: Option<DynAltDaResolver>,
     ) -> PipelineResult<Self> {
         let mut pipeline = Self::new_polled(
             Arc::clone(&cfg),
@@ -64,6 +65,7 @@ impl OnlinePipeline {
             l2_chain_provider,
             l1_head_number,
             verifier_l1_confs,
+            alt_da_resolver,
         );
 
         // Reset the pipeline to populate the initial L1/L2 cursor and system configuration in L1
@@ -89,6 +91,7 @@ impl OnlinePipeline {
         l2_chain_provider: AlloyL2ChainProvider,
         l1_head_number: L1HeadNumber,
         verifier_l1_confs: u64,
+        alt_da_resolver: Option<DynAltDaResolver>,
     ) -> Self {
         Self::new_polled_with_da_batcher_sender_override(
             cfg,
@@ -99,6 +102,7 @@ impl OnlinePipeline {
             l1_head_number,
             verifier_l1_confs,
             None,
+            alt_da_resolver,
         )
     }
 
@@ -114,6 +118,7 @@ impl OnlinePipeline {
         l1_head_number: L1HeadNumber,
         verifier_l1_confs: u64,
         da_batcher_sender_override: Option<Address>,
+        alt_da_resolver: Option<DynAltDaResolver>,
     ) -> Self {
         let chain_provider =
             ConfDepthProvider::new(chain_provider, l1_head_number, verifier_l1_confs);
@@ -123,7 +128,9 @@ impl OnlinePipeline {
             l2_chain_provider.clone(),
             chain_provider.clone(),
         );
-        let dap = EthereumDataSource::new_from_parts(chain_provider.clone(), blob_provider, &cfg);
+        let eth_dap =
+            EthereumDataSource::new_from_parts(chain_provider.clone(), blob_provider, &cfg);
+        let dap = AltDaDataSource::new(eth_dap, alt_da_resolver);
 
         let pipeline = PipelineBuilder::new()
             .rollup_config(cfg)

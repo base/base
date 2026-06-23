@@ -13,7 +13,9 @@ use alloy_provider::RootProvider;
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
+use base_consensus_derive::{
+    DynAltDaResolver, Pipeline, SignalReceiver, StatefulAttributesBuilder,
+};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
 use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, L1BlobProvider, OnlineBeaconClient,
@@ -152,6 +154,12 @@ pub struct RollupNode {
     pub safedb_path: Option<PathBuf>,
     /// Optional upgrade signal configuration for the consensus node.
     pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
+    /// Optional alt-DA commitment resolver.
+    ///
+    /// When set, derivation resolves `0x01` alt-DA commitments to their off-chain batch bytes
+    /// and ignores inline calldata, so the node derives purely from off-chain DA. When `None`
+    /// (the default), the node derives from calldata or blobs as usual.
+    pub alt_da_resolver: Option<DynAltDaResolver>,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -273,6 +281,7 @@ impl RollupNode {
             l1_head_number,
             self.l1_config.verifier_l1_confs,
             self.l1_config.da_batcher_sender_override,
+            self.alt_da_resolver.clone(),
         )
     }
 

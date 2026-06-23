@@ -234,6 +234,13 @@ pub struct ConsensusNodeConfigArgs {
     /// L1 upgrade signal schedule arguments.
     #[command(flatten)]
     pub upgrade_signal: UpgradeSignalArgs,
+
+    /// Alt-DA server URL (e.g. `http://base-da-server:2583`).
+    ///
+    /// When set, the node derives from off-chain DA: it resolves `0x01` commitments from this
+    /// server and ignores inline calldata. Leave unset to derive from calldata or blobs.
+    #[arg(long = "altda.da-server", env = "BASE_NODE_ALTDA_DA_SERVER")]
+    pub altda_da_server: Option<Url>,
 }
 
 /// Consensus node configuration arguments for embedded callers.
@@ -270,6 +277,13 @@ pub struct EmbeddedConsensusNodeConfigArgs {
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
+
+    /// Alt-DA server URL (e.g. `http://base-da-server:2583`).
+    ///
+    /// When set, the node derives from off-chain DA: it resolves `0x01` commitments from this
+    /// server and ignores inline calldata. Leave unset to derive from calldata or blobs.
+    #[arg(long = "altda.da-server", env = "BASE_NODE_ALTDA_DA_SERVER")]
+    pub altda_da_server: Option<Url>,
 }
 
 /// Consensus node configuration arguments for embedded sequencer callers.
@@ -310,6 +324,13 @@ pub struct EmbeddedSequencerConsensusNodeConfigArgs {
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
+
+    /// Alt-DA server URL (e.g. `http://base-da-server:2583`).
+    ///
+    /// When set, the node derives from off-chain DA: it resolves `0x01` commitments from this
+    /// server and ignores inline calldata. Leave unset to derive from calldata or blobs.
+    #[arg(long = "altda.da-server", env = "BASE_NODE_ALTDA_DA_SERVER")]
+    pub altda_da_server: Option<Url>,
 }
 
 impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
@@ -326,6 +347,7 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
             upgrade_signal: UpgradeSignalArgs::default(),
+            altda_da_server: args.altda_da_server,
         }
     }
 }
@@ -344,6 +366,7 @@ impl From<EmbeddedSequencerConsensusNodeConfigArgs> for ConsensusNodeConfigArgs 
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
             upgrade_signal: UpgradeSignalArgs::default(),
+            altda_da_server: args.altda_da_server,
         }
     }
 }
@@ -518,6 +541,7 @@ impl ConsensusNodeArgs {
         if let Some(path) = self.config.safedb_path.clone() {
             builder = builder.with_safedb_path(path);
         }
+        builder = builder.with_alt_da_server(self.config.altda_da_server.clone());
 
         builder.build().await.wrap_err("Failed to build rollup node")
     }
@@ -659,6 +683,7 @@ mod tests {
             safedb_path: None,
             checkpoint_path: None,
             upgrade_signal: UpgradeSignalArgs::default(),
+            altda_da_server: None,
         }
     }
 
@@ -962,6 +987,7 @@ mod tests {
             l2_config: L2ConfigFile::default(),
             safedb_path: None,
             checkpoint_path: None,
+            altda_da_server: None,
         };
 
         let config = ConsensusNodeConfigArgs::from(args);

@@ -8,8 +8,9 @@ use alloy_provider::RootProvider;
 use alloy_transport::{TransportErrorKind, TransportResult};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
+use base_consensus_derive::DynAltDaResolver;
 use base_consensus_engine::BaseEngineClient;
-use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
+use base_consensus_providers::{HttpAltDaResolver, L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::UpgradeSignalConfig;
 use url::Url;
@@ -102,6 +103,11 @@ pub struct RollupNodeBuilder {
     pub safedb_path: Option<PathBuf>,
     /// Upgrade signal configuration.
     pub upgrade_signal_config: UpgradeSignalBuilderConfig,
+    /// Optional alt-DA server URL.
+    ///
+    /// When set, derivation resolves `0x01` alt-DA commitments to off-chain batch bytes from
+    /// this server and derives purely from off-chain DA (skipping inline calldata).
+    pub alt_da_server: Option<Url>,
 }
 
 impl RollupNodeBuilder {
@@ -144,6 +150,7 @@ impl RollupNodeBuilder {
                 metrics_config: None,
                 l1_rpc: None,
             },
+            alt_da_server: None,
         }
     }
 
@@ -193,6 +200,14 @@ impl RollupNodeBuilder {
     /// Sets the upgrade signal configuration.
     pub fn with_upgrade_signal_config(self, config: UpgradeSignalBuilderConfig) -> Self {
         Self { upgrade_signal_config: config, ..self }
+    }
+
+    /// Enables alt-DA derivation by setting the DA server URL.
+    ///
+    /// When set, the node resolves `0x01` commitments from this server and derives purely from
+    /// off-chain DA.
+    pub fn with_alt_da_server(self, server: Option<Url>) -> Self {
+        Self { alt_da_server: server, ..self }
     }
 
     /// Assembles the [`RollupNode`] service.
@@ -273,6 +288,16 @@ impl RollupNodeBuilder {
             .transpose()
             .map_err(TransportErrorKind::non_retryable)?;
 
+        let alt_da_resolver: Option<DynAltDaResolver> = self
+            .alt_da_server
+            .map(|server| HttpAltDaResolver::new(server).map(|r| Arc::new(r) as DynAltDaResolver))
+            .transpose()
+            .map_err(|e| {
+                alloy_transport::TransportError::from(TransportErrorKind::custom_str(&format!(
+                    "failed to build alt-da resolver: {e}"
+                )))
+            })?;
+
         Ok(RollupNode {
             config: rollup_config,
             l1_config,
@@ -287,6 +312,7 @@ impl RollupNodeBuilder {
             checkpoint_path,
             safedb_path: self.safedb_path,
             upgrade_signal_config,
+            alt_da_resolver,
         })
     }
 

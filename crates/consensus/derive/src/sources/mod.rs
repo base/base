@@ -18,3 +18,6 @@ pub use blobs::BlobSource;
 
 mod calldata;
 pub use calldata::CalldataSource;
+
+mod alt_da;
+pub use alt_da::{AltDaCommitmentResolver, AltDaDataSource, AltDaResolverError, DynAltDaResolver};

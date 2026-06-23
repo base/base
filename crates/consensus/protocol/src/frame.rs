@@ -54,6 +54,16 @@ pub const BLOB_DERIVATION_PREFIX_SIZE: usize = 1;
 /// derivation-version prefix.
 pub const MAX_BLOB_FRAME_SIZE: usize = BLOB_MAX_DATA_SIZE - BLOB_DERIVATION_PREFIX_SIZE;
 
+/// Encoded length of an alt-DA generic commitment: a `0x01` type byte, a `0xff` sentinel, then
+/// a 32-byte payload. A [`DERIVATION_VERSION_1`] batcher transaction carries
+/// `1 + GENERIC_COMMITMENT_LEN` bytes (the version byte followed by the commitment).
+pub const GENERIC_COMMITMENT_LEN: usize = 34;
+
+/// Maximum alt-DA object size accepted on PUT/GET, sized for eight max-size blob frames per
+/// channel submission. Shared so the DA server, batcher, and derivation resolver agree on the
+/// cap without each crate redefining the formula.
+pub const MAX_DA_OBJECT_BYTES: usize = 8 * BLOB_MAX_DATA_SIZE;
+
 /// A frame decoding error.
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameDecodingError {
