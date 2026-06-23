@@ -13,7 +13,7 @@ set -euo pipefail
 # real hash and points the DisputeGameFactory's game type at it.
 
 L1_RPC_URL="${L1_RPC_URL:-http://l1-el:4545}"
-L2_RPC_URL="${L2_RPC_URL:-http://base-rpc:8545}"
+L2_RPC_URL="${L2_RPC_URL:-http://base-rpc:8645}"
 L1_CHAIN_ID="${L1_CHAIN_ID:-1337}"
 OUTPUT_DIR="${OUTPUT_DIR:-/devnet/l2/configs}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
