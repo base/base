@@ -7,7 +7,7 @@ use alloy_consensus::{BlockHeader as AlloyBlockHeader, Header, InMemorySize};
 use alloy_primitives::{
     Address, B64, B256, BlockNumber, Bloom, Bytes, Sealable, Sealed, U256, keccak256,
 };
-use alloy_rlp::{BufMut, Decodable, Encodable, length_of_length};
+use alloy_rlp::{BufMut, Decodable, Encodable};
 
 /// Number of milliseconds in one Unix timestamp second.
 pub const TIMESTAMP_MILLIS_PER_SECOND: u16 = 1_000;
@@ -177,137 +177,82 @@ impl BaseHeader {
     }
 
     fn header_payload_length(&self) -> usize {
-        let mut length = Self::inner_header_payload_length(&self.inner);
+        let inner_header = alloy_rlp::encode(&self.inner);
+        let mut length = Self::encoded_header_payload(&inner_header).len();
 
         if let Some(timestamp_millis_part) = self.timestamp_millis_part {
             // The millisecond trailer is encoded as a single-element RLP list so the decoder
             // can disambiguate it from a missing intermediate post-Bedrock optional field.
-            let inner_len = timestamp_millis_part.length();
-            length += inner_len + length_of_length(inner_len);
+            let trailer_header =
+                alloy_rlp::Header { list: true, payload_length: timestamp_millis_part.length() };
+            length += trailer_header.length_with_payload();
         }
 
         length
     }
 
-    fn inner_header_payload_length(header: &Header) -> usize {
-        let mut length = 0;
-        length += header.parent_hash.length();
-        length += header.ommers_hash.length();
-        length += header.beneficiary.length();
-        length += header.state_root.length();
-        length += header.transactions_root.length();
-        length += header.receipts_root.length();
-        length += header.logs_bloom.length();
-        length += header.difficulty.length();
-        length += U256::from(header.number).length();
-        length += U256::from(header.gas_limit).length();
-        length += U256::from(header.gas_used).length();
-        length += header.timestamp.length();
-        length += header.extra_data.length();
-        length += header.mix_hash.length();
-        length += header.nonce.length();
-
-        if let Some(base_fee) = header.base_fee_per_gas {
-            length += U256::from(base_fee).length();
-        }
-
-        if let Some(root) = header.withdrawals_root {
-            length += root.length();
-        }
-
-        if let Some(blob_gas_used) = header.blob_gas_used {
-            length += U256::from(blob_gas_used).length();
-        }
-
-        if let Some(excess_blob_gas) = header.excess_blob_gas {
-            length += U256::from(excess_blob_gas).length();
-        }
-
-        if let Some(parent_beacon_block_root) = header.parent_beacon_block_root {
-            length += parent_beacon_block_root.length();
-        }
-
-        if let Some(requests_hash) = header.requests_hash {
-            length += requests_hash.length();
-        }
-
-        if let Some(block_access_list_hash) = header.block_access_list_hash {
-            length += block_access_list_hash.length();
-        }
-
-        if let Some(slot_number) = header.slot_number {
-            length += U256::from(slot_number).length();
-        }
-
-        length
+    fn encoded_header_payload<'a>(encoded_header: &'a [u8]) -> &'a [u8] {
+        let mut encoded_header = encoded_header;
+        alloy_rlp::Header::decode_bytes(&mut encoded_header, true)
+            .expect("alloy header encoding must be a valid RLP list")
     }
 
-    fn encode_inner_header(header: &Header, out: &mut dyn BufMut) {
-        header.parent_hash.encode(out);
-        header.ommers_hash.encode(out);
-        header.beneficiary.encode(out);
-        header.state_root.encode(out);
-        header.transactions_root.encode(out);
-        header.receipts_root.encode(out);
-        header.logs_bloom.encode(out);
-        header.difficulty.encode(out);
-        U256::from(header.number).encode(out);
-        U256::from(header.gas_limit).encode(out);
-        U256::from(header.gas_used).encode(out);
-        header.timestamp.encode(out);
-        header.extra_data.encode(out);
-        header.mix_hash.encode(out);
-        header.nonce.encode(out);
+    fn decode_header_from_payload(payload: &[u8]) -> alloy_rlp::Result<Header> {
+        let list_header = alloy_rlp::Header { list: true, payload_length: payload.len() };
+        let mut encoded = Vec::with_capacity(list_header.length_with_payload());
+        list_header.encode(&mut encoded);
+        encoded.extend_from_slice(payload);
 
-        if let Some(base_fee) = header.base_fee_per_gas {
-            U256::from(base_fee).encode(out);
+        let mut encoded_slice = encoded.as_slice();
+        let inner = Header::decode(&mut encoded_slice)?;
+        if !encoded_slice.is_empty() {
+            return Err(alloy_rlp::Error::ListLengthMismatch {
+                expected: encoded.len(),
+                got: encoded.len() - encoded_slice.len(),
+            });
         }
 
-        if let Some(root) = header.withdrawals_root {
-            root.encode(out);
-        }
-
-        if let Some(blob_gas_used) = header.blob_gas_used {
-            U256::from(blob_gas_used).encode(out);
-        }
-
-        if let Some(excess_blob_gas) = header.excess_blob_gas {
-            U256::from(excess_blob_gas).encode(out);
-        }
-
-        if let Some(parent_beacon_block_root) = header.parent_beacon_block_root {
-            parent_beacon_block_root.encode(out);
-        }
-
-        if let Some(requests_hash) = header.requests_hash {
-            requests_hash.encode(out);
-        }
-
-        if let Some(block_access_list_hash) = header.block_access_list_hash {
-            block_access_list_hash.encode(out);
-        }
-
-        if let Some(slot_number) = header.slot_number {
-            U256::from(slot_number).encode(out);
-        }
+        Ok(inner)
     }
 
-    fn has_next_upstream_optional_field(
-        buf: &[u8],
-        started_len: usize,
-        payload_length: usize,
-    ) -> bool {
-        Self::has_remaining_payload(buf, started_len, payload_length)
-            && !Self::next_payload_item_is_list(buf)
+    fn split_last_rlp_item(payload: &[u8]) -> alloy_rlp::Result<(&[u8], &[u8])> {
+        let mut remaining = payload;
+        let mut last_item = None;
+
+        while !remaining.is_empty() {
+            let item_start = remaining;
+            let item_header = alloy_rlp::Header::decode(&mut remaining)?;
+            if remaining.len() < item_header.payload_length {
+                return Err(alloy_rlp::Error::InputTooShort);
+            }
+            remaining = &remaining[item_header.payload_length..];
+            let item_length = item_start.len() - remaining.len();
+            last_item = Some(&item_start[..item_length]);
+        }
+
+        let last_item = last_item.ok_or(alloy_rlp::Error::UnexpectedLength)?;
+        let payload_prefix = &payload[..payload.len() - last_item.len()];
+        Ok((payload_prefix, last_item))
     }
 
-    fn has_remaining_payload(buf: &[u8], started_len: usize, payload_length: usize) -> bool {
-        started_len - buf.len() < payload_length
+    fn decode_trailer_timestamp_millis_part(item: &[u8]) -> alloy_rlp::Result<u16> {
+        let mut item = item;
+        let trailer_payload = alloy_rlp::Header::decode_bytes(&mut item, true)?;
+        if !item.is_empty() {
+            return Err(alloy_rlp::Error::UnexpectedLength);
+        }
+
+        let mut trailer_payload = trailer_payload;
+        let part = u16::decode(&mut trailer_payload)?;
+        if !trailer_payload.is_empty() {
+            return Err(alloy_rlp::Error::UnexpectedLength);
+        }
+
+        Self::validate_timestamp_millis_part(part)
+            .map_err(|_| alloy_rlp::Error::Custom("invalid base header timestamp_millis_part"))?;
+        Ok(part)
     }
 
-    fn next_payload_item_is_list(buf: &[u8]) -> bool {
-        buf.first().is_some_and(|first| *first >= 0xC0)
-    }
 }
 
 impl From<Header> for BaseHeader {
@@ -443,126 +388,49 @@ impl AlloyBlockHeader for BaseHeader {
 
 impl Encodable for BaseHeader {
     fn encode(&self, out: &mut dyn BufMut) {
+        if self.timestamp_millis_part.is_none() {
+            self.inner.encode(out);
+            return;
+        }
+
+        let inner_header = alloy_rlp::encode(&self.inner);
+        let inner_payload = Self::encoded_header_payload(&inner_header);
         let list_header =
             alloy_rlp::Header { list: true, payload_length: self.header_payload_length() };
         list_header.encode(out);
-        Self::encode_inner_header(&self.inner, out);
+        out.put_slice(inner_payload);
 
-        if let Some(timestamp_millis_part) = self.timestamp_millis_part {
-            // Wrap in a single-element list (`[u16]`) so the trailer cannot be confused with a
-            // missing intermediate post-Bedrock optional field (which are all strings).
-            let trailer_header =
-                alloy_rlp::Header { list: true, payload_length: timestamp_millis_part.length() };
-            trailer_header.encode(out);
-            timestamp_millis_part.encode(out);
-        }
+        let timestamp_millis_part = self.timestamp_millis_part.expect("checked above");
+        // Wrap in a single-element list (`[u16]`) so the trailer cannot be confused with a
+        // missing intermediate post-Bedrock optional field (which are all strings).
+        let trailer_header =
+            alloy_rlp::Header { list: true, payload_length: timestamp_millis_part.length() };
+        trailer_header.encode(out);
+        timestamp_millis_part.encode(out);
     }
 
     fn length(&self) -> usize {
-        let length = self.header_payload_length();
-        length + length_of_length(length)
+        if self.timestamp_millis_part.is_none() {
+            return self.inner.length();
+        }
+
+        let payload_length = self.header_payload_length();
+        alloy_rlp::Header { list: true, payload_length }.length_with_payload()
     }
 }
 
 impl Decodable for BaseHeader {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let rlp_head = alloy_rlp::Header::decode(buf)?;
-        if !rlp_head.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-        let started_len = buf.len();
-        let mut inner = Header {
-            parent_hash: Decodable::decode(buf)?,
-            ommers_hash: Decodable::decode(buf)?,
-            beneficiary: Decodable::decode(buf)?,
-            state_root: Decodable::decode(buf)?,
-            transactions_root: Decodable::decode(buf)?,
-            receipts_root: Decodable::decode(buf)?,
-            logs_bloom: Decodable::decode(buf)?,
-            difficulty: Decodable::decode(buf)?,
-            number: u64::decode(buf)?,
-            gas_limit: u64::decode(buf)?,
-            gas_used: u64::decode(buf)?,
-            timestamp: Decodable::decode(buf)?,
-            extra_data: Decodable::decode(buf)?,
-            mix_hash: Decodable::decode(buf)?,
-            nonce: B64::decode(buf)?,
-            base_fee_per_gas: None,
-            withdrawals_root: None,
-            blob_gas_used: None,
-            excess_blob_gas: None,
-            parent_beacon_block_root: None,
-            requests_hash: None,
-            block_access_list_hash: None,
-            slot_number: None,
-        };
+        let payload = alloy_rlp::Header::decode_bytes(buf, true)?;
 
-        // After the mandatory fields, the upstream Ethereum [`Header`] writes a contiguous
-        // suffix of fork-specific optional fields. Those upstream suffix fields currently
-        // encode as RLP strings, while the Base millisecond trailer is encoded as a
-        // single-element RLP list and always written last, so we can stop decoding upstream
-        // fields as soon as the next payload item is a list.
-        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
-            inner.base_fee_per_gas = Some(u64::decode(buf)?);
+        if let Ok(inner) = Self::decode_header_from_payload(payload) {
+            return Ok(Self { inner, timestamp_millis_part: None });
         }
 
-        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
-            inner.withdrawals_root = Some(Decodable::decode(buf)?);
-        }
+        let (inner_payload, trailer_item) = Self::split_last_rlp_item(payload)?;
+        let timestamp_millis_part = Some(Self::decode_trailer_timestamp_millis_part(trailer_item)?);
+        let inner = Self::decode_header_from_payload(inner_payload)?;
 
-        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
-            inner.blob_gas_used = Some(u64::decode(buf)?);
-        }
-
-        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
-            inner.excess_blob_gas = Some(u64::decode(buf)?);
-        }
-
-        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
-            inner.parent_beacon_block_root = Some(B256::decode(buf)?);
-        }
-
-        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
-            inner.requests_hash = Some(B256::decode(buf)?);
-        }
-
-        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
-            inner.block_access_list_hash = Some(B256::decode(buf)?);
-        }
-
-        if Self::has_next_upstream_optional_field(buf, started_len, rlp_head.payload_length) {
-            inner.slot_number = Some(u64::decode(buf)?);
-        }
-
-        let timestamp_millis_part =
-            if Self::has_remaining_payload(buf, started_len, rlp_head.payload_length) {
-                let trailer_head = alloy_rlp::Header::decode(buf)?;
-                if !trailer_head.list {
-                    return Err(alloy_rlp::Error::UnexpectedString);
-                }
-                let trailer_started = buf.len();
-                let part = u16::decode(buf)?;
-                if trailer_started - buf.len() != trailer_head.payload_length {
-                    return Err(alloy_rlp::Error::ListLengthMismatch {
-                        expected: trailer_head.payload_length,
-                        got: trailer_started - buf.len(),
-                    });
-                }
-                Self::validate_timestamp_millis_part(part).map_err(|_| {
-                    alloy_rlp::Error::Custom("invalid base header timestamp_millis_part")
-                })?;
-                Some(part)
-            } else {
-                None
-            };
-
-        let consumed = started_len - buf.len();
-        if consumed != rlp_head.payload_length {
-            return Err(alloy_rlp::Error::ListLengthMismatch {
-                expected: rlp_head.payload_length,
-                got: consumed,
-            });
-        }
         Ok(Self { inner, timestamp_millis_part })
     }
 }
