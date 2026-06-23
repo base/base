@@ -343,13 +343,16 @@ where
                     Err(SubmitAction::GameAlreadyExists)
                 } else if matches!(
                     e,
-                    ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)
+                    ProposerError::Submission(
+                        ProofSubmissionError::L1OriginTooOld
+                            | ProofSubmissionError::InvalidParentGame
+                    )
                 ) {
                     propose_timer.disarm();
                     warn!(
                         error = %e,
                         target_block,
-                        "Proof L1 origin is too old, discarding proof to re-prove"
+                        "Proof cannot be submitted with current chain state, discarding proof to re-prove"
                     );
                     Err(SubmitAction::Discard(e))
                 } else if matches!(
@@ -418,13 +421,17 @@ where
                 );
                 Ok(())
             }
-            Err(e @ ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)) => {
+            Err(
+                e @ ProposerError::Submission(
+                    ProofSubmissionError::L1OriginTooOld | ProofSubmissionError::InvalidParentGame,
+                ),
+            ) => {
                 attach_timer.disarm();
                 warn!(
                     error = %e,
                     target_block,
                     game_address = %game_address,
-                    "Proof L1 origin is too old, discarding proof to re-prove"
+                    "Proof cannot be submitted with current chain state, discarding proof to re-prove"
                 );
                 Err(SubmitAction::Discard(e))
             }
@@ -756,6 +763,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn submit_discards_invalid_parent_game_create_error() {
+        let output = Arc::new(RecordingOutputProposer::default());
+        *output.create_error.lock().unwrap() =
+            Some(ProposerError::Submission(ProofSubmissionError::InvalidParentGame));
+        let submitter = submitter(
+            Arc::clone(&output),
+            MockDisputeGameFactory::with_games(vec![]),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(SubmitAction::Discard(ref error))
+                if error.metric_label() == "invalid_parent_game"
+        ));
+        assert_eq!(*output.created.lock().unwrap(), 1);
+        assert!(output.verified.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn submit_recovers_when_existing_game_l1_head_mismatches() {
         let game_address = Address::repeat_byte(0xAA);
         let mut verifier = MockAggregateVerifier::default();
@@ -787,6 +818,10 @@ mod tests {
     #[case::l1_origin_too_old(
         ProposerError::Submission(ProofSubmissionError::L1OriginTooOld),
         ExpectedAttachErrorAction::Discard("l1_origin_too_old")
+    )]
+    #[case::invalid_parent_game(
+        ProposerError::Submission(ProofSubmissionError::InvalidParentGame),
+        ExpectedAttachErrorAction::Discard("invalid_parent_game")
     )]
     #[case::invalid_signer(
         ProposerError::Submission(ProofSubmissionError::InvalidSigner),
