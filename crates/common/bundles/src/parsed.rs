@@ -33,25 +33,22 @@ pub struct ParsedBundle {
     pub dropping_tx_hashes: Vec<TxHash>,
 }
 
-impl TryFrom<Bundle> for ParsedBundle {
-    type Error = String;
-
-    fn try_from(bundle: Bundle) -> Result<Self, Self::Error> {
-        let txs: Vec<Recovered<BaseTxEnvelope>> = bundle
-            .txs
-            .into_iter()
-            .map(|tx| {
-                BaseTxEnvelope::decode_2718_exact(tx.iter().as_slice())
-                    .map_err(|e| format!("Failed to decode transaction: {e:?}"))
-                    .and_then(|tx| {
-                        tx.try_into_recovered().map_err(|e| {
-                            format!("Failed to convert transaction to recovered: {e:?}")
-                        })
-                    })
-            })
-            .collect::<Result<Vec<Recovered<BaseTxEnvelope>>, String>>()?;
-
-        let uuid = bundle
+impl ParsedBundle {
+    /// Builds a [`ParsedBundle`] from transactions that have already been decoded and
+    /// signer-recovered, reusing them instead of decoding the raw bytes again.
+    ///
+    /// Callers that already hold the recovered transaction (such as the ingress RPC, which
+    /// recovers it before wrapping it in a bundle) should use this to avoid a redundant
+    /// decode and signature recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `bundle.replacement_uuid` is set but is not a valid UUID.
+    pub fn from_recovered_txs(
+        txs: Vec<Recovered<BaseTxEnvelope>>,
+        bundle: Bundle,
+    ) -> Result<Self, String> {
+        let replacement_uuid = bundle
             .replacement_uuid
             .map(|x| Uuid::parse_str(x.as_ref()))
             .transpose()
@@ -65,15 +62,37 @@ impl TryFrom<Bundle> for ParsedBundle {
             min_timestamp: bundle.min_timestamp,
             max_timestamp: bundle.max_timestamp,
             reverting_tx_hashes: bundle.reverting_tx_hashes,
-            replacement_uuid: uuid,
+            replacement_uuid,
             dropping_tx_hashes: bundle.dropping_tx_hashes,
         })
     }
 }
 
+impl TryFrom<Bundle> for ParsedBundle {
+    type Error = String;
+
+    fn try_from(bundle: Bundle) -> Result<Self, Self::Error> {
+        let txs: Vec<Recovered<BaseTxEnvelope>> = bundle
+            .txs
+            .iter()
+            .map(|tx| {
+                BaseTxEnvelope::decode_2718_exact(tx.iter().as_slice())
+                    .map_err(|e| format!("Failed to decode transaction: {e:?}"))
+                    .and_then(|tx| {
+                        tx.try_into_recovered().map_err(|e| {
+                            format!("Failed to convert transaction to recovered: {e:?}")
+                        })
+                    })
+            })
+            .collect::<Result<Vec<Recovered<BaseTxEnvelope>>, String>>()?;
+
+        Self::from_recovered_txs(txs, bundle)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::U256;
+    use alloy_primitives::{Bytes, U256};
     use alloy_provider::network::eip2718::Encodable2718;
     use alloy_signer_local::PrivateKeySigner;
 
@@ -108,6 +127,34 @@ mod tests {
         assert_eq!(parsed.min_timestamp, Some(1000));
         assert_eq!(parsed.max_timestamp, Some(2000));
         assert!(parsed.replacement_uuid.is_none());
+    }
+
+    #[test]
+    fn from_recovered_txs_matches_try_from() {
+        let alice = PrivateKeySigner::random();
+        let bob = PrivateKeySigner::random();
+
+        let tx = create_transaction(alice, 7, bob.address(), U256::from(10_000));
+        let tx_bytes: Bytes = tx.encoded_2718().into();
+
+        let bundle = Bundle {
+            txs: vec![tx_bytes.clone()],
+            block_number: 100,
+            max_timestamp: Some(2000),
+            ..Default::default()
+        };
+
+        // Decode and recover once, then build the parsed bundle from the recovered tx.
+        let recovered = BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref())
+            .unwrap()
+            .try_into_recovered()
+            .unwrap();
+        let reused = ParsedBundle::from_recovered_txs(vec![recovered], bundle.clone()).unwrap();
+
+        // Decoding the raw bytes must produce an identical bundle (same fields, same hash).
+        let from_bytes: ParsedBundle = bundle.try_into().unwrap();
+
+        assert_eq!(reused, from_bytes);
     }
 
     #[test]

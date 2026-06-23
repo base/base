@@ -100,6 +100,7 @@ impl IngressApiServer for IngressService {
     async fn send_raw_transaction(&self, data: Bytes) -> RpcResult<B256> {
         let start = Instant::now();
         let transaction = self.get_tx(&data).await?;
+        let tx_hash = transaction.tx_hash();
 
         Metrics::transactions_received().increment(1);
 
@@ -107,7 +108,6 @@ impl IngressApiServer for IngressService {
         if let Some(forward_provider) = self.raw_tx_forward_provider.clone() {
             Metrics::raw_tx_forwards_total().increment(1);
             let tx_data = data.clone();
-            let tx_hash = transaction.tx_hash();
             tokio::spawn(async move {
                 match forward_provider.send_raw_transaction(tx_data.iter().as_slice()).await {
                     Ok(_) => {
@@ -126,14 +126,14 @@ impl IngressApiServer for IngressService {
         let bundle = Bundle {
             txs: vec![data.clone()],
             max_timestamp: Some(expiry_timestamp),
-            reverting_tx_hashes: vec![transaction.tx_hash()],
+            reverting_tx_hashes: vec![tx_hash],
             ..Default::default()
         };
 
-        let parsed_bundle: ParsedBundle = bundle
-            .clone()
-            .try_into()
-            .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
+        // Reuse the transaction already decoded and signer-recovered in `get_tx` instead of
+        // decoding and recovering the same bytes again inside `ParsedBundle::try_from`.
+        let parsed_bundle = ParsedBundle::from_recovered_txs(vec![transaction], bundle.clone())
+            .map_err(|e| EthApiError::InvalidParams(e).into_rpc_err())?;
 
         let bundle_hash = &parsed_bundle.bundle_hash();
 
@@ -141,7 +141,7 @@ impl IngressApiServer for IngressService {
             debug!(
                 message = "Duplicate bundle detected, skipping",
                 bundle_hash = %bundle_hash,
-                transaction_hash = %transaction.tx_hash(),
+                transaction_hash = %tx_hash,
             );
         } else {
             self.bundle_cache.insert(*bundle_hash, ()).await;
@@ -194,7 +194,7 @@ impl IngressApiServer for IngressService {
             match response {
                 Ok(_) => {
                     Metrics::sent_to_mempool().increment(1);
-                    debug!(message = "sent transaction to the mempool", hash=%transaction.tx_hash());
+                    debug!(message = "sent transaction to the mempool", hash=%tx_hash);
                 }
                 Err(e) => {
                     warn!(message = "Failed to send raw transaction to mempool", error = %e);
@@ -204,7 +204,7 @@ impl IngressApiServer for IngressService {
             info!(
                 message = "processed transaction",
                 bundle_hash = %bundle_hash,
-                transaction_hash = %transaction.tx_hash(),
+                transaction_hash = %tx_hash,
             );
 
             self.send_audit_event(&accepted_bundle, accepted_bundle.bundle_hash());
@@ -212,7 +212,7 @@ impl IngressApiServer for IngressService {
 
         Metrics::send_raw_transaction_duration().record(start.elapsed().as_secs_f64());
 
-        Ok(transaction.tx_hash())
+        Ok(tx_hash)
     }
 }
 
