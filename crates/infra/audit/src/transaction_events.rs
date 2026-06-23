@@ -242,12 +242,13 @@ impl PgTransactionEventSink {
         // RDS IAM auth tokens are only validated when a connection opens; open
         // connections remain usable after token expiry. sqlx does not expose a
         // pre-connect password callback, so the IAM-auth deployment path passes
-        // a fresh startup token and keeps the physical pool connections open.
-        // If the pool is fully dropped after token expiry, the process should be
+        // a fresh startup token, eagerly opens the full configured pool while
+        // that token is valid, and keeps those physical connections open. If
+        // the pool is fully dropped after token expiry, the process should be
         // restarted so a new token is minted before rebuilding the pool.
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
-            .min_connections(1)
+            .min_connections(max_connections)
             .max_lifetime(None)
             .idle_timeout(None)
             .connect(database_url)
