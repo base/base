@@ -108,7 +108,12 @@ impl BaseTransactionBuilder {
 
         let base = self.base.build_fill();
 
-        BaseTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit }
+        BaseTransaction {
+            base,
+            enveloped_tx: self.enveloped_tx,
+            deposit: self.deposit,
+            eip8130: None,
+        }
     }
 
     /// Build the [`BaseTransaction`] instance, return error if the transaction is not valid.
@@ -135,6 +140,11 @@ impl BaseTransactionBuilder {
 
         let base = self.base.build()?;
 
-        Ok(BaseTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit })
+        Ok(BaseTransaction {
+            base,
+            enveloped_tx: self.enveloped_tx,
+            deposit: self.deposit,
+            eip8130: None,
+        })
     }
 }

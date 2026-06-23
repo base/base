@@ -24,6 +24,10 @@ base-common-flz.workspace = true
 base-common-chains.workspace = true
 base-common-genesis.workspace = true
 base-common-precompiles.workspace = true
+# Only used by the enshrined EIP-8130 executor, which is `std`-only; kept
+# optional so `no_std` (proof/zkVM) builds do not pull in a `std` crate.
+base-precompile-storage = { workspace = true, optional = true }
+base-execution-eip8130 = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["evm"] }
 
 # revm
@@ -43,6 +47,7 @@ reth-evm = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
+k256 = { workspace = true, features = ["ecdsa"] }
 sha2 = { workspace = true, default-features = false }
 alloy-hardforks.workspace = true
 alloy-sol-types = { workspace = true, default-features = false }
@@ -61,6 +66,8 @@ std = [
 	"base-common-flz/std",
 	"base-common-genesis/std",
 	"base-common-precompiles/std",
+	"base-precompile-storage/std",
+	"dep:base-execution-eip8130",
 	"revm/std",
 	"serde?/std",
 	"thiserror/std",

@@ -169,6 +169,14 @@ impl TestRollupConfigBuilder {
         self
     }
 
+    /// Sets the Cobalt activation timestamp.
+    ///
+    /// Cobalt is a standalone Base-specific fork, independent of the inherited fork cascade.
+    pub const fn with_cobalt_at(mut self, t: u64) -> Self {
+        self.config.upgrades.base.cobalt = Some(t);
+        self
+    }
+
     /// Activates every scheduled fork from genesis for tests that need it.
     ///
     /// `base_mainnet` intentionally keeps the harness's existing "Canyon through

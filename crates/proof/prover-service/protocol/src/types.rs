@@ -91,6 +91,13 @@ pub struct ProveBlockRangeResponse {
     pub session_id: String,
 }
 
+/// Request to delete a completed proof request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteProofRequest {
+    /// Proof session identifier.
+    pub session_id: String,
+}
+
 /// Submitted proof request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofRequest {

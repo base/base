@@ -10,6 +10,12 @@
 mod event;
 pub use event::*;
 
+mod emit;
+pub use emit::{
+    GlobalTransactionEventWriter, GlobalTransactionEventWriterInitStatus, TransactionEventBuilder,
+    TransactionEventEmitOutcome,
+};
+
 mod id;
 pub use id::EventIdBuilder;
 
@@ -18,3 +24,8 @@ pub use metrics::Metrics;
 
 mod writer;
 pub use writer::{TransactionEventWriter, TransactionEventWriterConfig, WriteEventError};
+
+#[doc(hidden)]
+pub mod __private {
+    pub use serde_json::json;
+}

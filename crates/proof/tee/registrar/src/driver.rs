@@ -16,7 +16,6 @@ use base_proof_contracts::TEEProverRegistryClient;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
-use rand::random;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, warn};
 
@@ -251,40 +250,52 @@ where
             return Ok(outcome);
         }
 
-        let nonce: [u8; 32] = random();
-        info!(
-            nonce = %hex::encode(nonce),
-            instance = %instance.instance_id,
-            "requesting attestations with nonce"
-        );
-        let all_attestations = match self
-            .signer_client
-            .signer_attestation(&instance.endpoint, Some(nonce.to_vec()))
-            .await
-        {
-            Ok(attestations) => attestations,
-            Err(e) => {
+        let mut all_attestations = Vec::with_capacity(addresses.len());
+        for (index, signer) in addresses.iter().copied().enumerate() {
+            let nonce = self.signer_manager.attestation_nonce(signer);
+            info!(
+                nonce = %hex::encode(nonce),
+                signer = %signer,
+                instance = %instance.instance_id,
+                "requesting attestation with deterministic nonce"
+            );
+            let attestations = match self
+                .signer_client
+                .signer_attestation(&instance.endpoint, Some(nonce.to_vec()))
+                .await
+            {
+                Ok(attestations) => attestations,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        signer = %signer,
+                        instance = %instance.instance_id,
+                        "failed to fetch signer attestations after resolving signer addresses"
+                    );
+                    RegistrarMetrics::processing_errors_total().increment(1);
+                    outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
+                    return Ok(outcome);
+                }
+            };
+
+            if attestations.len() != addresses.len() {
                 warn!(
-                    error = %e,
+                    expected = addresses.len(),
+                    actual = attestations.len(),
+                    signer = %signer,
                     instance = %instance.instance_id,
-                    "failed to fetch signer attestations after resolving signer addresses"
+                    "signer attestation count did not match signer public key count"
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
                 outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
                 return Ok(outcome);
             }
-        };
 
-        if all_attestations.len() != addresses.len() {
-            warn!(
-                expected = addresses.len(),
-                actual = all_attestations.len(),
-                instance = %instance.instance_id,
-                "signer attestation count did not match signer public key count"
-            );
-            RegistrarMetrics::processing_errors_total().increment(1);
-            outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
-            return Ok(outcome);
+            let attestation = attestations
+                .into_iter()
+                .nth(index)
+                .expect("guarded by attestation count == signer count");
+            all_attestations.push(attestation);
         }
 
         if self.config.cancel.is_cancelled() {
@@ -415,7 +426,7 @@ where
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
-        sync::Arc,
+        sync::{Arc, Mutex},
         time::SystemTime,
     };
 
@@ -444,6 +455,7 @@ mod tests {
         keys: HashMap<Url, Vec<Vec<u8>>>,
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
+        requested_nonces: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
     }
 
     impl MockEnclaveEndpointClient {
@@ -472,8 +484,9 @@ mod tests {
         async fn signer_attestation(
             &self,
             endpoint: &Url,
-            _nonce: Option<Vec<u8>>,
+            nonce: Option<Vec<u8>>,
         ) -> Result<Vec<Vec<u8>>> {
+            self.requested_nonces.lock().unwrap().push(nonce);
             if self.fail_attestation.contains(endpoint) {
                 return Err(RegistrarError::ProverClient {
                     instance: endpoint.to_string(),
@@ -616,6 +629,44 @@ mod tests {
         assert!(resolution.active_signers.contains(&addr0));
         assert!(resolution.active_signers.contains(&addr1));
         assert!(resolution.unresolved_instance_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_requests_deterministic_nonce_per_signer() {
+        let signer_a = signer_from_private_key(&HARDHAT_KEY_0);
+        let signer_b = signer_from_private_key(&HARDHAT_KEY_1);
+        let signer_client =
+            MockEnclaveEndpointClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        let requested_nonces = Arc::clone(&signer_client.requested_nonces);
+
+        let driver = cycle_driver(
+            vec![healthy_prover_instance(EP1)],
+            signer_client,
+            CancellationToken::new(),
+        );
+
+        let resolution = discover_once(&driver).await;
+
+        assert_eq!(resolution.registerable.len(), 2);
+        assert_eq!(
+            *requested_nonces.lock().unwrap(),
+            vec![
+                Some(
+                    SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
+                        TEST_REGISTRY_ADDRESS,
+                        signer_a,
+                    )
+                    .to_vec(),
+                ),
+                Some(
+                    SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
+                        TEST_REGISTRY_ADDRESS,
+                        signer_b,
+                    )
+                    .to_vec(),
+                ),
+            ]
+        );
     }
 
     #[tokio::test]

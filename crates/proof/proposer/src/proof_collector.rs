@@ -1112,6 +1112,13 @@ mod tests {
             unimplemented!("tests do not poll proofs")
         }
 
+        async fn delete_proof_request(
+            &self,
+            _request: base_prover_service_protocol::DeleteProofRequest,
+        ) -> Result<(), ProverServiceClientError> {
+            unimplemented!("tests do not delete proofs")
+        }
+
         async fn list_proofs(
             &self,
             _request: base_prover_service_protocol::ListProofsRequest,
@@ -1139,6 +1146,13 @@ mod tests {
         ) -> Result<base_prover_service_protocol::GetProofResponse, ProverServiceClientError>
         {
             unimplemented!("tests do not poll proofs")
+        }
+
+        async fn delete_proof_request(
+            &self,
+            _request: base_prover_service_protocol::DeleteProofRequest,
+        ) -> Result<(), ProverServiceClientError> {
+            unimplemented!("tests do not delete proofs")
         }
 
         async fn list_proofs(

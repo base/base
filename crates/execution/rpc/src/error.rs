@@ -85,6 +85,11 @@ pub enum BaseInvalidTransactionError {
     /// transactions are also dropped if they arrive over devp2p.
     #[error("{}", base_common_consensus::EIP8130_REJECTION_MSG)]
     Eip8130NotAccepted,
+    /// An EIP-8130 (account-abstraction) transaction was rejected during its
+    /// enshrined execution pipeline (authorization, nonce, intrinsic gas, fee, or
+    /// account-change apply). The string carries the underlying rejection reason.
+    #[error("EIP-8130 transaction rejected: {0}")]
+    Eip8130Rejected(String),
 }
 
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -93,7 +98,8 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
             BaseInvalidTransactionError::DepositSystemTxPostRegolith
             | BaseInvalidTransactionError::HaltedDepositPostRegolith
             | BaseInvalidTransactionError::MissingEnvelopedTx
-            | BaseInvalidTransactionError::Eip8130NotAccepted => {
+            | BaseInvalidTransactionError::Eip8130NotAccepted
+            | BaseInvalidTransactionError::Eip8130Rejected(_) => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
         }
@@ -110,6 +116,7 @@ impl TryFrom<BaseTransactionError> for BaseInvalidTransactionError {
             }
             BaseTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
             BaseTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
+            BaseTransactionError::Eip8130(reason) => Ok(Self::Eip8130Rejected(reason)),
             BaseTransactionError::Base(err) => Err(err),
         }
     }

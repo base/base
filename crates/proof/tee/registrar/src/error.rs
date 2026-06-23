@@ -46,6 +46,10 @@ pub enum RegistrarError {
         tx_hash: B256,
     },
 
+    /// Generated proof journal failed registrar-side validation.
+    #[error("invalid attestation proof: {0}")]
+    InvalidAttestationProof(String),
+
     /// Generated proof journal could not be decoded before submission.
     #[error("proof journal could not be decoded: {reason}")]
     InvalidProofJournal {

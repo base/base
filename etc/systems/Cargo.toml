@@ -15,6 +15,7 @@ workspace = true
 # workspace
 base-runtime.workspace = true
 base-txpool-rpc.workspace = true
+base-tx-manager.workspace = true
 base-flashblocks.workspace = true
 base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true

@@ -17,9 +17,12 @@ use jsonrpsee::{
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::server::{
-    ProverServiceServer, WorkerApiConfig, failed_precondition, internal, invalid_argument,
-    not_found, record_rpc_result,
+use crate::{
+    metrics,
+    server::{
+        ProverServiceServer, WorkerApiConfig, failed_precondition, internal, invalid_argument,
+        not_found, record_rpc_result,
+    },
 };
 
 #[async_trait]
@@ -199,10 +202,19 @@ impl ProverServiceServer {
 
         match outcome {
             SubmitProofOutcome::Completed(job) => {
+                metrics::record_terminal_proof_job(metrics::PROOF_STATUS_SUCCEEDED, &job);
                 info!(
                     worker_id = %request.worker_id,
                     session_id = %request.session_id,
                     "worker submitted proof result"
+                );
+                Ok(WorkerSubmitProofResponse { job: into_protocol_job(job)? })
+            }
+            SubmitProofOutcome::AlreadyCompleted(job) => {
+                info!(
+                    worker_id = %request.worker_id,
+                    session_id = %request.session_id,
+                    "worker replayed already completed proof result"
                 );
                 Ok(WorkerSubmitProofResponse { job: into_protocol_job(job)? })
             }

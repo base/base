@@ -12,6 +12,7 @@ pub use payloads::{
     PrecompileLooper, PrecompilePayload, StoragePayload, TransferPayload, UniswapV3Payload,
     parse_precompile_id,
 };
+pub(crate) use payloads::{b20_salt_for, b20_token_for};
 
 mod generator;
 pub use generator::WorkloadGenerator;

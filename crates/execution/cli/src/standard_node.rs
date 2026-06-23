@@ -3,6 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use base_bundle_extension::BundleExtension;
+use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
@@ -326,7 +327,17 @@ impl StandardBaseRethNode {
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
 
-        // Feature extensions (FlashblocksExtension must be last - uses replace_configured).
+        // Feature extensions. Several use `replace_configured` (which is overwrite,
+        // not compose) on overlapping RPC methods, so install order would otherwise
+        // silently decide which one wins. Coordination is enforced by self-gating:
+        //   - FlashblocksExtension: registers eth_getTransactionCount (and others)
+        //     iff flashblocks is enabled.
+        //   - Eip8130RpcExtension: registers eth_getTransactionCount iff flashblocks
+        //     is NOT (see `Eip8130RpcMode` below).
+        //   - ProofsHistoryExtension: registers eth_getProof variants (disjoint from
+        //     the above, so it can sit anywhere in the chain).
+        // New extensions touching the same RPC methods MUST be added to this
+        // coordination scheme rather than relying on install order.
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig {
             sequencer_rpc: args.rpc.rollup_args.sequencer.clone(),
         });
@@ -367,8 +378,13 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_metrics_extension(&mut runner, &rollup_args)?;
+        let eip8130_rpc_mode = if flashblocks_config.is_some() {
+            Eip8130RpcMode::Defer
+        } else {
+            Eip8130RpcMode::Register
+        };
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
-
+        runner.install_ext::<Eip8130RpcExtension>(eip8130_rpc_mode);
         Ok(runner)
     }
 

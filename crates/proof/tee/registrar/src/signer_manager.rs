@@ -9,7 +9,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
@@ -30,6 +30,8 @@ pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
 
 /// Default initial delay between transaction submission retries in seconds.
 pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
+
+const ATTESTATION_NONCE_DOMAIN: &[u8] = b"base-proof-tee-registrar:attestation-nonce:v1";
 
 /// Runtime configuration for [`SignerManager`].
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +100,25 @@ impl<P, R, T> SignerManager<P, R, T> {
             tx_retry_delay,
             max_attestation_age,
         }
+    }
+
+    /// Derives the deterministic attestation nonce for a signer.
+    pub fn attestation_nonce(&self, signer: Address) -> [u8; 32] {
+        Self::attestation_nonce_for(self.registry_address, signer)
+    }
+
+    /// Derives the deterministic attestation nonce for a registry/signer pair.
+    pub fn attestation_nonce_for(registry_address: Address, signer: Address) -> [u8; 32] {
+        let mut input = Vec::with_capacity(
+            ATTESTATION_NONCE_DOMAIN.len()
+                + registry_address.as_slice().len()
+                + signer.as_slice().len(),
+        );
+        input.extend_from_slice(ATTESTATION_NONCE_DOMAIN);
+        input.extend_from_slice(registry_address.as_slice());
+        input.extend_from_slice(signer.as_slice());
+
+        *keccak256(input)
     }
 }
 
@@ -255,9 +276,17 @@ where
             }
             Err(e) => return Err(e.into()),
         };
-
         let journal = VerifierJournal::decode(&proof.output)
             .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
+        let expected_nonce = self.attestation_nonce(signer_address);
+        if journal.nonce.as_ref() != expected_nonce.as_slice() {
+            self.proof_provider.block_recovery_for_signer(signer_address);
+            return Err(RegistrarError::InvalidAttestationProof(format!(
+                "nonce mismatch for signer {signer_address}: expected 0x{}, got 0x{}",
+                hex::encode(expected_nonce),
+                hex::encode(journal.nonce)
+            )));
+        }
         let attestation_timestamp = journal.timestamp;
         drop(proof_permit);
 
@@ -322,9 +351,18 @@ where
                         }
 
                         if !e.is_retryable() {
-                            if matches!(e, TxManagerError::ExecutionReverted { .. }) {
+                            if let TxManagerError::ExecutionReverted { data, reason, .. } = &e {
+                                let registry_error = data
+                                    .as_ref()
+                                    .and_then(|d| d.get(..4))
+                                    .and_then(|selector| selector.try_into().ok())
+                                    .and_then(
+                                        ITEEProverRegistry::ITEEProverRegistryErrors::name_by_selector,
+                                    );
                                 warn!(
                                     signer = %signer_address,
+                                    registry_error = ?registry_error,
+                                    reason = ?reason,
                                     "execution reverted, blocking proof recovery for signer"
                                 );
                                 self.proof_provider.block_recovery_for_signer(signer_address);
@@ -692,7 +730,22 @@ mod tests {
         records: ProofRecords,
     }
 
+    fn expected_nonce(signer: Address) -> [u8; 32] {
+        SignerManager::<RecordingProofProvider, MockRegistry, RecordingTxManager>::attestation_nonce_for(
+            TEST_REGISTRY_ADDRESS,
+            signer,
+        )
+    }
+
+    fn proof_output_with_nonce(nonce: &[u8]) -> Bytes {
+        proof_output_with_nonce_and_age(nonce, Duration::ZERO)
+    }
+
     fn proof_output_with_age(age: Duration) -> Bytes {
+        proof_output_with_nonce_and_age(&expected_nonce(SIGNER_A), age)
+    }
+
+    fn proof_output_with_nonce_and_age(nonce: &[u8], age: Duration) -> Bytes {
         let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
         let age_ms = u64::try_from(age.as_millis()).unwrap_or(u64::MAX);
         let timestamp = u64::try_from(now_ms).unwrap_or(u64::MAX).saturating_sub(age_ms);
@@ -704,7 +757,7 @@ mod tests {
                 certs: Vec::new(),
                 certExpiries: Vec::new(),
                 userData: Bytes::new(),
-                nonce: Bytes::new(),
+                nonce: Bytes::copy_from_slice(nonce),
                 publicKey: Bytes::new(),
                 pcrs: Vec::new(),
                 moduleId: "test-module".to_string(),
@@ -740,7 +793,7 @@ mod tests {
                 output: self
                     .proof_output
                     .clone()
-                    .unwrap_or_else(|| proof_output_with_age(Duration::ZERO)),
+                    .unwrap_or_else(|| proof_output_with_nonce(&expected_nonce(signer_address))),
                 proof_bytes: Bytes::from_static(b"stub-proof"),
             })
         }
@@ -1007,6 +1060,28 @@ mod tests {
             "reverted receipt should fail with ReceiptReverted: {result:?}"
         );
         assert_eq!(manager.tx_manager.send_count(), 1, "should submit exactly one tx");
+        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+    }
+
+    #[tokio::test]
+    async fn register_signer_rejects_nonce_mismatch_before_tx() {
+        let proof_provider = RecordingProofProvider {
+            proof_output: Some(proof_output_with_nonce(b"old-nonce")),
+            ..Default::default()
+        };
+        let manager = manager_with(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::default(),
+        );
+
+        let result = register(&manager, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::InvalidAttestationProof(_))),
+            "mismatched nonce should fail before submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 0, "nonce mismatch must not submit a tx");
         assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
     }
 

@@ -486,11 +486,8 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
         let genesis = serde_json::from_str(cfg.genesis_json)?;
         let upgrades =
             base_common_chains::ChainUpgrades::new(BaseUpgrade::forks_for(cfg)).to_chain_upgrades();
-        Self::validate_beryl_activation_admin(
-            &upgrades,
-            Some(cfg.activation_admin_address),
-            cfg.chain_id,
-        )?;
+        let activation_admin_address = cfg.beryl_activation_admin_address();
+        Self::validate_beryl_activation_admin(&upgrades, activation_admin_address, cfg.chain_id)?;
         let genesis_header = match cfg.genesis_l2_hash {
             B256::ZERO => SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &upgrades)),
             hash => SealedHeader::new(Self::make_genesis_header(&genesis, &upgrades), hash),
@@ -527,7 +524,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
                 prune_delete_limit: cfg.prune_delete_limit,
                 ..Default::default()
             },
-            activation_admin_address: Some(cfg.activation_admin_address),
+            activation_admin_address,
         })
     }
 }
@@ -929,6 +926,8 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
         let mut config = ChainConfig::mainnet().clone();
         config.chain_id = chain_id;
+        config.beryl_timestamp = None;
+        config.cobalt_timestamp = None;
         let spec = BaseChainSpec::try_from(&config).unwrap();
         let timestamp = 42;
         let parent = spec.genesis_header();
@@ -973,14 +972,18 @@ mod tests {
     }
 
     #[test]
-    fn activation_admin_matches_chain_config() {
+    fn activation_admin_matches_beryl_constants() {
         assert_eq!(
             BaseChainSpec::mainnet().activation_admin_address(),
-            Some(address!("cE3a3bEE7E72E2A24079f3c0Cb3b97740ED425A9"))
+            Some(base_common_chains::MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
         assert_eq!(
             BaseChainSpec::sepolia().activation_admin_address(),
-            Some(address!("5F43072722f59964d886CBb507F6a85ca0759D42"))
+            Some(base_common_chains::SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS)
+        );
+        assert_eq!(
+            BaseChainSpec::zeronet().activation_admin_address(),
+            Some(base_common_chains::ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
     }
 
@@ -1051,15 +1054,15 @@ mod tests {
     }
 
     #[test]
-    fn beryl_chain_config_with_zero_activation_admin_is_rejected() {
+    fn beryl_chain_config_without_known_activation_admin_is_rejected() {
         let mut config = ChainConfig::devnet().clone();
+        config.chain_id = 987_654;
         config.beryl_timestamp = Some(0);
-        config.activation_admin_address = Address::ZERO;
 
         let err = BaseChainSpec::try_from(&config)
-            .expect_err("Beryl chain config with zero activation admin should be rejected");
+            .expect_err("Beryl chain config without activation admin should be rejected");
         assert!(
-            matches!(err, BaseChainSpecError::ZeroActivationAdminAddress { chain_id } if chain_id == config.chain_id)
+            matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id } if chain_id == config.chain_id)
         );
     }
 

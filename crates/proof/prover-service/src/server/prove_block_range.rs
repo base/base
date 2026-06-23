@@ -87,7 +87,7 @@ impl ProverServiceServer {
                     "rejected ProveBlockRange: proof request retry budget exhausted for this session_id",
                 );
                 return Err(resource_exhausted(format!(
-                    "session_id {session_id}: proof request retry budget exhausted; use get_proof for the stored terminal failure",
+                    "session_id {session_id}: proof request retry budget exhausted; use get_proof for the stored terminal result",
                 )));
             }
             CreateProofRequestOutcome::Created(id) => {
@@ -105,7 +105,7 @@ impl ProverServiceServer {
             CreateProofRequestOutcome::Replayed(id) => {
                 info!(
                     proof_request_id = %id,
-                    "Idempotent replay of in-flight or succeeded proof request"
+                    "Idempotent replay of non-failed proof request"
                 );
             }
         }

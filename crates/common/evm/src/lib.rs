@@ -19,7 +19,8 @@ pub use l1block::L1BlockInfo;
 mod transaction;
 pub use transaction::{
     BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr, BuildError,
-    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
+    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, EIP8130_TRANSACTION_TYPE,
+    Eip8130TransactionParts,
 };
 
 mod handler;
@@ -36,6 +37,11 @@ pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};
 
 mod evm;
 pub use evm::BaseEvm;
+
+#[cfg(feature = "std")]
+mod eip8130;
+#[cfg(feature = "std")]
+pub use eip8130::{Eip8130Executor, Eip8130Outcome};
 
 mod factory;
 pub use factory::BaseEvmFactory;

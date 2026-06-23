@@ -128,6 +128,14 @@ impl ZkHostConfig {
             .with_lock_duration_seconds(self.job_discovery_lock_duration_seconds)
             .with_max_concurrent_jobs(self.job_discovery_max_concurrent_jobs)
     }
+
+    /// Converts this config into the shared worker discovery config.
+    pub fn into_job_discovery_config(self) -> JobDiscoveryConfig {
+        JobDiscoveryConfig::zk(self.worker_id, self.proof_type, self.zk_vms)
+            .with_poll_interval(self.job_discovery_poll_interval)
+            .with_lock_duration_seconds(self.job_discovery_lock_duration_seconds)
+            .with_max_concurrent_jobs(self.job_discovery_max_concurrent_jobs)
+    }
 }
 
 /// Runs ZK proof generation jobs claimed from the prover service.
@@ -156,14 +164,12 @@ where
 {
     /// Runs the host until cancellation is requested.
     pub async fn run_until_cancelled(self, cancel: CancellationToken) {
-        let submitter = ProofSubmitter::new(self.client.clone());
-        let proof_generator = Arc::new(ProofGenerator::new(
-            self.prover,
-            submitter,
-            self.config.proof_generator_heartbeat,
-        ));
+        let Self { client, prover, config } = self;
+        let submitter = ProofSubmitter::new(client.clone());
+        let proof_generator =
+            Arc::new(ProofGenerator::new(prover, submitter, config.proof_generator_heartbeat));
         let discovery =
-            JobDiscovery::new(self.client, proof_generator, self.config.job_discovery_config());
+            JobDiscovery::new(client, proof_generator, config.into_job_discovery_config());
 
         discovery.run_until_cancelled(cancel).await;
     }

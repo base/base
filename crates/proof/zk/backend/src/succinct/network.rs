@@ -5,7 +5,7 @@
 //! the network, `poll` checks the network proof request status, and `download`
 //! fetches and serializes the completed proof for `submitProof`.
 
-use std::{sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
@@ -13,21 +13,59 @@ use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL
 use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{ProofResult, ZkProofResult, ZkVm};
 use sp1_sdk::{
-    HashableKey, NetworkProver, ProveRequest, Prover, ProvingKey, SP1ProofWithPublicValues,
-    SP1ProvingKey,
-    network::proto::{
-        GetProofRequestStatusResponse,
-        types::{FulfillmentStatus, FulfillmentStrategy},
+    HashableKey, NetworkProver, ProveRequest, Prover, ProverClient, ProvingKey,
+    SP1ProofWithPublicValues, SP1ProvingKey,
+    network::{
+        NetworkMode,
+        proto::{
+            GetProofRequestStatusResponse,
+            types::{FulfillmentStatus, FulfillmentStrategy},
+        },
+        signer::NetworkSigner,
     },
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-use crate::succinct::{L1HeadSource, OpSuccinctWitnessProvider, WitnessParams};
+use crate::succinct::{
+    L1HeadSource, OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
+    SuccinctZkProverBuilder, WitnessParams,
+};
 
 macro_rules! backend_error {
     ($($arg:tt)*) => {
         ZkProverError::Backend(std::io::Error::other(format!($($arg)*)).into())
     };
+}
+
+/// SP1 Network backend settings.
+#[derive(Clone)]
+pub struct SuccinctNetworkBackendConfig {
+    /// Shared RPC settings.
+    pub rpc: SuccinctRpcConfig,
+    /// SP1 network requester private key, or KMS key ARN when `use_kms_requester` is true.
+    pub network_private_key: String,
+    /// Use the requester key as an AWS KMS ARN instead of a local private key.
+    pub use_kms_requester: bool,
+    /// Proof timeout.
+    pub timeout: Duration,
+    /// Cycle limit for range proof requests.
+    pub range_cycle_limit: u64,
+    /// Gas limit for range proof requests.
+    pub range_gas_limit: u64,
+}
+
+impl fmt::Debug for SuccinctNetworkBackendConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SuccinctNetworkBackendConfig")
+            .field("rpc", &self.rpc)
+            .field("network_private_key", &"<redacted>")
+            .field("use_kms_requester", &self.use_kms_requester)
+            .field("timeout", &self.timeout)
+            .field("range_cycle_limit", &self.range_cycle_limit)
+            .field("range_gas_limit", &self.range_gas_limit)
+            .finish()
+    }
 }
 
 /// Configuration for [`NetworkZkProver`].
@@ -43,8 +81,6 @@ pub struct NetworkZkProverConfig {
     pub network_prover: Arc<NetworkProver>,
     /// Range program proving key.
     pub range_pk: Arc<SP1ProvingKey>,
-    /// Fulfillment strategy for range proof requests.
-    pub fulfillment_strategy: FulfillmentStrategy,
     /// Proof timeout.
     pub timeout: Duration,
     /// Cycle limit for range proof requests.
@@ -53,8 +89,8 @@ pub struct NetworkZkProverConfig {
     pub range_gas_limit: u64,
 }
 
-impl std::fmt::Debug for NetworkZkProverConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for NetworkZkProverConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let range_pk = self.range_pk.verifying_key().bytes32();
 
         f.debug_struct("NetworkZkProverConfig")
@@ -62,7 +98,6 @@ impl std::fmt::Debug for NetworkZkProverConfig {
             .field("l1_node_url", &self.l1_node_url)
             .field("default_sequence_window", &self.default_sequence_window)
             .field("range_pk", &range_pk)
-            .field("fulfillment_strategy", &self.fulfillment_strategy)
             .field("timeout", &self.timeout)
             .field("range_cycle_limit", &self.range_cycle_limit)
             .field("range_gas_limit", &self.range_gas_limit)
@@ -87,6 +122,124 @@ impl NetworkZkProver {
     /// Create a network prover with a witness provider and network config.
     pub const fn new(provider: OpSuccinctWitnessProvider, config: NetworkZkProverConfig) -> Self {
         Self { provider, config }
+    }
+
+    /// Builds an SP1 Network backend.
+    pub async fn build_until_cancelled(
+        config: SuccinctNetworkBackendConfig,
+        cancel: &CancellationToken,
+    ) -> Result<Option<Arc<dyn ZkProver>>, SuccinctZkProverBuildError> {
+        let SuccinctNetworkBackendConfig {
+            rpc,
+            network_private_key,
+            use_kms_requester,
+            timeout,
+            range_cycle_limit,
+            range_gas_limit,
+        } = config;
+        let base_consensus_url = rpc.base_consensus_rpc.as_str().to_owned();
+        let l1_node_url = rpc.l1_rpc.as_str().to_owned();
+        let default_sequence_window = rpc.default_sequence_window;
+
+        info!(backend = "network", "using Succinct SP1 Network backend");
+        info!("computing range proving key");
+        let Some(range_pk) = SuccinctZkProverBuilder::complete_unless_cancelled(
+            cancel,
+            async {
+                base_proof_succinct_proof_utils::cluster_setup_range_key().await.map_err(|error| {
+                    SuccinctZkProverBuildError::boxed_operation(
+                        "failed to compute range proving key",
+                        error.into_boxed_dyn_error(),
+                    )
+                })
+            },
+            "range_proving_key",
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        info!("range proving key computed successfully");
+
+        let Some(provider) = SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
+        else {
+            return Ok(None);
+        };
+
+        // This worker always submits public SP1 Network auction requests; reserved and hosted
+        // capacity are intentionally not exposed as deployment knobs.
+        let fulfillment_strategy = FulfillmentStrategy::Auction;
+        let network_mode = NetworkMode::Mainnet;
+        let Some(network_signer) =
+            Self::network_signer(network_private_key, use_kms_requester, cancel).await?
+        else {
+            return Ok(None);
+        };
+
+        info!(
+            network_mode = ?network_mode,
+            fulfillment_strategy = ?fulfillment_strategy,
+            "creating SP1 Network prover"
+        );
+        let Some(network_prover) = SuccinctZkProverBuilder::complete_unless_cancelled(
+            cancel,
+            async move {
+                Ok(ProverClient::builder()
+                    .network_for(network_mode)
+                    .signer(network_signer)
+                    .build()
+                    .await)
+            },
+            "sp1_network_prover",
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        let network_prover = Arc::new(network_prover);
+
+        let prover_config = NetworkZkProverConfig {
+            base_consensus_url,
+            l1_node_url,
+            default_sequence_window,
+            network_prover,
+            range_pk: range_pk.into(),
+            timeout,
+            range_cycle_limit,
+            range_gas_limit,
+        };
+
+        Ok(Some(Arc::new(Self::new(provider, prover_config))))
+    }
+
+    /// Builds an SP1 Network signer.
+    pub async fn network_signer(
+        key: String,
+        use_kms_requester: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Option<NetworkSigner>, SuccinctZkProverBuildError> {
+        if use_kms_requester {
+            SuccinctZkProverBuilder::complete_unless_cancelled(
+                cancel,
+                async {
+                    NetworkSigner::aws_kms(&key).await.map_err(|error| {
+                        SuccinctZkProverBuildError::operation(
+                            "failed to create KMS network signer",
+                            error,
+                        )
+                    })
+                },
+                "kms_network_signer",
+            )
+            .await
+        } else {
+            NetworkSigner::local(&key).map(Some).map_err(|error| {
+                SuccinctZkProverBuildError::operation(
+                    "failed to create local network signer",
+                    error,
+                )
+            })
+        }
     }
 
     /// Parse a network proof ID from its hex string representation.
@@ -194,7 +347,7 @@ impl NetworkZkProver {
             .prove(self.config.range_pk.as_ref(), stdin)
             .compressed()
             .skip_simulation(true)
-            .strategy(self.config.fulfillment_strategy)
+            .strategy(FulfillmentStrategy::Auction)
             .timeout(self.config.timeout)
             .cycle_limit(self.config.range_cycle_limit)
             .gas_limit(self.config.range_gas_limit)
