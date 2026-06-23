@@ -146,7 +146,7 @@ fn required_transaction_event_migration_version() -> Result<i64, &'static str> {
 }
 
 /// Persisted transaction event row returned by audit read APIs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransactionEventRecord {
     /// Event envelope.
     #[serde(flatten)]
