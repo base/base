@@ -148,15 +148,15 @@ mod tests {
     use async_trait::async_trait;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
-        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofResult,
-        ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkGroth16ProofResult,
-        ZkProofRequest, ZkProofResult, ZkVm,
+        DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
+        ListProofsResponse, ProofResult, ProofStatus, ProveBlockRangeRequest,
+        ProveBlockRangeResponse, SnarkGroth16ProofResult, ZkProofRequest, ZkProofResult, ZkVm,
     };
 
     use super::*;
 
     #[derive(Debug, Default)]
-    struct FakeRequester {
+    struct MockProofRequester {
         submitted: Mutex<Vec<String>>,
         responses: Mutex<VecDeque<GetProofResponse>>,
         prove_outcomes: Mutex<VecDeque<ProveOutcome>>,
@@ -168,7 +168,7 @@ mod tests {
         Error(ProverServiceClientError),
     }
 
-    impl FakeRequester {
+    impl MockProofRequester {
         fn with_responses(responses: impl Into<VecDeque<GetProofResponse>>) -> Self {
             Self {
                 submitted: Mutex::new(Vec::new()),
@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl ProofRequesterProvider for FakeRequester {
+    impl ProofRequesterProvider for MockProofRequester {
         async fn prove_block_range(
             &self,
             request: ProveBlockRangeRequest,
@@ -210,6 +210,13 @@ mod tests {
             _request: GetProofRequest,
         ) -> Result<GetProofResponse, ProverServiceClientError> {
             Ok(self.responses.lock().unwrap().pop_front().unwrap())
+        }
+
+        async fn delete_proof_request(
+            &self,
+            _request: DeleteProofRequest,
+        ) -> Result<(), ProverServiceClientError> {
+            unreachable!("ZkProofRequester does not delete proofs")
         }
 
         async fn list_proofs(
@@ -251,12 +258,12 @@ mod tests {
 
     #[tokio::test]
     async fn request_groth16_proof_requests_range_then_aggregation() {
-        let fake = FakeRequester::with_responses(VecDeque::from([
+        let requester = MockProofRequester::with_responses(VecDeque::from([
             GetProofResponse { status: ProofStatus::Running, error_message: None, result: None },
             succeeded(compressed_result()),
             succeeded(snark_result()),
         ]));
-        let requester = ZkProofRequester::new(fake);
+        let requester = ZkProofRequester::new(requester);
         let request =
             Groth16RangeProofRequest::new("parent", proof_request(), Address::repeat_byte(0x11));
 
@@ -274,13 +281,13 @@ mod tests {
 
     #[tokio::test]
     async fn request_groth16_proof_reports_accepted_range_on_aggregation_submit_failure() {
-        let fake = FakeRequester::with_prove_outcomes(VecDeque::from([
+        let requester = MockProofRequester::with_prove_outcomes(VecDeque::from([
             ProveOutcome::Success,
             ProveOutcome::Error(ProverServiceClientError::Timeout(
                 "aggregation timed out".to_owned(),
             )),
         ]));
-        let requester = ZkProofRequester::new(fake);
+        let requester = ZkProofRequester::new(requester);
         let request =
             Groth16RangeProofRequest::new("parent", proof_request(), Address::repeat_byte(0x11));
 
@@ -299,12 +306,12 @@ mod tests {
 
     #[tokio::test]
     async fn failed_range_status_returns_error() {
-        let fake = FakeRequester::with_responses(VecDeque::from([GetProofResponse {
+        let requester = MockProofRequester::with_responses(VecDeque::from([GetProofResponse {
             status: ProofStatus::Failed,
             error_message: Some("range failed".to_owned()),
             result: None,
         }]));
-        let requester = ZkProofRequester::new(fake);
+        let requester = ZkProofRequester::new(requester);
         let request =
             Groth16RangeProofRequest::new("parent", proof_request(), Address::repeat_byte(0x11));
 
@@ -315,7 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_aggregation_status_returns_error_after_range_succeeds() {
-        let fake = FakeRequester::with_responses(VecDeque::from([
+        let requester = MockProofRequester::with_responses(VecDeque::from([
             succeeded(compressed_result()),
             GetProofResponse {
                 status: ProofStatus::Failed,
@@ -323,7 +330,7 @@ mod tests {
                 result: None,
             },
         ]));
-        let requester = ZkProofRequester::new(fake);
+        let requester = ZkProofRequester::new(requester);
         let request =
             Groth16RangeProofRequest::new("parent", proof_request(), Address::repeat_byte(0x11));
 
