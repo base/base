@@ -11390,6 +11390,7 @@ dependencies = [
  "audit-archiver-lib",
  "axum 0.8.9",
  "base-bundles",
+ "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-network",
