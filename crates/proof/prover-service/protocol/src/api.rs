@@ -3,11 +3,11 @@
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{
-    DeleteProofRequest, DeleteProofResponse, GetNextProofRequest, GetNextProofResponse,
-    GetProofRequest, GetProofResponse, GetProofSessionRequest, GetProofSessionResponse,
-    HeartbeatRequest, HeartbeatResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, RecordProofSessionRequest,
-    RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    DeleteProofRequest, GetNextProofRequest, GetNextProofResponse, GetProofRequest,
+    GetProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
+    HeartbeatResponse, ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest,
+    ProveBlockRangeResponse, RecordProofSessionRequest, RecordProofSessionResponse,
+    WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -43,7 +43,7 @@ pub trait ProverRequesterApi {
     async fn delete_proof_request(
         &self,
         request: DeleteProofRequest,
-    ) -> jsonrpsee::core::RpcResult<DeleteProofResponse>;
+    ) -> jsonrpsee::core::RpcResult<()>;
 
     /// List submitted proof requests.
     #[method(name = "listProofs")]

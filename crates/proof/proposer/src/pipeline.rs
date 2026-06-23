@@ -167,8 +167,8 @@ mod tests {
     use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
     use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
     use base_prover_service_protocol::{
-        DeleteProofRequest, DeleteProofResponse, GetProofRequest, GetProofResponse,
-        ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+        DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
+        ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
     };
     use tokio_util::sync::CancellationToken;
 
@@ -207,7 +207,7 @@ mod tests {
         async fn delete_proof_request(
             &self,
             _request: DeleteProofRequest,
-        ) -> Result<DeleteProofResponse, ProverServiceClientError> {
+        ) -> Result<(), ProverServiceClientError> {
             unimplemented!("pipeline tests do not delete proofs")
         }
 

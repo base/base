@@ -462,9 +462,9 @@ mod tests {
     use async_trait::async_trait;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
-        DeleteProofRequest, DeleteProofResponse, GetProofRequest, GetProofResponse,
-        ListProofsRequest, ListProofsResponse, ProofRequestIdCollisionMessage,
-        ProveBlockRangeRequest, ProveBlockRangeResponse,
+        DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
+        ListProofsResponse, ProofRequestIdCollisionMessage, ProveBlockRangeRequest,
+        ProveBlockRangeResponse,
     };
     use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
@@ -500,7 +500,7 @@ mod tests {
         async fn delete_proof_request(
             &self,
             _request: DeleteProofRequest,
-        ) -> Result<DeleteProofResponse, ProverServiceClientError> {
+        ) -> Result<(), ProverServiceClientError> {
             unimplemented!("dispatcher tests do not delete proofs")
         }
 
@@ -536,7 +536,7 @@ mod tests {
         async fn delete_proof_request(
             &self,
             _request: DeleteProofRequest,
-        ) -> Result<DeleteProofResponse, ProverServiceClientError> {
+        ) -> Result<(), ProverServiceClientError> {
             unimplemented!("dispatcher tests do not delete proofs")
         }
 

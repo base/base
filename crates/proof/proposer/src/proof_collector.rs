@@ -1115,8 +1115,7 @@ mod tests {
         async fn delete_proof_request(
             &self,
             _request: base_prover_service_protocol::DeleteProofRequest,
-        ) -> Result<base_prover_service_protocol::DeleteProofResponse, ProverServiceClientError>
-        {
+        ) -> Result<(), ProverServiceClientError> {
             unimplemented!("tests do not delete proofs")
         }
 
@@ -1152,8 +1151,7 @@ mod tests {
         async fn delete_proof_request(
             &self,
             _request: base_prover_service_protocol::DeleteProofRequest,
-        ) -> Result<base_prover_service_protocol::DeleteProofResponse, ProverServiceClientError>
-        {
+        ) -> Result<(), ProverServiceClientError> {
             unimplemented!("tests do not delete proofs")
         }
 
