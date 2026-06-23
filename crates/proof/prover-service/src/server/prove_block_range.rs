@@ -105,7 +105,7 @@ impl ProverServiceServer {
             CreateProofRequestOutcome::Replayed(id) => {
                 info!(
                     proof_request_id = %id,
-                    "Idempotent replay of in-flight proof request"
+                    "Idempotent replay of non-failed proof request"
                 );
             }
         }
