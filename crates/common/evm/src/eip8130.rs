@@ -130,11 +130,10 @@ impl Eip8130Executor {
         // of re-encoding: this avoids an allocation and the assumption that
         // re-encoding is byte-identical, which matters because the EIP-8130
         // intrinsic-gas schedule meters the transaction size from these bytes.
-        let encoded = ctx
-            .tx()
-            .enveloped_tx()
-            .cloned()
-            .ok_or_else(|| BaseTransactionError::eip8130("missing enveloped transaction bytes"))?;
+        let encoded =
+            ctx.tx().enveloped_tx().cloned().ok_or_else(|| {
+                BaseTransactionError::eip8130("missing enveloped transaction bytes")
+            })?;
 
         // Guard every journal write so a late-stage rejection discards the whole
         // transaction's mutations.
