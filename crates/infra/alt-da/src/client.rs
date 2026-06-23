@@ -14,9 +14,11 @@ const MAX_PUT_RESPONSE_BYTES: usize = GENERIC_COMMITMENT_LEN + 1;
 /// Max error response body bytes preserved on non-success PUT responses.
 const MAX_ERROR_RESPONSE_BYTES: usize = 256;
 
-/// Alt-DA HTTP client used by the batcher to upload batch bytes.
+/// Alt-DA HTTP client: the batcher uploads batch bytes (`put`), derivation resolves
+/// commitments back to bytes (`get`).
 #[derive(Debug, Clone)]
 pub struct Client {
+    base: Url,
     put_url: Url,
     http: reqwest::Client,
 }
@@ -24,12 +26,60 @@ pub struct Client {
 impl Client {
     /// Build a client targeting `server` (e.g. `http://base-da-server:2583`).
     pub fn new(server: Url) -> Result<Self, ClientError> {
-        let mut put_url = server;
+        let mut base = server;
+        base.set_query(None);
+        base.set_fragment(None);
+        let mut put_url = base.clone();
         put_url.set_path("put");
-        put_url.set_query(None);
-        put_url.set_fragment(None);
         let http = reqwest::Client::builder().timeout(Duration::from_secs(60)).build()?;
-        Ok(Self { put_url, http })
+        Ok(Self { base, put_url, http })
+    }
+
+    /// Fetch the batch bytes stored under `commitment` (the `GET /get/0x…` endpoint).
+    ///
+    /// Returns [`ClientError::NotFound`] when the DA server has no object for the
+    /// commitment, so derivation can distinguish a missing object from a transport error.
+    pub async fn get(&self, commitment: &[u8]) -> Result<Vec<u8>, ClientError> {
+        let mut url = self.base.clone();
+        url.set_path(&format!("get/0x{}", hex::encode(commitment)));
+
+        let resp = self.http.get(url).send().await?;
+
+        let status = resp.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(ClientError::NotFound);
+        }
+        if !status.is_success() {
+            let mut detail = read_bounded_error_body(resp).await?;
+            if detail.is_empty() {
+                detail = "(no response body)".into();
+            }
+            return Err(ClientError::UnexpectedStatus { status: status.as_u16(), detail });
+        }
+
+        let content_len = resp.content_length();
+        if let Some(len) = content_len
+            && len as usize > crate::MAX_OBJECT_BYTES
+        {
+            return Err(ClientError::ResponseTooLarge {
+                size: len as usize,
+                max: crate::MAX_OBJECT_BYTES,
+            });
+        }
+
+        // Pre-size to the Content-Length when known; it is already validated <= MAX_OBJECT_BYTES.
+        let mut bytes = Vec::with_capacity(content_len.unwrap_or(0) as usize);
+        let mut response = resp;
+        while let Some(chunk) = response.chunk().await? {
+            if bytes.len() + chunk.len() > crate::MAX_OBJECT_BYTES {
+                return Err(ClientError::ResponseTooLarge {
+                    size: bytes.len() + chunk.len(),
+                    max: crate::MAX_OBJECT_BYTES,
+                });
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
     }
 
     /// Upload batch bytes; returns the server-generated generic commitment.
@@ -130,6 +180,25 @@ mod tests {
         let client = Client::new(url).unwrap();
         let err = client.put(&[]).await.unwrap_err();
         assert!(matches!(err, crate::ClientError::EmptyBody));
+    }
+
+    #[tokio::test]
+    async fn put_then_get_roundtrip() {
+        let (url, _dir) = spawn_test_server().await;
+        let client = Client::new(url).unwrap();
+        let body = b"hello-batch-bytes";
+        let commitment = client.put(body).await.unwrap();
+        let fetched = client.get(&commitment).await.unwrap();
+        assert_eq!(fetched, body);
+    }
+
+    #[tokio::test]
+    async fn get_missing_returns_not_found() {
+        let (url, _dir) = spawn_test_server().await;
+        let client = Client::new(url).unwrap();
+        let missing = [0x01u8, 0xff, 0xaa, 0xbb];
+        let err = client.get(&missing).await.unwrap_err();
+        assert!(matches!(err, crate::ClientError::NotFound));
     }
 
     #[tokio::test]

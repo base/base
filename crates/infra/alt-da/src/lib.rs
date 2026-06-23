@@ -7,11 +7,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use base_protocol::BLOB_MAX_DATA_SIZE;
-
 /// Max batch blob bytes accepted on PUT and loaded from the backing store.
-/// Sized for eight max-size blob frames per channel submission.
-pub const MAX_OBJECT_BYTES: usize = 8 * BLOB_MAX_DATA_SIZE;
+///
+/// Single source of truth: [`base_protocol::MAX_DA_OBJECT_BYTES`].
+pub const MAX_OBJECT_BYTES: usize = base_protocol::MAX_DA_OBJECT_BYTES;
 
 mod commitment;
 pub use commitment::{

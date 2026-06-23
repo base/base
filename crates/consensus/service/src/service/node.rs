@@ -12,7 +12,9 @@ use alloy_provider::RootProvider;
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
+use base_consensus_derive::{
+    DynAltDaResolver, Pipeline, SignalReceiver, StatefulAttributesBuilder,
+};
 use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
 use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, L1BlobProvider, OnlineBeaconClient,
@@ -125,6 +127,12 @@ pub struct RollupNode {
     /// If the path is set but the database cannot be opened (e.g., bad permissions, disk
     /// error, or corrupted file), the node **fails to start** with an error.
     pub safedb_path: Option<PathBuf>,
+    /// Optional alt-DA commitment resolver.
+    ///
+    /// When set, derivation resolves `0x01` alt-DA commitments to their off-chain batch bytes
+    /// and ignores inline calldata, so the node derives purely from off-chain DA. When `None`
+    /// (the default), the node derives from calldata or blobs as usual.
+    pub alt_da_resolver: Option<DynAltDaResolver>,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -243,6 +251,7 @@ impl RollupNode {
             l2_derivation_provider,
             l1_head_number,
             self.l1_config.verifier_l1_confs,
+            self.alt_da_resolver.clone(),
         )
     }
 
