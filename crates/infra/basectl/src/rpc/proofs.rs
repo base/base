@@ -1,11 +1,9 @@
-use std::{fmt, str::FromStr, sync::Arc, time::Duration};
+use std::{fmt, str::FromStr, time::Duration};
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_client::RpcClient;
+use alloy_provider::Provider;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_sol_types::sol;
-use alloy_transport_http::Http;
 use anyhow::{Context, Result, ensure};
 use base_common_network::Base;
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
@@ -19,6 +17,7 @@ use tokio::sync::mpsc;
 use tracing::warn;
 use url::Url;
 
+use super::RpcProviderFactory;
 use crate::{config::ProofsConfig, tui::Toast};
 
 const GAME_SCAN_BATCH_SIZE: usize = 50;
@@ -97,36 +96,231 @@ impl ProofsClient {
             Self::MAX_ONCHAIN_REPORT_LIMIT
         );
 
-        let l1_provider = Arc::new(
-            ProviderBuilder::new()
-                .connect(l1_rpc.as_str())
-                .await
-                .with_context(|| format!("connecting to L1 RPC at {l1_rpc}"))?,
-        );
+        let l1_provider = RpcProviderFactory::connect_l1_provider(l1_rpc)
+            .with_context(|| format!("connecting to L1 RPC at {l1_rpc}"))?;
+        let l2_provider = RpcProviderFactory::connect_l2_provider(l2_rpc)
+            .with_context(|| format!("connecting to L2 RPC at {l2_rpc}"))?;
 
-        let http_client = alloy_transport_http::reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .with_context(|| format!("building L2 HTTP client for {l2_rpc}"))?;
-        let transport = Http::with_client(http_client, l2_rpc.clone());
-        let l2_provider = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .network::<Base>()
-            .connect_client(RpcClient::new(transport, false));
-
-        let asr = IAnchorStateRegistry::new(proofs_contracts.anchor_state_registry, &*l1_provider);
-        let factory =
-            IDisputeGameFactory::new(proofs_contracts.dispute_game_factory, &*l1_provider);
-
-        fetch_onchain_report_from_providers(
-            &asr,
-            &factory,
-            &*l1_provider,
+        Self::fetch_onchain_report_with_providers(
+            proofs_contracts,
+            &l1_provider,
             &l2_provider,
             scan_window,
             limit,
         )
         .await
+    }
+
+    /// Fetches a combined on-chain report using already-constructed RPC providers.
+    #[must_use = "callers should handle the fetched on-chain proof report"]
+    pub async fn fetch_onchain_report_with_providers<P: Provider>(
+        proofs_contracts: impl Into<ProofsContracts>,
+        l1_provider: &P,
+        l2_provider: &impl Provider<Base>,
+        scan_window: u64,
+        limit: u32,
+    ) -> Result<OnchainProofsReport> {
+        let proofs_contracts = proofs_contracts.into();
+
+        ensure!(
+            (1..=Self::MAX_ONCHAIN_SCAN_WINDOW).contains(&scan_window),
+            "proof on-chain report scan window must be between 1 and {}",
+            Self::MAX_ONCHAIN_SCAN_WINDOW
+        );
+        ensure!(
+            (1..=Self::MAX_ONCHAIN_REPORT_LIMIT).contains(&limit),
+            "proof on-chain report limit must be between 1 and {}",
+            Self::MAX_ONCHAIN_REPORT_LIMIT
+        );
+
+        let asr = IAnchorStateRegistry::new(proofs_contracts.anchor_state_registry, l1_provider);
+        let factory = IDisputeGameFactory::new(proofs_contracts.dispute_game_factory, l1_provider);
+
+        let (chain, anchor, game_type, paused, game_count) = tokio::join!(
+            Self::fetch_chain_heads(l1_provider, l2_provider),
+            async { asr.getAnchorRoot().call().await.ok() },
+            async { asr.respectedGameType().call().await.ok() },
+            async { asr.paused().call().await.ok() },
+            async { factory.gameCount().call().await.ok() },
+        );
+
+        let (l1_block, l2_latest, l2_safe, l2_finalized) = chain;
+        let total_games = game_count.and_then(|count| count.try_into().ok());
+        let proposals = Self::find_recent_proposals(
+            proofs_contracts,
+            l1_provider,
+            game_type,
+            total_games,
+            scan_window,
+            limit,
+        )
+        .await;
+
+        let anchor_l2_block = anchor.as_ref().and_then(|a| a.l2SequenceNumber.try_into().ok());
+        let anchor_root = anchor.map(|a| a.root);
+        let gaps = ProofsGapReport::from_heads(
+            l2_latest,
+            l2_safe,
+            anchor_l2_block,
+            proposals.first().and_then(|proposal| proposal.l2_block),
+        );
+
+        Ok(OnchainProofsReport {
+            l1_block,
+            l2_latest_block: l2_latest,
+            l2_safe_block: l2_safe,
+            l2_finalized_block: l2_finalized,
+            respected_game_type: game_type,
+            system_paused: paused,
+            total_games,
+            anchor_l2_block,
+            anchor_root,
+            proposals,
+            gaps,
+        })
+    }
+
+    /// Fetches L1 and L2 chain heads used in proof-system reports.
+    pub async fn fetch_chain_heads(
+        l1: &impl Provider,
+        l2: &impl Provider<Base>,
+    ) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
+        let (l1_block, l2_latest, l2_safe, l2_finalized) = tokio::join!(
+            async { l1.get_block_number().await.ok() },
+            async {
+                l2.get_block_by_number(BlockNumberOrTag::Latest)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|b| b.header.number)
+            },
+            async {
+                l2.get_block_by_number(BlockNumberOrTag::Safe)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|b| b.header.number)
+            },
+            async {
+                l2.get_block_by_number(BlockNumberOrTag::Finalized)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|b| b.header.number)
+            },
+        );
+        (l1_block, l2_latest, l2_safe, l2_finalized)
+    }
+
+    /// Finds recent proposals for the respected game type, newest factory index first.
+    pub async fn find_recent_proposals<P: Provider>(
+        proofs_contracts: ProofsContracts,
+        l1_provider: &P,
+        respected_type: Option<u32>,
+        total_games: Option<u64>,
+        scan_window: u64,
+        limit: u32,
+    ) -> Vec<ProofsProposal> {
+        let Some(game_type) = respected_type else { return Vec::new() };
+        let Some(count) = total_games.filter(|count| *count > 0) else { return Vec::new() };
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let factory = IDisputeGameFactory::new(proofs_contracts.dispute_game_factory, l1_provider);
+        let mut proposals = Vec::new();
+        for batch in Self::proposal_scan_batches(count, scan_window, limit) {
+            let factory = &factory;
+            let games = future::join_all(batch.into_iter().map(|idx| async move {
+                factory.gameAtIndex(U256::from(idx)).call().await.ok().map(|game| (idx, game))
+            }))
+            .await;
+            let remaining = limit as usize - proposals.len();
+            let batch_proposals = future::join_all(
+                games
+                    .into_iter()
+                    .flatten()
+                    .filter(|(_, game)| game.gameType == game_type)
+                    .take(remaining)
+                    .map(|(idx, game)| async move {
+                        let verifier = IAggregateVerifier::new(game.proxy, l1_provider);
+                        let (root_claim, l2_seq, status) = tokio::join!(
+                            async { verifier.rootClaim().call().await.ok() },
+                            async { verifier.l2SequenceNumber().call().await.ok() },
+                            async { verifier.status().call().await.ok() },
+                        );
+
+                        ProofsProposal {
+                            factory_index: idx,
+                            game_type: game.gameType,
+                            game_address: game.proxy,
+                            l2_block: l2_seq.and_then(|seq| seq.try_into().ok()),
+                            root_claim,
+                            status,
+                            created_at: game.timestamp,
+                        }
+                    }),
+            )
+            .await;
+
+            proposals.extend(batch_proposals);
+            if proposals.len() >= limit as usize {
+                break;
+            }
+        }
+
+        proposals
+    }
+
+    /// Plans newest-first dispute-game scan batches for bounded concurrent RPC reads.
+    pub fn proposal_scan_batches(total_games: u64, scan_window: u64, limit: u32) -> Vec<Vec<u64>> {
+        if total_games == 0 || scan_window == 0 || limit == 0 {
+            return Vec::new();
+        }
+
+        let scan_len = total_games.min(scan_window);
+        let oldest_index = total_games - scan_len;
+        let mut next_index = total_games - 1;
+        let mut batch_width = (limit as usize).clamp(1, GAME_SCAN_BATCH_SIZE);
+        let mut batches = Vec::new();
+
+        loop {
+            let remaining = next_index - oldest_index + 1;
+            let take = remaining.min(batch_width as u64);
+            batches.push((0..take).map(|offset| next_index - offset).collect());
+
+            if take == remaining {
+                break;
+            }
+
+            next_index -= take;
+            batch_width = batch_width.saturating_mul(2).min(GAME_SCAN_BATCH_SIZE);
+        }
+
+        batches
+    }
+
+    /// Returns the stable proof type label used in basectl output.
+    pub const fn proof_type_label(proof_type: ProofType) -> &'static str {
+        match proof_type {
+            ProofType::Compressed => "compressed",
+            ProofType::SnarkGroth16 => "snark_groth16",
+            ProofType::Tee => "tee",
+        }
+    }
+
+    /// Returns the stable TEE kind label used in basectl output.
+    pub const fn tee_kind_label(tee_kind: TeeKind) -> &'static str {
+        match tee_kind {
+            TeeKind::AwsNitro => "aws_nitro",
+        }
+    }
+
+    /// Returns the stable ZK VM label used in basectl output.
+    pub const fn zk_vm_label(zk_vm: ZkVm) -> &'static str {
+        match zk_vm {
+            ZkVm::Sp1 => "sp1",
+        }
     }
 
     /// Lists submitted prover-service proof jobs.
@@ -366,14 +560,14 @@ impl From<ProofSummary> for ProverProofSummary {
     fn from(summary: ProofSummary) -> Self {
         Self {
             session_id: summary.session_id,
-            proof_type: proof_type_label(summary.proof_type).to_string(),
+            proof_type: ProofsClient::proof_type_label(summary.proof_type).to_string(),
             status: ProofsJobStatus::from(summary.status),
             created_at: summary.created_at,
             updated_at: summary.updated_at,
             completed_at: summary.completed_at,
             error_message: summary.error_message,
-            tee_kind: summary.tee_kind.map(tee_kind_label).map(str::to_string),
-            zk_vm: summary.zk_vm.map(zk_vm_label).map(str::to_string),
+            tee_kind: summary.tee_kind.map(ProofsClient::tee_kind_label).map(str::to_string),
+            zk_vm: summary.zk_vm.map(ProofsClient::zk_vm_label).map(str::to_string),
         }
     }
 }
@@ -485,12 +679,35 @@ pub async fn run_proofs_poller(
     tx: mpsc::Sender<ProofsSnapshot>,
     toast_tx: mpsc::Sender<Toast>,
 ) {
+    let l1_provider = match RpcProviderFactory::connect_l1_provider(&l1_rpc) {
+        Ok(provider) => provider,
+        Err(error) => {
+            warn!(error = %error, rpc = %l1_rpc, "Failed to connect to L1 RPC for proof poller");
+            let _ = toast_tx.try_send(Toast::warning("Proofs: RPC connection failed"));
+            return;
+        }
+    };
+    let l2_provider = match RpcProviderFactory::connect_l2_provider(&l2_rpc) {
+        Ok(provider) => provider,
+        Err(error) => {
+            warn!(error = %error, rpc = %l2_rpc, "Failed to connect to L2 RPC for proof poller");
+            let _ = toast_tx.try_send(Toast::warning("Proofs: RPC connection failed"));
+            return;
+        }
+    };
+
     let mut interval = tokio::time::interval(Duration::from_secs(10));
     loop {
         interval.tick().await;
 
-        let report =
-            ProofsClient::fetch_onchain_report(proofs_contracts, &l1_rpc, &l2_rpc, 50, 1).await;
+        let report = ProofsClient::fetch_onchain_report_with_providers(
+            proofs_contracts,
+            &l1_provider,
+            &l2_provider,
+            50,
+            1,
+        )
+        .await;
         let snapshot = match report {
             Ok(report) => ProofsSnapshot::from(report),
             Err(error) => {
@@ -506,164 +723,6 @@ pub async fn run_proofs_poller(
     }
 }
 
-async fn fetch_onchain_report_from_providers<P: Provider + Clone>(
-    asr: &IAnchorStateRegistry::IAnchorStateRegistryInstance<&P>,
-    factory: &IDisputeGameFactory::IDisputeGameFactoryInstance<&P>,
-    l1_provider: &P,
-    l2_provider: &impl Provider<Base>,
-    scan_window: u64,
-    limit: u32,
-) -> Result<OnchainProofsReport> {
-    let (chain, anchor, game_type, paused, game_count) = tokio::join!(
-        fetch_chain_heads(l1_provider, l2_provider),
-        async { asr.getAnchorRoot().call().await.ok() },
-        async { asr.respectedGameType().call().await.ok() },
-        async { asr.paused().call().await.ok() },
-        async { factory.gameCount().call().await.ok() },
-    );
-
-    let (l1_block, l2_latest, l2_safe, l2_finalized) = chain;
-    let total_games = game_count.and_then(|count| count.try_into().ok());
-    let proposals =
-        find_recent_proposals(factory, l1_provider, game_type, total_games, scan_window, limit)
-            .await;
-
-    let anchor_l2_block = anchor.as_ref().and_then(|a| a.l2SequenceNumber.try_into().ok());
-    let anchor_root = anchor.map(|a| a.root);
-    let gaps = ProofsGapReport::from_heads(
-        l2_latest,
-        l2_safe,
-        anchor_l2_block,
-        proposals.first().and_then(|proposal| proposal.l2_block),
-    );
-
-    Ok(OnchainProofsReport {
-        l1_block,
-        l2_latest_block: l2_latest,
-        l2_safe_block: l2_safe,
-        l2_finalized_block: l2_finalized,
-        respected_game_type: game_type,
-        system_paused: paused,
-        total_games,
-        anchor_l2_block,
-        anchor_root,
-        proposals,
-        gaps,
-    })
-}
-
-async fn fetch_chain_heads(
-    l1: &impl Provider,
-    l2: &impl Provider<Base>,
-) -> (Option<u64>, Option<u64>, Option<u64>, Option<u64>) {
-    let (l1_block, l2_latest, l2_safe, l2_finalized) = tokio::join!(
-        async { l1.get_block_number().await.ok() },
-        async {
-            l2.get_block_by_number(BlockNumberOrTag::Latest)
-                .await
-                .ok()
-                .flatten()
-                .map(|b| b.header.number)
-        },
-        async {
-            l2.get_block_by_number(BlockNumberOrTag::Safe)
-                .await
-                .ok()
-                .flatten()
-                .map(|b| b.header.number)
-        },
-        async {
-            l2.get_block_by_number(BlockNumberOrTag::Finalized)
-                .await
-                .ok()
-                .flatten()
-                .map(|b| b.header.number)
-        },
-    );
-    (l1_block, l2_latest, l2_safe, l2_finalized)
-}
-
-async fn find_recent_proposals<P: Provider + Clone>(
-    factory: &IDisputeGameFactory::IDisputeGameFactoryInstance<&P>,
-    l1_provider: &P,
-    respected_type: Option<u32>,
-    total_games: Option<u64>,
-    scan_window: u64,
-    limit: u32,
-) -> Vec<ProofsProposal> {
-    let Some(game_type) = respected_type else { return Vec::new() };
-    let Some(count) = total_games.filter(|count| *count > 0) else { return Vec::new() };
-    if limit == 0 {
-        return Vec::new();
-    }
-
-    let scan_start = count - 1;
-    let scan_end = count.saturating_sub(scan_window);
-    let mut proposals = Vec::new();
-
-    let indices = (scan_end..=scan_start).rev().collect::<Vec<_>>();
-    for batch in indices.chunks(GAME_SCAN_BATCH_SIZE) {
-        let games = future::join_all(batch.iter().copied().map(|idx| async move {
-            factory.gameAtIndex(U256::from(idx)).call().await.ok().map(|game| (idx, game))
-        }))
-        .await;
-        let remaining = limit as usize - proposals.len();
-        let batch_proposals = future::join_all(
-            games
-                .into_iter()
-                .flatten()
-                .filter(|(_, game)| game.gameType == game_type)
-                .take(remaining)
-                .map(|(idx, game)| async move {
-                    let verifier = IAggregateVerifier::new(game.proxy, l1_provider);
-                    let (root_claim, l2_seq, status) = tokio::join!(
-                        async { verifier.rootClaim().call().await.ok() },
-                        async { verifier.l2SequenceNumber().call().await.ok() },
-                        async { verifier.status().call().await.ok() },
-                    );
-
-                    ProofsProposal {
-                        factory_index: idx,
-                        game_type: game.gameType,
-                        game_address: game.proxy,
-                        l2_block: l2_seq.and_then(|seq| seq.try_into().ok()),
-                        root_claim,
-                        status,
-                        created_at: game.timestamp,
-                    }
-                }),
-        )
-        .await;
-
-        proposals.extend(batch_proposals);
-        if proposals.len() >= limit as usize {
-            break;
-        }
-    }
-
-    proposals
-}
-
-const fn proof_type_label(proof_type: ProofType) -> &'static str {
-    match proof_type {
-        ProofType::Compressed => "compressed",
-        ProofType::SnarkGroth16 => "snark_groth16",
-        ProofType::Tee => "tee",
-    }
-}
-
-const fn tee_kind_label(tee_kind: TeeKind) -> &'static str {
-    match tee_kind {
-        TeeKind::AwsNitro => "aws_nitro",
-    }
-}
-
-const fn zk_vm_label(zk_vm: ZkVm) -> &'static str {
-    match zk_vm {
-        ZkVm::Sp1 => "sp1",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -671,7 +730,10 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use serde_json::json;
 
-    use super::{OnchainProofsReport, ProofsGapReport, ProofsJobStatus, ProofsProposal};
+    use super::{
+        GAME_SCAN_BATCH_SIZE, OnchainProofsReport, ProofType, ProofsClient, ProofsGapReport,
+        ProofsJobStatus, ProofsProposal, TeeKind, ZkVm,
+    };
 
     #[test]
     fn proofs_job_status_parses_and_serializes_snake_case() {
@@ -720,6 +782,42 @@ mod tests {
         assert_eq!(report.gaps.proposer_behind_latest_head, Some(100));
         assert_eq!(report.gaps.anchor_behind_latest_proposal, Some(50));
         assert_eq!(report.gaps.anchor_behind_safe_head, Some(100));
+    }
+
+    #[test]
+    fn proposal_scan_batches_start_with_limit_sized_newest_batch() {
+        let batches = ProofsClient::proposal_scan_batches(50, 50, 1);
+
+        assert_eq!(batches.first(), Some(&vec![49]));
+    }
+
+    #[test]
+    fn proposal_scan_batches_cover_window_newest_first() {
+        let batches = ProofsClient::proposal_scan_batches(100, 50, 1);
+        let indices = batches.iter().flatten().copied().collect::<Vec<_>>();
+
+        assert_eq!(indices, (50..=99).rev().collect::<Vec<_>>());
+        assert!(batches.iter().all(|batch| batch.len() <= GAME_SCAN_BATCH_SIZE));
+        assert_eq!(batches.iter().map(Vec::len).collect::<Vec<_>>(), vec![1, 2, 4, 8, 16, 19],);
+    }
+
+    #[test]
+    fn proposal_scan_batches_start_at_limit_and_cap_at_max_batch_size() {
+        let batches = ProofsClient::proposal_scan_batches(200, 120, 10);
+        let indices = batches.iter().flatten().copied().collect::<Vec<_>>();
+
+        assert_eq!(indices, (80..=199).rev().collect::<Vec<_>>());
+        assert_eq!(batches.iter().map(Vec::len).collect::<Vec<_>>(), vec![10, 20, 40, 50],);
+        assert!(batches.iter().all(|batch| batch.len() <= GAME_SCAN_BATCH_SIZE));
+    }
+
+    #[test]
+    fn proof_label_methods_preserve_output_strings() {
+        assert_eq!(ProofsClient::proof_type_label(ProofType::Compressed), "compressed");
+        assert_eq!(ProofsClient::proof_type_label(ProofType::SnarkGroth16), "snark_groth16");
+        assert_eq!(ProofsClient::proof_type_label(ProofType::Tee), "tee");
+        assert_eq!(ProofsClient::tee_kind_label(TeeKind::AwsNitro), "aws_nitro");
+        assert_eq!(ProofsClient::zk_vm_label(ZkVm::Sp1), "sp1");
     }
 
     fn proposal(factory_index: u64, l2_block: u64) -> ProofsProposal {

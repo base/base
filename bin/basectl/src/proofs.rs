@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use basectl_cli::{
     JsonOutput, MonitoringConfig, OnchainProofsReport, ProofsClient, ProofsCommandError,
     ProofsConfig, ProofsGapReport, ProofsJobListRequest, ProofsJobStatus, ProofsProposal,
@@ -66,14 +66,17 @@ async fn run_list(config: MonitoringConfig, args: ProofsListArgs) -> Result<Comm
         },
     );
 
-    let has_failures = onchain.has_error() || prover.has_error();
     let report = ProofsListReport { request, onchain, prover };
 
-    if report.request.json {
-        JsonOutput::print(&ProofsListJson::from_report(&report))?;
+    let has_failures = if report.request.json {
+        let json = ProofsListJson::from_report(&report);
+        let has_failures = json.has_error();
+        JsonOutput::print(&json)?;
+        has_failures
     } else {
         print_pretty(&report)?;
-    }
+        report.onchain.has_error() || report.prover.has_error()
+    };
 
     Ok(CommandOutcome::from_failures(has_failures))
 }
@@ -92,9 +95,15 @@ struct ProofsListRequest {
 
 impl ProofsListRequest {
     fn resolve(config: MonitoringConfig, args: ProofsListArgs) -> Result<Self, ProofsCommandError> {
-        validate_limit(args.limit)?;
-        validate_scan_window(args.scan_window)?;
-        validate_contract_overrides(&args)?;
+        if !(1..=ProofsClient::MAX_ONCHAIN_REPORT_LIMIT).contains(&args.limit) {
+            return Err(ProofsCommandError::LimitOutOfRange { limit: args.limit });
+        }
+        if !(1..=ProofsClient::MAX_ONCHAIN_SCAN_WINDOW).contains(&args.scan_window) {
+            return Err(ProofsCommandError::ScanWindowOutOfRange { scan_window: args.scan_window });
+        }
+        if args.dispute_game_factory.is_some() != args.anchor_state_registry.is_some() {
+            return Err(ProofsCommandError::PartialContractOverride);
+        }
 
         let config_proofs = config.proofs.clone();
         let onchain = resolve_onchain_source(&config, &args, config_proofs.as_ref())?;
@@ -160,27 +169,6 @@ impl<T> SourceResult<T> {
     }
 }
 
-fn validate_limit(limit: u32) -> Result<(), ProofsCommandError> {
-    if !(1..=ProofsClient::MAX_ONCHAIN_REPORT_LIMIT).contains(&limit) {
-        return Err(ProofsCommandError::LimitOutOfRange { limit });
-    }
-    Ok(())
-}
-
-fn validate_scan_window(scan_window: u64) -> Result<(), ProofsCommandError> {
-    if !(1..=ProofsClient::MAX_ONCHAIN_SCAN_WINDOW).contains(&scan_window) {
-        return Err(ProofsCommandError::ScanWindowOutOfRange { scan_window });
-    }
-    Ok(())
-}
-
-const fn validate_contract_overrides(args: &ProofsListArgs) -> Result<(), ProofsCommandError> {
-    if args.dispute_game_factory.is_some() != args.anchor_state_registry.is_some() {
-        return Err(ProofsCommandError::PartialContractOverride);
-    }
-    Ok(())
-}
-
 fn resolve_onchain_source(
     config: &MonitoringConfig,
     args: &ProofsListArgs,
@@ -218,8 +206,12 @@ impl ProofsListJson {
             network: report.request.network.clone(),
             inputs: ProofsInputsJson::from_request(&report.request),
             onchain: SourceJson::from_source(&report.onchain, OnchainProofsJson::from_report),
-            prover: SourceJson::from_source(&report.prover, ProverProofsJson::from_page),
+            prover: SourceJson::try_from_source(&report.prover, ProverProofsJson::try_from_page),
         }
+    }
+
+    const fn has_error(&self) -> bool {
+        self.onchain.has_error() || self.prover.has_error()
     }
 }
 
@@ -245,30 +237,22 @@ struct ProofsInputsJson {
 
 impl ProofsInputsJson {
     fn from_request(request: &ProofsListRequest) -> Self {
-        let (l1_rpc, l2_rpc, dispute_game_factory, anchor_state_registry) =
-            request.onchain.as_ref().map_or((None, None, None, None), |source| {
-                (
-                    Some(source.l1_rpc.to_string()),
-                    Some(source.l2_rpc.to_string()),
-                    Some(source.contracts.dispute_game_factory),
-                    Some(source.contracts.anchor_state_registry),
-                )
-            });
+        let onchain = request.onchain.as_ref();
         Self {
             limit: request.limit,
             offset: request.offset,
             scan_window: request.scan_window,
             status: request.status,
-            l1_rpc,
-            l2_rpc,
-            dispute_game_factory,
-            anchor_state_registry,
+            l1_rpc: onchain.map(|source| source.l1_rpc.to_string()),
+            l2_rpc: onchain.map(|source| source.l2_rpc.to_string()),
+            dispute_game_factory: onchain.map(|source| source.contracts.dispute_game_factory),
+            anchor_state_registry: onchain.map(|source| source.contracts.anchor_state_registry),
             prover_url: request.prover_url.as_ref().map(ToString::to_string),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum SourceStatusJson {
     Available,
@@ -310,6 +294,41 @@ impl<T> SourceJson<T> {
                 data: None,
             },
         }
+    }
+
+    fn try_from_source<U>(source: &SourceResult<U>, convert: impl FnOnce(&U) -> Result<T>) -> Self {
+        match source {
+            SourceResult::Available(value) => match convert(value) {
+                Ok(data) => Self {
+                    status: SourceStatusJson::Available,
+                    reason: None,
+                    error: None,
+                    data: Some(data),
+                },
+                Err(error) => Self {
+                    status: SourceStatusJson::Error,
+                    reason: None,
+                    error: Some(format!("{error:#}")),
+                    data: None,
+                },
+            },
+            SourceResult::Skipped(reason) => Self {
+                status: SourceStatusJson::Skipped,
+                reason: Some(reason.clone()),
+                error: None,
+                data: None,
+            },
+            SourceResult::Error(error) => Self {
+                status: SourceStatusJson::Error,
+                reason: None,
+                error: Some(error.clone()),
+                data: None,
+            },
+        }
+    }
+
+    const fn has_error(&self) -> bool {
+        matches!(self.status, SourceStatusJson::Error)
     }
 }
 
@@ -383,13 +402,17 @@ struct ProverProofsJson {
 }
 
 impl ProverProofsJson {
-    fn from_page(page: &ProverProofsPage) -> Self {
-        Self {
+    fn try_from_page(page: &ProverProofsPage) -> Result<Self> {
+        Ok(Self {
             total_count: page.total_count,
             offset: page.offset,
             limit: page.limit,
-            jobs: page.jobs.iter().map(ProverProofSummaryJson::from_job).collect(),
-        }
+            jobs: page
+                .jobs
+                .iter()
+                .map(ProverProofSummaryJson::try_from_job)
+                .collect::<Result<Vec<_>>>()?,
+        })
     }
 }
 
@@ -412,18 +435,28 @@ struct ProverProofSummaryJson {
 }
 
 impl ProverProofSummaryJson {
-    fn from_job(job: &ProverProofSummary) -> Self {
-        Self {
+    fn try_from_job(job: &ProverProofSummary) -> Result<Self> {
+        Ok(Self {
             session_id: job.session_id.clone(),
             proof_type: job.proof_type.clone(),
             status: job.status,
-            created_at: TimestampJson::from_datetime_utc(job.created_at),
-            updated_at: TimestampJson::from_datetime_utc(job.updated_at),
-            completed_at: job.completed_at.map(TimestampJson::from_datetime_utc),
+            created_at: TimestampJson::try_from_datetime_utc(job.created_at).with_context(
+                || format!("converting created_at for proof job {}", job.session_id),
+            )?,
+            updated_at: TimestampJson::try_from_datetime_utc(job.updated_at).with_context(
+                || format!("converting updated_at for proof job {}", job.session_id),
+            )?,
+            completed_at: job
+                .completed_at
+                .map(TimestampJson::try_from_datetime_utc)
+                .transpose()
+                .with_context(|| {
+                    format!("converting completed_at for proof job {}", job.session_id)
+                })?,
             error_message: job.error_message.clone(),
             tee_kind: job.tee_kind.clone(),
             zk_vm: job.zk_vm.clone(),
-        }
+        })
     }
 }
 
@@ -630,8 +663,9 @@ mod tests {
     use anyhow::{Context, anyhow};
     use basectl_cli::{
         MonitoringConfig, OnchainProofsReport, ProofsCommandError, ProofsConfig, ProofsGapReport,
-        ProofsJobStatus, ProofsProposal,
+        ProofsJobStatus, ProofsProposal, ProverProofSummary, ProverProofsPage,
     };
+    use chrono::{TimeZone, Utc};
     use serde_json::Value;
     use url::Url;
 
@@ -774,6 +808,62 @@ mod tests {
     }
 
     #[test]
+    fn json_report_shape_includes_valid_prover_jobs() {
+        let request = ProofsListRequest::resolve(
+            test_config(Some(test_proofs_config())),
+            test_args(|args| {
+                args.json = true;
+                args.prover_url = Some(Url::parse("http://127.0.0.1:7300").unwrap());
+            }),
+        )
+        .unwrap();
+        let report = ProofsListReport {
+            request,
+            onchain: SourceResult::Available(sample_onchain_report()),
+            prover: SourceResult::Available(sample_prover_page(valid_timestamp())),
+        };
+
+        let json = ProofsListJson::from_report(&report);
+        let value: Value = serde_json::to_value(json).unwrap();
+
+        assert_eq!(value["prover"]["status"], "available");
+        assert_eq!(value["prover"]["data"]["jobs"][0]["createdAt"]["unix"], 1_780_596_004);
+    }
+
+    #[test]
+    fn json_report_maps_pre_epoch_prover_timestamp_to_source_error() {
+        let request = ProofsListRequest::resolve(
+            test_config(Some(test_proofs_config())),
+            test_args(|args| {
+                args.json = true;
+                args.prover_url = Some(Url::parse("http://127.0.0.1:7300").unwrap());
+            }),
+        )
+        .unwrap();
+        let report = ProofsListReport {
+            request,
+            onchain: SourceResult::Skipped("no proof contract addresses configured".to_string()),
+            prover: SourceResult::Available(sample_prover_page(
+                Utc.with_ymd_and_hms(1969, 12, 31, 23, 59, 59).single().unwrap(),
+            )),
+        };
+
+        let json = ProofsListJson::from_report(&report);
+        let value: Value = serde_json::to_value(&json).unwrap();
+
+        assert!(json.has_error());
+        assert_eq!(value["prover"]["status"], "error");
+        assert!(value["prover"].get("data").is_none());
+        assert!(
+            value["prover"]["error"]
+                .as_str()
+                .unwrap()
+                .contains("converting created_at for proof job session-1"),
+        );
+        assert!(value["prover"]["error"].as_str().unwrap().contains("before the Unix epoch"),);
+    }
+
+    #[test]
     fn source_result_preserves_anyhow_error_chain() {
         let result = Err::<(), _>(anyhow!("transport refused"))
             .context("connecting to L1 RPC at http://127.0.0.1:1");
@@ -845,5 +935,28 @@ mod tests {
                 anchor_behind_safe_head: Some(50),
             },
         }
+    }
+
+    fn sample_prover_page(timestamp: chrono::DateTime<Utc>) -> ProverProofsPage {
+        ProverProofsPage {
+            jobs: vec![ProverProofSummary {
+                session_id: "session-1".to_string(),
+                proof_type: "compressed".to_string(),
+                status: ProofsJobStatus::Succeeded,
+                created_at: timestamp,
+                updated_at: valid_timestamp(),
+                completed_at: Some(valid_timestamp()),
+                error_message: None,
+                tee_kind: None,
+                zk_vm: Some("sp1".to_string()),
+            }],
+            total_count: 1,
+            offset: 0,
+            limit: 10,
+        }
+    }
+
+    fn valid_timestamp() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 6, 4, 18, 0, 4).single().unwrap()
     }
 }

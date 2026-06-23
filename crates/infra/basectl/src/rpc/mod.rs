@@ -42,6 +42,9 @@ pub use p2p::{
 mod pods;
 pub use pods::{PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, run_pods_poller};
 
+mod provider;
+pub use provider::RpcProviderFactory;
+
 mod proofs;
 pub use proofs::{
     LatestProposal, OnchainProofsReport, ProofsClient, ProofsContracts, ProofsGapReport,

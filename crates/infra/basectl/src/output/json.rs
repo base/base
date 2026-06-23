@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use chrono::{DateTime, Local, SecondsFormat, Utc};
 use serde::Serialize;
 
@@ -62,14 +62,14 @@ impl TimestampJson {
         Self { unix: secs, utc, local }
     }
 
-    /// Builds a `TimestampJson` from a non-negative UTC timestamp.
+    /// Tries to build a `TimestampJson` from a UTC timestamp.
     ///
     /// Pre-epoch timestamps are rejected instead of being coerced to Unix zero,
     /// which would make the raw timestamp disagree with the rendered dates.
-    pub fn from_datetime_utc(dt: DateTime<Utc>) -> Self {
-        let unix = u64::try_from(dt.timestamp())
-            .expect("TimestampJson::from_datetime_utc requires a non-negative timestamp");
-        Self::from_unix(unix)
+    pub fn try_from_datetime_utc(dt: DateTime<Utc>) -> Result<Self> {
+        let timestamp = dt.timestamp();
+        ensure!(timestamp >= 0, "UTC timestamp {dt} is before the Unix epoch");
+        Ok(Self::from_unix(timestamp as u64))
     }
 }
 
@@ -115,10 +115,21 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "requires a non-negative timestamp")]
+    fn timestamp_json_renders_utc_datetime() {
+        let dt = Utc.with_ymd_and_hms(2026, 6, 4, 18, 0, 4).single().unwrap();
+
+        let ts = TimestampJson::try_from_datetime_utc(dt).unwrap();
+
+        assert_eq!(ts.unix, 1_780_596_004);
+        assert_eq!(ts.utc, "2026-06-04T18:00:04Z");
+    }
+
+    #[test]
     fn timestamp_json_rejects_pre_epoch_datetime() {
         let dt = Utc.with_ymd_and_hms(1969, 12, 31, 23, 59, 59).single().unwrap();
 
-        let _ = TimestampJson::from_datetime_utc(dt);
+        let error = TimestampJson::try_from_datetime_utc(dt).unwrap_err();
+
+        assert!(error.to_string().contains("before the Unix epoch"));
     }
 }
