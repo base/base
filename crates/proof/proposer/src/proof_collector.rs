@@ -103,7 +103,10 @@ where
         {
             Ok(Some(proof)) => proof,
             Ok(None) => return false,
-            Err(_) => return true,
+            Err(_) => {
+                self.delete_proof_request(&session_id, target_block).await;
+                return true;
+            }
         };
 
         self.submit_proof(target_block, &session_id, proof, recovered.parent_address, cancel).await
@@ -330,7 +333,6 @@ mod tests {
     };
 
     const BLOCK_INTERVAL: u64 = 100;
-
     fn recovered(block: u64) -> RecoveredState {
         RecoveredState {
             parent_address: Address::ZERO,
@@ -451,7 +453,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_restarts_when_proof_failed() {
+    async fn tick_deletes_failed_proof_and_restarts() {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(0xaa);
@@ -460,9 +462,9 @@ mod tests {
             .failed_sessions
             .lock()
             .unwrap()
-            .insert(session_id, "simulated proof failure".to_owned());
+            .insert(session_id.clone(), "simulated proof failure".to_owned());
         let collector = make_collector(
-            requester,
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(claimed_root)),
             Arc::new(MockOutputProposer::default()),
         );
@@ -470,5 +472,6 @@ mod tests {
         let restart = collector.tick(recovered(100), target_block, &CancellationToken::new()).await;
 
         assert!(restart);
+        assert!(!requester.failed_sessions.lock().unwrap().contains_key(&session_id));
     }
 }

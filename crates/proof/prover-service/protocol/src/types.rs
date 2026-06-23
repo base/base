@@ -98,6 +98,13 @@ pub struct DeleteProofRequest {
     pub session_id: String,
 }
 
+/// Response returned after deleting a completed proof request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteProofResponse {
+    /// Whether a completed proof request was deleted.
+    pub deleted: bool,
+}
+
 /// Submitted proof request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofRequest {
