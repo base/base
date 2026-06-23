@@ -152,10 +152,11 @@ impl ProofRequestRepo {
 
         let mismatch = match status {
             ProofStatus::Failed => params.first_mismatch_allowing_l1_head_replacement(&row),
-            ProofStatus::Created | ProofStatus::Pending | ProofStatus::Running => {
-                params.first_mismatch(&row)
-            }
-            ProofStatus::Succeeded => params.first_mismatch(&row),
+            // Non-failed existing requests are replay-only; l1_head replacement is only for failed retries.
+            ProofStatus::Created
+            | ProofStatus::Pending
+            | ProofStatus::Running
+            | ProofStatus::Succeeded => params.first_mismatch(&row),
         };
         if let Some(field) = mismatch {
             tx.rollback().await?;

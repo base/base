@@ -23,8 +23,8 @@ use base_proof_primitives::Proposal;
 use base_proof_rpc::{BaseBlock, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    DeleteProofRequest, DeleteProofResponse, GetProofRequest, GetProofResponse, ListProofsRequest,
-    ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind as ApiProofRequestKind,
+    DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind as ApiProofRequestKind,
     ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
     TeeKind, TeeProofResult,
 };
@@ -521,14 +521,14 @@ impl ProofRequesterProvider for MockProofRequester {
     async fn delete_proof_request(
         &self,
         request: DeleteProofRequest,
-    ) -> Result<DeleteProofResponse, ProverServiceClientError> {
+    ) -> Result<(), ProverServiceClientError> {
         if self.reject_delete.load(Ordering::SeqCst) {
             return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
         }
 
         self.requests.lock().unwrap().remove(&request.session_id);
         self.failed_sessions.lock().unwrap().remove(&request.session_id);
-        Ok(DeleteProofResponse { deleted: true })
+        Ok(())
     }
 
     async fn list_proofs(

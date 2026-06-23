@@ -294,14 +294,13 @@ where
             .delete_proof_request(DeleteProofRequest { session_id: session_id.to_owned() })
             .await
         {
-            Ok(response) => {
+            Ok(()) => {
                 info!(
                     target_block,
                     session_id = %session_id,
-                    deleted = response.deleted,
                     "Deleted proof request for re-prove"
                 );
-                response.deleted
+                true
             }
             Err(error) => {
                 warn!(
