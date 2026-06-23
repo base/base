@@ -212,12 +212,12 @@ pub enum RetryOutcome {
 pub enum CreateProofRequestOutcome {
     /// A new proof request row was inserted.
     Created(Uuid),
-    /// An existing terminal row was reset to `CREATED` and a fresh worker job
+    /// An existing failed row was reset to `CREATED` and a fresh worker job
     /// was made claimable again.
     Requeued(Uuid),
-    /// An existing non-terminal row was returned unchanged for idempotent replay.
+    /// An existing non-failed row was returned unchanged for idempotent replay.
     Replayed(Uuid),
-    /// An existing terminal row is at the retry cap; no requeue.
+    /// An existing failed row is at the retry cap; no requeue.
     RetryExhausted(Uuid),
 }
 

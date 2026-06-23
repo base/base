@@ -334,7 +334,6 @@ mod tests {
             Arc::clone(&proof_requester),
             Arc::clone(&rollup),
             proof_submitter,
-            Arc::clone(&proof_recovery),
             config.block_interval,
             config.submit_timeout,
         );

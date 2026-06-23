@@ -276,7 +276,6 @@ impl ProposerService {
             Arc::clone(&proof_requester),
             Arc::clone(&rollup_client),
             proof_submitter,
-            Arc::clone(&proof_recovery),
             driver_config.block_interval,
             driver_config.submit_timeout,
         );

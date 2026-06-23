@@ -151,12 +151,11 @@ impl ProofRequestRepo {
         })?;
 
         let mismatch = match status {
-            ProofStatus::Failed | ProofStatus::Succeeded => {
-                params.first_mismatch_allowing_l1_head_replacement(&row)
-            }
+            ProofStatus::Failed => params.first_mismatch_allowing_l1_head_replacement(&row),
             ProofStatus::Created | ProofStatus::Pending | ProofStatus::Running => {
                 params.first_mismatch(&row)
             }
+            ProofStatus::Succeeded => params.first_mismatch(&row),
         };
         if let Some(field) = mismatch {
             tx.rollback().await?;
@@ -164,11 +163,14 @@ impl ProofRequestRepo {
         }
 
         match status {
-            ProofStatus::Created | ProofStatus::Pending | ProofStatus::Running => {
+            ProofStatus::Created
+            | ProofStatus::Pending
+            | ProofStatus::Running
+            | ProofStatus::Succeeded => {
                 tx.rollback().await?;
                 Ok(CreateProofRequestOutcome::Replayed(existing_id))
             }
-            ProofStatus::Failed | ProofStatus::Succeeded => {
+            ProofStatus::Failed => {
                 let retry_count: i32 = row.get("retry_count");
                 if retry_count >= max_retries {
                     tx.rollback().await?;

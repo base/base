@@ -204,33 +204,6 @@ where
         }
     }
 
-    /// Builds and dispatches a retry-specific proof request for a discarded proof.
-    pub async fn dispatch_discard_retry(
-        &self,
-        target_block: u64,
-        recovered: &RecoveredState,
-        claimed_l2_output_root: B256,
-        attempt: u32,
-    ) -> ProofDispatchAttempt {
-        let request =
-            match self.build_request(target_block, recovered, claimed_l2_output_root).await {
-                Ok(request) => request,
-                Err(error) => return ProofDispatchAttempt::BuildFailed(error),
-            };
-        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(&request, attempt);
-        let expected_session_id = session_id.clone();
-
-        match self.dispatch_tee_with_session_id(request, session_id).await {
-            Ok(session_id) if session_id == expected_session_id => {
-                ProofDispatchAttempt::Accepted(session_id)
-            }
-            Ok(session_id) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {expected_session_id}, got {session_id}"
-            ))),
-            Err(error) => ProofDispatchAttempt::DispatchFailed(error),
-        }
-    }
-
     /// Submits a TEE proof request under an explicit session id.
     pub async fn dispatch_tee_with_session_id(
         &self,
@@ -670,19 +643,6 @@ mod tests {
         assert!(state.recovered.is_none());
         assert!(state.cursor.is_none());
         assert!(!state.retry_counts.contains_key(&200));
-    }
-
-    #[tokio::test]
-    async fn dispatch_discard_retry_uses_retry_specific_session() {
-        let (dispatcher, _requester) = dispatcher();
-        let claimed_root = B256::repeat_byte(0xaa);
-
-        let outcome = dispatcher.dispatch_discard_retry(200, &recovered(), claimed_root, 1).await;
-        let ProofDispatchAttempt::Accepted(session_id) = outcome else {
-            panic!("expected accepted dispatch")
-        };
-
-        assert_ne!(session_id, ProposerProofAdapter::tee_session_id_for_root(claimed_root));
     }
 
     #[test]
