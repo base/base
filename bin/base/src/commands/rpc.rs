@@ -59,7 +59,8 @@ impl RpcCommand {
             CliMetrics::init_rollup_config(&rollup_config);
         }
 
-        let execution = self.execution.into_launch_config(execution_chain).with_auth_ipc();
+        let execution =
+            self.execution.into_launch_config(execution_chain).with_unified_auth_endpoint();
         let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {

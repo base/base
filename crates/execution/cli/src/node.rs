@@ -1,6 +1,6 @@
 //! Chainless execution-node arguments and launch helpers.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeBuilder, LaunchedBaseNode};
@@ -17,13 +17,16 @@ use reth_node_core::{
     node_config::NodeConfig,
     version,
 };
-use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
+use reth_rpc_server_types::{
+    LenientRpcModuleValidator, RpcModuleValidator, constants::DEFAULT_ENGINE_API_IPC_ENDPOINT,
+};
 use tracing::info;
 
 use crate::{RpcStandardNodeArgs, StandardNodeArgs};
 
 const DEFAULT_BASE_MAX_INBOUND_EL_PEERS: usize = 80;
 const DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS: usize = 80;
+const DEFAULT_UNIFIED_AUTH_IPC_FILENAME: &str = "engine.ipc";
 
 /// Chainless execution-node arguments shared by embedded Base commands.
 #[derive(Debug, Clone, Args)]
@@ -198,6 +201,23 @@ impl ExecutionNodeRuntimeConfig {
         node_config.rpc.auth_ipc = true;
     }
 
+    /// Configures the embedded execution node auth endpoint used by unified Base binaries.
+    pub fn configure_unified_auth_endpoint(node_config: &mut NodeConfig<BaseChainSpec>) {
+        let auth_ipc_path = if node_config.rpc.auth_ipc_path == DEFAULT_ENGINE_API_IPC_ENDPOINT {
+            Some(node_config.datadir().data_dir().join(DEFAULT_UNIFIED_AUTH_IPC_FILENAME))
+        } else {
+            None
+        };
+
+        node_config.rpc.auth_ipc = true;
+        node_config.rpc.auth_port = 0;
+        node_config.rpc.auth_addr = Ipv4Addr::LOCALHOST.into();
+
+        if let Some(auth_ipc_path) = auth_ipc_path {
+            node_config.rpc.auth_ipc_path = auth_ipc_path.to_string_lossy().into_owned();
+        }
+    }
+
     /// Returns the configured authenticated Engine API IPC path from the supplied node config.
     pub const fn auth_ipc_path_for(node_config: &NodeConfig<BaseChainSpec>) -> &str {
         node_config.rpc.auth_ipc_path.as_str()
@@ -212,6 +232,12 @@ impl ExecutionNodeRuntimeConfig {
     /// Marks the upgrade-signal startup schedule as already applied by the caller.
     pub const fn with_upgrade_signal_startup_already_applied(mut self) -> Self {
         self.upgrade_signal_startup = UpgradeSignalStartupMode::AlreadyApplied;
+        self
+    }
+
+    /// Configures authenticated Engine API access for unified Base binaries.
+    pub fn with_unified_auth_endpoint(mut self) -> Self {
+        Self::configure_unified_auth_endpoint(&mut self.node_config);
         self
     }
 
@@ -293,6 +319,12 @@ impl ExecutionNodeLaunchConfig {
     /// Marks the upgrade-signal startup schedule as already applied by the caller.
     pub const fn with_upgrade_signal_startup_already_applied(mut self) -> Self {
         self.upgrade_signal_startup = UpgradeSignalStartupMode::AlreadyApplied;
+        self
+    }
+
+    /// Configures authenticated Engine API access for unified Base binaries.
+    pub fn with_unified_auth_endpoint(mut self) -> Self {
+        ExecutionNodeRuntimeConfig::configure_unified_auth_endpoint(&mut self.node_config);
         self
     }
 
@@ -383,6 +415,50 @@ mod tests {
 
         assert!(runtime.node_config.rpc.auth_ipc);
         assert_eq!(runtime.auth_ipc_path(), "/tmp/engine.ipc");
+    }
+
+    #[test]
+    fn runtime_config_uses_datadir_auth_ipc_path_for_unified_defaults() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
+            "reth",
+            "--datadir=/tmp/base-node-a",
+        ])
+        .args;
+
+        let runtime = args
+            .into_runtime_config(Arc::new(BaseChainSpec::devnet()))
+            .with_unified_auth_endpoint();
+        let expected = runtime
+            .node_config
+            .datadir()
+            .data_dir()
+            .join(DEFAULT_UNIFIED_AUTH_IPC_FILENAME)
+            .to_string_lossy()
+            .into_owned();
+
+        assert!(runtime.node_config.rpc.auth_ipc);
+        assert_eq!(runtime.node_config.rpc.auth_port, 0);
+        assert_eq!(runtime.node_config.rpc.auth_addr, Ipv4Addr::LOCALHOST);
+        assert_eq!(runtime.auth_ipc_path(), expected);
+    }
+
+    #[test]
+    fn runtime_config_preserves_explicit_auth_ipc_path_for_unified() {
+        let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from([
+            "reth",
+            "--datadir=/tmp/base-node-a",
+            "--auth-ipc.path=/tmp/custom-engine.ipc",
+        ])
+        .args;
+
+        let runtime = args
+            .into_runtime_config(Arc::new(BaseChainSpec::devnet()))
+            .with_unified_auth_endpoint();
+
+        assert!(runtime.node_config.rpc.auth_ipc);
+        assert_eq!(runtime.node_config.rpc.auth_port, 0);
+        assert_eq!(runtime.node_config.rpc.auth_addr, Ipv4Addr::LOCALHOST);
+        assert_eq!(runtime.auth_ipc_path(), "/tmp/custom-engine.ipc");
     }
 
     #[test]
