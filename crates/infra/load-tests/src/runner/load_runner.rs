@@ -1290,7 +1290,16 @@ impl LoadRunner {
             }
         }
 
-        if !pending_batch.is_empty() {
+        // Whether the run loop exited because of an interrupt (Ctrl-C / SIGTERM)
+        // rather than the configured duration elapsing. Captured here, before the
+        // unconditional `stop_flag` store below, so the post-loop submit drain can
+        // pick the right shutdown policy.
+        let interrupted = self.stop_flag.load(Ordering::SeqCst);
+
+        // On a clean (duration) exit, flush the half-filled batch so generated
+        // work is not wasted. On an interrupt we deliberately skip this: the user
+        // asked to stop sending, so the partially-built batch is dropped.
+        if !interrupted && !pending_batch.is_empty() {
             let final_batch_len = pending_batch.len();
             let batch_id = next_submit_batch_id.fetch_add(1, Ordering::SeqCst);
             let submit_batch =
@@ -1313,31 +1322,47 @@ impl LoadRunner {
 
         submission_pipeline.close_input();
 
-        let drain_started = Instant::now();
-        while submission_pipeline.pending_batches() > 0
-            && drain_started.elapsed() < SUBMIT_DRAIN_TIMEOUT
-        {
-            Self::drain_submit_events(
-                &mut submit_event_rx,
-                &mut queued_per_sender,
-                &mut self.collector,
-            );
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-
-        let pending_submit_batches = submission_pipeline.pending_batches();
-        if pending_submit_batches > 0 {
-            warn!(
-                pending_submit_batches,
-                "timed out waiting for submit queue to drain, closing submit queue"
-            );
+        if interrupted {
+            // Interrupt path: finish only the batches already in-flight to the RPC
+            // (the active `send_batch` attempt completes; retries are skipped via the
+            // worker shutdown token) and drop everything still sitting in the local
+            // queue. This is the "finish whatever is being sent, don't send more"
+            // behavior, avoiding the multi-second graceful drain below.
+            info!("interrupt received, dropping queued submit batches and finishing in-flight");
             let failures =
-                submission_pipeline.close_and_fail_queued("submit queue abandoned").await;
+                submission_pipeline.close_and_fail_queued("submit queue interrupted").await;
             Self::apply_queued_submit_failures(
                 failures,
                 &mut queued_per_sender,
                 &mut self.collector,
             );
+        } else {
+            let drain_started = Instant::now();
+            while submission_pipeline.pending_batches() > 0
+                && drain_started.elapsed() < SUBMIT_DRAIN_TIMEOUT
+            {
+                Self::drain_submit_events(
+                    &mut submit_event_rx,
+                    &mut queued_per_sender,
+                    &mut self.collector,
+                );
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+
+            let pending_submit_batches = submission_pipeline.pending_batches();
+            if pending_submit_batches > 0 {
+                warn!(
+                    pending_submit_batches,
+                    "timed out waiting for submit queue to drain, closing submit queue"
+                );
+                let failures =
+                    submission_pipeline.close_and_fail_queued("submit queue abandoned").await;
+                Self::apply_queued_submit_failures(
+                    failures,
+                    &mut queued_per_sender,
+                    &mut self.collector,
+                );
+            }
         }
         submission_pipeline.shutdown_and_join(SUBMIT_WORKER_SHUTDOWN_TIMEOUT).await;
         drop(submission_pipeline);
