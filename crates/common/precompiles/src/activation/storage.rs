@@ -164,16 +164,12 @@ impl ActivationRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IActivationRegistry::ZeroAdminAddress {}));
         }
 
-        let caller = self.storage.caller();
-        let current_admin = self.authorized_admin(admin_config)?;
-        if caller != current_admin {
-            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
-        }
+        let caller = self.require_admin_caller(admin_config)?;
 
         self.__initialize()?;
         self.admin.write(new_admin)?;
         self.emit_event(IActivationRegistry::AdminChanged {
-            previousAdmin: current_admin,
+            previousAdmin: caller,
             newAdmin: new_admin,
             caller,
         })?;
@@ -194,11 +190,7 @@ impl ActivationRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}));
         }
 
-        let caller = self.storage.caller();
-        let admin = self.authorized_admin(admin_config)?;
-        if caller != admin {
-            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
-        }
+        let caller = self.require_admin_caller(admin_config)?;
 
         let current_activated_state = self.features.at(&feature).read()?;
 
@@ -240,6 +232,16 @@ impl ActivationRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
         }
         Ok(admin)
+    }
+
+    /// Reverts unless the current caller is the effective activation admin.
+    pub fn require_admin_caller(&self, admin_config: ActivationAdminConfig) -> Result<Address> {
+        let caller = self.storage.caller();
+        let admin = self.authorized_admin(admin_config)?;
+        if caller != admin {
+            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
+        }
+        Ok(caller)
     }
 }
 
