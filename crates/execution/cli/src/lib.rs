@@ -46,7 +46,7 @@ pub use standard_node::{
 };
 mod upgrade_signal;
 pub use upgrade_signal::{
-    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalMetricsExtension,
+    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
     ExecutionUpgradeSignalRuntimeRefresher,
 };
 

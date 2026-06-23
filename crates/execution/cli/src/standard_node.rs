@@ -20,7 +20,7 @@ use base_upgrade_signal::{UpgradeSignalMetricLayer, UpgradeSignalStartupMode};
 use url::Url;
 
 use crate::upgrade_signal::{
-    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalMetricsExtension,
+    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
 
 /// CLI arguments for metering RPC and priority-fee resource budgets.
@@ -278,20 +278,18 @@ impl StandardBaseRethNode {
     }
 
     /// Installs the upgrade signal runtime extension when execution-side live reads are configured.
-    pub fn install_upgrade_signal_metrics_extension<SB: PayloadServiceBuilder>(
+    pub fn install_upgrade_signal_runtime_extension<SB: PayloadServiceBuilder>(
         runner: &mut BaseNodeRunner<SB>,
         rollup_args: &RollupArgs,
     ) -> eyre::Result<()> {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(());
         };
-        if !config.signal_config.mode.allows_runtime_admin()
-            && !config.signal_config.metrics_enabled(UpgradeSignalMetricLayer::Execution)
-        {
+        if !config.signal_config.reads_l1_at_runtime(UpgradeSignalMetricLayer::Execution) {
             return Ok(());
         }
 
-        runner.install_ext::<ExecutionUpgradeSignalMetricsExtension>(config);
+        runner.install_ext::<ExecutionUpgradeSignalRuntimeExtension>(config);
 
         Ok(())
     }
@@ -305,10 +303,7 @@ impl StandardBaseRethNode {
         let Some(signal_config) = rollup_args.upgrade_signal.config()? else {
             return Ok(());
         };
-        let execution_reads_upgrade_signal = signal_config.mode.applies_at_startup()
-            || signal_config.mode.allows_runtime_admin()
-            || signal_config.metrics_enabled(UpgradeSignalMetricLayer::Execution);
-        if execution_reads_upgrade_signal
+        if signal_config.reads_l1(UpgradeSignalMetricLayer::Execution)
             && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none()
         {
             eyre::bail!(
@@ -328,17 +323,14 @@ impl StandardBaseRethNode {
             return Ok(None);
         };
         Self::validate_upgrade_signal_args(rollup_args)?;
-        let execution_reads_upgrade_signal = signal_config.mode.applies_at_startup()
-            || signal_config.mode.allows_runtime_admin()
-            || signal_config.metrics_enabled(UpgradeSignalMetricLayer::Execution);
-        if !execution_reads_upgrade_signal {
+        if !signal_config.reads_l1(UpgradeSignalMetricLayer::Execution) {
             return Ok(None);
         }
         let l1_rpc = rollup_args
             .upgrade_signal_l1_rpc
             .upgrade_signal_l1_rpc
             .clone()
-            .expect("validated by validate_upgrade_signal_args");
+            .ok_or_else(|| eyre::eyre!("execution upgrade signal L1 RPC not configured"))?;
 
         Ok(Some(ExecutionUpgradeSignalConfig { signal_config, l1_rpc }))
     }
@@ -405,7 +397,7 @@ impl StandardBaseRethNode {
         runner.install_ext::<BundleExtension>(());
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
-        Self::install_upgrade_signal_metrics_extension(&mut runner, &rollup_args)?;
+        Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         let eip8130_rpc_mode = if flashblocks_config.is_some() {
             Eip8130RpcMode::Defer
         } else {

@@ -183,13 +183,13 @@ impl ExecutionUpgradeSignalRuntimeRefresher {
 
 /// Execution-node extension that registers runtime admin refresh and optional live metrics.
 #[derive(Debug)]
-pub struct ExecutionUpgradeSignalMetricsExtension {
+pub struct ExecutionUpgradeSignalRuntimeExtension {
     /// Extension configuration.
     pub config: ExecutionUpgradeSignalConfig,
 }
 
-impl ExecutionUpgradeSignalMetricsExtension {
-    /// Creates a new execution upgrade signal metrics extension.
+impl ExecutionUpgradeSignalRuntimeExtension {
+    /// Creates a new execution upgrade signal runtime extension.
     pub const fn new(config: ExecutionUpgradeSignalConfig) -> Self {
         Self { config }
     }
@@ -211,7 +211,7 @@ impl ExecutionUpgradeSignalMetricsExtension {
     }
 }
 
-impl BaseNodeExtension for ExecutionUpgradeSignalMetricsExtension {
+impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         let config = self.config;
 
@@ -263,7 +263,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalMetricsExtension {
     }
 }
 
-impl FromExtensionConfig for ExecutionUpgradeSignalMetricsExtension {
+impl FromExtensionConfig for ExecutionUpgradeSignalRuntimeExtension {
     type Config = ExecutionUpgradeSignalConfig;
 
     fn from_config(config: Self::Config) -> Self {

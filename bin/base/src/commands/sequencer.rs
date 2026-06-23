@@ -2,32 +2,28 @@
 
 use std::sync::Arc;
 
-use alloy_provider::RootProvider;
 use base_builder_cli::Args as BuilderArgs;
 use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
-use base_common_genesis::RollupConfig;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     EmbeddedSequencerConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
-    ExecutionNodeConfigArgs, ExecutionUpgradeSignal, StandardBaseRethNode,
-    chainspec::chain_value_parser,
+    ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
-use base_upgrade_signal::{
-    UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeValidation,
-    UpgradeSignalStartupMode,
-};
+use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
-use url::Url;
 
-use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
+use crate::{
+    commands::{integrated_upgrade_signal, rpc::engine_ipc_url},
+    config::ResolvedChainConfig,
+};
 
 /// Arguments for `base sequencer`.
 #[derive(Args, Clone, Debug)]
@@ -63,7 +59,10 @@ impl SequencerCommand {
         };
         let consensus_chain = resolved_chain.consensus_chain_args();
         let mut consensus_config: ConsensusNodeConfigArgs = consensus.into();
-        Self::derive_execution_upgrade_signal_l1_rpc(&mut builder, &consensus_config);
+        builder
+            .rollup_args
+            .upgrade_signal_l1_rpc
+            .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
         consensus_config.upgrade_signal = builder.rollup_args.upgrade_signal.clone();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
@@ -80,16 +79,15 @@ impl SequencerCommand {
             if let Some(signal_config) = rollup_args.upgrade_signal.config()?
                 && signal_config.mode.applies_at_startup()
             {
-                let l1_rpc = rollup_args
-                    .upgrade_signal_l1_rpc
-                    .upgrade_signal_l1_rpc
-                    .clone()
-                    .expect("upgrade signal L1 RPC is derived before startup");
-                Self::apply_shared_startup_upgrade_signal(
+                let l1_rpc = integrated_upgrade_signal::required_execution_l1_rpc(
+                    &rollup_args.upgrade_signal_l1_rpc,
+                )?;
+                integrated_upgrade_signal::apply_startup_signal(
                     &mut execution_chain,
                     &mut rollup_config,
                     &signal_config,
                     l1_rpc,
+                    "integrated sequencer startup",
                 )
                 .await?;
             }
@@ -101,7 +99,7 @@ impl SequencerCommand {
                 .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
 
             let upgrade_signal_runtime_validation =
-                Self::upgrade_signal_runtime_validation(&execution_chain);
+                integrated_upgrade_signal::runtime_validation_for_execution_chain(&execution_chain);
             let upgrade_signal_l1_rpc =
                 rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
             let execution =
@@ -117,7 +115,7 @@ impl SequencerCommand {
             runner.install_ext::<MeteringStoreExtension>(metering_provider);
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
             runner.install_ext::<BuilderApiExtension>(());
-            StandardBaseRethNode::install_upgrade_signal_metrics_extension(
+            StandardBaseRethNode::install_upgrade_signal_runtime_extension(
                 &mut runner,
                 &rollup_args,
             )?;
@@ -167,48 +165,6 @@ impl SequencerCommand {
             result
         })
     }
-
-    const fn upgrade_signal_runtime_validation(
-        execution_chain: &BaseChainSpec,
-    ) -> UpgradeSignalRuntimeValidation {
-        UpgradeSignalRuntimeValidation::with_activation_admin_address(
-            execution_chain.activation_admin_address,
-        )
-    }
-
-    async fn apply_shared_startup_upgrade_signal(
-        execution_chain: &mut Arc<BaseChainSpec>,
-        rollup_config: &mut RollupConfig,
-        signal_config: &UpgradeSignalConfig,
-        l1_rpc: Url,
-    ) -> eyre::Result<()> {
-        let reader = signal_config.reader(RootProvider::new_http(l1_rpc));
-        let application_schedule = signal_config
-            .read_validated_application_schedule(
-                &reader,
-                "integrated sequencer startup",
-                &[UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus],
-            )
-            .await?;
-
-        ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
-            Arc::make_mut(execution_chain),
-            &application_schedule,
-        )?;
-        ConsensusNodeArgs::apply_schedule_to_rollup_config(rollup_config, &application_schedule);
-
-        Ok(())
-    }
-
-    fn derive_execution_upgrade_signal_l1_rpc(
-        builder: &mut BuilderArgs,
-        consensus_config: &ConsensusNodeConfigArgs,
-    ) {
-        builder
-            .rollup_args
-            .upgrade_signal_l1_rpc
-            .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
-    }
 }
 
 #[cfg(test)]
@@ -216,7 +172,6 @@ mod tests {
     use base_consensus_cli::ConsensusNodeConfigArgs;
     use clap::Parser;
 
-    use super::SequencerCommand;
     use crate::{cli::BaseCli, commands::BaseCommand};
 
     const REQUIRED_CONSENSUS_ARGS: &[&str] =
@@ -336,10 +291,11 @@ mod tests {
         };
         let consensus_config: ConsensusNodeConfigArgs = sequencer.consensus.clone().into();
 
-        SequencerCommand::derive_execution_upgrade_signal_l1_rpc(
-            &mut sequencer.builder,
-            &consensus_config,
-        );
+        sequencer
+            .builder
+            .rollup_args
+            .upgrade_signal_l1_rpc
+            .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
 
         assert_eq!(
             sequencer

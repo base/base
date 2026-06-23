@@ -68,6 +68,16 @@ impl UpgradeSignalConfig {
         }
     }
 
+    /// Returns true if this layer performs runtime L1 reads.
+    pub const fn reads_l1_at_runtime(&self, layer: UpgradeSignalMetricLayer) -> bool {
+        self.mode.allows_runtime_admin() || self.metrics_enabled(layer)
+    }
+
+    /// Returns true if this layer performs any L1 reads, including startup application.
+    pub const fn reads_l1(&self, layer: UpgradeSignalMetricLayer) -> bool {
+        self.mode.applies_at_startup() || self.reads_l1_at_runtime(layer)
+    }
+
     /// Filters `layers` to the metric layers enabled in this config.
     pub fn enabled_metrics_layers(
         &self,
