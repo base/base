@@ -6,7 +6,10 @@
 extern crate alloc;
 
 mod config;
-pub use config::{Bootnodes, ChainConfig};
+pub use config::{
+    Bootnodes, ChainConfig, MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS,
+    SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS, ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS,
+};
 
 mod upgrade;
 pub use upgrade::{BaseUpgrade, BaseUpgradeExt};
