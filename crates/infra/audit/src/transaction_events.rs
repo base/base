@@ -12,14 +12,19 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use base_observability_events::TransactionEvent;
+use base_observability_events::{TransactionEvent, TransactionEventProducer, TransactionEventType};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize,
+    de::{
+        IntoDeserializer,
+        value::{Error as SerdeValueError, StringDeserializer},
+    },
+};
 use serde_json::Value;
 use sqlx::{PgPool, QueryBuilder, Row, migrate::Migrator, postgres::PgPoolOptions};
-use tokio::net::TcpListener;
 use tower_http::limit::RequestBodyLimitLayer;
-use tracing::{error, info};
+use tracing::error;
 
 use crate::Metrics;
 
@@ -130,7 +135,7 @@ pub fn required_transaction_event_migration_version() -> i64 {
     let migration = matching_migrations.next().expect(
         "transaction event migration 001_transaction_events.sql must be embedded in audit migrator",
     );
-    debug_assert!(
+    assert!(
         matching_migrations.next().is_none(),
         "transaction event migration description must be unique"
     );
@@ -469,8 +474,8 @@ fn record_from_row(row: sqlx::postgres::PgRow) -> Result<TransactionEventRecord>
         schema_version: row.try_get("schema_version")?,
         event_id: row.try_get("event_id")?,
         event_time: row.try_get("event_time")?,
-        producer: serde_json::from_value(Value::String(row.try_get("producer")?))?,
-        event_type: serde_json::from_value(Value::String(row.try_get("event_type")?))?,
+        producer: parse_transaction_event_producer(row.try_get("producer")?)?,
+        event_type: parse_transaction_event_type(row.try_get("event_type")?)?,
         network: row.try_get("network")?,
         tx_hash: row
             .try_get::<Option<String>, _>("tx_hash")?
@@ -489,6 +494,16 @@ fn record_from_row(row: sqlx::postgres::PgRow) -> Result<TransactionEventRecord>
             .ok_or_else(|| anyhow::anyhow!("transaction event data column is not a JSON object"))?,
     };
     Ok(TransactionEventRecord { event, ingested_at: row.try_get("ingested_at")? })
+}
+
+fn parse_transaction_event_producer(producer: String) -> Result<TransactionEventProducer> {
+    let deserializer: StringDeserializer<SerdeValueError> = producer.into_deserializer();
+    Ok(TransactionEventProducer::deserialize(deserializer)?)
+}
+
+fn parse_transaction_event_type(event_type: String) -> Result<TransactionEventType> {
+    let deserializer: StringDeserializer<SerdeValueError> = event_type.into_deserializer();
+    Ok(TransactionEventType::deserialize(deserializer)?)
 }
 
 #[async_trait]
@@ -560,24 +575,6 @@ impl TransactionEventSink for PgTransactionEventSink {
 struct TransactionEventIngestState {
     sink: Arc<dyn TransactionEventSink>,
     config: TransactionEventIngestConfig,
-}
-
-/// Starts a standalone transaction event HTTP ingest server.
-///
-/// The audit-archiver binary usually mounts [`transaction_event_router`] onto
-/// its existing HTTP/RPC listener instead. This helper is kept for tests or
-/// deployments that need only the Vector-facing ingest endpoint.
-pub async fn serve_transaction_event_ingest(
-    sink: Arc<dyn TransactionEventSink>,
-    config: TransactionEventIngestConfig,
-) -> Result<()> {
-    let listen_addr = config.listen_addr;
-    let path = config.path.clone();
-    let app = transaction_event_router(sink, config);
-    let listener = TcpListener::bind(listen_addr).await?;
-    info!(%listen_addr, %path, "transaction event HTTP ingest server started");
-    axum::serve(listener, app).await?;
-    Ok(())
 }
 
 /// Builds the Vector-facing transaction event ingest router.
@@ -837,6 +834,9 @@ fn validate_transaction_event(
         });
     }
 
+    // The parser keeps the full NDJSON line length for max_event_bytes, but
+    // serde_json::Value does not retain byte spans for individual fields. The
+    // data field has its own limit, so measure that subtree after parsing.
     let data_size = raw_event
         .value
         .get("data")
