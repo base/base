@@ -50,7 +50,7 @@ where
     /// poller that fires at `poll_interval`.
     pub fn new(clock: C, mut subscription: S, poller: P, poll_interval: Duration) -> Self {
         let sub = subscription.take_stream();
-        let interval = clock.interval(poll_interval);
+        let interval = clock.interval(poll_interval).skip(1).boxed();
         Self {
             sub,
             _subscription: subscription,
