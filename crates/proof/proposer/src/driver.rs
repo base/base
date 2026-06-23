@@ -32,9 +32,9 @@ use crate::pipeline::ProvingPipeline;
 pub struct DriverConfig {
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
-    /// Maximum retries for a single target block before dropping the cached
-    /// recovery. Only proof failures and dispatch RPC errors count against
-    /// this budget; transient submit and poll errors do not.
+    /// Maximum proof request dispatch retries for a single target block before
+    /// dropping the cached recovery. Collector-side proof/session failures and
+    /// submit errors do not count against this budget.
     pub max_retries: u32,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
