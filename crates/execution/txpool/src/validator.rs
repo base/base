@@ -19,9 +19,10 @@ use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, ActorAuthorizer, AuthenticatorDispatch,
-    AuthorizeError, DispatchOutcome, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceError,
-    NonceMode, NonceValidator, Operation, ResolvedActor, TransactionAuthorizer, TxAuthError,
+    AccountChangeApplier, AccountConfigurationStorage, ActorAuthorizer, AuthError,
+    AuthenticatorDispatch, AuthorizeError, DispatchOutcome, FeeCheck, IntrinsicGas,
+    IntrinsicGasInput, NonceError, NonceMode, NonceValidator, Operation, ResolvedActor,
+    TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{BasePrecompileError, PrecompileStorageProvider, StorageCtx};
 use parking_lot::RwLock;
@@ -374,9 +375,9 @@ where
     /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
     /// - for eip8130 (account abstraction): rejects submissions before the Cobalt upgrade is
-    ///   active, rejects local-origin submissions, and enforces the structural admission gate
-    ///   from [`Self::validate_eip8130_structural`] before the inner Eth checks; authenticator
-    ///   dispatch and account state lookups are not yet performed
+    ///   active, runs structural checks, then runs EIP-8130-specific stateful validation for
+    ///   actor authorization, nonce/replay state, intrinsic gas, create/delegation safety, and
+    ///   payer funding instead of using the inner Eth validator
     /// - ensures that the account has enough balance to cover the L1 gas cost
     pub async fn validate_one_with_state(
         &self,
@@ -595,7 +596,7 @@ where
                 signed.payer_auth(),
                 ctx.timestamp().to::<u64>(),
             )
-            .map_err(|_| Self::eip8130_error("payer authorization failed"))?;
+            .map_err(|error| Self::map_create_payer_authorize_error(error))?;
             if !Operation::Payer.is_granted(&resolved) {
                 return Err(Self::eip8130_error("payer scope missing"));
             }
@@ -668,7 +669,7 @@ where
             authenticator,
             &auth[20..],
         )
-        .map_err(|_| Self::eip8130_error("create sender authentication failed"))?;
+        .map_err(|error| Self::map_create_sender_auth_error(error))?;
         let actor_id = match outcome {
             DispatchOutcome::Authenticated { actor_id }
             | DispatchOutcome::Delegated { actor_id, .. } => actor_id,
@@ -767,6 +768,34 @@ where
             TxAuthError::ConfigChainId { .. } => "config change targets a foreign chain",
             TxAuthError::ConfigSequence { .. } => "config change sequence mismatch",
             TxAuthError::ConfigSequenceOverflow => "config change sequence overflow",
+        };
+        Self::eip8130_error(reason)
+    }
+
+    fn map_create_payer_authorize_error(error: AuthorizeError) -> InvalidPoolTransactionError {
+        tracing::debug!(error = ?error, "EIP-8130 create payer authorization failed");
+        let reason = match error {
+            AuthorizeError::Authenticate(_) => "payer authentication failed",
+            AuthorizeError::Storage(_) => "payer account configuration read failed",
+            AuthorizeError::ZeroActor => "payer actor id is zero",
+            AuthorizeError::NotBound { .. } => "payer actor is not bound",
+            AuthorizeError::DefaultEoaRevoked { .. } => "payer default EOA actor is revoked",
+            AuthorizeError::Expired { .. } => "payer actor credential expired",
+            AuthorizeError::NestedSignatureScope { .. } => {
+                "payer delegate nested actor lacks SIGNATURE scope"
+            }
+        };
+        Self::eip8130_error(reason)
+    }
+
+    fn map_create_sender_auth_error(error: AuthError) -> InvalidPoolTransactionError {
+        tracing::debug!(error = ?error, "EIP-8130 create sender authentication failed");
+        let reason = match error {
+            AuthError::MalformedAuth => "create sender auth is malformed",
+            AuthError::NotCanonical(_) => "create sender authenticator is not canonical",
+            AuthError::InvalidSignature => "create sender signature verification failed",
+            AuthError::NestedDelegate => "create sender delegate auth is nested",
+            AuthError::InvalidPublicKey => "create sender public key is invalid",
         };
         Self::eip8130_error(reason)
     }

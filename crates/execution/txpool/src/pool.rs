@@ -160,13 +160,17 @@ where
     }
 
     fn track_nonce_free_replay_id(&self, replay_id: B256, hash: TxHash) {
-        self.nonce_free_replays.write().insert(replay_id, hash);
+        {
+            let mut index = self.nonce_free_replays.write();
+            index.insert(replay_id, hash);
+        }
         self.reconcile_nonce_free_replays_if_needed();
     }
 
     fn reconcile_nonce_free_replays_if_needed(&self) {
         let pool_size = self.protocol_pool.pool_size().total;
-        if self.nonce_free_replays.read().len() <= pool_size {
+        let mut index = self.nonce_free_replays.write();
+        if index.len() <= pool_size {
             return;
         }
         let mut rebuilt = HashMap::new();
@@ -175,7 +179,7 @@ where
                 rebuilt.insert(replay_id, *transaction.hash());
             }
         }
-        *self.nonce_free_replays.write() = rebuilt;
+        *index = rebuilt;
     }
 
     fn untrack_nonce_free_replays(&self, transactions: &[Arc<ValidPoolTransaction<T>>]) {

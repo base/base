@@ -252,7 +252,6 @@ impl IngressService {
         let block = self
             .mempool_provider
             .get_block(BlockId::Number(BlockNumberOrTag::Latest))
-            .full()
             .await
             .map_err(|error| {
                 warn!(error = %error, "failed to fetch latest block for EIP-8130 Cobalt gate");
