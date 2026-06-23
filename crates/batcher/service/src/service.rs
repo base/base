@@ -133,13 +133,14 @@ impl ReadyBatcher {
                 .map(|(task_name, handle)| async move { (task_name, handle.await) })
                 .collect::<FuturesUnordered<_>>();
             tokio::select! {
+                biased;
+                () = background_cancellation.cancelled() => {}
                 Some((task_name, result)) = background_tasks.next(), if !background_tasks.is_empty() => {
                     match result {
                         Ok(()) => eyre::bail!("{task_name} exited unexpectedly"),
                         Err(error) => eyre::bail!("{task_name} task failed: {error}"),
                     }
                 }
-                () = background_cancellation.cancelled() => {}
             }
 
             while let Some((task_name, result)) = background_tasks.next().await {
@@ -170,8 +171,10 @@ impl ReadyBatcher {
             tokio::select! {
                 r = &mut driver_run => {
                     cancellation.cancel();
-                    background_task_exit.as_mut().await?;
-                    r?;
+                    let driver_result = r;
+                    let background_result = background_task_exit.as_mut().await;
+                    driver_result?;
+                    background_result?;
                     break;
                 }
                 r = &mut background_task_exit => {
@@ -590,10 +593,21 @@ impl BatcherService {
             );
             // `layer()` spawns the polling task and moves cloned state into it.
             let _ = layer.layer(l1_provider.clone());
+            let balance_cancellation = runtime.token().clone();
             let balance_handle = tokio::spawn(async move {
-                while balance_rx.changed().await.is_ok() {
-                    let balance_ether = f64::from(*balance_rx.borrow_and_update()) / WEI_PER_ETHER;
-                    BatcherMetrics::balance().set(balance_ether);
+                loop {
+                    tokio::select! {
+                        biased;
+                        () = balance_cancellation.cancelled() => break,
+                        changed = balance_rx.changed() => {
+                            if changed.is_err() {
+                                break;
+                            }
+                            let balance_ether =
+                                f64::from(*balance_rx.borrow_and_update()) / WEI_PER_ETHER;
+                            BatcherMetrics::balance().set(balance_ether);
+                        }
+                    }
                 }
             });
             background_tasks.push(("balance monitor relay", balance_handle));
