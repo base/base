@@ -34,7 +34,7 @@ use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
-    Metrics, error::ProposerError, output_proposer::OutputProposer,
+    Metrics, RecoveredState, error::ProposerError, output_proposer::OutputProposer,
     proposal_intervals::ProposalIntervals,
 };
 
@@ -156,17 +156,18 @@ where
 
     /// Validates the completed proof and submits it to L1 as a dispute game.
     ///
-    /// Returns `Ok(())` only when `propose_output` succeeded on L1. Any other
-    /// outcome — including RPC failures, root mismatches, invalid signers, or
-    /// contract-level rejections — is mapped to a [`SubmitAction`] variant
-    /// that tells the pipeline how to react.
+    /// Returns the next recovered state when the proof was submitted or
+    /// attached and the game address is known. Any other outcome — including
+    /// RPC failures, root mismatches, invalid signers, or contract-level
+    /// rejections — is mapped to a [`SubmitAction`] variant that tells the
+    /// pipeline how to react.
     #[instrument(skip_all, fields(target_block = target_block, parent_address = %parent_address))]
     pub async fn submit(
         &self,
         proof_result: &ProofResult,
         target_block: u64,
         parent_address: Address,
-    ) -> Result<(), SubmitAction> {
+    ) -> Result<Option<RecoveredState>, SubmitAction> {
         let (aggregate_proposal, proposals) = match proof_result {
             ProofResult::Tee { aggregate_proposal, proposals } => (aggregate_proposal, proposals),
             ProofResult::Zk { .. } => {
@@ -311,7 +312,29 @@ where
                 drop(propose_timer);
                 info!(target_block, "Dispute game created successfully");
                 Metrics::l2_output_proposals_total().increment(1);
-                Ok(())
+                let game_address = self
+                    .factory_client
+                    .games(self.config.game_type, aggregate_proposal.output_root, extra_data)
+                    .await
+                    .map_err(|e| {
+                        SubmitAction::Failed(ProposerError::Contract(format!(
+                            "matching game lookup after create failed: {e}"
+                        )))
+                    })?;
+                if game_address.is_zero() {
+                    warn!(
+                        target_block,
+                        output_root = ?aggregate_proposal.output_root,
+                        "Created dispute game was not found by UUID lookup"
+                    );
+                    Ok(None)
+                } else {
+                    Ok(Some(RecoveredState {
+                        parent_address: game_address,
+                        output_root: aggregate_proposal.output_root,
+                        l2_block_number: target_block,
+                    }))
+                }
             }
             Err(e) => {
                 if matches!(e, ProposerError::Submission(ProofSubmissionError::GameAlreadyExists)) {
@@ -380,7 +403,7 @@ where
         game_address: Address,
         aggregate_proposal: &Proposal,
         target_block: u64,
-    ) -> Result<(), SubmitAction> {
+    ) -> Result<Option<RecoveredState>, SubmitAction> {
         let game_l1_head = self.verifier_client.l1_head(game_address).await.map_err(|e| {
             SubmitAction::Failed(ProposerError::Contract(format!(
                 "l1Head lookup failed for game {game_address}: {e}"
@@ -410,7 +433,11 @@ where
                 drop(attach_timer);
                 info!(target_block, game_address = %game_address, "TEE proof attached successfully");
                 Metrics::l2_output_proposals_total().increment(1);
-                Ok(())
+                Ok(Some(RecoveredState {
+                    parent_address: game_address,
+                    output_root: aggregate_proposal.output_root,
+                    l2_block_number: target_block,
+                }))
             }
             Err(ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified)) => {
                 drop(attach_timer);
@@ -419,7 +446,11 @@ where
                     game_address = %game_address,
                     "TEE proof was attached by another submitter"
                 );
-                Ok(())
+                Ok(Some(RecoveredState {
+                    parent_address: game_address,
+                    output_root: aggregate_proposal.output_root,
+                    l2_block_number: target_block,
+                }))
             }
             Err(
                 e @ ProposerError::Submission(

@@ -15,6 +15,13 @@ use crate::{
     SubmitAction,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubmitOutcome {
+    Advanced(RecoveredState),
+    Restart,
+    Idle,
+}
+
 /// Polls the next expected proof and submits it when ready.
 pub struct ProofCollector<L1, R>
 where
@@ -63,7 +70,7 @@ where
     /// reload state from chain immediately.
     pub async fn tick(
         &self,
-        recovered: RecoveredState,
+        current: &mut RecoveredState,
         safe_head: u64,
         cancel: &CancellationToken,
     ) -> bool {
@@ -71,44 +78,58 @@ where
             return false;
         }
 
-        let Some(target_block) =
-            ProofTarget::next_block(recovered.l2_block_number, self.block_interval)
-        else {
-            return false;
-        };
-
-        if target_block > safe_head {
-            debug!(
-                current_block = recovered.l2_block_number,
-                target_block,
-                safe_head,
-                "Safe head below collection target, waiting for L2 head to advance"
-            );
-            return false;
-        }
-
-        let Some(claimed_l2_output_root) = ProofTarget::canonical_output_root(
-            self.rollup_client.as_ref(),
-            target_block,
-            "collector",
-        )
-        .await
-        else {
-            return false;
-        };
-
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
-        let proof = match Self::poll_proof(self.proof_requester.as_ref(), target_block, &session_id)
-            .await
-        {
-            Ok(Some(proof)) => proof,
-            Ok(None) => return false,
-            Err(_) => {
-                return self.delete_proof_request(&session_id, target_block).await;
+        loop {
+            if cancel.is_cancelled() {
+                return false;
             }
-        };
 
-        self.submit_proof(target_block, &session_id, proof, recovered.parent_address, cancel).await
+            let Some(target_block) =
+                ProofTarget::next_block(current.l2_block_number, self.block_interval)
+            else {
+                return false;
+            };
+
+            if target_block > safe_head {
+                debug!(
+                    current_block = current.l2_block_number,
+                    target_block,
+                    safe_head,
+                    "Safe head below collection target, waiting for L2 head to advance"
+                );
+                return false;
+            }
+
+            let Some(claimed_l2_output_root) = ProofTarget::canonical_output_root(
+                self.rollup_client.as_ref(),
+                target_block,
+                "collector",
+            )
+            .await
+            else {
+                return false;
+            };
+
+            let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
+            let proof =
+                match Self::poll_proof(self.proof_requester.as_ref(), target_block, &session_id)
+                    .await
+                {
+                    Ok(Some(proof)) => proof,
+                    Ok(None) => return false,
+                    Err(_) => {
+                        return self.delete_proof_request(&session_id, target_block).await;
+                    }
+                };
+
+            match self
+                .submit_proof(target_block, &session_id, proof, current.parent_address, cancel)
+                .await
+            {
+                SubmitOutcome::Advanced(next) => *current = next,
+                SubmitOutcome::Restart => return true,
+                SubmitOutcome::Idle => return false,
+            }
+        }
     }
 
     async fn poll_proof(
@@ -223,7 +244,7 @@ where
         proof: ProofResult,
         parent_address: Address,
         cancel: &CancellationToken,
-    ) -> bool {
+    ) -> SubmitOutcome {
         info!(target_block, parent_address = %parent_address, "Submitting proof");
 
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
@@ -246,12 +267,12 @@ where
                     timeout_secs = ?self.submit_timeout.map(|timeout| timeout.as_secs()),
                     "Submit timed out"
                 );
-                return true;
+                return SubmitOutcome::Restart;
             }
             None => {
                 submit_timer.disarm();
                 warn!(target_block, "Submit cancelled");
-                return false;
+                return SubmitOutcome::Idle;
             }
         };
 
@@ -260,15 +281,29 @@ where
         }
 
         match result {
-            Ok(()) => {
+            Ok(Some(next)) => {
                 drop(submit_timer);
                 info!(target_block, "Submission successful");
                 Metrics::last_proposed_block().set(target_block as f64);
+                return SubmitOutcome::Advanced(next);
+            }
+            Ok(None) => {
+                drop(submit_timer);
+                info!(target_block, "Submission successful");
+                Metrics::last_proposed_block().set(target_block as f64);
+                warn!(
+                    target_block,
+                    "Submitted proof did not return a game address, recovering chain state"
+                );
             }
             Err(SubmitAction::RootMismatch) => {
                 Metrics::root_mismatch_total().increment(1);
                 warn!(target_block, "Output root mismatch at submit time");
-                return self.delete_proof_request(session_id, target_block).await;
+                return if self.delete_proof_request(session_id, target_block).await {
+                    SubmitOutcome::Restart
+                } else {
+                    SubmitOutcome::Idle
+                };
             }
             Err(SubmitAction::GameAlreadyExists) => {
                 info!(target_block, "Game already exists onchain");
@@ -289,11 +324,15 @@ where
                     error = %error,
                     "Submission discarded, deleting proof request for re-prove"
                 );
-                return self.delete_proof_request(session_id, target_block).await;
+                return if self.delete_proof_request(session_id, target_block).await {
+                    SubmitOutcome::Restart
+                } else {
+                    SubmitOutcome::Idle
+                };
             }
         }
 
-        true
+        SubmitOutcome::Restart
     }
 
     async fn delete_proof_request(&self, session_id: &str, target_block: u64) -> bool {
@@ -328,6 +367,9 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, B256};
+    use base_proof_contracts::{
+        AggregateVerifierClient, DisputeGameFactoryClient, encode_extra_data,
+    };
     use base_proof_primitives::ProofRequest;
     use base_proof_submission::ProofSubmissionError;
     use tokio_util::sync::CancellationToken;
@@ -363,12 +405,28 @@ mod tests {
         rollup_client: Arc<MockRollupClient>,
         output_proposer: Arc<dyn OutputProposer>,
     ) -> ProofCollector<MockL1, MockRollupClient> {
+        make_collector_with_contracts(
+            proof_requester,
+            rollup_client,
+            output_proposer,
+            Arc::new(MockDisputeGameFactory::with_games(vec![])),
+            Arc::new(MockAggregateVerifier::default()),
+        )
+    }
+
+    fn make_collector_with_contracts(
+        proof_requester: Arc<dyn ProofRequesterProvider>,
+        rollup_client: Arc<MockRollupClient>,
+        output_proposer: Arc<dyn OutputProposer>,
+        factory_client: Arc<dyn DisputeGameFactoryClient>,
+        verifier_client: Arc<dyn AggregateVerifierClient>,
+    ) -> ProofCollector<MockL1, MockRollupClient> {
         let submitter = ProofSubmitter::new(
             output_proposer,
             Arc::clone(&rollup_client),
             Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() }),
-            Arc::new(MockDisputeGameFactory::with_games(vec![])),
-            Arc::new(MockAggregateVerifier::default()),
+            factory_client,
+            verifier_client,
             ProofSubmitterConfig {
                 proposer_address: Address::repeat_byte(0x04),
                 game_type: 0,
@@ -398,13 +456,14 @@ mod tests {
             Arc::new(MockOutputProposer::default()),
         );
 
-        let restart = collector.tick(recovered(100), target_block, &CancellationToken::new()).await;
+        let mut current = recovered(100);
+        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
 
         assert!(!restart);
     }
 
     #[tokio::test]
-    async fn tick_submits_ready_proof_and_restarts() {
+    async fn tick_submits_ready_proof_and_restarts_when_game_address_unknown() {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
@@ -425,9 +484,71 @@ mod tests {
             Arc::new(MockOutputProposer::default()),
         );
 
-        let restart = collector.tick(recovered(100), target_block, &CancellationToken::new()).await;
+        let mut current = recovered(100);
+        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
 
         assert!(restart);
+    }
+
+    #[tokio::test]
+    async fn tick_collects_ready_proofs_until_next_proof_is_missing() {
+        let requester = Arc::new(MockProofRequester::default());
+        let first_target = 200;
+        let second_target = 300;
+        let first_root = B256::repeat_byte(first_target as u8);
+        let second_root = B256::repeat_byte(second_target as u8);
+        let first_game = Address::repeat_byte(0x20);
+        let second_game = Address::repeat_byte(0x30);
+
+        for (target_block, claimed_root) in
+            [(first_target, first_root), (second_target, second_root)]
+        {
+            let proof_request = ProofRequest {
+                claimed_l2_output_root: claimed_root,
+                claimed_l2_block_number: target_block,
+                intermediate_block_interval: BLOCK_INTERVAL,
+                l1_head_number: 1000,
+                ..Default::default()
+            };
+            requester
+                .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                    proof_request,
+                ))
+                .await
+                .expect("test setup should dispatch root session");
+        }
+
+        let mut factory = MockDisputeGameFactory::with_games(vec![]);
+        factory.uuid_games.insert(
+            (0, first_root, encode_extra_data(first_target, Address::ZERO, &[first_root])),
+            first_game,
+        );
+        factory.uuid_games.insert(
+            (0, second_root, encode_extra_data(second_target, first_game, &[second_root])),
+            second_game,
+        );
+
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(second_target, B256::ZERO),
+            output_roots: [(first_target, first_root), (second_target, second_root)]
+                .into_iter()
+                .collect(),
+            max_safe_block: None,
+        });
+        let collector = make_collector_with_contracts(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            rollup_client,
+            Arc::new(MockOutputProposer::default()),
+            Arc::new(factory),
+            Arc::new(MockAggregateVerifier::default()),
+        );
+        let mut current = recovered(100);
+
+        let restart = collector.tick(&mut current, 400, &CancellationToken::new()).await;
+
+        assert!(!restart);
+        assert_eq!(current.l2_block_number, second_target);
+        assert_eq!(current.parent_address, second_game);
     }
 
     #[tokio::test]
@@ -455,7 +576,8 @@ mod tests {
             ))),
         );
 
-        let restart = collector.tick(recovered(100), target_block, &CancellationToken::new()).await;
+        let mut current = recovered(100);
+        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
 
         assert!(restart);
         assert!(!requester.requests.lock().unwrap().contains_key(&session_id));
@@ -487,7 +609,8 @@ mod tests {
             ))),
         );
 
-        let restart = collector.tick(recovered(100), target_block, &CancellationToken::new()).await;
+        let mut current = recovered(100);
+        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
 
         assert!(!restart);
         assert!(requester.requests.lock().unwrap().contains_key(&session_id));
@@ -510,7 +633,8 @@ mod tests {
             Arc::new(MockOutputProposer::default()),
         );
 
-        let restart = collector.tick(recovered(100), target_block, &CancellationToken::new()).await;
+        let mut current = recovered(100);
+        let restart = collector.tick(&mut current, target_block, &CancellationToken::new()).await;
 
         assert!(restart);
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&session_id));

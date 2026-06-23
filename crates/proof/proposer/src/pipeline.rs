@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::{
     Metrics,
-    driver::DriverConfig,
+    driver::{DriverConfig, RecoveredState},
     proof_collector::ProofCollector,
     proof_dispatcher::{ProofDispatcher, ProofDispatcherState},
     proof_recovery::{ProofRecovery, ProofRecoveryCache},
@@ -17,8 +17,9 @@ use crate::{
 /// The proving pipeline.
 ///
 /// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
-/// Submit failures restart both tasks from onchain state; dispatcher retry
-/// exhaustion clears dispatcher recovery state without interrupting collection.
+/// The collector chains ready proofs internally and restarts both tasks only
+/// when it needs fresh onchain state; dispatcher retry exhaustion clears
+/// dispatcher recovery state without interrupting collection.
 pub struct ProvingPipeline<L1, L2, R>
 where
     L1: L1Provider + 'static,
@@ -62,8 +63,9 @@ where
     ///
     /// Each session starts a dispatcher task and a collector task. The
     /// dispatcher can run ahead up to the safe head, while the collector
-    /// submits proofs in order. Submit failures restart both tasks from a
-    /// fresh recovery walk.
+    /// submits ready proofs in order from an internal cursor. Outcomes that
+    /// cannot safely advance that cursor restart both tasks from a fresh
+    /// recovery walk.
     pub async fn run(&self, cancel: CancellationToken) {
         info!(
             block_interval = self.config.block_interval,
@@ -131,6 +133,8 @@ where
 
     async fn collector_loop(&self, cancel: &CancellationToken) {
         let mut cache: Option<ProofRecoveryCache> = None;
+        let mut cursor_source: Option<RecoveredState> = None;
+        let mut cursor: Option<RecoveredState> = None;
 
         loop {
             let restart = {
@@ -142,7 +146,14 @@ where
                     Metrics::safe_head().set(safe_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-                    self.proof_collector.tick(recovered, safe_head, cancel).await
+                    if cursor_source != Some(recovered) || cursor.is_none() {
+                        cursor_source = Some(recovered);
+                        cursor = Some(recovered);
+                    }
+
+                    let current =
+                        cursor.as_mut().expect("collector cursor initialized from recovered state");
+                    self.proof_collector.tick(current, safe_head, cancel).await
                 } else {
                     false
                 }
