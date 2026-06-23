@@ -60,12 +60,29 @@ impl AltDaCommitmentResolver for HttpAltDaResolver {
             )));
         }
 
-        let bytes = resp.bytes().await.map_err(|e| AltDaResolverError::Resolve(e.to_string()))?;
-        if bytes.len() > MAX_RESOLVE_BYTES {
+        // Reject oversized responses up front by Content-Length, then stream chunks with a
+        // running cap so a misconfigured or malicious DA server cannot OOM the node by sending
+        // an arbitrarily large body. Mirrors `base_alt_da::Client::get`.
+        if let Some(len) = resp.content_length()
+            && len as usize > MAX_RESOLVE_BYTES
+        {
             return Err(AltDaResolverError::Resolve(format!(
-                "response too large: {} bytes (max {MAX_RESOLVE_BYTES})",
-                bytes.len()
+                "response too large: content-length {len} (max {MAX_RESOLVE_BYTES})"
             )));
+        }
+
+        let mut bytes = Vec::new();
+        let mut response = resp;
+        while let Some(chunk) =
+            response.chunk().await.map_err(|e| AltDaResolverError::Resolve(e.to_string()))?
+        {
+            if bytes.len() + chunk.len() > MAX_RESOLVE_BYTES {
+                return Err(AltDaResolverError::Resolve(format!(
+                    "response too large: {} bytes (max {MAX_RESOLVE_BYTES})",
+                    bytes.len() + chunk.len()
+                )));
+            }
+            bytes.extend_from_slice(&chunk);
         }
         Ok(Bytes::from(bytes))
     }

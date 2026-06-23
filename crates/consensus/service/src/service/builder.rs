@@ -235,11 +235,17 @@ impl RollupNodeBuilder {
             )
         });
 
-        let alt_da_resolver: Option<DynAltDaResolver> = self.alt_da_server.map(|server| {
-            let resolver = HttpAltDaResolver::new(server)
-                .expect("failed to build alt-da resolver http client");
-            Arc::new(resolver) as DynAltDaResolver
-        });
+        let alt_da_resolver: Option<DynAltDaResolver> = self
+            .alt_da_server
+            .map(|server| HttpAltDaResolver::new(server).map(|r| Arc::new(r) as DynAltDaResolver))
+            .transpose()
+            .map_err(|e| {
+                alloy_transport::TransportError::from(
+                    alloy_transport::TransportErrorKind::custom_str(&format!(
+                        "failed to build alt-da resolver: {e}"
+                    )),
+                )
+            })?;
 
         Ok(RollupNode {
             config: rollup_config,

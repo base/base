@@ -91,8 +91,10 @@ where
                     let bytes = resolver.resolve(&data[1..]).await?;
                     return Ok(bytes);
                 }
-                // Alt-DA mode ignores inline calldata or blob frames; pull the next item.
-                _ => continue,
+                // Alt-DA mode ignores inline calldata/blob frames (Some(_)) and any empty item
+                // (None); pull the next item. Termination relies on the inner source returning
+                // Eof once the block's data is exhausted.
+                Some(_) | None => continue,
             }
         }
     }
