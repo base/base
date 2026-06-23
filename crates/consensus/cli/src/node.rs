@@ -372,7 +372,13 @@ impl ConsensusNodeArgs {
             && startup_mode.reads_and_applies()
             && signal_config.mode.applies_at_startup()
         {
-            self.apply_initial_upgrade_signal(&mut cfg, signal_config, runtime_validation).await?;
+            self.apply_initial_upgrade_signal(
+                &mut cfg,
+                signal_config,
+                runtime_validation,
+                upgrade_signal_l1_rpc.as_ref(),
+            )
+            .await?;
         }
 
         info!(
@@ -461,9 +467,11 @@ impl ConsensusNodeArgs {
         cfg: &mut RollupConfig,
         signal_config: &UpgradeSignalConfig,
         runtime_validation: UpgradeSignalRuntimeValidation,
+        upgrade_signal_l1_rpc: Option<&Url>,
     ) -> eyre::Result<()> {
-        let reader = signal_config
-            .reader(RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()));
+        let reader = signal_config.reader(RootProvider::new_http(
+            self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc),
+        ));
         let application_schedule = signal_config
             .read_validated_application_schedule(
                 &reader,
@@ -476,6 +484,11 @@ impl ConsensusNodeArgs {
         Self::apply_schedule_to_rollup_config(cfg, &application_schedule);
 
         Ok(())
+    }
+
+    /// Returns the L1 RPC used by consensus upgrade-signal reads.
+    fn resolved_upgrade_signal_l1_rpc(&self, upgrade_signal_l1_rpc: Option<&Url>) -> Url {
+        upgrade_signal_l1_rpc.cloned().unwrap_or_else(|| self.config.l1_rpc_args.l1_eth_rpc.clone())
     }
 
     /// Applies a contract-backed upgrade activation schedule to a rollup config.
@@ -731,6 +744,33 @@ mod tests {
         assert_eq!(
             overrides.upgrade_signal_l1_rpc.as_ref().map(Url::as_str),
             Some("http://localhost:8545/")
+        );
+    }
+
+    #[test]
+    fn startup_upgrade_signal_defaults_to_consensus_l1_rpc() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            default_node_config_args(),
+        );
+
+        assert_eq!(
+            args.resolved_upgrade_signal_l1_rpc(None).as_str(),
+            args.config.l1_rpc_args.l1_eth_rpc.as_str()
+        );
+    }
+
+    #[test]
+    fn startup_upgrade_signal_prefers_override_l1_rpc() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            default_node_config_args(),
+        );
+        let upgrade_signal_l1_rpc = Url::parse("http://override-l1:8545").unwrap();
+
+        assert_eq!(
+            args.resolved_upgrade_signal_l1_rpc(Some(&upgrade_signal_l1_rpc)).as_str(),
+            upgrade_signal_l1_rpc.as_str()
         );
     }
 

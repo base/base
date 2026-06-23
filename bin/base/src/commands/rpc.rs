@@ -194,8 +194,7 @@ impl RpcCommand {
             .standard
             .rollup_args
             .upgrade_signal_l1_rpc
-            .upgrade_signal_l1_rpc
-            .get_or_insert_with(|| consensus_config.l1_rpc_args.l1_eth_rpc.clone());
+            .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
     }
 }
 

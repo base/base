@@ -936,6 +936,7 @@ mod tests {
             requests_hash: Some(B256::ZERO),
             ..Default::default()
         };
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -943,7 +944,8 @@ mod tests {
             &system_config,
             0,
             &l1_header,
-            0xFF,
+            l2_block_time.saturating_sub(2),
+            l2_block_time,
         )
         .unwrap();
 
@@ -959,7 +961,8 @@ mod tests {
             &system_config,
             0,
             &l1_header,
-            0xFF,
+            l2_block_time.saturating_sub(2),
+            l2_block_time,
         )
         .unwrap();
 

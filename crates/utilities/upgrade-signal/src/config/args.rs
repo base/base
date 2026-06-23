@@ -144,15 +144,22 @@ impl UpgradeSignalArgs {
     }
 }
 
-/// TODO: If an execution service gains its own explicit L1 execution RPC setting, default this
-/// to that URL so users do not need to pass the same endpoint twice.
-///
 /// CLI argument for the L1 RPC endpoint used by execution upgrade-signal polling.
+///
+/// Integrated callers may default this from the consensus L1 RPC so both services read from the
+/// same L1 endpoint by default.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct UpgradeSignalL1RpcArgs {
     /// L1 execution RPC URL used to read the upgrade signal contract.
     #[arg(long = "upgrade-signal.l1-rpc", env = "BASE_NODE_UPGRADE_SIGNAL_L1_RPC")]
     pub upgrade_signal_l1_rpc: Option<Url>,
+}
+
+impl UpgradeSignalL1RpcArgs {
+    /// Defaults the execution upgrade-signal L1 RPC from another service's L1 RPC when unset.
+    pub fn apply_default_from(&mut self, l1_rpc: &Url) {
+        self.upgrade_signal_l1_rpc.get_or_insert_with(|| l1_rpc.clone());
+    }
 }
 
 #[cfg(test)]
@@ -265,6 +272,30 @@ mod tests {
 
         assert!(config.metrics_enabled(UpgradeSignalMetricLayer::Execution));
         assert!(config.metrics_enabled(UpgradeSignalMetricLayer::Consensus));
+    }
+
+    #[test]
+    fn defaults_execution_l1_rpc_from_shared_l1_rpc() {
+        let mut args = UpgradeSignalL1RpcArgs::default();
+        let l1_rpc = Url::parse("http://localhost:8545").unwrap();
+
+        args.apply_default_from(&l1_rpc);
+
+        assert_eq!(args.upgrade_signal_l1_rpc.as_ref().map(Url::as_str), Some(l1_rpc.as_str()));
+    }
+
+    #[test]
+    fn preserves_explicit_execution_l1_rpc_when_defaulting() {
+        let explicit_l1_rpc = Url::parse("http://finalized-l1:8545").unwrap();
+        let mut args =
+            UpgradeSignalL1RpcArgs { upgrade_signal_l1_rpc: Some(explicit_l1_rpc.clone()) };
+
+        args.apply_default_from(&Url::parse("http://localhost:8545").unwrap());
+
+        assert_eq!(
+            args.upgrade_signal_l1_rpc.as_ref().map(Url::as_str),
+            Some(explicit_l1_rpc.as_str())
+        );
     }
 
     #[test]
