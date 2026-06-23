@@ -440,6 +440,8 @@ pub struct MockProofRequester {
     pub accepted_session_id: std::sync::Mutex<Option<String>>,
     /// Number of `prove_block_range` calls accepted.
     pub prove_count: AtomicUsize,
+    /// Reject every `delete_proof_request` call with a timeout.
+    pub reject_delete: AtomicBool,
 }
 
 #[async_trait]
@@ -520,6 +522,10 @@ impl ProofRequesterProvider for MockProofRequester {
         &self,
         request: DeleteProofRequest,
     ) -> Result<DeleteProofResponse, ProverServiceClientError> {
+        if self.reject_delete.load(Ordering::SeqCst) {
+            return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
+        }
+
         self.requests.lock().unwrap().remove(&request.session_id);
         self.failed_sessions.lock().unwrap().remove(&request.session_id);
         Ok(DeleteProofResponse { deleted: true })

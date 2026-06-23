@@ -59,8 +59,8 @@ where
 
     /// Runs one collector tick.
     ///
-    /// Returns `true` after a submit attempt so the pipeline drops stale
-    /// recovery caches and reloads state from chain.
+    /// Returns `true` when the pipeline should drop stale recovery caches and
+    /// reload state from chain immediately.
     pub async fn tick(
         &self,
         recovered: RecoveredState,
@@ -104,8 +104,7 @@ where
             Ok(Some(proof)) => proof,
             Ok(None) => return false,
             Err(_) => {
-                self.delete_proof_request(&session_id, target_block).await;
-                return true;
+                return self.delete_proof_request(&session_id, target_block).await;
             }
         };
 
@@ -269,7 +268,7 @@ where
             Err(SubmitAction::RootMismatch) => {
                 Metrics::root_mismatch_total().increment(1);
                 warn!(target_block, "Output root mismatch at submit time");
-                self.delete_proof_request(session_id, target_block).await;
+                return self.delete_proof_request(session_id, target_block).await;
             }
             Err(SubmitAction::GameAlreadyExists) => {
                 info!(target_block, "Game already exists onchain");
@@ -282,25 +281,27 @@ where
             Err(SubmitAction::Discard(error)) => {
                 Metrics::errors_total(error.metric_label()).increment(1);
                 warn!(target_block, error = %error, "Submission failed");
-                self.delete_proof_request(session_id, target_block).await;
+                return self.delete_proof_request(session_id, target_block).await;
             }
         }
 
         true
     }
 
-    async fn delete_proof_request(&self, session_id: &str, target_block: u64) {
+    async fn delete_proof_request(&self, session_id: &str, target_block: u64) -> bool {
         match self
             .proof_requester
             .delete_proof_request(DeleteProofRequest { session_id: session_id.to_owned() })
             .await
         {
-            Ok(_) => {
+            Ok(response) => {
                 info!(
                     target_block,
                     session_id = %session_id,
+                    deleted = response.deleted,
                     "Deleted proof request for re-prove"
                 );
+                response.deleted
             }
             Err(error) => {
                 warn!(
@@ -309,6 +310,7 @@ where
                     error = %error,
                     "Failed to delete proof request"
                 );
+                false
             }
         }
     }
@@ -450,6 +452,38 @@ mod tests {
 
         assert!(restart);
         assert!(!requester.requests.lock().unwrap().contains_key(&session_id));
+    }
+
+    #[tokio::test]
+    async fn tick_waits_when_delete_after_discard_fails() {
+        let requester = Arc::new(MockProofRequester::default());
+        requester.reject_delete.store(true, std::sync::atomic::Ordering::SeqCst);
+        let target_block = 200;
+        let claimed_root = B256::repeat_byte(target_block as u8);
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        let proof_request = ProofRequest {
+            claimed_l2_output_root: claimed_root,
+            claimed_l2_block_number: target_block,
+            intermediate_block_interval: BLOCK_INTERVAL,
+            l1_head_number: 1000,
+            ..Default::default()
+        };
+        requester
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .await
+            .expect("test setup should dispatch root session");
+        let collector = make_collector(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            rollup_client(target_block, Some(claimed_root)),
+            Arc::new(MockOutputProposer::with_create_error(ProposerError::Submission(
+                ProofSubmissionError::InvalidSigner,
+            ))),
+        );
+
+        let restart = collector.tick(recovered(100), target_block, &CancellationToken::new()).await;
+
+        assert!(!restart);
+        assert!(requester.requests.lock().unwrap().contains_key(&session_id));
     }
 
     #[tokio::test]
