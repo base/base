@@ -94,17 +94,25 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base-sidecrush-bin --bin sidecrush && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/sidecrush /app/sidecrush
 
+FROM source AS prover-service-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=prover-service-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-prover-service-bin --bin base-prover-service && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-service /app/base-prover-service
+
 FROM zk-builder-base AS zk-source
 COPY . .
 
-FROM zk-source AS zk-prover-builder
+FROM zk-source AS zk-host-builder
 ARG PROFILE=release
 ARG BASE_SUCCINCT_ELF_REQUIRE=1
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=zk-prover-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-prover-zk --bin base-prover-zk && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-zk /app/base-prover-zk
+    --mount=type=cache,target=/app/target,id=zk-host-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-prover-zk-host --bin base-prover-zk-host && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-zk-host /app/base-prover-zk-host
 
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
 RUN apt-get update && \
@@ -141,7 +149,11 @@ FROM runtime-base AS sidecrush
 COPY --from=sidecrush-builder /app/sidecrush ./sidecrush
 ENTRYPOINT ["./sidecrush"]
 
-FROM runtime-base AS zk-prover
-COPY --from=zk-prover-builder /app/base-prover-zk ./base-prover-zk
-EXPOSE 9000
-ENTRYPOINT ["./base-prover-zk"]
+FROM runtime-base AS prover-service
+COPY --from=prover-service-builder /app/base-prover-service ./base-prover-service
+EXPOSE 9000 9001
+ENTRYPOINT ["./base-prover-service"]
+
+FROM runtime-base AS zk-host
+COPY --from=zk-host-builder /app/base-prover-zk-host ./base-prover-zk-host
+ENTRYPOINT ["./base-prover-zk-host"]
