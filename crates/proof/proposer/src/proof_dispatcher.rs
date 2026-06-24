@@ -234,12 +234,11 @@ impl ProofDispatcher {
                 Err(error) => {
                     Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
                     Metrics::errors_total(error.metric_label()).increment(1);
-                    Metrics::proof_retries_total().increment(1);
 
                     warn!(
                         target_block,
                         error = %error,
-                        "Proof failed, re-dispatching"
+                        "Proof dispatch failed, stopping tick at current cursor"
                     );
                     break;
                 }

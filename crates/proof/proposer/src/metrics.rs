@@ -29,9 +29,6 @@ base_metrics::define_metrics! {
     #[label(name = "status", default = ["queued", "running", "succeeded", "failed"])]
     proof_status_received_total: counter,
 
-    #[describe("Total number of proof retries scheduled after a failed dispatch or collection")]
-    proof_retries_total: counter,
-
     #[describe("Latest safe (or finalized) L2 block number")]
     #[no_zero]
     safe_head: gauge,
