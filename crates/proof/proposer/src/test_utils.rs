@@ -48,9 +48,12 @@ pub struct MockL1 {
 }
 
 impl MockL1 {
-    /// Creates a mock L1 provider with no hash-specific headers.
+    /// Creates a mock L1 provider with the default test L1 head registered.
     pub fn new(latest_block_number: u64) -> Self {
-        Self { latest_block_number, headers_by_hash: HashMap::new() }
+        Self::with_headers(
+            latest_block_number,
+            HashMap::from([(B256::ZERO, test_l1_header(B256::ZERO, latest_block_number))]),
+        )
     }
 
     /// Creates a mock L1 provider with hash-specific headers.
@@ -71,11 +74,10 @@ impl L1Provider for MockL1 {
         Ok(test_l1_header(B256::repeat_byte(0x11), self.latest_block_number))
     }
     async fn header_by_hash(&self, hash: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
-        Ok(self
-            .headers_by_hash
+        self.headers_by_hash
             .get(&hash)
             .cloned()
-            .unwrap_or_else(|| test_l1_header(hash, self.latest_block_number)))
+            .ok_or_else(|| RpcError::HeaderNotFound(format!("mock: no header for hash {hash}")))
     }
     async fn block_receipts(
         &self,
