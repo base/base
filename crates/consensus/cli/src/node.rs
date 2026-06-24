@@ -509,9 +509,9 @@ impl ConsensusNodeArgs {
         ChainConfig::by_chain_id(self.chain.l2_chain_id.id()).map_or_else(
             UpgradeSignalRuntimeValidation::fail_closed,
             |config| {
-                UpgradeSignalRuntimeValidation::with_activation_admin_address(Some(
-                    config.activation_admin_address,
-                ))
+                UpgradeSignalRuntimeValidation::with_activation_admin_address(
+                    config.beryl_activation_admin_address(),
+                )
             },
         )
     }
@@ -714,7 +714,7 @@ mod tests {
         assert!(validation.require_activation_admin_for_beryl);
         assert_eq!(
             validation.activation_admin_address,
-            Some(ChainConfig::mainnet().activation_admin_address)
+            ChainConfig::mainnet().beryl_activation_admin_address()
         );
     }
 
