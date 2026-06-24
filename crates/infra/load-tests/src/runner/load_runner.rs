@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, TxHash, U256, utils::format_ether};
+use alloy_primitives::{Address, B256, Bytes, TxHash, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
@@ -77,6 +77,8 @@ pub struct LoadRunner {
     last_funds_low: bool,
     funder_address: Option<String>,
     sender_addresses: Vec<String>,
+    /// Per-run salt for deriving each sender's own B-20 token, set during B-20 setup.
+    pub(super) b20_run_salt: Option<B256>,
 }
 
 impl LoadRunner {
@@ -124,7 +126,7 @@ impl LoadRunner {
         let sender_addresses = accounts.accounts().iter().map(|a| a.address.to_string()).collect();
 
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
-        let generator = Self::create_generator(workload_config, &config)?;
+        let generator = Self::create_generator(workload_config, &config, None)?;
 
         info!(
             account_count = config.account_count,
@@ -153,7 +155,13 @@ impl LoadRunner {
             last_funds_low: false,
             funder_address: None,
             sender_addresses,
+            b20_run_salt: None,
         })
+    }
+
+    /// Builds the workload config used to (re)construct the transaction generator.
+    pub(super) fn workload_config(&self) -> WorkloadConfig {
+        WorkloadConfig::new("load-test").with_seed(self.config.seed)
     }
 
     /// Sets the funder wallet address for inclusion in live snapshots.
@@ -178,6 +186,7 @@ impl LoadRunner {
     pub(super) fn create_generator(
         workload_config: WorkloadConfig,
         config: &LoadConfig,
+        b20_run_salt: Option<B256>,
     ) -> Result<WorkloadGenerator> {
         let mut generator = WorkloadGenerator::new(workload_config);
 
@@ -212,10 +221,13 @@ impl LoadRunner {
                     );
                     generator = generator.with_payload(payload, weight_pct);
                 }
-                TxType::B20 { contract } => {
-                    if let Some(token) = contract {
+                TxType::B20 => {
+                    // Each sender transfers its own per-run token; the payload derives the token
+                    // from the run salt, which is only known after B-20 setup runs. Before setup
+                    // (salt None) the payload is intentionally not installed.
+                    if let Some(run_salt) = b20_run_salt {
                         generator = generator.with_payload(
-                            B20TransferPayload::new(*token, U256::from(1000), U256::from(10000)),
+                            B20TransferPayload::new(run_salt, U256::from(1000), U256::from(10000)),
                             weight_pct,
                         );
                     }
@@ -292,7 +304,7 @@ impl LoadRunner {
                 TxType::Transfer => 21_000,
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
-                TxType::B20 { .. } => 100_000,
+                TxType::B20 => 100_000,
                 TxType::Precompile { target, iterations, blake2f_rounds, .. } => {
                     let per_call = match target {
                         PrecompileId::Identity | PrecompileId::Bn254Add => 22_000,
@@ -665,7 +677,7 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
-                | TxType::B20 { .. }
+                | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
             }
@@ -684,7 +696,7 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
-                | TxType::B20 { .. }
+                | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
             }
@@ -977,12 +989,12 @@ impl LoadRunner {
     /// Runs the load test and returns metrics summary.
     #[instrument(skip(self), fields(target_gps = self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
-        for tx_config in &self.config.transactions {
-            if let TxType::B20 { contract: None } = &tx_config.tx_type {
-                return Err(BaselineError::Config(
-                    "b20 contract address not resolved; call setup_b20_tokens first".into(),
-                ));
-            }
+        if self.b20_run_salt.is_none()
+            && self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20))
+        {
+            return Err(BaselineError::Config(
+                "b20 run salt not set; call setup_b20_tokens before run".into(),
+            ));
         }
 
         self.collector.reset();

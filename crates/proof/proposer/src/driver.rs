@@ -260,7 +260,7 @@ mod tests {
     fn test_pipeline_handle(
         global_cancel: CancellationToken,
     ) -> PipelineHandle<MockL1, MockL2, MockRollupClient> {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
@@ -299,6 +299,7 @@ mod tests {
             Arc::clone(&rollup),
             ProofDispatcherConfig {
                 proposer_address: config.proposer_address,
+                allow_non_finalized: config.allow_non_finalized,
                 intermediate_block_interval: config.intermediate_block_interval,
                 tee_image_hash: config.tee_image_hash,
             },

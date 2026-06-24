@@ -59,9 +59,9 @@ flashblocks:
 logs *containers:
     docker compose {{ _env }} {{ _ha }} logs -f {{ containers }}
 
-# Stream logs from the sequencer's execution (EL) and consensus (CL) layers
+# Stream logs from the primary unified sequencer
 sequencer-logs:
-    docker compose {{ _env }} {{ _ha }} logs -f base-builder base-builder-cl
+    docker compose {{ _env }} {{ _ha }} logs -f base-builder
 
 # Stream logs from the devnet ZK prover services
 zk-logs *containers:
@@ -72,7 +72,7 @@ zk-down:
     -docker compose {{ _env }} {{ _ha }} stop base-prover-zk zk-prover-postgres
     -docker compose {{ _env }} {{ _ha }} rm -f base-prover-zk zk-prover-postgres
 
-# Follow the active raft leader's CL logs, switching automatically on failover
+# Follow the active raft leader's unified sequencer logs, switching automatically on failover
 follow-leader:
     ./etc/scripts/devnet/follow-leader.sh
 
@@ -97,8 +97,8 @@ ingress-down:
 ingress-logs *containers:
     docker compose {{ _env }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml logs -f {{ containers }}
 
-# Builds one of the shared Rust service images (default: client)
-build-image target='client' profile='dev':
+# Builds one of the shared Rust service images (default: base)
+build-image target='base' profile='dev':
     #!/usr/bin/env bash
     set -euo pipefail
     case "$(uname -m)" in

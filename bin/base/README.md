@@ -10,7 +10,7 @@ consensus node connects to that IPC endpoint internally.
 
 The execution CLI surface is shared with the standalone execution binaries through
 `base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
-sequencer, builder, conductor, metering, and transaction-forwarding options.
+sequencer, builder, conductor, and transaction-forwarding options.
 
 Supported forms:
 
@@ -19,6 +19,7 @@ base rpc
 base --chain sepolia rpc
 base -c sepolia rpc
 base --chain zeronet rpc
+base --chain dev rpc
 base --chain ./chain.toml rpc
 base -c ./chain.toml rpc
 ```
@@ -29,6 +30,9 @@ for consensus chain resolution:
 ```text
 base rpc --execution-chain dev
 ```
+
+The command also accepts metering flags such as `--enable-metering` for trusted local devnet
+simulation nodes.
 
 ## `base sequencer`
 
@@ -45,6 +49,7 @@ Supported forms:
 ```text
 base sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
 base --chain sepolia sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.signer.endpoint <url>
+base --chain dev sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
 base --chain ./chain.toml sequencer --l1-eth-rpc <url> --l1-beacon <url> --p2p.sequencer.key.path <path>
 ```
 
@@ -77,7 +82,7 @@ base update --update-installer
 
 Chain selection supports:
 
-- built-in names: `mainnet`, `sepolia`, `zeronet`
+- built-in names: `mainnet`, `sepolia`, `zeronet`, `dev`
 - TOML files for custom chains:
 
 ```toml

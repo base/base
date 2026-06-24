@@ -48,11 +48,9 @@ pub enum TxType {
         /// Looper contract address (required when iterations > 1).
         looper_contract: Option<Address>,
     },
-    /// B-20 precompile token transfer.
-    B20 {
-        /// Pre-deployed token address, or `None` to create a new token during setup.
-        contract: Option<Address>,
-    },
+    /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
+    /// per run during setup.
+    B20,
     /// Osaka (Base Azul) opcode or precompile transaction.
     Osaka {
         /// Target Osaka feature.

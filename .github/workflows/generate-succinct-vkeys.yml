@@ -28,10 +28,45 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Resolve ref
+        id: resolve-ref
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          set -euo pipefail
+
+          if git ls-remote --exit-code "$REPO_URL" "refs/heads/$INPUT_REF" >/dev/null 2>&1; then
+            echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code "$REPO_URL" "refs/tags/$INPUT_REF" >/dev/null 2>&1; then
+            echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$INPUT_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            sha_check_dir="$(mktemp -d)"
+            git -C "$sha_check_dir" init -q
+            if git -C "$sha_check_dir" fetch --depth=1 "$REPO_URL" "$INPUT_REF" >/dev/null 2>&1; then
+              rm -rf "$sha_check_dir"
+              echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            rm -rf "$sha_check_dir"
+            echo "::error::Commit SHA '$INPUT_REF' was not found in this repository."
+            exit 1
+          fi
+
+          echo "::error::Ref '$INPUT_REF' was not found as a branch, tag, or full commit SHA."
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ steps.resolve-ref.outputs.ref }}
           fetch-depth: 1
 
       - uses: ./.github/actions/setup

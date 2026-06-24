@@ -211,9 +211,9 @@ impl EnclaveApiServer for NitroSignerRpc {
     async fn signer_attestation(
         &self,
         user_data: Option<Vec<u8>>,
-        nonce: Option<Vec<u8>>,
+        nonces: Option<Vec<Vec<u8>>>,
     ) -> RpcResult<Vec<Vec<u8>>> {
-        // NSM limits: user_data ≤ 512 bytes, nonce ≤ 512 bytes.
+        // NSM limits: user_data ≤ 512 bytes, each nonce ≤ 512 bytes.
         // Reject oversized payloads early to avoid allocating and forwarding them
         // through the vsock transport only to be rejected by the enclave.
         if user_data.as_ref().is_some_and(|d| d.len() > MAX_USER_DATA_BYTES) {
@@ -222,7 +222,13 @@ impl EnclaveApiServer for NitroSignerRpc {
                 format!("user_data exceeds {MAX_USER_DATA_BYTES}-byte limit"),
             ));
         }
-        if nonce.as_ref().is_some_and(|n| n.len() > MAX_NONCE_BYTES) {
+        if nonces.as_ref().is_some_and(|items| items.len() != self.transports.len()) {
+            return Err(NitroProverServer::rpc_err(
+                -32602,
+                format!("nonces length must equal signer count {}", self.transports.len()),
+            ));
+        }
+        if nonces.as_ref().is_some_and(|items| items.iter().any(|n| n.len() > MAX_NONCE_BYTES)) {
             return Err(NitroProverServer::rpc_err(
                 -32602,
                 format!("nonce exceeds {MAX_NONCE_BYTES}-byte limit"),
@@ -230,10 +236,11 @@ impl EnclaveApiServer for NitroSignerRpc {
         }
 
         let mut attestations = Vec::with_capacity(self.transports.len());
-        for transport in &self.transports {
+        for (index, transport) in self.transports.iter().enumerate() {
+            let nonce = nonces.as_ref().map(|items| items[index].clone());
             attestations.push(
                 transport
-                    .signer_attestation(user_data.clone(), nonce.clone())
+                    .signer_attestation(user_data.clone(), nonce)
                     .await
                     .map_err(|e| NitroProverServer::rpc_err(-32001, e))?,
             );
@@ -360,10 +367,28 @@ mod tests {
         let rpc = NitroSignerRpc { transports: vec![transport] };
 
         let oversized = vec![0u8; MAX_NONCE_BYTES + 1];
-        let result = EnclaveApiServer::signer_attestation(&rpc, None, Some(oversized)).await;
+        let result = EnclaveApiServer::signer_attestation(&rpc, None, Some(vec![oversized])).await;
         let err = result.unwrap_err();
         assert_eq!(err.code(), -32602);
         assert!(err.message().contains("nonce"));
+    }
+
+    #[tokio::test]
+    async fn signer_attestation_rejects_nonce_count_mismatch() {
+        let server_a = Arc::new(EnclaveServer::new_local().unwrap());
+        let server_b = Arc::new(EnclaveServer::new_local().unwrap());
+        let rpc = NitroSignerRpc {
+            transports: vec![
+                Arc::new(NitroTransport::local(server_a)),
+                Arc::new(NitroTransport::local(server_b)),
+            ],
+        };
+
+        let result =
+            EnclaveApiServer::signer_attestation(&rpc, None, Some(vec![vec![0u8; 32]])).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), -32602);
+        assert!(err.message().contains("nonces length"));
     }
 
     #[test]

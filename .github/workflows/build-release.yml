@@ -186,21 +186,21 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          docker buildx bake -f etc/docker/docker-bake.hcl client \
-            --set client.tags=${{ env.REGISTRY_IMAGE }} \
-            --set client.platform=${{ matrix.settings.arch }} \
-            --set client.output=type=image,push-by-digest=true,name-canonical=true,push=true \
-            --set client.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-${{ env.PLATFORM_PAIR }},mode=max \
-            --set client.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }} \
-            --set client.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }} \
-            --set client.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }} \
-            --set client.labels.org.opencontainers.image.version=${{ steps.image-labels.outputs.version }} \
-            --metadata-file ${{ runner.temp }}/client-metadata.json
+          docker buildx bake -f etc/docker/docker-bake.hcl base \
+            --set base.tags=${{ env.REGISTRY_IMAGE }} \
+            --set base.platform=${{ matrix.settings.arch }} \
+            --set base.output=type=image,push-by-digest=true,name-canonical=true,push=true \
+            --set base.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-${{ env.PLATFORM_PAIR }},mode=max \
+            --set base.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }} \
+            --set base.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }} \
+            --set base.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }} \
+            --set base.labels.org.opencontainers.image.version=${{ steps.image-labels.outputs.version }} \
+            --metadata-file ${{ runner.temp }}/base-metadata.json
 
       - name: Export digest
         run: |
           mkdir -p ${{ runner.temp }}/digests
-          digest="$(jq -er '."client"."containerimage.digest"' ${{ runner.temp }}/client-metadata.json)"
+          digest="$(jq -er '."base"."containerimage.digest"' ${{ runner.temp }}/base-metadata.json)"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest

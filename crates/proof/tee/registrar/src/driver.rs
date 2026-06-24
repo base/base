@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, hex};
+use alloy_primitives::Address;
 use base_proof_contracts::TEEProverRegistryClient;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
@@ -250,25 +250,21 @@ where
             return Ok(outcome);
         }
 
-        let mut all_attestations = Vec::with_capacity(addresses.len());
-        for (index, signer) in addresses.iter().copied().enumerate() {
-            let nonce = self.signer_manager.attestation_nonce(signer);
-            info!(
-                nonce = %hex::encode(nonce),
-                signer = %signer,
-                instance = %instance.instance_id,
-                "requesting attestation with deterministic nonce"
-            );
-            let attestations = match self
-                .signer_client
-                .signer_attestation(&instance.endpoint, Some(nonce.to_vec()))
-                .await
-            {
+        let nonces = addresses
+            .iter()
+            .map(|signer| self.signer_manager.attestation_nonce(*signer).to_vec())
+            .collect::<Vec<_>>();
+        info!(
+            signer_count = addresses.len(),
+            instance = %instance.instance_id,
+            "requesting attestations with deterministic nonces"
+        );
+        let all_attestations =
+            match self.signer_client.signer_attestation(&instance.endpoint, Some(nonces)).await {
                 Ok(attestations) => attestations,
                 Err(e) => {
                     warn!(
                         error = %e,
-                        signer = %signer,
                         instance = %instance.instance_id,
                         "failed to fetch signer attestations after resolving signer addresses"
                     );
@@ -278,24 +274,16 @@ where
                 }
             };
 
-            if attestations.len() != addresses.len() {
-                warn!(
-                    expected = addresses.len(),
-                    actual = attestations.len(),
-                    signer = %signer,
-                    instance = %instance.instance_id,
-                    "signer attestation count did not match signer public key count"
-                );
-                RegistrarMetrics::processing_errors_total().increment(1);
-                outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
-                return Ok(outcome);
-            }
-
-            let attestation = attestations
-                .into_iter()
-                .nth(index)
-                .expect("guarded by attestation count == signer count");
-            all_attestations.push(attestation);
+        if all_attestations.len() != addresses.len() {
+            warn!(
+                expected = addresses.len(),
+                actual = all_attestations.len(),
+                instance = %instance.instance_id,
+                "signer attestation count did not match signer public key count"
+            );
+            RegistrarMetrics::processing_errors_total().increment(1);
+            outcome.unresolved_instance_ids.insert(instance.instance_id.clone());
+            return Ok(outcome);
         }
 
         if self.config.cancel.is_cancelled() {
@@ -455,8 +443,10 @@ mod tests {
         keys: HashMap<Url, Vec<Vec<u8>>>,
         attestations: HashMap<Url, Vec<Vec<u8>>>,
         fail_attestation: HashSet<Url>,
-        requested_nonces: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
+        requested_nonces: RequestedNonces,
     }
+
+    type RequestedNonces = Arc<Mutex<Vec<Option<Vec<Vec<u8>>>>>>;
 
     impl MockEnclaveEndpointClient {
         fn from_keys(entries: &[(&str, &[u8; 32])]) -> Self {
@@ -484,9 +474,9 @@ mod tests {
         async fn signer_attestation(
             &self,
             endpoint: &Url,
-            nonce: Option<Vec<u8>>,
+            nonces: Option<Vec<Vec<u8>>>,
         ) -> Result<Vec<Vec<u8>>> {
-            self.requested_nonces.lock().unwrap().push(nonce);
+            self.requested_nonces.lock().unwrap().push(nonces);
             if self.fail_attestation.contains(endpoint) {
                 return Err(RegistrarError::ProverClient {
                     instance: endpoint.to_string(),
@@ -648,25 +638,19 @@ mod tests {
         let resolution = discover_once(&driver).await;
 
         assert_eq!(resolution.registerable.len(), 2);
-        assert_eq!(
-            *requested_nonces.lock().unwrap(),
-            vec![
-                Some(
-                    SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
-                        TEST_REGISTRY_ADDRESS,
-                        signer_a,
-                    )
-                    .to_vec(),
-                ),
-                Some(
-                    SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
-                        TEST_REGISTRY_ADDRESS,
-                        signer_b,
-                    )
-                    .to_vec(),
-                ),
-            ]
-        );
+        let nonce_a =
+            SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
+                TEST_REGISTRY_ADDRESS,
+                signer_a,
+            )
+            .to_vec();
+        let nonce_b =
+            SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
+                TEST_REGISTRY_ADDRESS,
+                signer_b,
+            )
+            .to_vec();
+        assert_eq!(*requested_nonces.lock().unwrap(), vec![Some(vec![nonce_a, nonce_b])]);
     }
 
     #[tokio::test]

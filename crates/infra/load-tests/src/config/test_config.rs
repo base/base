@@ -239,13 +239,9 @@ pub enum TxTypeConfig {
         #[serde(default)]
         reverse_max_amount: Option<String>,
     },
-    /// B-20 precompile token transfer.
-    B20 {
-        /// B-20 token precompile address. When omitted, a new token is created via the factory
-        /// during setup.
-        #[serde(default)]
-        contract: Option<String>,
-    },
+    /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
+    /// per run during setup.
+    B20,
 
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
@@ -596,19 +592,7 @@ impl TestConfig {
                     looper_contract,
                 }
             }
-            TxTypeConfig::B20 { contract } => {
-                let contract = contract
-                    .as_ref()
-                    .map(|c| {
-                        c.parse::<Address>().map_err(|e| {
-                            BaselineError::Config(format!(
-                                "invalid b20 contract address '{c}': {e}"
-                            ))
-                        })
-                    })
-                    .transpose()?;
-                TxType::B20 { contract }
-            }
+            TxTypeConfig::B20 => TxType::B20,
             TxTypeConfig::Osaka { target } => TxType::Osaka { target: target.clone() },
             TxTypeConfig::UniswapV3 {
                 router,

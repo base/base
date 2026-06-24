@@ -176,22 +176,18 @@ The `PrecompileLooper` contract enables batch testing by calling a precompile mu
 #### B-20 Token Testing
 
 B-20 precompile tokens can be load-tested to benchmark the precompile's `transfer` performance.
-The load tester handles the full lifecycle: token creation via the B-20 factory, role grants
-(`MINT_ROLE` / `BURN_ROLE` to every sender), minting during setup, and burning during teardown.
+Each sender creates and owns its own B-20 token: during setup every sender sends one `createB20`
+factory tx (in parallel) whose privileged init calls grant the sender `BURN_ROLE` and mint its
+supply, during the load phase each sender transfers its own token, and during teardown each sender
+burns its remaining balance. A fresh per-run salt keeps each run's token addresses distinct.
 
 Requires Beryl activation (B-20 factory and token features must be active on the target chain).
 
 ```yaml
-# Auto-create a new B-20 token per run (devnet/zeronet)
+# Each sender creates and transfers its own B-20 token per run
 transactions:
   - weight: 100
     type: b20
-
-# Use a pre-deployed B-20 token
-transactions:
-  - weight: 100
-    type: b20
-    contract: "0x..."
 ```
 
 #### Swap Testing
@@ -218,3 +214,7 @@ real_token_setup:
 ```
 
 `reverse_min_amount` and `reverse_max_amount` on `uniswap_v3` and `aerodrome_cl` set the amount range for `token_out → token_in` swaps. Use these when the two tokens have different decimal scales; when omitted, the reverse range matches the forward range.
+
+#### Running multiple load tests
+
+- You may need to tune `target_gps` and sender count appropriately. 

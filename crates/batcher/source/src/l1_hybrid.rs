@@ -141,6 +141,15 @@ mod tests {
         }
     }
 
+    struct ProviderErrorPoller;
+
+    #[async_trait]
+    impl L1HeadPolling for ProviderErrorPoller {
+        async fn latest_head(&self) -> Result<u64, SourceError> {
+            Err(SourceError::Provider("poll down".to_string()))
+        }
+    }
+
     #[test]
     fn test_hybrid_l1_new_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -185,7 +194,10 @@ mod tests {
             let mut source = HybridL1HeadSource::new(
                 ctx,
                 StreamSub(stream.boxed()),
-                FixedPoller(3),
+                // The virtual-time interval ticks immediately, and `select!` may poll the
+                // interval branch before the stream delivers Ok(10). Keep the fallback poller
+                // from producing a new head so the test only covers stale-drop logic.
+                ProviderErrorPoller,
                 Duration::from_secs(100),
             );
 
@@ -206,7 +218,10 @@ mod tests {
             let mut source = HybridL1HeadSource::new(
                 ctx,
                 StreamSub(stream.boxed()),
-                FixedPoller(1),
+                // The virtual-time interval ticks immediately, and `select!` may poll this
+                // branch before the stream error. Keep the fallback poller from producing a
+                // head so the test only covers subscription error propagation.
+                ProviderErrorPoller,
                 Duration::from_secs(100),
             );
 

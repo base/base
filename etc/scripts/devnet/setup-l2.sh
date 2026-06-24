@@ -10,6 +10,7 @@ TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 L2_BASE_AZUL_BLOCK="${L2_BASE_AZUL_BLOCK:-}"
 L2_BASE_BERYL_BLOCK="${L2_BASE_BERYL_BLOCK:-}"
 L2_ISTHMUS_BLOCK="${L2_ISTHMUS_BLOCK:-}"
+L2_BASE_COBALT_BLOCK="${L2_BASE_COBALT_BLOCK:-}"
 L2_ACTIVATION_ADMIN_ADDR="${L2_ACTIVATION_ADMIN_ADDR:-$SEQUENCER_ADDR}"
 L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-1111111111111111111111111111111111111111111111111111111111111111}"
 L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
@@ -33,6 +34,10 @@ if [ -n "$L2_BASE_BERYL_BLOCK" ] && ! [[ "$L2_BASE_BERYL_BLOCK" =~ ^[0-9]+$ ]]; 
   echo "ERROR: L2_BASE_BERYL_BLOCK must be a non-negative integer when set, got: $L2_BASE_BERYL_BLOCK"
   exit 1
 fi
+if [ -n "$L2_BASE_COBALT_BLOCK" ] && ! [[ "$L2_BASE_COBALT_BLOCK" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: L2_BASE_COBALT_BLOCK must be a non-negative integer when set, got: $L2_BASE_COBALT_BLOCK"
+  exit 1
+fi
 if [ -n "$L2_ISTHMUS_BLOCK" ] && ! [[ "$L2_ISTHMUS_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_ISTHMUS_BLOCK must be a non-negative integer when set, got: $L2_ISTHMUS_BLOCK"
   exit 1
@@ -52,6 +57,11 @@ if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
   echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
 else
   echo "Base Beryl activation block: <unset>"
+fi
+if [ -n "$L2_BASE_COBALT_BLOCK" ]; then
+  echo "Base Cobalt activation block: $L2_BASE_COBALT_BLOCK"
+else
+  echo "Base Cobalt activation block: <unset>"
 fi
 if [ -n "$L2_ISTHMUS_BLOCK" ]; then
   echo "Isthmus activation block: $L2_ISTHMUS_BLOCK"
@@ -279,6 +289,41 @@ else
   echo "L2 genesis time: $L2_GENESIS_TIME"
   echo "L2 block time: $L2_BLOCK_TIME"
   echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
+fi
+
+if [ -n "$L2_BASE_COBALT_BLOCK" ]; then
+  L2_BASE_COBALT_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_COBALT_BLOCK))
+
+  echo ""
+  echo "=== Configuring Base Cobalt Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Cobalt activation block: $L2_BASE_COBALT_BLOCK"
+  echo "Derived Base Cobalt activation timestamp: $L2_BASE_COBALT_TIME"
+
+  TMP_ROLLUP=$(mktemp)
+  jq \
+    --argjson cobalt_time "$L2_BASE_COBALT_TIME" \
+    '.base = ((.base // {}) + {cobalt: $cobalt_time})' \
+    "$OUTPUT_DIR/rollup.json" \
+    >"$TMP_ROLLUP"
+  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+
+  TMP_GENESIS=$(mktemp)
+  jq \
+    --argjson cobalt_time "$L2_BASE_COBALT_TIME" \
+    '.config.base = ((.config.base // {}) + {cobalt: $cobalt_time})' \
+    "$OUTPUT_DIR/genesis.json" \
+    >"$TMP_GENESIS"
+  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+
+  echo "Patched Base Cobalt activation into rollup and genesis configs"
+else
+  echo ""
+  echo "=== Configuring Base Cobalt Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Cobalt activation block is unset; leaving base.cobalt unchanged"
 fi
 
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."

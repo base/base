@@ -40,6 +40,7 @@ members = [
   "crates/proof/zk/host",
   "crates/proof/zk/backend",
   "crates/proof/zk/client",
+  "crates/proof/zk/requester",
   "crates/proof/zk/db",
   "crates/proof/zk/outbox",
   "crates/proof/zk/service",
@@ -248,6 +249,7 @@ base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-submission = { path = "crates/proof/submission" }
 base-proof-zk-backend = { path = "crates/proof/zk/backend" }
 base-prover-service = { path = "crates/proof/prover-service" }
+base-proof-zk-requester = { path = "crates/proof/zk/requester" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-prover-service-db = { path = "crates/proof/prover-service/db" }
 base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host" }

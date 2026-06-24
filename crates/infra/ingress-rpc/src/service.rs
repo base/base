@@ -4,11 +4,13 @@ use std::{
 };
 
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
+use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
 use alloy_rpc_types_eth::error::EthRpcErrorCode;
 use audit_archiver_lib::BundleEvent;
 use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle};
+use base_common_chains::ChainConfig;
 use base_common_consensus::{BaseTxEnvelope, EIP8130_REJECTION_MSG};
 use base_common_network::Base;
 use jsonrpsee::{
@@ -56,6 +58,7 @@ pub struct IngressService {
     builder_tx: broadcast::Sender<MeterBundleResponse>,
     bundle_cache: Cache<B256, ()>,
     send_to_builder: bool,
+    cobalt_timestamp: Option<u64>,
 }
 
 impl std::fmt::Debug for IngressService {
@@ -75,6 +78,8 @@ impl IngressService {
         let mempool_provider = Arc::new(providers.mempool);
         let simulation_provider = Arc::new(providers.simulation);
         let raw_tx_forward_provider = providers.raw_tx_forward.map(Arc::new);
+        let cobalt_timestamp = ChainConfig::by_chain_id(config.chain_id)
+            .and_then(|chain_config| chain_config.cobalt_timestamp);
 
         // A TTL cache to deduplicate bundles with the same Bundle ID
         let bundle_cache =
@@ -91,6 +96,7 @@ impl IngressService {
             builder_tx,
             bundle_cache,
             send_to_builder: config.send_to_builder,
+            cobalt_timestamp,
         }
     }
 }
@@ -224,23 +230,46 @@ impl IngressService {
 
         let envelope = BaseTxEnvelope::decode_2718_exact(data.iter().as_slice())
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
-
-        if envelope.is_eip8130() {
-            // Mirror the rejection used by `BaseEthApi::send_raw_transaction` so both
-            // ingress surfaces return the same code (-32003, TransactionRejected) and
-            // the same wording. Message is sourced from `base-common-consensus` to
-            // prevent drift with `BaseInvalidTransactionError::Eip8130NotAccepted`.
-            return Err(rpc_err(
-                EthRpcErrorCode::TransactionRejected.code(),
-                EIP8130_REJECTION_MSG,
-                None,
-            ));
-        }
+        self.ensure_cobalt_active_for_eip8130(&envelope).await?;
 
         let transaction = envelope
             .try_into_recovered()
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
         Ok(transaction)
+    }
+
+    async fn ensure_cobalt_active_for_eip8130(&self, envelope: &BaseTxEnvelope) -> RpcResult<()> {
+        if !envelope.is_eip8130() {
+            return Ok(());
+        }
+        let Some(cobalt_timestamp) = self.cobalt_timestamp else {
+            return Err(Self::eip8130_pre_cobalt_error());
+        };
+        if cobalt_timestamp == 0 {
+            return Ok(());
+        }
+
+        let block = self
+            .mempool_provider
+            .get_block(BlockId::Number(BlockNumberOrTag::Latest))
+            .await
+            .map_err(|error| {
+                warn!(error = %error, "failed to fetch latest block for EIP-8130 Cobalt gate");
+                EthApiError::InternalEthError.into_rpc_err()
+            })?
+            .ok_or_else(|| {
+                warn!("latest block missing for EIP-8130 Cobalt gate");
+                EthApiError::InternalEthError.into_rpc_err()
+            })?;
+
+        if block.header.timestamp < cobalt_timestamp {
+            return Err(Self::eip8130_pre_cobalt_error());
+        }
+        Ok(())
+    }
+
+    fn eip8130_pre_cobalt_error() -> jsonrpsee::types::ErrorObjectOwned {
+        rpc_err(EthRpcErrorCode::TransactionRejected.code(), EIP8130_REJECTION_MSG, None)
     }
 
     /// `meter_bundle` is used to determine how long a bundle will take to execute. A bundle that
