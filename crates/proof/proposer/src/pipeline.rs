@@ -96,6 +96,9 @@ where
                     () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
                 }
             };
+            // Unwind safety: this assertion is scoped to one pipeline session. Session progress
+            // lives in the loop-local caches/cursors above and is discarded on panic; `self` only
+            // carries shared clients and static config that are reused after a fresh recovery walk.
             let restart = AssertUnwindSafe(session).catch_unwind().await.unwrap_or_else(|panic| {
                 let panic = panic
                     .downcast_ref::<&'static str>()
