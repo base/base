@@ -29,12 +29,6 @@ impl<T> CertManager<T>
 where
     T: TxManager,
 {
-    /// Decodes known `NitroEnclaveVerifier` custom-error names from a tx-manager error.
-    fn revoke_cert_revert_name(err: &TxManagerError) -> Option<&'static str> {
-        Self::revoke_cert_revert_selector(err)
-            .and_then(INitroEnclaveVerifier::INitroEnclaveVerifierErrors::name_by_selector)
-    }
-
     /// Decodes the raw revert selector from a tx-manager execution revert.
     fn revoke_cert_revert_selector(err: &TxManagerError) -> Option<[u8; 4]> {
         let TxManagerError::ExecutionReverted { data, .. } = err else {
@@ -44,10 +38,13 @@ where
         data.as_ref().and_then(|d| d.get(..4)).and_then(|selector| selector.try_into().ok())
     }
 
-    /// Returns whether a tx-manager error is `CallerNotOwnerOrRevoker()`.
-    fn is_revoke_cert_authorization_error(err: &TxManagerError) -> bool {
-        Self::revoke_cert_revert_selector(err)
-            .is_some_and(|selector| selector == caller_not_owner_or_revoker_selector())
+    /// Returns whether a tx-manager error reason names `CallerNotOwnerOrRevoker()`.
+    fn is_revoke_cert_authorization_reason(err: &TxManagerError) -> bool {
+        let TxManagerError::ExecutionReverted { reason, .. } = err else {
+            return false;
+        };
+
+        reason.as_deref().is_some_and(|reason| reason.contains("CallerNotOwnerOrRevoker"))
     }
 
     /// Creates a certificate manager from CRL fetch timeout, verifier client, and transaction manager.
@@ -157,8 +154,15 @@ where
                     RegistrarMetrics::revoke_cert_success_total().increment(1);
                 }
                 Err(e) => {
-                    let nitro_error = Self::revoke_cert_revert_name(&e);
-                    if Self::is_revoke_cert_authorization_error(&e) {
+                    let selector = Self::revoke_cert_revert_selector(&e);
+                    let nitro_error = selector.and_then(
+                        INitroEnclaveVerifier::INitroEnclaveVerifierErrors::name_by_selector,
+                    );
+                    let is_authorization_error = selector
+                        .is_some_and(|selector| selector == caller_not_owner_or_revoker_selector())
+                        || Self::is_revoke_cert_authorization_reason(&e);
+
+                    if is_authorization_error {
                         warn!(
                             error = %e,
                             nitro_error = ?nitro_error,
@@ -289,27 +293,33 @@ mod tests {
     }
 
     #[test]
-    fn revoke_cert_revert_name_decodes_authorization_error() {
+    fn revoke_cert_revert_selector_decodes_authorization_error() {
         let err = TxManagerError::ExecutionReverted {
             reason: None,
             data: Some(Bytes::from(caller_not_owner_or_revoker_selector().to_vec())),
         };
 
         assert_eq!(
-            CertManager::<NoopTxManager>::revoke_cert_revert_name(&err),
-            Some("CallerNotOwnerOrRevoker"),
+            CertManager::<NoopTxManager>::revoke_cert_revert_selector(&err),
+            Some(caller_not_owner_or_revoker_selector()),
         );
-        assert!(CertManager::<NoopTxManager>::is_revoke_cert_authorization_error(&err));
     }
 
     #[test]
-    fn revoke_cert_revert_name_ignores_unrelated_tx_errors() {
+    fn revoke_cert_revert_selector_ignores_unrelated_tx_errors() {
         assert_eq!(
-            CertManager::<NoopTxManager>::revoke_cert_revert_name(&TxManagerError::NonceTooLow),
+            CertManager::<NoopTxManager>::revoke_cert_revert_selector(&TxManagerError::NonceTooLow),
             None,
         );
-        assert!(!CertManager::<NoopTxManager>::is_revoke_cert_authorization_error(
-            &TxManagerError::NonceTooLow,
-        ));
+    }
+
+    #[test]
+    fn revoke_cert_authorization_reason_handles_plaintext_error() {
+        let err = TxManagerError::ExecutionReverted {
+            reason: Some("execution reverted: CallerNotOwnerOrRevoker()".to_string()),
+            data: None,
+        };
+
+        assert!(CertManager::<NoopTxManager>::is_revoke_cert_authorization_reason(&err));
     }
 }
