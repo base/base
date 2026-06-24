@@ -24,9 +24,9 @@ use base_proof_rpc::{BaseBlock, L1Provider, L2Provider, RollupProvider, RpcError
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind as ApiProofRequestKind,
-    ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
-    TeeKind, TeeProofResult,
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestIdCollisionMessage,
+    ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
+    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
 };
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
@@ -467,6 +467,8 @@ pub struct MockProofRequester {
     pub failed_sessions: std::sync::Mutex<HashMap<String, String>>,
     /// Reject every `prove_block_range` call with a timeout.
     pub reject_prove: AtomicBool,
+    /// Reject every `prove_block_range` call with an L1 head conflict.
+    pub reject_l1_head_conflict: AtomicBool,
     /// Override the accepted session id returned by `prove_block_range`.
     pub accepted_session_id: std::sync::Mutex<Option<String>>,
     /// Number of `prove_block_range` calls accepted.
@@ -486,6 +488,16 @@ impl ProofRequesterProvider for MockProofRequester {
         }
 
         let session_id = request.proof.session_id.clone();
+        if self.reject_l1_head_conflict.load(Ordering::SeqCst) {
+            return Err(ProverServiceClientError::from(JsonRpcClientError::Call(
+                ErrorObjectOwned::owned(
+                    ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+                    ProofRequestIdCollisionMessage::for_field(session_id, "l1_head"),
+                    None::<()>,
+                ),
+            )));
+        }
+
         self.prove_count.fetch_add(1, Ordering::SeqCst);
         self.requests.lock().unwrap().insert(session_id.clone(), request);
         if let Some(session_id) = self.accepted_session_id.lock().unwrap().clone() {
