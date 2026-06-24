@@ -7,7 +7,7 @@ use axum::{
     http::{Response, StatusCode},
     response::IntoResponse,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::oneshot};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
@@ -21,8 +21,19 @@ struct ProxyState {
     client: reqwest::Client,
 }
 
-/// Start a proxy server with the given configuration
-pub(super) async fn start_proxy(config: ProxyConfig) -> anyhow::Result<()> {
+/// Start a proxy server with the given configuration.
+///
+/// Sends `Ok(())` on `bind_tx` once the listener is bound and ready to accept
+/// connections. This lets the caller know the port is live before proceeding.
+pub(super) async fn start_proxy(
+    config: ProxyConfig,
+    bind_tx: oneshot::Sender<anyhow::Result<()>>,
+) {
+    let result = start_proxy_inner(config).await;
+    let _ = bind_tx.send(result);
+}
+
+async fn start_proxy_inner(config: ProxyConfig) -> anyhow::Result<()> {
     config.validate()?;
 
     let rate_limiter = RateLimiter::new(

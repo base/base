@@ -8,8 +8,8 @@ mod rate_limit;
 mod server;
 
 use server::start_proxy;
-use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tokio::{sync::oneshot, task::JoinHandle};
+use tracing::info;
 
 /// Start all proxy servers (L1, L2, Beacon) as background tasks.
 /// Returns handles to the spawned tasks.
@@ -40,36 +40,47 @@ pub async fn start_all_proxies(configs: ProxyConfigs) -> anyhow::Result<Vec<Join
     );
 
     let mut handles = Vec::new();
+    let mut bind_rxs = Vec::new();
 
     // Spawn L1 proxy
+    let (l1_tx, l1_rx) = oneshot::channel();
     let l1_config = configs.l1.clone();
     let l1_handle = tokio::spawn(async move {
-        if let Err(err) = start_proxy(l1_config).await {
-            error!(error = %err, "L1 proxy server failed");
-        }
+        start_proxy(l1_config, l1_tx).await;
     });
     handles.push(l1_handle);
+    bind_rxs.push(l1_rx);
 
     // Spawn L2 proxy
+    let (l2_tx, l2_rx) = oneshot::channel();
     let l2_config = configs.l2.clone();
     let l2_handle = tokio::spawn(async move {
-        if let Err(err) = start_proxy(l2_config).await {
-            error!(error = %err, "L2 proxy server failed");
-        }
+        start_proxy(l2_config, l2_tx).await;
     });
     handles.push(l2_handle);
+    bind_rxs.push(l2_rx);
 
     // Spawn Beacon proxy
+    let (beacon_tx, beacon_rx) = oneshot::channel();
     let beacon_config = configs.beacon;
     let beacon_handle = tokio::spawn(async move {
-        if let Err(err) = start_proxy(beacon_config).await {
-            error!(error = %err, "Beacon proxy server failed");
-        }
+        start_proxy(beacon_config, beacon_tx).await;
     });
     handles.push(beacon_handle);
+    bind_rxs.push(beacon_rx);
 
-    // Give servers a moment to bind
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Wait for all proxies to bind before returning
+    for rx in bind_rxs {
+        match rx.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                return Err(err);
+            }
+            Err(_) => {
+                return Err(anyhow::anyhow!("proxy task panicked during bind"));
+            }
+        }
+    }
 
     info!("All proxy servers started successfully");
 
