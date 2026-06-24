@@ -197,13 +197,7 @@ impl TransactionEventWriter {
         })?;
         line.push(b'\n');
 
-        let mut writer = writer.clone();
-        if writer.write_all(&line).is_err() {
-            Metrics::dropped_events("closed").increment(1);
-            self.observe_dropped_events();
-            return Err(WriteEventError::Closed);
-        }
-
+        let _ = writer.clone().write_all(&line);
         self.observe_dropped_events();
         Metrics::submitted_events().increment(1);
         Ok(())
@@ -246,9 +240,6 @@ pub enum WriteEventError {
     /// Writer is disabled.
     #[error("transaction event writer is disabled")]
     Disabled,
-    /// Writer queue is closed.
-    #[error("transaction event writer is closed")]
-    Closed,
     /// Serialization failed.
     #[error("failed to serialize transaction event: {0}")]
     Serialize(serde_json::Error),
