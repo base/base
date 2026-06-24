@@ -31,11 +31,7 @@ pub struct ProofDispatcher {
 
 impl std::fmt::Debug for ProofDispatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofDispatcher")
-            .field("proposer_address", &self.proposer_address)
-            .field("intermediate_block_interval", &self.intermediate_block_interval)
-            .field("tee_image_hash", &self.tee_image_hash)
-            .finish_non_exhaustive()
+        f.debug_struct("ProofDispatcher").finish_non_exhaustive()
     }
 }
 
@@ -148,23 +144,22 @@ impl ProofDispatcher {
         let expected_session_id = request.proof.session_id.clone();
 
         let session_id = match self.proof_requester.prove_block_range(request).await {
-            Ok(response) if response.session_id == expected_session_id => Ok(response.session_id),
+            Ok(response) if response.session_id == expected_session_id => response.session_id,
             Err(e) if e.is_l1_head_conflict_for_session(&expected_session_id) => {
                 debug!(
                     session_id = %expected_session_id,
                     "prover-service already has this TEE proof session with a different l1_head"
                 );
-                Ok(expected_session_id)
+                expected_session_id
             }
-            Ok(response) => Err(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {expected_session_id}, got {}",
-                response.session_id
-            ))),
-            Err(error) => Err(ProposerError::Prover(error.to_string())),
-        };
-        let session_id = match session_id {
-            Ok(session_id) => session_id,
-            Err(error) => {
+            result => {
+                let error = match result {
+                    Ok(response) => ProposerError::Prover(format!(
+                        "prover service returned mismatched session_id: expected {expected_session_id}, got {}",
+                        response.session_id
+                    )),
+                    Err(error) => ProposerError::Prover(error.to_string()),
+                };
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
                 Metrics::errors_total(error.metric_label()).increment(1);
 
