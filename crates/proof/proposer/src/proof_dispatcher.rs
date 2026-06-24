@@ -30,7 +30,11 @@ pub struct ProofDispatcher {
 
 impl std::fmt::Debug for ProofDispatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofDispatcher").finish_non_exhaustive()
+        f.debug_struct("ProofDispatcher")
+            .field("proposer_address", &self.proposer_address)
+            .field("intermediate_block_interval", &self.intermediate_block_interval)
+            .field("tee_image_hash", &self.tee_image_hash)
+            .finish_non_exhaustive()
     }
 }
 
@@ -142,14 +146,13 @@ impl ProofDispatcher {
         let request = ProposerProofAdapter::tee_prove_block_range_request(request);
         let expected_session_id = request.proof.session_id.clone();
 
-        let session_id = match self.proof_requester.prove_block_range(request).await {
-            Ok(response) if response.session_id == expected_session_id => response.session_id,
+        match self.proof_requester.prove_block_range(request).await {
+            Ok(response) if response.session_id == expected_session_id => {}
             Err(e) if e.is_l1_head_conflict_for_session(&expected_session_id) => {
                 debug!(
                     session_id = %expected_session_id,
                     "prover-service already has this TEE proof session with a different l1_head"
                 );
-                expected_session_id
             }
             result => {
                 let error = match result {
@@ -165,12 +168,12 @@ impl ProofDispatcher {
                 warn!(target_block, error = %error, "Proof dispatch failed, will retry next tick");
                 return false;
             }
-        };
+        }
 
         Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
         info!(
             target_block,
-            session_id = %session_id,
+            session_id = %expected_session_id,
             from_block = recovered.l2_block_number,
             l1_head_number = l1_head.number,
             "Proof request accepted by prover service"
