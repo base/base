@@ -236,7 +236,24 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
 
 impl PoolTransactionError for BaseTxPoolError {
     fn is_bad_transaction(&self) -> bool {
-        true
+        match self {
+            // Deterministic and state-independent: the DA footprint exceeds the
+            // block gas limit under every possible state, so the transaction can
+            // never be included. Penalize the peer and cache it as bad.
+            Self::DaFootprintExceedsBlockGasLimit { .. } => true,
+            // EIP-8130 admission is state-relative: it authorizes against the
+            // live account-configuration and nonce-channel precompile state and
+            // the sender's nonce/code. A pool state snapshot that trails the
+            // canonical tip can transiently reject a structurally valid
+            // transaction whose authorizing state was written by the preceding
+            // block, so these failures are retryable and must not be cached as
+            // permanently bad or penalize the relaying peer. The dominant
+            // structural invariants are surfaced separately as
+            // `InvalidTransactionError` variants (classified by the inner
+            // validator); the residual deterministic cases routed here are still
+            // rejected from the pool, they merely do not penalize the peer.
+            Self::Eip8130Validation { .. } => false,
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -438,7 +455,26 @@ where
     ) -> Result<Eip8130ValidationState, InvalidPoolTransactionError> {
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
-        let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
+        // Admit against the freshest available state. `pending()` reflects the
+        // in-memory canonical tip (including the block the sequencer just
+        // produced), whereas `latest()` can trail it by a block (~one block
+        // time). EIP-8130 admission authorizes against live precompile state
+        // (account configuration, nonce channels) and the sender's nonce/code,
+        // so a snapshot that lags the tip transiently rejects a structurally
+        // valid transaction whose authorizing state was written by the
+        // preceding block (e.g. an owner change immediately followed by a
+        // transaction from the new owner). Fall back to `latest()` when a
+        // pending snapshot is unavailable.
+        let state = match self.client().pending() {
+            Ok(state) => state,
+            Err(pending_error) => {
+                tracing::debug!(
+                    error = %pending_error,
+                    "EIP-8130 pending state unavailable; falling back to latest"
+                );
+                self.client().latest().map_err(|error| Self::provider_unavailable(error))?
+            }
+        };
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
 
         let (sender, payer, sender_actor) = StorageCtx::enter(&mut storage, |ctx| {
