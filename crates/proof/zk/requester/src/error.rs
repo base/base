@@ -1,7 +1,7 @@
 //! Error types for ZK proof requester flows.
 
 use base_prover_service_client::ProverServiceClientError;
-use base_prover_service_protocol::{ProofType, ProveBlockRangeResponse};
+use base_prover_service_protocol::ProofType;
 use thiserror::Error;
 
 /// Errors returned while requesting ZK proofs from the prover service.
@@ -10,13 +10,9 @@ pub enum ZkProofRequesterError {
     /// Prover-service requester RPC failed.
     #[error("prover-service requester call failed: {0}")]
     Client(#[from] ProverServiceClientError),
-    /// Aggregation request failed after range request acceptance.
-    #[error(
-        "aggregation request failed after range request {range_session_id} was accepted: {source}"
-    )]
+    /// Aggregation request failed after the range proof completed.
+    #[error("aggregation request failed after range proof {range_session_id} completed: {source}")]
     AggregationRequestFailed {
-        /// Accepted range proof session.
-        range: ProveBlockRangeResponse,
         /// Accepted range proof session identifier.
         range_session_id: String,
         /// Aggregation request failure.

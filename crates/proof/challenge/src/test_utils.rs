@@ -726,6 +726,22 @@ impl Default for MockZkProofState {
     }
 }
 
+impl MockZkProofState {
+    /// Returns a default ZK result for the requested session.
+    pub fn default_zk_result(&self, session_id: &str) -> ApiProofResult {
+        if session_id.ends_with(":range") {
+            return ApiProofResult::Compressed(ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: self.proof.clone().into(),
+            });
+        }
+
+        ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: self.proof.clone().into() },
+        })
+    }
+}
+
 impl Default for MockZkProofProvider {
     fn default() -> Self {
         Self { session_id: String::new(), state: Mutex::new(MockZkProofState::default()) }
@@ -745,18 +761,15 @@ impl ProofRequesterProvider for MockZkProofProvider {
 
     async fn get_proof(
         &self,
-        _request: GetProofRequest,
+        request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
         let state = self.state.lock().unwrap().clone();
         let result = if state.proof_status == ProofStatus::Succeeded {
             if state.omit_result_on_success {
                 None
             } else {
-                state.result.or_else(|| {
-                    Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                        proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: state.proof.into() },
-                    }))
-                })
+                let default_result = state.default_zk_result(&request.session_id);
+                state.result.or(Some(default_result))
             }
         } else {
             None

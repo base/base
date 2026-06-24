@@ -24,8 +24,9 @@ use alloy_primitives::{Address, B256};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::L2Provider;
+use base_proof_zk_requester::{Groth16ProofState, Groth16RangeProofRequest, ZkProofRequester};
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{SnarkGroth16ProofRequest, TeeKind, ZkProofRequest, ZkVm};
+use base_prover_service_protocol::{TeeKind, ZkProofRequest, ZkVm};
 use base_runtime::{Clock, TokioRuntime};
 use base_tx_manager::TxManager;
 use tokio::select;
@@ -610,16 +611,20 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         })
     }
 
-    /// Builds a [`SnarkGroth16ProofRequest`] for the given candidate and invalid index.
+    /// Builds a [`Groth16RangeProofRequest`] for the given candidate and invalid index.
     fn build_zk_request(
         &self,
         candidate: &CandidateGame,
         invalid_index: u64,
-    ) -> eyre::Result<SnarkGroth16ProofRequest> {
+    ) -> eyre::Result<Groth16RangeProofRequest> {
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
 
-        Ok(SnarkGroth16ProofRequest {
-            proof: ZkProofRequest {
+        Ok(Groth16RangeProofRequest::new(
+            crate::ChallengerProofAdapter::snark_groth16_session_id(
+                candidate.factory.proxy,
+                invalid_index,
+            ),
+            ZkProofRequest {
                 start_block_number,
                 number_of_blocks_to_prove: candidate.intermediate_block_interval,
                 sequence_window: None,
@@ -627,8 +632,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                 intermediate_root_interval: Some(candidate.intermediate_block_interval),
                 zk_vm: ZkVm::Sp1,
             },
-            prover_address: self.submitter.sender_address(),
-        })
+            self.submitter.sender_address(),
+        ))
     }
 
     /// Requests a ZK proof, stores the session, and polls for the result.
@@ -646,25 +651,23 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         // needs to cover the single interval that contains the invalid
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
         let proof_request = self.build_zk_request(&candidate, invalid_index)?;
-        let request = crate::ChallengerProofAdapter::snark_groth16_prove_block_range_request(
-            game_address,
-            invalid_index,
-            proof_request.clone(),
-        );
 
-        let prove_response = self.proof_requester.prove_block_range(request).await?;
+        let prove_response = ZkProofRequester::new(&*self.proof_requester)
+            .request_groth16_proof(&proof_request)
+            .await?;
 
         info!(
             game = %game_address,
-            session_id = %prove_response.session_id,
+            range_session_id = %prove_response.range.session_id,
             "proof job initiated"
         );
 
-        let pending = PendingProof::awaiting(
-            prove_response.session_id,
+        let pending = PendingProof::awaiting_zk(
+            proof_request.parent_session_id.clone(),
             invalid_index,
             expected_root,
             proof_request,
+            prove_response.state,
             intent,
         );
         self.pending_proofs.insert(game_address, pending);
@@ -840,8 +843,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         };
 
         let retry_count = pending.retry_count;
-        let invalid_index = pending.invalid_index;
-
         if retry_count > Self::MAX_PROOF_RETRIES {
             warn!(
                 game = %game_address,
@@ -875,37 +876,37 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
                 // Transition eagerly so retries use the ZK path.
                 if let Some(p) = self.pending_proofs.get_mut(&game_address) {
-                    p.kind = ProofKind::Zk { prove_request: fallback_request.clone() };
+                    p.kind = ProofKind::Zk {
+                        prove_request: fallback_request.clone(),
+                        proof_state: Groth16ProofState::AwaitingRange,
+                    };
                     p.intent = fallback_intent;
                     p.retry_count = 0;
                 }
 
                 fallback_request
             }
-            ProofKind::Zk { prove_request } => prove_request.clone(),
+            ProofKind::Zk { prove_request, .. } => prove_request.clone(),
         };
 
         ChallengerMetrics::proof_retries_total().increment(1);
 
-        let prove_request = crate::ChallengerProofAdapter::snark_groth16_prove_block_range_request(
-            game_address,
-            invalid_index,
-            request,
-        );
-
-        match self.proof_requester.prove_block_range(prove_request).await {
+        match ZkProofRequester::new(&*self.proof_requester).request_groth16_proof(&request).await {
             Ok(response) => {
                 info!(
                     game = %game_address,
-                    session_id = %response.session_id,
+                    range_session_id = %response.range.session_id,
                     retry_count = retry_count,
                     "proof job re-initiated"
                 );
                 if let Some(p) = self.pending_proofs.get_mut(&game_address) {
                     p.phase = ProofPhase::AwaitingProof {
-                        session_id: response.session_id,
+                        session_id: request.parent_session_id.clone(),
                         started_at: Instant::now(),
                     };
+                    if let ProofKind::Zk { proof_state, .. } = &mut p.kind {
+                        *proof_state = response.state;
+                    }
                 }
             }
             Err(e) => {
