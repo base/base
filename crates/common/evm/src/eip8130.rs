@@ -442,6 +442,11 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
+        // Use the declared payer (sponsor) so the published `TxContext` matches a
+        // real execution: a call that reads the payer from the `TxContext`
+        // precompile must see the same address it would on-chain, or it could take
+        // a different path and skew the estimate. No signature is verified here.
+        let payer = tx.payer.unwrap_or(sender);
         let _ = now;
 
         let internals = EvmInternals::from_context(ctx);
@@ -501,12 +506,12 @@ impl Eip8130Executor {
 
             // 6. Publish the transaction context for the `TxContext` precompile.
             TxContextStorage::new(sctx)
-                .set_context(sender, sender, sender_actor_id)
+                .set_context(sender, payer, sender_actor_id)
                 .map_err(BaseTransactionError::eip8130)?;
 
             Ok(Eip8130Outcome {
                 sender,
-                payer: sender,
+                payer,
                 sender_actor_id,
                 policy_type,
                 policy_target,

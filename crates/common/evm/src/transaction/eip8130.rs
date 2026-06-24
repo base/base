@@ -60,14 +60,10 @@ pub struct Eip8130TransactionParts {
 
 impl Eip8130TransactionParts {
     /// Create new EIP-8130 transaction parts from a signed envelope, for the
-    /// verified consensus/block-execution path.
+    /// verified consensus/block-execution path. The RPC simulation path builds
+    /// parts through the consensus-tx conversion and then sets
+    /// [`Eip8130ExecutionMode::Simulate`] on the result.
     pub const fn new(signed: Eip8130Signed) -> Self {
         Self { signed, mode: Eip8130ExecutionMode::Verified }
-    }
-
-    /// Create EIP-8130 transaction parts for a read-only RPC simulation
-    /// (`eth_estimateGas` / `eth_call`), routed to `Eip8130Executor::simulate`.
-    pub const fn new_simulation(signed: Eip8130Signed) -> Self {
-        Self { signed, mode: Eip8130ExecutionMode::Simulate }
     }
 }
