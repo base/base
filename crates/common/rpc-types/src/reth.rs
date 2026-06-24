@@ -24,6 +24,15 @@ use crate::{BaseTransactionRequest, Eip8130AuthScheme, Transaction};
 /// than under-pricing it as zero bytes; the bytes are never recovered.
 const STUB_AUTH_FILL: u8 = 0xff;
 
+/// Upper bound (in bytes) on a caller-declared authentication-payload size
+/// (`sender_auth_size` / `payer_auth_size`). Real authenticator payloads are at
+/// most a few hundred bytes (e.g. a `WebAuthn` assertion with its client-data
+/// JSON), so 8 `KiB` is generous. Without a cap an attacker could declare
+/// `u32::MAX` (~4 `GiB`) and OOM the node via the `vec![STUB_AUTH_FILL; len]`
+/// allocation before any gas estimation runs; an over-cap value is rejected
+/// (surfaced as `INVALID_PARAMS`) rather than allocated.
+const MAX_AUTH_SIZE: u32 = 8_192;
+
 impl BaseTransactionRequest {
     /// Builds the unsigned simulation transaction for an EIP-8130
     /// `eth_estimateGas` / `eth_call` request, or `None` when the request
@@ -51,6 +60,10 @@ impl BaseTransactionRequest {
     /// resolution, policy lookup, and auto-delegation, so a missing `from`
     /// returns `None` (surfaced as `INVALID_PARAMS`) rather than silently
     /// falling back to the zero address.
+    ///
+    /// A declared `sender_auth_size` / `payer_auth_size` exceeding
+    /// [`MAX_AUTH_SIZE`] also returns `None` rather than allocating a stub blob
+    /// of attacker-controlled size.
     pub fn to_eip8130_simulation_tx(
         &self,
         chain_id: u64,
@@ -65,25 +78,25 @@ impl BaseTransactionRequest {
         // blob); absent or secp256k1 prices the default-EOA bare-signature path.
         let (sender, sender_auth) = match aa.sender_auth_scheme {
             None | Some(Eip8130AuthScheme::Secp256k1) => {
-                let len = Self::auth_data_len(aa.sender_auth_size, Eip8130AuthScheme::Secp256k1);
+                let len = Self::auth_data_len(aa.sender_auth_size, Eip8130AuthScheme::Secp256k1)?;
                 (None, Bytes::from(vec![STUB_AUTH_FILL; len]))
             }
             Some(scheme) => {
-                let len = Self::auth_data_len(aa.sender_auth_size, scheme);
+                let len = Self::auth_data_len(aa.sender_auth_size, scheme)?;
                 (Some(from), Self::stub_prefixed_auth(scheme, len))
             }
         };
 
         // Sponsored payer authentication, priced only when a payer is declared.
         // The payer auth is always a prefixed `authenticator || data` blob.
-        let (payer, payer_auth) = aa.payer.map_or_else(
-            || (None, Bytes::new()),
-            |payer| {
+        let (payer, payer_auth) = match aa.payer {
+            None => (None, Bytes::new()),
+            Some(payer) => {
                 let scheme = aa.payer_auth_scheme.unwrap_or(Eip8130AuthScheme::Secp256k1);
-                let len = Self::auth_data_len(aa.payer_auth_size, scheme);
+                let len = Self::auth_data_len(aa.payer_auth_size, scheme)?;
                 (Some(payer), Self::stub_prefixed_auth(scheme, len))
-            },
-        );
+            }
+        };
 
         let tx = TxEip8130 {
             chain_id,
@@ -112,8 +125,16 @@ impl BaseTransactionRequest {
 
     /// Resolves the authentication-data byte length: an explicit request size,
     /// else the scheme's representative default.
-    fn auth_data_len(size: Option<u32>, scheme: Eip8130AuthScheme) -> usize {
-        size.map_or_else(|| scheme.default_data_len(), |s| s as usize)
+    ///
+    /// Returns `None` (surfaced to the caller as `INVALID_PARAMS`) when an
+    /// explicit size exceeds [`MAX_AUTH_SIZE`], so an attacker cannot drive a
+    /// multi-gigabyte stub allocation by declaring `u32::MAX`.
+    const fn auth_data_len(size: Option<u32>, scheme: Eip8130AuthScheme) -> Option<usize> {
+        match size {
+            None => Some(scheme.default_data_len()),
+            Some(s) if s <= MAX_AUTH_SIZE => Some(s as usize),
+            Some(_) => None,
+        }
     }
 
     /// Builds a prefixed stub authentication blob — `authenticator(20) || data`
@@ -262,6 +283,54 @@ mod tests {
         assert_eq!(
             Eip8130AuthScheme::Secp256k1.authenticator(),
             Eip8130Constants::K1_AUTHENTICATOR,
+        );
+    }
+
+    #[test]
+    fn auth_size_at_the_cap_is_accepted() {
+        let tx = sim_tx(json!({
+            "from": FROM,
+            "calls": [],
+            "senderAuthScheme": "webAuthn",
+            "senderAuthSize": MAX_AUTH_SIZE,
+        }));
+        let auth = signed(&tx).sender_auth();
+        assert_eq!(
+            auth.len(),
+            20 + MAX_AUTH_SIZE as usize,
+            "a size at the cap is honoured (selector + data)",
+        );
+    }
+
+    #[test]
+    fn oversize_sender_auth_size_is_rejected() {
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
+            "from": FROM,
+            "calls": [],
+            "senderAuthScheme": "webAuthn",
+            "senderAuthSize": MAX_AUTH_SIZE + 1,
+        }))
+        .expect("valid request");
+        assert!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            "an over-cap sender auth size is rejected rather than allocated",
+        );
+    }
+
+    #[test]
+    fn oversize_payer_auth_size_is_rejected() {
+        let payer = address!("0x00000000000000000000000000000000000000b2");
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
+            "from": FROM,
+            "calls": [],
+            "payer": payer,
+            "payerAuthScheme": "p256",
+            "payerAuthSize": u32::MAX,
+        }))
+        .expect("valid request");
+        assert!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            "an over-cap payer auth size is rejected rather than allocated",
         );
     }
 

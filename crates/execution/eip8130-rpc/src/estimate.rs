@@ -85,7 +85,8 @@ impl Eip8130GasEstimator {
         let sim_tx = request.to_eip8130_simulation_tx(chain_id, gas_cap).ok_or_else(|| {
             ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,
-                "request carries no EIP-8130 fields or is missing the required `from` sender",
+                "invalid EIP-8130 estimate request: missing EIP-8130 fields, missing the required \
+                 `from` sender, or a declared authentication size exceeds the maximum",
                 None::<()>,
             )
         })?;
