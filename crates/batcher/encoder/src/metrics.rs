@@ -13,7 +13,7 @@ base_metrics::define_metrics! {
     #[describe("Total number of L1 batch submissions")]
     #[label(outcome)]
     submission_total: counter,
-    #[describe("Total alt-DA commitment shadow-write outcomes")]
+    #[describe("Total alt-DA DA-server upload (PUT) outcomes")]
     #[label(outcome)]
     alt_da_commitment_total: counter,
     #[describe("Total bytes of frame payload submitted to the DA layer")]
@@ -80,11 +80,11 @@ impl BatcherMetrics {
     /// Submission requeued due to txpool blockage.
     pub const OUTCOME_REQUEUED: &'static str = "requeued";
 
-    /// Alt-DA shadow write: PUT to the DA server failed, so no commitment was posted.
-    pub const OUTCOME_PUT_FAILED: &'static str = "put_failed";
+    /// Alt-DA: batch bytes uploaded to the DA server (PUT succeeded).
+    pub const OUTCOME_PUT_OK: &'static str = "put_ok";
 
-    /// Alt-DA shadow write skipped because shadow concurrency limit was reached.
-    pub const OUTCOME_SKIPPED: &'static str = "skipped";
+    /// Alt-DA: PUT to the DA server failed, so the batch was requeued without posting.
+    pub const OUTCOME_PUT_FAILED: &'static str = "put_failed";
 
     /// Blob DA: frames encoded into EIP-4844 blobs.
     pub const DA_TYPE_BLOB: &'static str = "blob";

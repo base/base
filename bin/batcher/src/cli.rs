@@ -154,13 +154,15 @@ pub(crate) struct BatcherArgs {
     batch_type: BatchTypeArg,
     /// Data availability mode for L1 submissions.
     ///
-    /// Accepts `blobs` (default) or `calldata`.
+    /// Accepts `blobs` (default), `calldata`, or `altda`. With `altda`, batch
+    /// bytes are uploaded to the DA server and only the commitment is posted on
+    /// L1 (calldata is not posted); requires `--altda-da-server`.
     #[arg(
         long = "data-availability-type",
         default_value = "blobs",
         env = "BATCHER_DATA_AVAILABILITY_TYPE"
     )]
-    da_type: base_batcher_encoder::DaType,
+    da_type: DaTypeArg,
 
     /// Maximum number of in-flight (unconfirmed) transactions.
     #[arg(
@@ -271,15 +273,9 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "no-force-blobs-when-throttling", env = "BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING")]
     pub no_force_blobs_when_throttling: bool,
 
-    /// Enable alt-DA dual-write alongside calldata submissions.
-    ///
-    /// Uploads the same calldata bytes to the DA server and posts a generic
-    /// commitment transaction on L1. Requires `--data-availability-type=calldata`
-    /// and `--altda-da-server`.
-    #[arg(long = "altda-enabled", env = "BATCHER_ALTDA_ENABLED", default_value_t = false)]
-    pub altda_enabled: bool,
-
     /// Alt-DA HTTP server base URL (e.g. `http://base-da-server:2583`).
+    ///
+    /// Required when `--data-availability-type=altda`; ignored otherwise.
     #[arg(long = "altda-da-server", env = "BATCHER_ALTDA_DA_SERVER")]
     pub altda_da_server: Option<Url>,
 
@@ -300,19 +296,20 @@ impl BatcherArgs {
                 "--shadow-mode and --dangerously-override-batch-inbox-address must be set together"
             );
         }
-        if !self.altda_enabled && self.altda_da_server.is_some() {
+        let altda = matches!(self.da_type, DaTypeArg::Altda);
+        if !altda && self.altda_da_server.is_some() {
             warn!(
-                "--altda-da-server is set but --altda-enabled is false; alt-DA dual-write is disabled"
-            );
-        }
-        if self.altda_enabled && !self.no_force_blobs_when_throttling {
-            warn!(
-                "alt-DA dual-write is enabled while force-blobs-when-throttling is on; \
-                 throttled batches may switch to blobs and skip the shadow S3 path"
+                "--altda-da-server is set but --data-availability-type is not altda; it is ignored"
             );
         }
         let signer = SignerConfig::try_from(self.signer)?;
-        let frame_size = match self.da_type {
+
+        // alt-DA frames as calldata; only the L1 submission target differs.
+        let encoder_da_type = match self.da_type {
+            DaTypeArg::Blobs => base_batcher_encoder::DaType::Blob,
+            DaTypeArg::Calldata | DaTypeArg::Altda => base_batcher_encoder::DaType::Calldata,
+        };
+        let frame_size = match encoder_da_type {
             base_batcher_encoder::DaType::Blob => self
                 .target_frame_size
                 .saturating_sub(base_batcher_encoder::EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE),
@@ -326,7 +323,7 @@ impl BatcherArgs {
             target_num_frames: self.target_num_frames,
             max_blocks_per_span_batch: self.max_blocks_per_span_batch,
             batch_type: self.batch_type.into(),
-            da_type: self.da_type,
+            da_type: encoder_da_type,
             // The batcher binary only targets post-Fjord chains, so it always uses Brotli.
             compression_algo: base_batcher_encoder::CompressionAlgo::Brotli10,
             max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
@@ -360,11 +357,13 @@ impl BatcherArgs {
             stopped: self.stopped,
             wait_node_sync: self.wait_node_sync,
             wait_node_sync_timeout: Duration::from_secs(self.wait_node_sync_timeout_secs),
-            force_blobs_when_throttling: !self.no_force_blobs_when_throttling,
-            alt_da: if self.altda_enabled {
-                let server_url = self
-                    .altda_da_server
-                    .ok_or_else(|| eyre::eyre!("--altda-enabled requires --altda-da-server"))?;
+            // alt-DA frames as calldata and has no blob commitment path, so a
+            // throttle-driven blob switch is never valid; force it off in altda mode.
+            force_blobs_when_throttling: !self.no_force_blobs_when_throttling && !altda,
+            alt_da: if altda {
+                let server_url = self.altda_da_server.ok_or_else(|| {
+                    eyre::eyre!("--data-availability-type altda requires --altda-da-server")
+                })?;
                 let client = base_alt_da::Client::new(server_url)
                     .map_err(|e| eyre::eyre!("failed to create alt-da client: {e}"))?;
                 Some(std::sync::Arc::new(AltDaClientAdapter(client))
@@ -393,6 +392,18 @@ impl BatcherArgs {
         let service = BatcherService::new(config);
         service.setup(rt).await?.run().await
     }
+}
+
+/// Operator-facing data-availability selection for `--data-availability-type`.
+///
+/// `Altda` frames identically to `Calldata`; the difference is the L1 submission
+/// target (DA server + commitment vs. inline calldata), resolved in `into_config`.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DaTypeArg {
+    #[value(name = "blobs", alias = "blob")]
+    Blobs,
+    Calldata,
+    Altda,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -726,30 +737,24 @@ mod tests {
     }
 
     #[test]
-    fn altda_enabled_requires_server_url() {
-        let cli = parse_cli(&["--altda-enabled", "--data-availability-type", "calldata"]);
+    fn altda_requires_server_url() {
+        let cli = parse_cli(&["--data-availability-type", "altda"]);
         let err = cli.args.into_config().unwrap_err();
         assert!(err.to_string().contains("altda-da-server"));
     }
 
     #[test]
-    fn altda_config_parses_with_calldata() {
+    fn altda_config_parses_and_uses_calldata_framing() {
         let cli = parse_cli(&[
             "--data-availability-type",
-            "calldata",
-            "--altda-enabled",
+            "altda",
             "--altda-da-server",
             "http://base-da-server:2583",
         ]);
         let config = cli.args.into_config().expect("config should build");
         assert!(config.alt_da.is_some());
-    }
-
-    #[test]
-    fn altda_rejected_with_blob_da() {
-        let cli =
-            parse_cli(&["--altda-enabled", "--altda-da-server", "http://base-da-server:2583"]);
-        let err = cli.args.into_config().unwrap_err();
-        assert!(err.to_string().contains("calldata"));
+        assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
+        // alt-DA must not force blobs under throttling.
+        assert!(!config.force_blobs_when_throttling);
     }
 }

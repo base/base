@@ -8,13 +8,10 @@ use base_blobs::{BlobEncodeError, BlobEncoder};
 use base_protocol::Frame;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::{FuturesUnordered, StreamExt};
-use tokio::{sync::Semaphore, task::JoinSet};
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::{DynAltDaClient, TxOutcome};
-
-/// Max concurrent alt-DA shadow writes detached from the primary submission semaphore.
-const ALT_DA_MAX_IN_FLIGHT: usize = 2;
 
 /// Type alias for the in-flight receipt future collection.
 type InFlight =
@@ -67,11 +64,9 @@ pub struct SubmissionQueue<TM: TxManager + 'static> {
     semaphore: Arc<Semaphore>,
     inbox: Address,
     txpool_blocked: bool,
+    /// When set, batch bytes are uploaded here and only the commitment is posted
+    /// on L1 (calldata is not posted). The presence of the client is the mode.
     alt_da: Option<DynAltDaClient>,
-    /// Limits concurrent shadow PUT + commitment work without touching primary capacity.
-    alt_da_semaphore: Option<Arc<Semaphore>>,
-    /// Detached alt-DA shadow-write tasks, tracked so a reorg can cancel them.
-    alt_da_tasks: JoinSet<()>,
 }
 
 impl<TM: TxManager + 'static> SubmissionQueue<TM> {
@@ -82,8 +77,6 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
         max_pending: usize,
         alt_da: Option<DynAltDaClient>,
     ) -> Self {
-        let alt_da_semaphore =
-            alt_da.is_some().then(|| Arc::new(Semaphore::new(ALT_DA_MAX_IN_FLIGHT)));
         Self {
             tx_manager: Arc::new(tx_manager),
             in_flight: FuturesUnordered::new(),
@@ -91,8 +84,6 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
             inbox,
             txpool_blocked: false,
             alt_da,
-            alt_da_semaphore,
-            alt_da_tasks: JoinSet::new(),
         }
     }
 
@@ -136,7 +127,7 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                 DaType::Calldata => BatcherMetrics::DA_TYPE_CALLDATA,
             };
             let blob_payload_bytes;
-            let candidate = match sub.da_type {
+            let mut candidate = match sub.da_type {
                 DaType::Blob => {
                     match BatchTxCandidateBuilder::blob_tx_candidate(self.inbox, &sub.frames) {
                         Ok((candidate, payload_size)) => {
@@ -174,11 +165,38 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                 }
             };
             let frame_bytes = sub.frames.iter().map(|f| f.data.len()).sum::<usize>();
-            let alt_da_body = match sub.da_type {
-                DaType::Calldata if self.alt_da.is_some() => Some(candidate.tx_data.clone()),
-                _ => None,
-            };
-            let shadow_ids = alt_da_body.as_ref().map(|_| vec![sub.id]);
+
+            // Alt-DA mode: upload the batch bytes and post only the commitment on L1.
+            // The commitment rides the primary submission lifecycle (nonce, requeue,
+            // confirm), so calldata is never posted and there is a single ordered stream.
+            if let Some(alt_da) = self.alt_da.clone() {
+                if !matches!(sub.da_type, DaType::Calldata) {
+                    // Config validation pins alt-DA to calldata framing; a blob here has no
+                    // commitment path, so requeue rather than post uncommitted data.
+                    warn!(submission = ?sub.id, "alt-da received non-calldata submission, requeueing");
+                    pipeline.requeue(sub.id);
+                    drop(permit);
+                    return false;
+                }
+                match alt_da.put(candidate.tx_data.clone()).await {
+                    Ok(commitment) => {
+                        BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_PUT_OK)
+                            .increment(1);
+                        candidate.tx_data = commitment.encode_tx_data();
+                    }
+                    Err(error) => {
+                        // PUT failed: post nothing and requeue so the same batch retries next
+                        // tick. No nonce is consumed, so the commitment stream stays gap-free.
+                        warn!(submission = ?sub.id, %error, "alt-da put failed, requeueing batch");
+                        BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_PUT_FAILED)
+                            .increment(1);
+                        pipeline.requeue(sub.id);
+                        drop(permit);
+                        return false;
+                    }
+                }
+            }
+
             info!(
                 submissions = 1,
                 da_type = %da_type_label,
@@ -218,96 +236,6 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                     (vec![sub.id], outcome)
                 });
             self.in_flight.push(fut);
-
-            if let Some(body) = alt_da_body {
-                // alt_da_body is only Some when self.alt_da.is_some(); surface the invariant
-                // rather than silently dropping the shadow write if that ever changes.
-                let alt_da = self.alt_da.clone().expect("alt_da present when alt_da_body is Some");
-                let shadow_ids = shadow_ids.expect("shadow ids when alt-da body present");
-                let alt_da_semaphore =
-                    self.alt_da_semaphore.as_ref().expect("shadow semaphore when alt-da enabled");
-                if let Ok(alt_da_permit) = Arc::clone(alt_da_semaphore).try_acquire_owned() {
-                    let tx_manager = Arc::clone(&self.tx_manager);
-                    let inbox = self.inbox;
-                    // Reap finished shadow tasks so the JoinSet stays bounded.
-                    while self.alt_da_tasks.try_join_next().is_some() {}
-                    self.alt_da_tasks.spawn(async move {
-                        let _alt_da_permit = alt_da_permit;
-                        let commitment = match alt_da.put(body).await {
-                            Ok(commitment) => commitment,
-                            Err(error) => {
-                                // A failed PUT leaves this batch absent from S3. Harmless while
-                                // calldata is primary, but it is a gap that would block the S3-only
-                                // cutover, so surface it as a metric, not just a log line.
-                                warn!(submission_ids = ?shadow_ids, %error, "alt-da put failed; calldata submission unchanged");
-                                BatcherMetrics::alt_da_commitment_total(
-                                    BatcherMetrics::OUTCOME_PUT_FAILED,
-                                )
-                                .increment(1);
-                                return;
-                            }
-                        };
-
-                        let tx_data = commitment.encode_tx_data();
-                        info!(
-                            submission_ids = ?shadow_ids,
-                            commitment_bytes = %tx_data.len(),
-                            "submitting alt-da commitment to L1"
-                        );
-                        let candidate = TxCandidate {
-                            to: Some(inbox),
-                            tx_data,
-                            value: U256::ZERO,
-                            gas_limit: 0,
-                            blobs: vec![].into(),
-                        };
-
-                        // Shadow commitments share the primary TxManager signer + nonce pool today:
-                        // a slow PUT/commitment can stall primary submissions, and an abort_all
-                        // between these two awaits can leave a reserved nonce unconfirmed. Accepted
-                        // for the calldata-primary shadow phase; a separate shadow signer is the
-                        // S3-only cutover follow-up (PRIV-1972).
-                        match tx_manager.send_async(candidate).await.await {
-                            Ok(receipt) => {
-                                let l1_block = receipt.block_number.unwrap_or_else(|| {
-                                    warn!(
-                                        submission_ids = ?shadow_ids,
-                                        "alt-da commitment receipt missing block number"
-                                    );
-                                    0
-                                });
-                                info!(
-                                    submission_ids = ?shadow_ids,
-                                    l1_block = %l1_block,
-                                    "alt-da commitment confirmed on L1"
-                                );
-                                BatcherMetrics::alt_da_commitment_total(
-                                    BatcherMetrics::OUTCOME_CONFIRMED,
-                                )
-                                .increment(1);
-                            }
-                            Err(error) => {
-                                warn!(
-                                    submission_ids = ?shadow_ids,
-                                    %error,
-                                    "alt-da commitment submission failed"
-                                );
-                                BatcherMetrics::alt_da_commitment_total(
-                                    BatcherMetrics::OUTCOME_FAILED,
-                                )
-                                .increment(1);
-                            }
-                        }
-                    });
-                } else {
-                    warn!(
-                        submission_ids = ?shadow_ids,
-                        "alt-da shadow write skipped: shadow capacity exhausted"
-                    );
-                    BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_SKIPPED)
-                        .increment(1);
-                }
-            }
         }
     }
 
@@ -384,9 +312,6 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
         pipeline: &mut P,
         mut timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
     ) {
-        // Shadow commitments are not tied to pipeline confirmation; cancel on shutdown.
-        self.alt_da_tasks.abort_all();
-
         loop {
             if self.in_flight.is_empty() {
                 break;
@@ -432,8 +357,6 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
             BatcherMetrics::in_flight_submissions().set(0.0);
         }
         self.in_flight = FuturesUnordered::new();
-        // Cancel pending shadow commitments so a reorged batch can't still land on L1.
-        self.alt_da_tasks.abort_all();
     }
 
     /// Returns a future for the next settled `(ids, outcome)` pair.
@@ -677,7 +600,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn alt_da_shadow_write_puts_bytes_and_posts_commitment() {
+    async fn alt_da_posts_commitment_as_primary() {
         let client = Arc::new(RecordingAltDaClient::default());
         let puts = Arc::clone(&client.puts);
         let alt_da: DynAltDaClient = client;
@@ -692,9 +615,8 @@ mod tests {
         assert_eq!(ids, vec![SubmissionId(1)]);
         assert!(matches!(outcome, TxOutcome::Confirmed { .. }));
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        assert_eq!(sends.load(Ordering::SeqCst), 2);
+        // Exactly one L1 tx — the commitment — and the calldata body went to the DA server.
+        assert_eq!(sends.load(Ordering::SeqCst), 1);
         assert_eq!(commitment_sends.load(Ordering::SeqCst), 1);
         let puts = puts.lock().unwrap();
         assert_eq!(puts.len(), 1);
@@ -702,37 +624,28 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct GatedAltDaClient {
-        gate: Arc<tokio::sync::Notify>,
-    }
+    struct FailingAltDaClient;
 
     #[async_trait]
-    impl AltDaClient for GatedAltDaClient {
+    impl AltDaClient for FailingAltDaClient {
         async fn put(&self, _: Bytes) -> Result<GenericCommitment, AltDaError> {
-            self.gate.notified().await;
-            Ok(sample_commitment())
+            Err(AltDaError("put failed".into()))
         }
     }
 
     #[tokio::test]
-    async fn drain_aborts_pending_shadow_tasks() {
-        let gate = Arc::new(tokio::sync::Notify::new());
-        let alt_da: DynAltDaClient = Arc::new(GatedAltDaClient { gate });
-        let (tx_manager, _, commitment_sends) = CountingTxManager::new();
+    async fn alt_da_put_failure_posts_nothing() {
+        let alt_da: DynAltDaClient = Arc::new(FailingAltDaClient);
+        let (tx_manager, sends, _) = CountingTxManager::new();
         let mut queue = SubmissionQueue::new(tx_manager, Address::ZERO, 1, Some(alt_da));
         let mut pipeline = CalldataPipeline {
             submissions: std::collections::VecDeque::from([calldata_submission()]),
         };
 
         queue.submit_pending(&mut pipeline).await;
-        let timeout = Box::pin(std::future::ready(()));
-        queue.drain(&mut pipeline, timeout).await;
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert_eq!(
-            commitment_sends.load(Ordering::SeqCst),
-            0,
-            "drain should abort shadow tasks before commitment txs are sent"
-        );
+        // PUT failed → no L1 tx posted and nothing in flight (the batch is requeued).
+        assert_eq!(sends.load(Ordering::SeqCst), 0);
+        assert_eq!(queue.in_flight_count(), 0);
     }
 }
