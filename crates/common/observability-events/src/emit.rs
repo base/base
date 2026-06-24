@@ -358,7 +358,7 @@ macro_rules! transaction_event {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Duration};
+    use std::path::PathBuf;
 
     use alloy_primitives::{B256, TxHash};
     use serde_json::{Map, json};
@@ -374,7 +374,6 @@ mod tests {
             enabled: false,
             file_path: PathBuf::from("/tmp/transaction-events.jsonl"),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
-            flush_interval: Duration::from_secs(1),
             required: false,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-devnet".to_string(),

@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::fmt;
 
 use alloy_primitives::{B256, TxHash};
 use chrono::{DateTime, Utc};
@@ -10,9 +10,6 @@ pub const SCHEMA_VERSION: &str = "transaction-event/v1";
 
 /// Default bounded channel capacity for the background writer.
 pub const DEFAULT_QUEUE_CAPACITY: usize = 16_384;
-
-/// Default background flush interval.
-pub const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 const MAX_DATA_VALIDATION_DEPTH: usize = 16;
 

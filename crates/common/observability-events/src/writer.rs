@@ -7,15 +7,14 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 
 use tracing::warn;
 use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
 
 use crate::{
-    DEFAULT_FLUSH_INTERVAL, DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent,
-    TransactionEventProducer, TransactionEventValidationError,
+    DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent, TransactionEventProducer,
+    TransactionEventValidationError,
 };
 
 /// Configuration for the dedicated transaction event JSONL writer.
@@ -27,10 +26,6 @@ pub struct TransactionEventWriterConfig {
     pub file_path: PathBuf,
     /// Bounded queue capacity before producers drop instead of blocking.
     pub queue_capacity: usize,
-    /// Preferred periodic flush interval for implementations that manage their
-    /// own flush loop. The current non-blocking appender flushes on its
-    /// internal cadence, so this is retained for config compatibility.
-    pub flush_interval: Duration,
     /// If true, initialization errors are returned to the caller.
     pub required: bool,
     /// Producer identity expected for events written through this handle.
@@ -50,7 +45,6 @@ impl TransactionEventWriterConfig {
             enabled: false,
             file_path: file_path.into(),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
-            flush_interval: DEFAULT_FLUSH_INTERVAL,
             required: false,
             producer,
             network: network.into(),
@@ -317,7 +311,6 @@ mod tests {
             enabled: true,
             file_path: PathBuf::from("test.jsonl"),
             queue_capacity,
-            flush_interval: Duration::from_millis(10),
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
@@ -526,7 +519,6 @@ mod tests {
             enabled: true,
             file_path: path.clone(),
             queue_capacity: 8,
-            flush_interval: Duration::from_millis(10),
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
@@ -579,7 +571,6 @@ mod tests {
             enabled: true,
             file_path: path.clone(),
             queue_capacity: 8,
-            flush_interval: Duration::from_millis(10),
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
@@ -601,7 +592,6 @@ mod tests {
             enabled: true,
             file_path: path,
             queue_capacity: 8,
-            flush_interval: Duration::from_millis(10),
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
