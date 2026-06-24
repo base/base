@@ -180,14 +180,6 @@ mod tests {
         time::Duration,
     };
 
-    use super::*;
-    use crate::{
-        OutputProposer, ProofRecoveryConfig, ProofSubmitter, ProofSubmitterConfig,
-        test_utils::{
-            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
-        },
-    };
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
@@ -195,6 +187,15 @@ mod tests {
     use base_prover_service_protocol::{
         DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
         ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    };
+
+    use super::*;
+    use crate::{
+        OutputProposer, ProofRecoveryConfig, ProofSubmitter, ProofSubmitterConfig,
+        test_utils::{
+            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
+            MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
+        },
     };
 
     #[derive(Debug, Default)]

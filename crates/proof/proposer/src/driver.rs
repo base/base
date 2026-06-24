@@ -283,7 +283,7 @@ mod tests {
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             l1.clone(),
-            l2.clone(),
+            l2,
             rollup.clone(),
             &config,
         );
