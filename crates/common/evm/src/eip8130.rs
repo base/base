@@ -810,47 +810,15 @@ mod tests {
     };
 
     use super::*;
-    use crate::{BaseEvm, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase};
+    use crate::{
+        BaseEvm, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase,
+        test_utils::{
+            BASE_FEE, BENEFICIARY, CHAIN_ID, base_eip8130_tx as base_tx, eoa_address, eoa_sig,
+            signing_key,
+        },
+    };
 
-    const CHAIN_ID: u64 = 8453;
     const NOW: u64 = 1_000;
-    const BASE_FEE: u64 = 1_000_000_000;
-    const BENEFICIARY: Address = address!("0x00000000000000000000000000000000000000bb");
-
-    fn signing_key(byte: u8) -> SigningKey {
-        SigningKey::from_slice(&[byte; 32]).unwrap()
-    }
-
-    fn eoa_address(key: &SigningKey) -> Address {
-        let point = key.verifying_key().to_encoded_point(false);
-        Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
-    }
-
-    /// 65-byte `r || s || v` signature (`v` in `{27, 28}`, low-s) over `hash`.
-    fn eoa_sig(key: &SigningKey, hash: B256) -> Bytes {
-        let (signature, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
-        let mut out = vec![0u8; 65];
-        out[..64].copy_from_slice(&signature.to_bytes());
-        out[64] = recid.to_byte() + 27;
-        Bytes::from(out)
-    }
-
-    fn base_tx() -> TxEip8130 {
-        TxEip8130 {
-            chain_id: CHAIN_ID,
-            sender: None,
-            nonce_key: U256::ZERO,
-            nonce_sequence: 0,
-            expiry: 0,
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 5_000_000_000,
-            gas_limit: 1_000_000,
-            account_changes: Vec::new(),
-            calls: Vec::new(),
-            metadata: Bytes::new(),
-            payer: None,
-        }
-    }
 
     fn eoa_signed(tx: TxEip8130, key: &SigningKey) -> Eip8130Signed {
         let hash = tx.sender_signature_hash();

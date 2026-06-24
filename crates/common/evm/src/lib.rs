@@ -62,3 +62,6 @@ mod executor;
 pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BaseBlockExecutorFactory, BaseTxResult,
 };
+
+#[cfg(test)]
+pub mod test_utils;
