@@ -266,6 +266,7 @@ where
                 self.emit_forward_event(
                     TransactionEventType::TxpoolBuilderForwardAttempt,
                     Some(*tx_hash),
+                    Some(attempt),
                     Map::from_iter([
                         ("attempt".to_string(), json!(attempt)),
                         ("batch_size".to_string(), json!(tx_count)),
@@ -290,6 +291,7 @@ where
                                 self.emit_forward_event(
                                     TransactionEventType::TxpoolBuilderForwardSuccess,
                                     tx_hash,
+                                    Some(attempt),
                                     Map::from_iter([
                                         ("attempt".to_string(), json!(attempt)),
                                         ("batch_size".to_string(), json!(tx_count)),
@@ -306,6 +308,7 @@ where
                                 self.emit_forward_event(
                                     TransactionEventType::TxpoolBuilderForwardFailure,
                                     tx_hash,
+                                    Some(attempt),
                                     Map::from_iter([
                                         ("attempt".to_string(), json!(attempt)),
                                         ("batch_size".to_string(), json!(tx_count)),
@@ -346,6 +349,7 @@ where
                         self.emit_forward_event(
                             TransactionEventType::TxpoolBuilderForwardDropped,
                             Some(*tx_hash),
+                            Some(attempt),
                             Map::from_iter([
                                 ("drop_reason".to_string(), json!("rpc_failure")),
                                 ("attempt".to_string(), json!(attempt)),
@@ -395,12 +399,13 @@ where
         &self,
         event_type: TransactionEventType,
         tx_hash: Option<TxHash>,
+        attempt: Option<u32>,
         mut data: Map<String, serde_json::Value>,
     ) {
         data.entry("target".to_string()).or_insert_with(|| json!("builder_forwarder"));
         data.entry("rpc_method".to_string())
             .or_insert_with(|| json!("base_insertValidatedTransaction"));
-        let attempt_id = data.get("attempt").cloned().unwrap_or(serde_json::Value::Null);
+        let attempt_id = attempt.map(|attempt| attempt.to_string()).unwrap_or_default();
 
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,

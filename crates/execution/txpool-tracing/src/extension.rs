@@ -5,10 +5,9 @@ use std::sync::Arc;
 
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_observability_events::{GlobalTransactionEventWriter, TransactionEventWriterConfig};
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::tracex_subscription;
 
@@ -19,8 +18,6 @@ pub struct TxpoolConfig {
     pub tracing_enabled: bool,
     /// Emits `info`-level logs for transaction tracing when enabled.
     pub tracing_logs_enabled: bool,
-    /// Optional durable transaction event journal writer configuration.
-    pub transaction_event_writer_config: Option<TransactionEventWriterConfig>,
     /// Optional node role label attached to durable transaction events.
     pub transaction_event_node_role: Option<String>,
     /// Optional Flashblocks configuration (includes state).
@@ -48,7 +45,6 @@ impl BaseNodeExtension for TxPoolExtension {
 
         let tracing_enabled = config.tracing_enabled;
         let logs_enabled = config.tracing_logs_enabled;
-        let writer_config = config.transaction_event_writer_config;
         let node_role = config.transaction_event_node_role;
         let flashblocks_config = config.flashblocks_config;
 
@@ -68,10 +64,6 @@ impl BaseNodeExtension for TxPoolExtension {
                 flashblocks_config.as_ref().map(|cfg| Arc::clone(&cfg.state)).unwrap_or_default();
 
             tokio::spawn(async move {
-                if let Err(err) = GlobalTransactionEventWriter::init(writer_config).await {
-                    warn!(error = %err, "transaction event journal disabled");
-                }
-
                 tracex_subscription(canonical_stream, fb_state, pool, logs_enabled, node_role)
                     .await;
             });

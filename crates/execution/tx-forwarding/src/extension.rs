@@ -3,8 +3,7 @@
 
 use base_execution_txpool::{SpawnedConsumer, SpawnedForwarder};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_observability_events::{GlobalTransactionEventWriter, TransactionEventWriterConfig};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::TxForwardingConfig;
 
@@ -13,17 +12,12 @@ use crate::TxForwardingConfig;
 pub struct TxForwardingExtension {
     /// Transaction forwarding configuration.
     pub config: TxForwardingConfig,
-    /// Optional writer config for durable transaction events.
-    pub transaction_event_writer_config: Option<TransactionEventWriterConfig>,
 }
 
 impl TxForwardingExtension {
     /// Creates a new transaction forwarding extension.
-    pub const fn new(
-        config: TxForwardingConfig,
-        transaction_event_writer_config: Option<TransactionEventWriterConfig>,
-    ) -> Self {
-        Self { config, transaction_event_writer_config }
+    pub const fn new(config: TxForwardingConfig) -> Self {
+        Self { config }
     }
 }
 
@@ -35,7 +29,6 @@ impl BaseNodeExtension for TxForwardingExtension {
         }
 
         let config = self.config;
-        let writer_config = self.transaction_event_writer_config;
 
         hooks.add_node_started_hook(move |ctx| {
             info!(
@@ -52,10 +45,6 @@ impl BaseNodeExtension for TxForwardingExtension {
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {
-                    if let Err(err) = GlobalTransactionEventWriter::init(writer_config).await {
-                        warn!(error = %err, "transaction forwarding event journal disabled");
-                    }
-
                     let consumer_config = config.to_consumer_config();
                     let forwarder_config = config.to_forwarder_config();
                     let consumer = SpawnedConsumer::spawn(pool, consumer_config, &task_executor);
@@ -74,9 +63,9 @@ impl BaseNodeExtension for TxForwardingExtension {
 }
 
 impl FromExtensionConfig for TxForwardingExtension {
-    type Config = (TxForwardingConfig, Option<TransactionEventWriterConfig>);
+    type Config = TxForwardingConfig;
 
     fn from_config(config: Self::Config) -> Self {
-        Self::new(config.0, config.1)
+        Self::new(config)
     }
 }

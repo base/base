@@ -508,6 +508,7 @@ impl Tracker {
             data.insert("block_hash".to_string(), json!(format!("{:#x}", inclusion.block_hash)));
             data.insert("block_number".to_string(), json!(inclusion.block_number));
         }
+        let event_time_ns = Local::now().timestamp_nanos_opt().unwrap_or_default();
 
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,
@@ -517,6 +518,7 @@ impl Tracker {
             maybe_block_number: event_data.inclusion.map(|inclusion| inclusion.block_number),
             id: {
                 "event_index" => event_index,
+                "event_time" => event_time_ns,
             },
             data: data,
         );

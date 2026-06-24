@@ -10,8 +10,8 @@ use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringR
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_observability_events::{
-    DEFAULT_FLUSH_INTERVAL, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
-    TransactionEventWriterConfig,
+    DEFAULT_FLUSH_INTERVAL, DEFAULT_QUEUE_CAPACITY, GlobalTransactionEventWriter,
+    TransactionEventProducer, TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
 use base_tx_forwarding::{
@@ -348,6 +348,19 @@ impl StandardBaseRethNode {
 
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
+        let transaction_events_env_enabled = transaction_event_journal_env_enabled();
+        let transaction_event_writer_config = transaction_event_writer_config(&args.rpc)?;
+        let transaction_event_writer_init_config = transaction_event_writer_config.clone();
+        runner.add_started_callback(move || {
+            if let Some(config) = transaction_event_writer_init_config {
+                tokio::spawn(async move {
+                    if let Err(err) = GlobalTransactionEventWriter::init(Some(config)).await {
+                        tracing::warn!(error = %err, "transaction event journal disabled");
+                    }
+                });
+            }
+            Ok(())
+        });
 
         // Feature extensions. Several use `replace_configured` (which is overwrite,
         // not compose) on overlapping RPC methods, so install order would otherwise
@@ -365,9 +378,9 @@ impl StandardBaseRethNode {
         });
         runner.install_ext::<TxPoolExtension>(TxpoolConfig {
             tracing_enabled: args.rpc.enable_transaction_tracing
-                || args.rpc.enable_transaction_event_journal,
+                || args.rpc.enable_transaction_event_journal
+                || transaction_events_env_enabled,
             tracing_logs_enabled: args.rpc.enable_transaction_tracing_logs,
-            transaction_event_writer_config: transaction_event_writer_config(&args.rpc)?,
             transaction_event_node_role: transaction_event_node_role(),
             flashblocks_config: flashblocks_config.clone(),
         });
@@ -402,10 +415,7 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
-        runner.install_ext::<TxForwardingExtension>((
-            (&args).into(),
-            transaction_event_writer_config(&args.rpc)?,
-        ));
+        runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
         Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         let eip8130_rpc_mode = if flashblocks_config.is_some() {
@@ -498,7 +508,7 @@ fn transaction_event_writer_config(
 fn transaction_event_journal_env_enabled() -> bool {
     env::var("BASE_TRANSACTION_EVENTS_ENABLED")
         .or_else(|_| env::var("TRANSACTION_EVENTS_ENABLED"))
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "True" | "yes" | "YES"))
+        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
 }
 
