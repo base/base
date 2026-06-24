@@ -195,6 +195,7 @@ where
     <<Eth as reth_rpc_eth_api::RpcNodeCore>::Provider as reth_chainspec::ChainSpecProvider>::ChainSpec:
         base_common_chains::Upgrades,
     TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
+    reth_evm::EvmFactoryFor<Eth::Evm>: alloy_evm::EvmFactory<BlockEnv = revm::context::BlockEnv>,
     FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
@@ -497,7 +498,7 @@ where
                 &self.eth_api,
                 transaction,
                 block_id,
-                Some(final_overrides),
+                EvmOverrides::new(Some(final_overrides), pending_overrides.block),
             )
             .await;
         }

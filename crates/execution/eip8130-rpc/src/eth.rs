@@ -12,14 +12,15 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
+use alloy_evm::EvmFactory;
 use reth_chainspec::ChainSpecProvider;
-use reth_evm::TxEnvFor;
+use reth_evm::{EvmFactoryFor, TxEnvFor};
 use reth_rpc_eth_api::{
     EthApiTypes, FromEthApiError, RpcNodeCore,
     helpers::{EthCall, EthState, FullEthApi, LoadPendingBlock},
 };
 use reth_storage_api::BlockReaderIdExt;
-use revm::context::TxEnv;
+use revm::context::{BlockEnv, TxEnv};
 use tracing::debug;
 
 use crate::{ChannelNonceReader, Eip8130CobaltGate, Eip8130GasEstimator};
@@ -90,6 +91,7 @@ where
     <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
     <<Eth as RpcNodeCore>::Provider as ChainSpecProvider>::ChainSpec: Upgrades,
     TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
+    EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn get_transaction_count(
@@ -151,6 +153,16 @@ where
         debug!(message = "rpc::eip8130::estimate_gas", block_id = ?block_id);
 
         Eip8130CobaltGate::check(&self.eth_api, block_id)?;
-        Eip8130GasEstimator::estimate(&self.eth_api, request, block_id, state_overrides).await
+        // This standalone override only receives state overrides (the
+        // `eth_estimateGas` RPC signature carries no block overrides); the
+        // estimator still accepts the full `EvmOverrides` so the flashblocks
+        // path can thread its pending block env through.
+        Eip8130GasEstimator::estimate(
+            &self.eth_api,
+            request,
+            block_id,
+            EvmOverrides::state(state_overrides),
+        )
+        .await
     }
 }
