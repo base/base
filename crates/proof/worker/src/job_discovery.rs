@@ -61,10 +61,10 @@ impl JobClaimFilter {
     }
 
     /// Returns the prover-service proof types for this claim filter.
-    pub fn proof_types(&self) -> Vec<ProofType> {
+    pub const fn proof_types(&self) -> &'static [ProofType] {
         match self {
-            Self::Tee { .. } => vec![ProofType::Tee],
-            Self::Zk { .. } => ZK_PROOF_TYPES.to_vec(),
+            Self::Tee { .. } => &[ProofType::Tee],
+            Self::Zk { .. } => &ZK_PROOF_TYPES,
         }
     }
 
@@ -81,42 +81,42 @@ impl JobClaimFilter {
         &self,
         worker_id: String,
         lock_duration_seconds: u32,
-    ) -> Vec<GetNextProofRequest> {
-        match self {
-            Self::Tee { tee_kinds } => vec![GetNextProofRequest {
-                worker_id,
-                proof_type: ProofType::Tee,
-                tee_kinds: tee_kinds.clone(),
-                zk_vms: Vec::new(),
-                lock_duration_seconds,
-            }],
+    ) -> impl Iterator<Item = GetNextProofRequest> {
+        let requests = match self {
+            Self::Tee { tee_kinds } => [
+                Some(GetNextProofRequest {
+                    worker_id,
+                    proof_type: ProofType::Tee,
+                    tee_kinds: tee_kinds.clone(),
+                    zk_vms: Vec::new(),
+                    lock_duration_seconds,
+                }),
+                None,
+            ],
             Self::Zk { zk_vms } => {
-                let proof_types = ZK_PROOF_TYPES;
-                let (last_proof_type, proof_types) =
-                    proof_types.split_last().expect("ZK proof types should not be empty");
-                let mut requests = Vec::with_capacity(ZK_PROOF_TYPES.len());
+                let zk_vms = zk_vms.clone();
+                let [compressed_proof_type, snark_proof_type] = ZK_PROOF_TYPES;
 
-                for proof_type in proof_types {
-                    requests.push(GetNextProofRequest {
+                [
+                    Some(GetNextProofRequest {
                         worker_id: worker_id.clone(),
-                        proof_type: *proof_type,
+                        proof_type: compressed_proof_type,
                         tee_kinds: Vec::new(),
                         zk_vms: zk_vms.clone(),
                         lock_duration_seconds,
-                    });
-                }
-
-                requests.push(GetNextProofRequest {
-                    worker_id,
-                    proof_type: *last_proof_type,
-                    tee_kinds: Vec::new(),
-                    zk_vms: zk_vms.clone(),
-                    lock_duration_seconds,
-                });
-
-                requests
+                    }),
+                    Some(GetNextProofRequest {
+                        worker_id,
+                        proof_type: snark_proof_type,
+                        tee_kinds: Vec::new(),
+                        zk_vms,
+                        lock_duration_seconds,
+                    }),
+                ]
             }
-        }
+        };
+
+        requests.into_iter().flatten()
     }
 }
 
@@ -196,7 +196,7 @@ impl JobDiscoveryConfig {
     }
 
     /// Builds the worker claim requests for this host.
-    pub fn get_next_proof_requests(&self) -> Vec<GetNextProofRequest> {
+    pub fn get_next_proof_requests(&self) -> impl Iterator<Item = GetNextProofRequest> {
         self.claim_filter
             .get_next_proof_requests(self.worker_id.clone(), self.lock_duration_seconds)
     }
@@ -341,15 +341,10 @@ where
         }
 
         let mut last_error = None;
-        let mut claim_attempt_succeeded = false;
-
         for request in self.config.get_next_proof_requests() {
             let proof_type = request.proof_type;
             let response = match self.client.get_next_proof(request).await {
-                Ok(response) => {
-                    claim_attempt_succeeded = true;
-                    response
-                }
+                Ok(response) => response,
                 Err(error) => {
                     warn!(
                         worker_id = %self.config.worker_id,
@@ -371,10 +366,8 @@ where
         }
 
         drop(permit);
-        if !claim_attempt_succeeded {
-            if let Some(error) = last_error {
-                return Err(error);
-            }
+        if let Some(error) = last_error {
+            return Err(error);
         }
 
         debug!(
@@ -618,7 +611,7 @@ mod tests {
             .with_lock_duration_seconds(30)
             .with_max_concurrent_jobs(0);
 
-        let requests = config.get_next_proof_requests();
+        let requests = config.get_next_proof_requests().collect::<Vec<_>>();
 
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].worker_id, "worker-a");
@@ -639,7 +632,7 @@ mod tests {
         let config = JobDiscoveryConfig::tee("worker-a", vec![TeeKind::AwsNitro])
             .with_lock_duration_seconds(45);
 
-        let requests = config.get_next_proof_requests();
+        let requests = config.get_next_proof_requests().collect::<Vec<_>>();
         assert_eq!(requests.len(), 1);
         let request = &requests[0];
 
@@ -749,5 +742,25 @@ mod tests {
             *generated.lock().expect("generated jobs lock should not be poisoned"),
             vec!["session-1".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn claim_once_returns_error_when_any_claim_fails_without_job() {
+        let client = MockWorkerClient::with_failed_claims(None, vec![ProofType::SnarkGroth16]);
+        let generator = Arc::new(MockGenerator { can_claim: true, ..Default::default() });
+        let discovery = JobDiscovery::new(
+            client.clone(),
+            generator,
+            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1]),
+        );
+
+        let error =
+            discovery.claim_once().await.expect_err("claim should surface the failed proof type");
+
+        assert!(error.to_string().contains("simulated SnarkGroth16 claim failure"));
+        let requests = client.get_next_requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].proof_type, ProofType::Compressed);
+        assert_eq!(requests[1].proof_type, ProofType::SnarkGroth16);
     }
 }
