@@ -7,7 +7,7 @@ use alloy_consensus::{BlockHeader as AlloyBlockHeader, Header, InMemorySize};
 use alloy_primitives::{
     Address, B64, B256, BlockNumber, Bloom, Bytes, Sealable, Sealed, U256, keccak256,
 };
-use alloy_rlp::{BufMut, Decodable, Encodable};
+use alloy_rlp::{BufMut, Decodable, Encodable, RlpDecodable, RlpEncodable};
 
 /// Number of milliseconds in one Unix timestamp second.
 pub const TIMESTAMP_MILLIS_PER_SECOND: u16 = 1_000;
@@ -176,83 +176,16 @@ impl BaseHeader {
         Sealed::new_unchecked(self, hash)
     }
 
-    fn header_payload_length(&self) -> usize {
-        let inner_header = alloy_rlp::encode(&self.inner);
-        let mut length = Self::encoded_header_payload(&inner_header).len();
-
-        if let Some(timestamp_millis_part) = self.timestamp_millis_part {
-            // The millisecond trailer is encoded as a single-element RLP list so the decoder
-            // can disambiguate it from a missing intermediate post-Bedrock optional field.
-            let trailer_header =
-                alloy_rlp::Header { list: true, payload_length: timestamp_millis_part.length() };
-            length += trailer_header.length_with_payload();
-        }
-
-        length
+    /// Returns the post-activation RLP payload when a millisecond component is present.
+    ///
+    /// Pre-activation headers (`timestamp_millis_part == None`) have no payload because they
+    /// encode byte-identically to the upstream [`Header`].
+    fn to_payload(&self) -> Option<BaseHeaderPayload> {
+        self.timestamp_millis_part.map(|timestamp_millis_part| BaseHeaderPayload {
+            inner: self.inner.clone(),
+            timestamp_millis_part,
+        })
     }
-
-    fn encoded_header_payload<'a>(encoded_header: &'a [u8]) -> &'a [u8] {
-        let mut encoded_header = encoded_header;
-        alloy_rlp::Header::decode_bytes(&mut encoded_header, true)
-            .expect("alloy header encoding must be a valid RLP list")
-    }
-
-    fn decode_header_from_payload(payload: &[u8]) -> alloy_rlp::Result<Header> {
-        let list_header = alloy_rlp::Header { list: true, payload_length: payload.len() };
-        let mut encoded = Vec::with_capacity(list_header.length_with_payload());
-        list_header.encode(&mut encoded);
-        encoded.extend_from_slice(payload);
-
-        let mut encoded_slice = encoded.as_slice();
-        let inner = Header::decode(&mut encoded_slice)?;
-        if !encoded_slice.is_empty() {
-            return Err(alloy_rlp::Error::ListLengthMismatch {
-                expected: encoded.len(),
-                got: encoded.len() - encoded_slice.len(),
-            });
-        }
-
-        Ok(inner)
-    }
-
-    fn split_last_rlp_item(payload: &[u8]) -> alloy_rlp::Result<(&[u8], &[u8])> {
-        let mut remaining = payload;
-        let mut last_item = None;
-
-        while !remaining.is_empty() {
-            let item_start = remaining;
-            let item_header = alloy_rlp::Header::decode(&mut remaining)?;
-            if remaining.len() < item_header.payload_length {
-                return Err(alloy_rlp::Error::InputTooShort);
-            }
-            remaining = &remaining[item_header.payload_length..];
-            let item_length = item_start.len() - remaining.len();
-            last_item = Some(&item_start[..item_length]);
-        }
-
-        let last_item = last_item.ok_or(alloy_rlp::Error::UnexpectedLength)?;
-        let payload_prefix = &payload[..payload.len() - last_item.len()];
-        Ok((payload_prefix, last_item))
-    }
-
-    fn decode_trailer_timestamp_millis_part(item: &[u8]) -> alloy_rlp::Result<u16> {
-        let mut item = item;
-        let trailer_payload = alloy_rlp::Header::decode_bytes(&mut item, true)?;
-        if !item.is_empty() {
-            return Err(alloy_rlp::Error::UnexpectedLength);
-        }
-
-        let mut trailer_payload = trailer_payload;
-        let part = u16::decode(&mut trailer_payload)?;
-        if !trailer_payload.is_empty() {
-            return Err(alloy_rlp::Error::UnexpectedLength);
-        }
-
-        Self::validate_timestamp_millis_part(part)
-            .map_err(|_| alloy_rlp::Error::Custom("invalid base header timestamp_millis_part"))?;
-        Ok(part)
-    }
-
 }
 
 impl From<Header> for BaseHeader {
@@ -386,52 +319,69 @@ impl AlloyBlockHeader for BaseHeader {
     }
 }
 
+/// RLP body of a post-activation Base header.
+///
+/// Wire layout: `[inner, timestamp_millis_part, <future trailing-optional fields>]`.
+///
+/// The upstream Ethereum [`Header`] is nested verbatim as the first element, so this format can
+/// never drift from upstream's field layout. Nesting it first is also the decode discriminator:
+/// a plain upstream header begins with `parent_hash` (an RLP string), while this begins with the
+/// nested header (an RLP list). Base-specific fields follow the nested header; new ones are added
+/// as trailing optionals (enabled by `#[rlp(trailing)]`), mirroring how Ethereum fork fields and
+/// Tempo's consensus context grow a header without breaking previously encoded blocks.
+#[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[rlp(trailing)]
+pub struct BaseHeaderPayload {
+    /// Nested upstream Ethereum header, reused verbatim.
+    pub inner: Header,
+    /// Millisecond subsecond component of the block timestamp.
+    pub timestamp_millis_part: u16,
+}
+
 impl Encodable for BaseHeader {
     fn encode(&self, out: &mut dyn BufMut) {
-        if self.timestamp_millis_part.is_none() {
+        let Some(payload) = self.to_payload() else {
+            // Pre-activation headers are byte-identical to the upstream header, so historical
+            // blocks keep their original encoding and hash.
             self.inner.encode(out);
             return;
-        }
-
-        let inner_header = alloy_rlp::encode(&self.inner);
-        let inner_payload = Self::encoded_header_payload(&inner_header);
-        let list_header =
-            alloy_rlp::Header { list: true, payload_length: self.header_payload_length() };
-        list_header.encode(out);
-        out.put_slice(inner_payload);
-
-        let timestamp_millis_part = self.timestamp_millis_part.expect("checked above");
-        // Wrap in a single-element list (`[u16]`) so the trailer cannot be confused with a
-        // missing intermediate post-Bedrock optional field (which are all strings).
-        let trailer_header =
-            alloy_rlp::Header { list: true, payload_length: timestamp_millis_part.length() };
-        trailer_header.encode(out);
-        timestamp_millis_part.encode(out);
+        };
+        payload.encode(out);
     }
 
     fn length(&self) -> usize {
-        if self.timestamp_millis_part.is_none() {
+        let Some(payload) = self.to_payload() else {
             return self.inner.length();
-        }
-
-        let payload_length = self.header_payload_length();
-        alloy_rlp::Header { list: true, payload_length }.length_with_payload()
+        };
+        payload.length()
     }
 }
 
 impl Decodable for BaseHeader {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let payload = alloy_rlp::Header::decode_bytes(buf, true)?;
-
-        if let Ok(inner) = Self::decode_header_from_payload(payload) {
-            return Ok(Self { inner, timestamp_millis_part: None });
+        // Peek the outer list header and its first inner item without consuming `buf`.
+        let mut probe = *buf;
+        let outer = alloy_rlp::Header::decode(&mut probe)?;
+        if !outer.list {
+            return Err(alloy_rlp::Error::UnexpectedString);
         }
 
-        let (inner_payload, trailer_item) = Self::split_last_rlp_item(payload)?;
-        let timestamp_millis_part = Some(Self::decode_trailer_timestamp_millis_part(trailer_item)?);
-        let inner = Self::decode_header_from_payload(inner_payload)?;
+        // A plain upstream header starts with `parent_hash` (a 32-byte RLP string, first byte
+        // `< 0xC0`); a post-activation Base header starts with the nested upstream header (an RLP
+        // list, first byte `>= 0xC0`). This is the discriminator between the two encodings.
+        let is_nested = probe.first().is_some_and(|first| *first >= 0xC0);
+        if !is_nested {
+            return Ok(Self::from(Header::decode(buf)?));
+        }
 
-        Ok(Self { inner, timestamp_millis_part })
+        let payload = BaseHeaderPayload::decode(buf)?;
+        Self::validate_timestamp_millis_part(payload.timestamp_millis_part)
+            .map_err(|_| alloy_rlp::Error::Custom("invalid base header timestamp_millis_part"))?;
+
+        Ok(Self {
+            inner: payload.inner,
+            timestamp_millis_part: Some(payload.timestamp_millis_part),
+        })
     }
 }
 
@@ -621,7 +571,22 @@ mod tests {
     }
 
     #[test]
-    fn rlp_header_payload_length_matches_encoded_bytes() {
+    fn base_header_some_encoding_matches_payload_wrapper() {
+        // The post-activation `BaseHeader` encoding is exactly the `BaseHeaderPayload` wrapper,
+        // which is the single source of truth for the growable wire layout.
+        let header = sample_post_subsecond_header();
+        let base_header = BaseHeader::new(header.clone(), Some(400)).unwrap();
+        let payload = BaseHeaderPayload { inner: header, timestamp_millis_part: 400 };
+
+        assert_eq!(alloy_rlp::encode(&base_header), alloy_rlp::encode(&payload));
+
+        let encoded = alloy_rlp::encode(&payload);
+        let decoded = BaseHeaderPayload::decode(&mut encoded.as_slice()).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn rlp_length_matches_encoded_bytes() {
         for millis_part in [None, Some(0), Some(200), Some(800)] {
             let header = sample_post_subsecond_header();
             let base_header = BaseHeader::new(header, millis_part).unwrap();
@@ -632,27 +597,29 @@ mod tests {
             let rlp_header = alloy_rlp::Header::decode(&mut slice).unwrap();
 
             assert!(rlp_header.list);
-            assert_eq!(base_header.header_payload_length(), rlp_header.payload_length);
             assert_eq!(slice.len(), rlp_header.payload_length);
             assert_eq!(base_header.length(), encoded.len());
         }
     }
 
     #[test]
-    fn upstream_optional_suffix_fields_encode_as_rlp_strings() {
-        let mut encoded = Vec::new();
-        U256::from(1u64).encode(&mut encoded);
-        assert!(encoded.first().is_some_and(|first| *first < 0xC0));
+    fn rlp_nesting_discriminator_holds() {
+        // The decoder distinguishes the two encodings by the first item inside the outer list:
+        // a plain header begins with `parent_hash` (an RLP string), while a millis-bearing Base
+        // header begins with the nested upstream header (an RLP list).
+        let header = sample_post_subsecond_header();
 
-        encoded.clear();
-        B256::ZERO.encode(&mut encoded);
-        assert!(encoded.first().is_some_and(|first| *first < 0xC0));
+        let mut none_encoded = Vec::new();
+        BaseHeader::new(header.clone(), None).unwrap().encode(&mut none_encoded);
+        let mut none_payload = none_encoded.as_slice();
+        alloy_rlp::Header::decode(&mut none_payload).unwrap();
+        assert!(none_payload.first().is_some_and(|first| *first < 0xC0));
 
-        encoded.clear();
-        let millis_part = 200u16;
-        alloy_rlp::Header { list: true, payload_length: millis_part.length() }.encode(&mut encoded);
-        millis_part.encode(&mut encoded);
-        assert!(encoded.first().is_some_and(|first| *first >= 0xC0));
+        let mut some_encoded = Vec::new();
+        BaseHeader::new(header, Some(200)).unwrap().encode(&mut some_encoded);
+        let mut some_payload = some_encoded.as_slice();
+        alloy_rlp::Header::decode(&mut some_payload).unwrap();
+        assert!(some_payload.first().is_some_and(|first| *first >= 0xC0));
     }
 
     #[test]
@@ -679,6 +646,51 @@ mod tests {
         let mut slice = encoded.as_slice();
         let err = BaseHeader::decode(&mut slice).expect_err("invalid millis part must be rejected");
         assert!(matches!(err, alloy_rlp::Error::Custom(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn rlp_decode_rejects_nested_header_with_trailing_element() {
+        // `[header, millis, extra]` must be rejected: the nested form carries exactly two items.
+        let header = sample_post_subsecond_header();
+        let mut inner_encoded = Vec::new();
+        header.encode(&mut inner_encoded);
+
+        let part = 200u16;
+        let extra = 1u16;
+        let payload_length = inner_encoded.len() + part.length() + extra.length();
+
+        let mut encoded = Vec::new();
+        alloy_rlp::Header { list: true, payload_length }.encode(&mut encoded);
+        encoded.extend_from_slice(&inner_encoded);
+        part.encode(&mut encoded);
+        extra.encode(&mut encoded);
+
+        let mut slice = encoded.as_slice();
+        let err = BaseHeader::decode(&mut slice).expect_err("trailing element must be rejected");
+        assert!(matches!(err, alloy_rlp::Error::ListLengthMismatch { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn rlp_decode_rejects_nested_first_item_that_is_not_a_header() {
+        // `[[..], millis]` where the first list is not a valid header must be rejected rather
+        // than silently misread.
+        let bogus_inner: [u16; 2] = [1, 2];
+        let part = 200u16;
+        let inner_payload_length = bogus_inner.iter().map(|item| item.length()).sum::<usize>();
+        let inner_length = alloy_rlp::Header { list: true, payload_length: inner_payload_length }
+            .length_with_payload();
+        let payload_length = inner_length + part.length();
+
+        let mut encoded = Vec::new();
+        alloy_rlp::Header { list: true, payload_length }.encode(&mut encoded);
+        alloy_rlp::Header { list: true, payload_length: inner_payload_length }.encode(&mut encoded);
+        for item in bogus_inner {
+            item.encode(&mut encoded);
+        }
+        part.encode(&mut encoded);
+
+        let mut slice = encoded.as_slice();
+        assert!(BaseHeader::decode(&mut slice).is_err(), "non-header first item must be rejected");
     }
 
     #[test]

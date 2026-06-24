@@ -55,8 +55,8 @@ pub use block::BaseBlock;
 
 mod header;
 pub use header::{
-    BASE_BLOCK_TIME_MILLIS, BaseHeader, TIMESTAMP_MILLIS_PER_SECOND, TimestampMillisPartError,
-    VALID_TIMESTAMP_MILLIS_PARTS,
+    BASE_BLOCK_TIME_MILLIS, BaseHeader, BaseHeaderPayload, TIMESTAMP_MILLIS_PER_SECOND,
+    TimestampMillisPartError, VALID_TIMESTAMP_MILLIS_PARTS,
 };
 
 /// Signed transaction type alias for [`BaseTxEnvelope`].

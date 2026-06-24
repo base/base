@@ -607,35 +607,64 @@ impl Compact for BaseHeader {
     where
         B: BufMut + AsMut<[u8]>,
     {
+        // Destructure the upstream header exhaustively so that if alloy adds a field, this stops
+        // compiling and forces a decision about how it maps into the compact layout (and whether
+        // it belongs in the `extra_fields` bucket to preserve byte compatibility).
+        let Header {
+            parent_hash,
+            ommers_hash,
+            beneficiary,
+            state_root,
+            transactions_root,
+            receipts_root,
+            withdrawals_root,
+            logs_bloom,
+            difficulty,
+            number,
+            gas_limit,
+            gas_used,
+            timestamp,
+            extra_data,
+            mix_hash,
+            nonce,
+            base_fee_per_gas,
+            blob_gas_used,
+            excess_blob_gas,
+            parent_beacon_block_root,
+            requests_hash,
+            block_access_list_hash,
+            slot_number,
+        } = &self.inner;
+
         let extra_fields = BaseHeaderExt {
-            requests_hash: self.inner.requests_hash,
-            block_access_list_hash: self.inner.block_access_list_hash,
-            slot_number: self.inner.slot_number,
+            requests_hash: *requests_hash,
+            block_access_list_hash: *block_access_list_hash,
+            slot_number: *slot_number,
             timestamp_millis_part: self.timestamp_millis_part.map(u64::from),
         };
 
         let helper = BaseHeaderCompact {
-            parent_hash: self.inner.parent_hash,
-            ommers_hash: self.inner.ommers_hash,
-            beneficiary: self.inner.beneficiary,
-            state_root: self.inner.state_root,
-            transactions_root: self.inner.transactions_root,
-            receipts_root: self.inner.receipts_root,
-            withdrawals_root: self.inner.withdrawals_root,
-            logs_bloom: self.inner.logs_bloom,
-            difficulty: self.inner.difficulty,
-            number: self.inner.number,
-            gas_limit: self.inner.gas_limit,
-            gas_used: self.inner.gas_used,
-            timestamp: self.inner.timestamp,
-            mix_hash: self.inner.mix_hash,
-            nonce: self.inner.nonce.into(),
-            base_fee_per_gas: self.inner.base_fee_per_gas,
-            blob_gas_used: self.inner.blob_gas_used,
-            excess_blob_gas: self.inner.excess_blob_gas,
-            parent_beacon_block_root: self.inner.parent_beacon_block_root,
+            parent_hash: *parent_hash,
+            ommers_hash: *ommers_hash,
+            beneficiary: *beneficiary,
+            state_root: *state_root,
+            transactions_root: *transactions_root,
+            receipts_root: *receipts_root,
+            withdrawals_root: *withdrawals_root,
+            logs_bloom: *logs_bloom,
+            difficulty: *difficulty,
+            number: *number,
+            gas_limit: *gas_limit,
+            gas_used: *gas_used,
+            timestamp: *timestamp,
+            mix_hash: *mix_hash,
+            nonce: (*nonce).into(),
+            base_fee_per_gas: *base_fee_per_gas,
+            blob_gas_used: *blob_gas_used,
+            excess_blob_gas: *excess_blob_gas,
+            parent_beacon_block_root: *parent_beacon_block_root,
             extra_fields: extra_fields.into_option(),
-            extra_data: self.inner.extra_data.clone(),
+            extra_data: extra_data.clone(),
         };
         helper.to_compact(buf)
     }
@@ -852,5 +881,48 @@ mod tests {
         assert!(rest.is_empty());
         assert_eq!(decoded.timestamp_millis_part, None);
         assert_eq!(decoded.inner, inner);
+    }
+
+    #[test]
+    fn base_header_compact_with_all_fields_matches_alloy_header_bytes() {
+        // Drift tripwire: with EVERY upstream optional field populated (including the ones in
+        // reth's `HeaderExt` bucket that the Base millisecond field is appended to), the no-millis
+        // compact encoding must stay byte-identical to upstream. If a reth/alloy bump reorders or
+        // adds a `HeaderExt` field, this fails loudly instead of silently corrupting stored bytes.
+        let inner = Header {
+            parent_hash: B256::repeat_byte(0x01),
+            ommers_hash: B256::repeat_byte(0x02),
+            beneficiary: alloy_primitives::Address::repeat_byte(0x03),
+            state_root: B256::repeat_byte(0x04),
+            transactions_root: B256::repeat_byte(0x05),
+            receipts_root: B256::repeat_byte(0x06),
+            logs_bloom: alloy_primitives::Bloom::repeat_byte(0x07),
+            difficulty: alloy_primitives::U256::from(0x08),
+            number: 42_000,
+            gas_limit: 30_000_000,
+            gas_used: 1_234,
+            timestamp: 1_780_334_562,
+            extra_data: alloy_primitives::Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
+            mix_hash: B256::repeat_byte(0x09),
+            nonce: alloy_primitives::B64::repeat_byte(0x0a),
+            base_fee_per_gas: Some(1_000_000_000),
+            withdrawals_root: Some(B256::repeat_byte(0x11)),
+            blob_gas_used: Some(0x12),
+            excess_blob_gas: Some(0x13),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
+            requests_hash: Some(B256::repeat_byte(0x33)),
+            block_access_list_hash: Some(B256::repeat_byte(0x44)),
+            slot_number: Some(0x55),
+        };
+        let base_header = BaseHeader::from(inner.clone());
+
+        let mut base_encoding = Vec::new();
+        let base_len = base_header.to_compact(&mut base_encoding);
+
+        let mut alloy_encoding = Vec::new();
+        let alloy_len = inner.to_compact(&mut alloy_encoding);
+
+        assert_eq!(base_len, alloy_len);
+        assert_eq!(base_encoding, alloy_encoding);
     }
 }
