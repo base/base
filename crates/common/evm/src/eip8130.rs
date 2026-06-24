@@ -731,8 +731,8 @@ impl Eip8130Executor {
     where
         DB: AlloyDatabase,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+        BaseContext<DB>:
+            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let (ctx, precompiles) = evm.ctx_precompiles();
 
@@ -764,8 +764,8 @@ impl Eip8130Executor {
     where
         DB: AlloyDatabase,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
-        BaseContext<DB>: BaseContextTr
-            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+        BaseContext<DB>:
+            BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let ctx = evm.ctx_mut();
         ctx.journal_mut().checkpoint_revert(checkpoint);
@@ -1142,10 +1142,7 @@ mod tests {
         let mut db = InMemoryDB::default();
         db.insert_account_info(
             sender,
-            AccountInfo {
-                balance: U256::from(10u64).pow(U256::from(18u64)),
-                ..Default::default()
-            },
+            AccountInfo { balance: U256::from(10u64).pow(U256::from(18u64)), ..Default::default() },
         );
         db.insert_account_info(
             target,
