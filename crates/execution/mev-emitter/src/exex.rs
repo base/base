@@ -132,6 +132,53 @@ fn emit_preconf_pool_slots(pb: &PendingBlocks, sink: &EventSink) {
     }
 }
 
+/// Issue #45 (critic HIGH, base#4): decide whether a newly-received preconf
+/// payload SUPERSEDES the previous one (same height, different `payload_id`),
+/// requiring a `Superseded` discard so the downstream aggregator drops the old
+/// payload's now-stale slots. Returns `None` for the first payload, an unchanged
+/// payload, or a height advance (the latter is reconciled by the committed loop's
+/// finalized `BlockBoundaryEvent`).
+fn superseded_discard(
+    last: Option<&(String, u64)>,
+    payload_id: &str,
+    block_number: u64,
+) -> Option<crate::DiscardPreconfEvent> {
+    match last {
+        Some((prev_id, prev_block)) if prev_id != payload_id && *prev_block == block_number => {
+            Some(crate::DiscardPreconfEvent {
+                protocol_version: crate::PROTOCOL_VERSION,
+                payload_id: prev_id.clone(),
+                block_number: Some(*prev_block),
+                reason: Some(crate::DiscardReason::Superseded),
+            })
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod preconf_discard_tests {
+    use super::superseded_discard;
+    use crate::DiscardReason;
+
+    #[test]
+    fn emits_superseded_discard_only_on_same_height_payload_change() {
+        // First payload — nothing to discard.
+        assert!(superseded_discard(None, "A", 100).is_none());
+        // Same payload re-emitted (v1 re-ticks the latest flashblock) — no discard.
+        assert!(superseded_discard(Some(&("A".to_string(), 100)), "A", 100).is_none());
+        // New payload B replaces A at the SAME height — discard A as Superseded.
+        let ev = superseded_discard(Some(&("A".to_string(), 100)), "B", 100)
+            .expect("same-height payload change must emit a discard");
+        assert_eq!(ev.payload_id, "A");
+        assert_eq!(ev.block_number, Some(100));
+        assert_eq!(ev.reason, Some(DiscardReason::Superseded));
+        // Height advanced — NOT a supersede (the committed loop's finalized
+        // BlockBoundaryEvent reconciles the old payload instead).
+        assert!(superseded_discard(Some(&("A".to_string(), 100)), "C", 101).is_none());
+    }
+}
+
 /// `ExEx` run loop: drain canonical-chain notifications, report `FinishedHeight`.
 ///
 /// `fb_state` (issue #45): when present, a failure-isolated background task
@@ -162,9 +209,28 @@ pub async fn run_mev_emitter_exex(
         let task_sink = sink.clone();
         let mut rx = state.subscribe_to_flashblocks();
         tokio::spawn(async move {
+            // Tracks the previous preconf (payload_id, block_number) so a new
+            // payload that supersedes it at the same height can emit a discard.
+            let mut last_preconf: Option<(String, u64)> = None;
             loop {
                 match rx.recv().await {
-                    Ok(pending) => emit_preconf_pool_slots(&pending, &task_sink),
+                    Ok(pending) => {
+                        // Issue #45 (critic HIGH, base#4): when a NEW payload
+                        // supersedes the previous one at the SAME height, emit a
+                        // Superseded discard for the old payload so the downstream
+                        // MidBlockSlotAggregator drops its now-stale slots. A
+                        // FINALIZED payload is reconciled separately by the committed
+                        // loop's `BlockBoundaryEvent { finalized: true }`.
+                        let payload_id = format!("{}", pending.payload_id());
+                        let block_number = pending.latest_block_number();
+                        if let Some(ev) =
+                            superseded_discard(last_preconf.as_ref(), &payload_id, block_number)
+                        {
+                            task_sink.send_event(&crate::NodeEvent::DiscardPreconf(ev));
+                        }
+                        last_preconf = Some((payload_id, block_number));
+                        emit_preconf_pool_slots(&pending, &task_sink);
+                    }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         warn!(
                             target: "base::mev_emitter",
