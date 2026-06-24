@@ -1,6 +1,5 @@
 #![doc = include_str!("../README.md")]
 
-pub use base_proof_worker::ZkProofClaimType;
 pub use base_prover_service_protocol::ZkVm;
 
 mod prover;

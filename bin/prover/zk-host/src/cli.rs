@@ -13,7 +13,7 @@ use base_proof_zk_backend::{
 use base_proof_zk_host::{
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
     DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES, ProofGeneratorHeartbeatConfig,
-    ZkHost, ZkHostConfig, ZkProofClaimType,
+    ZkHost, ZkHostConfig,
 };
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::{Parser, ValueEnum};
@@ -56,10 +56,6 @@ struct WorkerArgs {
     /// Worker identifier used when claiming prover-service jobs.
     #[arg(long, env = "PROVER_WORKER_ID")]
     worker_id: Option<String>,
-
-    /// ZK proof type to claim: `compressed` or `snark_groth16`.
-    #[arg(long, env = "PROOF_TYPE", value_enum, default_value = "compressed")]
-    proof_type: ZkProofTypeArg,
 
     /// Proving backend to run: `mock`, `dry-run`, `cluster`, or `network`.
     #[arg(long, env = "ZK_BACKEND", value_enum)]
@@ -183,25 +179,6 @@ struct WorkerArgs {
     proof_generator_max_consecutive_heartbeat_failures: u32,
 }
 
-/// ZK proof type argument.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum ZkProofTypeArg {
-    /// Claim compressed ZK proofs.
-    Compressed,
-    /// Claim SNARK Groth16 proofs.
-    #[value(alias = "snark_groth16", alias = "groth16")]
-    SnarkGroth16,
-}
-
-impl From<ZkProofTypeArg> for ZkProofClaimType {
-    fn from(proof_type: ZkProofTypeArg) -> Self {
-        match proof_type {
-            ZkProofTypeArg::Compressed => Self::Compressed,
-            ZkProofTypeArg::SnarkGroth16 => Self::SnarkGroth16,
-        }
-    }
-}
-
 /// ZK proving backend argument.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum ZkBackendArg {
@@ -230,17 +207,6 @@ impl AsRef<str> for ZkBackendArg {
 impl fmt::Display for ZkBackendArg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_ref())
-    }
-}
-
-impl ZkBackendArg {
-    const fn supports_proof_type(self, proof_type: ZkProofTypeArg) -> bool {
-        match self {
-            Self::Mock => true,
-            Self::DryRun | Self::Cluster | Self::Network => {
-                matches!(proof_type, ZkProofTypeArg::Compressed)
-            }
-        }
     }
 }
 
@@ -338,16 +304,8 @@ impl Cli {
 impl WorkerArgs {
     async fn run(self, cancel: CancellationToken) -> eyre::Result<()> {
         let args = &self;
-        if !args.backend.supports_proof_type(args.proof_type) {
-            return Err(eyre!(
-                "ZK_BACKEND={} currently supports PROOF_TYPE=compressed only",
-                args.backend
-            ));
-        }
-        let proof_type = ZkProofClaimType::from(args.proof_type);
         info!(
             prover_service_endpoint = %args.prover_service_endpoint,
-            proof_type = ?proof_type,
             backend = %args.backend,
             "initializing zk prover host worker"
         );
@@ -359,7 +317,6 @@ impl WorkerArgs {
             .wrap_err("failed to initialize zk proving backend")?
         else {
             info!(
-                proof_type = ?proof_type,
                 backend = %args.backend,
                 "zk prover host worker initialization cancelled"
             );
@@ -371,7 +328,6 @@ impl WorkerArgs {
         let Some(client) = Self::connect_prover_service_client(&client_config, &cancel).await?
         else {
             info!(
-                proof_type = ?proof_type,
                 backend = %args.backend,
                 "zk prover host worker startup cancelled"
             );
@@ -386,7 +342,7 @@ impl WorkerArgs {
 
         let worker_id =
             args.worker_id.clone().unwrap_or_else(|| format!("zk-host-{}", Uuid::new_v4()));
-        let host_config = ZkHostConfig::sp1(worker_id.clone(), proof_type)
+        let host_config = ZkHostConfig::sp1(worker_id.clone())
             .with_job_discovery_poll_interval(Duration::from_millis(
                 args.job_discovery_poll_interval_ms,
             ))
@@ -398,7 +354,6 @@ impl WorkerArgs {
         info!(
             worker_id = %worker_id,
             prover_service_endpoint = %args.prover_service_endpoint,
-            proof_type = ?proof_type,
             backend = %args.backend,
             "starting zk prover host worker"
         );
