@@ -27,7 +27,9 @@ pub struct TransactionEventWriterConfig {
     pub file_path: PathBuf,
     /// Bounded queue capacity before producers drop instead of blocking.
     pub queue_capacity: usize,
-    /// Periodic flush interval for the background file writer.
+    /// Preferred periodic flush interval for implementations that manage their
+    /// own flush loop. The current non-blocking appender flushes on its
+    /// internal cadence, so this is retained for config compatibility.
     pub flush_interval: Duration,
     /// If true, initialization errors are returned to the caller.
     pub required: bool,
@@ -204,6 +206,8 @@ impl TransactionEventWriter {
         let mut writer = writer.clone();
         if writer.write_all(&line).is_err() {
             Metrics::dropped_events("closed").increment(1);
+            self.observe_dropped_events();
+            return Err(WriteEventError::Closed);
         }
 
         self.observe_dropped_events();
@@ -221,13 +225,24 @@ impl TransactionEventWriter {
             return 0;
         };
 
-        let current = dropped.dropped_lines();
-        let previous = self.inner.observed_drops.swap(current, Ordering::Relaxed);
-        let delta = current.saturating_sub(previous);
-        if delta > 0 {
-            Metrics::dropped_events("backpressure").increment(delta as u64);
+        loop {
+            let current = dropped.dropped_lines();
+            let previous = self.inner.observed_drops.load(Ordering::Relaxed);
+            if current <= previous {
+                return 0;
+            }
+
+            if self
+                .inner
+                .observed_drops
+                .compare_exchange_weak(previous, current, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                let delta = current - previous;
+                Metrics::dropped_events("backpressure").increment(delta as u64);
+                return delta;
+            }
         }
-        delta
     }
 }
 
@@ -237,6 +252,9 @@ pub enum WriteEventError {
     /// Writer is disabled.
     #[error("transaction event writer is disabled")]
     Disabled,
+    /// Writer queue is closed.
+    #[error("transaction event writer is closed")]
+    Closed,
     /// Serialization failed.
     #[error("failed to serialize transaction event: {0}")]
     Serialize(serde_json::Error),
