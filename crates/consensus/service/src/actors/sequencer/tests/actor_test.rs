@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::B256;
 use alloy_eips::BlockId;
+use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
@@ -253,9 +253,9 @@ async fn test_build_unsealed_payload_block_not_found_reset_resets_engine() {
     origin_selector.expect_next_l1_origin().times(1).return_once(move |_, _| Ok(l1_origin));
 
     let attributes_builder = TestAttributesBuilder {
-        attributes: vec![Err(PipelineErrorKind::Reset(ResetError::BlockNotFound(
-            BlockId::Hash(B256::from([0x11; 32]).into()),
-        )))],
+        attributes: vec![Err(PipelineErrorKind::Reset(ResetError::BlockNotFound(BlockId::Hash(
+            B256::from([0x11; 32]).into(),
+        ))))],
     };
 
     let mut actor = test_actor();
