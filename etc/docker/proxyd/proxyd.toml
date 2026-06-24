@@ -89,7 +89,7 @@ base_meterBlockByNumber = "client"
 base_meteredPriorityFeePerGas = "client"
 
 [transaction_events]
-enabled = false
+enabled = true
 file_path = "$TRANSACTION_EVENTS_PATH"
 queue_capacity = 10000
 flush_interval = "1s"

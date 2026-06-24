@@ -11,7 +11,9 @@ RUN cd proxyd && go mod download
 COPY --from=base-routing proxyd/ ./proxyd/
 RUN cd proxyd && make proxyd
 
-FROM 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/golang:v1-24-ub22
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates curl
 
 COPY --from=builder /app/proxyd/bin/proxyd /bin/proxyd
 

@@ -10,7 +10,7 @@ services:
       - ../../.devnet/transaction-events:/var/log/transaction-events
     environment:
       - BUILDER_TRANSACTION_EVENTS_ENABLED=true
-      - TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-builder/events.jsonl
+      - BUILDER_TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-builder/events.jsonl
       - BUILDER_TRANSACTION_EVENTS_NETWORK=base-devnet
 
   base-client:

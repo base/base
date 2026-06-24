@@ -62,6 +62,8 @@ sinks:
     type: http
     inputs:
       - validate_transaction_events
+    # Keep this in sync with AUDIT_RPC_PORT in devnet-env. Vector config is not
+    # interpolated by Docker Compose.
     uri: http://audit-archiver:9100/v1/transaction-events/batch
     method: post
     request:
