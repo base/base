@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
+use base_optimism_rpc::{L1BlockRef, L2BlockRef, SyncStatus};
 use base_proof_primitives::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
@@ -24,6 +25,7 @@ pub struct ProofDispatcher {
     l2_client: Arc<dyn L2Provider>,
     rollup_client: Arc<dyn RollupProvider>,
     proposer_address: Address,
+    allow_non_finalized: bool,
     intermediate_block_interval: u64,
     tee_image_hash: B256,
 }
@@ -32,6 +34,7 @@ impl std::fmt::Debug for ProofDispatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProofDispatcher")
             .field("proposer_address", &self.proposer_address)
+            .field("allow_non_finalized", &self.allow_non_finalized)
             .field("intermediate_block_interval", &self.intermediate_block_interval)
             .field("tee_image_hash", &self.tee_image_hash)
             .finish_non_exhaustive()
@@ -53,6 +56,7 @@ impl ProofDispatcher {
             l2_client,
             rollup_client,
             proposer_address: config.proposer_address,
+            allow_non_finalized: config.allow_non_finalized,
             intermediate_block_interval: config.intermediate_block_interval,
             tee_image_hash: config.tee_image_hash,
         }
@@ -107,6 +111,86 @@ impl ProofDispatcher {
         }
     }
 
+    /// Builds a proof request for `target_block`.
+    pub async fn build_request(
+        &self,
+        target_block: u64,
+        recovered: &RecoveredState,
+        claimed_l2_output_root: B256,
+    ) -> Result<ProofRequest, ProposerError> {
+        let (sync_status, agreed_l2_head) = tokio::try_join!(
+            self.rollup_client.sync_status(),
+            self.l2_client.header_by_number(BlockNumberOrTag::Number(recovered.l2_block_number)),
+        )
+        .map_err(ProposerError::Rpc)?;
+        let (l1_head_source, l1_head, l2_coverage) =
+            Self::select_l1_head_for_target(target_block, &sync_status, self.allow_non_finalized)?;
+        let l1_header =
+            self.l1_client.header_by_hash(l1_head.hash).await.map_err(ProposerError::Rpc)?;
+        if l1_header.hash != l1_head.hash || l1_header.number != l1_head.number {
+            return Err(ProposerError::Internal(format!(
+                "selected {l1_head_source} L1 head {}:{} does not match L1 RPC header {}:{}",
+                l1_head.number, l1_head.hash, l1_header.number, l1_header.hash
+            )));
+        }
+
+        info!(
+            target_block,
+            from_block = recovered.l2_block_number,
+            allow_non_finalized = self.allow_non_finalized,
+            l1_head_source = l1_head_source,
+            l1_head_number = l1_header.number,
+            l1_head_hash = %l1_header.hash,
+            l2_coverage_block = l2_coverage.number,
+            l2_coverage_hash = %l2_coverage.hash,
+            "Built proof request"
+        );
+
+        Ok(ProofRequest {
+            l1_head: l1_header.hash,
+            agreed_l2_head_hash: agreed_l2_head.hash,
+            agreed_l2_output_root: recovered.output_root,
+            claimed_l2_output_root,
+            claimed_l2_block_number: target_block,
+            proposer: self.proposer_address,
+            intermediate_block_interval: self.intermediate_block_interval,
+            l1_head_number: l1_header.number,
+            image_hash: self.tee_image_hash,
+        })
+    }
+
+    fn select_l1_head_for_target(
+        target_block: u64,
+        sync_status: &SyncStatus,
+        allow_non_finalized: bool,
+    ) -> Result<(&'static str, L1BlockRef, L2BlockRef), ProposerError> {
+        let selected = if target_block <= sync_status.finalized_l2.number {
+            ("finalized", sync_status.finalized_l1, sync_status.finalized_l2)
+        } else if !allow_non_finalized {
+            return Err(ProposerError::Internal(format!(
+                "target block {target_block} is above rollup finalized head {}",
+                sync_status.finalized_l2.number
+            )));
+        } else if target_block <= sync_status.safe_l2.number {
+            ("safe", sync_status.safe_l1, sync_status.safe_l2)
+        } else {
+            return Err(ProposerError::Internal(format!(
+                "target block {target_block} is above rollup safe head {}",
+                sync_status.safe_l2.number
+            )));
+        };
+
+        let (l1_head_source, l1_head, l2_coverage) = selected;
+        if l1_head.number < l2_coverage.l1origin.number {
+            return Err(ProposerError::Internal(format!(
+                "selected {l1_head_source} L1 head {} is below {l1_head_source} L2 origin {}",
+                l1_head.number, l2_coverage.l1origin.number
+            )));
+        }
+
+        Ok(selected)
+    }
+
     /// Builds and dispatches a fresh root-derived request.
     pub async fn dispatch(
         &self,
@@ -114,34 +198,21 @@ impl ProofDispatcher {
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
     ) -> bool {
-        let (l1_head, agreed_l2_head) = match tokio::try_join!(
-            self.l1_client.header_by_number(BlockNumberOrTag::Finalized),
-            self.l2_client.header_by_number(BlockNumberOrTag::Number(recovered.l2_block_number)),
-        ) {
-            Ok(headers) => headers,
-            Err(error) => {
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
-                let error = ProposerError::Rpc(error);
-                warn!(
-                    target_block,
-                    error = %error,
-                    "Failed to build proof request, will retry next iteration"
-                );
-                return false;
-            }
-        };
-
-        let request = ProofRequest {
-            l1_head: l1_head.hash,
-            agreed_l2_head_hash: agreed_l2_head.hash,
-            agreed_l2_output_root: recovered.output_root,
-            claimed_l2_output_root,
-            claimed_l2_block_number: target_block,
-            proposer: self.proposer_address,
-            intermediate_block_interval: self.intermediate_block_interval,
-            l1_head_number: l1_head.number,
-            image_hash: self.tee_image_hash,
-        };
+        let request =
+            match self.build_request(target_block, recovered, claimed_l2_output_root).await {
+                Ok(request) => request,
+                Err(error) => {
+                    Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED)
+                        .increment(1);
+                    warn!(
+                        target_block,
+                        error = %error,
+                        "Failed to build proof request, will retry next iteration"
+                    );
+                    return false;
+                }
+            };
+        let l1_head_number = request.l1_head_number;
 
         let request = ProposerProofAdapter::tee_prove_block_range_request(request);
         let expected_session_id = request.proof.session_id.clone();
@@ -175,7 +246,7 @@ impl ProofDispatcher {
             target_block,
             session_id = %expected_session_id,
             from_block = recovered.l2_block_number,
-            l1_head_number = l1_head.number,
+            l1_head_number,
             "Proof request accepted by prover service"
         );
         true
@@ -184,15 +255,28 @@ impl ProofDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
+    use std::{collections::HashMap, sync::atomic::Ordering};
+
+    use base_optimism_rpc::SyncStatus;
 
     use super::*;
-    use crate::test_utils::{MockL1, MockL2, MockProofRequester, MockRollupClient};
+    use crate::test_utils::{
+        MockL1, MockL2, MockProofRequester, MockRollupClient, test_l1_block_ref, test_l1_header,
+        test_l2_block_ref,
+    };
 
     fn dispatcher() -> (ProofDispatcher, Arc<MockProofRequester>) {
+        dispatcher_with_sync(sync_status_with_distinct_heads(600, 600), false)
+    }
+
+    fn dispatcher_with_sync(
+        sync_status: SyncStatus,
+        allow_non_finalized: bool,
+    ) -> (ProofDispatcher, Arc<MockProofRequester>) {
         let requester = Arc::new(MockProofRequester::default());
         let config = DriverConfig {
             proposer_address: Address::repeat_byte(0x04),
+            allow_non_finalized,
             intermediate_block_interval: 300,
             tee_image_hash: B256::repeat_byte(0x05),
             ..Default::default()
@@ -200,13 +284,56 @@ mod tests {
         (
             ProofDispatcher::new(
                 requester.clone(),
-                Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() }),
+                Arc::new(MockL1::with_headers(
+                    sync_status.finalized_l1.number,
+                    headers_for_sync_status(&sync_status),
+                )),
                 Arc::new(MockL2 { block_not_found: false, canonical_hash: None }),
-                Arc::new(MockRollupClient::default()),
+                Arc::new(MockRollupClient {
+                    sync_status,
+                    output_roots: HashMap::new(),
+                    max_safe_block: None,
+                }),
                 &config,
             ),
             requester,
         )
+    }
+
+    fn headers_for_sync_status(
+        sync_status: &SyncStatus,
+    ) -> HashMap<B256, alloy_rpc_types_eth::Header> {
+        let mut headers = HashMap::new();
+        for l1_head in [sync_status.finalized_l1, sync_status.safe_l1] {
+            headers.insert(l1_head.hash, test_l1_header(l1_head.hash, l1_head.number));
+        }
+        headers
+    }
+
+    fn sync_status_with_distinct_heads(finalized_l2: u64, safe_l2: u64) -> SyncStatus {
+        let mut finalized_l1 = test_l1_block_ref(10);
+        finalized_l1.hash = B256::repeat_byte(0xf1);
+        let mut safe_l1 = test_l1_block_ref(20);
+        safe_l1.hash = B256::repeat_byte(0x5a);
+
+        let mut finalized_l2 = test_l2_block_ref(finalized_l2, B256::repeat_byte(0xf2));
+        finalized_l2.l1origin.hash = finalized_l1.hash;
+        finalized_l2.l1origin.number = finalized_l1.number;
+        let mut safe_l2 = test_l2_block_ref(safe_l2, B256::repeat_byte(0x52));
+        safe_l2.l1origin.hash = safe_l1.hash;
+        safe_l2.l1origin.number = safe_l1.number;
+
+        SyncStatus {
+            current_l1: safe_l1,
+            current_l1_finalized: Some(finalized_l1),
+            head_l1: safe_l1,
+            safe_l1,
+            finalized_l1,
+            unsafe_l2: safe_l2,
+            safe_l2,
+            finalized_l2,
+            pending_safe_l2: None,
+        }
     }
 
     fn recovered() -> RecoveredState {
@@ -215,6 +342,39 @@ mod tests {
             output_root: B256::repeat_byte(0x03),
             l2_block_number: 100,
         }
+    }
+
+    #[tokio::test]
+    async fn build_request_uses_finalized_l1_head_for_finalized_target() {
+        let (dispatcher, _) = dispatcher_with_sync(sync_status_with_distinct_heads(300, 600), true);
+
+        let request =
+            dispatcher.build_request(200, &recovered(), B256::repeat_byte(0xaa)).await.unwrap();
+
+        assert_eq!(request.l1_head, B256::repeat_byte(0xf1));
+        assert_eq!(request.l1_head_number, 10);
+    }
+
+    #[tokio::test]
+    async fn build_request_uses_safe_l1_head_for_safe_target() {
+        let (dispatcher, _) = dispatcher_with_sync(sync_status_with_distinct_heads(300, 600), true);
+
+        let request =
+            dispatcher.build_request(400, &recovered(), B256::repeat_byte(0xaa)).await.unwrap();
+
+        assert_eq!(request.l1_head, B256::repeat_byte(0x5a));
+        assert_eq!(request.l1_head_number, 20);
+    }
+
+    #[tokio::test]
+    async fn build_request_rejects_safe_target_when_non_finalized_disallowed() {
+        let (dispatcher, _) =
+            dispatcher_with_sync(sync_status_with_distinct_heads(300, 600), false);
+
+        let err =
+            dispatcher.build_request(400, &recovered(), B256::repeat_byte(0xaa)).await.unwrap_err();
+
+        assert!(err.to_string().contains("above rollup finalized head"));
     }
 
     #[tokio::test]
