@@ -21,11 +21,26 @@ pub struct Eip8130TransactionParts {
     /// The signed EIP-8130 envelope: the transaction body plus the sender and
     /// (optional) payer authentication blobs.
     pub signed: Eip8130Signed,
+    /// When `true`, this is a read-only RPC simulation built from an
+    /// `eth_estimateGas` / `eth_call` request (no recoverable signature) and is
+    /// routed to `Eip8130Executor::simulate` — which skips signature
+    /// verification and fee settlement and reverts all state — instead of
+    /// `Eip8130Executor::execute`. Set only on the RPC call path; the
+    /// consensus/block-execution path always leaves it `false`, so block
+    /// execution and txpool admission never reach the unverified path.
+    pub simulate: bool,
 }
 
 impl Eip8130TransactionParts {
-    /// Create new EIP-8130 transaction parts from a signed envelope.
+    /// Create new EIP-8130 transaction parts from a signed envelope, for the
+    /// verified consensus/block-execution path.
     pub const fn new(signed: Eip8130Signed) -> Self {
-        Self { signed }
+        Self { signed, simulate: false }
+    }
+
+    /// Create EIP-8130 transaction parts for a read-only RPC simulation
+    /// (`eth_estimateGas` / `eth_call`), routed to `Eip8130Executor::simulate`.
+    pub const fn new_simulation(signed: Eip8130Signed) -> Self {
+        Self { signed, simulate: true }
     }
 }

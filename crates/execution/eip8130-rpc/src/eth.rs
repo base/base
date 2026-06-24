@@ -3,21 +3,26 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, U256};
+use alloy_rpc_types::state::{EvmOverrides, StateOverride};
 use base_common_chains::Upgrades;
+use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_network::Base;
+use base_common_rpc_types::BaseTransactionRequest;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use reth_chainspec::ChainSpecProvider;
+use reth_evm::TxEnvFor;
 use reth_rpc_eth_api::{
-    EthApiTypes, RpcNodeCore,
-    helpers::{EthState, FullEthApi},
+    EthApiTypes, FromEthApiError, RpcNodeCore,
+    helpers::{EthCall, EthState, FullEthApi, LoadPendingBlock},
 };
 use reth_storage_api::BlockReaderIdExt;
+use revm::context::TxEnv;
 use tracing::debug;
 
-use crate::{ChannelNonceReader, Eip8130CobaltGate};
+use crate::{ChannelNonceReader, Eip8130CobaltGate, Eip8130GasEstimator};
 
 /// Eth API override trait that adds EIP-8130 `nonce_key` support to
 /// `eth_getTransactionCount`.
@@ -45,6 +50,22 @@ pub trait Eip8130EthApiOverride {
         block_number: Option<BlockId>,
         nonce_key: Option<U256>,
     ) -> RpcResult<U256>;
+
+    /// Estimates gas for a transaction.
+    ///
+    /// A request carrying EIP-8130 fields (account changes, calls, `nonce_key`,
+    /// expiry, or metadata) is estimated via a single read-only EIP-8130
+    /// simulation against the block state (gated on the Cobalt fork). The
+    /// EIP-8130 pipeline charges deterministic, signature-independent gas, so no
+    /// gas-limit binary search is needed. A plain request falls through to the
+    /// standard reth estimator unchanged.
+    #[method(name = "estimateGas")]
+    async fn estimate_gas(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+    ) -> RpcResult<U256>;
 }
 
 /// Standalone EIP-8130 `eth_getTransactionCount` extension.
@@ -64,9 +85,11 @@ impl<Eth: EthApiTypes> Eip8130EthApiExt<Eth> {
 #[async_trait]
 impl<Eth> Eip8130EthApiOverrideServer for Eip8130EthApiExt<Eth>
 where
-    Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
+    Eth: FullEthApi<NetworkTypes = Base> + LoadPendingBlock + Clone + Send + Sync + 'static,
+    Eth::Error: FromEthApiError,
     <Eth as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
     <<Eth as RpcNodeCore>::Provider as ChainSpecProvider>::ChainSpec: Upgrades,
+    TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn get_transaction_count(
@@ -101,5 +124,33 @@ where
         // pending-state delta. This override only registers when
         // flashblocks is disabled.
         EthState::transaction_count(&self.eth_api, address, block_number).await.map_err(Into::into)
+    }
+
+    async fn estimate_gas(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+    ) -> RpcResult<U256> {
+        let block_id = block_number.unwrap_or_default();
+
+        // Plain (non-8130) request: this override replaces the default
+        // `eth_estimateGas`, so the common case must be delegated to the
+        // standard reth estimator unchanged.
+        if request.as_eip8130().is_none() {
+            return EthCall::estimate_gas_at(
+                &self.eth_api,
+                request,
+                block_id,
+                EvmOverrides::state(state_overrides),
+            )
+            .await
+            .map_err(Into::into);
+        }
+
+        debug!(message = "rpc::eip8130::estimate_gas", block_id = ?block_id);
+
+        Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+        Eip8130GasEstimator::estimate(&self.eth_api, request, block_id, state_overrides).await
     }
 }

@@ -2,21 +2,77 @@
 
 use core::convert::Infallible;
 
+use alloc::vec;
+
 use alloy_consensus::{SignableTransaction, error::ValueError};
 use alloy_evm::{
-    EvmEnv,
+    EvmEnv, FromRecoveredTx,
     env::BlockEnvironment,
     rpc::{EthTxEnvError, TryIntoTxEnv},
 };
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_signer::Signature;
-use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
+use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope, Eip8130Signed, TxEip8130};
 use base_common_evm::BaseTransaction as BaseRevm;
 use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
 
 use crate::{BaseTransactionRequest, Transaction};
+
+/// Length of the stub secp256k1 `sender_auth` blob used for EIP-8130 estimation.
+/// Matches the bare-signature (default-EOA) wire form so the intrinsic-gas
+/// schedule prices k1 authentication; the bytes are never recovered.
+const STUB_K1_SENDER_AUTH_LEN: usize = 65;
+
+impl BaseTransactionRequest {
+    /// Builds the unsigned simulation transaction for an EIP-8130
+    /// `eth_estimateGas` / `eth_call` request, or `None` when the request
+    /// carries no EIP-8130 fields.
+    ///
+    /// Estimation runs without a signature: a stub 65-byte k1 `sender_auth` blob
+    /// stands in for the bare-signature EOA wire form so the intrinsic schedule
+    /// prices authentication gas from its shape. The blob is never recovered —
+    /// [`base_common_evm::Eip8130Executor::simulate`] simulates from `from`
+    /// without verification. `gas_limit_cap` bounds execution when the request
+    /// omits `gas`.
+    pub fn to_eip8130_simulation_tx(
+        &self,
+        chain_id: u64,
+        gas_limit_cap: u64,
+    ) -> Option<BaseRevm<TxEnv>> {
+        let aa = self.as_eip8130()?;
+        let req = self.as_ref();
+        let from = req.from.unwrap_or_default();
+
+        let tx = TxEip8130 {
+            chain_id,
+            // Default-EOA path: the sender is `from`, resolved from the request
+            // rather than recovered from the (absent) signature.
+            sender: None,
+            nonce_key: aa.nonce_key.unwrap_or(U256::ZERO),
+            nonce_sequence: 0,
+            expiry: aa.expiry.unwrap_or_default(),
+            max_priority_fee_per_gas: req.max_priority_fee_per_gas.unwrap_or_default(),
+            max_fee_per_gas: req.max_fee_per_gas.unwrap_or_default(),
+            gas_limit: req.gas.unwrap_or(gas_limit_cap),
+            account_changes: aa.account_changes.clone().unwrap_or_default(),
+            calls: aa.calls.clone().unwrap_or_default(),
+            metadata: aa.metadata.clone().unwrap_or_default(),
+            payer: None,
+        };
+
+        let stub_auth = Bytes::from(vec![0u8; STUB_K1_SENDER_AUTH_LEN]);
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, stub_auth, Bytes::new()));
+        let mut sim_tx = BaseRevm::from_recovered_tx(&envelope, from);
+        // Route to the unverified `Eip8130Executor::simulate` path rather than
+        // the verifying `execute` path.
+        if let Some(parts) = sim_tx.eip8130.as_mut() {
+            parts.simulate = true;
+        }
+        Some(sim_tx)
+    }
+}
 
 impl FromConsensusTx<BaseTxEnvelope> for Transaction {
     type TxInfo = BaseTransactionInfo;

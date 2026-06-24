@@ -8,7 +8,7 @@ use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
 use serde::{Deserialize, Serialize};
 
 mod request;
-pub use request::BaseTransactionRequest;
+pub use request::{BaseTransactionRequest, Eip8130RequestFields};
 
 /// Base transaction type
 #[derive(

@@ -22,7 +22,7 @@ use reth_codecs::{
 
 use crate::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
-    DepositReceipt, EIP8130_TX_TYPE_ID, OpTxType, TxDeposit, TxEip8130,
+    DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt, OpTxType, TxDeposit, TxEip8130,
 };
 
 // ---------------------------------------------------------------------------
@@ -327,6 +327,11 @@ struct CompactBaseReceipt<'a> {
     logs: Cow<'a, Vec<alloy_primitives::Log>>,
     deposit_nonce: Option<u64>,
     deposit_receipt_version: Option<u64>,
+    /// EIP-8130 per-phase execution statuses. Persisted to the node-local
+    /// database so `eth_getTransactionReceipt` can surface `phaseStatuses`;
+    /// excluded from the consensus receipt encoding. Empty for non-8130 receipts.
+    #[expect(clippy::owned_cow)]
+    eip8130_phase_statuses: Cow<'a, Vec<u8>>,
 }
 
 impl<'a> From<&'a BaseReceipt> for CompactBaseReceipt<'a> {
@@ -345,6 +350,11 @@ impl<'a> From<&'a BaseReceipt> for CompactBaseReceipt<'a> {
             } else {
                 None
             },
+            eip8130_phase_statuses: if let BaseReceipt::Eip8130(receipt) = receipt {
+                Cow::Borrowed(&receipt.phase_statuses)
+            } else {
+                Cow::Owned(Vec::new())
+            },
             tx_type: receipt.tx_type(),
         }
     }
@@ -359,6 +369,7 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
             logs,
             deposit_nonce,
             deposit_receipt_version,
+            eip8130_phase_statuses,
         } = receipt;
 
         let inner =
@@ -372,7 +383,9 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
             OpTxType::Deposit => {
                 Self::Deposit(DepositReceipt { inner, deposit_nonce, deposit_receipt_version })
             }
-            OpTxType::Eip8130 => Self::Eip8130(inner),
+            OpTxType::Eip8130 => {
+                Self::Eip8130(Eip8130Receipt::new(inner, eip8130_phase_statuses.into_owned()))
+            }
         }
     }
 }
