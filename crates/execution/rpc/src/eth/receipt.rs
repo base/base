@@ -329,9 +329,7 @@ impl BaseReceiptBuilder {
                 BaseReceipt::Eip1559(receipt) => BaseReceipt::Eip1559(map_logs(receipt)),
                 BaseReceipt::Eip7702(receipt) => BaseReceipt::Eip7702(map_logs(receipt)),
                 BaseReceipt::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_inner(map_logs)),
-                BaseReceipt::Eip8130(receipt) => BaseReceipt::Eip8130(Eip8130Receipt::new(
-                    map_logs(receipt.inner),
-                    receipt.phase_statuses,
+                BaseReceipt::Eip8130(receipt) => BaseReceipt::Eip8130(receipt.map_inner(map_logs)),
                 )),
             };
             mapped_receipt.into_with_bloom()
