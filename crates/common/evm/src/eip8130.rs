@@ -273,14 +273,6 @@ impl Eip8130Executor {
             }
         };
 
-        // Hand the per-phase statuses to the receipt builder, which runs on this
-        // same thread immediately after execution (see [`Eip8130PhaseStatuses`]).
-        // This is the only channel available: the receipt builder is generic over
-        // the EVM and the `ExecutionResult`'s `output` already carries the
-        // transaction's revert data. Set only after the transaction is fully
-        // settled so a `settle_fees` error never leaves stale statuses in the slot.
-        Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
-
         let ctx = evm.ctx_mut();
 
         let logs = ctx.journal_mut().take_logs();
@@ -297,6 +289,18 @@ impl Eip8130Executor {
         // reused across a block.
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
+
+        // Hand the per-phase statuses to the receipt builder, which runs on this
+        // same thread immediately after execution (see [`Eip8130PhaseStatuses`]).
+        // This is the only channel available: the receipt builder is generic over
+        // the EVM and the `ExecutionResult`'s `output` already carries the
+        // transaction's revert data. Published as the last step before returning —
+        // after the transaction is fully settled and committed — so neither a
+        // `settle_fees` error nor a panic in the journal teardown above can leave
+        // stale statuses in the slot for the next transaction; only the
+        // allocation-free result construction below runs before the builder's
+        // `take`.
+        Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
 
         // The gas refund is already folded into `gas_used` (via `net_used` in
         // `settle_fees`), so the `refunded` counter is left 0; the per-phase
