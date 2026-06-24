@@ -53,7 +53,10 @@ use base_execution_eip8130::{
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
-    context::{BlockEnv, LocalContextTr, TxEnv, journaled_state::account::JournaledAccountTr},
+    context::{
+        BlockEnv, LocalContextTr, TxEnv,
+        journaled_state::{JournalCheckpoint, account::JournaledAccountTr},
+    },
     context_interface::{
         Block, Cfg, ContextTr, JournalTr,
         context::take_error,
@@ -64,6 +67,7 @@ use revm::{
         CallInput, CallInputs, CallScheme, CallValue, FrameInput, InterpreterResult, SharedMemory,
         interpreter::EthInterpreter, interpreter_action::FrameInit,
     },
+    primitives::hardfork::SpecId,
     state::Bytecode,
 };
 
@@ -233,26 +237,38 @@ impl Eip8130Executor {
             }
         };
 
+        // Mirror the mainnet handler's `load_accounts` pre-execution step, which
+        // the 8130 path bypasses: set the journal's EVM spec id and warm the
+        // precompiles and (EIP-3651) the coinbase before dispatching calls, so a
+        // call is charged identically to one in a normal transaction on the same
+        // chain.
+        Self::warm_pre_call_accounts(evm);
+
         let calls = match Self::execute_calls(evm, &signed, &outcome) {
             Ok(calls) => calls,
             Err(err) => {
-                let ctx = evm.ctx_mut();
-                ctx.journal_mut().checkpoint_revert(checkpoint);
-                ctx.chain_mut().clear_tx_l1_cost();
+                Self::teardown_after_error(evm, checkpoint);
+                return Err(err);
+            }
+        };
+
+        let gas_used = match Self::settle_fees(
+            evm.ctx_mut(),
+            &outcome,
+            &calls,
+            prepay,
+            &encoded,
+            spec,
+            beneficiary,
+        ) {
+            Ok(gas_used) => gas_used,
+            Err(err) => {
+                Self::teardown_after_error(evm, checkpoint);
                 return Err(err);
             }
         };
 
         let ctx = evm.ctx_mut();
-        let gas_used =
-            match Self::settle_fees(ctx, &outcome, &calls, prepay, &encoded, spec, beneficiary) {
-                Ok(gas_used) => gas_used,
-                Err(err) => {
-                    ctx.journal_mut().checkpoint_revert(checkpoint);
-                    ctx.chain_mut().clear_tx_l1_cost();
-                    return Err(err);
-                }
-            };
 
         let logs = ctx.journal_mut().take_logs();
 
@@ -702,6 +718,62 @@ impl Eip8130Executor {
         Ok(frame)
     }
 
+    /// Mirrors the mainnet handler's `load_accounts` pre-execution step (minus
+    /// the access-list handling, for which an EIP-8130 transaction has no
+    /// analogue): sets the journal's EVM spec id, warms the precompile address
+    /// set, and warms the coinbase per EIP-3651 (Shanghai+). The 8130 path runs
+    /// `calls` directly without the single-frame handler, so without this the
+    /// dispatched calls would execute against the journal's default spec id and
+    /// a cold coinbase / precompile set — charging cold-access gas (2600) where a
+    /// call in a normal transaction is charged warm (100) and otherwise drifting
+    /// from EVM equivalence on the same chain.
+    fn warm_pre_call_accounts<DB, I, P>(evm: &mut BaseEvm<DB, I, P>)
+    where
+        DB: AlloyDatabase,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    {
+        let (ctx, precompiles) = evm.ctx_precompiles();
+
+        let gen_spec = ctx.cfg().spec();
+        let eth_spec: SpecId = gen_spec.into();
+        ctx.journal_mut().set_spec_id(eth_spec);
+
+        // Inject the precompile addresses when the spec changed them or the
+        // journal has not been warmed yet, matching `pre_execution::load_accounts`.
+        let precompiles_changed = precompiles.set_spec(gen_spec);
+        if precompiles_changed || ctx.journal_mut().precompile_addresses().is_empty() {
+            ctx.journal_mut().warm_precompiles(precompiles.warm_addresses());
+        }
+
+        // EIP-3651: the COINBASE address starts warm from Shanghai onward.
+        if eth_spec.is_enabled_in(SpecId::SHANGHAI) {
+            let coinbase = ctx.block().beneficiary();
+            ctx.journal_mut().warm_coinbase_account(coinbase);
+        }
+    }
+
+    /// Centralized post-error teardown mirroring the mainnet handler's
+    /// `catch_error` cleanup: reverts the transaction checkpoint, clears the
+    /// cached L1 cost, and drains the frame stack and local context. A database
+    /// error raised inside a nested subcall surfaces while the parent frame is
+    /// still on the stack, so draining both prevents stale frame/local state
+    /// from leaking into the next transaction when a `BaseEvm` is reused.
+    fn teardown_after_error<DB, I, P>(evm: &mut BaseEvm<DB, I, P>, checkpoint: JournalCheckpoint)
+    where
+        DB: AlloyDatabase,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    {
+        let ctx = evm.ctx_mut();
+        ctx.journal_mut().checkpoint_revert(checkpoint);
+        ctx.chain_mut().clear_tx_l1_cost();
+        evm.ctx().local_mut().clear();
+        evm.frame_stack().clear();
+    }
+
     /// Settles the final fee against the pre-charged amount: caps the gas refund,
     /// computes the billable gas, refunds the surplus to the payer, and routes
     /// the base fee, priority tip, L1 cost, and operator fee to their vaults.
@@ -1104,6 +1176,55 @@ mod tests {
         assert!(
             matches!(err, EVMError::Database(_)),
             "DB failure during a call must surface as a fatal database error, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn call_warms_coinbase_per_eip3651() {
+        // EIP-3651: a dispatched call must see the coinbase pre-warmed, exactly
+        // as a call in a normal transaction does. `BALANCE(coinbase)` therefore
+        // costs warm access (100) rather than cold (2600). We compare it against
+        // an otherwise-identical `BALANCE` of an untouched address (cold) and
+        // require the coinbase read to be strictly cheaper; without coinbase
+        // warming both reads are cold and the gas is identical.
+        fn balance_of(addr: Address) -> Bytes {
+            // PUSH20 <addr>, BALANCE, STOP
+            let mut code = Vec::with_capacity(23);
+            code.push(0x73);
+            code.extend_from_slice(addr.as_slice());
+            code.push(0x31);
+            code.push(0x00);
+            Bytes::from(code)
+        }
+
+        let target = address!("0x00000000000000000000000000000000000000c8");
+        let cold_account = address!("0x00000000000000000000000000000000000000dd");
+
+        let run = |code: Bytes, signer: u8| -> u64 {
+            let key = signing_key(signer);
+            let sender = eoa_address(&key);
+            let mut tx = base_tx();
+            tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+            let signed = eoa_signed(tx, &key);
+            let mut evm = evm_with_accounts(
+                U256::from(10u64).pow(U256::from(18u64)),
+                sender,
+                &[(target, code)],
+            );
+            let outcome = evm.transact_raw(into_base_tx(&signed)).expect("call should execute");
+            assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+            outcome.result.gas().tx_gas_used()
+        };
+
+        // Both calls are byte-for-byte identical except the address read, so the
+        // only gas difference is the cold-vs-warm access cost of that address.
+        let warm_coinbase_gas = run(balance_of(BENEFICIARY), 0x78);
+        let cold_account_gas = run(balance_of(cold_account), 0x79);
+
+        assert!(
+            warm_coinbase_gas < cold_account_gas,
+            "BALANCE(coinbase) ({warm_coinbase_gas}) must be cheaper than a cold \
+             BALANCE ({cold_account_gas}) because EIP-3651 pre-warms the coinbase",
         );
     }
 
