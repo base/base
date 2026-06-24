@@ -861,12 +861,10 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                     warn!(
                         error = %e,
                         game = %game_address,
-                        "dispute proof L1 origin is too old, requesting a fresh proof"
+                        "dispute proof L1 origin is too old, dropping pending proof"
                     );
-                    if let Some(p) = self.pending_proofs.get_mut(&game_address) {
-                        p.phase = ProofPhase::NeedsRetry;
-                    }
-                    return self.handle_proof_retry(game_address).await;
+                    self.pending_proofs.remove(&game_address);
+                    return Ok(());
                 }
 
                 if matches!(e.known_revert(), Some(KnownRevert::InvalidSigner)) {
@@ -999,12 +997,9 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::{
-        ChallengerProofAdapter,
-        test_utils::{
-            MockAggregateVerifier, MockDisputeGameFactory, MockL2Provider, MockTxManager,
-            MockZkProofProvider, addr, mock_anchor_registry, mock_state,
-        },
+    use crate::test_utils::{
+        MockAggregateVerifier, MockDisputeGameFactory, MockL2Provider, MockTxManager,
+        MockZkProofProvider, addr, mock_anchor_registry, mock_state,
     };
 
     fn proof_request() -> SnarkGroth16ProofRequest {
@@ -1087,7 +1082,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_l1_origin_revert_requests_fresh_proof() {
+    async fn stale_l1_origin_revert_drops_pending_zk_proof() {
         let (mut driver, proof_requester) =
             driver_with_tx_error(TxManagerError::ExecutionReverted {
                 reason: None,
@@ -1097,13 +1092,8 @@ mod tests {
 
         driver.poll_or_submit(addr(0)).await.unwrap();
 
-        let pending = driver.pending_proofs.get(&addr(0)).unwrap();
-        assert!(matches!(pending.phase, ProofPhase::AwaitingProof { .. }));
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
         let state = proof_requester.state.lock().unwrap();
-        assert_eq!(state.prove_block_range_log.len(), 1);
-        assert_eq!(
-            state.prove_block_range_log[0].proof.session_id,
-            ChallengerProofAdapter::snark_groth16_session_id(addr(0), 0),
-        );
+        assert!(state.prove_block_range_log.is_empty());
     }
 }
