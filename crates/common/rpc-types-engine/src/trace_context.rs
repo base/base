@@ -1,6 +1,8 @@
 //! W3C trace context types for propagating `OpenTelemetry` parents across execution payload flows.
 
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
+#[cfg(feature = "reth")]
+use alloc::vec::Vec;
 
 use crate::ExecutionData;
 
