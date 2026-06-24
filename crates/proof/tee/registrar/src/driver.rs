@@ -44,8 +44,9 @@ pub const DEFAULT_MAX_CONCURRENCY: usize = 4;
 /// of 90 minutes.
 pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 5100;
 
-/// Number of consecutive discovery cycles to protect last-known active signers
-/// for an instance that disappears from otherwise successful discovery output.
+/// Default number of consecutive discovery cycles to protect last-known active
+/// signers for an instance that disappears from otherwise successful discovery
+/// output.
 ///
 /// Five cycles is roughly 2.5 minutes with the default 30 second poll interval.
 /// A shorter window is more vulnerable to transient discovery flakes; a longer
@@ -62,6 +63,10 @@ pub struct DriverConfig {
     pub cancel: CancellationToken,
     /// Maximum number of instances resolved concurrently per discovery cycle.
     pub max_concurrency: usize,
+    /// Number of consecutive discovery cycles to protect last-known active
+    /// signers for an instance missing from otherwise successful discovery
+    /// output. Defaults to [`INSTANCE_CACHE_TTL_CYCLES`].
+    pub instance_cache_ttl_cycles: u32,
     /// Duration after launch during which unhealthy instances are still
     /// eligible for registration. New instances may fail ALB health checks
     /// while the application is still initializing. Set to zero to disable.
@@ -140,6 +145,7 @@ where
         info!(
             poll_interval = ?self.config.poll_interval,
             max_concurrency = self.config.max_concurrency,
+            instance_cache_ttl_cycles = self.config.instance_cache_ttl_cycles,
             "starting registration driver"
         );
 
@@ -385,12 +391,12 @@ where
             }
 
             *ttl_cycles = ttl_cycles.saturating_add(1);
-            if *ttl_cycles <= INSTANCE_CACHE_TTL_CYCLES {
+            if *ttl_cycles <= self.config.instance_cache_ttl_cycles {
                 warn!(
                     instance = %instance_id,
                     cached_signers = addresses.len(),
                     ttl_cycles = *ttl_cycles,
-                    max_ttl_cycles = INSTANCE_CACHE_TTL_CYCLES,
+                    max_ttl_cycles = self.config.instance_cache_ttl_cycles,
                     "instance missing from discovery, preserving last-known active signers"
                 );
                 resolution.active_signers.extend(addresses.iter().copied());
@@ -399,7 +405,8 @@ where
             } else {
                 warn!(
                     instance = %instance_id,
-                    max_ttl_cycles = INSTANCE_CACHE_TTL_CYCLES,
+                    ttl_cycles = *ttl_cycles,
+                    max_ttl_cycles = self.config.instance_cache_ttl_cycles,
                     "last-known active signer cache expired for missing instance"
                 );
                 false
@@ -510,6 +517,20 @@ mod tests {
         signer_client: MockEnclaveEndpointClient,
         cancel: CancellationToken,
     ) -> TestDriver {
+        cycle_driver_with_instance_cache_ttl(
+            instances,
+            signer_client,
+            cancel,
+            INSTANCE_CACHE_TTL_CYCLES,
+        )
+    }
+
+    fn cycle_driver_with_instance_cache_ttl(
+        instances: Vec<ProverInstance>,
+        signer_client: MockEnclaveEndpointClient,
+        cancel: CancellationToken,
+        instance_cache_ttl_cycles: u32,
+    ) -> TestDriver {
         let signer_manager = Arc::new(SignerManager::new(
             signer_client.clone(),
             (),
@@ -530,6 +551,7 @@ mod tests {
                 poll_interval: Duration::from_secs(1),
                 cancel,
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                instance_cache_ttl_cycles,
                 unhealthy_registration_window: Duration::from_secs(
                     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
                 ),
@@ -711,18 +733,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discover_and_resolve_evicts_cached_missing_instance_after_ttl() {
+    async fn discover_and_resolve_evicts_cached_missing_instance_after_configured_ttl() {
+        const TEST_TTL_CYCLES: u32 = 2;
+
         let signer_addr = signer_from_private_key(&HARDHAT_KEY_0);
         let inst = healthy_prover_instance(EP1);
         let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
-        let first_cycle =
-            cycle_driver(vec![inst.clone()], signer_client.clone(), CancellationToken::new());
-        let missing_cycle = cycle_driver(vec![], signer_client, CancellationToken::new());
+        let first_cycle = cycle_driver_with_instance_cache_ttl(
+            vec![inst.clone()],
+            signer_client.clone(),
+            CancellationToken::new(),
+            TEST_TTL_CYCLES,
+        );
+        let missing_cycle = cycle_driver_with_instance_cache_ttl(
+            vec![],
+            signer_client,
+            CancellationToken::new(),
+            TEST_TTL_CYCLES,
+        );
         let mut last_known_active = HashMap::new();
 
         first_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
 
-        for expected_ttl in 1..=INSTANCE_CACHE_TTL_CYCLES {
+        for expected_ttl in 1..=TEST_TTL_CYCLES {
             let resolution =
                 missing_cycle.discover_and_resolve(&mut last_known_active).await.unwrap();
 

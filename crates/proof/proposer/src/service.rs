@@ -35,7 +35,7 @@ use crate::{
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::{OutputProposer, ProposalSubmitter},
     pipeline::ProvingPipeline,
-    proof_collector::{ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig},
+    proof_collector::ProofCollector,
     proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
     proof_recovery::{ProofRecovery, ProofRecoveryConfig},
     proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
@@ -232,8 +232,6 @@ impl ProposerService {
             tee_image_hash: config.tee_image_hash,
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
-        let proof_collector =
-            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::clone(&l1_client),
@@ -275,23 +273,15 @@ impl ProposerService {
             anchor_registry,
             factory_client,
         ));
-        let proof_collector_orchestrator = ProofCollectorOrchestrator::new(
-            proof_collector,
-            proof_dispatcher.clone(),
+        let proof_collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup_client),
             proof_submitter,
-            Arc::clone(&proof_recovery),
-            ProofCollectorRuntimeConfig {
-                block_interval: driver_config.block_interval,
-                max_retries: driver_config.max_retries,
-                submit_timeout: driver_config.submit_timeout,
-            },
+            driver_config.block_interval,
+            driver_config.submit_timeout,
         );
-        let pipeline = ProvingPipeline::new(
-            driver_config,
-            proof_dispatcher,
-            proof_recovery,
-            proof_collector_orchestrator,
-        );
+        let pipeline =
+            ProvingPipeline::new(driver_config, proof_dispatcher, proof_recovery, proof_collector);
         info!("Proving pipeline initialized");
         let driver_handle: Arc<dyn ProposerDriverControl> =
             Arc::new(PipelineHandle::new(pipeline, cancel.clone()));

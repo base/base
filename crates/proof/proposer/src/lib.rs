@@ -23,14 +23,14 @@ pub use proof_adapter::ProposerProofAdapter;
 mod proposal_intervals;
 pub use proposal_intervals::ProposalIntervals;
 
+mod proof_target;
+pub use proof_target::ProofTarget;
+
 mod proof_recovery;
 pub use proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig};
 
 mod proof_collector;
-pub use proof_collector::{
-    ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig, ProofCollectorState,
-    ProofSubmitEffect, TargetPoll,
-};
+pub use proof_collector::ProofCollector;
 
 mod proof_dispatcher;
 pub use proof_dispatcher::{

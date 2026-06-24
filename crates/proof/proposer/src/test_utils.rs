@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -39,10 +39,12 @@ const TEST_SIGNATURE: [u8; 65] = {
 };
 
 /// Mock L1 provider for tests.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MockL1 {
     /// The block number returned by `block_number()`.
     pub latest_block_number: u64,
+    /// Optional `header_by_number()` transport error.
+    pub header_by_number_error: Option<String>,
     /// Headers returned by `header_by_hash()`.
     pub headers_by_hash: HashMap<B256, Header>,
 }
@@ -58,7 +60,7 @@ impl MockL1 {
 
     /// Creates a mock L1 provider with hash-specific headers.
     pub fn with_headers(latest_block_number: u64, headers_by_hash: HashMap<B256, Header>) -> Self {
-        Self { latest_block_number, headers_by_hash }
+        Self { latest_block_number, header_by_number_error: None, headers_by_hash }
     }
 }
 
@@ -71,6 +73,9 @@ impl L1Provider for MockL1 {
         &self,
         _: BlockNumberOrTag,
     ) -> RpcResult<alloy_rpc_types_eth::Header> {
+        if let Some(error) = &self.header_by_number_error {
+            return Err(RpcError::Transport(error.clone()));
+        }
         Ok(test_l1_header(B256::repeat_byte(0x11), self.latest_block_number))
     }
     async fn header_by_hash(&self, hash: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
@@ -460,8 +465,14 @@ pub struct MockProofRequester {
     pub requests: std::sync::Mutex<HashMap<String, ProveBlockRangeRequest>>,
     /// Sessions that should return a terminal failed status from `get_proof`.
     pub failed_sessions: std::sync::Mutex<HashMap<String, String>>,
+    /// Reject every `prove_block_range` call with a timeout.
+    pub reject_prove: AtomicBool,
+    /// Override the accepted session id returned by `prove_block_range`.
+    pub accepted_session_id: std::sync::Mutex<Option<String>>,
     /// Number of `prove_block_range` calls accepted.
     pub prove_count: AtomicUsize,
+    /// Reject every `delete_proof_request` call with a timeout.
+    pub reject_delete: AtomicBool,
 }
 
 #[async_trait]
@@ -470,9 +481,17 @@ impl ProofRequesterProvider for MockProofRequester {
         &self,
         request: ProveBlockRangeRequest,
     ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+        if self.reject_prove.load(Ordering::SeqCst) {
+            return Err(ProverServiceClientError::Timeout("simulated dispatch failure".into()));
+        }
+
         let session_id = request.proof.session_id.clone();
         self.prove_count.fetch_add(1, Ordering::SeqCst);
         self.requests.lock().unwrap().insert(session_id.clone(), request);
+        if let Some(session_id) = self.accepted_session_id.lock().unwrap().clone() {
+            return Ok(ProveBlockRangeResponse { session_id });
+        }
+
         Ok(ProveBlockRangeResponse { session_id })
     }
 
@@ -534,6 +553,10 @@ impl ProofRequesterProvider for MockProofRequester {
         &self,
         request: DeleteProofRequest,
     ) -> Result<(), ProverServiceClientError> {
+        if self.reject_delete.load(Ordering::SeqCst) {
+            return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
+        }
+
         self.requests.lock().unwrap().remove(&request.session_id);
         self.failed_sessions.lock().unwrap().remove(&request.session_id);
         Ok(())
@@ -547,9 +570,19 @@ impl ProofRequesterProvider for MockProofRequester {
     }
 }
 
-/// Mock output proposer that always succeeds.
-#[derive(Debug)]
-pub struct MockOutputProposer;
+/// Mock output proposer that succeeds unless configured with a create error.
+#[derive(Debug, Default)]
+pub struct MockOutputProposer {
+    /// Error returned by the next `propose_output` call.
+    pub create_error: std::sync::Mutex<Option<ProposerError>>,
+}
+
+impl MockOutputProposer {
+    /// Creates a mock that fails the next output proposal.
+    pub fn with_create_error(error: ProposerError) -> Self {
+        Self { create_error: std::sync::Mutex::new(Some(error)) }
+    }
+}
 
 #[async_trait]
 impl OutputProposer for MockOutputProposer {
@@ -559,6 +592,9 @@ impl OutputProposer for MockOutputProposer {
         _parent_address: Address,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
+        if let Some(error) = self.create_error.lock().unwrap().take() {
+            return Err(error);
+        }
         Ok(())
     }
 

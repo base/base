@@ -14,6 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     Metrics, driver::RecoveredState, error::ProposerError, proof_adapter::ProposerProofAdapter,
+    proof_target::ProofTarget,
 };
 
 /// Static parameters needed to build proposer proof requests.
@@ -60,6 +61,17 @@ pub enum ProofDispatchAttempt {
     BuildFailed(ProposerError),
     /// The request reached prover-service but dispatch failed.
     DispatchFailed(ProposerError),
+}
+
+impl ProofDispatchAttempt {
+    /// Returns the metrics outcome label for this dispatch attempt.
+    pub const fn metric_label(&self) -> &'static str {
+        match self {
+            Self::Accepted(_) => Metrics::DISPATCH_OUTCOME_ACCEPTED,
+            Self::BuildFailed(_) => Metrics::DISPATCH_OUTCOME_BUILD_FAILED,
+            Self::DispatchFailed(_) => Metrics::DISPATCH_OUTCOME_FAILED,
+        }
+    }
 }
 
 /// Builds and dispatches proposer TEE proof requests.
@@ -251,33 +263,6 @@ where
         }
     }
 
-    /// Builds and dispatches a retry-specific proof request for a discarded proof.
-    pub async fn dispatch_discard_retry(
-        &self,
-        target_block: u64,
-        recovered: &RecoveredState,
-        claimed_l2_output_root: B256,
-        attempt: u32,
-    ) -> ProofDispatchAttempt {
-        let request =
-            match self.build_request(target_block, recovered, claimed_l2_output_root).await {
-                Ok(request) => request,
-                Err(error) => return ProofDispatchAttempt::BuildFailed(error),
-            };
-        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(&request, attempt);
-        let expected_session_id = session_id.clone();
-
-        match self.dispatch_tee_with_session_id(request, session_id).await {
-            Ok(session_id) if session_id == expected_session_id => {
-                ProofDispatchAttempt::Accepted(session_id)
-            }
-            Ok(session_id) => ProofDispatchAttempt::DispatchFailed(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {expected_session_id}, got {session_id}"
-            ))),
-            Err(error) => ProofDispatchAttempt::DispatchFailed(error),
-        }
-    }
-
     /// Submits a TEE proof request under an explicit session id.
     pub async fn dispatch_tee_with_session_id(
         &self,
@@ -344,7 +329,7 @@ where
             }
 
             let Some(target_block) =
-                Self::next_target_block(current.l2_block_number, block_interval)
+                ProofTarget::next_block(current.l2_block_number, block_interval)
             else {
                 break;
             };
@@ -358,7 +343,12 @@ where
                 break;
             }
 
-            let Some(claimed_l2_output_root) = self.canonical_output_root(target_block).await
+            let Some(claimed_l2_output_root) = ProofTarget::canonical_output_root(
+                self.rollup_client.as_ref(),
+                target_block,
+                "dispatcher",
+            )
+            .await
             else {
                 break;
             };
@@ -401,7 +391,10 @@ where
         max_retries: u32,
         count_dispatch_failure: bool,
     ) -> ProofDispatchOutcome {
-        match self.dispatch_for(target_block, recovered, claimed_l2_output_root).await {
+        let dispatch = self.dispatch_for(target_block, recovered, claimed_l2_output_root).await;
+        Metrics::proof_dispatch_total(dispatch.metric_label()).increment(1);
+
+        match dispatch {
             ProofDispatchAttempt::Accepted(session_id) => {
                 info!(
                     target_block,
@@ -409,7 +402,6 @@ where
                     from_block = recovered.l2_block_number,
                     "Proof request accepted by prover service"
                 );
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
                 ProofDispatchOutcome::Accepted
             }
             ProofDispatchAttempt::BuildFailed(error) => {
@@ -418,11 +410,9 @@ where
                     error = %error,
                     "Failed to build proof request, will retry next iteration"
                 );
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
                 ProofDispatchOutcome::Skipped
             }
             ProofDispatchAttempt::DispatchFailed(error) => {
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
                 if count_dispatch_failure {
                     if state.handle_proof_failure(target_block, error, max_retries) {
                         ProofDispatchOutcome::Skipped
@@ -439,37 +429,6 @@ where
                 }
             }
         }
-    }
-
-    /// Fetches the canonical output root for a dispatch target.
-    pub async fn canonical_output_root(&self, target_block: u64) -> Option<B256> {
-        match self.rollup_client.output_at_block(target_block).await {
-            Ok(output) => Some(output.output_root),
-            Err(e) => {
-                warn!(
-                    target_block,
-                    error = %e,
-                    "Failed to fetch canonical output root for dispatch target"
-                );
-                None
-            }
-        }
-    }
-
-    /// Computes the next dispatch target from a current block and interval.
-    pub fn next_target_block(current_block: u64, block_interval: u64) -> Option<u64> {
-        if block_interval == 0 {
-            error!("Block interval must be non-zero");
-            return None;
-        }
-
-        current_block.checked_add(block_interval).map_or_else(
-            || {
-                error!(current_block, block_interval, "Overflow computing next target block");
-                None
-            },
-            Some,
-        )
     }
 }
 
@@ -898,14 +857,6 @@ mod tests {
     }
 
     #[test]
-    fn next_target_block_returns_none_for_zero_interval() {
-        assert_eq!(
-            ProofDispatcher::<MockL1, MockL2, MockRollupClient>::next_target_block(100, 0),
-            None
-        );
-    }
-
-    #[test]
     fn handle_proof_failure_clears_cursor_on_retry_exhaustion() {
         let mut state = ProofDispatcherState::new();
         state.cursor = Some(RecoveredState {
@@ -921,19 +872,6 @@ mod tests {
         assert!(state.recovered.is_none());
         assert!(state.cursor.is_none());
         assert!(!state.retry_counts.contains_key(&200));
-    }
-
-    #[tokio::test]
-    async fn dispatch_discard_retry_uses_retry_specific_session() {
-        let (dispatcher, _requester) = dispatcher();
-        let claimed_root = B256::repeat_byte(0xaa);
-
-        let outcome = dispatcher.dispatch_discard_retry(200, &recovered(), claimed_root, 1).await;
-        let ProofDispatchAttempt::Accepted(session_id) = outcome else {
-            panic!("expected accepted dispatch")
-        };
-
-        assert_ne!(session_id, ProposerProofAdapter::tee_session_id_for_root(claimed_root));
     }
 
     #[test]

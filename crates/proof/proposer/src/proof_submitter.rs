@@ -19,10 +19,10 @@
 //! state. The pipeline enforces single-flight submission via its own join set,
 //! while the submitter focuses on per-proposal validation and the L1 call.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, B256, Signature, keccak256};
+use alloy_primitives::{Address, B256, Bytes, Signature, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
     AggregateVerifierClient, DisputeGameFactoryClient, ITEEProverRegistry, encode_extra_data,
@@ -34,9 +34,12 @@ use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
-    Metrics, error::ProposerError, output_proposer::OutputProposer,
+    Metrics, RecoveredState, error::ProposerError, output_proposer::OutputProposer,
     proposal_intervals::ProposalIntervals,
 };
+
+const RECENT_GAME_LOOKUP_MAX_ATTEMPTS: usize = 3;
+const RECENT_GAME_LOOKUP_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 /// Internal action returned to the pipeline after a single submission attempt.
 ///
@@ -156,17 +159,18 @@ where
 
     /// Validates the completed proof and submits it to L1 as a dispute game.
     ///
-    /// Returns `Ok(())` only when `propose_output` succeeded on L1. Any other
-    /// outcome — including RPC failures, root mismatches, invalid signers, or
-    /// contract-level rejections — is mapped to a [`SubmitAction`] variant
-    /// that tells the pipeline how to react.
+    /// Returns the next recovered state when the proof was submitted or
+    /// attached and the game address is known. Any other outcome — including
+    /// RPC failures, root mismatches, invalid signers, or contract-level
+    /// rejections — is mapped to a [`SubmitAction`] variant that tells the
+    /// pipeline how to react.
     #[instrument(skip_all, fields(target_block = target_block, parent_address = %parent_address))]
     pub async fn submit(
         &self,
         proof_result: &ProofResult,
         target_block: u64,
         parent_address: Address,
-    ) -> Result<(), SubmitAction> {
+    ) -> Result<Option<RecoveredState>, SubmitAction> {
         let (aggregate_proposal, proposals) = match proof_result {
             ProofResult::Tee { aggregate_proposal, proposals } => (aggregate_proposal, proposals),
             ProofResult::Zk { .. } => {
@@ -311,22 +315,45 @@ where
                 drop(propose_timer);
                 info!(target_block, "Dispute game created successfully");
                 Metrics::l2_output_proposals_total().increment(1);
-                Ok(())
+                let game_address = self
+                    .lookup_recent_game(
+                        aggregate_proposal.output_root,
+                        &extra_data,
+                        target_block,
+                        "create",
+                    )
+                    .await?;
+                game_address.map_or_else(
+                    || {
+                        warn!(
+                            target_block,
+                            output_root = ?aggregate_proposal.output_root,
+                            "Created dispute game was not found by UUID lookup"
+                        );
+                        Ok(None)
+                    },
+                    |game_address| {
+                        Ok(Some(RecoveredState {
+                            parent_address: game_address,
+                            output_root: aggregate_proposal.output_root,
+                            l2_block_number: target_block,
+                        }))
+                    },
+                )
             }
             Err(e) => {
                 if matches!(e, ProposerError::Submission(ProofSubmissionError::GameAlreadyExists)) {
                     drop(propose_timer);
                     info!(target_block, "Game already exists, checking fresh state from chain");
                     let raced_game = self
-                        .factory_client
-                        .games(self.config.game_type, aggregate_proposal.output_root, extra_data)
-                        .await
-                        .map_err(|e| {
-                            SubmitAction::Failed(ProposerError::Contract(format!(
-                                "matching game lookup after duplicate create failed: {e}"
-                            )))
-                        })?;
-                    if raced_game != Address::ZERO {
+                        .lookup_recent_game(
+                            aggregate_proposal.output_root,
+                            &extra_data,
+                            target_block,
+                            "duplicate_create",
+                        )
+                        .await?;
+                    if let Some(raced_game) = raced_game {
                         return self
                             .attach_existing_game_proof(
                                 raced_game,
@@ -343,13 +370,16 @@ where
                     Err(SubmitAction::GameAlreadyExists)
                 } else if matches!(
                     e,
-                    ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)
+                    ProposerError::Submission(
+                        ProofSubmissionError::L1OriginTooOld
+                            | ProofSubmissionError::InvalidParentGame
+                    )
                 ) {
                     propose_timer.disarm();
                     warn!(
                         error = %e,
                         target_block,
-                        "Proof L1 origin is too old, discarding proof to re-prove"
+                        "Proof cannot be submitted with current chain state, discarding proof to re-prove"
                     );
                     Err(SubmitAction::Discard(e))
                 } else if matches!(
@@ -372,12 +402,73 @@ where
         }
     }
 
+    async fn lookup_recent_game(
+        &self,
+        output_root: B256,
+        extra_data: &Bytes,
+        target_block: u64,
+        lookup_context: &'static str,
+    ) -> Result<Option<Address>, SubmitAction> {
+        for attempt in 1..=RECENT_GAME_LOOKUP_MAX_ATTEMPTS {
+            match self
+                .factory_client
+                .games(self.config.game_type, output_root, extra_data.clone())
+                .await
+            {
+                Ok(game_address) if game_address != Address::ZERO => {
+                    if attempt > 1 {
+                        info!(
+                            target_block,
+                            output_root = ?output_root,
+                            game_address = %game_address,
+                            attempt,
+                            lookup_context = %lookup_context,
+                            "Dispute game found by UUID lookup after retry"
+                        );
+                    }
+                    return Ok(Some(game_address));
+                }
+                Ok(_) if attempt < RECENT_GAME_LOOKUP_MAX_ATTEMPTS => {
+                    debug!(
+                        target_block,
+                        output_root = ?output_root,
+                        attempt,
+                        max_attempts = RECENT_GAME_LOOKUP_MAX_ATTEMPTS,
+                        lookup_context = %lookup_context,
+                        "Dispute game not found by UUID lookup, retrying"
+                    );
+                }
+                Ok(_) => return Ok(None),
+                Err(error) if attempt < RECENT_GAME_LOOKUP_MAX_ATTEMPTS => {
+                    warn!(
+                        target_block,
+                        output_root = ?output_root,
+                        attempt,
+                        max_attempts = RECENT_GAME_LOOKUP_MAX_ATTEMPTS,
+                        lookup_context = %lookup_context,
+                        error = %error,
+                        "Dispute game UUID lookup failed, retrying"
+                    );
+                }
+                Err(error) => {
+                    return Err(SubmitAction::Failed(ProposerError::Contract(format!(
+                        "matching game lookup after {lookup_context} failed: {error}"
+                    ))));
+                }
+            }
+
+            tokio::time::sleep(RECENT_GAME_LOOKUP_RETRY_DELAY).await;
+        }
+
+        Ok(None)
+    }
+
     async fn attach_existing_game_proof(
         &self,
         game_address: Address,
         aggregate_proposal: &Proposal,
         target_block: u64,
-    ) -> Result<(), SubmitAction> {
+    ) -> Result<Option<RecoveredState>, SubmitAction> {
         let game_l1_head = self.verifier_client.l1_head(game_address).await.map_err(|e| {
             SubmitAction::Failed(ProposerError::Contract(format!(
                 "l1Head lookup failed for game {game_address}: {e}"
@@ -407,7 +498,11 @@ where
                 drop(attach_timer);
                 info!(target_block, game_address = %game_address, "TEE proof attached successfully");
                 Metrics::l2_output_proposals_total().increment(1);
-                Ok(())
+                Ok(Some(RecoveredState {
+                    parent_address: game_address,
+                    output_root: aggregate_proposal.output_root,
+                    l2_block_number: target_block,
+                }))
             }
             Err(ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified)) => {
                 drop(attach_timer);
@@ -416,15 +511,23 @@ where
                     game_address = %game_address,
                     "TEE proof was attached by another submitter"
                 );
-                Ok(())
+                Ok(Some(RecoveredState {
+                    parent_address: game_address,
+                    output_root: aggregate_proposal.output_root,
+                    l2_block_number: target_block,
+                }))
             }
-            Err(e @ ProposerError::Submission(ProofSubmissionError::L1OriginTooOld)) => {
+            Err(
+                e @ ProposerError::Submission(
+                    ProofSubmissionError::L1OriginTooOld | ProofSubmissionError::InvalidParentGame,
+                ),
+            ) => {
                 attach_timer.disarm();
                 warn!(
                     error = %e,
                     target_block,
                     game_address = %game_address,
-                    "Proof L1 origin is too old, discarding proof to re-prove"
+                    "Proof cannot be submitted with current chain state, discarding proof to re-prove"
                 );
                 Err(SubmitAction::Discard(e))
             }
@@ -755,6 +858,51 @@ mod tests {
         assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn submit_retries_created_game_lookup() {
+        let game_address = Address::repeat_byte(0xAA);
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter = submitter_with_factory(
+            Arc::clone(&output),
+            Arc::new(SequentialGameFactory::new([Address::ZERO, Address::ZERO, game_address])),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        let recovered = result.unwrap().expect("game address should be recovered after retry");
+        assert_eq!(recovered.parent_address, game_address);
+        assert_eq!(recovered.l2_block_number, TEST_BLOCK_INTERVAL);
+        assert_eq!(*output.created.lock().unwrap(), 1);
+        assert!(output.verified.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_discards_invalid_parent_game_create_error() {
+        let output = Arc::new(RecordingOutputProposer::default());
+        *output.create_error.lock().unwrap() =
+            Some(ProposerError::Submission(ProofSubmissionError::InvalidParentGame));
+        let submitter = submitter(
+            Arc::clone(&output),
+            MockDisputeGameFactory::with_games(vec![]),
+            MockAggregateVerifier::default(),
+        );
+
+        let result = submitter
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(SubmitAction::Discard(ref error))
+                if error.metric_label() == "invalid_parent_game"
+        ));
+        assert_eq!(*output.created.lock().unwrap(), 1);
+        assert!(output.verified.lock().unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn submit_recovers_when_existing_game_l1_head_mismatches() {
         let game_address = Address::repeat_byte(0xAA);
@@ -787,6 +935,10 @@ mod tests {
     #[case::l1_origin_too_old(
         ProposerError::Submission(ProofSubmissionError::L1OriginTooOld),
         ExpectedAttachErrorAction::Discard("l1_origin_too_old")
+    )]
+    #[case::invalid_parent_game(
+        ProposerError::Submission(ProofSubmissionError::InvalidParentGame),
+        ExpectedAttachErrorAction::Discard("invalid_parent_game")
     )]
     #[case::invalid_signer(
         ProposerError::Submission(ProofSubmissionError::InvalidSigner),

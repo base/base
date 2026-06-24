@@ -32,9 +32,9 @@ use crate::pipeline::ProvingPipeline;
 pub struct DriverConfig {
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
-    /// Maximum retries for a single target block before dropping the cached
-    /// recovery. Only proof failures and dispatch RPC errors count against
-    /// this budget; transient submit and poll errors do not.
+    /// Maximum proof request dispatch retries for a single target block before
+    /// dropping the cached recovery. Collector-side proof/session failures and
+    /// submit errors do not count against this budget.
     pub max_retries: u32,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
@@ -247,9 +247,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ProofCollector, ProofCollectorOrchestrator, ProofCollectorRuntimeConfig, ProofDispatcher,
-        ProofDispatcherConfig, ProofRecovery, ProofRecoveryConfig, ProofSubmitter,
-        ProofSubmitterConfig,
+        ProofCollector, ProofDispatcher, ProofDispatcherConfig, ProofRecovery, ProofRecoveryConfig,
+        ProofSubmitter, ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
@@ -278,7 +277,8 @@ mod tests {
             Arc::new(MockProofRequester::default());
         let verifier: Arc<dyn base_proof_contracts::AggregateVerifierClient> =
             Arc::new(MockAggregateVerifier::default());
-        let output_proposer: Arc<dyn crate::OutputProposer> = Arc::new(MockOutputProposer);
+        let output_proposer: Arc<dyn crate::OutputProposer> =
+            Arc::new(MockOutputProposer::default());
         let config = DriverConfig {
             poll_interval: Duration::from_secs(3600),
             submit_timeout: Some(std::time::Duration::from_secs(60)),
@@ -290,8 +290,6 @@ mod tests {
             ..Default::default()
         };
 
-        let proof_collector =
-            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup));
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::clone(&l1),
@@ -333,23 +331,15 @@ mod tests {
             anchor_registry,
             factory,
         ));
-        let proof_collector_orchestrator = ProofCollectorOrchestrator::new(
-            proof_collector,
-            proof_dispatcher.clone(),
+        let proof_collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup),
             proof_submitter,
-            Arc::clone(&proof_recovery),
-            ProofCollectorRuntimeConfig {
-                block_interval: config.block_interval,
-                max_retries: config.max_retries,
-                submit_timeout: config.submit_timeout,
-            },
+            config.block_interval,
+            config.submit_timeout,
         );
-        let pipeline = ProvingPipeline::new(
-            config,
-            proof_dispatcher,
-            proof_recovery,
-            proof_collector_orchestrator,
-        );
+        let pipeline =
+            ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);
         PipelineHandle::new(pipeline, global_cancel)
     }
 
