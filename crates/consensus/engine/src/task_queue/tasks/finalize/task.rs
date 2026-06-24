@@ -1,11 +1,11 @@
 //! A task for finalizing an L2 block.
 
-use std::{sync::Arc, time::Instant};
+use std::{future::IntoFuture, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
-use opentelemetry::Context;
+use opentelemetry::{Context, context::FutureExt as OtelFutureExt};
 
 use crate::{
     EngineClient, EngineState, EngineTaskExt, FinalizeTaskError, Metrics, SynchronizeTask,
@@ -69,6 +69,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
             .client
             .get_l2_block(self.block_number.into())
             .full()
+            .into_future()
+            .with_context(self.otel_cx.clone())
             .await
             .map_err(FinalizeTaskError::TransportError)?
             .ok_or(FinalizeTaskError::BlockNotFound(self.block_number))?

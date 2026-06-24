@@ -224,6 +224,9 @@ pub trait PayloadTraceContextExt: Clone {
     fn trace_context_headers(&self) -> Option<&TraceContextHeaders>;
 
     /// Returns a copy of these attributes with the supplied trace context attached.
+    ///
+    /// Implementations that do not carry trace context may intentionally discard the supplied
+    /// headers and return `self` unchanged.
     #[must_use = "trace context is only preserved if the returned payload wrapper is used"]
     fn with_trace_context(self, trace_context: TraceContextHeaders) -> Self;
 

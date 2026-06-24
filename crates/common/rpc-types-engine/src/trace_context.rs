@@ -51,6 +51,7 @@ impl TraceContextHeaders {
 
     /// Attaches these W3C headers as the current `OTel` parent context.
     #[cfg(feature = "reth")]
+    #[must_use = "the returned ContextGuard must be held for the context to remain active"]
     pub fn attach_as_parent(&self) -> Option<opentelemetry::ContextGuard> {
         use opentelemetry::{global, propagation::Extractor, trace::TraceContextExt};
 
@@ -100,6 +101,9 @@ pub trait BaseExecutionDataExt: Clone {
     fn trace_context_headers(&self) -> Option<&TraceContextHeaders>;
 
     /// Returns a copy of this payload with the supplied trace context attached.
+    ///
+    /// Implementations that do not carry trace context may intentionally discard the supplied
+    /// headers and return `self` unchanged.
     #[must_use = "trace context is only preserved if the returned payload wrapper is used"]
     fn with_trace_context(self, trace_context: TraceContextHeaders) -> Self;
 
