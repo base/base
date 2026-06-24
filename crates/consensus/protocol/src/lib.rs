@@ -16,9 +16,9 @@ pub use batch::{
     BatchTransaction, BatchType, BatchValidationProvider, BatchValidity, BatchWithInclusionBlock,
     DecompressionError, RawSpanBatch, SingleBatch, SpanBatch, SpanBatchBits,
     SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
-    SpanBatchEip7702TransactionData, SpanBatchElement, SpanBatchError,
-    SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix, SpanBatchTransactionData,
-    SpanBatchTransactions, SpanDecodingError,
+    SpanBatchEip7702TransactionData, SpanBatchEip8130TransactionData, SpanBatchElement,
+    SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix,
+    SpanBatchTransactionData, SpanBatchTransactions, SpanDecodingError,
 };
 
 mod brotli;

@@ -19,7 +19,7 @@ inputs:
     default: "false"
   sp1-version:
     description: SP1 release tag used when sp1 is enabled (matches etc/just/succinct.just)
-    default: "v6.2.3"
+    default: "v6.3.0"
   native-deps:
     description: Install native build dependencies (clang, llvm, etc.)
     default: "false"

@@ -473,12 +473,12 @@ boundless-market = "1.1"
 risc0-ethereum-contracts = "3.0.1"
 risc0-zkvm = { version = "^3.0", default-features = false }
 
-# SP1 v6.2.1 (Hypercube) — used by crates/proof/succinct
-sp1-prover-types = "=6.2.1"
-sp1-sdk = { version = "=6.2.1" }
-sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
+# SP1 v6.3.0 (Hypercube) — used by crates/proof/succinct
+sp1-prover-types = "=6.3.0"
+sp1-sdk = { version = "=6.3.0" }
+sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
+sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
+sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
 
 # crypto
 sha3 = "0.10"

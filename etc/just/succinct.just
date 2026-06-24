@@ -1,5 +1,5 @@
 _cargo_prove := "~/.sp1/bin/cargo-prove"
-_sp1_tag := "v6.2.3"
+_sp1_tag := "v6.3.0"
 _repo_root := justfile_directory()
 _succinct_dir := justfile_directory() / "crates/proof/succinct"
 

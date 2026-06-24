@@ -10,7 +10,7 @@ pub use metrics::Metrics;
 
 /// Core RPC service implementation.
 mod service;
-pub use service::{IngressApiServer, IngressService, Providers};
+pub use service::{IngressApiServer, IngressService};
 
 /// Transaction validation implementation.
 mod validation;
@@ -43,9 +43,9 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_PORT", default_value = "8080")]
     pub port: u16,
 
-    /// URL of the mempool service to proxy transactions to
-    #[arg(long, env = "TIPS_INGRESS_RPC_MEMPOOL")]
-    pub mempool_url: Url,
+    /// Deprecated. Ingress no longer proxies transactions to the mempool.
+    #[arg(long = "mempool-url", env = "TIPS_INGRESS_RPC_MEMPOOL", hide = true)]
+    pub deprecated_mempool_url: Option<Url>,
 
     /// URL of the audit-archiver RPC endpoint that receives bundle events via
     /// `base_persistBatchedBundleEvent`.
@@ -100,9 +100,9 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_CHAIN_ID", default_value = "11")]
     pub chain_id: u64,
 
-    /// URL of third-party RPC endpoint to forward raw transactions to (enables forwarding if set)
-    #[arg(long, env = "TIPS_INGRESS_RAW_TX_FORWARD_RPC")]
-    pub raw_tx_forward_rpc: Option<Url>,
+    /// Deprecated. Ingress no longer forwards raw transactions to another RPC endpoint.
+    #[arg(long = "raw-tx-forward-rpc", env = "TIPS_INGRESS_RAW_TX_FORWARD_RPC", hide = true)]
+    pub deprecated_raw_tx_forward_rpc: Option<Url>,
 
     /// TTL for bundle cache in seconds
     #[arg(long, env = "TIPS_INGRESS_BUNDLE_CACHE_TTL", default_value = "20")]
