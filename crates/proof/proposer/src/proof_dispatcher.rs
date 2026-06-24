@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use base_optimism_rpc::{L1BlockRef, SyncStatus};
 use base_proof_primitives::ProofRequest;
-use base_proof_rpc::{L2Provider, RollupProvider};
+use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
 use tracing::{debug, info, warn};
 
@@ -18,12 +18,40 @@ use crate::{
     proof_target::ProofTarget,
 };
 
+/// Static parameters needed to build and dispatch proposer proof requests.
+#[derive(Debug, Clone, Copy)]
+pub struct ProofDispatcherConfig {
+    /// Whether requests may target safe, non-finalized L2 blocks.
+    pub allow_non_finalized: bool,
+    /// Number of L2 blocks between proof targets.
+    pub block_interval: u64,
+    /// Address of the proposer that will submit the proof onchain.
+    pub proposer_address: Address,
+    /// Number of L2 blocks between intermediate output root checkpoints.
+    pub intermediate_block_interval: u64,
+    /// Expected TEE enclave image hash.
+    pub tee_image_hash: B256,
+}
+
+impl From<&DriverConfig> for ProofDispatcherConfig {
+    fn from(config: &DriverConfig) -> Self {
+        Self {
+            allow_non_finalized: config.allow_non_finalized,
+            block_interval: config.block_interval,
+            proposer_address: config.proposer_address,
+            intermediate_block_interval: config.intermediate_block_interval,
+            tee_image_hash: config.tee_image_hash,
+        }
+    }
+}
+
 /// Builds and dispatches proposer TEE proof requests.
 pub struct ProofDispatcher {
     proof_requester: Arc<dyn ProofRequesterProvider>,
+    l1_client: Arc<dyn L1Provider>,
     l2_client: Arc<dyn L2Provider>,
     rollup_client: Arc<dyn RollupProvider>,
-    config: DriverConfig,
+    config: ProofDispatcherConfig,
 }
 
 impl std::fmt::Debug for ProofDispatcher {
@@ -36,11 +64,12 @@ impl ProofDispatcher {
     /// Creates a proof dispatcher.
     pub fn new(
         proof_requester: Arc<dyn ProofRequesterProvider>,
+        l1_client: Arc<dyn L1Provider>,
         l2_client: Arc<dyn L2Provider>,
         rollup_client: Arc<dyn RollupProvider>,
-        config: DriverConfig,
+        config: ProofDispatcherConfig,
     ) -> Self {
-        Self { proof_requester, l2_client, rollup_client, config }
+        Self { proof_requester, l1_client, l2_client, rollup_client, config }
     }
 
     /// Builds a proof request for `target_block` using `recovered` as the agreed parent.
@@ -60,14 +89,22 @@ impl ProofDispatcher {
             &sync_status,
             self.config.allow_non_finalized,
         )?;
+        let l1_header =
+            self.l1_client.header_by_hash(l1_head.hash).await.map_err(ProposerError::Rpc)?;
+        if l1_header.hash != l1_head.hash || l1_header.number != l1_head.number {
+            return Err(ProposerError::Internal(format!(
+                "selected {l1_head_source} L1 head {}:{} does not match L1 RPC header {}:{}",
+                l1_head.number, l1_head.hash, l1_header.number, l1_header.hash
+            )));
+        }
 
         info!(
             from_block = recovered.l2_block_number,
             to_block = target_block,
             allow_non_finalized = self.config.allow_non_finalized,
             l1_head_source = l1_head_source,
-            l1_head_number = l1_head.number,
-            l1_head_hash = %l1_head.hash,
+            l1_head_number = l1_header.number,
+            l1_head_hash = %l1_header.hash,
             agreed_l2_head_hash = %agreed_l2_head.hash,
             agreed_l2_output_root = %recovered.output_root,
             claimed_l2_output_root = %claimed_l2_output_root,
@@ -75,14 +112,14 @@ impl ProofDispatcher {
         );
 
         Ok(ProofRequest {
-            l1_head: l1_head.hash,
+            l1_head: l1_header.hash,
             agreed_l2_head_hash: agreed_l2_head.hash,
             agreed_l2_output_root: recovered.output_root,
             claimed_l2_output_root,
             claimed_l2_block_number: target_block,
             proposer: self.config.proposer_address,
             intermediate_block_interval: self.config.intermediate_block_interval,
-            l1_head_number: l1_head.number,
+            l1_head_number: l1_header.number,
             image_hash: self.config.tee_image_hash,
         })
     }
@@ -213,24 +250,31 @@ impl ProofDispatcher {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use alloy_primitives::Address;
 
     use super::*;
     use crate::test_utils::{
-        MockL2, MockProofRequester, MockRollupClient, test_l1_block_ref, test_l2_block_ref,
-        test_sync_status,
+        MockL1, MockL2, MockProofRequester, MockRollupClient, test_l1_block_ref, test_l1_header,
+        test_l2_block_ref, test_sync_status,
     };
 
     fn dispatcher(requester: Arc<MockProofRequester>) -> ProofDispatcher {
+        let sync_status = test_sync_status(10_000, B256::ZERO);
         ProofDispatcher::new(
             requester,
+            Arc::new(MockL1::new(sync_status.finalized_l1.number)),
             Arc::new(MockL2 { block_not_found: false, canonical_hash: None }),
             Arc::new(MockRollupClient {
-                sync_status: test_sync_status(10_000, B256::ZERO),
+                sync_status,
                 output_roots: Default::default(),
                 max_safe_block: None,
             }),
-            DriverConfig { block_interval: 100, ..Default::default() },
+            ProofDispatcherConfig::from(&DriverConfig {
+                block_interval: 100,
+                ..Default::default()
+            }),
         )
     }
 
@@ -247,6 +291,15 @@ mod tests {
         sync_status.finalized_l2.l1origin.number = sync_status.finalized_l1.number;
         sync_status.safe_l2.l1origin.number = sync_status.safe_l1.number;
         sync_status
+    }
+
+    fn headers_for_sync_status(
+        sync_status: &SyncStatus,
+    ) -> HashMap<B256, alloy_rpc_types_eth::Header> {
+        [sync_status.finalized_l1, sync_status.safe_l1]
+            .into_iter()
+            .map(|l1_head| (l1_head.hash, test_l1_header(l1_head.hash, l1_head.number)))
+            .collect()
     }
 
     #[test]
@@ -280,6 +333,45 @@ mod tests {
             .expect_err("safe L1 must cover selected safe L2 origin");
 
         assert!(err.to_string().contains("below safe L2 origin"));
+    }
+
+    #[tokio::test]
+    async fn build_request_rejects_l1_rpc_header_mismatch() {
+        let sync_status = sync_status_with_distinct_heads(300, 600);
+        let mut headers = headers_for_sync_status(&sync_status);
+        headers.insert(
+            sync_status.safe_l1.hash,
+            test_l1_header(sync_status.safe_l1.hash, sync_status.safe_l1.number + 1),
+        );
+        let dispatcher = ProofDispatcher::new(
+            Arc::new(MockProofRequester::default()),
+            Arc::new(MockL1::with_headers(sync_status.finalized_l1.number, headers)),
+            Arc::new(MockL2 { block_not_found: false, canonical_hash: None }),
+            Arc::new(MockRollupClient {
+                sync_status,
+                output_roots: Default::default(),
+                max_safe_block: None,
+            }),
+            ProofDispatcherConfig {
+                allow_non_finalized: true,
+                block_interval: 100,
+                proposer_address: Address::repeat_byte(0x04),
+                intermediate_block_interval: 300,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+        let recovered = RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::repeat_byte(0x03),
+            l2_block_number: 100,
+        };
+
+        let err = dispatcher
+            .build_request(400, &recovered, B256::repeat_byte(0xaa))
+            .await
+            .expect_err("L1 RPC header must match rollup-selected L1 head");
+
+        assert!(err.to_string().contains("does not match L1 RPC header"));
     }
 
     #[tokio::test]

@@ -237,8 +237,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ProofCollector, ProofDispatcher, ProofRecovery, ProofRecoveryConfig, ProofSubmitter,
-        ProofSubmitterConfig,
+        ProofCollector, ProofDispatcher, ProofDispatcherConfig, ProofRecovery, ProofRecoveryConfig,
+        ProofSubmitter, ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
@@ -281,9 +281,10 @@ mod tests {
 
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
+            l1.clone(),
             l2.clone(),
             rollup.clone(),
-            config.clone(),
+            ProofDispatcherConfig::from(&config),
         );
         let proof_submitter = ProofSubmitter::new(
             output_proposer,
