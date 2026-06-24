@@ -11,12 +11,13 @@ use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_evm::{EvmFactoryFor, TxEnvFor};
+use reth_evm::{EvmFactoryFor, HaltReasonFor, TxEnvFor};
 use reth_rpc_eth_api::{
     FromEthApiError,
     helpers::{FullEthApi, LoadPendingBlock},
 };
-use revm::context::{Block, BlockEnv, TxEnv};
+use reth_rpc_eth_types::error::api::{FromEvmHalt, FromRevert};
+use revm::context::{Block, BlockEnv, TxEnv, result::ExecutionResult};
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
 /// read-only [`base_common_evm::Eip8130Executor::simulate`] at the block state.
@@ -31,13 +32,13 @@ use revm::context::{Block, BlockEnv, TxEnv};
 /// **Fork-agnostic on purpose.** This does not check Cobalt activation; callers
 /// must gate via [`crate::Eip8130CobaltGate`] before invoking it.
 ///
-/// **Revert semantics differ from standard `eth_estimateGas`.** The standard
-/// estimator returns an execution error (carrying revert data) when the call
-/// reverts. An EIP-8130 estimate instead returns the gas charge even when one or
-/// more phases revert: an EIP-8130 transaction is still *included* on-chain
-/// (nonce consumed, fee paid) when its phases revert, so the charged gas is
-/// exactly what the sender must fund. Surfacing it — rather than erroring — lets
-/// callers set a correct gas limit for the always-included transaction.
+/// **Revert semantics match standard `eth_estimateGas`.** If a phased call
+/// reverts (or the simulation halts), this returns an execution error carrying
+/// the revert data, exactly like the standard estimator. An EIP-8130
+/// transaction whose phases revert is still *included* on-chain (nonce consumed,
+/// fee paid), but surfacing the failure — rather than a gas number for a call
+/// that would not succeed — keeps estimation consistent with what callers and
+/// tooling expect from `eth_estimateGas`/`eth_call`.
 #[derive(Debug)]
 pub struct Eip8130GasEstimator;
 
@@ -54,6 +55,8 @@ impl Eip8130GasEstimator {
     /// # Errors
     /// - `INVALID_PARAMS` if `request` carries no EIP-8130 fields (callers
     ///   should route plain requests to the standard estimator).
+    /// - An execution error (carrying revert data) if a phased call reverts or
+    ///   the simulation halts, matching standard `eth_estimateGas`.
     /// - Any error from environment resolution, state access, override
     ///   application, or simulation propagates as an `ErrorObjectOwned`.
     pub async fn estimate<Eth>(
@@ -69,6 +72,9 @@ impl Eip8130GasEstimator {
         // Pin the block env to revm's concrete type so block overrides can be
         // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
         EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
+        // Surface phase reverts/halts as execution errors, like the standard
+        // estimator (`FullEthApi` already guarantees these on `Eth::Error`).
+        Eth::Error: FromRevert + FromEvmHalt<HaltReasonFor<Eth::Evm>>,
         ErrorObjectOwned: From<Eth::Error>,
     {
         let (evm_env, at) = eth_api.evm_env_at(block_id).await?;
@@ -101,9 +107,20 @@ impl Eip8130GasEstimator {
             })
             .await?;
 
-        // Return the charged gas even on revert — see the type-level note: an
-        // EIP-8130 transaction is included (and pays) regardless of phase
-        // reverts, so this is the gas the sender must fund.
-        Ok(U256::from(result.result.tx_gas_used()))
+        // Mirror `eth_estimateGas`: a phase revert (or halt) is a failure. The
+        // EIP-8130 transaction would still be included on-chain, but reporting
+        // the failure with its revert data — rather than a gas number for a call
+        // that would not succeed — keeps estimation consistent with the standard
+        // estimator and surfaces the reason to callers.
+        let gas_used = result.result.tx_gas_used();
+        match result.result {
+            ExecutionResult::Success { .. } => Ok(U256::from(gas_used)),
+            ExecutionResult::Revert { output, .. } => {
+                Err(<Eth::Error as FromRevert>::from_revert(output).into())
+            }
+            ExecutionResult::Halt { reason, gas, .. } => {
+                Err(<Eth::Error as FromEvmHalt<_>>::from_evm_halt(reason, gas.tx_gas_used()).into())
+            }
+        }
     }
 }

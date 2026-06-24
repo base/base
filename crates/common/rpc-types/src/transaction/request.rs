@@ -9,20 +9,69 @@ use alloy_network::TransactionBuilder;
 use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
-use base_common_consensus::{AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, TxDeposit};
+use base_common_consensus::{
+    AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
+    TxDeposit,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::Transaction;
+
+/// Authentication scheme an EIP-8130 gas estimate should price.
+///
+/// Estimation never verifies a signature: the scheme only selects which
+/// enshrined authenticator the intrinsic-gas schedule charges (the
+/// authenticator's execution gas plus the calldata cost of its authentication
+/// payload). Absent a scheme, the estimate prices the default-EOA secp256k1
+/// (bare-signature) path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Eip8130AuthScheme {
+    /// secp256k1 — the default-EOA / k1 authenticator.
+    Secp256k1,
+    /// P-256 (secp256r1) authenticator.
+    P256,
+    /// `WebAuthn` authenticator (P-256 over `authenticatorData || clientDataJSON`).
+    WebAuthn,
+}
+
+impl Eip8130AuthScheme {
+    /// The enshrined authenticator address whose schedule entry prices this
+    /// scheme.
+    #[must_use]
+    pub const fn authenticator(self) -> Address {
+        match self {
+            Self::Secp256k1 => Eip8130Constants::K1_AUTHENTICATOR,
+            Self::P256 => Eip8130Contracts::P256_AUTHENTICATOR,
+            Self::WebAuthn => Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
+        }
+    }
+
+    /// Representative byte length of the authentication `data` (the bytes after
+    /// the 20-byte authenticator selector) for a real signature of this scheme.
+    /// Used to price calldata gas when the request omits an explicit size; the
+    /// variable-length `WebAuthn` payload should be sized via `*_auth_size`.
+    #[must_use]
+    pub const fn default_data_len(self) -> usize {
+        match self {
+            Self::Secp256k1 => 65,
+            Self::P256 => 128,
+            Self::WebAuthn => 256,
+        }
+    }
+}
 
 /// EIP-8130 account-abstraction fields layered onto a standard
 /// [`TransactionRequest`] for the `eth_call` / `eth_estimateGas` AA path.
 ///
 /// All fields are optional and absent for a plain (non-8130) request; their
 /// presence (via [`Eip8130RequestFields::is_some`]) marks a request as an
-/// EIP-8130 simulation. The signed-transaction fields (`sender_auth`,
-/// `payer_auth`, signatures) are intentionally omitted: estimation runs without
-/// a signature, pricing authentication gas from the request's call/account
-/// shape, so a caller estimates without first signing.
+/// EIP-8130 simulation. Raw signatures (`sender_auth`, `payer_auth`) are never
+/// passed: estimation runs without a signature. Instead a caller declares the
+/// authentication *scheme* it intends to use (and, for sponsored transactions,
+/// the `payer`), and the estimate prices that scheme's authentication gas by
+/// synthesizing a correctly-shaped stub blob — so a caller estimates the cost
+/// of any key type without first signing.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Eip8130RequestFields {
@@ -42,6 +91,27 @@ pub struct Eip8130RequestFields {
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
+    /// Authentication scheme the sender will use, priced into the estimate.
+    /// Absent (or [`Eip8130AuthScheme::Secp256k1`]) prices the default-EOA
+    /// bare-signature path; [`Eip8130AuthScheme::P256`] / `WebAuthn` price the
+    /// configured-account authenticator path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_auth_scheme: Option<Eip8130AuthScheme>,
+    /// Byte length of the sender's authentication payload, overriding the
+    /// scheme default — set this to size a variable-length `WebAuthn` signature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_auth_size: Option<u32>,
+    /// Sponsoring payer account. When set, the estimate includes payer
+    /// authentication gas (metered on top of the gas limit, as in execution).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer: Option<Address>,
+    /// Authentication scheme the payer will use (defaults to secp256k1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer_auth_scheme: Option<Eip8130AuthScheme>,
+    /// Byte length of the payer's authentication payload, overriding the scheme
+    /// default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer_auth_size: Option<u32>,
 }
 
 impl Eip8130RequestFields {
@@ -53,6 +123,8 @@ impl Eip8130RequestFields {
             || self.calls.is_some()
             || self.expiry.is_some()
             || self.metadata.is_some()
+            || self.sender_auth_scheme.is_some()
+            || self.payer.is_some()
     }
 }
 

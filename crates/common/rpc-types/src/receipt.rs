@@ -34,11 +34,7 @@ pub struct BaseTransactionReceipt {
     /// Each entry is `0x01` (success) or `0x00` (reverted); phases after a revert are
     /// not executed and reported as `0x00`. Empty for non-EIP-8130 transactions or when
     /// the transaction's `calls` was empty.
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        with = "alloy_serde::quantity::vec"
-    )]
+    #[serde(default, skip_serializing_if = "Vec::is_empty", with = "alloy_serde::quantity::vec")]
     pub phase_statuses: Vec<u8>,
     /// Opaque transaction metadata for EIP-8130 transactions, committed to by the sender
     /// and payer signatures but otherwise uninterpreted by the protocol.

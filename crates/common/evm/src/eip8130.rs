@@ -314,8 +314,12 @@ impl Eip8130Executor {
     /// from the read-only RPC simulation path; block execution and txpool
     /// admission always go through [`Self::execute`] with full verification.
     ///
-    /// Currently supports the default-EOA (empty-`sender`) path; configured
-    /// smart-account and sponsored estimation is a follow-up.
+    /// Both the default-EOA (empty-`sender`) path and a configured sender are
+    /// supported: a configured sender is resolved as its owner self-actor from
+    /// committed state (the happy path), and the authentication gas of whichever
+    /// authenticator the caller declared is priced from the synthesized
+    /// `sender_auth` / `payer_auth` blob shape. No signature is ever verified, so
+    /// the declared authenticator only selects which schedule entry is charged.
     pub fn simulate<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
     ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
@@ -339,19 +343,6 @@ impl Eip8130Executor {
             })?
             .signed
             .clone();
-
-        // Estimation currently supports the default-EOA (empty-`sender`) path:
-        // the sender is the request `from` and its actor id derives from that
-        // address, so no signature recovery is required. Configured smart-account
-        // and sponsored estimation resolves the signing actor from the request and
-        // is a follow-up.
-        if signed.tx().sender.is_some() {
-            return Err(BaseTransactionError::eip8130(
-                "EIP-8130 estimation supports only the default-EOA path; \
-                 configured-account estimation is not yet implemented",
-            )
-            .into());
-        }
 
         let ctx = evm.ctx_mut();
         let from = ctx.tx().base.caller;
@@ -415,12 +406,14 @@ impl Eip8130Executor {
         }
     }
 
-    /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`] over the default-EOA
-    /// path: derives the sender actor from `sender` and reads its policy from
+    /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: derives the
+    /// sender's owner self-actor from `sender` and reads its policy from
     /// committed account state (no signature recovery), then applies account
     /// changes, auto-delegates, and prices intrinsic gas — without validating or
-    /// advancing the nonce or checking the payer balance. Storage writes land on
-    /// the journal; the caller's checkpoint reverts them.
+    /// advancing the nonce or checking the payer balance. The authentication gas
+    /// for the sender's (and any payer's) declared authenticator is priced from
+    /// the synthesized auth-blob shape via [`IntrinsicGas`]. Storage writes land
+    /// on the journal; the caller's checkpoint reverts them.
     fn simulate_resolve<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
@@ -1227,7 +1220,8 @@ mod tests {
         let mut evm_sim = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
         evm_sim.ctx_mut().tx = into_base_tx(&signed);
         evm_sim.ctx_mut().tx.base.caller = sender;
-        let sim_result = Eip8130Executor::simulate(&mut evm_sim).expect("estimation should succeed");
+        let sim_result =
+            Eip8130Executor::simulate(&mut evm_sim).expect("estimation should succeed");
         let sim_gas = sim_result.tx_gas_used();
 
         assert!(sim_result.is_success(), "estimation should report success");
@@ -1242,7 +1236,11 @@ mod tests {
     }
 
     #[test]
-    fn simulate_rejects_configured_account_path() {
+    fn simulate_supports_configured_account_path() {
+        // The configured-sender path is estimable: simulation resolves the owner
+        // self-actor from committed state and prices the declared authenticator
+        // (here k1, via the prefixed `sender_auth` blob) without verifying the
+        // signature. Previously this path was rejected as unsupported.
         let key = signing_key(0x78);
         let sender = eoa_address(&key);
 
@@ -1254,8 +1252,10 @@ mod tests {
         evm.ctx_mut().tx = into_base_tx(&signed);
         evm.ctx_mut().tx.base.caller = sender;
 
-        let err = Eip8130Executor::simulate(&mut evm).expect_err("configured path is unsupported");
-        assert!(matches!(err, EVMError::Transaction(BaseTransactionError::Eip8130(_))));
+        let result = Eip8130Executor::simulate(&mut evm)
+            .expect("configured-account estimation should succeed");
+        assert!(result.is_success(), "estimation should report success");
+        assert!(result.tx_gas_used() > 0, "estimated gas should be positive");
     }
 
     #[test]

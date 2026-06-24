@@ -2,6 +2,7 @@
 //! `nonce_key` support on nodes without flashblocks.
 
 use alloy_eips::BlockId;
+use alloy_evm::EvmFactory;
 use alloy_primitives::{Address, U256};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride};
 use base_common_chains::Upgrades;
@@ -12,7 +13,6 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use alloy_evm::EvmFactory;
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::{EvmFactoryFor, TxEnvFor};
 use reth_rpc_eth_api::{

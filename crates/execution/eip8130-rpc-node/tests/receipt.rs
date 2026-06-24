@@ -73,8 +73,7 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
     // The EIP-8130 RPC receipt carries the gas payer; for a self-pay transaction
     // that is the resolved sender. With empty `calls`, `phaseStatuses` is omitted.
     let client = harness.rpc_client()?;
-    let json: serde_json::Value =
-        client.request("eth_getTransactionReceipt", (tx_hash,)).await?;
+    let json: serde_json::Value = client.request("eth_getTransactionReceipt", (tx_hash,)).await?;
     let payer: Address = serde_json::from_value(json["payer"].clone())?;
     assert_eq!(payer, alice.address(), "self-pay receipt payer must be the sender");
     assert!(
@@ -130,8 +129,7 @@ async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
     assert!(receipt.status(), "EIP-8130 transaction receipt must report success");
 
     let client = harness.rpc_client()?;
-    let json: serde_json::Value =
-        client.request("eth_getTransactionReceipt", (tx_hash,)).await?;
+    let json: serde_json::Value = client.request("eth_getTransactionReceipt", (tx_hash,)).await?;
     let payer: Address = serde_json::from_value(json["payer"].clone())?;
     assert_eq!(payer, alice.address(), "self-pay receipt payer must be the sender");
     assert_eq!(

@@ -10,7 +10,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, address, bytes};
 use alloy_rpc_client::RpcClient;
 use base_common_consensus::Eip8130Constants;
 use base_common_precompiles::NonceManagerStorage;
@@ -135,6 +135,94 @@ async fn estimate_gas_for_eip8130_request_returns_positive_gas() -> eyre::Result
     let gas: U256 = client.request("eth_estimateGas", (request, "latest")).await?;
 
     assert!(gas > U256::ZERO, "EIP-8130 gas estimate must be positive, got {gas}");
+    Ok(())
+}
+
+/// A declared non-secp256k1 authentication scheme must be priced into the
+/// estimate: a P-256 sender costs strictly more than the default-EOA secp256k1
+/// path (its authenticator execution gas is higher and its authentication
+/// payload is longer), and a `WebAuthn` sender sized larger costs more still.
+#[tokio::test]
+async fn estimate_gas_prices_declared_authentication_scheme() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+
+    let k1: U256 = client
+        .request("eth_estimateGas", (json!({ "from": alice, "calls": [] }), "latest"))
+        .await?;
+    let p256: U256 = client
+        .request(
+            "eth_estimateGas",
+            (json!({ "from": alice, "calls": [], "senderAuthScheme": "p256" }), "latest"),
+        )
+        .await?;
+    let webauthn: U256 = client
+        .request(
+            "eth_estimateGas",
+            (
+                json!({
+                    "from": alice,
+                    "calls": [],
+                    "senderAuthScheme": "webAuthn",
+                    "senderAuthSize": 1024,
+                }),
+                "latest",
+            ),
+        )
+        .await?;
+
+    assert!(p256 > k1, "P-256 auth ({p256}) must cost more than secp256k1 ({k1})");
+    assert!(
+        webauthn > p256,
+        "a larger WebAuthn payload ({webauthn}) must cost more than P-256 ({p256})"
+    );
+    Ok(())
+}
+
+/// A declared sponsoring `payer` must add payer authentication gas on top of the
+/// self-pay estimate for the same calls.
+#[tokio::test]
+async fn estimate_gas_includes_sponsored_payer_authentication() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+    let bob: Address = Account::Bob.address();
+
+    let self_pay: U256 = client
+        .request("eth_estimateGas", (json!({ "from": alice, "calls": [] }), "latest"))
+        .await?;
+    let sponsored: U256 = client
+        .request("eth_estimateGas", (json!({ "from": alice, "calls": [], "payer": bob }), "latest"))
+        .await?;
+
+    assert!(
+        sponsored > self_pay,
+        "sponsored estimate ({sponsored}) must exceed self-pay ({self_pay})"
+    );
+    Ok(())
+}
+
+/// An EIP-8130 `eth_estimateGas` whose phased call reverts must fail like the
+/// standard estimator: the simulation surfaces an execution error rather than a
+/// gas number for a call that would not succeed. The transaction would still be
+/// included on-chain, but estimation mirrors `eth_estimateGas`/`eth_call`.
+#[tokio::test]
+async fn estimate_gas_for_eip8130_request_with_reverting_call_fails() -> eyre::Result<()> {
+    let alice: Address = Account::Alice.address();
+    // `PUSH1 0x00, PUSH1 0x00, REVERT` — always reverts with empty data.
+    let revert_addr = address!("0x00000000000000000000000000000000000000fd");
+    let mut genesis = build_test_genesis_cobalt();
+    genesis.alloc.insert(
+        revert_addr,
+        GenesisAccount { code: Some(bytes!("60006000fd")), ..Default::default() },
+    );
+    let (_harness, client) = setup_with(genesis).await?;
+
+    let request = json!({ "from": alice, "calls": [[{ "to": revert_addr, "data": "0x" }]] });
+    let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
+
+    let err = result.expect_err("a reverting phase must surface an execution error");
+    let err_str = err.to_string();
+    assert!(err_str.contains("revert"), "expected an execution-revert error, got: {err_str}");
     Ok(())
 }
 
