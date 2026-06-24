@@ -35,16 +35,17 @@ impl ExecutionUpgradeSignal {
         chain_spec: &mut BaseChainSpec,
     ) -> eyre::Result<()> {
         let reader = config.signal_config.reader(RootProvider::new_http(config.l1_rpc.clone()));
-        let application_schedule = config
+        let schedule = config
             .signal_config
-            .read_validated_application_schedule(
+            .read_validated_schedule(
                 &reader,
                 "execution startup",
                 &[UpgradeSignalMetricLayer::Execution],
             )
             .await?;
 
-        Self::apply_schedule_to_chain_spec(chain_spec, &application_schedule)?;
+        Self::validate_runtime_schedule_for_chain_spec(chain_spec, &schedule)?;
+        Self::apply_schedule_to_chain_spec(chain_spec, &schedule)?;
 
         Ok(())
     }
@@ -90,8 +91,8 @@ impl ExecutionUpgradeSignal {
                         "failed to validate execution runtime upgrade signal"
                     );
                     return Err(ErrorObject::owned(
-                        -32003,
-                        "failed to refresh upgrade signal",
+                        -32005,
+                        "failed to validate upgrade signal",
                         None::<()>,
                     ));
                 }
@@ -260,7 +261,7 @@ impl FromExtensionConfig for ExecutionUpgradeSignalRuntimeExtension {
 
 #[cfg(test)]
 mod tests {
-    use base_common_chains::BaseUpgrade;
+    use base_common_genesis::BaseUpgrade;
     use reth_chainspec::{ChainSpec, EthereumHardfork, ForkCondition};
 
     use super::*;

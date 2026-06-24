@@ -169,9 +169,8 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_consensus_cli::ConsensusNodeConfigArgs;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use clap::Parser;
-
     use base_upgrade_signal::UpgradeSignalRuntimeValidation;
+    use clap::Parser;
 
     use crate::{
         cli::BaseCli,

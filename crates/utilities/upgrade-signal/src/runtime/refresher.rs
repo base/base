@@ -41,17 +41,13 @@ impl UpgradeSignalRefresher {
     pub async fn read_validated_schedule(
         &self,
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
-        let application_schedule = self
+        let schedule = self
             .config
-            .read_validated_application_schedule(
-                &self.reader,
-                "runtime refresh",
-                &[self.metrics_layer],
-            )
+            .read_validated_schedule(&self.reader, "runtime refresh", &[self.metrics_layer])
             .await?;
-        self.runtime_validation.validate_schedule(self.chain_id, &application_schedule)?;
+        self.runtime_validation.validate_schedule(self.chain_id, &schedule)?;
 
-        Ok(application_schedule)
+        Ok(schedule)
     }
 
     /// Reads, validates, metrics-records, logs, and applies the current L1 schedule.

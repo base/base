@@ -26,17 +26,6 @@ pub struct UpgradeSignalArgs {
     )]
     pub upgrade_ids: Vec<String>,
 
-    /// Upgrade IDs that are allowed to mutate the local schedule.
-    ///
-    /// If omitted, every read upgrade ID is eligible for application when the selected mode
-    /// permits schedule mutation.
-    #[arg(
-        long = "upgrade-signal.apply-upgrade-id",
-        env = "BASE_NODE_UPGRADE_SIGNAL_APPLY_UPGRADE_ID",
-        value_delimiter = ','
-    )]
-    pub apply_upgrade_ids: Vec<String>,
-
     /// Upgrade signal application mode.
     #[arg(
         long = "upgrade-signal.mode",
@@ -60,20 +49,17 @@ impl UpgradeSignalArgs {
     /// Builds a schedule read configuration if the upgrade signal is enabled.
     pub fn config(&self) -> Result<Option<UpgradeSignalConfig>, UpgradeSignalConfigError> {
         let Some(contract_address) = self.contract_address else {
-            if !self.upgrade_ids.is_empty() || !self.apply_upgrade_ids.is_empty() {
+            if !self.upgrade_ids.is_empty() {
                 return Err(UpgradeSignalConfigError::MissingContractAddress);
             }
             return Ok(None);
         };
 
         let upgrade_ids = Self::configured_upgrade_ids(&self.upgrade_ids)?;
-        let apply_upgrade_ids =
-            Self::configured_apply_upgrade_ids(&upgrade_ids, &self.apply_upgrade_ids)?;
 
         Ok(Some(UpgradeSignalConfig {
             contract_address,
             upgrade_ids,
-            apply_upgrade_ids,
             mode: self.mode,
             l1_block_tag: self.l1_block_tag.block_number_or_tag(),
             node_protocol_version: U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION),
@@ -105,7 +91,7 @@ impl UpgradeSignalArgs {
         Ok(ids)
     }
 
-    /// Returns the startup application configuration when startup mutation is enabled.
+    /// Returns startup config when the selected mode applies the signal before startup.
     pub fn startup_config(
         &self,
         l1_rpc_args: &UpgradeSignalL1RpcArgs,
@@ -120,43 +106,19 @@ impl UpgradeSignalArgs {
         let l1_rpc = l1_rpc_args.required_l1_rpc()?;
         Ok(Some(UpgradeSignalStartupConfig { signal_config, l1_rpc }))
     }
-
-    /// Returns the configured apply upgrade IDs, or the read upgrade IDs when omitted.
-    ///
-    /// Every apply upgrade ID must also be a read upgrade ID, since only read signals can be
-    /// applied. A non-subset apply ID is rejected rather than silently ignored.
-    pub fn configured_apply_upgrade_ids(
-        upgrade_ids: &[BaseUpgrade],
-        apply_upgrade_ids: &[String],
-    ) -> Result<Vec<BaseUpgrade>, UpgradeSignalConfigError> {
-        if apply_upgrade_ids.is_empty() {
-            return Ok(upgrade_ids.to_vec());
-        }
-
-        let apply_upgrade_ids = Self::configured_upgrade_ids(apply_upgrade_ids)?;
-        for apply_upgrade_id in &apply_upgrade_ids {
-            if !upgrade_ids.contains(apply_upgrade_id) {
-                return Err(UpgradeSignalConfigError::ApplyUpgradeIdNotRead(
-                    apply_upgrade_id.contract_id().to_string(),
-                ));
-            }
-        }
-
-        Ok(apply_upgrade_ids)
-    }
 }
 
-/// Resolved configuration for startup upgrade-signal application.
+/// Startup upgrade signal config with a resolved L1 RPC.
 #[derive(Debug, Clone)]
 pub struct UpgradeSignalStartupConfig {
-    /// Shared upgrade signal schedule read configuration.
+    /// Schedule read configuration.
     pub signal_config: UpgradeSignalConfig,
     /// L1 RPC used to read the upgrade signal contract.
     pub l1_rpc: Url,
 }
 
 impl UpgradeSignalStartupConfig {
-    /// Applies the startup upgrade signal once to execution and consensus sinks.
+    /// Applies one startup read to both execution and consensus schedules.
     pub async fn apply_to_sinks<EL, CL>(
         self,
         log_context: &'static str,
@@ -236,7 +198,6 @@ mod tests {
         let config = args.config().unwrap().unwrap();
 
         assert_eq!(config.upgrade_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
-        assert_eq!(config.apply_upgrade_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         assert_eq!(config.mode, UpgradeSignalMode::MetricsOnly);
     }
 
@@ -276,7 +237,6 @@ mod tests {
 
         assert_eq!(config.contract_address, contract);
         assert_eq!(config.upgrade_ids, [BaseUpgrade::Azul]);
-        assert_eq!(config.apply_upgrade_ids, [BaseUpgrade::Azul]);
         assert_eq!(config.mode, UpgradeSignalMode::StartupApply);
         assert_eq!(
             config.node_protocol_version,
@@ -346,37 +306,5 @@ mod tests {
             args.upgrade_signal_l1_rpc.as_ref().map(Url::as_str),
             Some(explicit_l1_rpc.as_str())
         );
-    }
-
-    #[test]
-    fn uses_explicit_apply_ids() {
-        let args = UpgradeSignalArgs {
-            contract_address: Some(address!("0000000000000000000000000000000000000001")),
-            upgrade_ids: vec!["azul".to_string(), "beryl".to_string()],
-            apply_upgrade_ids: vec!["beryl".to_string()],
-            mode: UpgradeSignalMode::RuntimeAdmin,
-            ..Default::default()
-        };
-
-        let config = args.config().unwrap().unwrap();
-
-        assert_eq!(config.upgrade_ids, [BaseUpgrade::Azul, BaseUpgrade::Beryl]);
-        assert_eq!(config.apply_upgrade_ids, [BaseUpgrade::Beryl]);
-        assert_eq!(config.mode, UpgradeSignalMode::RuntimeAdmin);
-    }
-
-    #[test]
-    fn rejects_apply_id_not_in_read_ids() {
-        let args = UpgradeSignalArgs {
-            contract_address: Some(address!("0000000000000000000000000000000000000001")),
-            upgrade_ids: vec!["azul".to_string()],
-            apply_upgrade_ids: vec!["beryl".to_string()],
-            ..Default::default()
-        };
-
-        assert!(matches!(
-            args.config().unwrap_err(),
-            UpgradeSignalConfigError::ApplyUpgradeIdNotRead(_)
-        ));
     }
 }

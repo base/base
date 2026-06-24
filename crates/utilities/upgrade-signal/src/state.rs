@@ -46,18 +46,6 @@ impl UpgradeSignalSchedule {
     pub const fn new(signals: Vec<UpgradeSignal>) -> Self {
         Self { signals }
     }
-
-    /// Returns a copy of this schedule containing only the requested upgrades.
-    pub fn filtered_to_upgrade_ids(&self, upgrade_ids: &[BaseUpgrade]) -> Self {
-        let signals = self
-            .signals
-            .iter()
-            .filter(|signal| upgrade_ids.contains(&signal.upgrade_id))
-            .cloned()
-            .collect();
-
-        Self { signals }
-    }
 }
 
 /// Result of applying a live signal read to local metrics state.
@@ -209,23 +197,5 @@ mod tests {
         updated_signal.l1_block_number = 2;
 
         assert_eq!(state.update_signal(updated_signal), UpgradeSignalStateUpdate::Unchanged);
-    }
-
-    #[test]
-    fn filters_schedule_by_contract_upgrade() {
-        let schedule = UpgradeSignalSchedule::new(vec![
-            signal(42),
-            UpgradeSignal {
-                upgrade_id: BaseUpgrade::Beryl,
-                activation_timestamp: 43,
-                protocol_version: U256::from(7),
-                l1_block_number: 1,
-            },
-        ]);
-
-        let filtered = schedule.filtered_to_upgrade_ids(&[BaseUpgrade::Azul]);
-
-        assert_eq!(filtered.signals.len(), 1);
-        assert_eq!(filtered.signals[0].upgrade_id, BaseUpgrade::Azul);
     }
 }

@@ -472,16 +472,16 @@ impl ConsensusNodeArgs {
         let reader = signal_config.reader(RootProvider::new_http(
             self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc),
         ));
-        let application_schedule = signal_config
-            .read_validated_application_schedule(
+        let schedule = signal_config
+            .read_validated_schedule(
                 &reader,
                 "consensus startup",
                 &[UpgradeSignalMetricLayer::Consensus],
             )
             .await?;
-        runtime_validation.validate_schedule(cfg.l2_chain_id.id(), &application_schedule)?;
+        runtime_validation.validate_schedule(cfg.l2_chain_id.id(), &schedule)?;
 
-        Self::apply_schedule_to_rollup_config(cfg, &application_schedule);
+        Self::apply_schedule_to_rollup_config(cfg, &schedule);
 
         Ok(())
     }

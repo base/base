@@ -10,7 +10,4 @@ pub enum UpgradeSignalConfigError {
     /// The upgrade ID is not recognized.
     #[error("unknown upgrade ID `{0}`")]
     UnknownUpgradeId(String),
-    /// An apply upgrade ID is not present in the set of read upgrade IDs.
-    #[error("apply upgrade ID `{0}` is not read; add it to --upgrade-signal.upgrade-id")]
-    ApplyUpgradeIdNotRead(String),
 }

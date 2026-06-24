@@ -21,8 +21,6 @@ pub struct UpgradeSignalConfig {
     pub contract_address: Address,
     /// Contract-backed upgrades to pass to the contract.
     pub upgrade_ids: Vec<BaseUpgrade>,
-    /// Contract-backed upgrades allowed to mutate local upgrade schedules.
-    pub apply_upgrade_ids: Vec<BaseUpgrade>,
     /// Local schedule mutation mode.
     pub mode: UpgradeSignalMode,
     /// L1 block tag used to read the contract.
@@ -37,7 +35,6 @@ impl UpgradeSignalConfig {
         Self {
             contract_address,
             upgrade_ids: vec![upgrade_id],
-            apply_upgrade_ids: vec![upgrade_id],
             mode: UpgradeSignalMode::MetricsOnly,
             l1_block_tag: BlockNumberOrTag::Finalized,
             node_protocol_version: U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION),
@@ -50,12 +47,6 @@ impl UpgradeSignalConfig {
             .with_block_tag(self.l1_block_tag)
     }
 
-    /// Returns a copy of `schedule` filtered to the configured upgrades that may be applied
-    /// locally.
-    pub fn application_schedule(&self, schedule: &UpgradeSignalSchedule) -> UpgradeSignalSchedule {
-        schedule.filtered_to_upgrade_ids(&self.apply_upgrade_ids)
-    }
-
     /// Returns true if this node supports the minimum protocol version attached to `signal`.
     pub fn supports_signal_protocol_version(&self, signal: &UpgradeSignal) -> bool {
         signal.protocol_version <= self.node_protocol_version
@@ -63,8 +54,7 @@ impl UpgradeSignalConfig {
 
     /// Returns an error if a positive activation timestamp omits its minimum protocol version.
     ///
-    /// This malformed-signal check applies to every signal read from L1, including signals that
-    /// this node only observes (reads) but does not apply.
+    /// This malformed-signal check applies to every signal read from L1.
     pub fn validate_signal_has_protocol_version(
         &self,
         signal: &UpgradeSignal,
@@ -80,8 +70,8 @@ impl UpgradeSignalConfig {
 
     /// Returns an error if this binary cannot support the signal's minimum protocol version.
     ///
-    /// This capability check applies only to signals this node will apply, so a node can observe
-    /// a future upgrade that requires newer software without aborting.
+    /// Signals that clear an upgrade (activation timestamp `0`) are always supported, so a node can
+    /// process a clear for an upgrade it does not implement.
     pub fn validate_signal_supported_protocol_version(
         &self,
         signal: &UpgradeSignal,
@@ -110,35 +100,23 @@ impl UpgradeSignalConfig {
         self.validate_signal_supported_protocol_version(signal)
     }
 
-    /// Validates that every positive signal in the full read schedule carries a protocol version.
-    pub fn validate_read_schedule_protocol_versions(
+    /// Validates the minimum protocol version of every signal in the schedule (presence and
+    /// support).
+    pub fn validate_schedule_protocol_versions(
         &self,
         schedule: &UpgradeSignalSchedule,
     ) -> Result<(), UpgradeSignalError> {
         for signal in &schedule.signals {
-            self.validate_signal_has_protocol_version(signal)?;
+            self.validate_signal_protocol_version(signal)?;
         }
 
         Ok(())
     }
 
-    /// Validates that this binary supports every applied signal's minimum protocol version.
-    pub fn validate_applied_schedule_protocol_versions(
-        &self,
-        schedule: &UpgradeSignalSchedule,
-    ) -> Result<(), UpgradeSignalError> {
-        for signal in &schedule.signals {
-            self.validate_signal_supported_protocol_version(signal)?;
-        }
-
-        Ok(())
-    }
-
-    /// Reads the L1 upgrade signal and applies it to an EL sink and a CL sink.
+    /// Reads the L1 startup schedule, validates runtime invariants, and applies it to both sinks.
     ///
-    /// Reads the schedule once, validates runtime invariants, then calls
-    /// [`UpgradeSignalRuntimeApplier::apply_schedule_to_sink`] for each sink in order: execution
-    /// chain spec first, then rollup config.
+    /// Execution is applied before consensus so an execution-only validation failure leaves the
+    /// rollup config unchanged.
     pub async fn apply_startup_to_sinks<EL, CL>(
         &self,
         l1_rpc: Url,
@@ -157,7 +135,7 @@ impl UpgradeSignalConfig {
     {
         let reader = self.reader(RootProvider::new_http(l1_rpc));
         let schedule = self
-            .read_validated_application_schedule(
+            .read_validated_schedule(
                 &reader,
                 log_context,
                 &[UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus],
@@ -177,13 +155,8 @@ impl UpgradeSignalConfig {
         Ok(())
     }
 
-    /// Reads the L1 schedule, records metrics, logs each signal, validates it, and returns the
-    /// application-filtered schedule ready to apply.
-    ///
-    /// This is the single read pipeline shared by startup application and runtime refresh. The
-    /// malformed-signal check runs over the full read schedule; the protocol-version support check
-    /// runs only over the schedule this node will apply.
-    pub async fn read_validated_application_schedule(
+    /// Reads, records, logs, and validates the L1 schedule.
+    pub async fn read_validated_schedule(
         &self,
         reader: &AlloyUpgradeSignalReader,
         log_context: &'static str,
@@ -212,11 +185,9 @@ impl UpgradeSignalConfig {
             );
         }
 
-        self.validate_read_schedule_protocol_versions(&schedule)?;
-        let application_schedule = self.application_schedule(&schedule);
-        self.validate_applied_schedule_protocol_versions(&application_schedule)?;
+        self.validate_schedule_protocol_versions(&schedule)?;
 
-        Ok(application_schedule)
+        Ok(schedule)
     }
 }
 
@@ -299,7 +270,7 @@ mod tests {
         ));
     }
 
-    fn malformed_read_only_schedule(config: &UpgradeSignalConfig) -> UpgradeSignalSchedule {
+    fn malformed_schedule(config: &UpgradeSignalConfig) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(vec![
             signal(config.node_protocol_version),
             UpgradeSignal {
@@ -312,21 +283,21 @@ mod tests {
     }
 
     #[test]
-    fn read_validation_rejects_missing_protocol_version_on_read_only_upgrade() {
+    fn schedule_validation_rejects_missing_protocol_version() {
         let config = UpgradeSignalConfig::new(
             address!("0000000000000000000000000000000000000001"),
             BaseUpgrade::Azul,
         );
-        let schedule = malformed_read_only_schedule(&config);
+        let schedule = malformed_schedule(&config);
 
         assert!(matches!(
-            config.validate_read_schedule_protocol_versions(&schedule).unwrap_err(),
+            config.validate_schedule_protocol_versions(&schedule).unwrap_err(),
             crate::UpgradeSignalError::MissingProtocolVersion(_)
         ));
     }
 
     #[test]
-    fn applied_validation_allows_unsupported_version_on_read_only_upgrade() {
+    fn schedule_validation_rejects_unsupported_protocol_version() {
         let config = UpgradeSignalConfig::new(
             address!("0000000000000000000000000000000000000001"),
             BaseUpgrade::Azul,
@@ -347,19 +318,18 @@ mod tests {
             },
         ]);
 
-        assert!(
-            config
-                .validate_applied_schedule_protocol_versions(
-                    &config.application_schedule(&schedule)
-                )
-                .is_ok()
-        );
+        assert!(matches!(
+            config.validate_schedule_protocol_versions(&schedule).unwrap_err(),
+            crate::UpgradeSignalError::UnsupportedProtocolVersion { .. }
+        ));
     }
 
     #[rstest]
     #[case("azul")]
     #[case("beryl")]
-    fn applied_validation_allows_clear_with_unsupported_protocol_version(#[case] upgrade_id: &str) {
+    fn schedule_validation_allows_clear_with_unsupported_protocol_version(
+        #[case] upgrade_id: &str,
+    ) {
         let config = UpgradeSignalConfig::new(
             address!("0000000000000000000000000000000000000001"),
             upgrade(upgrade_id),
@@ -371,6 +341,6 @@ mod tests {
             l1_block_number: 1,
         }]);
 
-        assert!(config.validate_applied_schedule_protocol_versions(&schedule).is_ok());
+        assert!(config.validate_schedule_protocol_versions(&schedule).is_ok());
     }
 }

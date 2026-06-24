@@ -13,28 +13,24 @@ use url::Url;
 
 use crate::NodeActor;
 
-/// Consolidated upgrade signal configuration for the consensus node.
-///
-/// Bundles the core schedule config with the resolved L1 provider, chain ID, and runtime
-/// validation context, so that actor and refresher construction is a single method call.
+/// Upgrade signal config resolved for a running consensus node.
 #[derive(Debug, Clone)]
 pub struct UpgradeSignalNodeConfig {
-    /// Core upgrade signal schedule read configuration.
+    /// Schedule read configuration.
     pub config: UpgradeSignalConfig,
-    /// Resolved L1 provider used for upgrade signal reads.
+    /// L1 provider used for upgrade signal reads.
     pub l1_provider: RootProvider,
     /// L2 chain ID.
     pub chain_id: u64,
-    /// Runtime upgrade signal validation context.
+    /// Runtime validation context.
     pub runtime_validation: UpgradeSignalRuntimeValidation,
 }
 
 impl UpgradeSignalNodeConfig {
-    /// Resolves a node upgrade signal config from optional builder inputs.
+    /// Builds consensus upgrade signal config from builder inputs.
     ///
-    /// Reads use the dedicated `l1_rpc` endpoint when set, otherwise falling back to
-    /// `default_l1_provider` (the node's L1 engine provider). When no `runtime_validation` is
-    /// supplied, a fail-closed context is used.
+    /// Uses `l1_rpc` when provided, otherwise falls back to the node's L1 provider. Missing runtime
+    /// validation is fail-closed so positive Beryl signals are rejected without an activation admin.
     pub fn resolve(
         config: UpgradeSignalConfig,
         l1_rpc: Option<&Url>,
@@ -49,12 +45,12 @@ impl UpgradeSignalNodeConfig {
         Self { config, l1_provider, chain_id, runtime_validation }
     }
 
-    /// Creates the upgrade signal metrics actor.
+    /// Builds the consensus metrics actor.
     pub fn metrics_actor(&self, cancellation: CancellationToken) -> UpgradeSignalMetricsActor {
         UpgradeSignalMetricsActor::new(self.config.clone(), self.l1_provider.clone(), cancellation)
     }
 
-    /// Creates the upgrade signal refresher if runtime admin mode is enabled.
+    /// Builds the runtime admin refresher when enabled.
     pub fn refresher(&self) -> Option<UpgradeSignalRefresher> {
         self.config.mode.allows_runtime_admin().then(|| {
             UpgradeSignalRefresher::new(
