@@ -5239,7 +5239,6 @@ dependencies = [
  "eyre",
  "hex",
  "metrics",
- "once_cell",
  "serde",
  "serde_json",
  "sha2 0.10.9",

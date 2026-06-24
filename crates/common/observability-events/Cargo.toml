@@ -18,7 +18,6 @@ chrono = { workspace = true, features = ["serde"] }
 eyre.workspace = true
 hex.workspace = true
 metrics = { workspace = true, optional = true }
-once_cell.workspace = true
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 sha2.workspace = true
