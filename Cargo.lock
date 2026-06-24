@@ -4547,14 +4547,21 @@ dependencies = [
 name = "base-execution-eip8130-rpc-node"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips 2.0.5",
+ "alloy-genesis 2.0.5",
+ "alloy-network 2.0.5",
  "alloy-primitives",
+ "alloy-provider 2.0.5",
  "alloy-rpc-client 2.0.5",
+ "alloy-signer 2.0.5",
  "base-common-consensus",
+ "base-common-precompiles",
  "base-execution-chainspec",
  "base-execution-eip8130-rpc",
  "base-node-runner",
  "base-test-utils",
  "eyre",
+ "serde_json",
  "tokio",
  "tracing",
 ]

@@ -1,0 +1,62 @@
+//! Per-transaction handoff of EIP-8130 `phaseStatuses` from the executor to the
+//! receipt builder.
+//!
+//! The EIP-8130 executor computes a per-phase status array while running a
+//! transaction's `calls`, but the receipt builder ([`BaseReceiptBuilder`]) is
+//! generic over `E: Evm` and reth's block-executor / factory machinery offers no
+//! type-safe channel to pass extra per-transaction execution metadata to it (the
+//! receipt builder only receives the [`ExecutionResult`], whose `output` already
+//! carries the transaction's revert data and so cannot be repurposed).
+//!
+//! [`Eip8130PhaseStatuses`] bridges that gap with a thread-local slot. This is
+//! sound because block execution drives each transaction strictly as
+//! `execute → commit` on a single thread: the executor [`set`]s the statuses while
+//! running the transaction and the receipt builder [`take`]s them immediately
+//! afterward, with no other EIP-8130 transaction executing in between. The slot
+//! is cleared on read, and is only ever consulted when building an EIP-8130
+//! receipt.
+//!
+//! [`BaseReceiptBuilder`]: crate::BaseReceiptBuilder
+//! [`ExecutionResult`]: revm::context_interface::result::ExecutionResult
+//! [`set`]: Eip8130PhaseStatuses::set
+//! [`take`]: Eip8130PhaseStatuses::take
+
+use alloc::vec::Vec;
+
+#[cfg(feature = "std")]
+std::thread_local! {
+    /// Per-thread slot holding the most recently executed EIP-8130 transaction's
+    /// per-phase statuses, awaiting consumption by the receipt builder.
+    static PHASE_STATUSES: core::cell::RefCell<Vec<u8>> = const { core::cell::RefCell::new(Vec::new()) };
+}
+
+/// Thread-local handoff for EIP-8130 per-phase statuses between the executor and
+/// the receipt builder. See the [module docs](self) for the safety rationale.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct Eip8130PhaseStatuses;
+
+impl Eip8130PhaseStatuses {
+    /// Records the per-phase statuses of the EIP-8130 transaction just executed
+    /// on this thread, to be consumed by the next [`Self::take`] when its receipt
+    /// is built. No-op in `no_std` builds (where EIP-8130 execution is disabled).
+    pub fn set(statuses: Vec<u8>) {
+        #[cfg(feature = "std")]
+        PHASE_STATUSES.with(|cell| *cell.borrow_mut() = statuses);
+        #[cfg(not(feature = "std"))]
+        let _ = statuses;
+    }
+
+    /// Takes (and clears) the per-phase statuses recorded by the most recent
+    /// [`Self::set`] on this thread. Returns an empty vector in `no_std` builds.
+    pub fn take() -> Vec<u8> {
+        #[cfg(feature = "std")]
+        {
+            PHASE_STATUSES.with(|cell| core::mem::take(&mut *cell.borrow_mut()))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            Vec::new()
+        }
+    }
+}
