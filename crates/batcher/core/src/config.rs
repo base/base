@@ -21,6 +21,8 @@ pub struct BatchDriverConfig {
     /// No-op when the encoder is already configured for blob DA.
     /// Default: `true`.
     pub force_blobs_when_throttling: bool,
-    /// Optional alt-DA client for dual-write (calldata + commitment txs).
+    /// Optional alt-DA client. When set, batch bytes are uploaded to the DA
+    /// server and only the commitment is posted on L1 (calldata is not posted).
+    /// The presence of the client selects alt-DA mode.
     pub alt_da: Option<crate::DynAltDaClient>,
 }

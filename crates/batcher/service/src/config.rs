@@ -162,8 +162,15 @@ impl BatcherConfig {
 
         if self.alt_da.is_some() && self.encoder_config.da_type != DaType::Calldata {
             eyre::bail!(
-                "alt-da dual-write requires --data-availability-type calldata; \
-                 blob submissions are not dual-written to the DA server"
+                "alt-da requires calldata framing; the batcher uploads calldata-framed \
+                 bytes to the DA server and posts the commitment on L1"
+            );
+        }
+
+        if self.alt_da.is_some() && self.force_blobs_when_throttling {
+            eyre::bail!(
+                "alt-da requires --no-force-blobs-when-throttling; a throttle-driven switch \
+                 to blobs has no commitment path and would stall the batcher"
             );
         }
 
