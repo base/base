@@ -5,7 +5,9 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType};
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
+};
 use base_common_evm::Eip8130PhaseStatuses;
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};

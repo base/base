@@ -37,9 +37,10 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
                     OpTxType::Deposit => unreachable!(),
                     // Consume the per-phase statuses published by the executor for
                     // this transaction (see [`Eip8130PhaseStatuses`]).
-                    OpTxType::Eip8130 => {
-                        BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, Eip8130PhaseStatuses::take()))
-                    }
+                    OpTxType::Eip8130 => BaseReceipt::Eip8130(Eip8130Receipt::new(
+                        receipt,
+                        Eip8130PhaseStatuses::take(),
+                    )),
                 })
             }
         }
