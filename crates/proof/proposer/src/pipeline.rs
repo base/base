@@ -1,13 +1,17 @@
 //! Proving pipeline for the proposer.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    panic::AssertUnwindSafe,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
+use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     Metrics,
@@ -84,12 +88,26 @@ where
             // polled while collector_loop remains the session restart signal.
             // Dropping either loop mid-tick is safe: the next recovery walk
             // rediscovers any already-broadcast L1 transaction from onchain state.
-            let restart = tokio::select! {
-                biased;
-                () = cancel.cancelled() => false,
-                () = self.dispatcher_loop(&cancel, Arc::clone(&dispatched_through)) => true,
-                () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
+            let session = async {
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => false,
+                    () = self.dispatcher_loop(&cancel, Arc::clone(&dispatched_through)) => true,
+                    () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
+                }
             };
+            // Unwind safety: this assertion is scoped to one pipeline session. Session progress
+            // lives in the loop-local caches/cursors above and is discarded on panic; `self` only
+            // carries shared clients and static config that are reused after a fresh recovery walk.
+            let restart = AssertUnwindSafe(session).catch_unwind().await.unwrap_or_else(|panic| {
+                let panic = panic
+                    .downcast_ref::<&'static str>()
+                    .copied()
+                    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("unknown panic payload");
+                warn!(panic = %panic, "Pipeline loop panicked, restarting session");
+                true
+            });
 
             if !restart {
                 break;
@@ -224,6 +242,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct RejectingProofRequester {
         prove_count: AtomicUsize,
+        panic_on_first_prove: bool,
     }
 
     #[async_trait]
@@ -232,7 +251,10 @@ mod tests {
             &self,
             _request: ProveBlockRangeRequest,
         ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
-            self.prove_count.fetch_add(1, Ordering::SeqCst);
+            let prove_count = self.prove_count.fetch_add(1, Ordering::SeqCst);
+            if self.panic_on_first_prove && prove_count == 0 {
+                panic!("simulated dispatch panic");
+            }
             Err(ProverServiceClientError::Timeout("simulated dispatch failure".into()))
         }
 
@@ -258,9 +280,9 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn dispatcher_retry_exhaustion_keeps_dispatcher_loop_running() {
-        let requester = Arc::new(RejectingProofRequester::default());
+    fn test_pipeline(
+        requester: Arc<RejectingProofRequester>,
+    ) -> ProvingPipeline<MockL1, MockL2, MockRollupClient> {
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::<RejectingProofRequester>::clone(&requester);
         let l1 = Arc::new(MockL1::new(1000));
@@ -334,8 +356,13 @@ mod tests {
             config.block_interval,
             config.submit_timeout,
         );
-        let pipeline =
-            ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);
+        ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector)
+    }
+
+    #[tokio::test]
+    async fn dispatcher_retry_exhaustion_keeps_dispatcher_loop_running() {
+        let requester = Arc::new(RejectingProofRequester::default());
+        let pipeline = test_pipeline(Arc::clone(&requester));
         let cancel = CancellationToken::new();
 
         assert!(
@@ -351,5 +378,29 @@ mod tests {
             requester.prove_count.load(Ordering::SeqCst) > 1,
             "dispatcher should keep recovering and retrying after exhaustion"
         );
+    }
+
+    #[tokio::test]
+    async fn dispatcher_panic_restarts_pipeline_session() {
+        let requester =
+            Arc::new(RejectingProofRequester { panic_on_first_prove: true, ..Default::default() });
+        let pipeline = test_pipeline(Arc::clone(&requester));
+        let cancel = CancellationToken::new();
+        let run = pipeline.run(cancel.clone());
+        tokio::pin!(run);
+
+        tokio::select! {
+            () = &mut run => panic!("pipeline should restart instead of exiting"),
+            result = tokio::time::timeout(Duration::from_millis(200), async {
+                while requester.prove_count.load(Ordering::SeqCst) < 2 {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }) => result.expect("pipeline should retry after dispatcher panic"),
+        }
+
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_millis(100), &mut run)
+            .await
+            .expect("pipeline should stop after cancellation");
     }
 }
