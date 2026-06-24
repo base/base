@@ -83,7 +83,7 @@ where
             let restart = tokio::select! {
                 biased;
                 () = cancel.cancelled() => false,
-                () = self.dispatcher_loop(&cancel, Arc::clone(&dispatched_through)) => true,
+                () = self.dispatcher_loop(Arc::clone(&dispatched_through)) => true,
                 () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
             };
 
@@ -97,11 +97,7 @@ where
         info!("Proving pipeline stopped");
     }
 
-    async fn dispatcher_loop(
-        &self,
-        cancel: &CancellationToken,
-        dispatched_through: Arc<AtomicU64>,
-    ) {
+    async fn dispatcher_loop(&self, dispatched_through: Arc<AtomicU64>) {
         let mut cache: Option<ProofRecoveryCache> = None;
         let mut cursor = None;
 
@@ -116,7 +112,7 @@ where
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
                     self.proof_dispatcher
-                        .tick(&mut cursor, recovered, safe_head, self.config.block_interval, cancel)
+                        .tick(&mut cursor, recovered, safe_head, self.config.block_interval)
                         .await;
 
                     if let Some((_, cursor)) = cursor {
@@ -184,16 +180,6 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_primitives::{Address, B256};
-    use async_trait::async_trait;
-    use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
-    use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
-    use base_prover_service_protocol::{
-        DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
-        ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
-    };
-    use tokio_util::sync::CancellationToken;
-
     use super::*;
     use crate::{
         OutputProposer, ProofDispatcherConfig, ProofRecoveryConfig, ProofSubmitter,
@@ -202,6 +188,14 @@ mod tests {
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
         },
+    };
+    use alloy_primitives::{Address, B256};
+    use async_trait::async_trait;
+    use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
+    use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
+    use base_prover_service_protocol::{
+        DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
+        ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
     };
 
     #[derive(Debug, Default)]
@@ -318,12 +312,11 @@ mod tests {
         );
         let pipeline =
             ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);
-        let cancel = CancellationToken::new();
 
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(100),
-                pipeline.dispatcher_loop(&cancel, Arc::new(AtomicU64::new(0)))
+                pipeline.dispatcher_loop(Arc::new(AtomicU64::new(0)))
             )
             .await
             .is_err(),
