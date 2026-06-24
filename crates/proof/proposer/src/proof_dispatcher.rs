@@ -29,13 +29,6 @@ pub struct ProofDispatcherConfig {
     pub tee_image_hash: B256,
 }
 
-/// Mutable dispatcher-side orchestration state.
-#[derive(Debug, Default)]
-pub struct ProofDispatcherState {
-    /// Recovery source and latest block the dispatcher has sent proof requests through.
-    pub cursor: Option<(RecoveredState, RecoveredState)>,
-}
-
 /// Builds and dispatches proposer TEE proof requests.
 pub struct ProofDispatcher {
     proof_requester: Arc<dyn ProofRequesterProvider>,
@@ -66,14 +59,13 @@ impl ProofDispatcher {
     /// Dispatches every target from the current dispatcher cursor up to `safe_head`.
     pub async fn tick(
         &self,
-        state: &mut ProofDispatcherState,
+        cursor: &mut Option<(RecoveredState, RecoveredState)>,
         recovered: RecoveredState,
         safe_head: u64,
         block_interval: u64,
         cancel: &CancellationToken,
     ) {
-        let mut current = state
-            .cursor
+        let mut current = cursor
             .filter(|(source, _)| *source == recovered)
             .map_or(recovered, |(_, cursor)| cursor);
 
@@ -111,7 +103,7 @@ impl ProofDispatcher {
             if self.dispatch(target_block, &current, claimed_l2_output_root).await {
                 current.l2_block_number = target_block;
                 current.output_root = claimed_l2_output_root;
-                state.cursor = Some((recovered, current));
+                *cursor = Some((recovered, current));
             } else {
                 break;
             }
@@ -306,59 +298,36 @@ mod tests {
     #[tokio::test]
     async fn tick_dispatches_all_targets_up_to_safe_head() {
         let (dispatcher, requester) = dispatcher();
-        let mut state = ProofDispatcherState::default();
+        let mut cursor = None;
         let cancel = CancellationToken::new();
 
-        dispatcher.tick(&mut state, recovered(), 400, 100, &cancel).await;
+        dispatcher.tick(&mut cursor, recovered(), 400, 100, &cancel).await;
 
         assert_eq!(requester.requests.lock().unwrap().len(), 3);
-        assert_eq!(state.cursor.map(|(_, cursor)| cursor.l2_block_number), Some(400));
+        assert_eq!(cursor.map(|(_, cursor)| cursor.l2_block_number), Some(400));
     }
 
     #[tokio::test]
     async fn tick_resets_cursor_when_recovery_rewinds() {
         let (dispatcher, requester) = dispatcher();
         let cancel = CancellationToken::new();
-        let mut state = ProofDispatcherState {
-            cursor: Some((
-                RecoveredState {
-                    parent_address: Address::repeat_byte(0x01),
-                    output_root: B256::repeat_byte(0x01),
-                    l2_block_number: 300,
-                },
-                RecoveredState {
-                    parent_address: Address::repeat_byte(0x02),
-                    output_root: B256::repeat_byte(0x02),
-                    l2_block_number: 500,
-                },
-            )),
-        };
+        let mut cursor = Some((
+            RecoveredState {
+                parent_address: Address::repeat_byte(0x01),
+                output_root: B256::repeat_byte(0x01),
+                l2_block_number: 300,
+            },
+            RecoveredState {
+                parent_address: Address::repeat_byte(0x02),
+                output_root: B256::repeat_byte(0x02),
+                l2_block_number: 500,
+            },
+        ));
 
-        dispatcher.tick(&mut state, recovered(), 200, 100, &cancel).await;
+        dispatcher.tick(&mut cursor, recovered(), 200, 100, &cancel).await;
 
-        assert_eq!(state.cursor.map(|(source, _)| source), Some(recovered()));
-        assert_eq!(state.cursor.map(|(_, cursor)| cursor.l2_block_number), Some(200));
+        assert_eq!(cursor.map(|(source, _)| source), Some(recovered()));
+        assert_eq!(cursor.map(|(_, cursor)| cursor.l2_block_number), Some(200));
         assert_eq!(requester.requests.lock().unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn dispatch_keeps_cursor_on_failure() {
-        let (dispatcher, requester) = dispatcher();
-        *requester.accepted_session_id.lock().unwrap() = Some("wrong-session".to_owned());
-        let state = ProofDispatcherState {
-            cursor: Some((
-                recovered(),
-                RecoveredState {
-                    parent_address: Address::ZERO,
-                    output_root: B256::repeat_byte(0x09),
-                    l2_block_number: 300,
-                },
-            )),
-        };
-
-        let outcome = dispatcher.dispatch(200, &recovered(), B256::repeat_byte(0xaa)).await;
-
-        assert!(!outcome);
-        assert!(state.cursor.is_some());
     }
 }

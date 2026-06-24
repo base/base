@@ -13,7 +13,7 @@ use crate::{
     Metrics,
     driver::{DriverConfig, RecoveredState},
     proof_collector::ProofCollector,
-    proof_dispatcher::{ProofDispatcher, ProofDispatcherState},
+    proof_dispatcher::ProofDispatcher,
     proof_recovery::{ProofRecovery, ProofRecoveryCache},
 };
 
@@ -103,7 +103,7 @@ where
         dispatched_through: Arc<AtomicU64>,
     ) {
         let mut cache: Option<ProofRecoveryCache> = None;
-        let mut state = ProofDispatcherState::default();
+        let mut cursor = None;
 
         loop {
             {
@@ -116,10 +116,10 @@ where
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
                     self.proof_dispatcher
-                        .tick(&mut state, recovered, safe_head, self.config.block_interval, cancel)
+                        .tick(&mut cursor, recovered, safe_head, self.config.block_interval, cancel)
                         .await;
 
-                    if let Some((_, cursor)) = state.cursor {
+                    if let Some((_, cursor)) = cursor {
                         dispatched_through.store(cursor.l2_block_number, Ordering::Relaxed);
                     }
                 }
