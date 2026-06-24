@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
-use base_optimism_rpc::{L1BlockRef, L2BlockRef, SyncStatus};
 use base_proof_primitives::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
@@ -207,59 +206,12 @@ mod tests {
         )
     }
 
-    fn headers_for_sync_status(
-        sync_status: &SyncStatus,
-    ) -> HashMap<B256, alloy_rpc_types_eth::Header> {
-        let mut headers = HashMap::new();
-        for l1_head in [sync_status.finalized_l1, sync_status.safe_l1] {
-            headers.insert(l1_head.hash, test_l1_header(l1_head.hash, l1_head.number));
-        }
-        headers
-    }
-
-    fn sync_status_with_distinct_heads(finalized_l2: u64, safe_l2: u64) -> SyncStatus {
-        let mut finalized_l1 = test_l1_block_ref(10);
-        finalized_l1.hash = B256::repeat_byte(0xf1);
-        let mut safe_l1 = test_l1_block_ref(20);
-        safe_l1.hash = B256::repeat_byte(0x5a);
-        let mut finalized_l2 = test_l2_block_ref(finalized_l2, B256::repeat_byte(0xf2));
-        finalized_l2.l1origin.hash = finalized_l1.hash;
-        finalized_l2.l1origin.number = finalized_l1.number;
-        let mut safe_l2 = test_l2_block_ref(safe_l2, B256::repeat_byte(0x52));
-        safe_l2.l1origin.hash = safe_l1.hash;
-        safe_l2.l1origin.number = safe_l1.number;
-
-        SyncStatus {
-            current_l1: safe_l1,
-            current_l1_finalized: Some(finalized_l1),
-            head_l1: safe_l1,
-            safe_l1,
-            finalized_l1,
-            unsafe_l2: safe_l2,
-            safe_l2,
-            finalized_l2,
-            pending_safe_l2: None,
-        }
-    }
-
     fn recovered() -> RecoveredState {
         RecoveredState {
             parent_address: Address::ZERO,
             output_root: B256::repeat_byte(0x03),
             l2_block_number: 100,
         }
-    }
-
-    #[tokio::test]
-    async fn dispatch_sends_root_derived_session() {
-        let (dispatcher, requester) = dispatcher();
-        let claimed_root = B256::repeat_byte(0xaa);
-
-        let outcome = dispatcher.dispatch(200, &recovered(), claimed_root).await;
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
-
-        assert!(outcome);
-        assert!(requester.requests.lock().unwrap().contains_key(&session_id));
     }
 
     #[tokio::test]
@@ -290,7 +242,10 @@ mod tests {
 
         dispatcher.tick(&mut cursor, recovered(), 400, 100).await;
 
-        assert_eq!(requester.requests.lock().unwrap().len(), 3);
+        let requests = requester.requests.lock().unwrap();
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(B256::repeat_byte(200));
+        assert_eq!(requests.len(), 3);
+        assert!(requests.contains_key(&session_id));
         assert_eq!(cursor.map(|(_, cursor)| cursor.l2_block_number), Some(400));
     }
 
