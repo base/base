@@ -3622,6 +3622,7 @@ dependencies = [
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
+ "base-proof-submission",
  "base-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",

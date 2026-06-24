@@ -24,6 +24,7 @@ use alloy_primitives::{Address, B256};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::L2Provider;
+use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{SnarkGroth16ProofRequest, TeeKind, ZkProofRequest, ZkVm};
 use base_runtime::{Clock, TokioRuntime};
@@ -806,17 +807,78 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                 }
             }
             Err(e) => {
-                if targets_tee && let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                if matches!(e.known_revert(), Some(KnownRevert::ProofAlreadyVerified)) {
+                    info!(
+                        error = %e,
+                        game = %game_address,
+                        "dispute proof already verified onchain, dropping pending proof"
+                    );
+                    self.pending_proofs.remove(&game_address);
+                    return Ok(());
+                }
+
+                if matches!(e.known_revert(), Some(KnownRevert::InvalidParentGame)) {
                     warn!(
                         error = %e,
                         game = %game_address,
-                        "TEE dispute tx failed, falling back to ZK"
+                        "dispute game parent is invalid onchain, dropping pending proof"
                     );
+                    self.pending_proofs.remove(&game_address);
+                    return Ok(());
+                }
+
+                if targets_tee && let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    match e.known_revert() {
+                        Some(KnownRevert::InvalidSigner) => {
+                            warn!(
+                                error = %e,
+                                game = %game_address,
+                                "TEE proof signer is invalid onchain, falling back to ZK"
+                            );
+                        }
+                        Some(KnownRevert::L1OriginTooOld) => {
+                            warn!(
+                                error = %e,
+                                game = %game_address,
+                                "TEE proof L1 origin is too old, falling back to ZK"
+                            );
+                        }
+                        _ => {
+                            warn!(
+                                error = %e,
+                                game = %game_address,
+                                "TEE dispute tx failed, falling back to ZK"
+                            );
+                        }
+                    }
                     // Don't retry the failed TEE submission — switch to the ZK
                     // fallback so the next retry uses the pre-built ZK request.
                     p.phase = ProofPhase::NeedsRetry;
                     return self.handle_proof_retry(game_address).await;
                 }
+
+                if matches!(e.known_revert(), Some(KnownRevert::L1OriginTooOld)) {
+                    warn!(
+                        error = %e,
+                        game = %game_address,
+                        "dispute proof L1 origin is too old, requesting a fresh proof"
+                    );
+                    if let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                        p.phase = ProofPhase::NeedsRetry;
+                    }
+                    return self.handle_proof_retry(game_address).await;
+                }
+
+                if matches!(e.known_revert(), Some(KnownRevert::InvalidSigner)) {
+                    warn!(
+                        error = %e,
+                        game = %game_address,
+                        "dispute proof signer is invalid onchain, dropping pending proof"
+                    );
+                    self.pending_proofs.remove(&game_address);
+                    return Ok(());
+                }
+
                 warn!(
                     error = %e,
                     game = %game_address,
@@ -923,5 +985,122 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc, time::Duration};
+
+    use alloy_primitives::{Address, B256, Bytes};
+    use base_proof_contracts::l1_origin_too_old_selector;
+    use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
+    use base_tx_manager::TxManagerError;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::{
+        ChallengerProofAdapter,
+        test_utils::{
+            MockAggregateVerifier, MockDisputeGameFactory, MockL2Provider, MockTxManager,
+            MockZkProofProvider, addr, mock_anchor_registry, mock_state,
+        },
+    };
+
+    fn proof_request() -> SnarkGroth16ProofRequest {
+        SnarkGroth16ProofRequest {
+            proof: ZkProofRequest {
+                start_block_number: 100,
+                number_of_blocks_to_prove: 10,
+                sequence_window: None,
+                l1_head: Some(B256::repeat_byte(0xAA)),
+                intermediate_root_interval: Some(10),
+                zk_vm: ZkVm::Sp1,
+            },
+            prover_address: Address::repeat_byte(0xCC),
+        }
+    }
+
+    fn driver_with_tx_error(
+        err: TxManagerError,
+    ) -> (Driver<MockL2Provider, MockZkProofProvider, MockTxManager>, Arc<MockZkProofProvider>)
+    {
+        let game_address = addr(0);
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(game_address, mock_state(GameStatus::InProgress, Address::ZERO, 100));
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
+        let scanner =
+            GameScanner::new(factory, verifier.clone(), mock_anchor_registry(Address::ZERO));
+        let proof_requester = Arc::new(MockZkProofProvider::default());
+        let tx_manager = MockTxManager::new(Err(err));
+        let components = DriverComponents {
+            scanner,
+            validator: OutputValidator::new(Arc::new(MockL2Provider::new())),
+            proof_requester: proof_requester.clone(),
+            submitter: ChallengeSubmitter::new(tx_manager),
+            tee: None,
+            verifier_client: verifier,
+            bond_manager: None,
+        };
+        let driver = Driver::new(
+            DriverConfig {
+                poll_interval: Duration::from_millis(10),
+                max_proof_duration: Duration::from_secs(60),
+                cancel: CancellationToken::new(),
+            },
+            components,
+        );
+
+        (driver, proof_requester)
+    }
+
+    fn insert_ready_proof(driver: &mut Driver<MockL2Provider, MockZkProofProvider, MockTxManager>) {
+        let game_address = addr(0);
+        driver.pending_proofs.insert(
+            game_address,
+            PendingProof::ready(
+                Bytes::from(vec![0x01, 0xAA]),
+                0,
+                B256::repeat_byte(0x22),
+                proof_request(),
+                DisputeIntent::Challenge,
+            ),
+        );
+    }
+
+    #[tokio::test]
+    async fn proof_already_verified_revert_drops_pending_proof() {
+        let (mut driver, _proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: Some("AlreadyProven(1)".to_string()),
+                data: None,
+            });
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+    }
+
+    #[tokio::test]
+    async fn stale_l1_origin_revert_requests_fresh_proof() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: None,
+                data: Some(Bytes::from(l1_origin_too_old_selector().to_vec())),
+            });
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        let pending = driver.pending_proofs.get(&addr(0)).unwrap();
+        assert!(matches!(pending.phase, ProofPhase::AwaitingProof { .. }));
+        let state = proof_requester.state.lock().unwrap();
+        assert_eq!(state.prove_block_range_log.len(), 1);
+        assert_eq!(
+            state.prove_block_range_log[0].proof.session_id,
+            ChallengerProofAdapter::snark_groth16_session_id(addr(0), 0),
+        );
     }
 }
