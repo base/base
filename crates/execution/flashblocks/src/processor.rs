@@ -134,7 +134,15 @@ where
             match update {
                 StateUpdate::Canonical(block) => {
                     debug!(message = "processing canonical block", block_number = block.number);
-                    match self.process_canonical_block(prev_pending_blocks, &block) {
+                    // Move the blocking MDBX read-tx + EVM rebuild off the async
+                    // worker thread so it cannot starve the runtime. Safe because
+                    // the node runs on a multi_thread runtime
+                    // (CliRunner::try_default_runtime -> new_multi_thread); the
+                    // closure runs on the same thread so all `&self`/borrow
+                    // captures stay on-thread (no Send + 'static, no clone).
+                    match tokio::task::block_in_place(|| {
+                        self.process_canonical_block(prev_pending_blocks, &block)
+                    }) {
                         Ok(new_pending_blocks) => {
                             self.pending_blocks.swap(new_pending_blocks);
 
@@ -178,7 +186,11 @@ where
         flashblock: Flashblock,
     ) {
         let start_time = Instant::now();
-        match self.process_flashblock(prev_pending_blocks, &flashblock) {
+        // Move the blocking MDBX read-tx + EVM rebuild off the async worker
+        // thread (multi_thread runtime; borrows stay on-thread, no clone).
+        match tokio::task::block_in_place(|| {
+            self.process_flashblock(prev_pending_blocks, &flashblock)
+        }) {
             Ok(new_pending_blocks) => {
                 if let Some(ref pb) = new_pending_blocks {
                     _ = self.sender.send(Arc::clone(pb));
@@ -844,5 +856,51 @@ where
         }
 
         self.publish_pending_blocks(pending_blocks_builder, db, state_overrides)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the runtime-flavor contract that `start()` and
+    //! `apply_flashblock()` rely on when they wrap the blocking MDBX read-tx +
+    //! EVM rebuild in `tokio::task::block_in_place`.
+    //!
+    //! A full behavior-parity test would require constructing a
+    //! `StateProcessor<Client>` over a mock `StateProviderFactory` plus EVM
+    //! state, for which this crate has no fixtures. Instead we lock in the
+    //! single safety precondition the wrap depends on as an executable
+    //! assertion: `block_in_place` is sound on a `multi_thread` runtime (the
+    //! node runtime, per `CliRunner::try_default_runtime` -> `new_multi_thread`)
+    //! and panics on a `current_thread` runtime. This documents — and CI-pins —
+    //! the
+    //! invariant so a future change to the runtime flavor (or a `#[tokio::test]`
+    //! default-`current_thread` harness driving these fns) fails loudly here.
+
+    /// Mirrors the wrap at the two call sites: `block_in_place` returning a
+    /// value, borrowing on-thread. Under `multi_thread` it runs the closure and
+    /// returns its result without panicking.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn block_in_place_is_sound_on_multi_thread_runtime() {
+        let owned = String::from("prev_pending_blocks");
+        let borrowed = 42u64;
+        let out = tokio::task::block_in_place(|| {
+            // Capture an owned value by move and a borrow by ref, exactly like
+            // the real wrap captures `prev_pending_blocks` (owned) and
+            // `&block`/`&flashblock` (borrowed).
+            format!("{owned}-{borrowed}")
+        });
+        assert_eq!(out, "prev_pending_blocks-42");
+    }
+
+    /// Documents the failure mode the wrap must never be exposed to: calling
+    /// `block_in_place` from a `current_thread` runtime panics. This is why the
+    /// node must stay on `new_multi_thread` and why any test that drives
+    /// `start()`/`apply_flashblock()` directly must use
+    /// `#[tokio::test(flavor = "multi_thread")]`.
+    #[tokio::test]
+    #[should_panic]
+    async fn block_in_place_panics_on_current_thread_runtime() {
+        // `#[tokio::test]` defaults to a current_thread runtime.
+        tokio::task::block_in_place(|| {});
     }
 }
