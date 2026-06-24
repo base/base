@@ -350,14 +350,20 @@ impl StandardBaseRethNode {
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
         let transaction_events_env_enabled = transaction_event_journal_env_enabled();
         let transaction_event_writer_config = transaction_event_writer_config(&args.rpc)?;
-        let transaction_event_writer_init_config = transaction_event_writer_config.clone();
         runner.add_started_callback(move || {
-            if let Some(config) = transaction_event_writer_init_config {
-                tokio::spawn(async move {
-                    if let Err(err) = GlobalTransactionEventWriter::init(Some(config)).await {
-                        tracing::warn!(error = %err, "transaction event journal disabled");
-                    }
-                });
+            if let Some(config) = transaction_event_writer_config {
+                let init_result = std::thread::spawn(move || {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("transaction event writer init runtime")
+                        .block_on(GlobalTransactionEventWriter::init(Some(config)))
+                })
+                .join()
+                .map_err(|_| eyre::eyre!("transaction event writer init thread panicked"))?;
+                if let Err(err) = init_result {
+                    tracing::warn!(error = %err, "transaction event journal disabled");
+                }
             }
             Ok(())
         });
