@@ -323,17 +323,17 @@ mod tests {
 
     impl MockOriginSelectorProvider {
         /// Creates a new [`MockOriginSelectorProvider`].
-        fn with_block(&mut self, block: BlockInfo) {
+        fn with_block(&self, block: BlockInfo) {
             self.blocks.lock().unwrap().replace(block);
         }
 
         /// Removes a block by hash.
-        fn remove_block_by_hash(&mut self, hash: B256) {
+        fn remove_block_by_hash(&self, hash: B256) {
             self.blocks.lock().unwrap().retain(|block| block.hash != hash);
         }
 
         /// Fails lookups for the given L1 block number.
-        fn fail_block_number(&mut self, number: u64) {
+        fn fail_block_number(&self, number: u64) {
             self.failed_number_fetches.lock().unwrap().insert(number);
         }
     }
@@ -381,7 +381,7 @@ mod tests {
 
         // Initialize the provider with mock L1 blocks, equal to the number of epochs + 1
         // (such that the next logical origin is always available.)
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         for i in 0..num_epochs + 1 {
             provider.with_block(BlockInfo {
                 parent_hash: B256::with_last_byte(i.saturating_sub(1) as u8),
@@ -468,7 +468,7 @@ mod tests {
         });
 
         // Initialize the provider with a single L1 block.
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(BlockInfo {
             parent_hash: B256::ZERO,
             hash: B256::ZERO,
@@ -527,7 +527,7 @@ mod tests {
 
         let current =
             BlockInfo { parent_hash: B256::ZERO, hash: B256::ZERO, number: 0, timestamp: 0 };
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(current);
         provider.fail_block_number(current.number + 1);
 
@@ -561,7 +561,7 @@ mod tests {
 
         let current =
             BlockInfo { parent_hash: B256::ZERO, hash: B256::ZERO, number: 0, timestamp: 0 };
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(current);
         provider.fail_block_number(current.number + 1);
 
@@ -595,7 +595,7 @@ mod tests {
 
         let current =
             BlockInfo { parent_hash: B256::ZERO, hash: B256::ZERO, number: 0, timestamp: 0 };
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(current);
         provider.fail_block_number(current.number + 1);
 
@@ -634,7 +634,7 @@ mod tests {
             timestamp: stale_current.timestamp,
         };
 
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(stale_current);
 
         let mut selector = L1OriginSelector::new(Arc::clone(&cfg), provider.clone());
@@ -685,7 +685,7 @@ mod tests {
         });
 
         // Initialize the provider with a single L1 block.
-        let mut provider = MockOriginSelectorProvider::default();
+        let provider = MockOriginSelectorProvider::default();
         provider.with_block(BlockInfo {
             parent_hash: B256::ZERO,
             hash: B256::ZERO,
