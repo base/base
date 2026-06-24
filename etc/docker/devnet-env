@@ -188,6 +188,9 @@ L2_BASE_AZUL_BLOCK=20
 # Optional: set to a non-negative block number to schedule Base Beryl in devnet.
 # Leave unset to avoid setting base.beryl during genesis generation.
 L2_BASE_BERYL_BLOCK=21
+# Optional: set to a non-negative block number to schedule Base Cobalt in devnet.
+# Leave unset to avoid setting base.cobalt during genesis generation.
+L2_BASE_COBALT_BLOCK=22
 
 # Metering Resource Limits
 # Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.
