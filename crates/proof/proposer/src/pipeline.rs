@@ -33,7 +33,7 @@ where
 {
     config: DriverConfig,
     proof_dispatcher: ProofDispatcher,
-    proof_recovery: Arc<ProofRecovery<R>>,
+    proof_recovery: Arc<ProofRecovery>,
     proof_collector: ProofCollector<L1, R>,
 }
 
@@ -56,7 +56,7 @@ where
     pub const fn new(
         config: DriverConfig,
         proof_dispatcher: ProofDispatcher,
-        proof_recovery: Arc<ProofRecovery<R>>,
+        proof_recovery: Arc<ProofRecovery>,
         proof_collector: ProofCollector<L1, R>,
     ) -> Self {
         Self { config, proof_dispatcher, proof_recovery, proof_collector }
@@ -310,7 +310,7 @@ mod tests {
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
             },
-            Arc::clone(&rollup),
+            rollup.clone(),
             anchor_registry,
             factory,
         ));

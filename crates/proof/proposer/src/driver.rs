@@ -311,7 +311,7 @@ mod tests {
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
             },
-            Arc::clone(&rollup),
+            rollup.clone(),
             anchor_registry,
             factory,
         ));

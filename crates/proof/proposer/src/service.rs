@@ -263,7 +263,7 @@ impl ProposerService {
                 anchor_state_registry_address: driver_config.anchor_state_registry_address,
                 scan_concurrency: driver_config.recovery_scan_concurrency,
             },
-            Arc::clone(&rollup_client),
+            rollup_client.clone(),
             anchor_registry,
             factory_client,
         ));
