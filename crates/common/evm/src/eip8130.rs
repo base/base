@@ -650,6 +650,14 @@ impl Eip8130Executor {
             known_bytecode,
             target_address: to,
             caller,
+            // `Transfer(ZERO)` is exactly what a zero-value `CALL` opcode lowers
+            // to (`Apparent` is reserved for `DELEGATECALL`), so this matches
+            // mainnet CALL semantics: `msg.value` reads as 0 and the target is
+            // touched. Touching is the correct CALL behaviour and, for an empty
+            // target, is a no-op under EIP-161 state-clear (touched-empty is
+            // erased at tx end). No new-account gas differs from `Apparent`: the
+            // classic 25000 charge lives at the CALL-opcode gas site (which this
+            // directly-built frame bypasses) and applies only when value > 0.
             value: CallValue::Transfer(U256::ZERO),
             scheme: CallScheme::Call,
             is_static: false,
@@ -661,8 +669,12 @@ impl Eip8130Executor {
         // one. The buffer is an `Rc<RefCell<Vec<u8>>>` owned by the context for
         // the EVM's lifetime, so this `Rc::clone` is a refcount bump (not a heap
         // allocation) and every call reuses the same backing allocation, growing
-        // it to the high-water mark across calls. The per-tx buffer is reclaimed
-        // by the `local_mut().clear()` after `commit_tx` in `execute`.
+        // it to the high-water mark across calls. When `run_exec_loop` finishes
+        // it drops the `SharedMemory` wrapper, which only decrements the refcount
+        // — the underlying `Vec` allocation stays owned by the `LocalContext`, so
+        // the next call reuses it (there is no "return to pool" step). The per-tx
+        // buffer is reclaimed by the `local_mut().clear()` after `commit_tx` in
+        // `execute`.
         let ctx = evm.ctx_mut();
         let mut memory =
             SharedMemory::new_with_buffer(Rc::clone(ctx.local().shared_memory_buffer()));
