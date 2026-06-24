@@ -8,7 +8,7 @@ use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
 use serde::{Deserialize, Serialize};
 
 mod request;
-pub use request::BaseTransactionRequest;
+pub use request::{BaseTransactionRequest, Eip8130AuthScheme, Eip8130RequestFields};
 
 /// Base transaction type
 #[derive(
@@ -344,7 +344,6 @@ mod tx_serde {
 mod tests {
     use alloc::vec;
 
-    use alloy_consensus::transaction::SignerRecoverable;
     use alloy_primitives::Bytes;
     use base_common_consensus::{Eip8130Signed, TxEip8130};
 
@@ -391,7 +390,13 @@ mod tests {
         let signed = Eip8130Signed::new(tx_body, sender_auth, payer_auth);
         let envelope = BaseTxEnvelope::Eip8130(signed);
 
-        let recovered = envelope.try_into_recovered().expect("recover eip-8130 explicit sender");
+        // Wrap the envelope with its explicit sender directly rather than going
+        // through `try_into_recovered`, which pulls in secp256k1 signature
+        // recovery (the `k256` feature). This test only exercises serialization,
+        // and an EIP-8130 tx with an explicit `sender` recovers to exactly that
+        // address, so the unchecked wrapper is equivalent here and keeps the
+        // default-feature `cargo test` build working.
+        let recovered = Recovered::new_unchecked(envelope, Address::with_last_byte(0x11));
         let tx_info = BaseTransactionInfo {
             inner: alloy_rpc_types_eth::TransactionInfo {
                 hash: Some(B256::repeat_byte(0x42)),
