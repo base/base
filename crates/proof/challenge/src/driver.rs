@@ -1030,14 +1030,17 @@ mod tests {
         verifier_games.insert(game_address, mock_state(GameStatus::InProgress, Address::ZERO, 100));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
-        let scanner =
-            GameScanner::new(factory, verifier.clone(), mock_anchor_registry(Address::ZERO));
+        let scanner = GameScanner::new(
+            factory,
+            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
+            mock_anchor_registry(Address::ZERO),
+        );
         let proof_requester = Arc::new(MockZkProofProvider::default());
         let tx_manager = MockTxManager::new(Err(err));
         let components = DriverComponents {
             scanner,
             validator: OutputValidator::new(Arc::new(MockL2Provider::new())),
-            proof_requester: proof_requester.clone(),
+            proof_requester: Arc::clone(&proof_requester),
             submitter: ChallengeSubmitter::new(tx_manager),
             tee: None,
             verifier_client: verifier,
