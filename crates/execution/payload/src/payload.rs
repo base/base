@@ -287,8 +287,7 @@ impl<T> TracedBasePayloadBuilderAttributes<T> {
         Self { inner, trace_context: TraceContextHeaders::new(None, None) }
     }
 
-    /// Returns mutable access to the inner attributes for focused test setup.
-    #[cfg(test)]
+    /// Returns mutable access to the inner attributes.
     pub const fn inner_mut(&mut self) -> &mut BasePayloadBuilderAttributes<T> {
         &mut self.inner
     }
