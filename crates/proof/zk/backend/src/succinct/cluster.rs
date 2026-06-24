@@ -13,7 +13,10 @@ use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::{ClusterArtifactStore, ClusterProofConfig};
 use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ProofResult, ZkProofResult, ZkVm};
+use base_prover_service_protocol::{
+    ProofResult, SessionType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, ZkProofResult,
+    ZkVm,
+};
 use serde::{Deserialize, Serialize};
 use sp1_cluster_common::{
     client::ClusterServiceClient,
@@ -23,7 +26,7 @@ use sp1_cluster_common::{
     },
 };
 use sp1_prover_types::{Artifact, ArtifactClient as _, ArtifactType};
-use sp1_sdk::{ProofFromNetwork, SP1ProofWithPublicValues, SP1Stdin};
+use sp1_sdk::{HashableKey, ProofFromNetwork, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -55,6 +58,10 @@ pub struct SuccinctClusterBackendConfig {
     pub range_cycle_limit: u64,
     /// Gas limit for range proof requests.
     pub range_gas_limit: u64,
+    /// Cycle limit for aggregation proof requests.
+    pub aggregation_cycle_limit: u64,
+    /// Gas limit for aggregation proof requests.
+    pub aggregation_gas_limit: u64,
 }
 
 /// Configuration for [`ClusterZkProver`].
@@ -68,21 +75,30 @@ pub struct ClusterZkProverConfig {
     pub default_sequence_window: u64,
     /// Cluster proof submission and artifact configuration.
     pub cluster: Arc<ClusterProofConfig>,
+    /// Range program verification key used by the aggregation program.
+    pub range_vk: Arc<SP1VerifyingKey>,
     /// Proof timeout.
     pub timeout: Duration,
     /// Cycle limit for range proof requests.
     pub range_cycle_limit: u64,
     /// Gas limit for range proof requests.
     pub range_gas_limit: u64,
+    /// Cycle limit for aggregation proof requests.
+    pub aggregation_cycle_limit: u64,
+    /// Gas limit for aggregation proof requests.
+    pub aggregation_gas_limit: u64,
 }
 
 impl std::fmt::Debug for ClusterZkProverConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClusterZkProverConfig")
             .field("default_sequence_window", &self.default_sequence_window)
+            .field("range_vk", &self.range_vk.bytes32())
             .field("timeout", &self.timeout)
             .field("range_cycle_limit", &self.range_cycle_limit)
             .field("range_gas_limit", &self.range_gas_limit)
+            .field("aggregation_cycle_limit", &self.aggregation_cycle_limit)
+            .field("aggregation_gas_limit", &self.aggregation_gas_limit)
             .finish_non_exhaustive()
     }
 }
@@ -144,12 +160,33 @@ impl ClusterZkProver {
             timeout,
             range_cycle_limit,
             range_gas_limit,
+            aggregation_cycle_limit,
+            aggregation_gas_limit,
         } = config;
         let base_consensus_url = rpc.base_consensus_rpc.as_str().to_owned();
         let l1_node_url = rpc.l1_rpc.as_str().to_owned();
         let default_sequence_window = rpc.default_sequence_window;
 
         info!(backend = "cluster", "using Succinct SP1 cluster backend");
+        info!("computing range verification key");
+        let Some((range_vk, _aggregation_vk)) = SuccinctZkProverBuilder::complete_unless_cancelled(
+            cancel,
+            async {
+                base_proof_succinct_proof_utils::cluster_setup_vkeys().await.map_err(|error| {
+                    SuccinctZkProverBuildError::boxed_operation(
+                        "failed to compute proof verification keys",
+                        error.into_boxed_dyn_error(),
+                    )
+                })
+            },
+            "proof_verification_keys",
+        )
+        .await?
+        else {
+            return Ok(None);
+        };
+        info!("range verification key computed successfully");
+
         let Some(provider) = SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
         else {
             return Ok(None);
@@ -187,9 +224,12 @@ impl ClusterZkProver {
                 artifact_store_config,
                 service_client,
             }),
+            range_vk: range_vk.into(),
             timeout,
             range_cycle_limit,
             range_gas_limit,
+            aggregation_cycle_limit,
+            aggregation_gas_limit,
         };
 
         Ok(Some(Arc::new(Self::new(provider, prover_config))))
@@ -252,6 +292,16 @@ impl ClusterZkProver {
     /// Build the cluster proof id for a prover-service session attempt.
     pub fn proof_id_for_attempt(request_session_id: &str, attempt: u64) -> String {
         let base_proof_id = format!("prover_service_{request_session_id}");
+        if attempt == 0 {
+            return base_proof_id;
+        }
+
+        format!("{base_proof_id}_retry_{attempt}")
+    }
+
+    /// Build the deterministic cluster aggregation proof id for a prover-service session attempt.
+    pub fn aggregation_proof_id_for_attempt(request_session_id: &str, attempt: u64) -> String {
+        let base_proof_id = format!("prover_service_{request_session_id}_aggregation");
         if attempt == 0 {
             return base_proof_id;
         }
@@ -373,6 +423,43 @@ impl ClusterZkProver {
         ProofRequestStatus::try_from(req.proof_status).map_err(|_| {
             backend_error!("cluster proof {} has unknown proof status {}", req.id, req.proof_status)
         })
+    }
+
+    /// Validate that an existing cluster request is safe to resume after create raced.
+    pub fn validate_existing_cluster_request(
+        req: &ClusterProtoProofRequest,
+    ) -> Result<ProofRequestStatus, ZkProverError> {
+        let proof_status = Self::cluster_proof_status(req)?;
+        match proof_status {
+            ProofRequestStatus::Failed | ProofRequestStatus::Cancelled => {
+                return Err(backend_error!(
+                    "cluster proof {} created concurrently but already terminal: {}",
+                    req.id,
+                    proof_status.as_str_name()
+                ));
+            }
+            ProofRequestStatus::Unspecified => {
+                return Err(backend_error!(
+                    "cluster proof {} created concurrently but has unspecified status",
+                    req.id
+                ));
+            }
+            ProofRequestStatus::Pending => {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| backend_error!("invalid unix timestamp: {e}"))?
+                    .as_secs();
+                if req.deadline <= now {
+                    return Err(backend_error!(
+                        "cluster proof {} created concurrently but deadline already elapsed",
+                        req.id
+                    ));
+                }
+            }
+            ProofRequestStatus::Completed => {}
+        }
+
+        Ok(proof_status)
     }
 
     /// Convert a cluster proof request into a persisted session id.
@@ -581,6 +668,7 @@ impl ClusterZkProver {
             proof_artifact_id: Some(proof_output_id.clone()),
             requester: vec![],
             deadline,
+            // Reuse the configured proof limits for both range and aggregation stages.
             cycle_limit: self.config.range_cycle_limit,
             gas_limit: self.config.range_gas_limit,
             scheduled_by: None,
@@ -591,54 +679,11 @@ impl ClusterZkProver {
             Ok(()) => Ok(ClusterSessionId { proof_id, proof_output_id }),
             Err(e) => {
                 if let Some(existing) = self.get_cluster_request(&proof_id).await? {
-                    let proof_status = Self::cluster_proof_status(&existing)?;
-                    match proof_status {
-                        ProofRequestStatus::Failed | ProofRequestStatus::Cancelled => {
-                            error!(
-                                proof_id = %proof_id,
-                                proof_status = %proof_status.as_str_name(),
-                                error = %e,
-                                "cluster proof create raced into terminal request"
-                            );
-                            return Err(backend_error!(
-                                "cluster proof {proof_id} created concurrently but already terminal: {}",
-                                proof_status.as_str_name()
-                            ));
-                        }
-                        ProofRequestStatus::Unspecified => {
-                            error!(
-                                proof_id = %proof_id,
-                                proof_status = %proof_status.as_str_name(),
-                                error = %e,
-                                "cluster proof create raced into unspecified request"
-                            );
-                            return Err(backend_error!(
-                                "cluster proof {proof_id} created concurrently but has unspecified status"
-                            ));
-                        }
-                        ProofRequestStatus::Pending => {
-                            let now = SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .map_err(|e| backend_error!("invalid unix timestamp: {e}"))?
-                                .as_secs();
-                            if existing.deadline <= now {
-                                error!(
-                                    proof_id = %proof_id,
-                                    deadline = existing.deadline,
-                                    now = now,
-                                    error = %e,
-                                    "cluster proof create raced into expired pending request"
-                                );
-                                return Err(backend_error!(
-                                    "cluster proof {proof_id} created concurrently but deadline already elapsed"
-                                ));
-                            }
-                        }
-                        ProofRequestStatus::Completed => {}
-                    }
+                    let proof_status = Self::validate_existing_cluster_request(&existing)?;
 
                     info!(
                         proof_id = %proof_id,
+                        proof_status = %proof_status.as_str_name(),
                         error = %e,
                         "cluster proof create raced, using existing request"
                     );
@@ -651,6 +696,190 @@ impl ClusterZkProver {
                     "cluster proof create failed with no existing request"
                 );
                 Err(backend_error!("failed to create cluster proof: {e}"))
+            }
+        }
+    }
+
+    /// Submit the Groth16 aggregation proof after the compressed range proof completes.
+    pub async fn submit_aggregation_proof(
+        &self,
+        request: &SnarkGroth16ProofRequest,
+        request_session_id: &str,
+        range_backend_session_id: &str,
+    ) -> Result<String, ZkProverError> {
+        let mut proof_id = None;
+        for attempt in 0..Self::MAX_SUBMIT_ATTEMPTS {
+            let candidate = Self::aggregation_proof_id_for_attempt(request_session_id, attempt);
+            let Some(existing) = self.get_cluster_request_once(&candidate).await? else {
+                proof_id = Some(candidate);
+                break;
+            };
+
+            let proof_status = Self::cluster_proof_status(&existing)?;
+            match proof_status {
+                ProofRequestStatus::Failed | ProofRequestStatus::Cancelled => {
+                    info!(
+                        proof_id = %candidate,
+                        proof_status = %proof_status.as_str_name(),
+                        "existing cluster aggregation request is terminal, trying next proof id"
+                    );
+                }
+                ProofRequestStatus::Pending => {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(|e| backend_error!("invalid unix timestamp: {e}"))?
+                        .as_secs();
+                    if existing.deadline <= now {
+                        info!(
+                            proof_id = %candidate,
+                            deadline = existing.deadline,
+                            now = now,
+                            "existing cluster aggregation request deadline elapsed, trying next proof id"
+                        );
+                        continue;
+                    }
+
+                    info!(proof_id = %candidate, "cluster aggregation request already exists");
+                    return Self::session_id_from_request(&existing)?.to_backend_session_id();
+                }
+                ProofRequestStatus::Unspecified => {
+                    return Err(backend_error!(
+                        "cluster aggregation proof {} has unspecified status",
+                        candidate
+                    ));
+                }
+                ProofRequestStatus::Completed => {
+                    info!(proof_id = %candidate, "cluster aggregation request already exists");
+                    return Self::session_id_from_request(&existing)?.to_backend_session_id();
+                }
+            }
+        }
+        let proof_id = proof_id.ok_or_else(|| {
+            backend_error!(
+                "exhausted {} cluster aggregation submit attempts for request session id {}",
+                Self::MAX_SUBMIT_ATTEMPTS,
+                request_session_id
+            )
+        })?;
+
+        let range_session = ClusterSessionId::parse(range_backend_session_id)?;
+        let range_proof = self.download_cluster_proof(&range_session).await?;
+        let stdin = self
+            .provider
+            .generate_aggregation_witness(
+                range_proof,
+                self.config.range_vk.as_ref(),
+                request.prover_address,
+            )
+            .await
+            .map_err(|e| backend_error!("aggregation witness generation failed: {e}"))?;
+
+        let session = self.create_aggregation_request(proof_id, stdin).await?;
+        let backend_session_id = session.to_backend_session_id()?;
+        info!(
+            proof_id = %session.proof_id,
+            proof_output_id = %session.proof_output_id,
+            cycle_limit = self.config.aggregation_cycle_limit,
+            gas_limit = self.config.aggregation_gas_limit,
+            "aggregation proof request submitted to SP1 cluster"
+        );
+
+        Ok(backend_session_id)
+    }
+
+    /// Create the cluster request after uploading the aggregation ELF and stdin artifacts.
+    pub async fn create_aggregation_request(
+        &self,
+        proof_id: String,
+        stdin: SP1Stdin,
+    ) -> Result<ClusterSessionId, ZkProverError> {
+        match &self.config.cluster.artifact_store {
+            ClusterArtifactStore::Redis(client) => {
+                self.create_aggregation_request_with_client(client.clone(), proof_id, stdin).await
+            }
+            ClusterArtifactStore::S3(client) => {
+                self.create_aggregation_request_with_client(client.clone(), proof_id, stdin).await
+            }
+        }
+    }
+
+    /// Upload aggregation artifacts with the provided client and create the cluster request.
+    pub async fn create_aggregation_request_with_client<A>(
+        &self,
+        artifact_client: A,
+        proof_id: String,
+        stdin: SP1Stdin,
+    ) -> Result<ClusterSessionId, ZkProverError>
+    where
+        A: sp1_prover_types::ArtifactClient,
+    {
+        let elf_id = artifact_client
+            .create_artifact()
+            .map_err(|e| backend_error!("failed to create aggregation ELF artifact: {e}"))?;
+        artifact_client
+            .upload_with_type(
+                &elf_id,
+                ArtifactType::Program,
+                base_proof_succinct_elfs::AGGREGATION_ELF.to_vec(),
+            )
+            .await
+            .map_err(|e| backend_error!("failed to upload aggregation ELF: {e}"))?;
+
+        let stdin_id = artifact_client
+            .create_artifact()
+            .map_err(|e| backend_error!("failed to create aggregation stdin artifact: {e}"))?;
+        artifact_client
+            .upload_with_type(&stdin_id, ArtifactType::Stdin, stdin)
+            .await
+            .map_err(|e| backend_error!("failed to upload aggregation stdin: {e}"))?;
+
+        let proof_output_id = artifact_client
+            .create_artifact()
+            .map_err(|e| backend_error!("failed to create aggregation proof artifact: {e}"))?;
+        let proof_output_id = proof_output_id.to_id();
+        let deadline = SystemTime::now() + self.config.timeout;
+        let deadline = deadline
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| backend_error!("invalid cluster aggregation deadline: {e}"))?
+            .as_secs();
+
+        let request = ProofRequestCreateRequest {
+            proof_id: proof_id.clone(),
+            program_artifact_id: elf_id.to_id(),
+            stdin_artifact_id: stdin_id.to_id(),
+            options_artifact_id: Some(
+                (sp1_sdk::network::proto::types::ProofMode::Groth16 as i32).to_string(),
+            ),
+            proof_artifact_id: Some(proof_output_id.clone()),
+            requester: vec![],
+            deadline,
+            cycle_limit: self.config.aggregation_cycle_limit,
+            gas_limit: self.config.aggregation_gas_limit,
+            scheduled_by: None,
+            stdin_private: false,
+        };
+
+        match self.config.cluster.service_client.create_proof_request(request).await {
+            Ok(()) => Ok(ClusterSessionId { proof_id, proof_output_id }),
+            Err(e) => {
+                if let Some(existing) = self.get_cluster_request(&proof_id).await? {
+                    let proof_status = Self::validate_existing_cluster_request(&existing)?;
+
+                    info!(
+                        proof_id = %proof_id,
+                        proof_status = %proof_status.as_str_name(),
+                        error = %e,
+                        "cluster aggregation create raced, using existing request"
+                    );
+                    return Self::session_id_from_request(&existing);
+                }
+
+                error!(
+                    proof_id = %proof_id,
+                    error = %e,
+                    "cluster aggregation create failed with no existing request"
+                );
+                Err(backend_error!("failed to create cluster aggregation proof: {e}"))
             }
         }
     }
@@ -686,13 +915,17 @@ impl ZkProver for ClusterZkProver {
             ZkProofRequestKind::Compressed(request) => {
                 self.submit_range_proof(request, request_session_id).await
             }
-            ZkProofRequestKind::SnarkGroth16(_) => Err(backend_error!(
-                "SP1 cluster Groth16 aggregation is not yet supported in the stateless ZK host"
-            )),
+            ZkProofRequestKind::SnarkGroth16(request) => {
+                self.submit_range_proof(&request.proof, request_session_id).await
+            }
         }
     }
 
-    async fn poll(&self, backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {
+    async fn poll(
+        &self,
+        _session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ZkSessionState, ZkProverError> {
         let session = ClusterSessionId::parse(backend_session_id)?;
         let Some(req) = self.get_cluster_request(&session.proof_id).await? else {
             return Ok(ZkSessionState::NotFound);
@@ -742,7 +975,24 @@ impl ZkProver for ClusterZkProver {
         }
     }
 
-    async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
+    async fn submit_next(
+        &self,
+        request: &SnarkGroth16ProofRequest,
+        request_session_id: &str,
+        completed_backend_session_id: &str,
+    ) -> Result<String, ZkProverError> {
+        let backend_session_id = self
+            .submit_aggregation_proof(request, request_session_id, completed_backend_session_id)
+            .await?;
+
+        Ok(backend_session_id)
+    }
+
+    async fn download(
+        &self,
+        session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ProofResult, ZkProverError> {
         let session = ClusterSessionId::parse(backend_session_id)?;
         let req = self
             .get_cluster_request(&session.proof_id)
@@ -761,11 +1011,12 @@ impl ZkProver for ClusterZkProver {
         let proof = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
             .map_err(|e| backend_error!("failed to serialize proof: {e}"))?;
 
-        Ok(ProofResult::Compressed(ZkProofResult {
-            zk_vm: ZkVm::Sp1,
-            proof: proof.into(),
-            execution_stats: None,
-        }))
+        let proof = ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into(), execution_stats: None };
+        if session_type == SessionType::Snark {
+            Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof }))
+        } else {
+            Ok(ProofResult::Compressed(proof))
+        }
     }
 }
 
@@ -793,5 +1044,14 @@ mod tests {
 
         assert_eq!(first, "prover_service_session-1");
         assert_eq!(retry, "prover_service_session-1_retry_2");
+    }
+
+    #[test]
+    fn aggregation_proof_id_for_attempt_uses_stage_suffix() {
+        let first = ClusterZkProver::aggregation_proof_id_for_attempt("session-1", 0);
+        let retry = ClusterZkProver::aggregation_proof_id_for_attempt("session-1", 2);
+
+        assert_eq!(first, "prover_service_session-1_aggregation");
+        assert_eq!(retry, "prover_service_session-1_aggregation_retry_2");
     }
 }

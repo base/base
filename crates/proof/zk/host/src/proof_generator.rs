@@ -79,6 +79,7 @@ pub struct ProofGenerator<Client> {
 }
 
 struct ResolvedBackendSession {
+    session_type: SessionType,
     backend_session_id: String,
     needs_polling: bool,
 }
@@ -220,7 +221,6 @@ where
         &self,
         request: &ProofGeneratorRequest,
     ) -> Result<ProofResult, ZkProverError> {
-        let session_type = request.request.session_type();
         let handle = ProofSessionHandle::new(
             self.submitter.client().clone(),
             request.claim.session_id.clone(),
@@ -228,26 +228,60 @@ where
             request.claim.worker_id.clone(),
         );
 
-        let existing = handle
-            .get(session_type)
-            .await
-            .map_err(|error| ZkProverError::Session(Box::new(error)))?;
+        let (session_type, existing) = self.resume_backend_session(request, &handle).await?;
         let resolved =
             self.resolve_backend_session(request, &handle, session_type, existing).await?;
 
-        if resolved.needs_polling {
+        let resolved = if resolved.needs_polling {
             self.wait_for_backend_session(
                 request,
                 &handle,
-                session_type,
-                &resolved.backend_session_id,
+                resolved.session_type,
+                resolved.backend_session_id,
             )
-            .await?;
-        }
+            .await?
+        } else {
+            resolved
+        };
 
-        let proof = self.prover.download(&resolved.backend_session_id).await?;
+        let proof =
+            self.prover.download(resolved.session_type, &resolved.backend_session_id).await?;
 
         Ok(proof)
+    }
+
+    async fn resume_backend_session(
+        &self,
+        request: &ProofGeneratorRequest,
+        handle: &ProofSessionHandle<Client>,
+    ) -> Result<(SessionType, Option<BackendSession>), ZkProverError> {
+        let initial_session_type = request.request.initial_session_type();
+        let result_session_type = request.request.session_type();
+
+        if result_session_type != initial_session_type {
+            // Failed result-stage sessions fall back to the initial stage; if it already
+            // completed, polling it will re-drive only the next stage via `submit_next`.
+            let existing = handle
+                .get(result_session_type)
+                .await
+                .map_err(|error| ZkProverError::Session(Box::new(error)))?;
+            if let Some(
+                existing @ BackendSession {
+                    state: BackendSessionState::Running | BackendSessionState::Completed,
+                    ..
+                },
+            ) = existing
+            {
+                return Ok((result_session_type, Some(existing)));
+            }
+        }
+
+        let existing = handle
+            .get(initial_session_type)
+            .await
+            .map_err(|error| ZkProverError::Session(Box::new(error)))?;
+
+        Ok((initial_session_type, existing))
     }
 
     async fn resolve_backend_session(
@@ -264,15 +298,17 @@ where
                     backend_session_id = %backend_session_id,
                     "resuming in-flight backend session"
                 );
-                Ok(ResolvedBackendSession { backend_session_id, needs_polling: true })
+                Ok(ResolvedBackendSession { session_type, backend_session_id, needs_polling: true })
             }
             Some(BackendSession { backend_session_id, state: BackendSessionState::Completed }) => {
+                let needs_polling = session_type != request.request.session_type();
                 info!(
                     session_id = %request.claim.session_id,
                     backend_session_id = %backend_session_id,
-                    "backend session already completed, skipping to download"
+                    needs_polling = needs_polling,
+                    "backend session already completed"
                 );
-                Ok(ResolvedBackendSession { backend_session_id, needs_polling: false })
+                Ok(ResolvedBackendSession { session_type, backend_session_id, needs_polling })
             }
             None
             | Some(BackendSession {
@@ -292,7 +328,7 @@ where
                     backend_session_id = %backend_session_id,
                     "submitted backend session and recorded it"
                 );
-                Ok(ResolvedBackendSession { backend_session_id, needs_polling: true })
+                Ok(ResolvedBackendSession { session_type, backend_session_id, needs_polling: true })
             }
         }
     }
@@ -301,11 +337,11 @@ where
         &self,
         request: &ProofGeneratorRequest,
         handle: &ProofSessionHandle<Client>,
-        session_type: SessionType,
-        backend_session_id: &str,
-    ) -> Result<(), ZkProverError> {
+        mut session_type: SessionType,
+        mut backend_session_id: String,
+    ) -> Result<ResolvedBackendSession, ZkProverError> {
         loop {
-            match self.prover.poll(backend_session_id).await? {
+            match self.prover.poll(session_type, &backend_session_id).await? {
                 ZkSessionState::Running => {
                     debug!(
                         session_id = %request.claim.session_id,
@@ -314,7 +350,56 @@ where
                     );
                     sleep(self.normalized_poll_interval()).await;
                 }
-                ZkSessionState::Completed => return Ok(()),
+                ZkSessionState::Completed => {
+                    handle
+                        .record(
+                            session_type,
+                            backend_session_id.clone(),
+                            BackendSessionState::Completed,
+                        )
+                        .await
+                        .map_err(|error| ZkProverError::Session(Box::new(error)))?;
+
+                    if session_type == SessionType::Stark
+                        && let ZkProofRequestKind::SnarkGroth16(proof_request) = &request.request
+                    {
+                        let next_session_type = SessionType::Snark;
+                        let next_backend_session_id = self
+                            .prover
+                            .submit_next(
+                                proof_request,
+                                &request.claim.session_id,
+                                &backend_session_id,
+                            )
+                            .await?;
+                        handle
+                            .record(
+                                next_session_type,
+                                next_backend_session_id.clone(),
+                                BackendSessionState::Running,
+                            )
+                            .await
+                            .map_err(|error| ZkProverError::Session(Box::new(error)))?;
+
+                        info!(
+                            session_id = %request.claim.session_id,
+                            backend_session_id = %backend_session_id,
+                            next_backend_session_id = %next_backend_session_id,
+                            next_session_type = ?next_session_type,
+                            "backend session advanced"
+                        );
+
+                        session_type = next_session_type;
+                        backend_session_id = next_backend_session_id;
+                        continue;
+                    }
+
+                    return Ok(ResolvedBackendSession {
+                        session_type,
+                        backend_session_id,
+                        needs_polling: false,
+                    });
+                }
                 ZkSessionState::Failed(reason) => {
                     warn!(
                         session_id = %request.claim.session_id,
@@ -326,13 +411,10 @@ where
                         request,
                         handle,
                         session_type,
-                        backend_session_id,
+                        &backend_session_id,
                     )
                     .await;
-                    return Err(ZkProverError::BackendSessionFailed {
-                        backend_session_id: backend_session_id.to_owned(),
-                        reason,
-                    });
+                    return Err(ZkProverError::BackendSessionFailed { backend_session_id, reason });
                 }
                 ZkSessionState::NotFound => {
                     warn!(
@@ -344,12 +426,10 @@ where
                         request,
                         handle,
                         session_type,
-                        backend_session_id,
+                        &backend_session_id,
                     )
                     .await;
-                    return Err(ZkProverError::BackendSessionNotFound {
-                        backend_session_id: backend_session_id.to_owned(),
-                    });
+                    return Err(ZkProverError::BackendSessionNotFound { backend_session_id });
                 }
             }
         }

@@ -32,12 +32,14 @@ impl ZkProofRequestKind {
         }
     }
 
-    /// Returns whether this request asks for a Groth16 SNARK proof.
-    pub const fn is_snark_groth16(&self) -> bool {
-        matches!(self, Self::SnarkGroth16(_))
+    /// Returns the first backend session type used to prove this request.
+    pub const fn initial_session_type(&self) -> SessionType {
+        match self {
+            Self::Compressed(_) | Self::SnarkGroth16(_) => SessionType::Stark,
+        }
     }
 
-    /// Returns the backend session type tracked for this request.
+    /// Returns the backend session type that produces this request's final proof.
     pub const fn session_type(&self) -> SessionType {
         match self {
             Self::Compressed(_) => SessionType::Stark,
@@ -97,11 +99,29 @@ pub trait ZkProver: Send + Sync + std::fmt::Debug {
         request_session_id: &str,
     ) -> Result<String, ZkProverError>;
 
+    /// Submit the Groth16 aggregation backend session for a completed range proof.
+    async fn submit_next(
+        &self,
+        _request: &SnarkGroth16ProofRequest,
+        _request_session_id: &str,
+        _completed_backend_session_id: &str,
+    ) -> Result<String, ZkProverError> {
+        Err(ZkProverError::Unimplemented)
+    }
+
     /// Poll the backend session, returning its current state.
-    async fn poll(&self, backend_session_id: &str) -> Result<ZkSessionState, ZkProverError>;
+    async fn poll(
+        &self,
+        session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ZkSessionState, ZkProverError>;
 
     /// Download the completed proof for a backend session.
-    async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError>;
+    async fn download(
+        &self,
+        session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ProofResult, ZkProverError>;
 }
 
 /// Placeholder [`ZkProver`] that always reports proving as unimplemented.
@@ -118,11 +138,19 @@ impl ZkProver for UnimplementedZkProver {
         Err(ZkProverError::Unimplemented)
     }
 
-    async fn poll(&self, _backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {
+    async fn poll(
+        &self,
+        _session_type: SessionType,
+        _backend_session_id: &str,
+    ) -> Result<ZkSessionState, ZkProverError> {
         Err(ZkProverError::Unimplemented)
     }
 
-    async fn download(&self, _backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
+    async fn download(
+        &self,
+        _session_type: SessionType,
+        _backend_session_id: &str,
+    ) -> Result<ProofResult, ZkProverError> {
         Err(ZkProverError::Unimplemented)
     }
 }
@@ -149,26 +177,28 @@ mod tests {
         let compressed = ZkProofRequestKind::Compressed(zk_request());
         assert_eq!(compressed.start_block_number(), 100);
         assert_eq!(compressed.number_of_blocks_to_prove(), 5);
-        assert!(!compressed.is_snark_groth16());
 
         let snark = ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
             proof: zk_request(),
             prover_address: alloy_primitives::Address::ZERO,
         });
-        assert!(snark.is_snark_groth16());
+        assert_eq!(snark.start_block_number(), 100);
+        assert_eq!(snark.number_of_blocks_to_prove(), 5);
     }
 
     #[test]
     fn request_kind_maps_to_session_type() {
-        assert_eq!(ZkProofRequestKind::Compressed(zk_request()).session_type(), SessionType::Stark);
         assert_eq!(
-            ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
-                proof: zk_request(),
-                prover_address: alloy_primitives::Address::ZERO,
-            })
-            .session_type(),
-            SessionType::Snark
+            ZkProofRequestKind::Compressed(zk_request()).initial_session_type(),
+            SessionType::Stark
         );
+        assert_eq!(ZkProofRequestKind::Compressed(zk_request()).session_type(), SessionType::Stark);
+        let snark = ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+            proof: zk_request(),
+            prover_address: alloy_primitives::Address::ZERO,
+        });
+        assert_eq!(snark.initial_session_type(), SessionType::Stark);
+        assert_eq!(snark.session_type(), SessionType::Snark);
     }
 
     #[tokio::test]
