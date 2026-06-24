@@ -566,6 +566,7 @@ where
         executed_sender_nonces: &mut HashMap<Address, u64>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
+        let payload_id = ctx.payload_id().to_string();
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
         let mut target_da_for_batch = ctx.extra.target_da_for_batch;
         let mut target_da_footprint_for_batch = ctx.extra.target_da_footprint_for_batch;
@@ -589,6 +590,7 @@ where
         let flashblock_build_start_time = Instant::now();
         self.emit_flashblock_event(
             ctx,
+            &payload_id,
             TransactionEventType::BuilderFlashblockStarted,
             None,
             serde_json::Map::from_iter([
@@ -703,6 +705,7 @@ where
         if block_cancel.is_cancelled() {
             self.emit_flashblock_event(
                 ctx,
+                &payload_id,
                 TransactionEventType::BuilderFlashblockBuildStopped,
                 None,
                 serde_json::Map::from_iter([
@@ -771,6 +774,7 @@ where
                 if cancelled {
                     self.emit_flashblock_event(
                         ctx,
+                        &payload_id,
                         TransactionEventType::BuilderFlashblockBuildStopped,
                         None,
                         serde_json::Map::from_iter([
@@ -811,6 +815,7 @@ where
                 let flashblock_build_duration = flashblock_build_start_time.elapsed();
                 self.emit_flashblock_event(
                     ctx,
+                    &payload_id,
                     TransactionEventType::BuilderFlashblockPublished,
                     Some(fb_payload.diff.block_hash),
                     serde_json::Map::from_iter([
@@ -911,12 +916,13 @@ where
     fn emit_flashblock_event(
         &self,
         ctx: &BasePayloadBuilderCtx,
+        payload_id: &str,
         event_type: TransactionEventType,
         block_hash: Option<B256>,
         data: serde_json::Map<String, serde_json::Value>,
     ) {
         let event_ctx = BuilderTransactionEventContext {
-            payload_id: ctx.payload_id().to_string(),
+            payload_id: payload_id.to_string(),
             block_number: ctx.block_number(),
             block_hash,
             parent_hash: ctx.parent_hash(),
