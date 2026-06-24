@@ -8,6 +8,9 @@ pub use envelope::BaseReceiptEnvelope;
 mod deposit;
 pub use deposit::{DepositReceipt, DepositReceiptWithBloom};
 
+mod eip8130;
+pub use eip8130::Eip8130Receipt;
+
 mod receipt;
 pub use receipt::BaseReceipt;
 

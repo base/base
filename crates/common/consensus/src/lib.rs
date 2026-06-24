@@ -21,6 +21,7 @@ pub use reth_compat::{BaseBlockBody, BasePrimitives, CompactTxDeposit, DepositRe
 mod receipts;
 pub use receipts::{
     BaseReceipt, BaseReceiptEnvelope, BaseTxReceipt, DepositReceipt, DepositReceiptWithBloom,
+    Eip8130Receipt,
 };
 
 mod transaction;
