@@ -238,8 +238,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ProofCollector, ProofDispatcher, ProofDispatcherConfig, ProofRecovery, ProofRecoveryConfig,
-        ProofSubmitter, ProofSubmitterConfig,
+        ProofCollector, ProofDispatcher, ProofRecovery, ProofRecoveryConfig, ProofSubmitter,
+        ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
@@ -285,12 +285,7 @@ mod tests {
             l1.clone(),
             l2.clone(),
             rollup.clone(),
-            ProofDispatcherConfig {
-                proposer_address: config.proposer_address,
-                allow_non_finalized: config.allow_non_finalized,
-                intermediate_block_interval: config.intermediate_block_interval,
-                tee_image_hash: config.tee_image_hash,
-            },
+            &config,
         );
         let proof_submitter = ProofSubmitter::new(
             output_proposer,

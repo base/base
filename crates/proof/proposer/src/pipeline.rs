@@ -182,8 +182,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        OutputProposer, ProofDispatcherConfig, ProofRecoveryConfig, ProofSubmitter,
-        ProofSubmitterConfig,
+        OutputProposer, ProofRecoveryConfig, ProofSubmitter, ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
@@ -267,12 +266,7 @@ mod tests {
             l1.clone(),
             l2.clone(),
             rollup.clone(),
-            ProofDispatcherConfig {
-                proposer_address: config.proposer_address,
-                allow_non_finalized: config.allow_non_finalized,
-                intermediate_block_interval: config.intermediate_block_interval,
-                tee_image_hash: config.tee_image_hash,
-            },
+            &config,
         );
         let proof_recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {

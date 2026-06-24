@@ -36,7 +36,7 @@ use crate::{
     output_proposer::{OutputProposer, ProposalSubmitter},
     pipeline::ProvingPipeline,
     proof_collector::ProofCollector,
-    proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
+    proof_dispatcher::ProofDispatcher,
     proof_recovery::{ProofRecovery, ProofRecoveryConfig},
     proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
 };
@@ -236,12 +236,7 @@ impl ProposerService {
             l1_client.clone(),
             l2_client.clone(),
             rollup_client.clone(),
-            ProofDispatcherConfig {
-                proposer_address: driver_config.proposer_address,
-                allow_non_finalized: driver_config.allow_non_finalized,
-                intermediate_block_interval: driver_config.intermediate_block_interval,
-                tee_image_hash: driver_config.tee_image_hash,
-            },
+            &driver_config,
         );
         let proof_submitter = ProofSubmitter::new(
             output_proposer,

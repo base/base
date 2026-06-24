@@ -11,22 +11,12 @@ use base_prover_service_client::ProofRequesterProvider;
 use tracing::{debug, info, warn};
 
 use crate::{
-    Metrics, driver::RecoveredState, error::ProposerError, proof_adapter::ProposerProofAdapter,
+    Metrics,
+    driver::{DriverConfig, RecoveredState},
+    error::ProposerError,
+    proof_adapter::ProposerProofAdapter,
     proof_target::ProofTarget,
 };
-
-/// Static parameters needed to build proposer proof requests.
-#[derive(Debug, Clone, Copy)]
-pub struct ProofDispatcherConfig {
-    /// Address of the proposer that will submit the proof onchain.
-    pub proposer_address: Address,
-    /// Whether requests may target safe, non-finalized L2 blocks.
-    pub allow_non_finalized: bool,
-    /// Number of L2 blocks between intermediate output root checkpoints.
-    pub intermediate_block_interval: u64,
-    /// Expected TEE enclave image hash.
-    pub tee_image_hash: B256,
-}
 
 /// Builds and dispatches proposer TEE proof requests.
 pub struct ProofDispatcher {
@@ -34,12 +24,18 @@ pub struct ProofDispatcher {
     l1_client: Arc<dyn L1Provider>,
     l2_client: Arc<dyn L2Provider>,
     rollup_client: Arc<dyn RollupProvider>,
-    config: ProofDispatcherConfig,
+    proposer_address: Address,
+    intermediate_block_interval: u64,
+    tee_image_hash: B256,
 }
 
 impl std::fmt::Debug for ProofDispatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofDispatcher").field("config", &self.config).finish_non_exhaustive()
+        f.debug_struct("ProofDispatcher")
+            .field("proposer_address", &self.proposer_address)
+            .field("intermediate_block_interval", &self.intermediate_block_interval)
+            .field("tee_image_hash", &self.tee_image_hash)
+            .finish_non_exhaustive()
     }
 }
 
@@ -50,9 +46,17 @@ impl ProofDispatcher {
         l1_client: Arc<dyn L1Provider>,
         l2_client: Arc<dyn L2Provider>,
         rollup_client: Arc<dyn RollupProvider>,
-        config: ProofDispatcherConfig,
+        config: &DriverConfig,
     ) -> Self {
-        Self { proof_requester, l1_client, l2_client, rollup_client, config }
+        Self {
+            proof_requester,
+            l1_client,
+            l2_client,
+            rollup_client,
+            proposer_address: config.proposer_address,
+            intermediate_block_interval: config.intermediate_block_interval,
+            tee_image_hash: config.tee_image_hash,
+        }
     }
 
     /// Dispatches every target from the current dispatcher cursor up to `safe_head`.
@@ -134,10 +138,10 @@ impl ProofDispatcher {
             agreed_l2_output_root: recovered.output_root,
             claimed_l2_output_root,
             claimed_l2_block_number: target_block,
-            proposer: self.config.proposer_address,
-            intermediate_block_interval: self.config.intermediate_block_interval,
+            proposer: self.proposer_address,
+            intermediate_block_interval: self.intermediate_block_interval,
             l1_head_number: l1_head.number,
-            image_hash: self.config.tee_image_hash,
+            image_hash: self.tee_image_hash,
         };
 
         let request = ProposerProofAdapter::tee_prove_block_range_request(request);
@@ -190,17 +194,19 @@ mod tests {
 
     fn dispatcher() -> (ProofDispatcher, Arc<MockProofRequester>) {
         let requester = Arc::new(MockProofRequester::default());
+        let config = DriverConfig {
+            proposer_address: Address::repeat_byte(0x04),
+            intermediate_block_interval: 300,
+            tee_image_hash: B256::repeat_byte(0x05),
+            ..Default::default()
+        };
         (
             ProofDispatcher::new(
                 requester.clone(),
                 Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() }),
                 Arc::new(MockL2 { block_not_found: false, canonical_hash: None }),
                 Arc::new(MockRollupClient::default()),
-                ProofDispatcherConfig {
-                    proposer_address: Address::repeat_byte(0x04),
-                    intermediate_block_interval: 300,
-                    tee_image_hash: B256::repeat_byte(0x05),
-                },
+                &config,
             ),
             requester,
         )
