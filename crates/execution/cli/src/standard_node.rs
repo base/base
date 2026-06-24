@@ -10,8 +10,8 @@ use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringR
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_observability_events::{
-    DEFAULT_FLUSH_INTERVAL, DEFAULT_QUEUE_CAPACITY, GlobalTransactionEventWriter,
-    TransactionEventProducer, TransactionEventWriterConfig,
+    DEFAULT_QUEUE_CAPACITY, GlobalTransactionEventWriter, TransactionEventProducer,
+    TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
 use base_tx_forwarding::{
@@ -352,16 +352,7 @@ impl StandardBaseRethNode {
         let transaction_event_writer_config = transaction_event_writer_config(&args.rpc)?;
         runner.add_started_callback(move || {
             if let Some(config) = transaction_event_writer_config {
-                let init_result = std::thread::spawn(move || {
-                    tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("transaction event writer init runtime")
-                        .block_on(GlobalTransactionEventWriter::init(Some(config)))
-                })
-                .join()
-                .map_err(|_| eyre::eyre!("transaction event writer init thread panicked"))?;
-                if let Err(err) = init_result {
+                if let Err(err) = GlobalTransactionEventWriter::init(Some(config)) {
                     tracing::warn!(error = %err, "transaction event journal disabled");
                 }
             }
@@ -504,7 +495,6 @@ fn transaction_event_writer_config(
         enabled: true,
         file_path,
         queue_capacity: DEFAULT_QUEUE_CAPACITY,
-        flush_interval: DEFAULT_FLUSH_INTERVAL,
         required: false,
         producer: TransactionEventProducer::BaseRethNode,
         network: transaction_event_network(),
