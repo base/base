@@ -169,6 +169,12 @@ impl Eip8130Executor {
                 Journal: core::fmt::Debug,
             >,
     {
+        // Discard any phase statuses a previous transaction may have leaked into
+        // the thread-local slot (e.g. via a panic caught between its `set` and the
+        // receipt builder's `take`), so this transaction's receipt can only ever
+        // observe its own statuses. See [`Eip8130PhaseStatuses`] panic safety.
+        Eip8130PhaseStatuses::clear();
+
         // The signed envelope is cloned out of the context because the pipeline
         // borrows `ctx` mutably (journal/account access) while needing the
         // envelope's fields throughout. The clone deep-copies the account-change

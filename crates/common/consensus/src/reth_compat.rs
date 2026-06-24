@@ -580,4 +580,31 @@ mod tests {
 
         assert_eq!(decoded, receipt);
     }
+
+    #[test]
+    fn base_receipt_compact_roundtrips_eip8130_phase_statuses() {
+        // Pins that `eip8130_phase_statuses` is wired through `CompactBaseReceipt`
+        // as the trailing field: a non-empty status array must survive a full
+        // encode/decode round-trip. Reordering or dropping the field (so an 8130
+        // receipt decodes via the empty-trailing tolerance path) would lose the
+        // statuses and fail this assertion.
+        let receipt = BaseReceipt::Eip8130(crate::Eip8130Receipt::new(
+            Receipt {
+                status: true.into(),
+                cumulative_gas_used: 21_000,
+                logs: vec![Log::default()],
+            },
+            vec![0x01, 0x00, 0x01],
+        ));
+
+        let mut buf = Vec::new();
+        let len = receipt.to_compact(&mut buf);
+        let (decoded, _) = BaseReceipt::from_compact(&buf, len);
+
+        assert_eq!(decoded, receipt);
+        let BaseReceipt::Eip8130(decoded) = decoded else {
+            panic!("decoded receipt must remain an EIP-8130 receipt");
+        };
+        assert_eq!(decoded.phase_statuses, vec![0x01, 0x00, 0x01]);
+    }
 }

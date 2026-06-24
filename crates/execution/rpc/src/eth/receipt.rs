@@ -306,7 +306,12 @@ impl BaseReceiptBuilder {
         let payer = tx_signed
             .as_eip8130()
             .map(|signed| signed.tx().payer.unwrap_or_else(|| input.tx.signer()));
-        let metadata = tx_signed.as_eip8130().map(|signed| signed.tx().metadata.clone());
+        // Omit empty metadata rather than serializing it as `"0x"`, matching how
+        // empty `phase_statuses` is skipped — only a non-empty commitment surfaces.
+        let metadata = tx_signed
+            .as_eip8130()
+            .map(|signed| signed.tx().metadata.clone())
+            .filter(|metadata| !metadata.is_empty());
         let phase_statuses = match &input.receipt {
             BaseReceipt::Eip8130(receipt) => receipt.phase_statuses.clone(),
             _ => Vec::new(),

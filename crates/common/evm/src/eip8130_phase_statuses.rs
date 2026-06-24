@@ -16,10 +16,22 @@
 //! is cleared on read, and is only ever consulted when building an EIP-8130
 //! receipt.
 //!
+//! # Panic safety
+//!
+//! The slot is global mutable state, so a panic between [`set`] and [`take`] (for
+//! instance, one caught by a `catch_unwind` in a parallel-execution context)
+//! could otherwise leave one transaction's statuses behind for the next
+//! transaction on the same worker thread to misattribute. The executor closes
+//! this by calling [`clear`] at the very start of every `execute`, so the slot
+//! only ever reflects the in-flight transaction: any value leaked by an earlier
+//! transaction is discarded before the current one runs, and `set` publishes the
+//! current statuses as `execute`'s last step.
+//!
 //! [`BaseReceiptBuilder`]: crate::BaseReceiptBuilder
 //! [`ExecutionResult`]: revm::context_interface::result::ExecutionResult
 //! [`set`]: Eip8130PhaseStatuses::set
 //! [`take`]: Eip8130PhaseStatuses::take
+//! [`clear`]: Eip8130PhaseStatuses::clear
 
 use alloc::vec::Vec;
 
@@ -37,6 +49,15 @@ std::thread_local! {
 pub struct Eip8130PhaseStatuses;
 
 impl Eip8130PhaseStatuses {
+    /// Clears any statuses left in the slot, called at the start of `execute` so a
+    /// value leaked by an earlier transaction (e.g. a panic caught between a prior
+    /// [`Self::set`] and its [`Self::take`]) can never be misattributed to the
+    /// current transaction's receipt. No-op in `no_std` builds.
+    pub fn clear() {
+        #[cfg(feature = "std")]
+        PHASE_STATUSES.with(|cell| cell.borrow_mut().clear());
+    }
+
     /// Records the per-phase statuses of the EIP-8130 transaction just executed
     /// on this thread, to be consumed by the next [`Self::take`] when its receipt
     /// is built. No-op in `no_std` builds (where EIP-8130 execution is disabled).
