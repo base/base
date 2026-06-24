@@ -430,6 +430,7 @@ where
 
         let mut live_state = self.lock_live_state();
         let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
+            drop(live_state);
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -570,6 +571,7 @@ where
 
         let mut live_state = self.lock_live_state();
         let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
+            drop(live_state);
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
