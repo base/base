@@ -65,7 +65,7 @@ pub struct TransactionEventsArgs {
     /// Dedicated transaction events JSONL file path.
     #[arg(
         long = "builder.transaction-events.file-path",
-        env = "TRANSACTION_EVENTS_PATH",
+        env = "BUILDER_TRANSACTION_EVENTS_PATH",
         default_value = "/var/log/transaction-events/base-builder/events.jsonl"
     )]
     pub file_path: PathBuf,

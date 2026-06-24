@@ -2,7 +2,8 @@
 
 use alloy_primitives::{B256, TxHash};
 use base_observability_events::{
-    TransactionEventEmitOutcome, TransactionEventProducer, TransactionEventType, transaction_event,
+    GlobalTransactionEventWriter, TransactionEventEmitOutcome, TransactionEventProducer,
+    TransactionEventType, transaction_event,
 };
 use serde_json::{Map, Value, json};
 use tracing::warn;
@@ -128,6 +129,10 @@ pub(crate) fn emit_builder_transaction_event(
     tx_hash: TxHash,
     mut data: Map<String, Value>,
 ) {
+    if GlobalTransactionEventWriter::get().is_none() {
+        return;
+    }
+
     let event_type_label = event_type.to_string();
     let mut base_data = ctx.base_data();
     base_data.append(&mut data);
@@ -169,6 +174,10 @@ pub(crate) fn emit_builder_payload_event(
     event_type: TransactionEventType,
     mut data: Map<String, Value>,
 ) {
+    if GlobalTransactionEventWriter::get().is_none() {
+        return;
+    }
+
     let event_type_label = event_type.to_string();
     let mut base_data = ctx.base_data();
     base_data.append(&mut data);

@@ -23,7 +23,7 @@ use base_execution_payload_builder::{
 use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
 };
-use base_observability_events::TransactionEventType;
+use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -52,33 +52,7 @@ use crate::{
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
-    let r = match reason {
-        TxnExecutionError::TransactionDASizeExceeded(_, _) => "tx_da_size_exceeded",
-        TxnExecutionError::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
-        TxnExecutionError::DAFootprintLimitExceeded { .. } => "da_footprint_limit_exceeded",
-        TxnExecutionError::TransactionGasLimitExceeded { .. } => "transaction_gas_limit_exceeded",
-        TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
-            "block_uncompressed_size_exceeded"
-        }
-        TxnExecutionError::MeteringDataPending => "metering_data_pending",
-        TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
-            ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
-                "tx_execution_time_exceeded"
-            }
-            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
-                "flashblock_execution_time_exceeded"
-            }
-            ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
-                "block_state_root_gas_exceeded"
-            }
-        },
-        TxnExecutionError::SequencerTransaction => "sequencer_transaction",
-        TxnExecutionError::NonceTooLow => "nonce_too_low",
-        TxnExecutionError::InternalError(_) => "internal_error",
-        TxnExecutionError::EvmError => "evm_error",
-        TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
-    };
-    BuilderMetrics::rejected_tx_priority_fee(r).record(priority_fee);
+    BuilderMetrics::rejected_tx_priority_fee(rejection_reason_code(reason)).record(priority_fee);
 }
 
 /// Diagnostics captured during a single flashblock's transaction execution.
@@ -506,11 +480,12 @@ impl BasePayloadBuilderCtx {
 
     fn builder_transaction_event_context(
         &self,
+        payload_id: &str,
         ordering_position: Option<u64>,
         block_hash: Option<BlockHash>,
     ) -> BuilderTransactionEventContext {
         BuilderTransactionEventContext {
-            payload_id: self.payload_id().to_string(),
+            payload_id: payload_id.to_string(),
             block_number: self.block_number(),
             block_hash,
             parent_hash: self.parent_hash(),
@@ -524,13 +499,17 @@ impl BasePayloadBuilderCtx {
 
     fn emit_builder_decision_event(
         &self,
+        payload_id: &str,
         event_type: TransactionEventType,
         tx_hash: TxHash,
         ordering_position: Option<u64>,
         data: Map<String, serde_json::Value>,
     ) {
+        if GlobalTransactionEventWriter::get().is_none() {
+            return;
+        }
         emit_builder_transaction_event(
-            self.builder_transaction_event_context(ordering_position, None),
+            self.builder_transaction_event_context(payload_id, ordering_position, None),
             event_type,
             tx_hash,
             data,
@@ -717,13 +696,15 @@ impl BasePayloadBuilderCtx {
 
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
+        let payload_id = self.payload_id().to_string();
 
         while let Some(tx) = best_txs.next(()) {
             if let Some(target) = tx.target_block_number()
                 && target != block_number
             {
                 let tx_hash = *tx.hash();
-                let ordering_position = num_txs_considered + 1;
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx_hash,
@@ -737,6 +718,7 @@ impl BasePayloadBuilderCtx {
                 )]);
                 add_budget_fields(&mut considered_data, info, limits, None);
                 self.emit_builder_decision_event(
+                    &payload_id,
                     TransactionEventType::BuilderConsidered,
                     tx_hash,
                     Some(ordering_position),
@@ -754,6 +736,7 @@ impl BasePayloadBuilderCtx {
                 ]);
                 add_budget_fields(&mut rejected_data, info, limits, None);
                 self.emit_builder_decision_event(
+                    &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
@@ -765,7 +748,8 @@ impl BasePayloadBuilderCtx {
 
             if tx.is_bundle_expired(block_number, block_timestamp) {
                 let tx_hash = *tx.hash();
-                let ordering_position = num_txs_considered + 1;
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx_hash,
@@ -776,6 +760,7 @@ impl BasePayloadBuilderCtx {
                 let mut considered_data = Map::new();
                 add_budget_fields(&mut considered_data, info, limits, None);
                 self.emit_builder_decision_event(
+                    &payload_id,
                     TransactionEventType::BuilderConsidered,
                     tx_hash,
                     Some(ordering_position),
@@ -792,6 +777,7 @@ impl BasePayloadBuilderCtx {
                 ]);
                 add_budget_fields(&mut rejected_data, info, limits, None);
                 self.emit_builder_decision_event(
+                    &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
@@ -803,7 +789,8 @@ impl BasePayloadBuilderCtx {
 
             if tx.is_bundle_not_yet_valid(block_timestamp) {
                 let tx_hash = *tx.hash();
-                let ordering_position = num_txs_considered + 1;
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx_hash,
@@ -814,6 +801,7 @@ impl BasePayloadBuilderCtx {
                 let mut considered_data = Map::new();
                 add_budget_fields(&mut considered_data, info, limits, None);
                 self.emit_builder_decision_event(
+                    &payload_id,
                     TransactionEventType::BuilderConsidered,
                     tx_hash,
                     Some(ordering_position),
@@ -830,6 +818,7 @@ impl BasePayloadBuilderCtx {
                 ]);
                 add_budget_fields(&mut rejected_data, info, limits, None);
                 self.emit_builder_decision_event(
+                    &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
@@ -892,6 +881,7 @@ impl BasePayloadBuilderCtx {
                     ]);
                     add_budget_fields(&mut considered_data, info, limits, Some(&tx_resources));
                     self.emit_builder_decision_event(
+                        &payload_id,
                         TransactionEventType::BuilderConsidered,
                         tx_hash,
                         Some(ordering_position),
@@ -912,6 +902,7 @@ impl BasePayloadBuilderCtx {
                     ]);
                     add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                     self.emit_builder_decision_event(
+                        &payload_id,
                         TransactionEventType::BuilderRejected,
                         tx_hash,
                         Some(ordering_position),
@@ -955,6 +946,7 @@ impl BasePayloadBuilderCtx {
             let mut considered_data = Map::new();
             add_budget_fields(&mut considered_data, info, limits, Some(&tx_resources));
             self.emit_builder_decision_event(
+                &payload_id,
                 TransactionEventType::BuilderConsidered,
                 tx_hash,
                 Some(ordering_position),
@@ -1020,6 +1012,7 @@ impl BasePayloadBuilderCtx {
                         ]);
                         add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                         self.emit_builder_decision_event(
+                            &payload_id,
                             TransactionEventType::BuilderRejected,
                             tx_hash,
                             Some(ordering_position),
@@ -1050,6 +1043,7 @@ impl BasePayloadBuilderCtx {
                     ]);
                     add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                     self.emit_builder_decision_event(
+                        &payload_id,
                         TransactionEventType::BuilderRejected,
                         tx_hash,
                         Some(ordering_position),
@@ -1085,6 +1079,7 @@ impl BasePayloadBuilderCtx {
                 ]);
                 add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                 self.emit_builder_decision_event(
+                    &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
@@ -1145,6 +1140,7 @@ impl BasePayloadBuilderCtx {
                                 Some(&tx_resources),
                             );
                             self.emit_builder_decision_event(
+                                &payload_id,
                                 TransactionEventType::BuilderRejected,
                                 tx_hash,
                                 Some(ordering_position),
@@ -1181,6 +1177,7 @@ impl BasePayloadBuilderCtx {
                                 Some(&tx_resources),
                             );
                             self.emit_builder_decision_event(
+                                &payload_id,
                                 TransactionEventType::BuilderRejected,
                                 tx_hash,
                                 Some(ordering_position),
@@ -1261,6 +1258,7 @@ impl BasePayloadBuilderCtx {
                 ]);
                 add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                 self.emit_builder_decision_event(
+                    &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
@@ -1299,25 +1297,10 @@ impl BasePayloadBuilderCtx {
                     serde_json::json!(if is_success { "success" } else { "reverted" }),
                 ),
                 ("gas_used".to_string(), serde_json::json!(gas_used)),
-                (
-                    "cumulative_gas_used_after".to_string(),
-                    serde_json::json!(info.cumulative_gas_used),
-                ),
-                (
-                    "cumulative_da_bytes_used_after".to_string(),
-                    serde_json::json!(info.cumulative_da_bytes_used),
-                ),
-                (
-                    "cumulative_state_root_gas_after".to_string(),
-                    serde_json::json!(info.cumulative_state_root_gas),
-                ),
-                (
-                    "cumulative_uncompressed_bytes_after".to_string(),
-                    serde_json::json!(info.cumulative_uncompressed_bytes),
-                ),
             ]);
             add_budget_fields(&mut accepted_data, info, limits, Some(&tx_resources));
             self.emit_builder_decision_event(
+                &payload_id,
                 TransactionEventType::BuilderAccepted,
                 tx_hash,
                 Some(ordering_position),

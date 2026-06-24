@@ -1018,7 +1018,7 @@ where
             source_queue: "finalized_payload",
         };
         emit_builder_payload_event(
-            payload_event_ctx,
+            payload_event_ctx.clone(),
             TransactionEventType::BuilderPayloadFinalized,
             serde_json::Map::from_iter([
                 ("transaction_count".to_string(), serde_json::json!(transaction_count)),
@@ -1030,29 +1030,16 @@ where
         );
 
         for (position, tx) in block.body().transactions.iter().enumerate() {
-            let event_ctx = BuilderTransactionEventContext {
-                payload_id: ctx.payload_id().to_string(),
-                block_number,
-                block_hash: Some(block_hash),
-                parent_hash: ctx.parent_hash(),
-                flashblock_index: None,
-                target_flashblock_count: ctx.target_flashblock_count(),
-                ordering_position: Some(position as u64),
-                builder_mode: "flashblocks",
-                source_queue: "finalized_payload",
-            };
+            let mut event_ctx = payload_event_ctx.clone();
+            event_ctx.ordering_position = Some(position as u64);
             emit_builder_transaction_event(
                 event_ctx,
                 TransactionEventType::BuilderIncluded,
                 tx.tx_hash(),
-                serde_json::Map::from_iter([
-                    ("position".to_string(), serde_json::json!(position)),
-                    ("gas_used".to_string(), serde_json::json!(block.gas_used)),
-                    (
-                        "inclusion_signal".to_string(),
-                        serde_json::json!("builder_finalized_payload"),
-                    ),
-                ]),
+                serde_json::Map::from_iter([(
+                    "inclusion_signal".to_string(),
+                    serde_json::json!("builder_finalized_payload"),
+                )]),
             );
         }
     }
