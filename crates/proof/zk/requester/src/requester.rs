@@ -11,10 +11,39 @@ use crate::{Groth16RangeProofRequest, ZkProofRequesterError};
 /// Accepted prover-service sessions for a requested Groth16 proof flow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Groth16ProofRequestResponse {
-    /// Accepted compressed range proof session.
-    pub range: ProveBlockRangeResponse,
-    /// Accepted Groth16 aggregation proof session.
-    pub aggregation: ProveBlockRangeResponse,
+    /// Current state of the composed Groth16 proof flow.
+    pub state: Groth16ProofState,
+}
+
+/// Current state for a requested Groth16 proof flow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Groth16ProofState {
+    /// The range proof has been submitted and aggregation is waiting on its result.
+    AwaitingRange {
+        /// Accepted compressed range proof session.
+        range: ProveBlockRangeResponse,
+    },
+    /// The aggregation proof has been submitted and is waiting on its result.
+    AwaitingAggregation {
+        /// Accepted compressed range proof session.
+        range: ProveBlockRangeResponse,
+        /// Accepted Groth16 aggregation proof session.
+        aggregation: ProveBlockRangeResponse,
+    },
+}
+
+impl Groth16ProofState {
+    /// Return the accepted compressed range proof session.
+    pub const fn range(&self) -> &ProveBlockRangeResponse {
+        match self {
+            Self::AwaitingRange { range } | Self::AwaitingAggregation { range, .. } => range,
+        }
+    }
+
+    /// Return the accepted compressed range proof session identifier.
+    pub fn range_session_id(&self) -> &str {
+        &self.range().session_id
+    }
 }
 
 /// Higher-level requester for ZK proof flows backed by prover-service requests.
@@ -35,70 +64,103 @@ impl<Client> ZkProofRequester<Client> {
     }
 }
 
-impl<Client> ZkProofRequester<Client>
-where
-    Client: ProofRequesterProvider,
-{
-    /// Request range proof and Groth16 aggregation stages.
-    ///
-    /// If aggregation submission fails after range acceptance, the error includes
-    /// the accepted range response.
-    ///
-    /// This method is not cancellation-safe between the range and aggregation
-    /// submissions.
+impl<Client> ZkProofRequester<Client> {
+    /// Request the range proof stage for a composed Groth16 proof.
     pub async fn request_groth16_proof(
         &self,
         request: &Groth16RangeProofRequest,
-    ) -> Result<Groth16ProofRequestResponse, ZkProofRequesterError> {
-        let range = self.client.prove_block_range(request.range_prove_block_request()).await?;
-        let aggregation =
-            match self.client.prove_block_range(request.aggregation_prove_block_request()).await {
-                Ok(response) => response,
-                Err(source) => {
-                    return Err(ZkProofRequesterError::AggregationRequestFailed {
-                        range_session_id: range.session_id.clone(),
-                        range,
-                        source,
-                    });
-                }
-            };
-        Ok(Groth16ProofRequestResponse { range, aggregation })
+    ) -> Result<Groth16ProofRequestResponse, ZkProofRequesterError>
+    where
+        Client: ProofRequesterProvider,
+    {
+        ZkProofRequester::request_groth16_proof_with(&self.client, request).await
     }
 
     /// Return the completed Groth16 proof if the aggregation stage has finished.
     pub async fn groth16_result(
         &self,
         request: &Groth16RangeProofRequest,
-    ) -> Result<Option<SnarkGroth16ProofResult>, ZkProofRequesterError> {
-        let range_session_id = request.range_session_id();
-        match self.proof_result(&range_session_id).await? {
-            Some(ProofResult::Compressed(_)) => {}
-            Some(result) => {
-                return Err(Self::unexpected_result(
-                    range_session_id,
-                    &result,
-                    ProofType::Compressed,
-                ));
-            }
-            None => return Ok(None),
-        }
+        state: &mut Groth16ProofState,
+    ) -> Result<Option<SnarkGroth16ProofResult>, ZkProofRequesterError>
+    where
+        Client: ProofRequesterProvider,
+    {
+        ZkProofRequester::groth16_result_with(&self.client, request, state).await
+    }
+}
 
-        let session_id = request.aggregation_session_id();
-        match self.proof_result(&session_id).await? {
-            Some(ProofResult::SnarkGroth16(result)) => Ok(Some(result)),
-            Some(result) => {
-                Err(Self::unexpected_result(session_id, &result, ProofType::SnarkGroth16))
+impl ZkProofRequester<()> {
+    /// Request the range proof stage using an explicitly provided prover-service client.
+    pub async fn request_groth16_proof_with<P>(
+        client: &P,
+        request: &Groth16RangeProofRequest,
+    ) -> Result<Groth16ProofRequestResponse, ZkProofRequesterError>
+    where
+        P: ProofRequesterProvider + ?Sized,
+    {
+        let range = client.prove_block_range(request.range_prove_block_request()).await?;
+        Ok(Groth16ProofRequestResponse { state: Groth16ProofState::AwaitingRange { range } })
+    }
+
+    /// Return the completed Groth16 proof using an explicitly provided prover-service client.
+    pub async fn groth16_result_with<P>(
+        client: &P,
+        request: &Groth16RangeProofRequest,
+        state: &mut Groth16ProofState,
+    ) -> Result<Option<SnarkGroth16ProofResult>, ZkProofRequesterError>
+    where
+        P: ProofRequesterProvider + ?Sized,
+    {
+        match state {
+            Groth16ProofState::AwaitingRange { range } => {
+                let range = range.clone();
+                let range_session_id = range.session_id.clone();
+                let range_proof = match Self::proof_result_with(client, &range_session_id).await? {
+                    Some(ProofResult::Compressed(result)) => result,
+                    Some(result) => {
+                        return Err(Self::unexpected_result(
+                            range_session_id,
+                            &result,
+                            ProofType::Compressed,
+                        ));
+                    }
+                    None => return Ok(None),
+                };
+
+                let aggregation_request = request.aggregation_prove_block_request(range_proof);
+                let aggregation =
+                    client.prove_block_range(aggregation_request).await.map_err(|source| {
+                        ZkProofRequesterError::AggregationRequestFailed {
+                            range_session_id: range_session_id.clone(),
+                            range: range.clone(),
+                            source,
+                        }
+                    })?;
+                *state = Groth16ProofState::AwaitingAggregation { range, aggregation };
+                Ok(None)
             }
-            None => Ok(None),
+            Groth16ProofState::AwaitingAggregation { aggregation, .. } => {
+                let session_id = aggregation.session_id.clone();
+                match Self::proof_result_with(client, &session_id).await? {
+                    Some(ProofResult::SnarkGroth16(result)) => Ok(Some(result)),
+                    Some(result) => {
+                        Err(Self::unexpected_result(session_id, &result, ProofType::SnarkGroth16))
+                    }
+                    None => Ok(None),
+                }
+            }
         }
     }
 
-    async fn proof_result(
-        &self,
+    async fn proof_result_with<P>(
+        client: &P,
         session_id: &str,
-    ) -> Result<Option<ProofResult>, ZkProofRequesterError> {
+    ) -> Result<Option<ProofResult>, ZkProofRequesterError>
+    where
+        P: ProofRequesterProvider + ?Sized,
+    {
         let response =
-            self.client.get_proof(GetProofRequest { session_id: session_id.to_owned() }).await?;
+            client.get_proof(GetProofRequest { session_id: session_id.to_owned() }).await?;
         Self::resolve_get_proof_response(session_id, response)
     }
 
@@ -267,12 +329,21 @@ mod tests {
         let request =
             Groth16RangeProofRequest::new("parent", proof_request(), Address::repeat_byte(0x11));
 
-        let proof = requester.request_groth16_proof(&request).await.unwrap();
-        assert_eq!(proof.range.session_id, "parent:range");
-        assert_eq!(proof.aggregation.session_id, "parent:aggregation");
-        assert!(requester.groth16_result(&request).await.unwrap().is_none());
+        let mut proof = requester.request_groth16_proof(&request).await.unwrap();
+        assert_eq!(proof.state.range_session_id(), "parent:range");
+        assert!(matches!(proof.state, Groth16ProofState::AwaitingRange { .. }));
+        assert!(requester.groth16_result(&request, &mut proof.state).await.unwrap().is_none());
+        assert!(matches!(proof.state, Groth16ProofState::AwaitingRange { .. }));
+        assert!(requester.groth16_result(&request, &mut proof.state).await.unwrap().is_none());
+        assert!(matches!(proof.state, Groth16ProofState::AwaitingAggregation { .. }));
         assert_eq!(
-            requester.groth16_result(&request).await.unwrap().unwrap().proof.proof,
+            requester
+                .groth16_result(&request, &mut proof.state)
+                .await
+                .unwrap()
+                .unwrap()
+                .proof
+                .proof,
             Bytes::from(vec![2])
         );
 
@@ -280,7 +351,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn request_groth16_proof_reports_accepted_range_on_aggregation_submit_failure() {
+    async fn groth16_result_reports_accepted_range_on_aggregation_submit_failure() {
         let requester = MockProofRequester::with_prove_outcomes(VecDeque::from([
             ProveOutcome::Success,
             ProveOutcome::Error(ProverServiceClientError::Timeout(
@@ -291,7 +362,9 @@ mod tests {
         let request =
             Groth16RangeProofRequest::new("parent", proof_request(), Address::repeat_byte(0x11));
 
-        let error = requester.request_groth16_proof(&request).await.unwrap_err();
+        requester.client().responses.lock().unwrap().push_back(succeeded(compressed_result()));
+        let mut proof = requester.request_groth16_proof(&request).await.unwrap();
+        let error = requester.groth16_result(&request, &mut proof.state).await.unwrap_err();
 
         let ZkProofRequesterError::AggregationRequestFailed { range, range_session_id, source } =
             error
@@ -315,26 +388,30 @@ mod tests {
         let request =
             Groth16RangeProofRequest::new("parent", proof_request(), Address::repeat_byte(0x11));
 
-        let error = requester.groth16_result(&request).await.unwrap_err();
+        let mut state = Groth16ProofState::AwaitingRange {
+            range: ProveBlockRangeResponse { session_id: "parent:range".to_owned() },
+        };
+        let error = requester.groth16_result(&request, &mut state).await.unwrap_err();
 
         assert!(matches!(error, ZkProofRequesterError::ProofFailed { .. }));
     }
 
     #[tokio::test]
     async fn failed_aggregation_status_returns_error_after_range_succeeds() {
-        let requester = MockProofRequester::with_responses(VecDeque::from([
-            succeeded(compressed_result()),
-            GetProofResponse {
-                status: ProofStatus::Failed,
-                error_message: Some("aggregation failed".to_owned()),
-                result: None,
-            },
-        ]));
+        let requester = MockProofRequester::with_responses(VecDeque::from([GetProofResponse {
+            status: ProofStatus::Failed,
+            error_message: Some("aggregation failed".to_owned()),
+            result: None,
+        }]));
         let requester = ZkProofRequester::new(requester);
         let request =
             Groth16RangeProofRequest::new("parent", proof_request(), Address::repeat_byte(0x11));
 
-        let error = requester.groth16_result(&request).await.unwrap_err();
+        let mut state = Groth16ProofState::AwaitingAggregation {
+            range: ProveBlockRangeResponse { session_id: "parent:range".to_owned() },
+            aggregation: ProveBlockRangeResponse { session_id: "parent:aggregation".to_owned() },
+        };
+        let error = requester.groth16_result(&request, &mut state).await.unwrap_err();
 
         assert!(matches!(
             error,

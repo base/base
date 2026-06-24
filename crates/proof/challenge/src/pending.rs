@@ -13,8 +13,11 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes};
+use base_proof_zk_requester::{
+    Groth16ProofState, Groth16RangeProofRequest, ZkProofRequester, ZkProofRequesterError,
+};
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{GetProofRequest, ProofStatus, SnarkGroth16ProofRequest};
+use base_prover_service_protocol::{GetProofRequest, ProofResult, ProofStatus};
 use tracing::warn;
 
 use crate::{ChallengerMetrics, ChallengerProofAdapter};
@@ -32,7 +35,7 @@ pub enum ProofKind {
     Tee {
         /// Pre-built ZK request for fallback if TEE submission fails.
         /// `None` when the fallback request could not be constructed.
-        zk_fallback_request: Option<SnarkGroth16ProofRequest>,
+        zk_fallback_request: Option<Groth16RangeProofRequest>,
         /// The dispute intent to use for the ZK fallback path.
         /// `None` when the fallback request could not be constructed.
         zk_fallback_intent: Option<DisputeIntent>,
@@ -43,7 +46,9 @@ pub enum ProofKind {
     /// `proveBlockRange` on failure.
     Zk {
         /// Original request parameters for retry.
-        prove_request: SnarkGroth16ProofRequest,
+        prove_request: Groth16RangeProofRequest,
+        /// Current requester orchestration state.
+        proof_state: Option<Groth16ProofState>,
     },
 }
 
@@ -112,12 +117,13 @@ impl PendingProof {
         session_id: String,
         invalid_index: u64,
         expected_root: B256,
-        prove_request: SnarkGroth16ProofRequest,
+        prove_request: Groth16RangeProofRequest,
+        proof_state: Groth16ProofState,
         intent: DisputeIntent,
     ) -> Self {
         Self {
             phase: ProofPhase::AwaitingProof { session_id, started_at: Instant::now() },
-            kind: ProofKind::Zk { prove_request },
+            kind: ProofKind::Zk { prove_request, proof_state: Some(proof_state) },
             invalid_index,
             expected_root,
             retry_count: 0,
@@ -130,7 +136,7 @@ impl PendingProof {
         session_id: String,
         invalid_index: u64,
         expected_root: B256,
-        zk_fallback_request: Option<SnarkGroth16ProofRequest>,
+        zk_fallback_request: Option<Groth16RangeProofRequest>,
         zk_fallback_intent: Option<DisputeIntent>,
     ) -> Self {
         Self {
@@ -144,16 +150,16 @@ impl PendingProof {
     }
 
     /// Creates a new ZK `PendingProof` in the `ReadyToSubmit` phase.
-    pub const fn ready(
+    pub fn ready(
         proof_bytes: Bytes,
         invalid_index: u64,
         expected_root: B256,
-        prove_request: SnarkGroth16ProofRequest,
+        prove_request: Groth16RangeProofRequest,
         intent: DisputeIntent,
     ) -> Self {
         Self {
             phase: ProofPhase::ReadyToSubmit { proof_bytes },
-            kind: ProofKind::Zk { prove_request },
+            kind: ProofKind::Zk { prove_request, proof_state: None },
             invalid_index,
             expected_root,
             retry_count: 0,
@@ -267,6 +273,102 @@ impl PendingProofs {
             pending.retry_count += 1;
             pending.phase = ProofPhase::NeedsRetry;
             return Ok(Some(ProofUpdate::NeedsRetry));
+        }
+
+        let zk_request = match &pending.kind {
+            ProofKind::Zk { prove_request, proof_state: Some(proof_state) } => {
+                Some((prove_request.clone(), proof_state.clone()))
+            }
+            ProofKind::Zk { proof_state: None, .. } => {
+                let pending = self.0.get_mut(&game).expect("entry just inspected");
+                warn!(game = %game, "ZK proof missing requester state, treating as retryable failure");
+                ChallengerMetrics::proof_session_failures_total(
+                    ChallengerMetrics::PROOF_FAILURE_MALFORMED,
+                )
+                .increment(1);
+                pending.retry_count += 1;
+                pending.phase = ProofPhase::NeedsRetry;
+                return Ok(Some(ProofUpdate::NeedsRetry));
+            }
+            ProofKind::Tee { .. } => None,
+        };
+
+        if let Some((prove_request, mut proof_state)) = zk_request {
+            let result = ZkProofRequester::groth16_result_with(
+                proof_requester,
+                &prove_request,
+                &mut proof_state,
+            )
+            .await;
+
+            let pending = match self.0.get_mut(&game) {
+                Some(p) => p,
+                None => return Ok(None),
+            };
+            if let ProofKind::Zk { proof_state: state, .. } = &mut pending.kind {
+                *state = Some(proof_state);
+            }
+
+            let update = match result {
+                Ok(Some(result)) => {
+                    let proof_bytes = ChallengerProofAdapter::snark_groth16_dispute_proof_bytes(
+                        ProofResult::SnarkGroth16(result),
+                    )?;
+                    pending.phase = ProofPhase::ReadyToSubmit { proof_bytes: proof_bytes.clone() };
+                    ProofUpdate::Ready(proof_bytes)
+                }
+                Ok(None) => ProofUpdate::Pending,
+                Err(ZkProofRequesterError::AggregationRequestFailed {
+                    range_session_id,
+                    source,
+                    ..
+                }) => {
+                    warn!(
+                        game = %game,
+                        range_session_id = %range_session_id,
+                        error = %source,
+                        "aggregation request failed, will retry proof request"
+                    );
+                    ChallengerMetrics::proof_session_failures_total(
+                        ChallengerMetrics::PROOF_FAILURE_FAILED,
+                    )
+                    .increment(1);
+                    pending.retry_count += 1;
+                    pending.phase = ProofPhase::NeedsRetry;
+                    ProofUpdate::NeedsRetry
+                }
+                Err(ZkProofRequesterError::ProofFailed { session_id, message }) => {
+                    warn!(
+                        game = %game,
+                        session_id = %session_id,
+                        error_message = %message,
+                        "proof job failed"
+                    );
+                    ChallengerMetrics::proof_session_failures_total(
+                        ChallengerMetrics::PROOF_FAILURE_FAILED,
+                    )
+                    .increment(1);
+                    pending.retry_count += 1;
+                    pending.phase = ProofPhase::NeedsRetry;
+                    ProofUpdate::NeedsRetry
+                }
+                Err(
+                    ZkProofRequesterError::MissingResult { .. }
+                    | ZkProofRequesterError::UnexpectedResult { .. },
+                ) => {
+                    warn!(game = %game, "proof response malformed, treating as retryable failure");
+                    ChallengerMetrics::proof_session_failures_total(
+                        ChallengerMetrics::PROOF_FAILURE_MALFORMED,
+                    )
+                    .increment(1);
+                    pending.retry_count += 1;
+                    pending.phase = ProofPhase::NeedsRetry;
+                    ProofUpdate::NeedsRetry
+                }
+                Err(ZkProofRequesterError::Client(e)) => return Err(e.into()),
+            };
+
+            return Ok(Some(update));
         }
 
         let request = GetProofRequest { session_id };

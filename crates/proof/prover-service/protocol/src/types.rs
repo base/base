@@ -142,8 +142,8 @@ pub struct ZkProofRequest {
 /// Groth16 SNARK proof request parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnarkGroth16ProofRequest {
-    /// Underlying ZK proof request.
-    pub proof: ZkProofRequest,
+    /// Completed compressed range proofs consumed by the aggregation program.
+    pub range_proofs: Vec<ZkProofResult>,
     /// On-chain prover address.
     pub prover_address: Address,
 }

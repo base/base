@@ -21,9 +21,10 @@ use base_challenger::{
 };
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex, GameStatus};
 use base_proof_primitives::Proposal;
+use base_proof_zk_requester::{Groth16ProofState, Groth16RangeProofRequest};
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
-    ProofResult as ApiProofResult, ProofStatus, SnarkGroth16ProofRequest, TeeKind, TeeProofResult,
+    ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeResponse, TeeKind, TeeProofResult,
     ZkProofRequest, ZkVm,
 };
 use base_runtime::TokioRuntime;
@@ -137,8 +138,9 @@ const fn tee_api_result(aggregate_proposal: Proposal) -> ApiProofResult {
 }
 
 fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
-    let request = SnarkGroth16ProofRequest {
-        proof: ZkProofRequest {
+    let request = Groth16RangeProofRequest::new(
+        "ready-session",
+        ZkProofRequest {
             start_block_number: 15,
             number_of_blocks_to_prove: 5,
             sequence_window: None,
@@ -146,8 +148,8 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
             intermediate_root_interval: None,
             zk_vm: ZkVm::Sp1,
         },
-        prover_address: addr(0),
-    };
+        addr(0),
+    );
 
     PendingProof::ready(
         Bytes::from_static(&[0x01, 0xDE, 0xAD]),
@@ -298,7 +300,10 @@ async fn test_step_invalid_game_proof_succeeded() {
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
     );
 
-    // Step 2: proof polled → Succeeded → nullification submitted → entry removed.
+    // Step 2: range proof succeeds and aggregation proof is requested.
+    driver.step().await.unwrap();
+
+    // Step 3: aggregation proof succeeds → nullification submitted → entry removed.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -439,8 +444,10 @@ async fn test_step_pending_proof_skips_prove_block() {
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
     );
 
-    // Step 2: same game re-discovered → polls existing session, proof succeeds,
-    // challenge tx submitted, session removed from pending_proofs.
+    // Step 2: same game re-discovered → range proof succeeds and aggregation is requested.
+    driver.step().await.unwrap();
+
+    // Step 3: aggregation proof succeeds, challenge tx submitted, session removed.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -469,7 +476,10 @@ async fn test_step_nullification_failure_preserves_proof() {
         "proof should be pending after initiation"
     );
 
-    // Step 2: proof polled → Succeeded → ReadyToSubmit → dispute tx fails.
+    // Step 2: range proof succeeds and aggregation proof is requested.
+    driver.step().await.unwrap();
+
+    // Step 3: aggregation proof succeeds → ReadyToSubmit → dispute tx fails.
     driver.step().await.unwrap();
 
     // Entry must still be in pending_proofs as ReadyToSubmit.
@@ -482,7 +492,7 @@ async fn test_step_nullification_failure_preserves_proof() {
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
     );
 
-    // Step 3: poll_pending_proofs re-submits the challenge tx, now it succeeds.
+    // Step 4: poll_pending_proofs re-submits the challenge tx, now it succeeds.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -590,7 +600,10 @@ async fn test_step_proof_retry_succeeds() {
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
     );
 
-    // Step 3: proof succeeds, challenge tx submitted, entry removed.
+    // Step 3: range proof succeeds and aggregation proof is requested.
+    driver.step().await.unwrap();
+
+    // Step 4: aggregation proof succeeds, challenge tx submitted, entry removed.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -619,7 +632,8 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     let tx_manager = default_tx_manager();
     let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
-    let expected_session_id = ChallengerProofAdapter::snark_groth16_session_id(addr(0), 1);
+    let expected_session_id =
+        format!("{}:range", ChallengerProofAdapter::snark_groth16_session_id(addr(0), 1));
 
     // Step 1: initial proveBlockRange call from initiate_zk_proof.
     driver.step().await.unwrap();
@@ -629,7 +643,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
         assert_eq!(
             log[0].proof.session_id.as_str(),
             expected_session_id.as_str(),
-            "challenger must use game-address/invalid-index session_id on initiation",
+            "challenger must use deterministic range session_id on initiation",
         );
     }
 
@@ -642,7 +656,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
         assert_eq!(
             log[1].proof.session_id.as_str(),
             expected_session_id.as_str(),
-            "retry must reuse the deterministic session_id so the service can requeue",
+            "retry must reuse the deterministic range session_id so the service can requeue",
         );
         assert_eq!(
             log[0].proof.session_id.as_str(),
@@ -671,6 +685,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
     );
 
+    driver.step().await.unwrap();
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -793,7 +808,10 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
     );
 
-    // Step 2: proof polled → Succeeded → challenge tx submitted → entry removed.
+    // Step 2: range proof succeeds and aggregation proof is requested.
+    driver.step().await.unwrap();
+
+    // Step 3: aggregation proof succeeds → challenge tx submitted → entry removed.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -950,7 +968,10 @@ async fn test_step_tee_submission_failure_falls_back_to_zk() {
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
     );
 
-    // Step 3: ZK proof polled → Succeeded → entry cleaned up.
+    // Step 3: range proof succeeds and aggregation proof is requested.
+    driver.step().await.unwrap();
+
+    // Step 4: aggregation proof succeeds → entry cleaned up.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -1642,7 +1663,10 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
         "proof should be pending after initiation"
     );
 
-    // Step 2: proof polled → Succeeded → challenge tx submitted → bond tracked.
+    // Step 2: range proof succeeds and aggregation proof is requested.
+    driver.step().await.unwrap();
+
+    // Step 3: aggregation proof succeeds → challenge tx submitted → bond tracked.
     driver.step().await.unwrap();
 
     let bond_mgr = driver.bond_manager.as_ref().expect("bond_manager should be Some");
@@ -1697,9 +1721,10 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     );
 }
 
-const fn minimal_prove_request() -> SnarkGroth16ProofRequest {
-    SnarkGroth16ProofRequest {
-        proof: ZkProofRequest {
+fn minimal_prove_request() -> Groth16RangeProofRequest {
+    Groth16RangeProofRequest::new(
+        "minimal-session",
+        ZkProofRequest {
             start_block_number: 0,
             number_of_blocks_to_prove: 1,
             sequence_window: None,
@@ -1707,7 +1732,13 @@ const fn minimal_prove_request() -> SnarkGroth16ProofRequest {
             intermediate_root_interval: None,
             zk_vm: ZkVm::Sp1,
         },
-        prover_address: Address::ZERO,
+        Address::ZERO,
+    )
+}
+
+fn minimal_proof_state() -> Groth16ProofState {
+    Groth16ProofState::AwaitingRange {
+        range: ProveBlockRangeResponse { session_id: minimal_prove_request().range_session_id() },
     }
 }
 
@@ -1729,6 +1760,7 @@ async fn test_poll_failed_status_triggers_retry() {
             0,
             B256::ZERO,
             minimal_prove_request(),
+            minimal_proof_state(),
             DisputeIntent::Challenge,
         ),
     );
@@ -1758,6 +1790,7 @@ async fn test_poll_running_within_timeout_stays_pending() {
             0,
             B256::ZERO,
             minimal_prove_request(),
+            minimal_proof_state(),
             DisputeIntent::Challenge,
         ),
     );
@@ -1790,6 +1823,7 @@ async fn test_poll_running_timeout_triggers_retry() {
             0,
             B256::ZERO,
             minimal_prove_request(),
+            minimal_proof_state(),
             DisputeIntent::Challenge,
         ),
     );
@@ -1888,6 +1922,7 @@ mod metrics_emission {
                         0,
                         B256::ZERO,
                         minimal_prove_request(),
+                        minimal_proof_state(),
                         DisputeIntent::Challenge,
                     ),
                 );
@@ -1929,6 +1964,7 @@ mod metrics_emission {
                         0,
                         B256::ZERO,
                         minimal_prove_request(),
+                        minimal_proof_state(),
                         DisputeIntent::Challenge,
                     ),
                 );
@@ -1972,6 +2008,7 @@ mod metrics_emission {
                         0,
                         B256::ZERO,
                         minimal_prove_request(),
+                        minimal_proof_state(),
                         DisputeIntent::Challenge,
                     ),
                 );

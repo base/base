@@ -745,7 +745,7 @@ impl ProofRequesterProvider for MockZkProofProvider {
 
     async fn get_proof(
         &self,
-        _request: GetProofRequest,
+        request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
         let state = self.state.lock().unwrap().clone();
         let result = if state.proof_status == ProofStatus::Succeeded {
@@ -753,9 +753,12 @@ impl ProofRequesterProvider for MockZkProofProvider {
                 None
             } else {
                 state.result.or_else(|| {
-                    Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                        proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: state.proof.into() },
-                    }))
+                    let proof = ZkProofResult { zk_vm: ZkVm::Sp1, proof: state.proof.into() };
+                    if request.session_id.ends_with(":range") {
+                        Some(ApiProofResult::Compressed(proof))
+                    } else {
+                        Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof }))
+                    }
                 })
             }
         } else {

@@ -296,6 +296,9 @@ pub enum CreateProofRequestValidationError {
     /// The protocol request payload could not be serialized for storage.
     #[error("failed to serialize request_payload")]
     RequestPayloadSerialization,
+    /// A Groth16 aggregation request did not include any compressed range proofs.
+    #[error("snark_groth16 request must include at least one range proof")]
+    EmptyRangeProofs,
     /// A backend proof type is required for the requested protocol proof type.
     #[error("missing backend proof_type for {api_proof_type}")]
     MissingBackendProofType {
@@ -885,18 +888,23 @@ impl DerivedProofRequestFields {
                 l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
                 intermediate_root_interval: proof.intermediate_root_interval,
             }),
-            ProtocolProofRequestKind::SnarkGroth16(request) => Ok(Self {
-                api_proof_type: ApiProofType::SnarkGroth16,
-                zk_vm: Some(protocol_zk_vm(request.proof.zk_vm)),
-                tee_kind: None,
-                proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16),
-                start_block_number: request.proof.start_block_number,
-                number_of_blocks_to_prove: request.proof.number_of_blocks_to_prove,
-                sequence_window: request.proof.sequence_window,
-                prover_address: Some(format!("{:#x}", request.prover_address)),
-                l1_head: request.proof.l1_head.map(|hash| format!("{hash:#x}")),
-                intermediate_root_interval: request.proof.intermediate_root_interval,
-            }),
+            ProtocolProofRequestKind::SnarkGroth16(request) => {
+                let Some(first_proof) = request.range_proofs.first() else {
+                    return Err(CreateProofRequestValidationError::EmptyRangeProofs);
+                };
+                Ok(Self {
+                    api_proof_type: ApiProofType::SnarkGroth16,
+                    zk_vm: Some(protocol_zk_vm(first_proof.zk_vm)),
+                    tee_kind: None,
+                    proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16),
+                    start_block_number: 0,
+                    number_of_blocks_to_prove: request.range_proofs.len() as u64,
+                    sequence_window: None,
+                    prover_address: Some(format!("{:#x}", request.prover_address)),
+                    l1_head: None,
+                    intermediate_root_interval: None,
+                })
+            }
             ProtocolProofRequestKind::Tee(request) => Ok(Self {
                 api_proof_type: ApiProofType::Tee,
                 zk_vm: None,

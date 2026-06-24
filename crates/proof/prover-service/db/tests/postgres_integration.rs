@@ -89,18 +89,7 @@ fn snark_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
         request: ProtocolProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
-            proof: ZkProofRequest {
-                start_block_number: 200,
-                number_of_blocks_to_prove: 10,
-                sequence_window: Some(100),
-                l1_head: Some(
-                    "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-                        .parse()
-                        .expect("valid hash"),
-                ),
-                intermediate_root_interval: None,
-                zk_vm: ZkVm::Sp1,
-            },
+            range_proofs: vec![ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![1, 2, 3].into() }],
             prover_address: "0x1234567890abcdef1234567890abcdef12345678"
                 .parse()
                 .expect("valid address"),
@@ -187,14 +176,11 @@ async fn test_create_and_get_snark() {
     let id = repo.create(snark_request()).await.unwrap();
     let req = repo.get(id).await.unwrap().expect("should find request");
 
-    assert_eq!(req.start_block_number, 200);
-    assert_eq!(req.number_of_blocks_to_prove, 10);
+    assert_eq!(req.start_block_number, 0);
+    assert_eq!(req.number_of_blocks_to_prove, 1);
     assert_eq!(req.proof_type, Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16));
     assert_eq!(req.prover_address.as_deref(), Some("0x1234567890abcdef1234567890abcdef12345678"));
-    assert_eq!(
-        req.l1_head.as_deref(),
-        Some("0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
-    );
+    assert_eq!(req.l1_head.as_deref(), None);
 }
 
 #[tokio::test]

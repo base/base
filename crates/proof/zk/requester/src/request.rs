@@ -3,7 +3,7 @@
 use alloy_primitives::Address;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProveBlockRangeRequest, SnarkGroth16ProofRequest,
-    ZkProofRequest,
+    ZkProofRequest, ZkProofResult,
 };
 
 const RANGE_SESSION_LABEL: &str = "range";
@@ -52,12 +52,15 @@ impl Groth16RangeProofRequest {
     }
 
     /// Build the prover-service request for the Groth16 aggregation proof stage.
-    pub fn aggregation_prove_block_request(&self) -> ProveBlockRangeRequest {
+    pub fn aggregation_prove_block_request(
+        &self,
+        range_proof: ZkProofResult,
+    ) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: self.aggregation_session_id(),
                 request: ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
-                    proof: self.proof.clone(),
+                    range_proofs: vec![range_proof],
                     prover_address: self.prover_address,
                 }),
             },
@@ -92,11 +95,16 @@ mod tests {
         assert_eq!(range.proof.session_id, "parent-session:range");
         assert!(matches!(range.proof.request, ProofRequestKind::Compressed(_)));
 
-        let aggregation = request.aggregation_prove_block_request();
+        let aggregation = request.aggregation_prove_block_request(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![1, 2, 3].into(),
+        });
         assert_eq!(aggregation.proof.session_id, "parent-session:aggregation");
         let ProofRequestKind::SnarkGroth16(aggregation) = aggregation.proof.request else {
             panic!("expected Groth16 aggregation request");
         };
         assert_eq!(aggregation.prover_address, prover_address);
+        assert_eq!(aggregation.range_proofs.len(), 1);
+        assert_eq!(aggregation.range_proofs[0].proof, vec![1_u8, 2, 3]);
     }
 }

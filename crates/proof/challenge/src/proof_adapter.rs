@@ -3,8 +3,8 @@
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
 use base_prover_service_protocol::{
-    ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
-    SnarkGroth16ProofRequest, TeeKind, TeeProofRequest,
+    ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest, TeeKind,
+    TeeProofRequest,
 };
 use eyre::{Result, WrapErr, bail};
 
@@ -46,18 +46,6 @@ impl ChallengerProofAdapter {
             Self::tee_session_label(tee_kind),
             &[game_address.as_slice(), &invalid_index],
         )
-    }
-
-    /// Builds a prover-service request for a challenger SNARK proof.
-    pub fn snark_groth16_prove_block_range_request(
-        game_address: Address,
-        invalid_index: u64,
-        request: SnarkGroth16ProofRequest,
-    ) -> ProveBlockRangeRequest {
-        let session_id = Self::snark_groth16_session_id(game_address, invalid_index);
-        ProveBlockRangeRequest {
-            proof: ProofRequest { session_id, request: ProofRequestKind::SnarkGroth16(request) },
-        }
     }
 
     /// Builds a prover-service request for a challenger TEE proof.
@@ -120,8 +108,8 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_primitives::{PROOF_TYPE_TEE, Proposal};
     use base_prover_service_protocol::{
-        ProofRequestKind, ProofResult, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, TeeKind,
-        TeeProofResult, ZkProofRequest, ZkProofResult, ZkVm,
+        ProofRequestKind, ProofResult, SnarkGroth16ProofResult, TeeKind, TeeProofResult,
+        ZkProofResult, ZkVm,
     };
 
     use super::ChallengerProofAdapter;
@@ -181,45 +169,6 @@ mod tests {
             ChallengerProofAdapter::snark_groth16_session_id(game_address, 1),
             ChallengerProofAdapter::snark_groth16_session_id(Address::repeat_byte(0xbb), 1)
         );
-    }
-
-    #[test]
-    fn snark_groth16_prove_block_range_request_converts_zk_request() {
-        let game_address = Address::repeat_byte(0xaa);
-        let invalid_index = 1;
-        let session_id =
-            ChallengerProofAdapter::snark_groth16_session_id(game_address, invalid_index);
-        let prover_address = Address::repeat_byte(0x11);
-        let l1_head = B256::repeat_byte(0x22);
-        let proof = ZkProofRequest {
-            start_block_number: 100,
-            number_of_blocks_to_prove: 300,
-            sequence_window: Some(10),
-            l1_head: Some(l1_head),
-            intermediate_root_interval: Some(150),
-            zk_vm: ZkVm::Sp1,
-        };
-        let request = SnarkGroth16ProofRequest { proof, prover_address };
-
-        let wrapped = ChallengerProofAdapter::snark_groth16_prove_block_range_request(
-            game_address,
-            invalid_index,
-            request,
-        );
-
-        assert_eq!(wrapped.proof.session_id, session_id);
-        match wrapped.proof.request {
-            ProofRequestKind::SnarkGroth16(snark) => {
-                assert_eq!(snark.prover_address, prover_address);
-                assert_eq!(snark.proof.start_block_number, 100);
-                assert_eq!(snark.proof.number_of_blocks_to_prove, 300);
-                assert_eq!(snark.proof.sequence_window, Some(10));
-                assert_eq!(snark.proof.l1_head, Some(l1_head));
-                assert_eq!(snark.proof.intermediate_root_interval, Some(150));
-                assert_eq!(snark.proof.zk_vm, ZkVm::Sp1);
-            }
-            other => panic!("unexpected proof request kind: {other:?}"),
-        }
     }
 
     #[test]

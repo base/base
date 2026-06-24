@@ -20,7 +20,7 @@ impl ZkProofRequestKind {
     pub const fn start_block_number(&self) -> u64 {
         match self {
             Self::Compressed(request) => request.start_block_number,
-            Self::SnarkGroth16(request) => request.proof.start_block_number,
+            Self::SnarkGroth16(_) => 0,
         }
     }
 
@@ -28,7 +28,7 @@ impl ZkProofRequestKind {
     pub const fn number_of_blocks_to_prove(&self) -> u64 {
         match self {
             Self::Compressed(request) => request.number_of_blocks_to_prove,
-            Self::SnarkGroth16(request) => request.proof.number_of_blocks_to_prove,
+            Self::SnarkGroth16(request) => request.range_proofs.len() as u64,
         }
     }
 
@@ -152,7 +152,7 @@ mod tests {
         assert!(!compressed.is_snark_groth16());
 
         let snark = ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
-            proof: zk_request(),
+            range_proofs: Vec::new(),
             prover_address: alloy_primitives::Address::ZERO,
         });
         assert!(snark.is_snark_groth16());
@@ -163,7 +163,7 @@ mod tests {
         assert_eq!(ZkProofRequestKind::Compressed(zk_request()).session_type(), SessionType::Stark);
         assert_eq!(
             ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
-                proof: zk_request(),
+                range_proofs: Vec::new(),
                 prover_address: alloy_primitives::Address::ZERO,
             })
             .session_type(),

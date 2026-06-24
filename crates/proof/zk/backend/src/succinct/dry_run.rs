@@ -46,7 +46,9 @@ impl ZkProver for DryRunZkProver {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
+    use base_prover_service_protocol::{
+        SnarkGroth16ProofRequest, ZkProofRequest, ZkProofResult, ZkVm,
+    };
 
     use super::*;
 
@@ -67,7 +69,7 @@ mod tests {
 
     fn snark_groth16() -> ZkProofRequestKind {
         ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
-            proof: zk_request(),
+            range_proofs: vec![ZkProofResult { zk_vm: ZkVm::Sp1, proof: Vec::new().into() }],
             prover_address: Default::default(),
         })
     }
