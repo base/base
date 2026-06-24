@@ -96,13 +96,15 @@ where
                     () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
                 }
             };
-            let restart = match AssertUnwindSafe(session).catch_unwind().await {
-                Ok(restart) => restart,
-                Err(_) => {
-                    warn!("Pipeline loop panicked, restarting session");
-                    true
-                }
-            };
+            let restart = AssertUnwindSafe(session).catch_unwind().await.unwrap_or_else(|panic| {
+                let panic = panic
+                    .downcast_ref::<&'static str>()
+                    .copied()
+                    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("unknown panic payload");
+                warn!(panic = %panic, "Pipeline loop panicked, restarting session");
+                true
+            });
 
             if !restart {
                 break;
