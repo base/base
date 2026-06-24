@@ -32,7 +32,7 @@ impl ProofTarget {
         caller: &'static str,
     ) -> Option<B256>
     where
-        R: RollupProvider,
+        R: RollupProvider + ?Sized,
     {
         match rollup_client.output_at_block(target_block).await {
             Ok(output) => Some(output.output_root),

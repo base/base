@@ -15,7 +15,7 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
-use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
+use base_proof_rpc::{L1Provider, RollupProvider};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -127,22 +127,20 @@ struct Session {
 
 /// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
 /// and stopped at runtime (e.g. via the admin RPC).
-pub struct PipelineHandle<L1, L2, R>
+pub struct PipelineHandle<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
-    pipeline: Arc<ProvingPipeline<L1, L2, R>>,
+    pipeline: Arc<ProvingPipeline<L1, R>>,
     session: TokioMutex<Session>,
     global_cancel: CancellationToken,
     running: Arc<AtomicBool>,
 }
 
-impl<L1, L2, R> std::fmt::Debug for PipelineHandle<L1, L2, R>
+impl<L1, R> std::fmt::Debug for PipelineHandle<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -152,14 +150,13 @@ where
     }
 }
 
-impl<L1, L2, R> PipelineHandle<L1, L2, R>
+impl<L1, R> PipelineHandle<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     /// Creates a new [`PipelineHandle`] wrapping the given proving pipeline.
-    pub fn new(pipeline: ProvingPipeline<L1, L2, R>, global_cancel: CancellationToken) -> Self {
+    pub fn new(pipeline: ProvingPipeline<L1, R>, global_cancel: CancellationToken) -> Self {
         let session = Session { cancel: global_cancel.child_token(), task: None };
         Self {
             pipeline: Arc::new(pipeline),
@@ -171,10 +168,9 @@ where
 }
 
 #[async_trait]
-impl<L1, L2, R> ProposerDriverControl for PipelineHandle<L1, L2, R>
+impl<L1, R> ProposerDriverControl for PipelineHandle<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     async fn start_proposer(&self) -> Result<(), String> {
@@ -258,8 +254,8 @@ mod tests {
 
     fn test_pipeline_handle(
         global_cancel: CancellationToken,
-    ) -> PipelineHandle<MockL1, MockL2, MockRollupClient> {
-        let l1 = Arc::new(MockL1::new(1000));
+    ) -> PipelineHandle<MockL1, MockRollupClient> {
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
@@ -292,9 +288,9 @@ mod tests {
 
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
-            Arc::clone(&l1),
-            Arc::clone(&l2),
-            Arc::clone(&rollup),
+            l1.clone(),
+            l2.clone(),
+            rollup.clone(),
             ProofDispatcherConfig {
                 proposer_address: config.proposer_address,
                 allow_non_finalized: config.allow_non_finalized,

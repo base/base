@@ -234,9 +234,9 @@ impl ProposerService {
         };
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
-            Arc::clone(&l1_client),
-            Arc::clone(&l2_client),
-            Arc::clone(&rollup_client),
+            l1_client.clone(),
+            l2_client.clone(),
+            rollup_client.clone(),
             ProofDispatcherConfig {
                 proposer_address: driver_config.proposer_address,
                 allow_non_finalized: driver_config.allow_non_finalized,

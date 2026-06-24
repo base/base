@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
+use base_proof_rpc::{L1Provider, RollupProvider};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -23,22 +23,20 @@ use crate::{
 /// The collector chains ready proofs internally and restarts both tasks only
 /// when it needs fresh onchain state; dispatcher retry exhaustion clears
 /// dispatcher recovery state without interrupting collection.
-pub struct ProvingPipeline<L1, L2, R>
+pub struct ProvingPipeline<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     config: DriverConfig,
-    proof_dispatcher: ProofDispatcher<L1, L2, R>,
+    proof_dispatcher: ProofDispatcher,
     proof_recovery: Arc<ProofRecovery<R>>,
     proof_collector: ProofCollector<L1, R>,
 }
 
-impl<L1, L2, R> std::fmt::Debug for ProvingPipeline<L1, L2, R>
+impl<L1, R> std::fmt::Debug for ProvingPipeline<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -46,16 +44,15 @@ where
     }
 }
 
-impl<L1, L2, R> ProvingPipeline<L1, L2, R>
+impl<L1, R> ProvingPipeline<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     /// Creates a new proving pipeline.
     pub const fn new(
         config: DriverConfig,
-        proof_dispatcher: ProofDispatcher<L1, L2, R>,
+        proof_dispatcher: ProofDispatcher,
         proof_recovery: Arc<ProofRecovery<R>>,
         proof_collector: ProofCollector<L1, R>,
     ) -> Self {
@@ -107,7 +104,7 @@ where
         dispatched_through: Arc<AtomicU64>,
     ) {
         let mut cache: Option<ProofRecoveryCache> = None;
-        let mut state = ProofDispatcherState::new();
+        let mut state = ProofDispatcherState::default();
 
         loop {
             {
@@ -131,7 +128,7 @@ where
                         )
                         .await;
 
-                    if let Some(cursor) = state.cursor {
+                    if let Some((_, cursor)) = state.cursor {
                         dispatched_through.store(cursor.l2_block_number, Ordering::Relaxed);
                     }
 
@@ -288,9 +285,9 @@ mod tests {
         };
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
-            Arc::clone(&l1),
-            Arc::clone(&l2),
-            Arc::clone(&rollup),
+            l1.clone(),
+            l2.clone(),
+            rollup.clone(),
             ProofDispatcherConfig {
                 proposer_address: config.proposer_address,
                 allow_non_finalized: config.allow_non_finalized,
