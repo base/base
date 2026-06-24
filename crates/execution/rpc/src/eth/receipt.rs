@@ -7,7 +7,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTransaction, Eip8130Receipt};
+use base_common_consensus::{BaseReceipt, BaseTransaction};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields};
 use base_execution_evm::RethL1BlockInfo;
@@ -330,7 +330,6 @@ impl BaseReceiptBuilder {
                 BaseReceipt::Eip7702(receipt) => BaseReceipt::Eip7702(map_logs(receipt)),
                 BaseReceipt::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_inner(map_logs)),
                 BaseReceipt::Eip8130(receipt) => BaseReceipt::Eip8130(receipt.map_inner(map_logs)),
-                )),
             };
             mapped_receipt.into_with_bloom()
         });
