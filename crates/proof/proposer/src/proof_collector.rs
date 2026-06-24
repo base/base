@@ -1279,7 +1279,7 @@ mod tests {
     fn make_orchestrator(
         block_interval: u64,
     ) -> ProofCollectorOrchestrator<MockL1, MockL2, MockRollupClient> {
-        make_orchestrator_with_l1(Arc::new(MockL1 { latest_block_number: 1000 }), block_interval)
+        make_orchestrator_with_l1(Arc::new(MockL1::new(1000)), block_interval)
     }
 
     fn make_orchestrator_with_l1<L1>(
@@ -1360,7 +1360,7 @@ mod tests {
     async fn submit_inline_restarts_when_post_submit_recovery_fails() {
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::new(MockProofRequester::default());
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup_client = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
@@ -1443,7 +1443,7 @@ mod tests {
 
     #[tokio::test]
     async fn discard_retry_dispatch_failure_does_not_store_unaccepted_session() {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup_client = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
@@ -1506,7 +1506,7 @@ mod tests {
 
     #[tokio::test]
     async fn discard_retry_session_mismatch_does_not_store_unaccepted_session() {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup_client = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
@@ -1642,7 +1642,7 @@ mod tests {
 
     #[tokio::test]
     async fn discard_retry_dispatch_failure_returns_false_on_retry_exhaustion() {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup_client = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
@@ -1707,7 +1707,7 @@ mod tests {
 
     #[tokio::test]
     async fn root_retry_dispatch_failure_returns_false_after_failed_session_was_counted() {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup_client = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
@@ -1772,7 +1772,7 @@ mod tests {
     #[tokio::test]
     async fn tick_returns_restart_when_discard_retry_budget_exhausts() {
         let proof_requester = Arc::new(MockProofRequester::default());
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
@@ -1847,7 +1847,7 @@ mod tests {
     #[tokio::test]
     async fn tick_returns_restart_when_failed_session_exhausts_retries() {
         let proof_requester = Arc::new(MockProofRequester::default());
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);

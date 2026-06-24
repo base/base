@@ -146,17 +146,24 @@ where
             &sync_status,
             self.config.allow_non_finalized,
         )?;
-        self.l1_client.header_by_hash(l1_head.hash).await.map_err(ProposerError::Rpc)?;
+        let l1_header =
+            self.l1_client.header_by_hash(l1_head.hash).await.map_err(ProposerError::Rpc)?;
+        if l1_header.hash != l1_head.hash || l1_header.number != l1_head.number {
+            return Err(ProposerError::Internal(format!(
+                "selected {l1_head_source} L1 head {}:{} does not match L1 RPC header {}:{}",
+                l1_head.number, l1_head.hash, l1_header.number, l1_header.hash
+            )));
+        }
 
         let request = ProofRequest {
-            l1_head: l1_head.hash,
+            l1_head: l1_header.hash,
             agreed_l2_head_hash: agreed_l2_head.hash,
             agreed_l2_output_root: recovered.output_root,
             claimed_l2_output_root,
             claimed_l2_block_number: target_block,
             proposer: self.config.proposer_address,
             intermediate_block_interval: self.config.intermediate_block_interval,
-            l1_head_number: l1_head.number,
+            l1_head_number: l1_header.number,
             image_hash: self.config.tee_image_hash,
         };
 
@@ -165,8 +172,8 @@ where
             to_block = target_block,
             allow_non_finalized = self.config.allow_non_finalized,
             l1_head_source = l1_head_source,
-            l1_head_number = l1_head.number,
-            l1_head_hash = %l1_head.hash,
+            l1_head_number = l1_header.number,
+            l1_head_hash = %l1_header.hash,
             l2_coverage_block = l2_coverage.number,
             l2_coverage_hash = %l2_coverage.hash,
             finalized_l1_number = sync_status.finalized_l1.number,
@@ -191,25 +198,31 @@ where
         sync_status: &SyncStatus,
         allow_non_finalized: bool,
     ) -> Result<(&'static str, L1BlockRef, L2BlockRef), ProposerError> {
-        if target_block <= sync_status.finalized_l2.number {
-            return Ok(("finalized", sync_status.finalized_l1, sync_status.finalized_l2));
-        }
-
-        if !allow_non_finalized {
+        let selected = if target_block <= sync_status.finalized_l2.number {
+            ("finalized", sync_status.finalized_l1, sync_status.finalized_l2)
+        } else if !allow_non_finalized {
             return Err(ProposerError::Internal(format!(
                 "target block {target_block} is above rollup finalized head {}",
                 sync_status.finalized_l2.number
             )));
+        } else if target_block <= sync_status.safe_l2.number {
+            ("safe", sync_status.safe_l1, sync_status.safe_l2)
+        } else {
+            return Err(ProposerError::Internal(format!(
+                "target block {target_block} is above rollup safe head {}",
+                sync_status.safe_l2.number
+            )));
+        };
+
+        let (l1_head_source, l1_head, l2_coverage) = selected;
+        if l1_head.number < l2_coverage.l1origin.number {
+            return Err(ProposerError::Internal(format!(
+                "selected {l1_head_source} L1 head {} is below {l1_head_source} L2 origin {}",
+                l1_head.number, l2_coverage.l1origin.number
+            )));
         }
 
-        if target_block <= sync_status.safe_l2.number {
-            return Ok(("safe", sync_status.safe_l1, sync_status.safe_l2));
-        }
-
-        Err(ProposerError::Internal(format!(
-            "target block {target_block} is above rollup safe head {}",
-            sync_status.safe_l2.number
-        )))
+        Ok(selected)
     }
 
     /// Builds and dispatches a root-derived proof request for `target_block`.
@@ -516,8 +529,8 @@ mod tests {
 
     use super::*;
     use crate::test_utils::{
-        MockL1, MockL2, MockProofRequester, MockRollupClient, test_l1_block_ref, test_l2_block_ref,
-        test_sync_status,
+        MockL1, MockL2, MockProofRequester, MockRollupClient, test_l1_block_ref, test_l1_header,
+        test_l2_block_ref, test_sync_status,
     };
 
     #[derive(Debug)]
@@ -614,7 +627,10 @@ mod tests {
         sync_status: SyncStatus,
         allow_non_finalized: bool,
     ) -> ProofDispatcher<MockL1, MockL2, MockRollupClient> {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l1 = Arc::new(MockL1::with_headers(
+            sync_status.finalized_l1.number,
+            headers_for_sync_status(&sync_status),
+        ));
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let rollup = Arc::new(MockRollupClient {
             sync_status,
@@ -635,13 +651,27 @@ mod tests {
         )
     }
 
+    fn headers_for_sync_status(
+        sync_status: &SyncStatus,
+    ) -> HashMap<B256, alloy_rpc_types_eth::Header> {
+        let mut headers = HashMap::new();
+        for l1_head in [sync_status.finalized_l1, sync_status.safe_l1] {
+            headers.insert(l1_head.hash, test_l1_header(l1_head.hash, l1_head.number));
+        }
+        headers
+    }
+
     fn sync_status_with_distinct_heads(finalized_l2: u64, safe_l2: u64) -> SyncStatus {
         let mut finalized_l1 = test_l1_block_ref(10);
         finalized_l1.hash = B256::repeat_byte(0xf1);
         let mut safe_l1 = test_l1_block_ref(20);
         safe_l1.hash = B256::repeat_byte(0x5a);
-        let finalized_l2 = test_l2_block_ref(finalized_l2, B256::repeat_byte(0xf2));
-        let safe_l2 = test_l2_block_ref(safe_l2, B256::repeat_byte(0x52));
+        let mut finalized_l2 = test_l2_block_ref(finalized_l2, B256::repeat_byte(0xf2));
+        finalized_l2.l1origin.hash = finalized_l1.hash;
+        finalized_l2.l1origin.number = finalized_l1.number;
+        let mut safe_l2 = test_l2_block_ref(safe_l2, B256::repeat_byte(0x52));
+        safe_l2.l1origin.hash = safe_l1.hash;
+        safe_l2.l1origin.number = safe_l1.number;
 
         SyncStatus {
             current_l1: safe_l1,
@@ -698,6 +728,58 @@ mod tests {
 
         assert_eq!(request.l1_head, B256::repeat_byte(0x5a));
         assert_eq!(request.l1_head_number, 20);
+    }
+
+    #[tokio::test]
+    async fn build_request_rejects_l2_coverage_beyond_selected_l1_head() {
+        let requester: Arc<dyn ProofRequesterProvider> = Arc::new(MockProofRequester::default());
+        let mut sync_status = sync_status_with_distinct_heads(300, 600);
+        sync_status.safe_l2.l1origin.number = sync_status.safe_l1.number + 1;
+        let dispatcher = dispatcher_for_requester_and_sync(requester, sync_status, true);
+
+        let err = dispatcher
+            .build_request(400, &recovered(), B256::repeat_byte(0xaa))
+            .await
+            .expect_err("safe L1 must cover selected safe L2 origin");
+
+        assert!(err.to_string().contains("below safe L2 origin"));
+    }
+
+    #[tokio::test]
+    async fn build_request_rejects_l1_rpc_header_mismatch() {
+        let requester: Arc<dyn ProofRequesterProvider> = Arc::new(MockProofRequester::default());
+        let sync_status = sync_status_with_distinct_heads(300, 600);
+        let mut headers = headers_for_sync_status(&sync_status);
+        headers.insert(
+            sync_status.safe_l1.hash,
+            test_l1_header(sync_status.safe_l1.hash, sync_status.safe_l1.number + 1),
+        );
+        let l1 = Arc::new(MockL1::with_headers(sync_status.finalized_l1.number, headers));
+        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status,
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let dispatcher = ProofDispatcher::new(
+            requester,
+            l1,
+            l2,
+            rollup,
+            ProofDispatcherConfig {
+                proposer_address: Address::repeat_byte(0x04),
+                allow_non_finalized: true,
+                intermediate_block_interval: 300,
+                tee_image_hash: B256::repeat_byte(0x05),
+            },
+        );
+
+        let err = dispatcher
+            .build_request(400, &recovered(), B256::repeat_byte(0xaa))
+            .await
+            .expect_err("L1 RPC header must match rollup-selected L1 head");
+
+        assert!(err.to_string().contains("does not match L1 RPC header"));
     }
 
     #[tokio::test]
