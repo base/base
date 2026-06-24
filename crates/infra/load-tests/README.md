@@ -217,4 +217,17 @@ real_token_setup:
 
 #### Running multiple load tests
 
-- You may need to tune `target_gps` and sender count appropriately. 
+- You may need to tune `target_gps` and sender count appropriately.
+
+#### Account Create
+
+By default, transfer recipients are picked from the bounded sender pool, so long runs keep targeting the same `sender_count` addresses. Set `fresh_recipient_ratio` to a value from `0.0` to `1.0` to derive that fraction of recipient signing keys from the configured mnemonic, or from `seed` when no mnemonic is set. This drives account-trie fan-out for workloads like the account-create performance baseline.
+
+```yaml
+fresh_recipient_ratio: 1.0
+transactions:
+  - weight: 100
+    type: transfer
+```
+
+Recipient keys are advanced past the sender keys. The runner prints `recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, recipient_offset)` or `AccountPool::with_offset(seed, fresh_recipient_count, recipient_offset)`.

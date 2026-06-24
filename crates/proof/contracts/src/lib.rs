@@ -40,6 +40,7 @@ pub use tee_prover_registry::{
 mod nitro_enclave_verifier;
 pub use nitro_enclave_verifier::{
     INitroEnclaveVerifier, NitroEnclaveVerifierClient, NitroEnclaveVerifierContractClient,
+    caller_not_owner_or_revoker_selector,
 };
 
 mod error;

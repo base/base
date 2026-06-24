@@ -8,9 +8,11 @@ use std::time::Duration;
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_proof_contracts::{INitroEnclaveVerifier, NitroEnclaveVerifierClient};
+use base_proof_contracts::{
+    INitroEnclaveVerifier, NitroEnclaveVerifierClient, caller_not_owner_or_revoker_selector,
+};
 use base_proof_tee_nitro_verifier::AttestationReport;
-use base_tx_manager::{TxCandidate, TxManager};
+use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tracing::{info, warn};
 
 use crate::{ProverInstance, RegistrarError, RegistrarMetrics, Result, crl};
@@ -27,6 +29,27 @@ impl<T> CertManager<T>
 where
     T: TxManager,
 {
+    /// Decodes known `NitroEnclaveVerifier` custom-error names from a tx-manager error.
+    fn revoke_cert_revert_name(err: &TxManagerError) -> Option<&'static str> {
+        Self::revoke_cert_revert_selector(err)
+            .and_then(INitroEnclaveVerifier::INitroEnclaveVerifierErrors::name_by_selector)
+    }
+
+    /// Decodes the raw revert selector from a tx-manager execution revert.
+    fn revoke_cert_revert_selector(err: &TxManagerError) -> Option<[u8; 4]> {
+        let TxManagerError::ExecutionReverted { data, .. } = err else {
+            return None;
+        };
+
+        data.as_ref().and_then(|d| d.get(..4)).and_then(|selector| selector.try_into().ok())
+    }
+
+    /// Returns whether a tx-manager error is `CallerNotOwnerOrRevoker()`.
+    fn is_revoke_cert_authorization_error(err: &TxManagerError) -> bool {
+        Self::revoke_cert_revert_selector(err)
+            .is_some_and(|selector| selector == caller_not_owner_or_revoker_selector())
+    }
+
     /// Creates a certificate manager from CRL fetch timeout, verifier client, and transaction manager.
     ///
     /// # Errors
@@ -121,7 +144,7 @@ where
                     warn!(
                         path_digest = %revoked.path_digest,
                         tx_hash = %receipt.transaction_hash,
-                        "revokeCert transaction reverted (cert may already be revoked)"
+                        "revokeCert transaction reverted after inclusion; receipt has no revert data"
                     );
                     RegistrarMetrics::revoke_cert_reverted_total().increment(1);
                 }
@@ -134,11 +157,22 @@ where
                     RegistrarMetrics::revoke_cert_success_total().increment(1);
                 }
                 Err(e) => {
-                    warn!(
-                        error = %e,
-                        path_digest = %revoked.path_digest,
-                        "failed to submit revokeCert transaction"
-                    );
+                    let nitro_error = Self::revoke_cert_revert_name(&e);
+                    if Self::is_revoke_cert_authorization_error(&e) {
+                        warn!(
+                            error = %e,
+                            nitro_error = ?nitro_error,
+                            path_digest = %revoked.path_digest,
+                            "revokeCert sender is not authorized; configure registrar signer as Nitro owner or revoker"
+                        );
+                    } else {
+                        warn!(
+                            error = %e,
+                            nitro_error = ?nitro_error,
+                            path_digest = %revoked.path_digest,
+                            "failed to submit revokeCert transaction"
+                        );
+                    }
                     RegistrarMetrics::revoke_cert_tx_failures().increment(1);
                 }
             }
@@ -152,9 +186,10 @@ where
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::{Address, B256, Bytes};
     use async_trait::async_trait;
     use base_proof_contracts::ContractError;
+    use base_tx_manager::TxManagerError;
 
     use super::*;
     use crate::test_utils::{EP1, NoopTxManager, healthy_prover_instance};
@@ -251,5 +286,30 @@ mod tests {
             .unwrap();
 
         assert!(!revoked);
+    }
+
+    #[test]
+    fn revoke_cert_revert_name_decodes_authorization_error() {
+        let err = TxManagerError::ExecutionReverted {
+            reason: None,
+            data: Some(Bytes::from(caller_not_owner_or_revoker_selector().to_vec())),
+        };
+
+        assert_eq!(
+            CertManager::<NoopTxManager>::revoke_cert_revert_name(&err),
+            Some("CallerNotOwnerOrRevoker"),
+        );
+        assert!(CertManager::<NoopTxManager>::is_revoke_cert_authorization_error(&err));
+    }
+
+    #[test]
+    fn revoke_cert_revert_name_ignores_unrelated_tx_errors() {
+        assert_eq!(
+            CertManager::<NoopTxManager>::revoke_cert_revert_name(&TxManagerError::NonceTooLow),
+            None,
+        );
+        assert!(!CertManager::<NoopTxManager>::is_revoke_cert_authorization_error(
+            &TxManagerError::NonceTooLow,
+        ));
     }
 }

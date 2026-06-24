@@ -72,6 +72,10 @@ impl Payload for UniswapV3Payload {
         "uniswap_v3"
     }
 
+    fn uses_runner_recipient(&self) -> bool {
+        false
+    }
+
     fn generate(&self, rng: &mut SeededRng, from: Address, _to: Address) -> TransactionRequest {
         // Randomly swap direction to exercise both sides of the pool.
         // V3 pools are keyed by (token0, token1, fee) with token0 < token1,

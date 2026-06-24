@@ -41,6 +41,9 @@ pub trait Payload: Send + Sync + std::fmt::Debug {
     /// Returns the name of this payload type.
     fn name(&self) -> &'static str;
 
+    /// Returns true when this payload uses the runner-supplied recipient address.
+    fn uses_runner_recipient(&self) -> bool;
+
     /// Generates a transaction request.
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest;
 }
