@@ -157,7 +157,11 @@ impl<TM: TxManager + 'static> SubmissionQueue<TM> {
                     break;
                 }
                 match alt_da.put(candidate.tx_data.clone()).await {
-                    Ok(commitment) => candidate.tx_data = commitment.encode_tx_data(),
+                    Ok(commitment) => {
+                        BatcherMetrics::alt_da_commitment_total(BatcherMetrics::OUTCOME_PUT_OK)
+                            .increment(1);
+                        candidate.tx_data = commitment.encode_tx_data();
+                    }
                     Err(error) => {
                         // PUT failed: post nothing and requeue so the same batch retries next
                         // tick. No nonce is consumed, so the commitment stream stays gap-free.

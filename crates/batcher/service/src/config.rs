@@ -104,11 +104,11 @@ pub struct BatcherConfig {
     /// emit blob-typed submissions even when its configured `da_type` is
     /// calldata. No-op for blob-configured batchers. Default: `true`.
     pub force_blobs_when_throttling: bool,
-    /// Alt-DA dual-write: upload calldata bytes to the DA server and post commitments on L1.
-    ///
-    /// Requires [`EncoderConfig::da_type`](base_batcher_encoder::EncoderConfig::da_type) ==
-    /// [`DaType::Calldata`](base_batcher_encoder::DaType::Calldata). Calldata remains the
-    /// primary derivation path; alt-DA is a shadow path for validation. The concrete
+    /// Optional alt-DA client. When set, the batcher uploads each batch's
+    /// calldata-framed bytes to the DA server and posts only the commitment on L1
+    /// (calldata is not posted). Requires
+    /// [`EncoderConfig::da_type`](base_batcher_encoder::EncoderConfig::da_type) ==
+    /// [`DaType::Calldata`](base_batcher_encoder::DaType::Calldata). The concrete
     /// client is constructed by the binary and injected here.
     pub alt_da: Option<DynAltDaClient>,
 }
