@@ -7,34 +7,6 @@ _succinct_dir := justfile_directory() / "crates/proof/succinct"
 default:
     @just --justfile {{ source_file() }} --list
 
-# Ensure the ELF cache has the required SP1 ELFs. No-op on hit; rebuilds on miss.
-# Prepend this to any recipe that compiles `base-proof-succinct-elfs` so local and CI
-# builds pick up the ELFs just like `just build::contracts` handles contracts.
-ensure-elfs:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    repo="{{ _repo_root }}"
-    here="{{ _succinct_dir }}"
-    cache_dir="$here/elf"
-    missing=()
-    for elf in range-elf-embedded aggregation-elf; do
-        if [ ! -s "$cache_dir/$elf" ]; then
-            missing+=("$elf")
-        fi
-    done
-    if [ "${#missing[@]}" -eq 0 ]; then
-        echo "ELF cache has required artifacts"
-        exit 0
-    fi
-    echo "ELF cache missing required artifact(s): ${missing[*]}; rebuilding..."
-    ( cd "$repo" && just succinct build-elfs )
-    for elf in range-elf-embedded aggregation-elf; do
-        if [ ! -s "$cache_dir/$elf" ]; then
-            echo "error: missing ELF after rebuild: $cache_dir/$elf" >&2
-            exit 1
-        fi
-    done
-
 # Build all SP1 ELF files (range + aggregation)
 build-elfs: build-range-elf build-agg-elf
 
@@ -78,7 +50,7 @@ vkeys mode="":
     set -euo pipefail
     case "{{ mode }}" in
         "")
-            just succinct ensure-elfs
+            just succinct build-elfs
             ;;
         --build)
             just succinct clean-elfs
