@@ -174,6 +174,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             }
 
             ChallengerMetrics::pending_proofs().set(self.pending_proofs.len() as f64);
+            ChallengerMetrics::ignored_games().set(self.ignored_games.len() as f64);
 
             select! {
                 biased;
@@ -824,6 +825,15 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                 };
 
                 match known_revert {
+                    Some(KnownRevert::GameAlreadyExists) => {
+                        info!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute game already exists, dropping pending proof"
+                        );
+                        self.pending_proofs.remove(&game_address);
+                        return Ok(());
+                    }
                     Some(KnownRevert::ProofAlreadyVerified) => {
                         info!(
                             error = %e,
@@ -892,6 +902,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     fn ignore_game(&mut self, game_address: Address) {
         self.pending_proofs.remove(&game_address);
         self.ignored_games.insert(game_address);
+        ChallengerMetrics::ignored_games().set(self.ignored_games.len() as f64);
     }
 
     /// Handles a proof that needs retrying after failure.
@@ -1111,6 +1122,20 @@ mod tests {
         let (mut driver, _proof_requester) =
             driver_with_tx_error(TxManagerError::ExecutionReverted {
                 reason: Some("AlreadyProven(1)".to_string()),
+                data: None,
+            });
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+    }
+
+    #[tokio::test]
+    async fn game_already_exists_revert_drops_pending_proof() {
+        let (mut driver, _proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: Some("GameAlreadyExists(0x00)".to_string()),
                 data: None,
             });
         insert_ready_proof(&mut driver);
