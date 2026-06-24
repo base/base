@@ -9,6 +9,14 @@ to detect new Nitro enclave instances, fetches their attestation documents via
 (RISC Zero / Automata SDK), and submits registration transactions to
 `TEEProverRegistry` on L1.
 
+## Discovery Cache TTL
+
+When an instance disappears from otherwise successful discovery output, the
+registrar preserves its last-known active signers for `instance_cache_ttl_cycles`
+cycles. Shorter TTLs can speed up cleanup for genuinely removed instances but
+increase exposure to transient AWS/ALB discovery flakes; longer TTLs protect
+against flakes but delay real cleanup.
+
 ## Modules
 
 - **`service`** — [`RegistrarConfig`] runtime config and lifecycle runner.

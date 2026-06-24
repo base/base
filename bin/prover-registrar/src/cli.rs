@@ -6,7 +6,8 @@ use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::{BoundlessProver, BoundlessProverConfig};
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, RegistrarConfig, RegistrarError,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig,
+    RegistrarError,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use boundless_market::{
@@ -176,6 +177,17 @@ pub(crate) struct Cli {
     )]
     max_concurrency: usize,
 
+    /// Discovery cycles to preserve signers for instances missing from discovery output.
+    ///
+    /// Shorter TTLs speed up real cleanup but are more vulnerable to transient AWS/ALB
+    /// discovery flakes; longer TTLs protect against flakes but delay cleanup.
+    #[arg(
+        long,
+        env = cli_env!("INSTANCE_CACHE_TTL_CYCLES"),
+        default_value_t = INSTANCE_CACHE_TTL_CYCLES
+    )]
+    instance_cache_ttl_cycles: u32,
+
     /// Maximum number of transaction submission retries for transient errors.
     #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
     max_tx_retries: u32,
@@ -262,6 +274,7 @@ impl Cli {
             poll_interval: Duration::from_secs(self.poll_interval),
             prover_timeout: Duration::from_secs(self.prover_timeout),
             max_concurrency: self.max_concurrency,
+            instance_cache_ttl_cycles: self.instance_cache_ttl_cycles,
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay),
             unhealthy_registration_window: Duration::from_secs(self.unhealthy_registration_window),
@@ -375,11 +388,23 @@ mod tests {
             "30",
             "--tx-retry-delay-secs",
             "2",
+            "--instance-cache-ttl-cycles",
+            "3",
             "--unhealthy-registration-window-secs",
             "600",
         ]);
 
         assert!(Cli::try_parse_from(args).is_ok());
+    }
+
+    #[test]
+    fn instance_cache_ttl_cycles_configures_registrar() {
+        let mut args = required_args();
+        args.extend(["--instance-cache-ttl-cycles", "2"]);
+
+        let config = Cli::parse_from(args).config().unwrap();
+
+        assert_eq!(config.instance_cache_ttl_cycles, 2);
     }
 
     #[test]

@@ -53,6 +53,8 @@ pub struct RegistrarConfig {
     pub prover_timeout: Duration,
     /// Maximum number of instances to process concurrently.
     pub max_concurrency: usize,
+    /// Discovery cycles to preserve last-known active signers for missing instances.
+    pub instance_cache_ttl_cycles: u32,
     /// Maximum number of transaction submission retries for transient errors.
     pub max_tx_retries: u32,
     /// Initial delay between transaction submission retries.
@@ -83,6 +85,7 @@ impl fmt::Debug for RegistrarConfig {
             .field("poll_interval", &self.poll_interval)
             .field("prover_timeout", &self.prover_timeout)
             .field("max_concurrency", &self.max_concurrency)
+            .field("instance_cache_ttl_cycles", &self.instance_cache_ttl_cycles)
             .field("max_tx_retries", &self.max_tx_retries)
             .field("tx_retry_delay", &self.tx_retry_delay)
             .field("unhealthy_registration_window", &self.unhealthy_registration_window)
@@ -243,6 +246,7 @@ impl RegistrarConfig {
                 poll_interval: self.poll_interval,
                 cancel: cancel.clone(),
                 max_concurrency: self.max_concurrency,
+                instance_cache_ttl_cycles: self.instance_cache_ttl_cycles,
                 unhealthy_registration_window: self.unhealthy_registration_window,
             },
             cert_manager,
@@ -327,6 +331,7 @@ mod tests {
             poll_interval: Duration::from_secs(1),
             prover_timeout: Duration::from_secs(1),
             max_concurrency: 1,
+            instance_cache_ttl_cycles: crate::INSTANCE_CACHE_TTL_CYCLES,
             max_tx_retries: 1,
             tx_retry_delay: Duration::from_secs(1),
             unhealthy_registration_window: Duration::from_secs(1),
