@@ -233,9 +233,9 @@ impl ProposerService {
         };
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
-            l1_client.clone(),
-            l2_client.clone(),
-            rollup_client.clone(),
+            Arc::<L1Client>::clone(&l1_client),
+            Arc::<L2Client>::clone(&l2_client),
+            Arc::<RollupClient>::clone(&rollup_client),
             ProofDispatcherConfig::from(&driver_config),
         );
         let proof_submitter = ProofSubmitter::new(

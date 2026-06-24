@@ -205,7 +205,7 @@ impl ProofDispatcher {
             };
 
             let request =
-                match self.build_request(target_block, &current, claimed_l2_output_root).await {
+                match self.build_request(target_block, current, claimed_l2_output_root).await {
                     Ok(request) => request,
                     Err(error) => {
                         Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED)

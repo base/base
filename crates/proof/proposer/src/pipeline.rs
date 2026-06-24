@@ -293,9 +293,9 @@ mod tests {
         };
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
-            l1.clone(),
-            l2.clone(),
-            rollup.clone(),
+            Arc::<MockL1>::clone(&l1),
+            l2,
+            Arc::<MockRollupClient>::clone(&rollup),
             ProofDispatcherConfig::from(&config),
         );
         let proof_recovery = Arc::new(ProofRecovery::new(
