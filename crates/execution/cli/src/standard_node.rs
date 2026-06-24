@@ -156,10 +156,6 @@ pub struct RpcStandardNodeArgs {
     )]
     pub max_pending_blocks_depth: u64,
 
-    /// Enable cached execution via the flashblocks-aware engine validator.
-    #[arg(long = "flashblocks.cached-execution", requires = "flashblocks_url")]
-    pub flashblocks_cached_execution: bool,
-
     /// Interval between flashblocks upstream websocket ping frames.
     #[arg(
         long = "flashblocks.ping-interval",
@@ -211,10 +207,8 @@ impl StandardNodeArgs {
 impl From<&StandardNodeArgs> for Option<FlashblocksConfig> {
     fn from(args: &StandardNodeArgs) -> Self {
         args.rpc.flashblocks_url.clone().map(|url| {
-            let mut config = FlashblocksConfig::new(url, args.rpc.max_pending_blocks_depth)
-                .with_subscriber_ping_interval(args.rpc.flashblocks_ping_interval);
-            config.cached_execution = args.rpc.flashblocks_cached_execution;
-            config
+            FlashblocksConfig::new(url, args.rpc.max_pending_blocks_depth)
+                .with_subscriber_ping_interval(args.rpc.flashblocks_ping_interval)
         })
     }
 }
@@ -467,7 +461,6 @@ mod tests {
             rpc_forwarding_endpoint: None,
             flashblocks_url: None,
             max_pending_blocks_depth: 3,
-            flashblocks_cached_execution: false,
             flashblocks_ping_interval: Duration::from_secs(30),
             enable_transaction_tracing: false,
             enable_transaction_tracing_logs: false,

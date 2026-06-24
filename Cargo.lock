@@ -4339,54 +4339,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-engine-tree"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-consensus 2.0.5",
- "alloy-eip7928 0.4.2",
- "alloy-eips 2.0.5",
- "alloy-evm",
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth 2.0.5",
- "base-common-consensus",
- "base-common-evm",
- "base-common-flashblocks",
- "base-common-rpc-types",
- "base-common-rpc-types-engine",
- "base-execution-chainspec",
- "base-execution-evm",
- "base-flashblocks",
- "base-node-core",
- "crossbeam-channel",
- "derive_more 2.1.1",
- "eyre",
- "reth-chain-state",
- "reth-chainspec",
- "reth-consensus",
- "reth-db-common",
- "reth-engine-primitives",
- "reth-engine-tree",
- "reth-errors",
- "reth-evm",
- "reth-node-api",
- "reth-node-builder",
- "reth-payload-primitives",
- "reth-primitives-traits",
- "reth-provider",
- "reth-revm",
- "reth-storage-errors",
- "reth-tasks",
- "reth-trie",
- "reth-trie-parallel",
- "revm",
- "revm-primitives",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-execution-chainspec"
 version = "0.0.0"
 dependencies = [
@@ -4915,7 +4867,6 @@ dependencies = [
  "base-common-flashblocks",
  "base-common-network",
  "base-common-rpc-types",
- "base-engine-tree",
  "base-execution-chainspec",
  "base-flashblocks",
  "base-flashblocks-node",
@@ -5213,7 +5164,6 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
- "base-engine-tree",
  "base-execution-chainspec",
  "base-execution-payload-builder",
  "base-execution-rpc",

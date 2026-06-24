@@ -161,7 +161,7 @@ where
 }
 
 /// Extension trait that exposes [`BaseEngineValidator::validate_block_post_execution_with_state`]
-/// through generic engine pipelines (e.g. `base-engine-tree`'s `V` validator parameter).
+/// through generic engine pipelines.
 ///
 /// The inherent method on [`BaseEngineValidator`] is the source of truth; this trait is just a
 /// dispatch surface so callers that don't know the concrete validator type can still invoke it.
