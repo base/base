@@ -216,6 +216,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     pub(crate) fn insert_validated(
         &mut self,
         mut transaction: ValidPoolTransaction<T>,
+        state_nonce: u64,
     ) -> PoolResult<InsertOutcome<T>> {
         let hash = *transaction.hash();
         if self.contains(&hash) {
@@ -232,7 +233,17 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let nonce = transaction.nonce();
         transaction.transaction_id = TransactionId::new(sender_id, nonce);
         let transaction = Arc::new(transaction);
-        let lane = self.lanes.entry(lane_id).or_default();
+        let lane = self.lanes.entry(lane_id).or_insert_with(|| NonceLane {
+            next_nonce: state_nonce,
+            transactions: BTreeMap::new(),
+        });
+        // Keep the lane anchored to the state view used by validation. This may
+        // move backward after a reorg lowers the on-chain channel nonce, allowing
+        // now-valid transactions to be accepted instead of treating them as
+        // already executed under the pre-reorg lane cursor.
+        if state_nonce != lane.next_nonce {
+            lane.next_nonce = state_nonce;
+        }
         let pending_len_before = lane.consecutive_pending_len();
 
         if nonce < lane.next_nonce {
@@ -620,8 +631,8 @@ mod tests {
         let first = valid_pool_transaction(signed_channel_tx(&signer, U256::from(1), 0, 1_000));
         let second = valid_pool_transaction(signed_channel_tx(&signer, U256::from(2), 0, 1_000));
 
-        pool.insert_validated(first).unwrap();
-        pool.insert_validated(second).unwrap();
+        pool.insert_validated(first, 0).unwrap();
+        pool.insert_validated(second, 0).unwrap();
 
         let (pending, queued) = pool.pending_and_queued_txn_count();
         assert_eq!(pending, 2);
@@ -640,8 +651,8 @@ mod tests {
         let original_hash = *original.hash();
         let replacement_hash = *replacement.hash();
 
-        pool.insert_validated(original).unwrap();
-        let outcome = pool.insert_validated(replacement).unwrap();
+        pool.insert_validated(original, 0).unwrap();
+        let outcome = pool.insert_validated(replacement, 0).unwrap();
 
         assert_eq!(
             outcome.replaced.as_ref().map(|transaction| *transaction.hash()),
@@ -662,8 +673,8 @@ mod tests {
         let queued = valid_pool_transaction(signed_channel_tx(&signer, U256::from(3), 1, 900));
         let queued_hash = *queued.hash();
 
-        pool.insert_validated(head).unwrap();
-        pool.insert_validated(queued).unwrap();
+        pool.insert_validated(head, 0).unwrap();
+        pool.insert_validated(queued, 0).unwrap();
 
         let (pending, queued_count) = pool.pending_and_queued_txn_count();
         assert_eq!((pending, queued_count), (2, 0));
@@ -697,8 +708,8 @@ mod tests {
             valid_pool_transaction(signed_channel_tx(&signer, U256::from(4), 0, 1_000_000_000_000));
         let unaffordable_hash = *unaffordable.hash();
 
-        pool.insert_validated(affordable).unwrap();
-        pool.insert_validated(unaffordable).unwrap();
+        pool.insert_validated(affordable, 0).unwrap();
+        pool.insert_validated(unaffordable, 0).unwrap();
 
         let removed = pool.remove_unaffordable(&[ChangedAccount {
             address: signer.address(),
@@ -729,10 +740,10 @@ mod tests {
         let third_hash = *third.hash();
         let gap_hash = *gap.hash();
 
-        pool.insert_validated(first).unwrap();
-        pool.insert_validated(second).unwrap();
-        pool.insert_validated(third).unwrap();
-        pool.insert_validated(gap).unwrap();
+        pool.insert_validated(first, 0).unwrap();
+        pool.insert_validated(second, 0).unwrap();
+        pool.insert_validated(third, 0).unwrap();
+        pool.insert_validated(gap, 0).unwrap();
 
         let (pending, queued) = pool.pending_and_queued_txn_count();
         assert_eq!((pending, queued), (3, 1));
@@ -878,7 +889,7 @@ mod tests {
         pool.lanes
             .insert(lane_id, NonceLane { next_nonce: u64::MAX, transactions: BTreeMap::new() });
 
-        let outcome = pool.insert_validated(transaction).unwrap();
+        let outcome = pool.insert_validated(transaction, u64::MAX).unwrap();
 
         assert!(matches!(outcome.outcome.state, AddedTransactionState::Pending));
     }
@@ -923,10 +934,10 @@ mod tests {
         let middle = valid_pool_transaction(signed_channel_tx(&signer, U256::from(13), 1, 900));
         let gap_hash = *gap.hash();
 
-        pool.insert_validated(first).unwrap();
-        pool.insert_validated(gap).unwrap();
+        pool.insert_validated(first, 0).unwrap();
+        pool.insert_validated(gap, 0).unwrap();
 
-        let outcome = pool.insert_validated(middle).unwrap();
+        let outcome = pool.insert_validated(middle, 0).unwrap();
 
         assert_eq!(
             outcome.promoted.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
@@ -947,16 +958,16 @@ mod tests {
         let third_hash = *third.hash();
         let queued = valid_pool_transaction(signed_channel_tx(&signer, U256::from(11), 4, 700));
 
-        pool.insert_validated(first).unwrap();
-        pool.insert_validated(second).unwrap();
-        pool.insert_validated(third).unwrap();
-        pool.insert_validated(queued).unwrap();
+        pool.insert_validated(first, 0).unwrap();
+        pool.insert_validated(second, 0).unwrap();
+        pool.insert_validated(third, 0).unwrap();
+        pool.insert_validated(queued, 0).unwrap();
 
         pool.prune_mined(&[third_hash, first_hash, second_hash]);
 
         let replacement =
             valid_pool_transaction(signed_channel_tx(&signer, U256::from(11), 2, 850));
-        let error = pool.insert_validated(replacement).unwrap_err();
+        let error = pool.insert_validated(replacement, 3).unwrap_err();
         assert!(matches!(error.kind, PoolErrorKind::InvalidTransaction(_)));
     }
 
@@ -967,7 +978,7 @@ mod tests {
         let non_channelized =
             valid_pool_transaction(signed_channel_tx(&signer, U256::ZERO, 0, 1_000));
 
-        let error = pool.insert_validated(non_channelized).unwrap_err();
+        let error = pool.insert_validated(non_channelized, 0).unwrap_err();
         assert!(matches!(error.kind, PoolErrorKind::Other(_)));
     }
 
@@ -985,9 +996,9 @@ mod tests {
             valid_pool_transaction(signed_channel_tx(&signer, U256::from(22), 0, 950));
         let second_lane_head_hash = *second_lane_head.hash();
 
-        pool.insert_validated(first_lane_head).unwrap();
-        pool.insert_validated(first_lane_next).unwrap();
-        pool.insert_validated(second_lane_head).unwrap();
+        pool.insert_validated(first_lane_head, 0).unwrap();
+        pool.insert_validated(first_lane_next, 0).unwrap();
+        pool.insert_validated(second_lane_head, 0).unwrap();
 
         let lane_to_invalidate = pool.get(&first_lane_head_hash).unwrap();
         let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0);
@@ -1012,8 +1023,8 @@ mod tests {
             valid_pool_transaction(signed_channel_tx_with_tip(&signer, U256::from(32), 0, 50, 50));
         let high_tip_hash = *high_tip_lower_cap.hash();
 
-        pool.insert_validated(low_tip_high_cap).unwrap();
-        pool.insert_validated(high_tip_lower_cap).unwrap();
+        pool.insert_validated(low_tip_high_cap, 0).unwrap();
+        pool.insert_validated(high_tip_lower_cap, 0).unwrap();
 
         let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10);
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(high_tip_hash));
@@ -1035,8 +1046,8 @@ mod tests {
             now + std::time::Duration::from_secs(1),
         );
 
-        pool.insert_validated(older).unwrap();
-        pool.insert_validated(newer).unwrap();
+        pool.insert_validated(older, 0).unwrap();
+        pool.insert_validated(newer, 0).unwrap();
 
         let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10);
         assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(older_hash));

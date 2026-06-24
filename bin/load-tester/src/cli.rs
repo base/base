@@ -389,7 +389,7 @@ async fn run_test_phases(
 
     if runner.needs_b20_setup() {
         println!("Setting up B-20 tokens...");
-        runner.setup_b20_tokens(funding_key.clone(), amounts.b20_mint).await?;
+        runner.setup_b20_tokens(amounts.b20_mint).await?;
         println!("B-20 tokens ready.");
     }
     println!();

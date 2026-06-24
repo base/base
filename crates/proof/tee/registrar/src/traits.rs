@@ -38,10 +38,11 @@ pub trait EnclaveEndpointClient: Send + Sync {
 
     /// Fetches the raw Nitro attestation document for each enclave signer at the given endpoint.
     ///
-    /// The optional nonce binds the attestation to a specific request for replay protection.
+    /// The optional `nonces` vector must have one entry per signer in the same
+    /// order returned by [`signer_public_key`](Self::signer_public_key).
     fn signer_attestation<'a>(
         &'a self,
         endpoint: &'a Url,
-        nonce: Option<Vec<u8>>,
+        nonces: Option<Vec<Vec<u8>>>,
     ) -> impl Future<Output = Result<Vec<Vec<u8>>>> + Send + 'a;
 }

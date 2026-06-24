@@ -11,17 +11,9 @@ scrape_configs:
     static_configs:
       - targets: ['base-builder:7090']
 
-  - job_name: 'l2_builder_cl'
-    static_configs:
-      - targets: ['base-builder-cl:7300']
-
   - job_name: 'l2_client'
     static_configs:
       - targets: ['base-client:8090']
-
-  - job_name: 'l2_client_cl'
-    static_configs:
-      - targets: ['base-client-cl:8300']
 
   - job_name: 'l2_base_rpc'
     static_configs:

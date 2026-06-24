@@ -129,6 +129,11 @@ impl Eip8130Constants {
     /// `MAX_CONFIG_CHANGES_PER_TX * MAX_ACTORS_PER_ENTRY + MAX_ACTORS_PER_ENTRY`
     /// (config-change `actor_changes` + one `Create.initial_actors`).
     pub const MAX_ACTORS_PER_ENTRY: usize = 32;
+
+    /// Maximum runtime bytecode size for a create entry, matching EIP-170's
+    /// `MAX_CODE_SIZE` limit. EIP-8130 places runtime code directly, so the
+    /// mempool rejects oversized code before execution.
+    pub const MAX_CODE_SIZE: usize = 24_576;
 }
 
 #[cfg(test)]

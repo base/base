@@ -23,14 +23,9 @@ use crate::upgrade_signal::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalMetricsExtension,
 };
 
-/// CLI arguments for a standard Base execution node.
-#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
-#[command(next_help_heading = "Rollup")]
-pub struct StandardNodeArgs {
-    /// Shared execution node arguments.
-    #[command(flatten)]
-    pub rpc: RpcStandardNodeArgs,
-
+/// CLI arguments for metering RPC and priority-fee resource budgets.
+#[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
+pub struct MeteringArgs {
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
@@ -71,6 +66,19 @@ pub struct StandardNodeArgs {
     /// (e.g., "SSTORE,SLOAD,KECCAK256"). Precompile gas is always tracked.
     #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
     pub metering_metered_opcodes: Vec<String>,
+}
+
+/// CLI arguments for a standard Base execution node.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+#[command(next_help_heading = "Rollup")]
+pub struct StandardNodeArgs {
+    /// Shared execution node arguments.
+    #[command(flatten)]
+    pub rpc: RpcStandardNodeArgs,
+
+    /// Metering RPC and priority-fee resource budget arguments.
+    #[command(flatten)]
+    pub metering: MeteringArgs,
 
     /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
     #[arg(
@@ -182,19 +190,21 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
 
         Self {
             rpc: args,
-            enable_metering: false,
-            metering_gas_limit: None,
-            metering_execution_time_us: None,
-            metering_state_root_time_us: None,
-            metering_da_bytes: None,
-            metering_target_flashblocks_per_block: None,
-            metering_metered_opcodes: Vec::new(),
+            metering: MeteringArgs::default(),
             enable_tx_forwarding: false,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
             tx_forwarding_max_rps: DEFAULT_MAX_RPS,
         }
+    }
+}
+
+impl StandardNodeArgs {
+    /// Sets the metering arguments on this standard node configuration.
+    pub fn with_metering(mut self, metering: MeteringArgs) -> Self {
+        self.metering = metering;
+        self
     }
 }
 
@@ -348,16 +358,16 @@ impl StandardBaseRethNode {
         });
 
         let resource_limits = MeteringResourceLimits {
-            gas_limit: args.metering_gas_limit,
-            execution_time_us: args.metering_execution_time_us,
-            state_root_time_us: args.metering_state_root_time_us,
-            da_bytes: args.metering_da_bytes,
+            gas_limit: args.metering.metering_gas_limit,
+            execution_time_us: args.metering.metering_execution_time_us,
+            state_root_time_us: args.metering.metering_state_root_time_us,
+            da_bytes: args.metering.metering_da_bytes,
         };
-        let metering_config = if args.enable_metering {
-            let metered_opcodes = if args.metering_metered_opcodes.is_empty() {
+        let metering_config = if args.metering.enable_metering {
+            let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
                 MeteredOpcodes::default()
             } else {
-                MeteredOpcodes::parse(&args.metering_metered_opcodes)?
+                MeteredOpcodes::parse(&args.metering.metering_metered_opcodes)?
             }
             .with_all_precompiles();
 
@@ -366,7 +376,9 @@ impl StandardBaseRethNode {
                 .map_or_else(MeteringConfig::enabled, MeteringConfig::with_flashblocks)
                 .with_resource_limits(resource_limits)
                 .with_metered_opcodes(metered_opcodes);
-            if let Some(target_flashblocks_per_block) = args.metering_target_flashblocks_per_block {
+            if let Some(target_flashblocks_per_block) =
+                args.metering.metering_target_flashblocks_per_block
+            {
                 config = config.with_target_flashblocks_per_block(target_flashblocks_per_block);
             }
             config
@@ -570,5 +582,19 @@ mod tests {
         .expect_err("upgrade signal contract should require an explicit execution L1 RPC");
 
         assert!(error.to_string().contains("--upgrade-signal.l1-rpc"));
+    }
+
+    #[test]
+    fn test_standard_node_args_parses_metering_flags_once() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-metering",
+            "--metering.execution-time-us",
+            "5000000",
+        ])
+        .args;
+
+        assert!(args.metering.enable_metering);
+        assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
     }
 }

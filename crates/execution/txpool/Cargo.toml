@@ -34,6 +34,9 @@ base-common-chains.workspace = true
 base-common-evm.workspace = true
 base-common-genesis.workspace = true
 base-execution-evm.workspace = true
+base-precompile-storage.workspace = true
+base-common-precompiles.workspace = true
+base-execution-eip8130.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 
 # metrics
@@ -44,6 +47,7 @@ metrics = { workspace = true, optional = true }
 url.workspace = true
 serde.workspace = true
 c-kzg.workspace = true
+revm.workspace = true
 futures.workspace = true
 tracing.workspace = true
 thiserror.workspace = true

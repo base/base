@@ -147,12 +147,14 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, BerylErrorKind, IPolicyRegistry,
-        PolicyRegistryStorage, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
-        PrecompileCallStatus,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, BerylErrorKind,
+        IPolicyRegistry, PolicyRegistryStorage, PrecompileCallMetric, PrecompileCallObserver,
+        PrecompileCallOutcome, PrecompileCallStatus,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
+    const ACTIVATION_ADMIN_CONFIG: ActivationAdminConfig =
+        ActivationAdminConfig::static_fallback(Some(ACTIVATION_ADMIN));
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
 
@@ -177,7 +179,7 @@ mod tests {
         storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
             ActivationRegistryStorage::new(ctx)
-                .activate(ActivationFeature::PolicyRegistry.id(), Some(ACTIVATION_ADMIN))
+                .activate(ActivationFeature::PolicyRegistry.id(), ACTIVATION_ADMIN_CONFIG)
                 .unwrap()
         });
     }
@@ -198,7 +200,7 @@ mod tests {
         storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
             ActivationRegistryStorage::new(ctx)
-                .deactivate(ActivationFeature::PolicyRegistry.id(), Some(ACTIVATION_ADMIN))
+                .deactivate(ActivationFeature::PolicyRegistry.id(), ACTIVATION_ADMIN_CONFIG)
                 .unwrap()
         });
     }

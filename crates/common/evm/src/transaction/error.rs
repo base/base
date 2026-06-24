@@ -70,6 +70,24 @@ pub enum BaseTransactionError {
     /// Non-deposit transactions on Base must have `enveloped_tx` field set
     /// to properly calculate L1 costs.
     MissingEnvelopedTx,
+    /// An EIP-8130 (account-abstraction) transaction was rejected during its
+    /// enshrined execution pipeline (authorization, nonce, intrinsic gas, fee,
+    /// or account-change apply). The string is the underlying rejection reason.
+    ///
+    /// As an [`EVMError::Transaction`] error this is cause for non-inclusion, so
+    /// the transaction's journal writes are reverted and it is not added to the
+    /// block.
+    Eip8130(alloc::string::String),
+}
+
+impl BaseTransactionError {
+    /// Wraps an EIP-8130 pipeline rejection (any [`Display`] error from the
+    /// authorize / nonce / intrinsic-gas / fee / apply stages) as
+    /// [`BaseTransactionError::Eip8130`]. Keeps the call sites a single
+    /// `.map_err(BaseTransactionError::eip8130)?`.
+    pub fn eip8130(reason: impl Display) -> Self {
+        Self::Eip8130(alloc::string::ToString::to_string(&reason))
+    }
 }
 
 impl TransactionError for BaseTransactionError {}
@@ -89,6 +107,9 @@ impl Display for BaseTransactionError {
             }
             Self::MissingEnvelopedTx => {
                 write!(f, "missing enveloped transaction bytes for non-deposit transaction")
+            }
+            Self::Eip8130(reason) => {
+                write!(f, "EIP-8130 transaction rejected: {reason}")
             }
         }
     }
@@ -142,6 +163,10 @@ mod tests {
             BaseTransactionError::MissingEnvelopedTx.to_string(),
             "missing enveloped transaction bytes for non-deposit transaction"
         );
+        assert_eq!(
+            BaseTransactionError::eip8130("nonce too low").to_string(),
+            "EIP-8130 transaction rejected: nonce too low"
+        );
     }
 
     #[cfg(feature = "serde")]
@@ -151,5 +176,17 @@ mod tests {
 
         let base_transaction_error: BaseTransactionError = serde_json::from_str(response).unwrap();
         assert_eq!(base_transaction_error, BaseTransactionError::DepositSystemTxPostRegolith);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_serialize_json_eip8130_error() {
+        let error = BaseTransactionError::Eip8130("payer balance too low".to_string());
+
+        let serialized = serde_json::to_string(&error).unwrap();
+        assert_eq!(serialized, r#"{"Eip8130":"payer balance too low"}"#);
+
+        let round_trip: BaseTransactionError = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(round_trip, error);
     }
 }

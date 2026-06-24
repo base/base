@@ -1,6 +1,6 @@
 #!/bin/bash
 # Polls all op-conductor nodes to find the current raft leader, then streams
-# logs from the corresponding sequencer CL container. Automatically switches
+# logs from the corresponding unified sequencer container. Automatically switches
 # when leadership changes.
 set -euo pipefail
 
@@ -18,7 +18,7 @@ CONDUCTOR1_RPC_PORT="${CONDUCTOR1_RPC_PORT:-6546}"
 CONDUCTOR2_RPC_PORT="${CONDUCTOR2_RPC_PORT:-6547}"
 
 CONDUCTOR_PORTS=("$CONDUCTOR0_RPC_PORT" "$CONDUCTOR1_RPC_PORT" "$CONDUCTOR2_RPC_PORT")
-CONDUCTOR_CL_MAP=("base-builder-cl" "base-sequencer-1-cl" "base-sequencer-2-cl")
+CONDUCTOR_NODE_MAP=("base-builder" "base-sequencer-1" "base-sequencer-2")
 CONDUCTOR_NAMES=("op-conductor-0" "op-conductor-1" "op-conductor-2")
 
 POLL_INTERVAL="${FOLLOW_LEADER_POLL_INTERVAL:-2}"
@@ -72,7 +72,7 @@ while true; do
     continue
   fi
 
-  LEADER_CL="${CONDUCTOR_CL_MAP[$LEADER_IDX]}"
+  LEADER_NODE="${CONDUCTOR_NODE_MAP[$LEADER_IDX]}"
   CONDUCTOR_NAME="${CONDUCTOR_NAMES[$LEADER_IDX]}"
 
   if [ "$LEADER_IDX" != "$CURRENT_LEADER" ]; then
@@ -83,12 +83,12 @@ while true; do
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo " [$(date '+%H:%M:%S')] Leader: $CONDUCTOR_NAME → $LEADER_CL"
+    echo " [$(date '+%H:%M:%S')] Leader: $CONDUCTOR_NAME → $LEADER_NODE"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 
     CURRENT_LEADER="$LEADER_IDX"
-    docker logs -f --tail=50 "$LEADER_CL" &
+    docker logs -f --tail=50 "$LEADER_NODE" &
     LOG_PID=$!
   fi
 

@@ -378,13 +378,15 @@ mod tests {
 
     use super::FACTORY_MARKER_CODE_HASH;
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20_MAX_SUPPLY_CAP,
-        B20AssetStorage, B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20TokenRole,
-        B20Variant, IB20, IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged, Token,
-        TokenAccounting, Transferable,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
+        B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken, B20FactoryStorage,
+        B20StablecoinStorage, B20TokenRole, B20Variant, IB20, IB20Factory, Mintable, Permittable,
+        PolicyHandle, RoleManaged, Token, TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
+    const ACTIVATION_ADMIN_CONFIG: ActivationAdminConfig =
+        ActivationAdminConfig::static_fallback(Some(ACTIVATION_ADMIN));
 
     #[test]
     fn factory_address_matches_canonical_precompile_address() {
@@ -398,7 +400,7 @@ mod tests {
         storage.set_caller(ACTIVATION_ADMIN);
         for key in [ActivationFeature::B20Stablecoin.id(), ActivationFeature::B20Asset.id()] {
             StorageCtx::enter(storage, |ctx| {
-                ActivationRegistryStorage::new(ctx).activate(key, Some(ACTIVATION_ADMIN)).unwrap()
+                ActivationRegistryStorage::new(ctx).activate(key, ACTIVATION_ADMIN_CONFIG).unwrap()
             });
         }
     }

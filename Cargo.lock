@@ -2298,6 +2298,7 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
+ "axum 0.8.9",
  "base-cli-utils",
  "clap",
  "dotenvy",
@@ -2305,6 +2306,7 @@ dependencies = [
  "moka",
  "serde",
  "tokio",
+ "tower 0.5.3",
  "tracing",
 ]
 
@@ -2318,9 +2320,12 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
+ "axum 0.8.9",
  "base-bundles",
  "base-metrics",
+ "base-observability-events",
  "bytes",
+ "chrono",
  "futures",
  "jsonrpsee",
  "jsonrpsee-types",
@@ -2328,9 +2333,12 @@ dependencies = [
  "moka",
  "serde",
  "serde_json",
+ "sqlx",
  "testcontainers",
  "testcontainers-modules",
+ "thiserror 2.0.18",
  "tokio",
+ "tower-http",
  "tracing",
  "uuid",
 ]
@@ -3736,7 +3744,10 @@ dependencies = [
  "base-common-flz",
  "base-common-genesis",
  "base-common-precompiles",
+ "base-execution-eip8130",
  "base-metrics",
+ "base-precompile-storage",
+ "k256",
  "metrics",
  "reth-evm",
  "revm",
@@ -4774,9 +4785,12 @@ dependencies = [
  "base-common-evm",
  "base-common-flz",
  "base-common-genesis",
+ "base-common-precompiles",
  "base-execution-chainspec",
+ "base-execution-eip8130",
  "base-execution-evm",
  "base-metrics",
+ "base-precompile-storage",
  "base-test-utils",
  "c-kzg",
  "derive_more 2.1.1",
@@ -4794,6 +4808,7 @@ dependencies = [
  "reth-storage-api",
  "reth-tasks",
  "reth-transaction-pool",
+ "revm",
  "serde",
  "thiserror 2.0.18",
  "tokio",
@@ -5929,12 +5944,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-zk-requester"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "base-proofs-extension"
 version = "0.0.0"
 dependencies = [
- "base-common-consensus",
  "base-execution-exex",
- "base-execution-payload-builder",
  "base-execution-rpc",
  "base-execution-trie",
  "base-node-core",
@@ -11399,6 +11424,7 @@ dependencies = [
  "audit-archiver-lib",
  "axum 0.8.9",
  "base-bundles",
+ "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-network",

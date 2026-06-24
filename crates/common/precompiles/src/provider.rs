@@ -14,9 +14,9 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, NonceManager,
-    NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver, TxContext,
-    bls12_381, bn254_pair,
+    ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup,
+    NonceManager, NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver,
+    TxContext, bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -207,7 +207,10 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             PolicyRegistryPrecompile::install_with_observer(&mut precompiles, observer.clone());
             ActivationRegistry::install_with_observer(
                 &mut precompiles,
-                self.activation_admin_address,
+                ActivationAdminConfig::new(
+                    self.activation_admin_address,
+                    self.spec.upgrade() >= BaseUpgrade::Cobalt,
+                ),
                 observer,
             );
         }

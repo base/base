@@ -52,7 +52,15 @@ impl ActorTxVerifier {
         let sender = Self::verify_sender(signed, storage, now)?;
 
         let payer = match tx.payer {
-            None => None,
+            None => {
+                if !Operation::Payer.is_granted(&sender.resolved) {
+                    return Err(TxAuthError::Scope {
+                        operation: Operation::Payer,
+                        scope: sender.resolved.scope,
+                    });
+                }
+                None
+            }
             Some(account) => {
                 // The payer digest binds to the resolved sender account.
                 let hash = tx.payer_signature_hash(sender.account);
@@ -228,12 +236,44 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_PAYER,
+                    0,
+                    0,
+                ))
                 .unwrap();
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             assert_eq!(actors.sender.account, account);
-            assert_eq!(actors.sender.resolved.scope, Eip8130Constants::SCOPE_SENDER);
+            assert_eq!(
+                actors.sender.resolved.scope,
+                Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_PAYER
+            );
             assert!(actors.payer.is_none());
+        });
+    }
+
+    #[test]
+    fn self_pay_sender_without_payer_scope_is_rejected() {
+        let k = key(0x22);
+        let account = address!("0x00000000000000000000000000000000000000aa");
+        let id = actor_id(addr(&k));
+        let tx = base_tx(Some(account), None);
+        let hash = tx.sender_signature_hash();
+        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
+        with_storage(|acc| {
+            acc.actor_config
+                .at_mut(&id)
+                .at_mut(&account)
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .unwrap();
+            assert_eq!(
+                ActorTxVerifier::verify(&signed, acc, NOW),
+                Err(TxAuthError::Scope {
+                    operation: Operation::Payer,
+                    scope: Eip8130Constants::SCOPE_SENDER,
+                }),
+            );
         });
     }
 

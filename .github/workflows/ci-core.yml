@@ -254,7 +254,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build Docker image
-        run: docker buildx bake -f etc/docker/docker-bake.hcl client --load
+        run: docker buildx bake -f etc/docker/docker-bake.hcl base --load
 
   test-musl-sigsegv:
     name: Test SIGSEGV (musl)

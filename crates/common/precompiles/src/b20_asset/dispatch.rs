@@ -487,9 +487,9 @@ mod tests {
     };
 
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
-        B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset, InMemoryPolicy,
-        InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
+        B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset,
+        InMemoryPolicy, InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
         PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
         TokenAccounting,
     };
@@ -517,6 +517,8 @@ mod tests {
     const BOB: Address = Address::repeat_byte(0xbb);
     const TOKEN: Address = Address::repeat_byte(0x01);
     const ACTIVATION_ADMIN: Address = Address::repeat_byte(0xcb);
+    const ACTIVATION_ADMIN_CONFIG: ActivationAdminConfig =
+        ActivationAdminConfig::static_fallback(Some(ACTIVATION_ADMIN));
     fn make_token() -> TestAssetToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.multiplier = B20AssetStorage::WAD; // 1:1 multiplier
@@ -527,7 +529,7 @@ mod tests {
         storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
             ActivationRegistryStorage::new(ctx)
-                .activate(ActivationFeature::B20Asset.id(), Some(ACTIVATION_ADMIN))
+                .activate(ActivationFeature::B20Asset.id(), ACTIVATION_ADMIN_CONFIG)
         })
         .unwrap();
     }

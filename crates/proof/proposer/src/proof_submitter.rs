@@ -761,7 +761,7 @@ mod tests {
                 output_roots,
                 max_safe_block: None,
             }),
-            Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() }),
+            Arc::new(MockL1::new(1000)),
             factory,
             Arc::new(verifier),
             ProofSubmitterConfig {

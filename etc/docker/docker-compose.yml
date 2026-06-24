@@ -5,6 +5,13 @@ x-rust-service-build: &rust-service-build
     PROFILE: "${CARGO_PROFILE:-dev}"
     BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-0}"
 
+x-node-healthcheck: &node-healthcheck
+  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
+  interval: 250ms
+  timeout: 1s
+  retries: 240
+  start_period: 250ms
+
 services:
   setup-l1:
     image: devnet-setup:local
@@ -171,78 +178,53 @@ services:
       - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
-  base-el-bootnode:
-    image: base-reth-node:local
+  base-bootnode:
+    image: base:local
     build:
       <<: *rust-service-build
-      target: client
-    container_name: base-el-bootnode
+      target: base
+    container_name: base-bootnode
     depends_on:
       setup-l2:
         condition: service_completed_successfully
     ports:
       - "${L2_EL_BOOTNODE_P2P_PORT}:${L2_EL_BOOTNODE_P2P_PORT}/udp" # Discovery
+      - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}"     # Consensus P2P TCP metadata
+      - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}/udp" # Consensus discovery
     volumes:
       - ../../.devnet/l2/el-bootnode:/data
-      - ../../.devnet/l2/configs:/genesis/l2:ro
-    entrypoint: /app/base-client
-    command:
-      - p2p
-      - bootnode
-      - --v4-addr=0.0.0.0:${L2_EL_BOOTNODE_P2P_PORT}
-      - --nat=extip:${L2_EL_BOOTNODE_ADVERTISE_IP}
-      - --p2p-secret-key=/genesis/l2/el-bootnode-p2p-key.txt
-      - --color=never
-      - -vvv
-    networks:
-      default:
-        ipv4_address: ${L2_EL_BOOTNODE_ADVERTISE_IP}
-    healthcheck:
-      test: ["CMD", "bash", "-c", "readlink /proc/1/exe | grep -q /app/base-client"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
-    restart: unless-stopped
-
-  base-cl-bootnode:
-    image: base-consensus:local
-    build:
-      <<: *rust-service-build
-      target: consensus
-    container_name: base-cl-bootnode
-    depends_on:
-      setup-l2:
-        condition: service_completed_successfully
-    ports:
-      - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}"     # P2P TCP metadata
-      - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}/udp" # Discovery
-    volumes:
-      - ../../.devnet/l2/cl-bootnode:/data
       - ../../.devnet/l2/cl-bootnode-enr:/bootnodes
       - ../../.devnet/l2/configs:/genesis/l2:ro
-    entrypoint: /app/base-consensus
+    environment:
+      - BASE_CHAIN_NAME=dev
+      - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
+      - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
+    entrypoint: /app/base
     command:
       - bootnode
       - --chain
-      - ${L2_CHAIN_ID}
+      - dev
       - --l2-config-file
       - /genesis/l2/rollup.json
+      - --v4-addr=0.0.0.0:${L2_EL_BOOTNODE_P2P_PORT}
+      - --nat=extip:${L2_EL_BOOTNODE_ADVERTISE_IP}
+      - --p2p-secret-key=/genesis/l2/el-bootnode-p2p-key.txt
       - --p2p.listen.tcp
       - "${L2_CL_BOOTNODE_P2P_PORT}"
       - --p2p.listen.udp
       - "${L2_CL_BOOTNODE_P2P_PORT}"
       - --p2p.advertise.ip
-      - "${L2_CL_BOOTNODE_ADVERTISE_IP}"
+      - "${L2_EL_BOOTNODE_ADVERTISE_IP}"
       - --p2p.priv.path
       - /genesis/l2/cl-bootnode-p2p-key.txt
       - --p2p.bootstore
       - /data/bootstore.json
       - --p2p.enr-output
       - "${L2_CL_BOOTNODE_ENR_PATH}"
+      - -vvv
     networks:
       default:
-        ipv4_address: ${L2_CL_BOOTNODE_ADVERTISE_IP}
+        ipv4_address: ${L2_EL_BOOTNODE_ADVERTISE_IP}
     healthcheck:
       test: ["CMD", "test", "-s", "${L2_CL_BOOTNODE_ENR_PATH}"]
       interval: 250ms
@@ -252,16 +234,16 @@ services:
     restart: unless-stopped
 
   base-builder:
-    image: base-builder:local
+    image: base:local
     build:
       <<: *rust-service-build
-      target: builder
+      target: base
     container_name: base-builder
     depends_on:
       setup-l2:
         condition: service_completed_successfully
-      base-el-bootnode:
-        condition: service_started
+      base-bootnode:
+        condition: service_healthy
     ports:
       - "${L2_BUILDER_HTTP_PORT}:${L2_BUILDER_HTTP_PORT}"           # HTTP RPC
       - "${L2_BUILDER_WS_PORT}:${L2_BUILDER_WS_PORT}"               # WebSocket
@@ -270,19 +252,28 @@ services:
       - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}/udp"         # Discovery
       - "${L2_BUILDER_FLASHBLOCKS_PORT}:${L2_BUILDER_FLASHBLOCKS_PORT}"  # Flashblocks
       - "${L2_BUILDER_METRICS_PORT}:${L2_BUILDER_METRICS_PORT}"     # Metrics
+      - "${L2_BUILDER_CL_RPC_PORT}:${L2_BUILDER_CL_RPC_PORT}"       # Consensus RPC
+      - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # Consensus P2P TCP
+      - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}/udp"   # Consensus P2P UDP
     volumes:
       - ../../.devnet/l2/builder:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
     environment:
+      - BASE_CHAIN_NAME=dev
+      - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
+      - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
+      - NODE_HEALTHCHECK_HTTP_PORT=${L2_BUILDER_HTTP_PORT}
+      - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BUILDER_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-builder
-    entrypoint: /app/base-builder
+    entrypoint: /app/base
     command:
-      - node
-      - --chain=/genesis/l2/genesis.json
+      - sequencer
+      - --chain
+      - dev
+      - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
-      - --tracing-otlp=http://jaeger:4318
-      - --tracing-otlp.filter=debug,providers::state::overlay=off,trie=off
       - --telemetry.sampling-ratio=1
       - --http
       - --http.addr=0.0.0.0
@@ -297,6 +288,7 @@ services:
       - --authrpc.port=${L2_BUILDER_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --auth-ipc.path=/tmp/base-builder-engine.ipc
       - --port=${L2_BUILDER_P2P_PORT}
       - --discovery.port=${L2_BUILDER_P2P_PORT}
       - --nat=extip:${L2_BUILDER_ADVERTISE_IP}
@@ -324,53 +316,10 @@ services:
       - --txpool.max-batch-size=1024
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
-      - --color=never
-      - -vvv
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_BUILDER_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
-    networks:
-      default:
-        ipv4_address: ${L2_BUILDER_ADVERTISE_IP}
-    restart: unless-stopped
-
-  base-builder-cl:
-    image: base-consensus:local
-    build:
-      <<: *rust-service-build
-      target: consensus
-    container_name: base-builder-cl
-    depends_on:
-      base-builder:
-        condition: service_healthy
-      base-cl-bootnode:
-        condition: service_healthy
-    ports:
-      - "${L2_BUILDER_CL_RPC_PORT}:${L2_BUILDER_CL_RPC_PORT}"       # RPC
-      - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # P2P TCP
-      - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}/udp"   # P2P UDP
-      - "${L2_BUILDER_CL_METRICS_PORT}:${L2_BUILDER_CL_METRICS_PORT}"  # Metrics
-    volumes:
-      - ../../.devnet/l2/builder-cl:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
-    entrypoint: /app/base-consensus
-    command:
-      - node
-      - --chain
-      - ${L2_CHAIN_ID}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
-      - --l2-engine-rpc
-      - ws://base-builder:${L2_BUILDER_AUTH_PORT}
-      - --l2-engine-jwt-secret
-      - /genesis/jwt.hex
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
@@ -385,28 +334,23 @@ services:
       - --p2p.listen.udp
       - "${L2_BUILDER_CL_P2P_PORT}"
       - --p2p.advertise.ip
-      - base-builder-cl
+      - base-builder
       - --p2p.priv.path
       - /genesis/l2/builder-p2p-key.txt
       - --p2p.bootnodes-file
       - "${L2_CL_BOOTNODE_ENR_PATH}"
-      - --metrics.enabled
-      - --metrics.port
-      - "${L2_BUILDER_CL_METRICS_PORT}"
-      - --mode
-      - Sequencer
       - --sequencer.l1-confs
       - "0"
       - --p2p.sequencer.key
       - ${SEQUENCER_KEY}
       - --p2p.scoring
       - Off
+      - -vvv
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:${L2_BUILDER_CL_RPC_PORT}/healthz"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *node-healthcheck
+    networks:
+      default:
+        ipv4_address: ${L2_BUILDER_ADVERTISE_IP}
     restart: unless-stopped
 
   base-batcher:
@@ -416,7 +360,7 @@ services:
       target: batcher
     container_name: base-batcher
     depends_on:
-      base-builder-cl:
+      base-builder:
         condition: service_healthy
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
@@ -426,7 +370,7 @@ services:
       - --l2-rpc-url
       - http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --rollup-rpc-url
-      - http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
+      - http://base-builder:${L2_BUILDER_CL_RPC_PORT}
       - --private-key
       - ${BATCHER_KEY}
       - --max-channel-duration
@@ -445,16 +389,16 @@ services:
     restart: unless-stopped
 
   base-client:
-    image: base-reth-node:local
+    image: base:local
     build:
       <<: *rust-service-build
-      target: client
+      target: base
     container_name: base-client
     depends_on:
       setup-l2:
         condition: service_completed_successfully
-      base-el-bootnode:
-        condition: service_started
+      base-bootnode:
+        condition: service_healthy
     ports:
       - "${L2_CLIENT_HTTP_PORT}:${L2_CLIENT_HTTP_PORT}"     # HTTP RPC
       - "${L2_CLIENT_WS_PORT}:${L2_CLIENT_WS_PORT}"         # WebSocket
@@ -462,19 +406,28 @@ services:
       - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}"       # P2P
       - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}/udp"   # Discovery
       - "${L2_CLIENT_METRICS_PORT}:${L2_CLIENT_METRICS_PORT}"  # Metrics
+      - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # Consensus RPC
+      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # Consensus P2P TCP
+      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}/udp" # Consensus P2P UDP
     volumes:
       - ../../.devnet/l2/client:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
     environment:
+      - BASE_CHAIN_NAME=dev
+      - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
+      - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
+      - NODE_HEALTHCHECK_HTTP_PORT=${L2_CLIENT_HTTP_PORT}
+      - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_CLIENT_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-client
-    entrypoint: /app/base-client
+    entrypoint: /app/base
     command:
-      - node
-      - --chain=/genesis/l2/genesis.json
+      - rpc
+      - --chain
+      - dev
+      - --execution-chain=/genesis/l2/genesis.json
       - --datadir=/data
-      - --tracing-otlp=http://jaeger:4318
-      - --tracing-otlp.filter=debug,providers::state::overlay=off,trie=off
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_CLIENT_HTTP_PORT}
@@ -490,6 +443,7 @@ services:
       - --authrpc.port=${L2_CLIENT_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --auth-ipc.path=/tmp/base-client-engine.ipc
       - --port=${L2_CLIENT_P2P_PORT}
       - --discovery.port=${L2_CLIENT_P2P_PORT}
       - --nat=extip:${L2_CLIENT_ADVERTISE_IP}
@@ -510,62 +464,17 @@ services:
       - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
-      - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --rpc.forwarding-endpoint=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --enable-metering
       - --metering.gas-limit=${METERING_GAS_LIMIT}
       - --metering.execution-time-us=${METERING_EXECUTION_TIME_US}
       - --metering.state-root-time-us=${METERING_STATE_ROOT_TIME_US}
       - --metering.da-bytes=${METERING_DA_BYTES}
       - --metering.target-flashblocks-per-block=${METERING_TARGET_FLASHBLOCKS_PER_BLOCK}
-      - --color=never
-      - -vvv
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_CLIENT_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
-    networks:
-      default:
-        ipv4_address: ${L2_CLIENT_ADVERTISE_IP}
-    restart: unless-stopped
-
-  base-client-cl:
-    image: base-consensus:local
-    build:
-      <<: *rust-service-build
-      target: consensus
-    container_name: base-client-cl
-    depends_on:
-      base-client:
-        condition: service_healthy
-      base-builder-cl:
-        condition: service_healthy
-      base-cl-bootnode:
-        condition: service_healthy
-    ports:
-      - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
-      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # P2P TCP
-      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}/udp" # P2P UDP
-      - "${L2_CLIENT_CL_METRICS_PORT}:${L2_CLIENT_CL_METRICS_PORT}"  # Metrics
-    volumes:
-      - ../../.devnet/l2/client-cl:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
-    entrypoint: /app/base-consensus
-    command:
-      - node
-      - --chain
-      - ${L2_CHAIN_ID}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
-      - --l2-engine-rpc
-      - ws://base-client:${L2_CLIENT_AUTH_PORT}
-      - --l2-engine-jwt-secret
-      - /genesis/jwt.hex
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
@@ -579,22 +488,19 @@ services:
       - --p2p.listen.udp
       - "${L2_CLIENT_CL_P2P_PORT}"
       - --p2p.advertise.ip
-      - base-client-cl
-      - --metrics.enabled
-      - --metrics.port
-      - "${L2_CLIENT_CL_METRICS_PORT}"
+      - base-client
       - --p2p.bootnodes-file
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --p2p.scoring
       - Off
       - --l1.verifier-confs
       - "${BASE_NODE_VERIFIER_L1_CONFS}"
+      - -vvv
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:${L2_CLIENT_CL_RPC_PORT}/healthz"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *node-healthcheck
+    networks:
+      default:
+        ipv4_address: ${L2_CLIENT_ADVERTISE_IP}
     restart: unless-stopped
 
   base-rpc:
@@ -606,9 +512,9 @@ services:
     depends_on:
       setup-l2:
         condition: service_completed_successfully
-      base-el-bootnode:
-        condition: service_started
-      base-builder-cl:
+      base-bootnode:
+        condition: service_healthy
+      base-builder:
         condition: service_healthy
     ports:
       - "${L2_BASE_RPC_HTTP_PORT}:${L2_BASE_RPC_HTTP_PORT}"     # HTTP RPC
@@ -629,6 +535,8 @@ services:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
       - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
+      - NODE_HEALTHCHECK_HTTP_PORT=${L2_BASE_RPC_HTTP_PORT}
+      - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BASE_RPC_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-rpc
     entrypoint: /app/base
     command:
@@ -681,7 +589,7 @@ services:
       - --p2p.listen.udp
       - "${L2_BASE_RPC_CL_P2P_PORT}"
       - --p2p.advertise.ip
-      - base-rpc-cl
+      - base-rpc
       - --p2p.bootnodes-file
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --p2p.scoring
@@ -690,16 +598,10 @@ services:
       - "${BASE_NODE_VERIFIER_L1_CONFS}"
       - -vvv
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_BASE_RPC_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *node-healthcheck
     networks:
       default:
         ipv4_address: ${L2_BASE_RPC_ADVERTISE_IP}
-        aliases:
-          - base-rpc-cl
     restart: unless-stopped
 
   zk-prover-postgres:

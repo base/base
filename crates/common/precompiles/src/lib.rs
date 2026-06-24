@@ -18,7 +18,8 @@ pub use spec::BasePrecompileSpec;
 
 mod activation;
 pub use activation::{
-    ActivationFeature, ActivationRegistry, ActivationRegistryStorage, IActivationRegistry,
+    ActivationAdminConfig, ActivationFeature, ActivationRegistry, ActivationRegistryStorage,
+    IActivationRegistry,
 };
 
 mod bn254_pair;

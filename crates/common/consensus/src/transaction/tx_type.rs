@@ -14,14 +14,12 @@ pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 pub const EIP8130_TX_TYPE_ID: u8 = 123; // 0x7B
 
-/// Canonical user-facing rejection message for EIP-8130 transactions submitted via RPC.
+/// Canonical user-facing rejection message for EIP-8130 transactions submitted before Cobalt.
 ///
-/// Shared between `base-execution-rpc` (the `BaseInvalidTransactionError::Eip8130NotAccepted`
-/// variant) and `ingress-rpc-lib` so both ingress surfaces return identical wording.
-/// Centralising this prevents silent drift when the rejection becomes conditional
-/// (e.g. fork-gated) in a future PR.
-pub const EIP8130_REJECTION_MSG: &str = "EIP-8130 (account abstraction) transactions are not currently accepted via RPC; \
-     eth_sendRawTransaction does not accept transaction type 0x7B";
+/// Used by `base-execution-rpc` when an EIP-8130 transaction is submitted before
+/// the Cobalt fork is active at the latest block timestamp.
+pub const EIP8130_REJECTION_MSG: &str = "EIP-8130 (account abstraction) transactions are gated behind Cobalt; \
+     eth_sendRawTransaction does not accept transaction type 0x7B before Cobalt";
 
 #[allow(clippy::derivable_impls)]
 impl Default for OpTxType {

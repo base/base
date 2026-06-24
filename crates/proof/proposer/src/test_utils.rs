@@ -10,7 +10,7 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types_eth::EIP1186AccountProofResponse;
+use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_optimism_rpc::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
@@ -45,6 +45,23 @@ pub struct MockL1 {
     pub latest_block_number: u64,
     /// Optional `header_by_number()` transport error.
     pub header_by_number_error: Option<String>,
+    /// Headers returned by `header_by_hash()`.
+    pub headers_by_hash: HashMap<B256, Header>,
+}
+
+impl MockL1 {
+    /// Creates a mock L1 provider with the default test L1 head registered.
+    pub fn new(latest_block_number: u64) -> Self {
+        Self::with_headers(
+            latest_block_number,
+            HashMap::from([(B256::ZERO, test_l1_header(B256::ZERO, latest_block_number))]),
+        )
+    }
+
+    /// Creates a mock L1 provider with hash-specific headers.
+    pub fn with_headers(latest_block_number: u64, headers_by_hash: HashMap<B256, Header>) -> Self {
+        Self { latest_block_number, header_by_number_error: None, headers_by_hash }
+    }
 }
 
 #[async_trait]
@@ -59,10 +76,13 @@ impl L1Provider for MockL1 {
         if let Some(error) = &self.header_by_number_error {
             return Err(RpcError::Transport(error.clone()));
         }
-        Ok(alloy_rpc_types_eth::Header { hash: B256::repeat_byte(0x11), ..Default::default() })
+        Ok(test_l1_header(B256::repeat_byte(0x11), self.latest_block_number))
     }
-    async fn header_by_hash(&self, _: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
-        unimplemented!()
+    async fn header_by_hash(&self, hash: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
+        self.headers_by_hash
+            .get(&hash)
+            .cloned()
+            .ok_or_else(|| RpcError::HeaderNotFound(format!("mock: no header for hash {hash}")))
     }
     async fn block_receipts(
         &self,
@@ -375,6 +395,15 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 }
 
+/// Creates a test L1 RPC header with the given block hash and number.
+pub fn test_l1_header(hash: B256, number: u64) -> Header {
+    Header {
+        hash,
+        inner: alloy_consensus::Header { number, ..Default::default() },
+        ..Default::default()
+    }
+}
+
 /// Creates a test [`L1BlockRef`] with the given block number.
 pub fn test_l1_block_ref(number: u64) -> L1BlockRef {
     L1BlockRef { hash: B256::ZERO, number, parent_hash: B256::ZERO, timestamp: 1_000_000 + number }
@@ -394,8 +423,10 @@ pub fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
 
 /// Creates a test [`SyncStatus`] with the given safe block number and hash.
 pub fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus {
-    let l1 = test_l1_block_ref(100);
-    let l2 = test_l2_block_ref(safe_number, safe_hash);
+    let l1 = test_l1_block_ref(1000);
+    let mut l2 = test_l2_block_ref(safe_number, safe_hash);
+    l2.l1origin.hash = l1.hash;
+    l2.l1origin.number = l1.number;
     SyncStatus {
         current_l1: l1,
         current_l1_finalized: None,

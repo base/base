@@ -38,22 +38,6 @@ RUN set -eux; \
 FROM rust-builder-base AS source
 COPY . .
 
-FROM source AS client-builder
-ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=client-target,sharing=locked \
-    cargo build --profile $PROFILE \
-      --bin base-reth-node \
-      --bin base-consensus \
-      --bin basectl \
-      --bin snapshotter && \
-    target_dir="/app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")" && \
-    cp "$target_dir/base-reth-node" /app/base-client && \
-    cp "$target_dir/base-consensus" /app/base-consensus && \
-    cp "$target_dir/basectl" /app/basectl && \
-    cp "$target_dir/snapshotter" /app/snapshotter
-
 FROM source AS base-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -61,22 +45,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/target,id=base-target,sharing=locked \
     cargo build --profile $PROFILE --package base --bin base && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base /app/base
-
-FROM source AS builder-builder
-ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=builder-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-builder-bin --bin base-builder && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-builder /app/base-builder
-
-FROM source AS consensus-builder
-ARG PROFILE=release
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=consensus-target,sharing=locked \
-    cargo build --profile $PROFILE --bin base-consensus && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-consensus /app/base-consensus
 
 FROM source AS proposer-builder
 ARG PROFILE=release
@@ -136,24 +104,9 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-FROM runtime-base AS client
-COPY --from=client-builder /app/base-client ./base-client
-COPY --from=client-builder /app/base-consensus ./base-consensus
-COPY --from=client-builder /app/basectl ./basectl
-COPY --from=client-builder /app/snapshotter ./snapshotter
-ENTRYPOINT ["./base-client"]
-
 FROM runtime-base AS base
 COPY --from=base-builder /app/base ./base
 ENTRYPOINT ["./base"]
-
-FROM runtime-base AS builder
-COPY --from=builder-builder /app/base-builder ./base-builder
-ENTRYPOINT ["./base-builder"]
-
-FROM runtime-base AS consensus
-COPY --from=consensus-builder /app/base-consensus ./base-consensus
-ENTRYPOINT ["./base-consensus"]
 
 FROM runtime-base AS proposer
 COPY --from=proposer-builder /app/base-proposer ./base-proposer
