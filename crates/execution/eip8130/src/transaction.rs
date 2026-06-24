@@ -1,11 +1,14 @@
 //! The EIP-8130 transaction-authorization orchestrator: the final sender/payer
 //! signatures plus the transaction's ordered account-configuration changes.
 
-use base_common_consensus::{AccountChange, Eip8130Signed};
+use alloy_primitives::Address;
+use base_common_consensus::{AccountChange, CreateEntry, Eip8130Signed};
 
 use crate::{
-    AccountConfigurationStorage, ActorTxVerifier, AuthorizeError, ConfigChangeAuthorizer,
-    ResolvedActor, TxActors, TxAuthError,
+    AccountConfigurationStorage, ActorAuthorizer, ActorTxVerifier, AuthError, AuthorizeError,
+    AuthenticatorDispatch, ConfigChangeAuthorizer, DispatchOutcome, Operation, ResolvedActor,
+    TxActors, TxAuthError,
+    verify::AuthorizedActor,
 };
 
 /// The authorized result of an EIP-8130 transaction: its resolved actors and the
@@ -40,6 +43,15 @@ impl TransactionAuthorizer {
     /// sequence by one each within the transaction, so entries are validated
     /// against the running per-channel sequence rather than re-reading state.
     ///
+    /// For counterfactual smart-account creates (first `account_changes` entry is
+    /// [`AccountChange::Create`]), the sender does not yet exist on-chain, so the
+    /// normal stateful `resolve_bound` path cannot be used. Instead the sender
+    /// auth is validated statelessly via [`AuthenticatorDispatch::authenticate`]
+    /// and checked against `initial_actors` — exactly mirroring the txpool's
+    /// `validate_create_sender_auth`. The synthesized sender actor is unrestricted
+    /// (scope 0, no policy gate), matching the implicit owner surface of a newly
+    /// created account.
+    ///
     /// Returns the [`AuthorizedTransaction`], or the first [`TxAuthError`]
     /// encountered (sender, then payer, then config changes in order). Reads
     /// state but performs no mutations.
@@ -54,7 +66,26 @@ impl TransactionAuthorizer {
         // 1. The final transaction signatures over the whole body. This also
         //    resolves the sender account (recovering it for the EOA path), which
         //    the config changes apply against.
-        let actors = ActorTxVerifier::verify(signed, storage, now)?;
+        //
+        //    Counterfactual creates take a separate path: the account does not
+        //    exist yet, so the standard `resolve_bound` path would fail with
+        //    `NotBound`. Instead we validate the sender auth statelessly against
+        //    `initial_actors` and synthesize an unrestricted resolved actor.
+        let is_create = signed
+            .tx()
+            .account_changes
+            .first()
+            .is_some_and(|c| matches!(c, AccountChange::Create(_)));
+
+        let actors = if is_create {
+            let create = match signed.tx().account_changes.first() {
+                Some(AccountChange::Create(c)) => c,
+                _ => unreachable!("checked above"),
+            };
+            Self::authorize_create_actors(signed, create, storage, now)?
+        } else {
+            ActorTxVerifier::verify(signed, storage, now)?
+        };
         let account = actors.sender.account;
 
         // 2. Read each config-change channel's base sequence once, then validate
@@ -111,6 +142,99 @@ impl TransactionAuthorizer {
         }
 
         Ok(AuthorizedTransaction { actors, config_changes })
+    }
+
+    /// Authorizes the sender and payer for a counterfactual smart-account
+    /// CREATE transaction without requiring the account to exist on-chain yet.
+    ///
+    /// Mirrors the txpool's `validate_create_sender_auth`: dispatches the sender
+    /// auth blob statelessly via [`AuthenticatorDispatch::authenticate`] and
+    /// verifies the recovered `(actor_id, authenticator)` pair appears in
+    /// `create.initial_actors`. The returned sender actor is synthesized as
+    /// unrestricted (scope 0, no policy gate) — the implicit owner surface of a
+    /// newly created account.
+    ///
+    /// A sponsored payer (when `tx.payer` is `Some`) is authenticated normally
+    /// via the stateful `authenticate_actor` path because the payer account must
+    /// already exist.
+    fn authorize_create_actors(
+        signed: &Eip8130Signed,
+        create: &CreateEntry,
+        storage: &AccountConfigurationStorage<'_>,
+        now: u64,
+    ) -> Result<TxActors, TxAuthError> {
+        let tx = signed.tx();
+
+        // The wire `sender` field must be explicit: it is the deterministic
+        // CREATE2 address the account will be deployed to.
+        let sender = signed
+            .explicit_sender()
+            .ok_or_else(|| TxAuthError::Authorize(AuthorizeError::Authenticate(
+                AuthError::MalformedAuth,
+            )))?;
+
+        // Validate the sender auth blob statelessly and recover the actor id.
+        let auth = signed.sender_auth();
+        if auth.len() < 20 {
+            return Err(TxAuthError::Authorize(AuthorizeError::Authenticate(
+                AuthError::MalformedAuth,
+            )));
+        }
+        let authenticator = Address::from_slice(&auth[..20]);
+        let outcome = AuthenticatorDispatch::authenticate(
+            tx.sender_signature_hash(),
+            authenticator,
+            &auth[20..],
+        )
+        .map_err(AuthorizeError::Authenticate)?;
+
+        let actor_id = match outcome {
+            DispatchOutcome::Authenticated { actor_id }
+            | DispatchOutcome::Delegated { actor_id, .. } => actor_id,
+        };
+
+        // The recovered (actor_id, authenticator) must appear in initial_actors,
+        // proving the signing key is an owner of the account being created.
+        let in_initial = create
+            .initial_actors
+            .iter()
+            .any(|a| a.actor_id == actor_id && a.authenticator == authenticator);
+        if !in_initial {
+            return Err(TxAuthError::Authorize(AuthorizeError::NotBound {
+                actor_id,
+                authenticator,
+            }));
+        }
+
+        // Synthesize an unrestricted resolved actor: a brand-new account's
+        // creating owner has full authority (scope 0 = unrestricted, no policy).
+        let sender_resolved = ResolvedActor::unrestricted(actor_id);
+        let sender_authorized = AuthorizedActor { account: sender, resolved: sender_resolved };
+
+        // Resolve the payer. When `tx.payer` is `None` the sender pays — the
+        // unrestricted sender actor implicitly grants PAYER scope.
+        let payer = match tx.payer {
+            None => None,
+            Some(payer_account) => {
+                let hash = tx.payer_signature_hash(sender);
+                let resolved = ActorAuthorizer::authenticate_actor(
+                    storage,
+                    payer_account,
+                    hash,
+                    signed.payer_auth(),
+                    now,
+                )?;
+                if !Operation::Payer.is_granted(&resolved) {
+                    return Err(TxAuthError::Scope {
+                        operation: Operation::Payer,
+                        scope: resolved.scope,
+                    });
+                }
+                Some(AuthorizedActor { account: payer_account, resolved })
+            }
+        };
+
+        Ok(TxActors { sender: sender_authorized, payer })
     }
 }
 
@@ -363,25 +487,54 @@ mod tests {
 
     #[test]
     fn create_and_delegation_entries_do_not_consume_a_sequence() {
+        // A Create followed by a Delegation is a valid SA create pattern:
+        // neither entry carries an independent config-change signature, so
+        // `config_changes` must be empty and the sender must be unrestricted.
+        //
+        // (Config changes combined with a Create are rejected by the txpool and
+        // are a separate concern from the sequence-accounting tested here.)
         let k = key(0x11);
-        let account = addr(&k);
-        // A Create and a Delegation bracket a single multichain config change at
-        // sequence 0; the non-config entries are authorized by the sender
-        // signature alone and must not advance (or consume) the channel.
-        let create = AccountChange::Create(CreateEntry {
+        let signer_addr = addr(&k);
+        let actor_id_k = B256::from_slice(&{
+            let mut id = [0u8; 32];
+            id[..20].copy_from_slice(signer_addr.as_slice());
+            id
+        });
+        let initial_actors =
+            vec![InitialActor { actor_id: actor_id_k, authenticator: K1 }];
+        let create_entry = CreateEntry {
             user_salt: B256::ZERO,
             code: Bytes::from_static(&[0x60, 0x00]),
-            initial_actors: Vec::new(),
-        });
-        let delegation = AccountChange::Delegation(Delegation { target: account });
-        let cc = signed_change(account, K1, &k, 0, 0, vec![revoke(0xa0)]);
-        let signed = eoa_signed(
-            tx_with(None, None, vec![create, AccountChange::ConfigChange(cc), delegation]),
-            &k,
-        );
+            initial_actors: initial_actors.clone(),
+        };
+        let derived = AccountChangeApplier::compute_address(
+            create_entry.user_salt,
+            create_entry.code.as_ref(),
+            &initial_actors,
+        )
+        .expect("address derivation");
+
+        let delegation = AccountChange::Delegation(Delegation { target: derived });
+        let tx = TxEip8130 {
+            chain_id: LOCAL,
+            sender: Some(derived),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 5_000_000_000,
+            gas_limit: 250_000,
+            account_changes: vec![AccountChange::Create(create_entry), delegation],
+            calls: vec![],
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let hash = tx.sender_signature_hash();
+        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
             let out = TransactionAuthorizer::authorize(&signed, acc, LOCAL, NOW).unwrap();
-            assert_eq!(out.config_changes.len(), 1);
+            assert!(out.actors.sender.resolved.is_unrestricted());
+            assert_eq!(out.config_changes.len(), 0, "create + delegation carry no config changes");
         });
     }
 
@@ -457,6 +610,175 @@ mod tests {
             assert_eq!(out.actors.payer.expect("payer present").account, payer_account);
             assert_eq!(out.config_changes.len(), 1);
             assert_eq!(out.config_changes[0].scope, Eip8130Constants::SCOPE_CONFIG);
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Counterfactual create path
+    // ─────────────────────────────────────────────────────────────────────────
+
+    use base_common_consensus::InitialActor;
+    use crate::AccountChangeApplier;
+
+    /// Builds a K1-signed `CreateEntry` whose derived address matches `signer`
+    /// and a matching `TxEip8130` with `sender = derived` and the create as the
+    /// first `account_changes` entry.
+    fn create_tx_and_signed(
+        signer: &K256SigningKey,
+        extra_changes: Vec<AccountChange>,
+    ) -> (Address, Eip8130Signed) {
+        let signer_addr = addr(signer);
+        let actor_id_val = B256::from_slice(&{
+            let mut id = [0u8; 32];
+            id[..20].copy_from_slice(signer_addr.as_slice());
+            id
+        });
+        let initial_actors = vec![InitialActor { actor_id: actor_id_val, authenticator: K1 }];
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::new(),
+            initial_actors: initial_actors.clone(),
+        };
+        let derived = AccountChangeApplier::compute_address(
+            create.user_salt,
+            create.code.as_ref(),
+            &initial_actors,
+        )
+        .expect("address derivation");
+
+        let mut changes = vec![AccountChange::Create(create)];
+        changes.extend(extra_changes);
+
+        let tx = TxEip8130 {
+            chain_id: LOCAL,
+            sender: Some(derived),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 5_000_000_000,
+            gas_limit: 250_000,
+            account_changes: changes,
+            calls: vec![],
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let hash = tx.sender_signature_hash();
+        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(signer, hash)), Bytes::new());
+        (derived, signed)
+    }
+
+    #[test]
+    fn counterfactual_create_authorizes_on_empty_account() {
+        // A counterfactual smart-account CREATE must succeed even though the
+        // account does not yet exist in storage (actor_config is empty). Before
+        // the fix this returned `NotBound` because `resolve_bound` ran against
+        // an empty account before `apply_create` could install `initial_actors`.
+        let k = key(0xc1);
+        let (derived, signed) = create_tx_and_signed(&k, vec![]);
+
+        with_storage(|acc| {
+            let out = TransactionAuthorizer::authorize(&signed, acc, LOCAL, NOW)
+                .expect("create tx on empty account must authorize");
+            assert_eq!(out.actors.sender.account, derived);
+            assert!(out.actors.sender.resolved.is_unrestricted(), "create sender must be unrestricted");
+            assert!(out.actors.payer.is_none());
+            assert!(out.config_changes.is_empty());
+        });
+    }
+
+    #[test]
+    fn counterfactual_create_wrong_signer_is_rejected() {
+        // A signer not in `initial_actors` must not authorize the create.
+        let owner = key(0xc2);
+        let attacker = key(0xc3);
+        let attacker_addr = addr(&attacker);
+        let actor_id_val = B256::from_slice(&{
+            let mut id = [0u8; 32];
+            id[..20].copy_from_slice(attacker_addr.as_slice());
+            id
+        });
+        let initial_actors = vec![InitialActor { actor_id: actor_id_val, authenticator: K1 }];
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::new(),
+            initial_actors: initial_actors.clone(),
+        };
+        let derived = AccountChangeApplier::compute_address(
+            create.user_salt,
+            create.code.as_ref(),
+            &initial_actors,
+        )
+        .unwrap();
+
+        // Sign with `owner`, whose actor_id is NOT in initial_actors.
+        let tx = TxEip8130 {
+            chain_id: LOCAL,
+            sender: Some(derived),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 5_000_000_000,
+            gas_limit: 250_000,
+            account_changes: vec![AccountChange::Create(create)],
+            calls: vec![],
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let hash = tx.sender_signature_hash();
+        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&owner, hash)), Bytes::new());
+
+        with_storage(|acc| {
+            assert!(
+                matches!(
+                    TransactionAuthorizer::authorize(&signed, acc, LOCAL, NOW),
+                    Err(TxAuthError::Authorize(AuthorizeError::NotBound { .. }))
+                ),
+                "signer not in initial_actors must be rejected"
+            );
+        });
+    }
+
+    #[test]
+    fn counterfactual_create_without_explicit_sender_is_rejected() {
+        // A create tx with `sender = None` (EOA path) must be rejected since the
+        // sender address cannot be the derived CREATE2 address.
+        let k = key(0xc4);
+        let signer_addr = addr(&k);
+        let actor_id_val = B256::from_slice(&{
+            let mut id = [0u8; 32];
+            id[..20].copy_from_slice(signer_addr.as_slice());
+            id
+        });
+        let initial_actors = vec![InitialActor { actor_id: actor_id_val, authenticator: K1 }];
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::new(),
+            initial_actors,
+        };
+        let tx = TxEip8130 {
+            chain_id: LOCAL,
+            sender: None, // missing explicit sender
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 5_000_000_000,
+            gas_limit: 250_000,
+            account_changes: vec![AccountChange::Create(create)],
+            calls: vec![],
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let hash = tx.sender_signature_hash();
+        let signed = Eip8130Signed::new(tx, Bytes::from(sig(&k, hash)), Bytes::new());
+
+        with_storage(|acc| {
+            assert!(
+                TransactionAuthorizer::authorize(&signed, acc, LOCAL, NOW).is_err(),
+                "create without explicit sender must be rejected"
+            );
         });
     }
 }
