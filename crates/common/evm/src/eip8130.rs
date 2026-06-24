@@ -350,13 +350,9 @@ impl Eip8130Executor {
 
         let ctx = evm.ctx_mut();
         let from = ctx.tx().base.caller;
-        // Consensus-critical clamp guard mirrors `execute`: a saturated timestamp
-        // would shift expiry-dependent intrinsic pricing.
-        let now: u64 = ctx
-            .block()
-            .timestamp()
-            .try_into()
-            .map_err(|_| BaseTransactionError::eip8130("block timestamp exceeds u64"))?;
+        // Estimation prices the happy path: it skips authorization, so it does not
+        // enforce expiry, and the EIP-8130 intrinsic schedule does not depend on
+        // the block timestamp — so no timestamp is read here (unlike `execute`).
         let base_fee: u128 = u128::from(ctx.block().basefee());
         let encoded =
             ctx.tx().enveloped_tx().cloned().ok_or_else(|| {
@@ -364,7 +360,7 @@ impl Eip8130Executor {
             })?;
 
         let checkpoint = ctx.journal_mut().checkpoint();
-        let outcome = match Self::simulate_resolve(ctx, &signed, &encoded, from, now, base_fee) {
+        let outcome = match Self::simulate_resolve(ctx, &signed, &encoded, from, base_fee) {
             Ok(outcome) => outcome,
             Err(err) => {
                 ctx.journal_mut().checkpoint_revert(checkpoint);
@@ -424,7 +420,6 @@ impl Eip8130Executor {
         signed: &base_common_consensus::Eip8130Signed,
         encoded: &[u8],
         sender: Address,
-        now: u64,
         base_fee: u128,
     ) -> Result<Eip8130Outcome, BaseTransactionError>
     where
@@ -447,7 +442,6 @@ impl Eip8130Executor {
         // precompile must see the same address it would on-chain, or it could take
         // a different path and skew the estimate. No signature is verified here.
         let payer = tx.payer.unwrap_or(sender);
-        let _ = now;
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -1056,9 +1050,14 @@ impl Eip8130Executor {
 
     /// The gas billed for an EIP-8130 transaction: sender-intrinsic plus the gas
     /// its `calls` consumed, less the EIP-3529-capped refund, plus payer
-    /// authentication (billed on top of the sender budget). The refund-cap
-    /// denominator (`gross_used`) intentionally includes `sender_intrinsic`,
-    /// matching the mainnet `gas_used / 5` refund-cap convention.
+    /// authentication (billed on top of the sender budget).
+    ///
+    /// The refund-cap denominator (`gross_used`) includes `sender_intrinsic` —
+    /// like mainnet, where intrinsic gas counts toward the `gas_used / 5` ceiling —
+    /// but deliberately excludes `payer_auth`: payer authentication carries no
+    /// SSTORE/SELFDESTRUCT refund of its own, so it must not inflate the refund
+    /// ceiling. (Mainnet has no payer-auth concept, so this is an EIP-8130-specific
+    /// choice rather than literal mainnet parity.)
     ///
     /// Single source of truth for both the consensus charge ([`Self::settle_fees`])
     /// and the read-only estimate ([`Self::simulate`]), so the gas a transaction

@@ -143,6 +143,8 @@ impl BaseTransactionRequest {
     /// total length drives the calldata charge; the bytes are never recovered.
     fn stub_prefixed_auth(scheme: Eip8130AuthScheme, data_len: usize) -> Bytes {
         let mut blob = scheme.authenticator().to_vec();
+        // Fill with a non-zero byte (`STUB_AUTH_FILL`) so the EIP-2028 calldata
+        // charge matches a real, high-entropy signature (zero bytes are cheaper).
         blob.resize(blob.len() + data_len, STUB_AUTH_FILL);
         Bytes::from(blob)
     }

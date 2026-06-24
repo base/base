@@ -124,7 +124,10 @@ impl Eip8130RequestFields {
             || self.expiry.is_some()
             || self.metadata.is_some()
             || self.sender_auth_scheme.is_some()
+            || self.sender_auth_size.is_some()
             || self.payer.is_some()
+            || self.payer_auth_scheme.is_some()
+            || self.payer_auth_size.is_some()
     }
 }
 
