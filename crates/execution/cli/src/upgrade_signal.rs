@@ -34,15 +34,6 @@ impl ExecutionUpgradeSignal {
         config: &ExecutionUpgradeSignalConfig,
         chain_spec: &mut BaseChainSpec,
     ) -> eyre::Result<()> {
-        if !config.signal_config.mode.applies_at_startup() {
-            info!(
-                target: "upgrade_signal",
-                mode = ?config.signal_config.mode,
-                "observing execution upgrade signal without startup schedule application"
-            );
-            return Ok(());
-        }
-
         let reader = config.signal_config.reader(RootProvider::new_http(config.l1_rpc.clone()));
         let application_schedule = config
             .signal_config
@@ -223,10 +214,6 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
         } else {
             hooks
         };
-
-        if !config.signal_config.metrics_enabled(UpgradeSignalMetricLayer::Execution) {
-            return hooks;
-        }
 
         hooks.add_node_started_hook(move |ctx| {
             let reader = config

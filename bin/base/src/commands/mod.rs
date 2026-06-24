@@ -2,7 +2,6 @@
 
 mod bootnode;
 mod command;
-mod integrated_upgrade_signal;
 pub(crate) use command::BaseCommand;
 mod rpc;
 mod sequencer;

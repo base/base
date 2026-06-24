@@ -8,13 +8,13 @@ use base_consensus_cli::{
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
-use base_upgrade_signal::UpgradeSignalStartupMode;
+use base_upgrade_signal::{UpgradeSignalRuntimeValidation, UpgradeSignalStartupMode};
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::{commands::integrated_upgrade_signal, config::ResolvedChainConfig};
+use crate::config::ResolvedChainConfig;
 
 /// Arguments for `base rpc`.
 #[derive(Args, Clone, Debug)]
@@ -68,20 +68,28 @@ impl RpcCommand {
         let mut rollup_config = consensus_args.load_rollup_config()?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
-            if let Some(signal_config) = execution.standard.rollup_args.upgrade_signal.config()?
-                && signal_config.mode.applies_at_startup()
+            let upgrade_signal_runtime_validation =
+                UpgradeSignalRuntimeValidation::with_activation_admin_address(
+                    execution_chain.activation_admin_address,
+                );
+            if let Some(startup_config) = execution
+                .standard
+                .rollup_args
+                .upgrade_signal
+                .startup_config(&execution.standard.rollup_args.upgrade_signal_l1_rpc)?
             {
-                let l1_rpc = integrated_upgrade_signal::required_execution_l1_rpc(
-                    &execution.standard.rollup_args.upgrade_signal_l1_rpc,
-                )?;
-                integrated_upgrade_signal::apply_startup_signal(
-                    &mut execution_chain,
-                    &mut rollup_config,
-                    &signal_config,
-                    l1_rpc,
-                    "integrated startup",
-                )
-                .await?;
+                let el_chain_id = execution_chain.chain().id();
+                let cl_chain_id = rollup_config.l2_chain_id.id();
+                startup_config
+                    .apply_to_sinks(
+                        "integrated startup",
+                        upgrade_signal_runtime_validation,
+                        el_chain_id,
+                        Arc::make_mut(&mut execution_chain),
+                        cl_chain_id,
+                        &mut rollup_config,
+                    )
+                    .await?;
             }
 
             if metrics_enabled {
@@ -90,8 +98,6 @@ impl RpcCommand {
             let _upgrade_countdown_metrics = metrics_enabled
                 .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
 
-            let upgrade_signal_runtime_validation =
-                integrated_upgrade_signal::runtime_validation_for_execution_chain(&execution_chain);
             let upgrade_signal_l1_rpc =
                 execution.standard.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
             let execution = execution
@@ -165,9 +171,11 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use clap::Parser;
 
+    use base_upgrade_signal::UpgradeSignalRuntimeValidation;
+
     use crate::{
         cli::BaseCli,
-        commands::{BaseCommand, integrated_upgrade_signal},
+        commands::BaseCommand,
         config::{BuiltInChain, ChainArg},
     };
 
@@ -302,8 +310,9 @@ mod tests {
             .without_fork(BaseUpgrade::Beryl)
             .build();
 
-        let validation =
-            integrated_upgrade_signal::runtime_validation_for_execution_chain(&execution_chain);
+        let validation = UpgradeSignalRuntimeValidation::with_activation_admin_address(
+            execution_chain.activation_admin_address,
+        );
 
         assert!(validation.require_activation_admin_for_beryl);
         assert_eq!(validation.activation_admin_address, None);

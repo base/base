@@ -10,7 +10,8 @@
 mod config;
 pub use config::{
     UpgradeSignalArgs, UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalConfigError,
-    UpgradeSignalDefaults, UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupMode,
+    UpgradeSignalDefaults, UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupConfig,
+    UpgradeSignalStartupMode,
 };
 
 mod contract;

@@ -16,7 +16,7 @@ use base_tx_forwarding::{
 };
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
-use base_upgrade_signal::{UpgradeSignalMetricLayer, UpgradeSignalStartupMode};
+use base_upgrade_signal::UpgradeSignalStartupMode;
 use url::Url;
 
 use crate::upgrade_signal::{
@@ -285,9 +285,6 @@ impl StandardBaseRethNode {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(());
         };
-        if !config.signal_config.reads_l1_at_runtime(UpgradeSignalMetricLayer::Execution) {
-            return Ok(());
-        }
 
         runner.install_ext::<ExecutionUpgradeSignalRuntimeExtension>(config);
 
@@ -296,14 +293,11 @@ impl StandardBaseRethNode {
 
     /// Validates execution upgrade signal arguments before node setup.
     ///
-    /// Execution upgrade-signal polling is configured independently from consensus polling, so any
-    /// execution-side startup application, runtime admin refresh, or live metrics observer requires
-    /// an explicit `--upgrade-signal.l1-rpc`.
+    /// Execution upgrade-signal polling is configured independently from consensus polling, so a
+    /// configured upgrade-signal contract always requires an explicit `--upgrade-signal.l1-rpc` for
+    /// its startup application, runtime admin refresh, and live metrics observer.
     pub fn validate_upgrade_signal_args(rollup_args: &RollupArgs) -> eyre::Result<()> {
-        let Some(signal_config) = rollup_args.upgrade_signal.config()? else {
-            return Ok(());
-        };
-        if signal_config.reads_l1(UpgradeSignalMetricLayer::Execution)
+        if rollup_args.upgrade_signal.config()?.is_some()
             && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none()
         {
             eyre::bail!(
@@ -323,9 +317,6 @@ impl StandardBaseRethNode {
             return Ok(None);
         };
         Self::validate_upgrade_signal_args(rollup_args)?;
-        if !signal_config.reads_l1(UpgradeSignalMetricLayer::Execution) {
-            return Ok(None);
-        }
         let l1_rpc = rollup_args
             .upgrade_signal_l1_rpc
             .upgrade_signal_l1_rpc
@@ -579,23 +570,10 @@ mod tests {
     }
 
     #[test]
-    fn test_upgrade_signal_contract_without_execution_reads_does_not_require_l1_rpc() {
-        StandardBaseRethNode::validate_upgrade_signal_args(&RollupArgs {
-            upgrade_signal: base_upgrade_signal::UpgradeSignalArgs {
-                contract_address: Some(address!("0000000000000000000000000000000000000001")),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .expect("disabled execution metrics should not require an execution L1 RPC");
-    }
-
-    #[test]
     fn test_execution_upgrade_signal_reads_require_l1_rpc() {
         let error = StandardBaseRethNode::validate_upgrade_signal_args(&RollupArgs {
             upgrade_signal: base_upgrade_signal::UpgradeSignalArgs {
                 contract_address: Some(address!("0000000000000000000000000000000000000001")),
-                el_metrics_enabled: true,
                 ..Default::default()
             },
             ..Default::default()

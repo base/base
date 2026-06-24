@@ -44,7 +44,7 @@ pub use l1_watcher::{
 };
 
 mod upgrade_signal;
-pub use upgrade_signal::UpgradeSignalMetricsActor;
+pub use upgrade_signal::{UpgradeSignalMetricsActor, UpgradeSignalNodeConfig};
 
 mod network;
 #[cfg(test)]

@@ -1,14 +1,16 @@
 use alloy_primitives::{Address, U256};
 use alloy_provider::RootProvider;
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseUpgrade, UpgradeActivationSink};
 use tracing::info;
+use url::Url;
 
 use super::{UpgradeSignalDefaults, UpgradeSignalMode};
 use crate::{
     contract::AlloyUpgradeSignalReader,
     error::UpgradeSignalError,
     metrics::{UpgradeSignalMetricLayer, UpgradeSignalMetrics},
+    runtime::{UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation},
     state::{UpgradeSignal, UpgradeSignalSchedule},
 };
 
@@ -27,10 +29,6 @@ pub struct UpgradeSignalConfig {
     pub l1_block_tag: BlockNumberOrTag,
     /// Node protocol version supported by this binary.
     pub node_protocol_version: U256,
-    /// Whether execution-layer metric recording is enabled.
-    pub el_metrics_enabled: bool,
-    /// Whether consensus-layer metric recording is enabled.
-    pub cl_metrics_enabled: bool,
 }
 
 impl UpgradeSignalConfig {
@@ -43,8 +41,6 @@ impl UpgradeSignalConfig {
             mode: UpgradeSignalMode::MetricsOnly,
             l1_block_tag: BlockNumberOrTag::Finalized,
             node_protocol_version: U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION),
-            el_metrics_enabled: false,
-            cl_metrics_enabled: false,
         }
     }
 
@@ -58,32 +54,6 @@ impl UpgradeSignalConfig {
     /// locally.
     pub fn application_schedule(&self, schedule: &UpgradeSignalSchedule) -> UpgradeSignalSchedule {
         schedule.filtered_to_upgrade_ids(&self.apply_upgrade_ids)
-    }
-
-    /// Returns true if metric recording is enabled for `layer`.
-    pub const fn metrics_enabled(&self, layer: UpgradeSignalMetricLayer) -> bool {
-        match layer {
-            UpgradeSignalMetricLayer::Execution => self.el_metrics_enabled,
-            UpgradeSignalMetricLayer::Consensus => self.cl_metrics_enabled,
-        }
-    }
-
-    /// Returns true if this layer performs runtime L1 reads.
-    pub const fn reads_l1_at_runtime(&self, layer: UpgradeSignalMetricLayer) -> bool {
-        self.mode.allows_runtime_admin() || self.metrics_enabled(layer)
-    }
-
-    /// Returns true if this layer performs any L1 reads, including startup application.
-    pub const fn reads_l1(&self, layer: UpgradeSignalMetricLayer) -> bool {
-        self.mode.applies_at_startup() || self.reads_l1_at_runtime(layer)
-    }
-
-    /// Filters `layers` to the metric layers enabled in this config.
-    pub fn enabled_metrics_layers(
-        &self,
-        layers: &[UpgradeSignalMetricLayer],
-    ) -> Vec<UpgradeSignalMetricLayer> {
-        layers.iter().copied().filter(|layer| self.metrics_enabled(*layer)).collect()
     }
 
     /// Returns true if this node supports the minimum protocol version attached to `signal`.
@@ -164,6 +134,49 @@ impl UpgradeSignalConfig {
         Ok(())
     }
 
+    /// Reads the L1 upgrade signal and applies it to an EL sink and a CL sink.
+    ///
+    /// Reads the schedule once, validates runtime invariants, then calls
+    /// [`UpgradeSignalRuntimeApplier::apply_schedule_to_sink`] for each sink in order: execution
+    /// chain spec first, then rollup config.
+    pub async fn apply_startup_to_sinks<EL, CL>(
+        &self,
+        l1_rpc: Url,
+        log_context: &'static str,
+        runtime_validation: UpgradeSignalRuntimeValidation,
+        el_chain_id: u64,
+        el_sink: &mut EL,
+        cl_chain_id: u64,
+        cl_sink: &mut CL,
+    ) -> eyre::Result<()>
+    where
+        EL: UpgradeActivationSink + Clone,
+        EL::Error: std::error::Error + Send + Sync + 'static,
+        CL: UpgradeActivationSink + Clone,
+        CL::Error: std::error::Error + Send + Sync + 'static,
+    {
+        let reader = self.reader(RootProvider::new_http(l1_rpc));
+        let schedule = self
+            .read_validated_application_schedule(
+                &reader,
+                log_context,
+                &[UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus],
+            )
+            .await?;
+
+        runtime_validation.validate_schedule(el_chain_id, &schedule)?;
+
+        UpgradeSignalRuntimeApplier::apply_schedule_to_sink(el_chain_id, &schedule, el_sink)
+            .map_err(eyre::Report::new)?
+            .log("execution chain spec");
+
+        UpgradeSignalRuntimeApplier::apply_schedule_to_sink(cl_chain_id, &schedule, cl_sink)
+            .map_err(eyre::Report::new)?
+            .log("rollup config");
+
+        Ok(())
+    }
+
     /// Reads the L1 schedule, records metrics, logs each signal, validates it, and returns the
     /// application-filtered schedule ready to apply.
     ///
@@ -176,17 +189,16 @@ impl UpgradeSignalConfig {
         log_context: &'static str,
         metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
-        let enabled_metrics_layers = self.enabled_metrics_layers(metrics_layers);
         let schedule = reader
             .read_schedule_with_retries(
                 &self.upgrade_ids,
                 UpgradeSignalDefaults::READ_ATTEMPTS,
                 UpgradeSignalDefaults::READ_BACKOFF,
-                &enabled_metrics_layers,
+                metrics_layers,
             )
             .await?;
 
-        UpgradeSignalMetrics::record_schedule_for_layers(&enabled_metrics_layers, &schedule);
+        UpgradeSignalMetrics::record_schedule_for_layers(metrics_layers, &schedule);
         for signal in &schedule.signals {
             info!(
                 target: "upgrade_signal",

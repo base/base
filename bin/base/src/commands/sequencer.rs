@@ -15,15 +15,12 @@ use base_execution_cli::{
 };
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
-use base_upgrade_signal::UpgradeSignalStartupMode;
+use base_upgrade_signal::{UpgradeSignalRuntimeValidation, UpgradeSignalStartupMode};
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    commands::{integrated_upgrade_signal, rpc::engine_ipc_url},
-    config::ResolvedChainConfig,
-};
+use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
 
 /// Arguments for `base sequencer`.
 #[derive(Args, Clone, Debug)]
@@ -76,20 +73,25 @@ impl SequencerCommand {
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
-            if let Some(signal_config) = rollup_args.upgrade_signal.config()?
-                && signal_config.mode.applies_at_startup()
+            let upgrade_signal_runtime_validation =
+                UpgradeSignalRuntimeValidation::with_activation_admin_address(
+                    execution_chain.activation_admin_address,
+                );
+            if let Some(startup_config) =
+                rollup_args.upgrade_signal.startup_config(&rollup_args.upgrade_signal_l1_rpc)?
             {
-                let l1_rpc = integrated_upgrade_signal::required_execution_l1_rpc(
-                    &rollup_args.upgrade_signal_l1_rpc,
-                )?;
-                integrated_upgrade_signal::apply_startup_signal(
-                    &mut execution_chain,
-                    &mut rollup_config,
-                    &signal_config,
-                    l1_rpc,
-                    "integrated sequencer startup",
-                )
-                .await?;
+                let el_chain_id = execution_chain.chain().id();
+                let cl_chain_id = rollup_config.l2_chain_id.id();
+                startup_config
+                    .apply_to_sinks(
+                        "integrated sequencer startup",
+                        upgrade_signal_runtime_validation,
+                        el_chain_id,
+                        Arc::make_mut(&mut execution_chain),
+                        cl_chain_id,
+                        &mut rollup_config,
+                    )
+                    .await?;
             }
 
             if metrics_enabled {
@@ -98,8 +100,6 @@ impl SequencerCommand {
             let _upgrade_countdown_metrics = metrics_enabled
                 .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
 
-            let upgrade_signal_runtime_validation =
-                integrated_upgrade_signal::runtime_validation_for_execution_chain(&execution_chain);
             let upgrade_signal_l1_rpc =
                 rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
             let execution =

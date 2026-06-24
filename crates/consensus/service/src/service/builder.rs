@@ -14,8 +14,8 @@ use base_upgrade_signal::{UpgradeSignalConfig, UpgradeSignalRuntimeValidation};
 use url::Url;
 
 use crate::{
-    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, actors::DerivationDelegateClient,
-    service::node::L1Config,
+    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, UpgradeSignalNodeConfig,
+    actors::DerivationDelegateClient, service::node::L1Config,
 };
 
 /// Configuration for Derivation Delegate mode.
@@ -241,6 +241,16 @@ impl RollupNodeBuilder {
             )
         });
 
+        let upgrade_signal_config = self.upgrade_signal_metrics_config.map(|config| {
+            UpgradeSignalNodeConfig::resolve(
+                config,
+                self.upgrade_signal_l1_rpc.as_ref(),
+                l1_config.engine_provider.clone(),
+                rollup_config.l2_chain_id.id(),
+                self.upgrade_signal_runtime_validation,
+            )
+        });
+
         Ok(RollupNode {
             config: rollup_config,
             l1_config,
@@ -253,9 +263,7 @@ impl RollupNodeBuilder {
             derivation_delegate_provider,
             checkpoint_path,
             safedb_path: self.safedb_path,
-            upgrade_signal_metrics_config: self.upgrade_signal_metrics_config,
-            upgrade_signal_l1_rpc: self.upgrade_signal_l1_rpc,
-            upgrade_signal_runtime_validation: self.upgrade_signal_runtime_validation,
+            upgrade_signal_config,
         })
     }
 

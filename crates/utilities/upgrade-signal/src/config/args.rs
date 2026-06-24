@@ -1,11 +1,12 @@
 use alloy_primitives::{Address, U256};
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseUpgrade, UpgradeActivationSink};
 use url::Url;
 
 use super::{
     UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalConfigError, UpgradeSignalDefaults,
     UpgradeSignalMode,
 };
+use crate::UpgradeSignalRuntimeValidation;
 
 /// CLI arguments shared by nodes that read the L1 upgrade signal contract.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
@@ -53,25 +54,13 @@ pub struct UpgradeSignalArgs {
         default_value_t = UpgradeSignalBlockTag::Finalized
     )]
     pub l1_block_tag: UpgradeSignalBlockTag,
-
-    /// Enable execution-layer live upgrade-signal metrics.
-    #[arg(long = "upgrade-signal.el-metrics", env = "BASE_NODE_UPGRADE_SIGNAL_EL_METRICS")]
-    pub el_metrics_enabled: bool,
-
-    /// Enable consensus-layer live upgrade-signal metrics.
-    #[arg(long = "upgrade-signal.cl-metrics", env = "BASE_NODE_UPGRADE_SIGNAL_CL_METRICS")]
-    pub cl_metrics_enabled: bool,
 }
 
 impl UpgradeSignalArgs {
     /// Builds a schedule read configuration if the upgrade signal is enabled.
     pub fn config(&self) -> Result<Option<UpgradeSignalConfig>, UpgradeSignalConfigError> {
         let Some(contract_address) = self.contract_address else {
-            if !self.upgrade_ids.is_empty()
-                || !self.apply_upgrade_ids.is_empty()
-                || self.el_metrics_enabled
-                || self.cl_metrics_enabled
-            {
+            if !self.upgrade_ids.is_empty() || !self.apply_upgrade_ids.is_empty() {
                 return Err(UpgradeSignalConfigError::MissingContractAddress);
             }
             return Ok(None);
@@ -88,8 +77,6 @@ impl UpgradeSignalArgs {
             mode: self.mode,
             l1_block_tag: self.l1_block_tag.block_number_or_tag(),
             node_protocol_version: U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION),
-            el_metrics_enabled: self.el_metrics_enabled,
-            cl_metrics_enabled: self.cl_metrics_enabled,
         }))
     }
 
@@ -101,9 +88,8 @@ impl UpgradeSignalArgs {
             return Ok(BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         }
 
-        let source = upgrade_ids.iter().map(String::as_str).collect::<Vec<_>>();
         let mut ids = Vec::new();
-        for upgrade_id in source {
+        for upgrade_id in upgrade_ids.iter().map(String::as_str) {
             let upgrade_id = upgrade_id.trim();
             if upgrade_id.is_empty() {
                 return Err(UpgradeSignalConfigError::EmptyUpgradeId);
@@ -117,6 +103,22 @@ impl UpgradeSignalArgs {
         }
 
         Ok(ids)
+    }
+
+    /// Returns the startup application configuration when startup mutation is enabled.
+    pub fn startup_config(
+        &self,
+        l1_rpc_args: &UpgradeSignalL1RpcArgs,
+    ) -> eyre::Result<Option<UpgradeSignalStartupConfig>> {
+        let Some(signal_config) = self.config()? else {
+            return Ok(None);
+        };
+        if !signal_config.mode.applies_at_startup() {
+            return Ok(None);
+        }
+
+        let l1_rpc = l1_rpc_args.required_l1_rpc()?;
+        Ok(Some(UpgradeSignalStartupConfig { signal_config, l1_rpc }))
     }
 
     /// Returns the configured apply upgrade IDs, or the read upgrade IDs when omitted.
@@ -144,6 +146,46 @@ impl UpgradeSignalArgs {
     }
 }
 
+/// Resolved configuration for startup upgrade-signal application.
+#[derive(Debug, Clone)]
+pub struct UpgradeSignalStartupConfig {
+    /// Shared upgrade signal schedule read configuration.
+    pub signal_config: UpgradeSignalConfig,
+    /// L1 RPC used to read the upgrade signal contract.
+    pub l1_rpc: Url,
+}
+
+impl UpgradeSignalStartupConfig {
+    /// Applies the startup upgrade signal once to execution and consensus sinks.
+    pub async fn apply_to_sinks<EL, CL>(
+        self,
+        log_context: &'static str,
+        runtime_validation: UpgradeSignalRuntimeValidation,
+        el_chain_id: u64,
+        el_sink: &mut EL,
+        cl_chain_id: u64,
+        cl_sink: &mut CL,
+    ) -> eyre::Result<()>
+    where
+        EL: UpgradeActivationSink + Clone,
+        EL::Error: std::error::Error + Send + Sync + 'static,
+        CL: UpgradeActivationSink + Clone,
+        CL::Error: std::error::Error + Send + Sync + 'static,
+    {
+        self.signal_config
+            .apply_startup_to_sinks(
+                self.l1_rpc,
+                log_context,
+                runtime_validation,
+                el_chain_id,
+                el_sink,
+                cl_chain_id,
+                cl_sink,
+            )
+            .await
+    }
+}
+
 /// CLI argument for the L1 RPC endpoint used by execution upgrade-signal polling.
 ///
 /// Integrated callers may default this from the consensus L1 RPC so both services read from the
@@ -160,6 +202,13 @@ impl UpgradeSignalL1RpcArgs {
     pub fn apply_default_from(&mut self, l1_rpc: &Url) {
         self.upgrade_signal_l1_rpc.get_or_insert_with(|| l1_rpc.clone());
     }
+
+    /// Returns the configured L1 RPC, or an internal-error if it was never set.
+    pub fn required_l1_rpc(&self) -> eyre::Result<Url> {
+        self.upgrade_signal_l1_rpc
+            .clone()
+            .ok_or_else(|| eyre::eyre!("upgrade signal L1 RPC not derived; this is a bug"))
+    }
 }
 
 #[cfg(test)]
@@ -167,16 +216,8 @@ mod tests {
     use alloy_primitives::address;
     use alloy_rpc_types_eth::BlockNumberOrTag;
     use base_common_genesis::BaseUpgrade;
-    use clap::Parser;
 
     use super::*;
-    use crate::UpgradeSignalMetricLayer;
-
-    #[derive(Parser)]
-    struct CommandParser {
-        #[command(flatten)]
-        args: UpgradeSignalArgs,
-    }
 
     #[test]
     fn disabled_when_no_contract_or_upgrade_id() {
@@ -197,24 +238,12 @@ mod tests {
         assert_eq!(config.upgrade_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         assert_eq!(config.apply_upgrade_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         assert_eq!(config.mode, UpgradeSignalMode::MetricsOnly);
-        assert!(!config.metrics_enabled(UpgradeSignalMetricLayer::Execution));
-        assert!(!config.metrics_enabled(UpgradeSignalMetricLayer::Consensus));
     }
 
     #[test]
     fn rejects_upgrade_id_without_contract() {
         let args =
             UpgradeSignalArgs { upgrade_ids: vec!["azul".to_string()], ..Default::default() };
-
-        assert!(matches!(
-            args.config().unwrap_err(),
-            UpgradeSignalConfigError::MissingContractAddress
-        ));
-    }
-
-    #[test]
-    fn rejects_metrics_without_contract() {
-        let args = UpgradeSignalArgs { el_metrics_enabled: true, ..Default::default() };
 
         assert!(matches!(
             args.config().unwrap_err(),
@@ -249,8 +278,6 @@ mod tests {
         assert_eq!(config.upgrade_ids, [BaseUpgrade::Azul]);
         assert_eq!(config.apply_upgrade_ids, [BaseUpgrade::Azul]);
         assert_eq!(config.mode, UpgradeSignalMode::StartupApply);
-        assert!(!config.metrics_enabled(UpgradeSignalMetricLayer::Execution));
-        assert!(!config.metrics_enabled(UpgradeSignalMetricLayer::Consensus));
         assert_eq!(
             config.node_protocol_version,
             U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION)
@@ -258,20 +285,43 @@ mod tests {
     }
 
     #[test]
-    fn enables_layer_metrics_explicitly() {
-        let args = CommandParser::parse_from([
-            "test",
-            "--upgrade-signal.contract",
-            "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.el-metrics",
-            "--upgrade-signal.cl-metrics",
-        ])
-        .args;
+    fn startup_config_is_none_when_mode_does_not_apply_at_startup() {
+        let args = UpgradeSignalArgs {
+            contract_address: Some(address!("0000000000000000000000000000000000000001")),
+            ..Default::default()
+        };
 
-        let config = args.config().unwrap().unwrap();
+        assert!(args.startup_config(&UpgradeSignalL1RpcArgs::default()).unwrap().is_none());
+    }
 
-        assert!(config.metrics_enabled(UpgradeSignalMetricLayer::Execution));
-        assert!(config.metrics_enabled(UpgradeSignalMetricLayer::Consensus));
+    #[test]
+    fn startup_config_requires_l1_rpc_when_mode_applies_at_startup() {
+        let args = UpgradeSignalArgs {
+            contract_address: Some(address!("0000000000000000000000000000000000000001")),
+            mode: UpgradeSignalMode::StartupApply,
+            ..Default::default()
+        };
+
+        let error = args.startup_config(&UpgradeSignalL1RpcArgs::default()).unwrap_err();
+
+        assert_eq!(error.to_string(), "upgrade signal L1 RPC not derived; this is a bug");
+    }
+
+    #[test]
+    fn startup_config_returns_resolved_config_when_mode_applies_at_startup() {
+        let contract_address = address!("0000000000000000000000000000000000000001");
+        let l1_rpc = Url::parse("http://l1:8545").unwrap();
+        let args = UpgradeSignalArgs {
+            contract_address: Some(contract_address),
+            mode: UpgradeSignalMode::StartupApply,
+            ..Default::default()
+        };
+        let l1_rpc_args = UpgradeSignalL1RpcArgs { upgrade_signal_l1_rpc: Some(l1_rpc.clone()) };
+
+        let config = args.startup_config(&l1_rpc_args).unwrap().unwrap();
+
+        assert_eq!(config.signal_config.contract_address, contract_address);
+        assert_eq!(config.l1_rpc, l1_rpc);
     }
 
     #[test]

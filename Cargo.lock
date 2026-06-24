@@ -3134,7 +3134,6 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
- "alloy-provider 2.0.5",
  "base-builder-cli",
  "base-builder-core",
  "base-builder-metering",
@@ -6511,6 +6510,7 @@ dependencies = [
  "base-common-genesis",
  "base-metrics",
  "clap",
+ "eyre",
  "futures",
  "metrics",
  "rstest",

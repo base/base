@@ -201,7 +201,12 @@ impl CliMetrics {
             loop {
                 interval.tick().await;
                 let now = current_unix_timestamp();
-                Self::record_seconds_until_next_upgrade(&config, now, &mut observed_upgrades);
+                let countdown_config = config.with_runtime_upgrade_overrides();
+                Self::record_seconds_until_next_upgrade(
+                    &countdown_config,
+                    now,
+                    &mut observed_upgrades,
+                );
             }
         })
     }
