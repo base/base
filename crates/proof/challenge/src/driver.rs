@@ -16,6 +16,7 @@
 //!    After the TEE proof is nullified, the game is re-scanned as Path 3.
 
 use std::{
+    collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -34,9 +35,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BondManager, CandidateGame, ChallengeSubmitter, ChallengerMetrics, DisputeIntent, GameCategory,
-    GameScanner, IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof,
-    PendingProofs, ProofKind, ProofPhase, ProofUpdate, ValidatorError,
+    BondManager, CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
+    DisputeIntent, GameCategory, GameScanner, IntermediateValidationParams, L1HeadProvider,
+    OutputValidator, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate,
+    ValidatorError,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -113,6 +115,8 @@ where
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
     pub pending_proofs: PendingProofs,
+    /// Games that hit terminal contract reverts and should not be rediscovered.
+    ignored_games: HashSet<Address>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
     /// Interval between polling cycles.
@@ -148,6 +152,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             tee: components.tee,
             verifier_client: components.verifier_client,
             pending_proofs: PendingProofs::new(),
+            ignored_games: HashSet::new(),
             bond_manager: components.bond_manager,
             poll_interval: config.poll_interval,
             max_proof_duration: config.max_proof_duration,
@@ -242,6 +247,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     /// handler based on the game's [`GameCategory`].
     async fn process_candidate(&mut self, candidate: CandidateGame) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
+
+        if self.ignored_games.contains(&game_address) {
+            debug!(game = %game_address, "skipping ignored game");
+            return Ok(());
+        }
 
         // If this game already has an in-flight proof session, skip it.
         // Pending proofs are polled separately in `poll_pending_proofs`.
@@ -807,86 +817,81 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                 }
             }
             Err(e) => {
-                if matches!(e.known_revert(), Some(KnownRevert::ProofAlreadyVerified)) {
-                    info!(
-                        error = %e,
-                        game = %game_address,
-                        "dispute proof already verified onchain, dropping pending proof"
-                    );
-                    self.pending_proofs.remove(&game_address);
-                    return Ok(());
-                }
+                let known_revert = match &e {
+                    ChallengeSubmitError::KnownRevert(revert) => Some(*revert),
+                    ChallengeSubmitError::TxReverted { .. }
+                    | ChallengeSubmitError::TxManager(_) => None,
+                };
 
-                if matches!(e.known_revert(), Some(KnownRevert::InvalidParentGame)) {
-                    warn!(
-                        error = %e,
-                        game = %game_address,
-                        "dispute game parent is invalid onchain, dropping pending proof"
-                    );
-                    self.pending_proofs.remove(&game_address);
-                    return Ok(());
-                }
-
-                if targets_tee && let Some(p) = self.pending_proofs.get_mut(&game_address) {
-                    match e.known_revert() {
-                        Some(KnownRevert::InvalidSigner) => {
-                            warn!(
-                                error = %e,
-                                game = %game_address,
-                                "TEE proof signer is invalid onchain, falling back to ZK"
-                            );
-                        }
-                        Some(KnownRevert::L1OriginTooOld) => {
-                            warn!(
-                                error = %e,
-                                game = %game_address,
-                                "TEE proof L1 origin is too old, falling back to ZK"
-                            );
-                        }
-                        _ => {
-                            warn!(
-                                error = %e,
-                                game = %game_address,
-                                "TEE dispute tx failed, falling back to ZK"
-                            );
-                        }
+                match known_revert {
+                    Some(KnownRevert::ProofAlreadyVerified) => {
+                        info!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute proof already verified onchain, dropping pending proof"
+                        );
+                        self.pending_proofs.remove(&game_address);
+                        return Ok(());
                     }
+                    Some(KnownRevert::InvalidParentGame) => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute game parent is invalid onchain, ignoring game"
+                        );
+                        self.ignore_game(game_address);
+                        return Ok(());
+                    }
+                    Some(KnownRevert::L1OriginTooOld) => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute proof L1 origin is too old, ignoring game"
+                        );
+                        self.ignore_game(game_address);
+                        return Ok(());
+                    }
+                    Some(KnownRevert::InvalidSigner) if !targets_tee => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute proof signer is invalid onchain, dropping pending proof"
+                        );
+                        self.pending_proofs.remove(&game_address);
+                        return Ok(());
+                    }
+                    _ if targets_tee => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "TEE dispute tx failed, falling back to ZK"
+                        );
+                    }
+                    _ => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute tx failed, will retry next tick"
+                        );
+                        return Ok(());
+                    }
+                }
+
+                if let Some(p) = self.pending_proofs.get_mut(&game_address) {
                     // Don't retry the failed TEE submission — switch to the ZK
                     // fallback so the next retry uses the pre-built ZK request.
                     p.phase = ProofPhase::NeedsRetry;
                     return self.handle_proof_retry(game_address).await;
                 }
-
-                if matches!(e.known_revert(), Some(KnownRevert::L1OriginTooOld)) {
-                    warn!(
-                        error = %e,
-                        game = %game_address,
-                        "dispute proof L1 origin is too old, dropping pending proof"
-                    );
-                    self.pending_proofs.remove(&game_address);
-                    return Ok(());
-                }
-
-                if matches!(e.known_revert(), Some(KnownRevert::InvalidSigner)) {
-                    warn!(
-                        error = %e,
-                        game = %game_address,
-                        "dispute proof signer is invalid onchain, dropping pending proof"
-                    );
-                    self.pending_proofs.remove(&game_address);
-                    return Ok(());
-                }
-
-                warn!(
-                    error = %e,
-                    game = %game_address,
-                    "dispute tx failed, will retry next tick"
-                );
-                // Leave entry as ReadyToSubmit for retry.
             }
         }
 
         Ok(())
+    }
+
+    fn ignore_game(&mut self, game_address: Address) {
+        self.pending_proofs.remove(&game_address);
+        self.ignored_games.insert(game_address);
     }
 
     /// Handles a proof that needs retrying after failure.
@@ -999,7 +1004,7 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockL2Provider, MockTxManager,
-        MockZkProofProvider, addr, mock_anchor_registry, mock_state,
+        MockZkProofProvider, addr, factory_game, mock_anchor_registry, mock_state,
     };
 
     fn proof_request() -> SnarkGroth16ProofRequest {
@@ -1067,6 +1072,40 @@ mod tests {
         );
     }
 
+    fn insert_ready_tee_proof(
+        driver: &mut Driver<MockL2Provider, MockZkProofProvider, MockTxManager>,
+    ) {
+        let game_address = addr(0);
+        driver.pending_proofs.insert(
+            game_address,
+            PendingProof {
+                phase: ProofPhase::ReadyToSubmit { proof_bytes: Bytes::from(vec![0x00, 0xAA]) },
+                kind: ProofKind::Tee {
+                    zk_fallback_request: Some(proof_request()),
+                    zk_fallback_intent: Some(DisputeIntent::Nullify),
+                },
+                invalid_index: 0,
+                expected_root: B256::repeat_byte(0x22),
+                retry_count: 0,
+                intent: DisputeIntent::Nullify,
+            },
+        );
+    }
+
+    fn candidate() -> CandidateGame {
+        let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        CandidateGame {
+            index: 0,
+            factory: factory_game(0, 1),
+            info: state.game_info,
+            starting_block_number: state.starting_block_number,
+            intermediate_block_interval: 10,
+            l1_head: state.l1_head,
+            tee_prover: state.tee_prover,
+            category: GameCategory::InvalidZkProposal,
+        }
+    }
+
     #[tokio::test]
     async fn proof_already_verified_revert_drops_pending_proof() {
         let (mut driver, _proof_requester) =
@@ -1093,6 +1132,40 @@ mod tests {
         driver.poll_or_submit(addr(0)).await.unwrap();
 
         assert!(!driver.pending_proofs.contains_key(&addr(0)));
+        assert!(driver.ignored_games.contains(&addr(0)));
+        let state = proof_requester.state.lock().unwrap();
+        assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_l1_origin_revert_drops_pending_tee_proof_without_requesting_zk() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: None,
+                data: Some(Bytes::from(l1_origin_too_old_selector().to_vec())),
+            });
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+        assert!(driver.ignored_games.contains(&addr(0)));
+        let state = proof_requester.state.lock().unwrap();
+        assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ignored_game_is_not_reprocessed_from_scan() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: None,
+                data: Some(Bytes::from(l1_origin_too_old_selector().to_vec())),
+            });
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+        driver.process_candidate(candidate()).await.unwrap();
+
         let state = proof_requester.state.lock().unwrap();
         assert!(state.prove_block_range_log.is_empty());
     }

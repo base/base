@@ -22,16 +22,6 @@ pub enum ChallengeSubmitError {
     TxManager(TxManagerError),
 }
 
-impl ChallengeSubmitError {
-    /// Returns the decoded known revert, if this error wraps one.
-    pub const fn known_revert(&self) -> Option<KnownRevert> {
-        match self {
-            Self::KnownRevert(revert) => Some(*revert),
-            Self::TxReverted { .. } | Self::TxManager(_) => None,
-        }
-    }
-}
-
 impl From<TxManagerError> for ChallengeSubmitError {
     fn from(err: TxManagerError) -> Self {
         if let Some(revert) = KnownRevert::from_tx_manager_error(&err) {
