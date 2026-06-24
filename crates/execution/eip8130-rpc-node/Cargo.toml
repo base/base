@@ -1,6 +1,6 @@
 [package]
 name = "base-execution-eip8130-rpc-node"
-description = "BaseNodeExtension wiring for the standalone EIP-8130 eth_getTransactionCount override"
+description = "BaseNodeExtension wiring for the standalone EIP-8130 eth_getTransactionCount and eth_estimateGas overrides"
 
 version.workspace = true
 edition.workspace = true

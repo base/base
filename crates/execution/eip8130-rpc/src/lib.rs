@@ -6,5 +6,8 @@ pub use nonce_reader::ChannelNonceReader;
 mod cobalt_gate;
 pub use cobalt_gate::Eip8130CobaltGate;
 
+mod estimate;
+pub use estimate::Eip8130GasEstimator;
+
 mod eth;
 pub use eth::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
