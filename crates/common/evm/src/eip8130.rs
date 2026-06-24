@@ -117,8 +117,14 @@ struct CallsResult {
     /// Total regular gas consumed by dispatched calls (across all phases,
     /// including the gas spent by a reverting phase up to its revert).
     call_gas_spent: u64,
-    /// Accumulated gas refund from committed (successful) phases, pre-cap.
-    refund: u64,
+    /// Net gas refund accumulated across all committed (successful) phases,
+    /// pre-cap. This is the standard transaction-level refund counter: every
+    /// call's `Gas::refunded()` (which may be negative — e.g. re-dirtying a slot
+    /// a prior call cleared) is summed signed across the whole transaction, so
+    /// offsetting SSTORE refunds cancel exactly as they would under a single
+    /// continuous EVM execution. It is clamped to `>= 0` and capped per
+    /// EIP-3529 only once, in [`Eip8130Executor::settle_fees`].
+    refund: i64,
     /// `true` if any phase reverted (or was blocked by the policy gate); later
     /// phases are then skipped.
     reverted: bool,
@@ -519,11 +525,13 @@ impl Eip8130Executor {
             >,
     {
         let mut pool = outcome.execution_gas_available;
-        let mut refund: u64 = 0;
+        // Signed transaction-level refund counter: refunds are accounted across
+        // the whole transaction, not per call. See [`CallsResult::refund`].
+        let mut refund: i64 = 0;
 
         for phase in &signed.tx().calls {
             let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
-            let mut phase_refund: u64 = 0;
+            let mut phase_refund: i64 = 0;
             let mut phase_reverted = false;
             let mut phase_output = Bytes::new();
 
@@ -552,7 +560,11 @@ impl Eip8130Executor {
 
                 let result = frame.interpreter_result().result;
                 if result.is_ok() {
-                    phase_refund = phase_refund.saturating_add(gas.refunded().max(0) as u64);
+                    // Accumulate the call's signed refund (it may be negative)
+                    // so offsetting SSTORE refunds across calls cancel exactly,
+                    // matching standard transaction-level refund accounting. The
+                    // sum is clamped and EIP-3529-capped once in `settle_fees`.
+                    phase_refund = phase_refund.saturating_add(gas.refunded());
                 } else {
                     phase_reverted = true;
                     phase_output = frame.interpreter_result().output.clone();
@@ -691,7 +703,7 @@ impl Eip8130Executor {
         // matches the mainnet refund-cap convention, where intrinsic gas counts
         // toward `gas_used` in the `gas_used / 5` ceiling.
         let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
-        let refund = calls.refund.min(gross_used / MAX_REFUND_QUOTIENT);
+        let refund = Self::capped_refund(calls.refund, gross_used);
         let net_used = gross_used.saturating_sub(refund);
         // Payer authentication is billed on top of the sender budget.
         let billable_gas = net_used.saturating_add(outcome.payer_auth);
@@ -743,6 +755,16 @@ impl Eip8130Executor {
         }
 
         Ok(billable_gas)
+    }
+
+    /// Folds the signed transaction-level refund counter into the final applied
+    /// refund: clamps a net-negative counter to zero (a net negative grants no
+    /// refund, never adds to gas owed), then applies EIP-3529's `gross_used / 5`
+    /// ceiling. Accounting refunds signed across the whole transaction — rather
+    /// than flooring each call's refund at zero — is what makes offsetting SSTORE
+    /// refunds across calls cancel exactly, as under one continuous execution.
+    fn capped_refund(signed_refund: i64, gross_used: u64) -> u64 {
+        u64::try_from(signed_refund.max(0)).unwrap_or(0).min(gross_used / MAX_REFUND_QUOTIENT)
     }
 
     /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
@@ -1093,5 +1115,126 @@ mod tests {
         assert_eq!(&data[..4], &expected_selector[..4]);
         assert_eq!(&data[4..36], actor_id.as_slice());
         assert_eq!(&data[36..68], target.into_word().as_slice());
+    }
+
+    #[test]
+    fn capped_refund_uses_signed_transaction_level_accounting() {
+        // Two calls touch the same slot: call A clears it (+4800 clear refund),
+        // call B re-dirties it back to the original (−4800 for un-clearing,
+        // +2900 for the reset-to-original = −1900 net). Transaction-level
+        // accounting sums the per-call refunds *signed*: 4800 + (−1900) = 2900,
+        // so the clear refund is cancelled down to the reset refund. A per-call
+        // floor-at-zero would instead keep 4800 + max(0, −1900) = 4800 and
+        // over-refund the payer.
+        let signed_sum = 4800_i64 + (-1900_i64);
+        assert_eq!(signed_sum, 2900);
+
+        // Large `gross_used` so the EIP-3529 cap does not bind.
+        assert_eq!(Eip8130Executor::capped_refund(signed_sum, 1_000_000), 2900);
+        assert_eq!(
+            Eip8130Executor::capped_refund(4800, 1_000_000),
+            4800,
+            "a per-call floor would have yielded this larger, incorrect refund",
+        );
+
+        // A net-negative counter grants no refund (never adds to gas owed).
+        assert_eq!(Eip8130Executor::capped_refund(-1900, 1_000_000), 0);
+
+        // EIP-3529's `gross_used / 5` ceiling still binds the clamped refund.
+        assert_eq!(Eip8130Executor::capped_refund(10_000, 20_000), 4_000);
+    }
+
+    /// Runs a two-call EIP-8130 transaction over a contract that stores
+    /// `calldata[0..32]` into slot 0 (pre-seeded to `1`). Call 1 always clears
+    /// the slot (`store 0`); call 2 stores `second_store`. Returns the
+    /// transaction's reported `gas_used` plus the slot's final value. The two
+    /// calls always carry 32-byte calldata so intrinsic gas and call gas are
+    /// identical regardless of the stored value — only the SSTORE *refund*
+    /// differs between a restore (`1`) and a no-op re-clear (`0`).
+    fn run_cross_call_refund_tx(key_byte: u8, second_store: u8) -> (u64, Option<U256>) {
+        // PUSH1 0x00  CALLDATALOAD  PUSH1 0x00  SSTORE  STOP
+        let store_calldata = bytes!("60003560005500");
+        let target = address!("0x00000000000000000000000000000000000000d1");
+        let key = signing_key(key_byte);
+        let sender = eoa_address(&key);
+
+        let clear_data = vec![0u8; 32]; // store 0 -> clears slot 0
+        let mut second_data = vec![0u8; 32];
+        second_data[31] = second_store; // store `second_store`
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![
+            Call { to: target, data: Bytes::from(clear_data) },
+            Call { to: target, data: Bytes::from(second_data) },
+        ]];
+        let signed = eoa_signed(tx, &key);
+
+        // Pre-seed slot 0 to a non-zero value so its transaction-start original
+        // value is non-zero (a prerequisite for the clear/un-clear refund).
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(sender, AccountInfo { balance: initial, ..Default::default() });
+        db.insert_account_info(
+            target,
+            AccountInfo {
+                code_hash: keccak256(&store_calldata),
+                code: Some(Bytecode::new_raw(store_calldata)),
+                ..Default::default()
+            },
+        );
+        db.insert_account_storage(target, U256::ZERO, U256::from(1u64)).expect("seed slot 0");
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                    .with_chain_id(CHAIN_ID),
+            )
+            .with_block(BlockEnv {
+                number: U256::from(1u64),
+                timestamp: U256::from(NOW),
+                basefee: BASE_FEE,
+                beneficiary: BENEFICIARY,
+                ..Default::default()
+            })
+            .build_with_inspector(NoOpInspector);
+
+        let outcome =
+            evm.transact_raw(into_base_tx(&signed)).expect("cross-call refund tx should execute");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        let slot0 = outcome
+            .state
+            .get(&target)
+            .and_then(|a| a.storage.get(&U256::ZERO))
+            .map(|s| s.present_value);
+        (outcome.result.gas().tx_gas_used(), slot0)
+    }
+
+    #[test]
+    fn cross_call_offsetting_refunds_cancel() {
+        // Both transactions: call 1 clears slot 0 (+4800 clear refund). They
+        // differ only in call 2 and so only in the SSTORE refund:
+        //   restore  (store 1): re-dirties the slot to its original -> the clear
+        //            refund is cancelled (net refund is the smaller reset refund).
+        //   re-clear (store 0): slot is already 0, a no-op write with no refund
+        //            change -> the +4800 clear refund stands.
+        // The SSTORE *gas cost* is identical (both warm, 100), as is intrinsic
+        // gas (identical 32-byte calldata and call count), so any difference in
+        // `gas_used` is purely the refund. Under correct transaction-level
+        // accounting the restore refund is strictly smaller, so the restore tx
+        // reports strictly MORE gas_used. The old per-call floor-at-zero would
+        // discard the restore's negative delta, making both refunds 4800 and the
+        // two gas_used values equal — which this asserts against.
+        let (restore_gas, restore_slot) = run_cross_call_refund_tx(0x99, 1);
+        let (reclear_gas, reclear_slot) = run_cross_call_refund_tx(0x9a, 0);
+
+        assert_eq!(restore_slot, Some(U256::from(1u64)), "restore should leave the original value");
+        assert_eq!(reclear_slot, Some(U256::ZERO), "re-clear should leave the slot cleared");
+
+        assert!(
+            restore_gas > reclear_gas,
+            "transaction-level accounting must cancel the restore's clear refund, charging more \
+             gas than the re-clear case (restore_gas={restore_gas}, reclear_gas={reclear_gas}); \
+             equal values indicate per-call refund clamping has regressed",
+        );
     }
 }
