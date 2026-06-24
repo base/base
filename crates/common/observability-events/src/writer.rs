@@ -127,7 +127,7 @@ impl TransactionEventWriter {
     /// metric. If initialization fails and `required = false`, returns the same
     /// disabled handle after recording the error. If `required = true`, returns
     /// the initialization error.
-    pub async fn from_config(config: TransactionEventWriterConfig) -> eyre::Result<Self> {
+    pub fn from_config(config: TransactionEventWriterConfig) -> eyre::Result<Self> {
         if !config.enabled {
             return Ok(Self::disabled(config));
         }
@@ -518,8 +518,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn writer_appends_jsonl() {
+    #[test]
+    fn writer_appends_jsonl() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("transaction-events.jsonl");
         let writer = TransactionEventWriter::from_config(TransactionEventWriterConfig {
@@ -531,7 +531,6 @@ mod tests {
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         })
-        .await
         .unwrap();
 
         writer.try_write(&sample_event()).unwrap();
@@ -572,8 +571,8 @@ mod tests {
         assert!(dropped > 0, "lossy writer should report aggregate drops under backpressure");
     }
 
-    #[tokio::test]
-    async fn writer_creates_parent_directories() {
+    #[test]
+    fn writer_creates_parent_directories() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing").join("transaction-events.jsonl");
         let writer = TransactionEventWriter::from_config(TransactionEventWriterConfig {
@@ -585,7 +584,6 @@ mod tests {
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         })
-        .await
         .unwrap();
 
         writer.try_write(&sample_event()).unwrap();
@@ -594,8 +592,8 @@ mod tests {
         assert!(path.exists());
     }
 
-    #[tokio::test]
-    async fn required_writer_fails_closed_on_init_error() {
+    #[test]
+    fn required_writer_fails_closed_on_init_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("transaction-events-dir");
         fs::create_dir(&path).unwrap();
@@ -608,7 +606,6 @@ mod tests {
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         })
-        .await
         .unwrap_err();
 
         assert!(err.to_string().contains("required transaction event writer"));
