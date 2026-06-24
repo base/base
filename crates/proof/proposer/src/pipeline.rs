@@ -130,6 +130,9 @@ where
                     Metrics::safe_head().set(safe_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
+                    // Dispatch failures retry from the in-memory cursor. A fresh recovery walk is
+                    // only needed when onchain state changes; try_recover_and_plan returns that as
+                    // a different recovered state, which resets the cursor here.
                     if cursor_source != Some(recovered) || cursor.is_none() {
                         cursor_source = Some(recovered);
                         cursor = Some(recovered);
