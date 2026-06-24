@@ -44,7 +44,17 @@ impl Eip8130PhaseStatuses {
         #[cfg(feature = "std")]
         PHASE_STATUSES.with(|cell| *cell.borrow_mut() = statuses);
         #[cfg(not(feature = "std"))]
-        let _ = statuses;
+        {
+            // EIP-8130 execution is `std`-gated, so the only caller never runs in
+            // `no_std`; statuses are therefore always empty here. Guard against a
+            // future caller silently dropping real data (which `take` could not
+            // recover) rather than failing loudly.
+            debug_assert!(
+                statuses.is_empty(),
+                "EIP-8130 phase statuses dropped in a no_std build; take() would return empty"
+            );
+            let _ = statuses;
+        }
     }
 
     /// Takes (and clears) the per-phase statuses recorded by the most recent
