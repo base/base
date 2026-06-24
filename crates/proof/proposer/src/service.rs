@@ -220,7 +220,6 @@ impl ProposerService {
 
         let driver_config = DriverConfig {
             poll_interval: config.poll_interval,
-            max_retries: 8,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
             submit_timeout,
             tee_prover_registry_address: config.tee_prover_registry_address,

@@ -21,8 +21,7 @@ use crate::{
 ///
 /// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
 /// The collector chains ready proofs internally and restarts both tasks only
-/// when it needs fresh onchain state; dispatcher retry exhaustion clears
-/// dispatcher recovery state without interrupting collection.
+/// when it needs fresh onchain state.
 pub struct ProvingPipeline<L1, R>
 where
     L1: L1Provider + 'static,
@@ -116,25 +115,12 @@ where
                     Metrics::safe_head().set(safe_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-                    let drop_recovery_cache = self
-                        .proof_dispatcher
-                        .tick(
-                            &mut state,
-                            recovered,
-                            safe_head,
-                            self.config.block_interval,
-                            self.config.max_retries,
-                            cancel,
-                        )
+                    self.proof_dispatcher
+                        .tick(&mut state, recovered, safe_head, self.config.block_interval, cancel)
                         .await;
 
                     if let Some((_, cursor)) = state.cursor {
                         dispatched_through.store(cursor.l2_block_number, Ordering::Relaxed);
-                    }
-
-                    if drop_recovery_cache {
-                        cache = None;
-                        dispatched_through.store(0, Ordering::Relaxed);
                     }
                 }
             }
@@ -256,7 +242,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatcher_retry_exhaustion_keeps_dispatcher_loop_running() {
+    async fn dispatcher_failures_keep_dispatcher_loop_running() {
         let requester = Arc::new(RejectingProofRequester::default());
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::<RejectingProofRequester>::clone(&requester);
@@ -278,7 +264,6 @@ mod tests {
         let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer::default());
         let config = DriverConfig {
             poll_interval: Duration::from_millis(10),
-            max_retries: 1,
             block_interval: 100,
             intermediate_block_interval: 100,
             ..Default::default()
@@ -342,7 +327,7 @@ mod tests {
             )
             .await
             .is_err(),
-            "dispatcher retry exhaustion should not end the dispatcher loop"
+            "dispatcher failures should not end the dispatcher loop"
         );
         assert!(
             requester.prove_count.load(Ordering::SeqCst) > 1,

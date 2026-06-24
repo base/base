@@ -9,7 +9,7 @@ use base_proof_primitives::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     Metrics, driver::RecoveredState, error::ProposerError, proof_adapter::ProposerProofAdapter,
@@ -34,8 +34,6 @@ pub struct ProofDispatcherConfig {
 pub struct ProofDispatcherState {
     /// Recovery source and latest block the dispatcher has sent proof requests through.
     pub cursor: Option<(RecoveredState, RecoveredState)>,
-    /// Active proof/dispatch retry count.
-    pub retry: Option<(u64, u32)>,
 }
 
 /// Builds and dispatches proposer TEE proof requests.
@@ -72,26 +70,21 @@ impl ProofDispatcher {
         recovered: RecoveredState,
         safe_head: u64,
         block_interval: u64,
-        max_retries: u32,
         cancel: &CancellationToken,
-    ) -> bool {
-        if matches!(state.retry, Some((target, _)) if target <= recovered.l2_block_number) {
-            state.retry = None;
-        }
-
+    ) {
         let mut current = state
             .cursor
             .filter(|(source, _)| *source == recovered)
             .map_or(recovered, |(_, cursor)| cursor);
-        let drop_recovery_cache = loop {
+        loop {
             if cancel.is_cancelled() {
-                break false;
+                break;
             }
 
             let Some(target_block) =
                 ProofTarget::next_block(current.l2_block_number, block_interval)
             else {
-                break false;
+                break;
             };
             if target_block > safe_head {
                 debug!(
@@ -100,7 +93,7 @@ impl ProofDispatcher {
                     safe_head,
                     "Safe head below dispatch target, waiting for L2 head to advance"
                 );
-                break false;
+                break;
             }
 
             let Some(claimed_l2_output_root) = ProofTarget::canonical_output_root(
@@ -110,42 +103,26 @@ impl ProofDispatcher {
             )
             .await
             else {
-                break false;
+                break;
             };
 
-            match self
-                .dispatch_with_retry(
-                    target_block,
-                    &current,
-                    claimed_l2_output_root,
-                    state,
-                    max_retries,
-                )
-                .await
-            {
-                Ok(true) => {
-                    current.l2_block_number = target_block;
-                    current.output_root = claimed_l2_output_root;
-                    state.cursor = Some((recovered, current));
-                }
-                Err(()) => break true,
-                Ok(false) => break false,
+            if self.dispatch(target_block, &current, claimed_l2_output_root).await {
+                current.l2_block_number = target_block;
+                current.output_root = claimed_l2_output_root;
+                state.cursor = Some((recovered, current));
+            } else {
+                break;
             }
-        };
-
-        Metrics::pipeline_retries().set(state.retry.map_or(0, |(_, count)| count) as f64);
-        drop_recovery_cache
+        }
     }
 
-    /// Builds and dispatches a fresh root-derived request with retry accounting.
-    pub async fn dispatch_with_retry(
+    /// Builds and dispatches a fresh root-derived request.
+    pub async fn dispatch(
         &self,
         target_block: u64,
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
-        state: &mut ProofDispatcherState,
-        max_retries: u32,
-    ) -> Result<bool, ()> {
+    ) -> bool {
         let (l1_head, agreed_l2_head) = match tokio::try_join!(
             self.l1_client.header_by_number(BlockNumberOrTag::Finalized),
             self.l2_client.header_by_number(BlockNumberOrTag::Number(recovered.l2_block_number)),
@@ -159,7 +136,7 @@ impl ProofDispatcher {
                     error = %error,
                     "Failed to build proof request, will retry next iteration"
                 );
-                return Ok(false);
+                return false;
             }
         };
 
@@ -204,33 +181,9 @@ impl ProofDispatcher {
             Err(error) => {
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
                 Metrics::errors_total(error.metric_label()).increment(1);
-                Metrics::proof_retries_total().increment(1);
 
-                let count = match state.retry {
-                    Some((retry_target, count)) if retry_target == target_block => count + 1,
-                    _ => 1,
-                };
-                state.retry = Some((target_block, count));
-
-                if count >= max_retries {
-                    error!(
-                        target_block,
-                        attempts = count,
-                        error = %error,
-                        "Proof failed after max retries, dropping cached recovery"
-                    );
-                    state.retry = None;
-                    state.cursor = None;
-                    return Err(());
-                }
-
-                warn!(
-                    target_block,
-                    attempt = count,
-                    error = %error,
-                    "Proof failed, re-dispatching"
-                );
-                return Ok(false);
+                warn!(target_block, error = %error, "Proof dispatch failed, will retry next tick");
+                return false;
             }
         };
 
@@ -242,7 +195,7 @@ impl ProofDispatcher {
             from_block = recovered.l2_block_number,
             "Proof request accepted by prover service"
         );
-        Ok(true)
+        true
     }
 }
 
@@ -315,46 +268,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_with_retry_sends_root_derived_session() {
+    async fn dispatch_sends_root_derived_session() {
         let (dispatcher, requester) = dispatcher();
         let claimed_root = B256::repeat_byte(0xaa);
-        let mut state = ProofDispatcherState::default();
 
-        let outcome =
-            dispatcher.dispatch_with_retry(200, &recovered(), claimed_root, &mut state, 3).await;
+        let outcome = dispatcher.dispatch(200, &recovered(), claimed_root).await;
         let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
 
-        assert_eq!(outcome, Ok(true));
+        assert!(outcome);
         assert!(requester.requests.lock().unwrap().contains_key(&session_id));
-        assert_eq!(state.retry, None);
     }
 
     #[tokio::test]
-    async fn dispatch_with_retry_rejects_mismatched_session_id() {
+    async fn dispatch_rejects_mismatched_session_id() {
         let (dispatcher, requester) = dispatcher();
         *requester.accepted_session_id.lock().unwrap() = Some("wrong-session".to_owned());
-        let mut state = ProofDispatcherState::default();
 
-        let outcome = dispatcher
-            .dispatch_with_retry(200, &recovered(), B256::repeat_byte(0xaa), &mut state, 2)
-            .await;
+        let outcome = dispatcher.dispatch(200, &recovered(), B256::repeat_byte(0xaa)).await;
 
-        assert_eq!(outcome, Ok(false));
-        assert_eq!(state.retry, Some((200, 1)));
+        assert!(!outcome);
     }
 
     #[tokio::test]
-    async fn dispatch_with_retry_accepts_existing_l1_head_conflict() {
+    async fn dispatch_accepts_existing_l1_head_conflict() {
         let (dispatcher, requester) = dispatcher();
         requester.l1_head_conflict.store(true, Ordering::SeqCst);
         let claimed_root = B256::repeat_byte(0xaa);
-        let mut state = ProofDispatcherState::default();
 
-        let outcome =
-            dispatcher.dispatch_with_retry(200, &recovered(), claimed_root, &mut state, 3).await;
+        let outcome = dispatcher.dispatch(200, &recovered(), claimed_root).await;
 
-        assert_eq!(outcome, Ok(true));
-        assert_eq!(state.retry, None);
+        assert!(outcome);
     }
 
     #[tokio::test]
@@ -363,12 +306,10 @@ mod tests {
         let mut state = ProofDispatcherState::default();
         let cancel = CancellationToken::new();
 
-        let result = dispatcher.tick(&mut state, recovered(), 400, 100, 3, &cancel).await;
+        dispatcher.tick(&mut state, recovered(), 400, 100, &cancel).await;
 
-        assert!(!result);
         assert_eq!(requester.requests.lock().unwrap().len(), 3);
         assert_eq!(state.cursor.map(|(_, cursor)| cursor.l2_block_number), Some(400));
-        assert_eq!(state.retry, None);
     }
 
     #[tokio::test]
@@ -388,22 +329,20 @@ mod tests {
                     l2_block_number: 500,
                 },
             )),
-            retry: None,
         };
 
-        let result = dispatcher.tick(&mut state, recovered(), 200, 100, 3, &cancel).await;
+        dispatcher.tick(&mut state, recovered(), 200, 100, &cancel).await;
 
-        assert!(!result);
         assert_eq!(state.cursor.map(|(source, _)| source), Some(recovered()));
         assert_eq!(state.cursor.map(|(_, cursor)| cursor.l2_block_number), Some(200));
         assert_eq!(requester.requests.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
-    async fn dispatch_with_retry_clears_cursor_on_retry_exhaustion() {
+    async fn dispatch_keeps_cursor_on_failure() {
         let (dispatcher, requester) = dispatcher();
         *requester.accepted_session_id.lock().unwrap() = Some("wrong-session".to_owned());
-        let mut state = ProofDispatcherState {
+        let state = ProofDispatcherState {
             cursor: Some((
                 recovered(),
                 RecoveredState {
@@ -412,15 +351,11 @@ mod tests {
                     l2_block_number: 300,
                 },
             )),
-            retry: Some((200, 1)),
         };
 
-        let outcome = dispatcher
-            .dispatch_with_retry(200, &recovered(), B256::repeat_byte(0xaa), &mut state, 2)
-            .await;
+        let outcome = dispatcher.dispatch(200, &recovered(), B256::repeat_byte(0xaa)).await;
 
-        assert_eq!(outcome, Err(()));
-        assert!(state.cursor.is_none());
-        assert_eq!(state.retry, None);
+        assert!(!outcome);
+        assert!(state.cursor.is_some());
     }
 }

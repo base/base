@@ -32,10 +32,6 @@ use crate::pipeline::ProvingPipeline;
 pub struct DriverConfig {
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
-    /// Maximum proof request dispatch retries for a single target block before
-    /// dropping the cached recovery. Collector-side proof/session failures and
-    /// submit errors do not count against this budget.
-    pub max_retries: u32,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
     /// Optional maximum duration for a single inline submit (validation + L1
@@ -70,7 +66,6 @@ impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             poll_interval: Duration::from_secs(12),
-            max_retries: 8,
             recovery_scan_concurrency: 8,
             submit_timeout: None,
             tee_prover_registry_address: None,
@@ -278,7 +273,6 @@ mod tests {
         let config = DriverConfig {
             poll_interval: Duration::from_secs(3600),
             submit_timeout: Some(std::time::Duration::from_secs(60)),
-            max_retries: 3,
             recovery_scan_concurrency: 8,
             tee_prover_registry_address: None,
             block_interval: 512,
