@@ -1,6 +1,7 @@
 ARG RUST_VERSION=1.94.1
 FROM public.ecr.aws/docker/library/rust:${RUST_VERSION}-trixie AS rust-builder-base
 WORKDIR /app
+ENV CARGO_INCREMENTAL=0
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       git libclang-dev libssl-dev pkg-config curl build-essential cmake && \

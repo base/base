@@ -12,19 +12,27 @@ default:
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
 up zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(zk) }}
+    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(zk) }} "with-metrics"
+
+# Stops devnet, deletes data, and starts fresh without Prometheus/Grafana.
+up-without-metrics zk='dry-run':
+    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(zk) }} "without-metrics"
 
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
 up-single zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(zk) }}
+    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(zk) }} "with-metrics"
+
+# Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor) without Prometheus/Grafana.
+up-single-without-metrics zk='dry-run':
+    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(zk) }} "without-metrics"
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
-    docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build
+    docker compose {{ _env }} {{ _ha }} --profile profiling --profile metrics up -d --no-build
 
 # Stops devnet and deletes all data
 down:
-    -docker compose {{ _env }} {{ _ha }} --profile profiling down
+    -docker compose {{ _env }} {{ _ha }} --profile profiling --profile metrics down
     -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Shows devnet block numbers and sync status
@@ -167,12 +175,16 @@ _build-rust-images group profile='dev':
     PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
-_up-devnet compose_profile zk:
+_up-devnet compose_profile zk metrics:
     #!/usr/bin/env bash
     set -euo pipefail
     compose_profile={{ quote(compose_profile) }}
     zk_mode={{ quote(zk) }}
+    metrics_mode={{ quote(metrics) }}
     zk_mode="${zk_mode#zk=}"
+    metrics_mode="${metrics_mode#metrics=}"
+
+    profile_args=()
 
     case "$compose_profile" in
       ha) compose_files=({{ _ha }}) ;;
@@ -183,12 +195,21 @@ _up-devnet compose_profile zk:
         ;;
     esac
 
+    case "$metrics_mode" in
+      with-metrics) profile_args+=(--profile metrics) ;;
+      without-metrics) ;;
+      *)
+        echo "ERROR: metrics must be 'with-metrics' or 'without-metrics' (got '${metrics_mode}')" >&2
+        exit 1
+        ;;
+    esac
+
     case "$zk_mode" in
       dry-run)
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        SP1_PROVER=dry-run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build
+        SP1_PROVER=dry-run docker compose {{ _env }} "${compose_files[@]}" "${profile_args[@]}" up -d --no-build
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -238,7 +259,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build
+        docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" "${profile_args[@]}" up -d --no-build
         ;;
       *)
         echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2

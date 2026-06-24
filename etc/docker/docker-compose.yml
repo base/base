@@ -778,6 +778,7 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.56
     container_name: jaeger
+    profiles: ["metrics"]
     ports:
       - "3001:16686"  # Jaeger UI
     environment:
@@ -815,6 +816,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.51.0
     container_name: prometheus
+    profiles: ["metrics"]
     ports:
       - "9090:9090"
     volumes:
@@ -828,6 +830,7 @@ services:
   grafana:
     image: grafana/grafana:10.4.1
     container_name: grafana
+    profiles: ["metrics"]
     ports:
       - "3000:3000"
     environment:

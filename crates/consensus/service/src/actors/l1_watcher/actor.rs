@@ -268,7 +268,7 @@ where
                             .address(filter_address)
                             .select(derivation_block.hash);
 
-                        let Some(logs) = LogRetrier::fetch_logs_with_retry(
+                        let logs = match LogRetrier::fetch_logs_with_retry(
                             &self.l1_provider,
                             filter,
                             &cancel,
@@ -276,9 +276,20 @@ where
                             INITIAL_BACKOFF,
                             MAX_BACKOFF,
                         )
-                        .await?
-                        else {
-                            return Ok(());
+                        .await
+                        {
+                            Ok(Some(logs)) => logs,
+                            Ok(None) => return Ok(()),
+                            Err(L1WatcherActorError::RetriesExhausted) => {
+                                warn!(
+                                    target: "l1_watcher",
+                                    block_hash = %derivation_block.hash,
+                                    block_number = derivation_block.number,
+                                    "Skipping L1 head after exhausting log fetch retries"
+                                );
+                                continue;
+                            }
+                            Err(e) => return Err(e),
                         };
                         let ecotone_active =
                             self.rollup_config.is_ecotone_active(derivation_block.timestamp);
@@ -407,6 +418,7 @@ mod tests {
     struct ConfigurableFetcher {
         get_block_behavior: GetBlockBehavior,
         get_block_requested_ids: Arc<Mutex<Vec<BlockId>>>,
+        get_logs_fail_count: Arc<AtomicU32>,
     }
 
     impl ConfigurableFetcher {
@@ -414,6 +426,7 @@ mod tests {
             Self {
                 get_block_behavior: GetBlockBehavior::Default,
                 get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_logs_fail_count: Arc::new(AtomicU32::new(0)),
             }
         }
 
@@ -421,6 +434,7 @@ mod tests {
             Self {
                 get_block_behavior: GetBlockBehavior::None,
                 get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_logs_fail_count: Arc::new(AtomicU32::new(0)),
             }
         }
 
@@ -428,6 +442,15 @@ mod tests {
             Self {
                 get_block_behavior: GetBlockBehavior::Err,
                 get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_logs_fail_count: Arc::new(AtomicU32::new(0)),
+            }
+        }
+
+        fn failing_logs_for_calls(n: u32) -> Self {
+            Self {
+                get_block_behavior: GetBlockBehavior::Default,
+                get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_logs_fail_count: Arc::new(AtomicU32::new(n)),
             }
         }
     }
@@ -437,7 +460,13 @@ mod tests {
         type Error = String;
 
         async fn get_logs(&self, _: Filter) -> Result<Vec<Log>, Self::Error> {
-            Ok(vec![])
+            let remaining_failures = self.get_logs_fail_count.load(Ordering::SeqCst);
+            if remaining_failures > 0 {
+                self.get_logs_fail_count.fetch_sub(1, Ordering::SeqCst);
+                Err("transient error".to_string())
+            } else {
+                Ok(vec![])
+            }
         }
 
         async fn get_block(&self, id: BlockId) -> Result<Option<Block>, Self::Error> {
@@ -708,6 +737,23 @@ mod tests {
 
         // After processing all three heads, the atomic should hold the last one.
         assert_eq!(l1_head_number.load(Ordering::Relaxed), 30);
+    }
+
+    #[tokio::test]
+    async fn log_fetch_retry_exhaustion_skips_head_and_continues() {
+        let (client, rx, l1_head_number) = run_actor(
+            ConfigurableFetcher::failing_logs_for_calls(10),
+            vec![block_at(100), block_at(101)],
+            0,
+        )
+        .await;
+
+        let heads = client.sent_heads();
+        assert_eq!(heads.len(), 2);
+        assert_eq!(heads[0].number, 100);
+        assert_eq!(heads[1].number, 101);
+        assert_eq!(rx.borrow().unwrap().number, 101);
+        assert_eq!(l1_head_number.load(Ordering::Relaxed), 101);
     }
 
     #[tokio::test]
