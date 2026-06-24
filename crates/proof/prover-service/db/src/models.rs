@@ -1298,6 +1298,7 @@ mod tests {
         let result = ProtocolProofResult::Compressed(ZkProofResult {
             zk_vm: ZkVm::Sp1,
             proof: vec![0x01].into(),
+            execution_stats: None,
         });
 
         assert_eq!(job.validate_submitted_result(&result), Ok(()));
@@ -1309,6 +1310,7 @@ mod tests {
         let result = ProtocolProofResult::Compressed(ZkProofResult {
             zk_vm: ZkVm::Sp1,
             proof: vec![0x01].into(),
+            execution_stats: None,
         });
 
         assert!(job.validate_submitted_result(&result).is_err());
@@ -1318,7 +1320,11 @@ mod tests {
     fn validate_submitted_result_rejects_snark_for_compressed_job() {
         let job = proof_job_with(ApiProofType::Compressed, Some(ZkVmKind::Sp1), None);
         let result = ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![0x01].into() },
+            proof: ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: vec![0x01].into(),
+                execution_stats: None,
+            },
         });
 
         assert!(job.validate_submitted_result(&result).is_err());
@@ -1330,6 +1336,7 @@ mod tests {
         let result = ProtocolProofResult::Compressed(ZkProofResult {
             zk_vm: ZkVm::Sp1,
             proof: vec![0x01].into(),
+            execution_stats: None,
         });
 
         assert!(job.validate_submitted_result(&result).is_err());

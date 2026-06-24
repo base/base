@@ -426,6 +426,7 @@ mod tests {
                 result: Some(ProofResult::Compressed(ZkProofResult {
                     zk_vm: ZkVm::Sp1,
                     proof: vec![0xab, 0xcd].into(),
+                    execution_stats: None,
                 })),
             })
         }

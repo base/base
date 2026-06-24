@@ -61,39 +61,39 @@ struct WorkerArgs {
     #[arg(long, env = "PROOF_TYPE", value_enum, default_value = "compressed")]
     proof_type: ZkProofTypeArg,
 
-    /// Proving backend to run: `mock`, `dry_run`, `cluster`, or `network`.
+    /// Proving backend to run: `mock`, `dry-run`, `cluster`, or `network`.
     #[arg(long, env = "ZK_BACKEND", value_enum)]
     backend: ZkBackendArg,
 
-    /// Base consensus node RPC URL. Required for `ZK_BACKEND=cluster` or `network`.
+    /// Base consensus node RPC URL. Required for `ZK_BACKEND=dry-run`, `cluster`, or `network`.
     #[arg(
         long,
         env = "BASE_CONSENSUS_ADDRESS",
-        required_if_eq_any([("backend", "cluster"), ("backend", "network")])
+        required_if_eq_any([("backend", "dry-run"), ("backend", "cluster"), ("backend", "network")])
     )]
     base_consensus_address: Option<Url>,
 
-    /// L1 execution node RPC URL. Required for `ZK_BACKEND=cluster` or `network`.
+    /// L1 execution node RPC URL. Required for `ZK_BACKEND=dry-run`, `cluster`, or `network`.
     #[arg(
         long,
         env = "L1_NODE_ADDRESS",
-        required_if_eq_any([("backend", "cluster"), ("backend", "network")])
+        required_if_eq_any([("backend", "dry-run"), ("backend", "cluster"), ("backend", "network")])
     )]
     l1_node_address: Option<Url>,
 
-    /// L1 beacon node RPC URL. Required for `ZK_BACKEND=cluster` or `network`.
+    /// L1 beacon node RPC URL. Required for `ZK_BACKEND=dry-run`, `cluster`, or `network`.
     #[arg(
         long,
         env = "L1_BEACON_ADDRESS",
-        required_if_eq_any([("backend", "cluster"), ("backend", "network")])
+        required_if_eq_any([("backend", "dry-run"), ("backend", "cluster"), ("backend", "network")])
     )]
     l1_beacon_address: Option<Url>,
 
-    /// L2 execution node RPC URL. Required for `ZK_BACKEND=cluster` or `network`.
+    /// L2 execution node RPC URL. Required for `ZK_BACKEND=dry-run`, `cluster`, or `network`.
     #[arg(
         long,
         env = "L2_NODE_ADDRESS",
-        required_if_eq_any([("backend", "cluster"), ("backend", "network")])
+        required_if_eq_any([("backend", "dry-run"), ("backend", "cluster"), ("backend", "network")])
     )]
     l2_node_address: Option<Url>,
 
@@ -207,7 +207,7 @@ impl From<ZkProofTypeArg> for ZkProofClaimType {
 enum ZkBackendArg {
     /// Return placeholder proof bytes without an external backend.
     Mock,
-    /// Return empty proof bytes without an external backend.
+    /// Run local SP1 execution and return dry-run stats without proof bytes.
     #[value(alias = "dry_run", alias = "dryrun")]
     DryRun,
     /// Submit proofs to an SP1 cluster.
@@ -236,8 +236,10 @@ impl fmt::Display for ZkBackendArg {
 impl ZkBackendArg {
     const fn supports_proof_type(self, proof_type: ZkProofTypeArg) -> bool {
         match self {
-            Self::Mock | Self::DryRun => true,
-            Self::Cluster | Self::Network => matches!(proof_type, ZkProofTypeArg::Compressed),
+            Self::Mock => true,
+            Self::DryRun | Self::Cluster | Self::Network => {
+                matches!(proof_type, ZkProofTypeArg::Compressed)
+            }
         }
     }
 }
@@ -246,7 +248,10 @@ impl WorkerArgs {
     fn backend_config(&self) -> eyre::Result<SuccinctZkBackendConfig> {
         match self.backend {
             ZkBackendArg::Mock => Ok(SuccinctZkBackendConfig::Mock),
-            ZkBackendArg::DryRun => Ok(SuccinctZkBackendConfig::DryRun),
+            ZkBackendArg::DryRun => Ok(SuccinctZkBackendConfig::DryRun {
+                rpc: self.rpc_config()?,
+                range_cycle_limit: self.range_cycle_limit,
+            }),
             ZkBackendArg::Cluster => {
                 Ok(SuccinctZkBackendConfig::Cluster(SuccinctClusterBackendConfig {
                     rpc: self.rpc_config()?,

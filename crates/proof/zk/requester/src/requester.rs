@@ -240,12 +240,20 @@ mod tests {
 
     fn snark_result() -> ProofResult {
         ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: Bytes::from(vec![2]) },
+            proof: ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: Bytes::from(vec![2]),
+                execution_stats: None,
+            },
         })
     }
 
     fn compressed_result() -> ProofResult {
-        ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: Bytes::from(vec![1]) })
+        ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: Bytes::from(vec![1]),
+            execution_stats: None,
+        })
     }
 
     fn succeeded(result: ProofResult) -> GetProofResponse {

@@ -160,12 +160,17 @@ mod tests {
                 ProofResult::Compressed(ZkProofResult {
                     zk_vm: ZkVm::Sp1,
                     proof: Bytes::from(vec![]),
+                    execution_stats: None,
                 }),
                 "expected TEE proof result, got Compressed",
             ),
             (
                 ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                    proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: Bytes::from(vec![]) },
+                    proof: ZkProofResult {
+                        zk_vm: ZkVm::Sp1,
+                        proof: Bytes::from(vec![]),
+                        execution_stats: None,
+                    },
                 }),
                 "expected TEE proof result, got SnarkGroth16",
             ),

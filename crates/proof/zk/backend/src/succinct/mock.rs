@@ -37,7 +37,11 @@ impl ZkProver for MockZkProver {
     }
 
     async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
-        let zk_proof = ZkProofResult { zk_vm: ZkVm::Sp1, proof: MOCK_PROOF_BYTES.to_vec().into() };
+        let zk_proof = ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: MOCK_PROOF_BYTES.to_vec().into(),
+            execution_stats: None,
+        };
 
         if backend_session_id.starts_with(MOCK_SNARK_PREFIX) {
             Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof: zk_proof }))

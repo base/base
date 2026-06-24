@@ -1869,7 +1869,11 @@ fn proof_result_from_receipt_update(update: &UpdateReceipt) -> Option<ProtocolPr
     // stores SP1 receipts. Protocol-native completions carry their own ZK VM.
     if let Some(snark_receipt) = &update.snark_receipt {
         return Some(ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_receipt.clone().into() },
+            proof: ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: snark_receipt.clone().into(),
+                execution_stats: None,
+            },
         }));
     }
 
@@ -1877,6 +1881,7 @@ fn proof_result_from_receipt_update(update: &UpdateReceipt) -> Option<ProtocolPr
         ProtocolProofResult::Compressed(ZkProofResult {
             zk_vm: ZkVm::Sp1,
             proof: stark_receipt.clone().into(),
+            execution_stats: None,
         })
     })
 }
@@ -2627,7 +2632,8 @@ mod tests {
             result,
             ProtocolProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
-                proof: vec![1, 2, 3].into()
+                proof: vec![1, 2, 3].into(),
+                execution_stats: None,
             })
         );
     }
@@ -2668,7 +2674,11 @@ mod tests {
         assert_eq!(
             result,
             ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![4, 5, 6].into() }
+                proof: ZkProofResult {
+                    zk_vm: ZkVm::Sp1,
+                    proof: vec![4, 5, 6].into(),
+                    execution_stats: None
+                }
             })
         );
     }
