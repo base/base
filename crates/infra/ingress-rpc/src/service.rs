@@ -97,7 +97,7 @@ impl IngressApiServer for IngressService {
         let tx_hash = transaction.tx_hash();
 
         Metrics::transactions_received().increment(1);
-        self.emit_transaction_event(TransactionEventType::IngressReceived, tx_hash, None, None);
+        Self::emit_transaction_event(TransactionEventType::IngressReceived, tx_hash, None, None);
 
         let expiry_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
             + self.send_transaction_default_lifetime_seconds;
@@ -126,7 +126,7 @@ impl IngressApiServer for IngressService {
             self.bundle_cache.insert(*bundle_hash, ()).await;
             Metrics::bundles_parsed().increment(1);
 
-            self.emit_transaction_event(
+            Self::emit_transaction_event(
                 TransactionEventType::SimulationStarted,
                 tx_hash,
                 Some(*bundle_hash),
@@ -136,7 +136,7 @@ impl IngressApiServer for IngressService {
             let (meter_bundle_response, simulation_accepted): (Option<MeterBundleResponse>, bool) =
                 match self.meter_bundle(&bundle, bundle_hash).await {
                     Ok(response) => {
-                        self.emit_simulation_event(
+                        Self::emit_simulation_event(
                             TransactionEventType::SimulationSucceeded,
                             tx_hash,
                             *bundle_hash,
@@ -147,7 +147,7 @@ impl IngressApiServer for IngressService {
                         (Some(response), true)
                     }
                     Err(e) => {
-                        self.emit_simulation_failed_event(
+                        Self::emit_simulation_failed_event(
                             tx_hash,
                             *bundle_hash,
                             simulation_start.elapsed(),
@@ -339,7 +339,6 @@ impl IngressService {
     }
 
     fn emit_transaction_event(
-        &self,
         event_type: TransactionEventType,
         tx_hash: B256,
         bundle_hash: Option<B256>,
@@ -355,7 +354,6 @@ impl IngressService {
     }
 
     fn emit_simulation_event(
-        &self,
         event_type: TransactionEventType,
         tx_hash: B256,
         bundle_hash: B256,
@@ -372,7 +370,6 @@ impl IngressService {
     }
 
     fn emit_simulation_failed_event(
-        &self,
         tx_hash: B256,
         bundle_hash: B256,
         duration: Duration,
@@ -623,7 +620,7 @@ mod tests {
         assert!(result.is_ok());
 
         let metering = timeout(Duration::from_secs(1), builder_rx.recv()).await.unwrap().unwrap();
-        assert_eq!(metering, create_test_meter_bundle_response());
+        assert_eq!(metering.response, create_test_meter_bundle_response());
 
         let audit_event = timeout(Duration::from_secs(1), audit_rx.recv()).await.unwrap().unwrap();
         assert!(matches!(audit_event, BundleEvent::Received { .. }));
