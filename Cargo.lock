@@ -11432,7 +11432,6 @@ dependencies = [
  "base-execution-evm",
  "base-metrics",
  "base-observability-events",
- "chrono",
  "clap",
  "jsonrpsee",
  "metrics",

@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
     let simulation_provider = RootProvider::<Base>::new_http(config.simulation_rpc.clone());
 
     GlobalTransactionEventWriter::init(Some(config.transaction_event_writer_config()))
-        .map_err(|err| anyhow::anyhow!("{err}"))?;
+        .map_err(|err| anyhow::anyhow!("{err:#}"))?;
 
     let audit_publisher = RpcBundleEventPublisher::new(
         config.audit_rpc_url.as_str(),

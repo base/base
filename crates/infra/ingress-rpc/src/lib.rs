@@ -237,12 +237,7 @@ impl BuilderConnector {
                             continue;
                         }
 
-                        let tx_hash = event
-                            .results
-                            .first()
-                            .map(|result| result.tx_hash)
-                            .or_else(|| message.tx_hashes.first().copied())
-                            .expect("empty results handled above");
+                        let tx_hash = event.results[0].tx_hash;
                         let bundle_hash = event.bundle_hash;
                         let Ok(permit) = Arc::clone(&semaphore).acquire_owned().await else {
                             break;

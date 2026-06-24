@@ -133,44 +133,47 @@ impl IngressApiServer for IngressService {
                 None,
             );
             let simulation_start = Instant::now();
-            let meter_bundle_response: Option<MeterBundleResponse> = match self
-                .meter_bundle(&bundle, bundle_hash)
-                .await
-            {
-                Ok(response) => {
-                    self.emit_simulation_event(
-                        TransactionEventType::SimulationSucceeded,
-                        tx_hash,
-                        *bundle_hash,
-                        simulation_start.elapsed(),
-                        &response,
-                        None,
-                    );
-                    info!(message = "Metering succeeded for raw transaction", bundle_hash = %bundle_hash, response = ?response);
-                    Some(response)
-                }
-                Err(e) => {
-                    self.emit_simulation_failed_event(
-                        tx_hash,
-                        *bundle_hash,
-                        simulation_start.elapsed(),
-                        e.error.to_string(),
-                        e.metering.as_ref(),
-                    );
-                    warn!(
-                        bundle_hash = %bundle_hash,
-                        error = %e.error,
-                        "Metering failed for raw transaction"
-                    );
-                    e.metering
-                }
-            };
+            let (meter_bundle_response, simulation_accepted): (Option<MeterBundleResponse>, bool) =
+                match self.meter_bundle(&bundle, bundle_hash).await {
+                    Ok(response) => {
+                        self.emit_simulation_event(
+                            TransactionEventType::SimulationSucceeded,
+                            tx_hash,
+                            *bundle_hash,
+                            simulation_start.elapsed(),
+                            &response,
+                        );
+                        info!(message = "Metering succeeded for raw transaction", bundle_hash = %bundle_hash, response = ?response);
+                        (Some(response), true)
+                    }
+                    Err(e) => {
+                        self.emit_simulation_failed_event(
+                            tx_hash,
+                            *bundle_hash,
+                            simulation_start.elapsed(),
+                            e.error.to_string(),
+                            e.metering.as_ref(),
+                        );
+                        warn!(
+                            bundle_hash = %bundle_hash,
+                            error = %e.error,
+                            "Metering failed for raw transaction"
+                        );
+                        (e.metering, false)
+                    }
+                };
 
             if let Some(meter_info) = meter_bundle_response.as_ref() {
-                Metrics::successful_simulations().increment(1);
-                // Update the current size of the `builder_tx` channel captured right before sending to the builder
-                Metrics::buffered_meter_bundle_responses_size().set(self.builder_tx.len() as f64);
-                if self.send_to_builder {
+                if simulation_accepted {
+                    Metrics::successful_simulations().increment(1);
+                } else {
+                    Metrics::failed_simulations().increment(1);
+                }
+
+                if self.send_to_builder && simulation_accepted {
+                    // Update the current size of the `builder_tx` channel captured right before sending to the builder
+                    Metrics::buffered_meter_bundle_responses_size()
+                        .set(self.builder_tx.len() as f64);
                     let message = MeteringForwardMessage {
                         tx_hashes: vec![tx_hash],
                         response: meter_info.clone(),
@@ -358,16 +361,12 @@ impl IngressService {
         bundle_hash: B256,
         duration: Duration,
         metering: &MeterBundleResponse,
-        rejection_reason: Option<String>,
     ) {
-        let mut data = metering_summary_data(bundle_hash, None, metering);
+        let mut data = metering_summary_data(bundle_hash, metering);
         data.insert(
             "simulation_duration_ms".to_string(),
             serde_json::json!(duration.as_secs_f64() * 1000.0),
         );
-        if let Some(reason) = rejection_reason {
-            data.insert("rejection_reason".to_string(), serde_json::json!(reason));
-        }
 
         Self::emit_transaction_event_with_data(event_type, tx_hash, Some(bundle_hash), None, data);
     }
@@ -387,7 +386,7 @@ impl IngressService {
                     serde_json::json!(bundle_hash.to_string()),
                 )])
             },
-            |metering| metering_summary_data(bundle_hash, None, metering),
+            |metering| metering_summary_data(bundle_hash, metering),
         );
         data.extend([
             (
@@ -435,16 +434,12 @@ impl IngressService {
 
 fn metering_summary_data(
     bundle_hash: B256,
-    bundle_id: Option<Uuid>,
     metering: &MeterBundleResponse,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut data = serde_json::Map::from_iter([(
         "bundle_hash".to_string(),
         serde_json::json!(bundle_hash.to_string()),
     )]);
-    if let Some(bundle_id) = bundle_id {
-        data.insert("bundle_id".to_string(), serde_json::json!(bundle_id.to_string()));
-    }
     if let Ok(metering_response) = serde_json::to_value(metering) {
         data.insert("meter_bundle_response".to_string(), metering_response);
     }
