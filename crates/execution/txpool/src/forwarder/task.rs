@@ -93,8 +93,12 @@ pub struct Forwarder<T: PoolTransaction> {
     config: Arc<ForwarderConfig>,
     cancel: CancellationToken,
     limiter: RateLimiter,
-    buffer: Vec<ValidatedTransaction>,
-    tx_hash_buffer: Vec<TxHash>,
+    buffer: Vec<BufferedTransaction>,
+}
+
+struct BufferedTransaction {
+    transaction: ValidatedTransaction,
+    tx_hash: TxHash,
 }
 
 impl<T> Forwarder<T>
@@ -113,19 +117,8 @@ where
         let limiter = RateLimiter::new(config.max_rps);
         let initial_capacity = if config.max_batch_size == 0 { 256 } else { config.max_batch_size };
         let buffer = Vec::with_capacity(initial_capacity);
-        let tx_hash_buffer = Vec::with_capacity(initial_capacity);
         let url_label: Arc<str> = builder_url.to_string().into();
-        Self {
-            builder_url,
-            url_label,
-            client,
-            receiver,
-            config,
-            cancel,
-            limiter,
-            buffer,
-            tx_hash_buffer,
-        }
+        Self { builder_url, url_label, client, receiver, config, cancel, limiter, buffer }
     }
 
     /// Runs the forwarder loop until cancelled.
@@ -194,14 +187,16 @@ where
                 let target_block_number = tx.transaction.target_block_number();
                 let min_timestamp = tx.transaction.min_timestamp_millis();
                 let max_timestamp = tx.transaction.max_timestamp_millis();
-                self.buffer.push(ValidatedTransaction {
-                    sender,
-                    raw,
-                    target_block_number,
-                    min_timestamp,
-                    max_timestamp,
+                self.buffer.push(BufferedTransaction {
+                    transaction: ValidatedTransaction {
+                        sender,
+                        raw,
+                        target_block_number,
+                        min_timestamp,
+                        max_timestamp,
+                    },
+                    tx_hash,
                 });
-                self.tx_hash_buffer.push(tx_hash);
                 ForwarderMetrics::buffer_size(Arc::clone(&self.url_label))
                     .set(self.buffer.len() as f64);
                 false
@@ -239,13 +234,15 @@ where
         } else {
             self.buffer.len().min(self.config.max_batch_size)
         };
-        let batch: Vec<ValidatedTransaction> = self.buffer.drain(..batch_size).collect();
-        let tx_hashes: Vec<TxHash> = self.tx_hash_buffer.drain(..batch_size).collect();
+        let buffered: Vec<BufferedTransaction> = self.buffer.drain(..batch_size).collect();
         ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
 
-        if batch.is_empty() {
+        if buffered.is_empty() {
             return;
         }
+        let tx_hashes: Vec<TxHash> = buffered.iter().map(|tx| tx.tx_hash).collect();
+        let batch: Vec<ValidatedTransaction> =
+            buffered.into_iter().map(|tx| tx.transaction).collect();
 
         trace!(
             builder_url = %self.builder_url,
@@ -414,6 +411,7 @@ where
             id: {
                 "builder_url" => self.url_label.as_ref(),
                 "attempt" => attempt_id,
+                "tx_hash" => tx_hash.map(|hash| format!("{hash:#x}")).unwrap_or_default(),
             },
             data: data,
         );
