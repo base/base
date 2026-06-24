@@ -74,10 +74,6 @@ pub struct TransactionEventsArgs {
     #[arg(long = "builder.transaction-events.queue-capacity", env = "BUILDER_TRANSACTION_EVENTS_QUEUE_CAPACITY", default_value_t = DEFAULT_QUEUE_CAPACITY)]
     pub queue_capacity: usize,
 
-    /// Background writer flush interval.
-    #[arg(long = "builder.transaction-events.flush-interval", env = "BUILDER_TRANSACTION_EVENTS_FLUSH_INTERVAL", value_parser = humantime::parse_duration, default_value = "1s")]
-    pub flush_interval: Duration,
-
     /// Fail builder startup if the transaction event writer cannot open.
     #[arg(
         long = "builder.transaction-events.required",
@@ -101,7 +97,6 @@ impl Default for TransactionEventsArgs {
             enabled: false,
             file_path: PathBuf::from("/var/log/transaction-events/base-builder/events.jsonl"),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
-            flush_interval: Duration::from_secs(1),
             required: false,
             network: "unknown".to_string(),
         }
@@ -115,7 +110,6 @@ impl TransactionEventsArgs {
             enabled: self.enabled,
             file_path: self.file_path.clone(),
             queue_capacity: self.queue_capacity,
-            flush_interval: self.flush_interval,
             required: self.required,
             producer: TransactionEventProducer::BaseBuilder,
             network: self.network.clone(),
