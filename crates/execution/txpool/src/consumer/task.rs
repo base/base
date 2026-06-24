@@ -116,6 +116,7 @@ where
             event_type: event_type,
             tx_hash: tx_hash,
             id: {
+                "tx_hash" => format!("{tx_hash:#x}"),
                 "iterator_index" => iterator_index,
             },
             data: data,

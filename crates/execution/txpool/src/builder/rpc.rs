@@ -134,6 +134,9 @@ impl<P> BuilderApiImpl<P> {
             producer: TransactionEventProducer::BaseBuilder,
             event_type: event_type,
             maybe_tx_hash: tx_hash,
+            id: {
+                "tx_hash" => tx_hash.map(|hash| format!("{hash:#x}")).unwrap_or_default(),
+            },
             data: data,
         );
     }
