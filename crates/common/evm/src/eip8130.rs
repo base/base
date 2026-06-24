@@ -56,6 +56,7 @@ use revm::{
     context::{BlockEnv, LocalContextTr, TxEnv, journaled_state::account::JournaledAccountTr},
     context_interface::{
         Block, Cfg, ContextTr, JournalTr,
+        context::take_error,
         result::{EVMError, ExecutionResult, Output, ResultGas, SuccessReason},
     },
     handler::{EthFrame, EvmTr, FrameResult, Handler, PrecompileProvider},
@@ -686,7 +687,19 @@ impl Eip8130Executor {
             EVMError<DB::Error, BaseTransactionError>,
             EthFrame<EthInterpreter>,
         >::new();
-        handler.run_exec_loop(evm, frame_init)
+        let frame = handler.run_exec_loop(evm, frame_init)?;
+
+        // A top-level frame's database error is recorded on the context and the
+        // interpreter halts with `FatalExternalError`; unlike a nested frame
+        // (whose error is surfaced when its outcome is folded into the parent
+        // via `EthFrame::return_result`), the root frame is returned directly by
+        // `run_exec_loop` without that check. Mirror the mainnet
+        // `Handler::execution_result` guard so a node-local DB failure raised
+        // mid-call propagates as a fatal `Err` instead of being misread as a
+        // deterministic call revert on this consensus-critical path.
+        take_error::<EVMError<DB::Error, BaseTransactionError>, _>(evm.ctx_mut().error())?;
+
+        Ok(frame)
     }
 
     /// Settles the final fee against the pre-charged amount: caps the gas refund,
@@ -802,9 +815,11 @@ mod tests {
     use base_common_consensus::{BaseTxEnvelope, Call, Eip8130Signed, Predeploys, TxEip8130};
     use k256::ecdsa::SigningKey;
     use revm::{
+        Database,
         bytecode::Bytecode,
         context::{BlockEnv, CfgEnv, Context},
         database::InMemoryDB,
+        database_interface::DBErrorMarker,
         inspector::NoOpInspector,
         state::AccountInfo,
     };
@@ -984,6 +999,112 @@ mod tests {
         let sender_acc = outcome.state.get(&sender).expect("sender in state");
         assert_eq!(sender_acc.info.nonce, 1);
         assert!(sender_acc.info.balance < initial, "payer should still be charged");
+    }
+
+    /// Database error returned by [`StorageFailDb`] when a gated address is read.
+    #[derive(Debug)]
+    struct StorageUnavailable;
+
+    impl core::fmt::Display for StorageUnavailable {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str("storage temporarily unavailable")
+        }
+    }
+
+    impl core::error::Error for StorageUnavailable {}
+
+    impl DBErrorMarker for StorageUnavailable {}
+
+    /// Wraps an [`InMemoryDB`] and fails every `storage` read for a single
+    /// address, modelling a node-local backend failure (e.g. a missing trie
+    /// node) encountered while an EVM call executes an `SLOAD`. All other reads
+    /// delegate to the inner database.
+    #[derive(Debug)]
+    struct StorageFailDb {
+        inner: InMemoryDB,
+        fail_storage_at: Address,
+    }
+
+    impl Database for StorageFailDb {
+        type Error = StorageUnavailable;
+
+        fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            Ok(self.inner.basic(address).expect("infallible"))
+        }
+
+        fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Ok(self.inner.code_by_hash(code_hash).expect("infallible"))
+        }
+
+        fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+            if address == self.fail_storage_at {
+                return Err(StorageUnavailable);
+            }
+            Ok(self.inner.storage(address, index).expect("infallible"))
+        }
+
+        fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+            Ok(self.inner.block_hash(number).expect("infallible"))
+        }
+    }
+
+    #[test]
+    fn db_failure_during_call_propagates_as_error_not_revert() {
+        // A node-local database failure raised *inside* a call's execution (here
+        // an `SLOAD` the backend cannot serve) must abort the whole transaction
+        // as a fatal `EVMError::Database`, never be folded into the deterministic
+        // "phase reverted" path — otherwise a node that hits the failure would
+        // include the tx as reverted while a healthy node would execute it,
+        // forking consensus.
+        let target = address!("0x00000000000000000000000000000000000000c7");
+        let key = signing_key(0x77);
+        let sender = eoa_address(&key);
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        // Target code: PUSH1 0x00, SLOAD, STOP. The `SLOAD` forces a storage read
+        // of `target`, which the wrapping database refuses to serve.
+        let code = bytes!("60005400");
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            sender,
+            AccountInfo {
+                balance: U256::from(10u64).pow(U256::from(18u64)),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            target,
+            AccountInfo {
+                code_hash: keccak256(&code),
+                code: Some(Bytecode::new_raw(code)),
+                ..Default::default()
+            },
+        );
+        let db = StorageFailDb { inner: db, fail_storage_at: target };
+
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                    .with_chain_id(CHAIN_ID),
+            )
+            .with_block(BlockEnv {
+                number: U256::from(1u64),
+                timestamp: U256::from(NOW),
+                basefee: BASE_FEE,
+                beneficiary: BENEFICIARY,
+                ..Default::default()
+            })
+            .build_with_inspector(NoOpInspector);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(
+            matches!(err, EVMError::Database(_)),
+            "DB failure during a call must surface as a fatal database error, got {err:?}",
+        );
     }
 
     #[test]
