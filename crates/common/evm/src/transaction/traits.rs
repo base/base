@@ -41,6 +41,6 @@ pub trait BaseTxTr: Transaction {
     /// (`eth_estimateGas` / `eth_call`) that must be routed to
     /// `Eip8130Executor::simulate` rather than `execute`.
     fn is_eip8130_simulate(&self) -> bool {
-        self.eip8130_parts().is_some_and(|parts| parts.simulate)
+        self.eip8130_parts().is_some_and(|parts| parts.mode.is_simulate())
     }
 }

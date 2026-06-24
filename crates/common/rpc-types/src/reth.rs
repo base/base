@@ -14,7 +14,7 @@ use alloy_network::TxSigner;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_signer::Signature;
 use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope, Eip8130Signed, TxEip8130};
-use base_common_evm::BaseTransaction as BaseRevm;
+use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
 use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
 
@@ -28,7 +28,7 @@ const STUB_K1_SENDER_AUTH_LEN: usize = 65;
 impl BaseTransactionRequest {
     /// Builds the unsigned simulation transaction for an EIP-8130
     /// `eth_estimateGas` / `eth_call` request, or `None` when the request
-    /// carries no EIP-8130 fields.
+    /// carries no EIP-8130 fields or omits the required `from` sender.
     ///
     /// Estimation runs without a signature: a stub 65-byte k1 `sender_auth` blob
     /// stands in for the bare-signature EOA wire form so the intrinsic schedule
@@ -36,6 +36,11 @@ impl BaseTransactionRequest {
     /// [`base_common_evm::Eip8130Executor::simulate`] simulates from `from`
     /// without verification. `gas_limit_cap` bounds execution when the request
     /// omits `gas`.
+    ///
+    /// `from` is mandatory for EIP-8130: the sender identity drives actor
+    /// resolution, policy lookup, and auto-delegation, so a missing `from`
+    /// returns `None` (surfaced as `INVALID_PARAMS`) rather than silently
+    /// falling back to the zero address.
     pub fn to_eip8130_simulation_tx(
         &self,
         chain_id: u64,
@@ -43,7 +48,7 @@ impl BaseTransactionRequest {
     ) -> Option<BaseRevm<TxEnv>> {
         let aa = self.as_eip8130()?;
         let req = self.as_ref();
-        let from = req.from.unwrap_or_default();
+        let from = req.from?;
 
         let tx = TxEip8130 {
             chain_id,
@@ -68,7 +73,7 @@ impl BaseTransactionRequest {
         // Route to the unverified `Eip8130Executor::simulate` path rather than
         // the verifying `execute` path.
         if let Some(parts) = sim_tx.eip8130.as_mut() {
-            parts.simulate = true;
+            parts.mode = Eip8130ExecutionMode::Simulate;
         }
         Some(sim_tx)
     }

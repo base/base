@@ -20,7 +20,7 @@ mod transaction;
 pub use transaction::{
     BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr, BuildError,
     DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, EIP8130_TRANSACTION_TYPE,
-    Eip8130TransactionParts,
+    Eip8130ExecutionMode, Eip8130TransactionParts,
 };
 
 mod handler;

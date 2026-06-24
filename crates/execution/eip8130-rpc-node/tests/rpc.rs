@@ -138,6 +138,22 @@ async fn estimate_gas_for_eip8130_request_returns_positive_gas() -> eyre::Result
     Ok(())
 }
 
+/// An EIP-8130 `eth_estimateGas` request that omits `from` must be rejected
+/// rather than silently simulated from the zero address: the sender identity
+/// drives actor resolution, policy lookup, and auto-delegation.
+#[tokio::test]
+async fn estimate_gas_for_eip8130_request_without_from_is_rejected() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+
+    let request = json!({ "calls": [] });
+    let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
+
+    let err = result.expect_err("EIP-8130 estimate without `from` must error");
+    let err_str = err.to_string();
+    assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
+    Ok(())
+}
+
 /// A plain (non-8130) `eth_estimateGas` request must still work through the
 /// override, which delegates to the standard reth estimator. A bare value
 /// transfer estimates to the 21000-gas floor.

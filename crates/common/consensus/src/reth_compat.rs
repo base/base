@@ -313,6 +313,46 @@ impl Compact for BaseTxEnvelope {
 // Compact – BaseReceipt (via CompactZstd helper)
 // ---------------------------------------------------------------------------
 
+/// Backward-compatible `Compact` wrapper for the EIP-8130 per-phase statuses
+/// stored as the trailing field of [`CompactBaseReceipt`].
+///
+/// The reth `Compact` derive reads a trailing `Vec`/`Cow` field by calling
+/// `decode_varuint` on the remaining buffer, which panics when that buffer is
+/// empty. Receipts written before this field existed (every legacy/EIP-1559/
+/// deposit receipt already on disk) have no trailing bytes, so decoding them
+/// with the derive would panic. This wrapper makes the addition backward
+/// compatible:
+///
+/// * `from_compact` returns an empty value when no trailing bytes remain, so
+///   pre-existing on-disk receipts decode unchanged.
+/// * `to_compact` writes nothing when the statuses are empty, so non-EIP-8130
+///   receipts (and EIP-8130 receipts with empty `calls`) stay byte-identical to
+///   the current on-disk format and never grow the encoding.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct CompactPhaseStatuses(Vec<u8>);
+
+impl Compact for CompactPhaseStatuses {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        if self.0.is_empty() {
+            return 0;
+        }
+        self.0.to_compact(buf)
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        // Receipts written before this field existed have no trailing bytes;
+        // decode them as empty rather than reading past the end of the buffer.
+        if buf.is_empty() {
+            return (Self(Vec::new()), buf);
+        }
+        let (statuses, buf) = Vec::<u8>::from_compact(buf, len);
+        (Self(statuses), buf)
+    }
+}
+
 #[derive(CompactZstd)]
 #[reth_codecs(crate = "reth_codecs")]
 #[reth_zstd(
@@ -329,9 +369,10 @@ struct CompactBaseReceipt<'a> {
     deposit_receipt_version: Option<u64>,
     /// EIP-8130 per-phase execution statuses. Persisted to the node-local
     /// database so `eth_getTransactionReceipt` can surface `phaseStatuses`;
-    /// excluded from the consensus receipt encoding. Empty for non-8130 receipts.
-    #[expect(clippy::owned_cow)]
-    eip8130_phase_statuses: Cow<'a, Vec<u8>>,
+    /// excluded from the consensus receipt encoding. Empty for non-8130
+    /// receipts. Must remain the last field — see [`CompactPhaseStatuses`] for
+    /// the backward-compatibility contract with pre-existing on-disk receipts.
+    eip8130_phase_statuses: CompactPhaseStatuses,
 }
 
 impl<'a> From<&'a BaseReceipt> for CompactBaseReceipt<'a> {
@@ -351,9 +392,9 @@ impl<'a> From<&'a BaseReceipt> for CompactBaseReceipt<'a> {
                 None
             },
             eip8130_phase_statuses: if let BaseReceipt::Eip8130(receipt) = receipt {
-                Cow::Borrowed(&receipt.phase_statuses)
+                CompactPhaseStatuses(receipt.phase_statuses.clone())
             } else {
-                Cow::Owned(Vec::new())
+                CompactPhaseStatuses(Vec::new())
             },
             tx_type: receipt.tx_type(),
         }
@@ -384,7 +425,7 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
                 Self::Deposit(DepositReceipt { inner, deposit_nonce, deposit_receipt_version })
             }
             OpTxType::Eip8130 => {
-                Self::Eip8130(Eip8130Receipt::new(inner, eip8130_phase_statuses.into_owned()))
+                Self::Eip8130(Eip8130Receipt::new(inner, eip8130_phase_statuses.0))
             }
         }
     }
@@ -485,4 +526,58 @@ impl reth_primitives_traits::NodePrimitives for BasePrimitives {
     type BlockBody = BaseBlockBody;
     type SignedTx = BaseTxEnvelope;
     type Receipt = BaseReceipt;
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Receipt;
+    use alloy_primitives::Log;
+
+    use super::*;
+
+    #[test]
+    fn compact_phase_statuses_empty_writes_nothing_and_decodes_empty() {
+        // Empty statuses must encode to zero bytes so non-8130 receipts (and
+        // empty-`calls` 8130 receipts) keep the pre-existing on-disk format.
+        let mut buf = Vec::new();
+        let written = CompactPhaseStatuses(Vec::new()).to_compact(&mut buf);
+        assert_eq!(written, 0);
+        assert!(buf.is_empty());
+
+        // An empty trailing buffer (a receipt written before this field existed)
+        // must decode to empty rather than panic.
+        let (decoded, rest) = CompactPhaseStatuses::from_compact(&[], 0);
+        assert_eq!(decoded, CompactPhaseStatuses(Vec::new()));
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn compact_phase_statuses_nonempty_roundtrips() {
+        let statuses = CompactPhaseStatuses(vec![0x01, 0x00]);
+        let mut buf = Vec::new();
+        statuses.to_compact(&mut buf);
+        assert!(!buf.is_empty());
+        let (decoded, _) = CompactPhaseStatuses::from_compact(&buf, buf.len());
+        assert_eq!(decoded, statuses);
+    }
+
+    #[test]
+    fn base_receipt_compact_decode_tolerates_missing_phase_statuses() {
+        // A non-8130 receipt encodes with zero trailing phase-status bytes, so
+        // its `Compact` byte stream is identical to receipts written before the
+        // `eip8130_phase_statuses` field existed. Decoding must not panic and
+        // must reproduce the original receipt — proving the field addition is
+        // backward compatible with pre-existing on-disk receipts.
+        let receipt = BaseReceipt::Legacy(Receipt {
+            status: true.into(),
+            cumulative_gas_used: 21_000,
+            logs: vec![Log::default()],
+        });
+
+        let mut buf = Vec::new();
+        let len = receipt.to_compact(&mut buf);
+        let (decoded, _) = BaseReceipt::from_compact(&buf, len);
+
+        assert_eq!(decoded, receipt);
+    }
 }

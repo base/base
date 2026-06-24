@@ -237,7 +237,7 @@ impl Eip8130Executor {
             }
         };
 
-        let calls = match Self::execute_calls(evm, &signed, &outcome) {
+        let mut calls = match Self::execute_calls(evm, &signed, &outcome) {
             Ok(calls) => calls,
             Err(err) => {
                 let ctx = evm.ctx_mut();
@@ -246,13 +246,6 @@ impl Eip8130Executor {
                 return Err(err);
             }
         };
-
-        // Hand the per-phase statuses to the receipt builder, which runs on this
-        // same thread immediately after execution (see [`Eip8130PhaseStatuses`]).
-        // This is the only channel available: the receipt builder is generic over
-        // the EVM and the `ExecutionResult`'s `output` already carries the
-        // transaction's revert data.
-        Eip8130PhaseStatuses::set(calls.phase_statuses.clone());
 
         let ctx = evm.ctx_mut();
         let gas_used =
@@ -264,6 +257,14 @@ impl Eip8130Executor {
                     return Err(err);
                 }
             };
+
+        // Hand the per-phase statuses to the receipt builder, which runs on this
+        // same thread immediately after execution (see [`Eip8130PhaseStatuses`]).
+        // This is the only channel available: the receipt builder is generic over
+        // the EVM and the `ExecutionResult`'s `output` already carries the
+        // transaction's revert data. Set only after the transaction is fully
+        // settled so a `settle_fees` error never leaves stale statuses in the slot.
+        Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
 
         let logs = ctx.journal_mut().take_logs();
 
