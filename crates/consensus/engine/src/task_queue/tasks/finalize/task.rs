@@ -5,7 +5,6 @@ use std::{sync::Arc, time::Instant};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
-use derive_more::Constructor;
 use opentelemetry::Context;
 
 use crate::{
@@ -15,7 +14,7 @@ use crate::{
 
 /// The [`FinalizeTask`] fetches the [`L2BlockInfo`] at `block_number`, updates the [`EngineState`],
 /// and dispatches a forkchoice update to finalize the block.
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct FinalizeTask<EngineClient_: EngineClient> {
     /// The engine client.
     pub client: Arc<EngineClient_>,
@@ -23,6 +22,20 @@ pub struct FinalizeTask<EngineClient_: EngineClient> {
     pub cfg: Arc<RollupConfig>,
     /// The number of the L2 block to finalize.
     pub block_number: u64,
+    /// The `OpenTelemetry` context to propagate through EL HTTP calls.
+    pub otel_cx: Context,
+}
+
+impl<EngineClient_: EngineClient> FinalizeTask<EngineClient_> {
+    /// Creates a new finalize task.
+    pub const fn new(
+        client: Arc<EngineClient_>,
+        cfg: Arc<RollupConfig>,
+        block_number: u64,
+        otel_cx: Context,
+    ) -> Self {
+        Self { client, cfg, block_number, otel_cx }
+    }
 }
 
 #[async_trait]
@@ -73,7 +86,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
             Arc::clone(&self.client),
             Arc::clone(&self.cfg),
             EngineSyncStateUpdate { finalized_head: Some(block_info), ..Default::default() },
-            Context::current(),
+            self.otel_cx.clone(),
         )
         .execute(state)
         .await?;

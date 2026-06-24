@@ -101,6 +101,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
             Arc::clone(&self.cfg),
             attributes.clone(),
             InsertPayloadSafety::Safe,
+            self.otel_cx.clone(),
         )
         .await?;
 

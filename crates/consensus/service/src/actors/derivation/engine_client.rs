@@ -5,7 +5,10 @@ use base_consensus_engine::ConsolidateInput;
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
-use crate::{EngineActorRequest, EngineClientError, EngineClientResult, ResetRequest};
+use crate::{
+    EngineActorRequest, EngineClientError, EngineClientResult, FinalizeL2BlockRequest,
+    ResetRequest, SafeL2SignalRequest,
+};
 
 /// Client to use to interact with the engine.
 #[cfg_attr(test, mockall::automock(type SafeL2Signal = AttributesWithParent;))]
@@ -59,7 +62,9 @@ impl DerivationEngineClient for QueuedDerivationEngineClient {
     async fn send_finalized_l2_block(&self, block_number: u64) -> EngineClientResult<()> {
         trace!(target: "derivation", block_number, "Sending finalized L2 block number to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(Box::new(block_number)))
+            .send(EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(Box::new(
+                FinalizeL2BlockRequest { block_number, otel_cx: opentelemetry::Context::current() },
+            )))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 
@@ -69,7 +74,10 @@ impl DerivationEngineClient for QueuedDerivationEngineClient {
     async fn send_safe_l2_signal(&self, signal: ConsolidateInput) -> EngineClientResult<()> {
         trace!(target: "derivation", ?signal, "Sending safe L2 signal info to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(signal))
+            .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(SafeL2SignalRequest {
+                signal,
+                otel_cx: opentelemetry::Context::current(),
+            })))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 

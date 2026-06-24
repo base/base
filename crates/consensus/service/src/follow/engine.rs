@@ -63,7 +63,7 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
             Arc::clone(&self.client),
             Arc::clone(&self.rollup_config),
             envelope,
-            Context::current(),
+            Context::new(),
         );
         EngineTask::Insert(Box::new(task))
             .execute(&mut *self.state.lock().await)
@@ -89,7 +89,7 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
                 finalized_head: finalized,
                 ..Default::default()
             },
-            Context::current(),
+            Context::new(),
         );
         task.execute(&mut *self.state.lock().await).await.map_err(FollowError::engine_task)
     }

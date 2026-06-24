@@ -15,7 +15,8 @@ pub use error::EngineError;
 mod request;
 pub use request::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineClientResult, EngineRpcRequest,
-    GetPayloadRequest, InsertUnsafePayloadRequest, ResetRequest,
+    ExternalUnsafePayloadRequest, FinalizeL2BlockRequest, GetPayloadRequest,
+    InsertUnsafePayloadRequest, ResetRequest, SafeL2SignalRequest,
 };
 
 mod engine_request_processor;

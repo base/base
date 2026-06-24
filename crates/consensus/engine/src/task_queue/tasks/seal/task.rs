@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
-use derive_more::Constructor;
 use opentelemetry::Context;
 use tokio::sync::mpsc;
 
@@ -30,7 +29,7 @@ use crate::{
 ///
 /// [`InsertTask`]: crate::InsertTask
 /// [`InsertTaskError`]: crate::InsertTaskError
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct SealTask<EngineClient_: EngineClient> {
     /// The engine API client.
     pub engine: Arc<EngineClient_>,
@@ -46,6 +45,23 @@ pub struct SealTask<EngineClient_: EngineClient> {
     /// [`BaseExecutionPayloadEnvelope`] after the block has been built, imported, and canonicalized
     /// or the [`SealTaskError`] that occurred during processing.
     pub result_tx: Option<mpsc::Sender<Result<BaseExecutionPayloadEnvelope, SealTaskError>>>,
+    /// The `OpenTelemetry` context to propagate through EL HTTP calls.
+    pub otel_cx: Context,
+}
+
+impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
+    /// Creates a new seal task.
+    pub const fn new(
+        engine: Arc<EngineClient_>,
+        cfg: Arc<RollupConfig>,
+        payload_id: PayloadId,
+        attributes: AttributesWithParent,
+        payload_safety: InsertPayloadSafety,
+        result_tx: Option<mpsc::Sender<Result<BaseExecutionPayloadEnvelope, SealTaskError>>>,
+        otel_cx: Context,
+    ) -> Self {
+        Self { engine, cfg, payload_id, attributes, payload_safety, result_tx, otel_cx }
+    }
 }
 
 impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
@@ -88,7 +104,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             Arc::clone(&self.cfg),
             new_payload.clone(),
             self.payload_safety,
-            Context::current(),
+            self.otel_cx.clone(),
         )
         .execute(state)
         .await
@@ -116,6 +132,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                     Arc::clone(&self.cfg),
                     deposits_only_attrs.clone(),
                     self.payload_safety,
+                    self.otel_cx.clone(),
                 )
                 .await
                 {

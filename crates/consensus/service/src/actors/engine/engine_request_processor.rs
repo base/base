@@ -19,8 +19,9 @@ use tokio::{
 
 use crate::{
     BuildRequest, CheckpointWriter, Conductor, EngineActorRequest, EngineClientError,
-    EngineDerivationClient, EngineError, GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode,
-    NoopCheckpointWriter,
+    EngineDerivationClient, EngineError, ExternalUnsafePayloadRequest, FinalizeL2BlockRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode, NoopCheckpointWriter,
+    SafeL2SignalRequest,
 };
 
 /// Requires that the implementor handles engine requests via the provided channel.
@@ -474,6 +475,7 @@ where
         self.rollup.log_upgrade_activation(
             envelope.execution_payload.block_number(),
             envelope.execution_payload.timestamp(),
+            self.engine.state().sync_state.unsafe_head().block_info.timestamp,
         );
     }
 
@@ -804,28 +806,32 @@ where
                         }
                     }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
+                        let SafeL2SignalRequest { signal, otel_cx } = *safe_signal;
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
                             Arc::clone(&self.client),
                             Arc::clone(&self.rollup),
-                            safe_signal,
-                            opentelemetry::Context::current(),
+                            signal,
+                            otel_cx,
                         )));
                         self.engine.enqueue(task);
                     }
                     EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(
                         finalized_l2_block_number,
                     ) => {
+                        let FinalizeL2BlockRequest { block_number, otel_cx } =
+                            *finalized_l2_block_number;
                         // Finalize the L2 block at the provided block number.
                         let task = EngineTask::Finalize(Box::new(FinalizeTask::new(
                             Arc::clone(&self.client),
                             Arc::clone(&self.rollup),
-                            *finalized_l2_block_number,
+                            block_number,
+                            otel_cx,
                         )));
                         self.engine.enqueue(task);
                     }
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
-                        let otel_cx = opentelemetry::Context::current();
-                        self.handle_external_unsafe_l2_block(*envelope, otel_cx);
+                        let ExternalUnsafePayloadRequest { envelope, otel_cx } = *envelope;
+                        self.handle_external_unsafe_l2_block(envelope, otel_cx);
                     }
                     EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
                         let InsertUnsafePayloadRequest { envelope, result_tx, otel_cx } = *envelope;

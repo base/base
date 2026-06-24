@@ -1353,8 +1353,8 @@ mod tests {
 
         // Strict mode: derived attributes (`no_tx_pool=true`) — the invalid tx must be fatal.
         let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, parent);
-        ctx.config.attributes.inner.no_tx_pool = true;
-        ctx.config.attributes.inner.transactions = vec![with_encoded];
+        ctx.config.attributes.inner_mut().no_tx_pool = true;
+        ctx.config.attributes.inner_mut().transactions = vec![with_encoded];
 
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
@@ -1369,7 +1369,7 @@ mod tests {
         // Mempool mode (`no_tx_pool=false`): pre-includes are still skippable. Identical
         // input now succeeds with zero gas consumed and no receipt — this guards against
         // accidentally tightening the legacy code path along with the strict one.
-        ctx.config.attributes.inner.no_tx_pool = false;
+        ctx.config.attributes.inner_mut().no_tx_pool = false;
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let info = ctx

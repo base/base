@@ -102,14 +102,14 @@ impl<T: SignedTransaction> Attributes for TracedBasePayloadBuilderAttributes<T> 
     }
 
     fn payload_job_id(&self) -> PayloadId {
-        self.inner.payload_attributes.id
+        self.inner.payload_job_id()
     }
 
     fn no_tx_pool(&self) -> bool {
-        self.inner.no_tx_pool
+        self.inner.no_tx_pool()
     }
 
     fn sequencer_transactions(&self) -> &[WithEncoded<Self::Transaction>] {
-        &self.inner.transactions
+        self.inner.sequencer_transactions()
     }
 }

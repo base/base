@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use tokio::sync::mpsc;
 
-use crate::{EngineActorRequest, EngineClientError, EngineClientResult};
+use crate::{
+    EngineActorRequest, EngineClientError, EngineClientResult, ExternalUnsafePayloadRequest,
+};
 
 /// Client used to interact with the Engine.
 #[cfg_attr(test, mockall::automock)]
@@ -34,7 +36,12 @@ impl NetworkEngineClient for QueuedNetworkEngineClient {
         trace!(target: "network", ?block, "Sending unsafe block to engine.");
         Ok(self
             .engine_actor_request_tx
-            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(block)))
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(
+                ExternalUnsafePayloadRequest {
+                    envelope: block,
+                    otel_cx: opentelemetry::Context::current(),
+                },
+            )))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?)
     }

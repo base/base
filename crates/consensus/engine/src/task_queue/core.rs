@@ -580,6 +580,7 @@ mod tests {
     use alloy_primitives::FixedBytes;
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
     use base_common_genesis::RollupConfig;
+    use opentelemetry::Context;
     use tokio::sync::watch;
 
     use crate::{
@@ -645,6 +646,7 @@ mod tests {
             attributes.clone(),
             InsertPayloadSafety::Unsafe,
             None,
+            Context::new(),
         ))));
         engine.enqueue(EngineTask::Seal(Box::new(SealTask::new(
             Arc::clone(&client),
@@ -653,6 +655,7 @@ mod tests {
             attributes,
             InsertPayloadSafety::Unsafe,
             None,
+            Context::new(),
         ))));
 
         let (first, _) = engine.tasks.pop().expect("first task should be queued");
@@ -688,6 +691,7 @@ mod tests {
             TestAttributesBuilder::new().build(),
             InsertPayloadSafety::Unsafe,
             None,
+            Context::new(),
         ))));
         assert_eq!(*queue_rx.borrow(), 1);
 

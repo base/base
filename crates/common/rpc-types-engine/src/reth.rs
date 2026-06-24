@@ -79,46 +79,69 @@ impl ExecutionPayload for ExecutionData {
 
 impl ExecutionPayload for TracedExecutionData {
     fn parent_hash(&self) -> B256 {
-        self.inner.parent_hash()
+        ExecutionPayload::parent_hash(&self.inner)
     }
 
     fn block_hash(&self) -> B256 {
-        self.inner.block_hash()
+        ExecutionPayload::block_hash(&self.inner)
     }
 
     fn block_number(&self) -> u64 {
-        self.inner.block_number()
+        ExecutionPayload::block_number(&self.inner)
     }
 
     fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
-        self.inner.payload.as_v2().map(|p| &p.withdrawals)
+        ExecutionPayload::withdrawals(&self.inner)
     }
 
     fn block_access_list(&self) -> Option<&Bytes> {
-        None
+        ExecutionPayload::block_access_list(&self.inner)
     }
 
     fn parent_beacon_block_root(&self) -> Option<B256> {
-        self.inner.sidecar.parent_beacon_block_root()
+        ExecutionPayload::parent_beacon_block_root(&self.inner)
     }
 
     fn timestamp(&self) -> u64 {
-        self.inner.payload.as_v1().timestamp
+        ExecutionPayload::timestamp(&self.inner)
     }
 
     fn gas_used(&self) -> u64 {
-        self.inner.payload.as_v1().gas_used
+        ExecutionPayload::gas_used(&self.inner)
     }
 
     fn gas_limit(&self) -> u64 {
-        self.inner.payload.gas_limit()
+        ExecutionPayload::gas_limit(&self.inner)
     }
 
     fn slot_number(&self) -> Option<u64> {
-        None
+        ExecutionPayload::slot_number(&self.inner)
     }
 
     fn transaction_count(&self) -> usize {
-        self.inner.payload.as_v1().transactions.len()
+        ExecutionPayload::transaction_count(&self.inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{B256, Bytes};
+    use base_common_consensus::BaseBlock;
+    use reth_payload_primitives::ExecutionPayload as _;
+
+    use super::{ExecutionData, TracedExecutionData};
+
+    #[test]
+    fn traced_execution_data_preserves_block_access_list() {
+        let expected = Bytes::from_static(b"block-access-list");
+        let execution_data = ExecutionData::from_block_unchecked_with_extras(
+            B256::ZERO,
+            &BaseBlock::default(),
+            Some(expected.clone()),
+        );
+
+        let traced = TracedExecutionData::from(execution_data);
+
+        assert_eq!(traced.block_access_list(), Some(&expected));
     }
 }

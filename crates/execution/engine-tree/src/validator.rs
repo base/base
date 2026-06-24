@@ -231,12 +231,7 @@ where
         Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = BasePrimitives>,
     {
         match input {
-            BlockOrPayload::Payload(payload) => {
-                let _trace_guard = payload
-                    .trace_context_headers()
-                    .and_then(|trace_context| trace_context.attach_as_parent());
-                Ok(self.evm_config.evm_env_for_payload(payload)?)
-            }
+            BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
             BlockOrPayload::Block(block) => Ok(self.evm_config.evm_env(block.header())?),
         }
     }
@@ -257,16 +252,9 @@ where
         Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = BasePrimitives>,
     {
         Ok(match input {
-            BlockOrPayload::Payload(payload) => {
-                let _trace_guard = payload
-                    .trace_context_headers()
-                    .and_then(|trace_context| trace_context.attach_as_parent());
-                let iter = self
-                    .evm_config
-                    .tx_iterator_for_payload(payload)
-                    .map_err(NewPayloadError::other)?;
-                Either::Left(iter)
-            }
+            BlockOrPayload::Payload(payload) => Either::Left(
+                self.evm_config.tx_iterator_for_payload(payload).map_err(NewPayloadError::other)?,
+            ),
             BlockOrPayload::Block(block) => {
                 let txs = block.body().clone_transactions();
                 let convert = |tx: BaseTransactionSigned| tx.try_into_recovered();
@@ -291,12 +279,7 @@ where
         Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = BasePrimitives>,
     {
         match input {
-            BlockOrPayload::Payload(payload) => {
-                let _trace_guard = payload
-                    .trace_context_headers()
-                    .and_then(|trace_context| trace_context.attach_as_parent());
-                Ok(self.evm_config.context_for_payload(payload)?)
-            }
+            BlockOrPayload::Payload(payload) => Ok(self.evm_config.context_for_payload(payload)?),
             BlockOrPayload::Block(block) => Ok(self.evm_config.context_for_block(block)?),
         }
     }

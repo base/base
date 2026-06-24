@@ -224,9 +224,11 @@ pub trait PayloadTraceContextExt: Clone {
     fn trace_context_headers(&self) -> Option<&TraceContextHeaders>;
 
     /// Returns a copy of these attributes with the supplied trace context attached.
+    #[must_use = "trace context is only preserved if the returned payload wrapper is used"]
     fn with_trace_context(self, trace_context: TraceContextHeaders) -> Self;
 
     /// Captures the current `OTel` context and attaches it if supported.
+    #[must_use = "trace context is only preserved if the returned payload wrapper is used"]
     fn with_current_trace_context(self) -> Self {
         self.with_trace_context(TraceContextHeaders::from_current())
     }
@@ -280,6 +282,12 @@ impl<T> TracedBasePayloadBuilderAttributes<T> {
     /// Creates traced Base payload attributes with no trace context attached.
     pub const fn new(inner: BasePayloadBuilderAttributes<T>) -> Self {
         Self { inner, trace_context: TraceContextHeaders::new(None, None) }
+    }
+
+    /// Returns mutable access to the inner attributes for focused test setup.
+    #[cfg(test)]
+    pub const fn inner_mut(&mut self) -> &mut BasePayloadBuilderAttributes<T> {
+        &mut self.inner
     }
 }
 

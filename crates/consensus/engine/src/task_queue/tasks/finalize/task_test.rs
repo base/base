@@ -8,6 +8,7 @@ use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum
 use alloy_rpc_types_eth::Block as RpcBlock;
 use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_common_rpc_types::Transaction as BaseTransaction;
+use opentelemetry::Context;
 
 use crate::{
     EngineTaskExt, FinalizeTask, FinalizeTaskError,
@@ -62,7 +63,8 @@ async fn block_not_safe_returns_error() {
     let mut state =
         TestEngineStateBuilder::new().with_safe_head(head).with_unsafe_head(head).build();
 
-    let task = FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 10);
+    let task =
+        FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 10, Context::new());
     let result = task.execute(&mut state).await;
 
     assert!(
@@ -84,7 +86,8 @@ async fn block_not_found_returns_error() {
         .with_finalized_head(finalized)
         .build();
 
-    let task = FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 7);
+    let task =
+        FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 7, Context::new());
     let result = task.execute(&mut state).await;
 
     assert!(
@@ -110,7 +113,7 @@ async fn from_block_error_on_genesis_hash_mismatch() {
     let mut state =
         TestEngineStateBuilder::new().with_safe_head(head).with_unsafe_head(head).build();
 
-    let task = FinalizeTask::new(Arc::new(client), cfg, 0);
+    let task = FinalizeTask::new(Arc::new(client), cfg, 0, Context::new());
     let result = task.execute(&mut state).await;
 
     assert!(
@@ -135,7 +138,7 @@ async fn fcu_failure_propagates_as_forkchoice_update_failed() {
 
     let mut state = TestEngineStateBuilder::new().build();
 
-    let task = FinalizeTask::new(Arc::new(client), cfg, 0);
+    let task = FinalizeTask::new(Arc::new(client), cfg, 0, Context::new());
     let result = task.execute(&mut state).await;
 
     assert!(
@@ -156,7 +159,8 @@ async fn stale_task_does_not_regress_finalized_head() {
         .with_finalized_head(head)
         .build();
 
-    let task = FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 7);
+    let task =
+        FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 7, Context::new());
     let result = task.execute(&mut state).await;
 
     assert!(result.is_ok(), "stale FinalizeTask should succeed as a no-op, got {result:?}");
@@ -186,7 +190,7 @@ async fn success_updates_engine_state_finalized_head() {
     // calls FCU. After execution the finalized_head must reflect the new block.
     let mut state = TestEngineStateBuilder::new().build();
 
-    let task = FinalizeTask::new(Arc::new(client), Arc::clone(&cfg), 0);
+    let task = FinalizeTask::new(Arc::new(client), Arc::clone(&cfg), 0, Context::new());
     task.execute(&mut state).await.expect("FinalizeTask should succeed");
 
     assert_eq!(

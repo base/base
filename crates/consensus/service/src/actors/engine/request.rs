@@ -53,11 +53,11 @@ pub enum EngineActorRequest {
     GetPayloadRequest(Box<GetPayloadRequest>),
     /// Request to consolidate using a safe L2 signal from attributes or delegated safe-block
     /// derivation
-    ProcessSafeL2SignalRequest(ConsolidateInput),
+    ProcessSafeL2SignalRequest(Box<SafeL2SignalRequest>),
     /// Request to finalize the L2 block at the provided block number.
-    ProcessFinalizedL2BlockNumberRequest(Box<u64>),
+    ProcessFinalizedL2BlockNumberRequest(Box<FinalizeL2BlockRequest>),
     /// Request to insert the provided external unsafe block.
-    ProcessUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
+    ProcessUnsafeL2BlockRequest(Box<ExternalUnsafePayloadRequest>),
     /// Request to insert a locally produced sequencer unsafe block.
     ProcessLocalUnsafeL2BlockRequest(Box<InsertUnsafePayloadRequest>),
     /// Request to reset engine forkchoice.
@@ -79,6 +79,33 @@ pub struct BuildRequest {
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
     pub result_tx: mpsc::Sender<Result<PayloadId, BuildTaskError>>,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
+}
+
+/// A request to consolidate the safe head with the caller's tracing context.
+#[derive(Debug)]
+pub struct SafeL2SignalRequest {
+    /// The safe signal payload.
+    pub signal: ConsolidateInput,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
+}
+
+/// A request to finalize an L2 block with the caller's tracing context.
+#[derive(Debug)]
+pub struct FinalizeL2BlockRequest {
+    /// The block number to finalize.
+    pub block_number: u64,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
+}
+
+/// A request to insert an external unsafe payload with the caller's tracing context.
+#[derive(Debug)]
+pub struct ExternalUnsafePayloadRequest {
+    /// The payload envelope to insert.
+    pub envelope: BaseExecutionPayloadEnvelope,
     /// [`opentelemetry::Context`] from the requester, for trace propagation.
     pub otel_cx: Context,
 }

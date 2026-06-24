@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use base_common_genesis::RollupConfig;
 use base_protocol::AttributesWithParent;
+use opentelemetry::Context;
 
 use super::{BuildTaskError, EngineTaskExt, SealTask, SealTaskError};
 use crate::{Engine, EngineClient, EngineState, InsertPayloadSafety};
@@ -41,6 +42,7 @@ pub(in crate::task_queue) async fn build_and_seal<EngineClient_: EngineClient>(
     cfg: Arc<RollupConfig>,
     attributes: AttributesWithParent,
     payload_safety: InsertPayloadSafety,
+    otel_cx: Context,
 ) -> Result<(), BuildAndSealError> {
     let payload_id = Engine::<EngineClient_>::build_with_state(
         state,
@@ -51,7 +53,9 @@ pub(in crate::task_queue) async fn build_and_seal<EngineClient_: EngineClient>(
     .await?;
 
     // Execute the seal task with the payload ID from the build
-    SealTask::new(engine, cfg, payload_id, attributes, payload_safety, None).execute(state).await?;
+    SealTask::new(engine, cfg, payload_id, attributes, payload_safety, None, otel_cx)
+        .execute(state)
+        .await?;
 
     Ok(())
 }

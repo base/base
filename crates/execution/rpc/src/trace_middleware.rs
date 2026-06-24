@@ -91,7 +91,7 @@ where
         // handler spans created inside that future inherit the caller's traceparent.
         let this = self.project();
         let _guard =
-            this.otel_cx.as_ref().cloned().map(|InboundOtelContext(otel_cx)| otel_cx.attach());
+            this.otel_cx.as_ref().map(|InboundOtelContext(otel_cx)| otel_cx.clone().attach());
         this.inner.poll(cx)
     }
 }

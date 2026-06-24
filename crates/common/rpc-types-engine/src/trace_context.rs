@@ -1,3 +1,5 @@
+//! W3C trace context types for propagating `OpenTelemetry` parents across execution payload flows.
+
 use alloc::{string::String, vec::Vec};
 
 use crate::ExecutionData;
@@ -98,10 +100,12 @@ pub trait BaseExecutionDataExt: Clone {
     fn trace_context_headers(&self) -> Option<&TraceContextHeaders>;
 
     /// Returns a copy of this payload with the supplied trace context attached.
+    #[must_use = "trace context is only preserved if the returned payload wrapper is used"]
     fn with_trace_context(self, trace_context: TraceContextHeaders) -> Self;
 
     /// Captures the current `OTel` context and attaches it to this payload if supported.
     #[cfg(feature = "reth")]
+    #[must_use = "trace context is only preserved if the returned payload wrapper is used"]
     fn with_current_trace_context(self) -> Self {
         self.with_trace_context(TraceContextHeaders::from_current())
     }
