@@ -68,7 +68,7 @@ struct WriterInner {
     writer: Option<NonBlocking>,
     dropped: Option<ErrorCounter>,
     observed_drops: AtomicUsize,
-    _guard: Option<Arc<WorkerGuard>>,
+    _guard: Option<WorkerGuard>,
     config: TransactionEventWriterConfig,
 }
 
@@ -166,7 +166,7 @@ impl TransactionEventWriter {
                 writer: Some(writer),
                 dropped: Some(dropped),
                 observed_drops: AtomicUsize::new(0),
-                _guard: Some(Arc::new(guard)),
+                _guard: Some(guard),
                 config,
             }),
         })
@@ -334,7 +334,7 @@ mod tests {
                 writer: Some(writer),
                 dropped: Some(dropped),
                 observed_drops: AtomicUsize::new(0),
-                _guard: Some(Arc::new(guard)),
+                _guard: Some(guard),
                 config,
             }),
         }
