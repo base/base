@@ -452,6 +452,7 @@ clap_builder = "4.5.57"
 tracing-appender = "0.2.4"
 tracing-subscriber = "0.3.22"
 tracing = { version = "0.1.43", default-features = false }
+once_cell = { version = "1.21.3", default-features = false, features = ["std"] }
 
 # Metrics
 ordered-float = "5"

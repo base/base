@@ -205,7 +205,7 @@ impl TransactionEventWriter {
         }
 
         self.observe_dropped_events();
-        Metrics::emitted_events().increment(1);
+        Metrics::submitted_events().increment(1);
         Ok(())
     }
 

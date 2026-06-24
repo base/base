@@ -1,9 +1,10 @@
 //! Transaction event emission helpers and process-global writer access.
 
-use std::sync::{Mutex, OnceLock};
+use std::cell::Cell;
 
 use alloy_primitives::{B256, TxHash};
 use chrono::Utc;
+use once_cell::sync::OnceCell;
 use serde_json::{Map, Value};
 use tracing::debug;
 
@@ -12,8 +13,7 @@ use crate::{
     TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
 };
 
-static GLOBAL_TRANSACTION_EVENT_WRITER: OnceLock<TransactionEventWriter> = OnceLock::new();
-static GLOBAL_TRANSACTION_EVENT_WRITER_INIT_LOCK: Mutex<()> = Mutex::new(());
+static GLOBAL_TRANSACTION_EVENT_WRITER: OnceCell<TransactionEventWriter> = OnceCell::new();
 
 /// Result of initializing the process-global transaction event writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,20 +51,17 @@ impl GlobalTransactionEventWriter {
             return Ok(GlobalTransactionEventWriterInitStatus::NotConfigured);
         }
 
-        if GLOBAL_TRANSACTION_EVENT_WRITER.get().is_some() {
-            return Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized);
-        }
+        let initialized = Cell::new(false);
+        GLOBAL_TRANSACTION_EVENT_WRITER.get_or_try_init(|| {
+            initialized.set(true);
+            TransactionEventWriter::from_config(config)
+        })?;
 
-        let _guard = GLOBAL_TRANSACTION_EVENT_WRITER_INIT_LOCK
-            .lock()
-            .map_err(|_| eyre::eyre!("transaction event writer init lock poisoned"))?;
-        if GLOBAL_TRANSACTION_EVENT_WRITER.get().is_some() {
-            return Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized);
+        if initialized.get() {
+            Ok(GlobalTransactionEventWriterInitStatus::Initialized)
+        } else {
+            Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized)
         }
-
-        let writer = TransactionEventWriter::from_config(config)?;
-        let _ = GLOBAL_TRANSACTION_EVENT_WRITER.set(writer);
-        Ok(GlobalTransactionEventWriterInitStatus::Initialized)
     }
 
     /// Returns the process-global transaction event writer, if configured.
