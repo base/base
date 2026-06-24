@@ -9,7 +9,10 @@ use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
 use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ExecutionStats, ProofResult, ZkProofResult, ZkVm};
+use base_prover_service_protocol::{
+    ExecutionStats, ProofResult, SessionType, SnarkGroth16ProofResult, ZkProofRequest,
+    ZkProofResult, ZkVm,
+};
 use sp1_sdk::{
     Elf, SP1Stdin,
     blocking::{LightProver, Prover},
@@ -28,7 +31,7 @@ macro_rules! backend_error {
     };
 }
 
-/// Prefix marking a dry-run backend session id.
+/// Prefix marking a dry-run STARK backend session id.
 pub const DRY_RUN_PREFIX: &str = "dry-run-stark-";
 
 /// [`ZkProver`] that generates a witness and executes the range program locally.
@@ -130,7 +133,7 @@ impl DryRunZkProver {
     /// Generate the witness, execute it locally, and return an empty-proof dry-run result.
     pub async fn prove_range(
         &self,
-        request: &base_prover_service_protocol::ZkProofRequest,
+        request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<ProofResult, ZkProverError> {
         if request.number_of_blocks_to_prove == 0 {
@@ -206,6 +209,22 @@ impl DryRunZkProver {
             execution_stats: Some(execution_stats),
         }))
     }
+
+    /// Derive the deterministic backend session id for a request.
+    pub fn backend_session_id(request: &ZkProofRequestKind, request_session_id: &str) -> String {
+        Self::backend_session_id_for_type(request.initial_session_type(), request_session_id)
+    }
+
+    /// Derive the deterministic backend session id for a stage.
+    pub fn backend_session_id_for_type(
+        session_type: SessionType,
+        request_session_id: &str,
+    ) -> String {
+        match session_type {
+            SessionType::Stark => format!("{DRY_RUN_PREFIX}{request_session_id}"),
+            SessionType::Snark => format!("dry-run-snark-{request_session_id}"),
+        }
+    }
 }
 
 /// Dry-run submission is synchronous: `submit` generates the witness and runs local SP1 execution
@@ -220,14 +239,13 @@ impl ZkProver for DryRunZkProver {
         request: &ZkProofRequestKind,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
-        let ZkProofRequestKind::Compressed(request) = request else {
-            return Err(backend_error!(
-                "dry-run backend only supports compressed proof types; SNARK_GROTH16 requires a proof-producing backend"
-            ));
+        let range_request = match request {
+            ZkProofRequestKind::Compressed(request) => request,
+            ZkProofRequestKind::SnarkGroth16(request) => &request.proof,
         };
 
-        let backend_session_id = format!("{DRY_RUN_PREFIX}{request_session_id}");
-        let result = self.prove_range(request, request_session_id).await?;
+        let backend_session_id = Self::backend_session_id(request, request_session_id);
+        let result = self.prove_range(range_request, request_session_id).await?;
         self.completed_results
             .lock()
             .map_err(|e| backend_error!("dry-run result store lock poisoned: {e}"))?
@@ -236,7 +254,42 @@ impl ZkProver for DryRunZkProver {
         Ok(backend_session_id)
     }
 
-    async fn poll(&self, backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {
+    async fn submit_next(
+        &self,
+        _request: &base_prover_service_protocol::SnarkGroth16ProofRequest,
+        request_session_id: &str,
+        completed_backend_session_id: &str,
+    ) -> Result<String, ZkProverError> {
+        let range_result = self
+            .completed_results
+            .lock()
+            .map_err(|e| backend_error!("dry-run result store lock poisoned: {e}"))?
+            .remove(completed_backend_session_id)
+            .ok_or_else(|| ZkProverError::BackendSessionNotFound {
+                backend_session_id: completed_backend_session_id.to_owned(),
+            })?;
+        let execution_stats = match range_result {
+            ProofResult::Compressed(proof) => proof.execution_stats,
+            _ => return Err(backend_error!("dry-run range result had unexpected proof type")),
+        };
+        let backend_session_id =
+            Self::backend_session_id_for_type(SessionType::Snark, request_session_id);
+        let result = ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: Vec::new().into(), execution_stats },
+        });
+        self.completed_results
+            .lock()
+            .map_err(|e| backend_error!("dry-run result store lock poisoned: {e}"))?
+            .insert(backend_session_id.clone(), result);
+
+        Ok(backend_session_id)
+    }
+
+    async fn poll(
+        &self,
+        _session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ZkSessionState, ZkProverError> {
         let contains_result = self
             .completed_results
             .lock()
@@ -245,7 +298,11 @@ impl ZkProver for DryRunZkProver {
         if contains_result { Ok(ZkSessionState::Completed) } else { Ok(ZkSessionState::NotFound) }
     }
 
-    async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
+    async fn download(
+        &self,
+        _session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ProofResult, ZkProverError> {
         self.completed_results
             .lock()
             .map_err(|e| backend_error!("dry-run result store lock poisoned: {e}"))?

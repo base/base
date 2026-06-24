@@ -23,4 +23,4 @@ mod dry_run;
 pub use dry_run::{DRY_RUN_PREFIX, DryRunZkProver};
 
 mod mock;
-pub use mock::{MOCK_PROOF_BYTES, MOCK_SNARK_PREFIX, MockZkProver};
+pub use mock::{MOCK_PROOF_BYTES, MockZkProver};
