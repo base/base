@@ -32,7 +32,7 @@ macro_rules! backend_error {
 pub const DRY_RUN_PREFIX: &str = "dry-run-stark-";
 
 /// [`ZkProver`] that generates a witness and executes the range program locally.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DryRunZkProver {
     provider: OpSuccinctWitnessProvider,
     base_consensus_url: String,
@@ -40,17 +40,6 @@ pub struct DryRunZkProver {
     default_sequence_window: u64,
     range_cycle_limit: u64,
     completed_results: Arc<Mutex<HashMap<String, ProofResult>>>,
-}
-
-impl std::fmt::Debug for DryRunZkProver {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DryRunZkProver")
-            .field("base_consensus_url", &self.base_consensus_url)
-            .field("l1_node_url", &self.l1_node_url)
-            .field("default_sequence_window", &self.default_sequence_window)
-            .field("range_cycle_limit", &self.range_cycle_limit)
-            .finish_non_exhaustive()
-    }
 }
 
 impl DryRunZkProver {
