@@ -12,32 +12,43 @@ pub use cli::{
 };
 
 mod config;
-pub use config::{ConfigError, ProposerConfig};
-
-mod constants;
-pub use constants::{
-    MAX_PROOF_RETRIES, PROPOSAL_TIMEOUT, PROVER_TIMEOUT, RECOVERY_SCAN_CONCURRENCY,
-};
+pub use config::ProposerConfig;
 
 mod output_proposer;
 pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
+
+mod proof_adapter;
+pub use proof_adapter::ProposerProofAdapter;
+
+mod proposal_intervals;
+pub use proposal_intervals::ProposalIntervals;
+
+mod proof_target;
+pub use proof_target::ProofTarget;
+
+mod proof_recovery;
+pub use proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig};
+
+mod proof_collector;
+pub use proof_collector::ProofCollector;
+
+mod proof_dispatcher;
+pub use proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig};
+
+mod proof_submitter;
+pub use proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction};
 
 mod driver;
 pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};
 
 mod pipeline;
-pub use pipeline::{PipelineConfig, ProvingPipeline};
-
-mod proof_source;
-pub use proof_source::{
-    DualPlatformProof, PlatformProof, TeeProofError, TeeProofPlatform, TeeProofSources,
-};
+pub use pipeline::ProvingPipeline;
 
 mod error;
-pub use error::{ProposerError, ProposerResult};
+pub use error::ProposerError;
 
 mod admin;
-pub use admin::{AdminServer, ProposerAdminApiServer, ProposerAdminApiServerImpl};
+pub use admin::ProposerAdminApiServerImpl;
 
 mod metrics;
 pub use metrics::Metrics;

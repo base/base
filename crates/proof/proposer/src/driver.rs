@@ -15,12 +15,11 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
-use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
-use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
+use base_proof_rpc::{L1Provider, RollupProvider};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::pipeline::ProvingPipeline;
 
@@ -33,6 +32,14 @@ use crate::pipeline::ProvingPipeline;
 pub struct DriverConfig {
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
+    /// Maximum number of concurrent RPC calls during the recovery scan.
+    pub recovery_scan_concurrency: usize,
+    /// Optional maximum duration for a single inline submit (validation + L1
+    /// transaction). `None` disables the outer pipeline timeout.
+    pub submit_timeout: Option<Duration>,
+    /// Optional address of the `TEEProverRegistry` contract on L1.
+    /// When set, the pipeline validates signers via `isValidSigner` before submission.
+    pub tee_prover_registry_address: Option<Address>,
     /// Number of L2 blocks between proposals (read from `AggregateVerifier` at startup).
     pub block_interval: u64,
     /// Number of L2 blocks between intermediate output root checkpoints.
@@ -42,17 +49,13 @@ pub struct DriverConfig {
     /// If true, use `safe_l2` (derived from L1 but L1 not yet finalized).
     /// If false (default), use `finalized_l2` (derived from finalized L1).
     pub allow_non_finalized: bool,
-    /// Address of the proposer that submits proof transactions on-chain.
+    /// Address of the proposer that submits proof transactions onchain.
     /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
     pub proposer_address: Address,
-    /// Keccak256 hash of the expected Nitro enclave PCR0 measurement.
-    /// Passed to the Nitro prover in each proof request so multi-enclave provers
+    /// Keccak256 hash of the expected enclave PCR0 measurement.
+    /// Passed to the prover in each proof request so multi-enclave provers
     /// can select the correct enclave.
-    pub tee_nitro_image_hash: B256,
-    /// Contract-compatible hash of the expected TDX TEE image measurements.
-    /// Passed to the TDX prover in each proof request so multi-enclave provers
-    /// can select the correct enclave.
-    pub tee_tdx_image_hash: B256,
+    pub tee_image_hash: B256,
     /// Address of the `AnchorStateRegistry` contract on L1.
     /// Used as the "no parent" sentinel when creating the first game from anchor state.
     pub anchor_state_registry_address: Address,
@@ -62,23 +65,25 @@ impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             poll_interval: Duration::from_secs(12),
+            recovery_scan_concurrency: 8,
+            submit_timeout: None,
+            tee_prover_registry_address: None,
             block_interval: 512,
             intermediate_block_interval: 512,
             game_type: 0,
             allow_non_finalized: false,
             proposer_address: Address::ZERO,
-            tee_nitro_image_hash: B256::ZERO,
-            tee_tdx_image_hash: B256::ZERO,
+            tee_image_hash: B256::ZERO,
             anchor_state_registry_address: Address::ZERO,
         }
     }
 }
 
-/// On-chain state recovered by the pipeline.
+/// Onchain state recovered by the pipeline.
 ///
 /// This is either a game found in the `DisputeGameFactory` or the
 /// anchor root from the `AnchorStateRegistry` when no games exist.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecoveredState {
     /// Proxy address of the parent game, or the `AnchorStateRegistry` address
     /// when creating the first game from anchor state (no parent game exists).
@@ -111,32 +116,26 @@ pub trait ProposerDriverControl: Send + Sync {
 /// pipeline.
 struct Session {
     cancel: CancellationToken,
-    task: Option<JoinHandle<Result<()>>>,
+    task: Option<JoinHandle<()>>,
 }
 
 /// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
 /// and stopped at runtime (e.g. via the admin RPC).
-pub struct PipelineHandle<L1, L2, R, ASR, F>
+pub struct PipelineHandle<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
-    ASR: AnchorStateRegistryClient + 'static,
-    F: DisputeGameFactoryClient + 'static,
 {
-    pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
+    pipeline: Arc<ProvingPipeline<L1, R>>,
     session: TokioMutex<Session>,
     global_cancel: CancellationToken,
     running: Arc<AtomicBool>,
 }
 
-impl<L1, L2, R, ASR, F> std::fmt::Debug for PipelineHandle<L1, L2, R, ASR, F>
+impl<L1, R> std::fmt::Debug for PipelineHandle<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
-    ASR: AnchorStateRegistryClient + 'static,
-    F: DisputeGameFactoryClient + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PipelineHandle")
@@ -145,22 +144,16 @@ where
     }
 }
 
-impl<L1, L2, R, ASR, F> PipelineHandle<L1, L2, R, ASR, F>
+impl<L1, R> PipelineHandle<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
-    ASR: AnchorStateRegistryClient + 'static,
-    F: DisputeGameFactoryClient + 'static,
 {
     /// Creates a new [`PipelineHandle`] wrapping the given proving pipeline.
-    pub fn new(
-        pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
-        global_cancel: CancellationToken,
-    ) -> Self {
+    pub fn new(pipeline: ProvingPipeline<L1, R>, global_cancel: CancellationToken) -> Self {
         let session = Session { cancel: global_cancel.child_token(), task: None };
         Self {
-            pipeline,
+            pipeline: Arc::new(pipeline),
             session: TokioMutex::new(session),
             global_cancel,
             running: Arc::new(AtomicBool::new(false)),
@@ -169,13 +162,10 @@ where
 }
 
 #[async_trait]
-impl<L1, L2, R, ASR, F> ProposerDriverControl for PipelineHandle<L1, L2, R, ASR, F>
+impl<L1, R> ProposerDriverControl for PipelineHandle<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
-    ASR: AnchorStateRegistryClient + 'static,
-    F: DisputeGameFactoryClient + 'static,
 {
     async fn start_proposer(&self) -> Result<(), String> {
         let mut session = self.session.lock().await;
@@ -188,8 +178,7 @@ where
         // are surfaced and the JoinHandle resources are properly reclaimed.
         if let Some(task) = session.task.take() {
             match task.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => warn!(error = %e, "previous pipeline run exited with error"),
+                Ok(()) => {}
                 Err(e) => error!(error = %e, "previous pipeline run panicked"),
             }
         }
@@ -197,14 +186,13 @@ where
         self.running.store(true, Ordering::Release);
 
         let cancel = self.global_cancel.child_token();
-        let mut pipeline = self.pipeline.clone();
-        pipeline.set_cancel(cancel.clone());
+        let pipeline = Arc::clone(&self.pipeline);
 
         let running = Arc::clone(&self.running);
+        let run_cancel = cancel.clone();
         let handle = tokio::spawn(async move {
-            let result = pipeline.run().await;
+            pipeline.run(run_cancel).await;
             running.store(false, Ordering::Release);
-            result
         });
 
         session.cancel = cancel;
@@ -225,8 +213,7 @@ where
 
         if let Some(task) = session.task.take() {
             match task.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => warn!(error = %e, "proving pipeline exited with error"),
+                Ok(()) => {}
                 Err(e) => error!(error = %e, "proving pipeline task panicked"),
             }
         }
@@ -246,65 +233,97 @@ mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::B256;
-    use base_proof_primitives::ProverClient;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
-        pipeline::PipelineConfig,
-        proof_source::TeeProofSources,
+        ProofCollector, ProofDispatcher, ProofDispatcherConfig, ProofRecovery, ProofRecoveryConfig,
+        ProofSubmitter, ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockProver, MockRollupClient, test_anchor_root, test_sync_status,
+            MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
+            test_sync_status,
         },
     };
 
     fn test_pipeline_handle(
         global_cancel: CancellationToken,
-    ) -> PipelineHandle<
-        MockL1,
-        MockL2,
-        MockRollupClient,
-        MockAnchorStateRegistry,
-        MockDisputeGameFactory,
-    > {
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+    ) -> PipelineHandle<MockL1, MockRollupClient> {
+        let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: Duration::ZERO, block_interval: 512 });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let anchor_registry =
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
-        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
+        let anchor_registry: Arc<dyn base_proof_contracts::AnchorStateRegistryClient> =
+            Arc::new(MockAnchorStateRegistry {
+                anchor_root: test_anchor_root(0),
+                anchor_game: Address::ZERO,
+            });
+        let factory: Arc<dyn base_proof_contracts::DisputeGameFactoryClient> =
+            Arc::new(MockDisputeGameFactory::with_games(vec![]));
+        let proof_requester: Arc<dyn base_prover_service_client::ProofRequesterProvider> =
+            Arc::new(MockProofRequester::default());
+        let verifier: Arc<dyn base_proof_contracts::AggregateVerifierClient> =
+            Arc::new(MockAggregateVerifier::default());
+        let output_proposer: Arc<dyn crate::OutputProposer> =
+            Arc::new(MockOutputProposer::default());
+        let config = DriverConfig {
+            poll_interval: Duration::from_secs(3600),
+            submit_timeout: Some(std::time::Duration::from_secs(60)),
+            recovery_scan_concurrency: 8,
+            tee_prover_registry_address: None,
+            block_interval: 512,
+            intermediate_block_interval: 512,
+            ..Default::default()
+        };
 
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
-                max_parallel_proofs: 2,
-                max_retries: 3,
-                recovery_scan_concurrency: 8,
-                tee_prover_registry_address: None,
-                readiness: None,
-                driver: DriverConfig {
-                    poll_interval: Duration::from_secs(3600),
-                    block_interval: 512,
-                    intermediate_block_interval: 512,
-                    ..Default::default()
-                },
-            },
-            TeeProofSources::new(Arc::clone(&prover), prover),
-            l1,
+        let proof_dispatcher = ProofDispatcher::new(
+            Arc::clone(&proof_requester),
+            Arc::<MockL1>::clone(&l1),
             l2,
-            rollup,
+            Arc::<MockRollupClient>::clone(&rollup),
+            ProofDispatcherConfig::from(&config),
+        );
+        let proof_submitter = ProofSubmitter::new(
+            output_proposer,
+            Arc::clone(&rollup),
+            Arc::clone(&l1),
+            Arc::clone(&factory),
+            verifier,
+            ProofSubmitterConfig {
+                proposer_address: config.proposer_address,
+                game_type: config.game_type,
+                block_interval: config.block_interval,
+                intermediate_block_interval: config.intermediate_block_interval,
+                tee_image_hash: config.tee_image_hash,
+                tee_prover_registry_address: config.tee_prover_registry_address,
+                output_fetch_concurrency: config.recovery_scan_concurrency,
+            },
+        );
+        let proof_recovery = Arc::new(ProofRecovery::new(
+            ProofRecoveryConfig {
+                block_interval: config.block_interval,
+                intermediate_block_interval: config.intermediate_block_interval,
+                game_type: config.game_type,
+                allow_non_finalized: config.allow_non_finalized,
+                anchor_state_registry_address: config.anchor_state_registry_address,
+                scan_concurrency: config.recovery_scan_concurrency,
+            },
+            Arc::<MockRollupClient>::clone(&rollup),
             anchor_registry,
             factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
-            global_cancel.child_token(),
+        ));
+        let proof_collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup),
+            proof_submitter,
+            config.block_interval,
+            config.submit_timeout,
         );
+        let pipeline =
+            ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);
         PipelineHandle::new(pipeline, global_cancel)
     }
 
