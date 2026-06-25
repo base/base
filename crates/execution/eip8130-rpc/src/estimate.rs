@@ -22,12 +22,17 @@ use revm::context::{Block, BlockEnv, TxEnv, result::ExecutionResult};
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
 /// read-only [`base_common_evm::Eip8130Executor::simulate`] at the block state.
 ///
-/// Unlike the standard reth estimator, this does not binary-search a gas limit:
-/// the EIP-8130 pipeline charges a deterministic, signature-independent amount
-/// (intrinsic + phased-call gas, less the EIP-3529-capped refund, plus payer
-/// authentication), so one simulation yields the exact estimate. The simulation
-/// is built from an unsigned request with a stub authentication blob and never
-/// commits state.
+/// The EIP-8130 pipeline prices a deterministic, signature-independent amount
+/// (intrinsic + phased-call gas + payer authentication), so a single
+/// [`base_common_evm::Eip8130Executor::simulate`] resolves the sender and prices
+/// intrinsic/auth gas once. To return a gas *limit* that is guaranteed to
+/// succeed — covering both the unrefunded gross call spend and EIP-150's 63/64
+/// retention across nested calls — `simulate` internally binary-searches the
+/// minimum call pool at which the phased calls still succeed, re-dispatching them
+/// at candidate pools over reverted journal checkpoints. The determinism keeps
+/// that search to a handful of iterations (vs. the standard estimator searching
+/// the whole gas limit from scratch). The simulation is built from an unsigned
+/// request with a stub authentication blob and never commits state.
 ///
 /// **Fork-agnostic on purpose.** This does not check Cobalt activation; callers
 /// must gate via [`crate::Eip8130CobaltGate`] before invoking it.

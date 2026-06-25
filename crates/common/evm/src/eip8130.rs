@@ -80,6 +80,18 @@ use crate::{
 /// Base is post-London, so this is constant across all live specs.
 const MAX_REFUND_QUOTIENT: u64 = 5;
 
+/// Maximum number of bisection steps the [`Eip8130Executor::simulate`] gas-limit
+/// search runs before returning the tightest verified-feasible pool it has found.
+/// The `POOL_SEARCH_TOLERANCE_PER_MILLE` early exit normally terminates the
+/// search in far fewer steps; this is a hard backstop against pathological ranges.
+const POOL_SEARCH_MAX_ITERS: u32 = 16;
+
+/// Early-exit tolerance (in parts-per-thousand) for the gas-limit search: once the
+/// `(highest - lowest)` window is within this fraction of `highest`, the search
+/// stops and returns `highest` (a verified-feasible pool). Mirrors the standard
+/// reth/geth estimator's 1.5% `ESTIMATE_GAS_ERROR_RATIO`.
+const POOL_SEARCH_TOLERANCE_PER_MILLE: u64 = 15;
+
 /// The resolved pre-call context of an EIP-8130 transaction: the authorized
 /// actors, the policy gate target, and the gas/fee parameters needed to dispatch
 /// `calls` and settle the fee.
@@ -255,7 +267,8 @@ impl Eip8130Executor {
         // chain.
         Self::warm_pre_call_accounts(evm);
 
-        let mut calls = match Self::execute_calls(evm, &signed, &outcome) {
+        let mut calls = match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available)
+        {
             Ok(calls) => calls,
             Err(err) => {
                 Self::teardown_after_error(evm, checkpoint);
@@ -400,34 +413,211 @@ impl Eip8130Executor {
         // warm-access gas a real execution would — keeping the estimate aligned.
         Self::warm_pre_call_accounts(evm);
 
-        let calls = match Self::execute_calls(evm, &signed, &outcome) {
-            Ok(calls) => calls,
+        // The estimate must return a gas *limit* that guarantees execution
+        // succeeds, not the net charge. Two effects make that more than the gas a
+        // single happy-path run consumes:
+        //
+        // 1. Refunds are credited to the payer *after* execution, so they never
+        //    rejoin the call pool; the limit must cover the gross call spend.
+        // 2. EIP-150 lets a `CALL` forward at most 63/64 of the gas available at
+        //    the call site. The calls are measured here against a large pool (the
+        //    request's `gas_limit`, defaulting to the block gas limit), so a
+        //    contract that forwards "all but 1/64" across nested calls would, at a
+        //    tighter `gas_limit == estimate`, forward less and could starve a deep
+        //    callee — OOG-ing even though this simulation succeeded.
+        //
+        // Rather than guess a headroom factor, search for the minimum call pool at
+        // which the calls still succeed — re-dispatching them at candidate pools
+        // over fresh journal checkpoints (each reverted), exactly as standard
+        // `eth_estimateGas` binary-searches the gas limit. The resolved sender,
+        // applied account changes, and warmed accounts above are shared by every
+        // probe, so only the call pool varies. Determinism of the EIP-8130 schedule
+        // keeps the search to a handful of iterations.
+        let ceiling_pool = outcome.execution_gas_available;
+
+        // First run at the request's full pool: measures the baseline call spend
+        // and decides whether the transaction can succeed at all. Probed under a
+        // nested checkpoint so its writes (and logs) are rolled back before the
+        // search reuses the resolved state.
+        let ceiling = match Self::probe_calls(evm, &signed, &outcome, ceiling_pool) {
+            Ok(ceiling) => ceiling,
             Err(err) => {
                 Self::teardown_after_error(evm, checkpoint);
                 return Err(err);
             }
         };
 
-        // Gas used mirrors `settle_fees` exactly via the shared `billable_gas`
-        // helper: a real `execute` of the same transaction charges this amount.
-        let billable_gas = Self::billable_gas(&outcome, &calls);
+        // A revert/halt even at the full pool is a genuine failure (not a gas
+        // shortfall the search could fix): surface it like standard
+        // `eth_estimateGas`. Re-run once un-reverted to capture the revert output
+        // and any logs the committed phases emitted before the failing phase.
+        if ceiling.reverted {
+            let final_calls = match Self::execute_calls(evm, &signed, &outcome, ceiling_pool) {
+                Ok(final_calls) => final_calls,
+                Err(err) => {
+                    Self::teardown_after_error(evm, checkpoint);
+                    return Err(err);
+                }
+            };
+            let logs = evm.ctx_mut().journal_mut().take_logs();
+            evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
+            let gross = outcome
+                .sender_intrinsic
+                .saturating_add(final_calls.call_gas_spent)
+                .saturating_add(outcome.payer_auth);
+            let result_gas = ResultGas::new_with_state_gas(gross, 0, 0, 0);
+            return Ok(ExecutionResult::Revert {
+                gas: result_gas,
+                logs,
+                output: final_calls.output,
+            });
+        }
 
-        // Capture logs before reverting so `eth_call`-style consumers still see
-        // them; estimation never commits, so discard all simulated state.
+        let feasible_pool =
+            match Self::search_estimate_pool(evm, &signed, &outcome, ceiling.call_gas_spent, ceiling_pool)
+            {
+                Ok(pool) => pool,
+                Err(err) => {
+                    Self::teardown_after_error(evm, checkpoint);
+                    return Err(err);
+                }
+            };
+
+        // Final canonical run at the chosen pool (un-reverted) to capture the logs
+        // and output at the returned gas limit, then discard all simulated state.
+        let final_calls = match Self::execute_calls(evm, &signed, &outcome, feasible_pool) {
+            Ok(final_calls) => final_calls,
+            Err(err) => {
+                Self::teardown_after_error(evm, checkpoint);
+                return Err(err);
+            }
+        };
         let logs = evm.ctx_mut().journal_mut().take_logs();
         evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
 
-        let result_gas = ResultGas::new_with_state_gas(billable_gas, 0, 0, 0);
-        if calls.reverted {
-            Ok(ExecutionResult::Revert { gas: result_gas, logs, output: calls.output })
+        // gas_limit = intrinsic + feasible_pool + payer_auth. The on-chain call
+        // pool at this limit is `gas_limit - intrinsic = feasible_pool + payer_auth`
+        // (payer authentication is billed on top of the limit, not drawn from the
+        // pool), so it is at least `feasible_pool` — the verified-feasible amount —
+        // and the limit also covers the net charge (which never exceeds it).
+        let estimate_gas = outcome
+            .sender_intrinsic
+            .saturating_add(feasible_pool)
+            .saturating_add(outcome.payer_auth);
+        let result_gas = ResultGas::new_with_state_gas(estimate_gas, 0, 0, 0);
+        if final_calls.reverted {
+            Ok(ExecutionResult::Revert { gas: result_gas, logs, output: final_calls.output })
         } else {
             Ok(ExecutionResult::Success {
                 reason: SuccessReason::Return,
                 gas: result_gas,
                 logs,
-                output: Output::Call(calls.output),
+                output: Output::Call(final_calls.output),
             })
         }
+    }
+
+    /// Runs the phased `calls` at `pool` under a nested journal checkpoint and
+    /// reverts every write (and log) they made, leaving the journal at the
+    /// resolved pre-call state so the next probe starts identically. Used only by
+    /// the [`Self::simulate`] gas-limit search; returns the measured
+    /// [`CallsResult`] so the caller can read `reverted` / `call_gas_spent`.
+    fn probe_calls<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+        signed: &base_common_consensus::Eip8130Signed,
+        outcome: &Eip8130Outcome,
+        pool: u64,
+    ) -> Result<CallsResult, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug,
+            >,
+    {
+        let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
+        let calls = Self::execute_calls(evm, signed, outcome, pool)?;
+        evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
+        Ok(calls)
+    }
+
+    /// Searches for the minimum call pool at which the `calls` still succeed,
+    /// given that they already succeeded at `ceiling_pool` consuming
+    /// `ceiling_spent`. Returns a verified-feasible pool in
+    /// `[ceiling_spent, ceiling_pool]`.
+    ///
+    /// Fast path: the measured spend is usually itself feasible (no gas lost to
+    /// EIP-150 forwarding), so a single probe at `ceiling_spent` resolves it. Only
+    /// when that probe fails does it bisect upward, seeded with the standard
+    /// `64/63` optimistic guess and bounded by [`POOL_SEARCH_MAX_ITERS`] and the
+    /// [`POOL_SEARCH_TOLERANCE_PER_MILLE`] early exit. Every bound assigned to
+    /// `highest` is a probe-verified success, so the returned value always
+    /// succeeds.
+    fn search_estimate_pool<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+        signed: &base_common_consensus::Eip8130Signed,
+        outcome: &Eip8130Outcome,
+        ceiling_spent: u64,
+        ceiling_pool: u64,
+    ) -> Result<u64, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug,
+            >,
+    {
+        // The calls consumed `ceiling_spent` at the full pool, so no smaller pool
+        // can satisfy them; if `ceiling_spent` itself succeeds it is the answer.
+        let spent = ceiling_spent.min(ceiling_pool);
+        if spent >= ceiling_pool
+            || !Self::probe_calls(evm, signed, outcome, spent)?.reverted
+        {
+            return Ok(spent);
+        }
+
+        // `lowest` is a pool known (or assumed) to be insufficient; `highest` is a
+        // verified-feasible pool. Bisect to shrink the window onto the threshold.
+        let mut lowest = spent;
+        let mut highest = ceiling_pool;
+
+        // Optimistic 64/63 seed (covers one forwarding level), verified before use.
+        let seed = spent.saturating_mul(64) / 63;
+        if seed > lowest && seed < highest {
+            if Self::probe_calls(evm, signed, outcome, seed)?.reverted {
+                lowest = seed;
+            } else {
+                highest = seed;
+            }
+        }
+
+        let mut iters = 0;
+        while lowest + 1 < highest && iters < POOL_SEARCH_MAX_ITERS {
+            // Stop once the window is within the tolerated fraction of `highest`,
+            // returning `highest` (a verified-feasible pool).
+            if (highest - lowest).saturating_mul(1000) <=
+                highest.saturating_mul(POOL_SEARCH_TOLERANCE_PER_MILLE)
+            {
+                break;
+            }
+            let mid = lowest + (highest - lowest) / 2;
+            if Self::probe_calls(evm, signed, outcome, mid)?.reverted {
+                lowest = mid;
+            } else {
+                highest = mid;
+            }
+            iters += 1;
+        }
+
+        Ok(highest)
     }
 
     /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: derives the
@@ -753,14 +943,21 @@ impl Eip8130Executor {
     }
 
     /// Dispatches the transaction's `calls` as EVM call frames, phase by phase,
-    /// from a single gas pool. Each phase runs under a journal checkpoint: a
+    /// from a single gas `pool`. Each phase runs under a journal checkpoint: a
     /// successful phase commits and its gas refund counts; a reverting phase (or
     /// one blocked by the policy gate) rolls back, is charged for the gas already
     /// consumed without refund, and skips every later phase.
+    ///
+    /// `pool` is the gas available to the calls (`gas_limit - sender_intrinsic`).
+    /// Block execution passes `outcome.execution_gas_available`; the read-only
+    /// estimate probes the same calls at several candidate pools to search for the
+    /// minimum gas limit that succeeds, so it is supplied explicitly rather than
+    /// read from `outcome`.
     fn execute_calls<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
         signed: &base_common_consensus::Eip8130Signed,
         outcome: &Eip8130Outcome,
+        pool: u64,
     ) -> Result<CallsResult, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
@@ -773,7 +970,7 @@ impl Eip8130Executor {
                 Journal: core::fmt::Debug,
             >,
     {
-        let mut pool = outcome.execution_gas_available;
+        let mut remaining = pool;
         // Signed transaction-level refund counter: refunds are accounted across
         // the whole transaction, not per call. See [`CallsResult::refund`].
         let mut refund: i64 = 0;
@@ -800,12 +997,13 @@ impl Eip8130Executor {
                     break;
                 }
 
-                let frame = Self::run_call(evm, outcome.sender, call.to, call.data.clone(), pool)?;
+                let frame =
+                    Self::run_call(evm, outcome.sender, call.to, call.data.clone(), remaining)?;
                 let gas = frame.gas();
-                // `run_call` caps the frame at `pool`, so a call can never report
-                // spending more than the pool held; treat a violation of that EVM
-                // invariant as a hard error rather than silently clamping to 0.
-                pool = pool.checked_sub(gas.total_gas_spent()).ok_or_else(|| {
+                // `run_call` caps the frame at `remaining`, so a call can never
+                // report spending more than the pool held; treat a violation of
+                // that EVM invariant as a hard error rather than silently clamping.
+                remaining = remaining.checked_sub(gas.total_gas_spent()).ok_or_else(|| {
                     BaseTransactionError::eip8130(
                         "EIP-8130 call consumed more gas than the phase pool contained",
                     )
@@ -832,7 +1030,7 @@ impl Eip8130Executor {
                 phase_statuses.push(0x00);
                 phase_statuses.resize(total_phases, 0x00);
                 return Ok(CallsResult {
-                    call_gas_spent: outcome.execution_gas_available.saturating_sub(pool),
+                    call_gas_spent: pool.saturating_sub(remaining),
                     refund,
                     reverted: true,
                     output: phase_output,
@@ -851,7 +1049,7 @@ impl Eip8130Executor {
         }
 
         Ok(CallsResult {
-            call_gas_spent: outcome.execution_gas_available.saturating_sub(pool),
+            call_gas_spent: pool.saturating_sub(remaining),
             refund,
             reverted: false,
             output: Bytes::new(),
@@ -1110,9 +1308,11 @@ impl Eip8130Executor {
     /// ceiling. (Mainnet has no payer-auth concept, so this is an EIP-8130-specific
     /// choice rather than literal mainnet parity.)
     ///
-    /// Single source of truth for both the consensus charge ([`Self::settle_fees`])
-    /// and the read-only estimate ([`Self::simulate`]), so the gas a transaction
-    /// pays and the gas `eth_estimateGas` reports cannot drift.
+    /// This is the **net consensus charge** used by [`Self::settle_fees`]. The
+    /// read-only estimate ([`Self::simulate`]) uses the gross amount instead —
+    /// `sender_intrinsic + call_gas_spent + payer_auth` — because refunds are
+    /// credited after execution and are never available to the call pool during
+    /// execution, so the gas limit must cover the full gross spend.
     fn billable_gas(outcome: &Eip8130Outcome, calls: &CallsResult) -> u64 {
         let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
         let refund = Self::capped_refund(calls.refund, gross_used);
@@ -1386,7 +1586,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_matches_execution_gas_without_a_signature() {
+    fn simulate_estimate_covers_execution_gas_without_a_signature() {
         let key = signing_key(0x77);
         let sender = eoa_address(&key);
         let target = address!("0x00000000000000000000000000000000000000c5");
@@ -1416,7 +1616,12 @@ mod tests {
 
         assert!(sim_result.is_success(), "estimation should report success");
         assert!(sim_gas > 0, "estimated gas should be positive");
-        assert_eq!(sim_gas, exec_gas, "simulation gas must match execution gas");
+        // The estimate is a gas *limit* that must cover the real execution charge.
+        // This transaction calls a STOP contract (no nested calls, no
+        // SSTORE/SELFDESTRUCT), so it loses no gas to EIP-150 forwarding and earns
+        // no refund: the gas-limit search converges on exactly the gas a real
+        // execution charges, so the estimate equals `exec_gas`.
+        assert_eq!(sim_gas, exec_gas, "no-forwarding estimate should equal the execution charge");
 
         // Estimation never commits: a fresh execution after it still bumps the
         // nonce from zero, proving no nonce was consumed by the simulation.
