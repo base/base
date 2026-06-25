@@ -7,6 +7,7 @@ use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, en
 use base_proof_primitives::Proposal;
 use base_proof_rpc::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
+use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
@@ -49,6 +50,7 @@ pub struct ProofSubmitter {
     game_type: u32,
     block_interval: u64,
     intermediate_block_interval: u64,
+    output_fetch_concurrency: usize,
 }
 
 impl std::fmt::Debug for ProofSubmitter {
@@ -57,6 +59,7 @@ impl std::fmt::Debug for ProofSubmitter {
             .field("game_type", &self.game_type)
             .field("block_interval", &self.block_interval)
             .field("intermediate_block_interval", &self.intermediate_block_interval)
+            .field("output_fetch_concurrency", &self.output_fetch_concurrency)
             .finish_non_exhaustive()
     }
 }
@@ -78,6 +81,7 @@ impl ProofSubmitter {
             game_type: config.game_type,
             block_interval: config.block_interval,
             intermediate_block_interval: config.intermediate_block_interval,
+            output_fetch_concurrency: config.recovery_scan_concurrency,
         }
     }
 
@@ -134,18 +138,35 @@ impl ProofSubmitter {
         )
         .map_err(SubmitAction::Failed)?;
 
-        for (block, proposal_root) in
-            intermediate_blocks.iter().copied().zip(intermediate_roots.iter().copied())
+        let rollup_client = Arc::clone(&self.rollup_client);
+        let target_root = canonical_output.output_root;
+        let canonical_roots = stream::iter(intermediate_blocks.iter().copied())
+            .map(|block| {
+                let rollup_client = Arc::clone(&rollup_client);
+                async move {
+                    if block == target_block {
+                        Ok(target_root)
+                    } else {
+                        rollup_client
+                            .fresh_output_at_block(block)
+                            .await
+                            .map(|out| out.output_root)
+                            .map_err(|error| SubmitAction::Failed(ProposerError::Rpc(error)))
+                    }
+                }
+            })
+            .buffered(self.output_fetch_concurrency.max(1))
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for ((block, proposal_root), canonical_root) in intermediate_blocks
+            .iter()
+            .copied()
+            .zip(intermediate_roots.iter().copied())
+            .zip(canonical_roots)
         {
-            let canonical_root = if block == target_block {
-                canonical_output.output_root
-            } else {
-                self.rollup_client
-                    .fresh_output_at_block(block)
-                    .await
-                    .map(|out| out.output_root)
-                    .map_err(|error| SubmitAction::Failed(ProposerError::Rpc(error)))?
-            };
             if proposal_root != canonical_root {
                 warn!(
                     intermediate_block = block,
@@ -454,6 +475,36 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(*output.created.lock().unwrap(), 0);
         assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
+    }
+
+    #[tokio::test]
+    async fn submit_validates_multiple_intermediate_roots() {
+        let game_address = Address::repeat_byte(0xAA);
+        let output = Arc::new(MockOutputProposer::default());
+        let submitter = ProofSubmitter::new(
+            output,
+            Arc::new(MockRollupClient {
+                sync_status: test_sync_status(TEST_BLOCK_INTERVAL, B256::ZERO),
+                output_roots: Default::default(),
+                max_safe_block: None,
+            }),
+            Arc::new(MockDisputeGameFactory::with_uuid_game_responses([game_address])),
+            Arc::new(MockAggregateVerifier::default()),
+            &DriverConfig {
+                game_type: TEST_GAME_TYPE,
+                block_interval: TEST_BLOCK_INTERVAL,
+                intermediate_block_interval: 25,
+                recovery_scan_concurrency: 2,
+                ..Default::default()
+            },
+        );
+
+        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+        let result = submitter
+            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .await;
+
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
