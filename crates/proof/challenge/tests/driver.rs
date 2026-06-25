@@ -862,10 +862,9 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
 }
 
 #[tokio::test]
-async fn test_step_tee_submission_failure_falls_back_to_zk() {
-    // TEE proof succeeds but the on-chain nullify() tx fails.
-    // The driver should immediately fall back to a ZK proof instead of
-    // retrying the same TEE proof indefinitely.
+async fn test_step_tee_contract_revert_falls_back_to_zk() {
+    // TEE proof succeeds but the on-chain nullify() call reverts.
+    // Contract-level failures are proof-specific enough to fall back to ZK.
     let (l2, factory, root_15, root_20) = base_game_mocks();
 
     let verifier = single_game_verifier(MockGameState {
@@ -895,9 +894,12 @@ async fn test_step_tee_submission_failure_falls_back_to_zk() {
         }),
     });
 
-    // TEE nullify() tx fails (NonceTooLow), ZK challenge() tx succeeds.
+    // TEE nullify() tx reverts, ZK challenge() tx succeeds.
     let tx_manager = MockTxManager::with_responses(vec![
-        Err(TxManagerError::NonceTooLow),
+        Err(TxManagerError::ExecutionReverted {
+            reason: Some("unexpected contract revert".to_string()),
+            data: None,
+        }),
         Ok(receipt_with_status(true, DEFAULT_TX_HASH)),
     ]);
 

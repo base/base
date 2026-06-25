@@ -29,7 +29,7 @@ use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{SnarkGroth16ProofRequest, TeeKind, ZkProofRequest, ZkVm};
 use base_runtime::{Clock, TokioRuntime};
-use base_tx_manager::TxManager;
+use base_tx_manager::{TxManager, TxManagerError};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -870,12 +870,20 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                         self.pending_proofs.remove(&game_address);
                         return Ok(());
                     }
-                    _ if targets_tee => {
+                    _ if targets_tee && Self::should_fallback_from_tee_submit(&e) => {
                         warn!(
                             error = %e,
                             game = %game_address,
                             "TEE dispute tx failed, falling back to ZK"
                         );
+                    }
+                    _ if targets_tee => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "TEE dispute tx failed, will retry next tick"
+                        );
+                        return Ok(());
                     }
                     _ => {
                         warn!(
@@ -897,6 +905,15 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         }
 
         Ok(())
+    }
+
+    const fn should_fallback_from_tee_submit(error: &ChallengeSubmitError) -> bool {
+        matches!(
+            error,
+            ChallengeSubmitError::KnownRevert(KnownRevert::InvalidSigner)
+                | ChallengeSubmitError::TxReverted { .. }
+                | ChallengeSubmitError::TxManager(TxManagerError::ExecutionReverted { .. })
+        )
     }
 
     fn ignore_game(&mut self, game_address: Address) {
@@ -1016,6 +1033,7 @@ mod tests {
     use crate::test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockL2Provider, MockTxManager,
         MockZkProofProvider, addr, factory_game, mock_anchor_registry, mock_state,
+        receipt_with_status,
     };
 
     fn proof_request() -> SnarkGroth16ProofRequest {
@@ -1036,6 +1054,13 @@ mod tests {
         err: TxManagerError,
     ) -> (Driver<MockL2Provider, MockZkProofProvider, MockTxManager>, Arc<MockZkProofProvider>)
     {
+        driver_with_tx_manager(MockTxManager::new(Err(err)))
+    }
+
+    fn driver_with_tx_manager(
+        tx_manager: MockTxManager,
+    ) -> (Driver<MockL2Provider, MockZkProofProvider, MockTxManager>, Arc<MockZkProofProvider>)
+    {
         let game_address = addr(0);
         let mut verifier_games = HashMap::new();
         verifier_games.insert(game_address, mock_state(GameStatus::InProgress, Address::ZERO, 100));
@@ -1047,7 +1072,6 @@ mod tests {
             mock_anchor_registry(Address::ZERO),
         );
         let proof_requester = Arc::new(MockZkProofProvider::default());
-        let tx_manager = MockTxManager::new(Err(err));
         let components = DriverComponents {
             scanner,
             validator: OutputValidator::new(Arc::new(MockL2Provider::new())),
@@ -1117,6 +1141,23 @@ mod tests {
         }
     }
 
+    fn assert_ready_tee_proof(driver: &Driver<MockL2Provider, MockZkProofProvider, MockTxManager>) {
+        let pending = driver.pending_proofs.get(&addr(0)).expect("pending proof should remain");
+        assert!(matches!(pending.phase, ProofPhase::ReadyToSubmit { .. }));
+        assert!(pending.kind.is_tee());
+    }
+
+    fn assert_zk_fallback_requested(
+        driver: &Driver<MockL2Provider, MockZkProofProvider, MockTxManager>,
+        proof_requester: &MockZkProofProvider,
+    ) {
+        let pending = driver.pending_proofs.get(&addr(0)).expect("pending proof should remain");
+        assert!(matches!(pending.phase, ProofPhase::AwaitingProof { .. }));
+        assert!(!pending.kind.is_tee());
+        let state = proof_requester.state.lock().unwrap();
+        assert_eq!(state.prove_block_range_log.len(), 1);
+    }
+
     #[tokio::test]
     async fn proof_already_verified_revert_drops_pending_proof() {
         let (mut driver, _proof_requester) =
@@ -1177,6 +1218,44 @@ mod tests {
         assert!(driver.ignored_games.contains(&addr(0)));
         let state = proof_requester.state.lock().unwrap();
         assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tee_submit_nonce_too_low_keeps_ready_proof_without_requesting_zk() {
+        let (mut driver, proof_requester) = driver_with_tx_error(TxManagerError::NonceTooLow);
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_ready_tee_proof(&driver);
+        let state = proof_requester.state.lock().unwrap();
+        assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tee_invalid_signer_revert_falls_back_to_zk() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: Some("InvalidSigner()".to_string()),
+                data: None,
+            });
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_zk_fallback_requested(&driver, &proof_requester);
+    }
+
+    #[tokio::test]
+    async fn tee_mined_tx_revert_falls_back_to_zk() {
+        let tx_hash = B256::repeat_byte(0x44);
+        let (mut driver, proof_requester) =
+            driver_with_tx_manager(MockTxManager::new(Ok(receipt_with_status(false, tx_hash))));
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_zk_fallback_requested(&driver, &proof_requester);
     }
 
     #[tokio::test]
