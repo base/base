@@ -755,6 +755,10 @@ impl EngineClient for ActionEngineClient {
         };
         Ok(info)
     }
+
+    async fn el_syncing(&self) -> Result<bool, EngineClientError> {
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -981,5 +985,9 @@ impl SequencerEngineClient for ActionEngineClient {
     async fn get_unsafe_head(&self) -> Result<L2BlockInfo, NodeEngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         Ok(guard.canonical_head)
+    }
+
+    async fn el_sync_finished(&self) -> Result<bool, NodeEngineClientError> {
+        Ok(true)
     }
 }

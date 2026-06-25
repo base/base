@@ -1,27 +1,31 @@
-use std::{fmt, sync::Arc};
+use std::{fmt, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
-    ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, ForkchoiceCheckpointLabel,
-    ForkchoiceCheckpointReader, InsertTask, InsertTaskResult, Metrics as EngineMetrics,
-    NoopForkchoiceCheckpointReader, SealTaskError,
+    BuildTaskError, ConsolidateTask, Engine, EngineBuildError, EngineClient, EngineSyncStateUpdate,
+    EngineTask, EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask,
+    ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader, InsertTask, InsertTaskResult,
+    Metrics as EngineMetrics, NoopForkchoiceCheckpointReader, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
+    time::{self, Instant as TokioInstant, MissedTickBehavior},
 };
 
 use crate::{
     BuildRequest, CheckpointWriter, Conductor, EngineActorRequest, EngineClientError,
     EngineDerivationClient, EngineError, GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode,
-    NoopCheckpointWriter,
+    NoopCheckpointWriter, SequencerSyncMode,
 };
+
+/// How often an EL-sync sequencer re-probes reth while the EL is still syncing.
+const SEQUENCER_EL_SYNC_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Requires that the implementor handles engine requests via the provided channel.
 /// Note: this exists to facilitate unit testing rather than consolidate multiple implementations
@@ -59,6 +63,8 @@ pub struct EngineProcessorOptions {
     pub conductor: Option<Arc<dyn Conductor>>,
     /// Whether the sequencer starts in a stopped state.
     pub sequencer_stopped: bool,
+    /// Source used to complete sequencer sync.
+    pub sequencer_sync_mode: SequencerSyncMode,
 }
 
 impl EngineProcessorOptions {
@@ -76,6 +82,7 @@ impl fmt::Debug for EngineProcessorOptions {
             .field("has_unsafe_head_tx", &self.unsafe_head_tx.is_some())
             .field("has_conductor", &self.conductor.is_some())
             .field("sequencer_stopped", &self.sequencer_stopped)
+            .field("sequencer_sync_mode", &self.sequencer_sync_mode)
             .finish()
     }
 }
@@ -102,6 +109,8 @@ where
     sequencer_stopped: bool,
     /// The configured node mode.
     node_mode: NodeMode,
+    /// Source used to complete sequencer sync.
+    sequencer_sync_mode: SequencerSyncMode,
     /// The last safe head update sent.
     last_safe_head_sent: L2BlockInfo,
     /// The last safe head checkpoint written.
@@ -182,6 +191,7 @@ where
             node_mode: options.node_mode,
             rollup: config,
             sequencer_stopped: options.sequencer_stopped,
+            sequencer_sync_mode: options.sequencer_sync_mode,
             unsafe_head_tx: options.unsafe_head_tx,
         }
     }
@@ -279,6 +289,11 @@ where
             }
             EngineTaskErrorSeverity::Reset => {
                 warn!(target: "engine", %error, "Received reset request");
+                if self.should_probe_sequencer_el_sync() {
+                    warn!(target: "engine", "Deferring engine reset: EL sync not yet complete");
+                    self.engine.clear();
+                    return Ok(());
+                }
                 self.reset().await
             }
             EngineTaskErrorSeverity::Flush => {
@@ -470,6 +485,34 @@ where
         );
     }
 
+    fn publish_unsafe_head(&self) {
+        if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
+            let new_head = self.engine.state().sync_state.unsafe_head();
+            unsafe_head_tx
+                .send_if_modified(|val| (*val != new_head).then(|| *val = new_head).is_some());
+        }
+    }
+
+    const fn should_probe_sequencer_el_sync(&self) -> bool {
+        self.node_mode.is_sequencer()
+            && self.sequencer_sync_mode.is_el()
+            && !self.engine.state().el_sync_finished
+    }
+
+    const fn sequencer_el_syncing_build_error() -> BuildTaskError {
+        BuildTaskError::EngineBuildError(EngineBuildError::EngineSyncing)
+    }
+
+    async fn el_reports_syncing(&self) -> bool {
+        match self.client.el_syncing().await {
+            Ok(syncing) => syncing,
+            Err(err) => {
+                warn!(target: "engine", error = %err, "EL sync-status query failed, treating EL as syncing");
+                true
+            }
+        }
+    }
+
     /// Classifies the bootstrap role from configuration alone (no I/O).
     ///
     /// Decision table:
@@ -540,11 +583,27 @@ where
     /// that `el_sync_finished` can be set when reth responds `Valid`.  Unlike pure
     /// validators, conductor followers must have derivation running so they are ready
     /// for leadership transfer; the zeroed safe/finalized avoids disrupting EL sync.
-    async fn bootstrap_conductor_follower(&mut self, head: Option<L2BlockInfo>) {
+    async fn bootstrap_conductor_follower(&mut self, head: Option<L2BlockInfo>, at_genesis: bool) {
         let Some(head) = head else { return };
 
         let follower_update =
             EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
+
+        if !self.sequencer_sync_mode.is_el() {
+            self.bootstrap_validator(Some(head)).await;
+            return;
+        }
+
+        if at_genesis {
+            self.engine.seed_state(follower_update);
+            self.publish_unsafe_head();
+            info!(
+                target: "engine",
+                unsafe_head = %head.block_info.number,
+                "Bootstrap: conductor follower seeded genesis head, awaiting EL sync"
+            );
+            return;
+        }
 
         let el_confirmed = match self
             .engine
@@ -566,11 +625,7 @@ where
             self.engine.seed_state(follower_update);
         }
 
-        if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
-            let new_head = self.engine.state().sync_state.unsafe_head();
-            unsafe_head_tx
-                .send_if_modified(|val| (*val != new_head).then(|| *val = new_head).is_some());
-        }
+        self.publish_unsafe_head();
 
         info!(
             target: "engine",
@@ -587,20 +642,32 @@ where
     ///   `el_sync_finished` can be set immediately, unblocking the initial derivation reset.
     async fn bootstrap_active_sequencer(&mut self, head: Option<L2BlockInfo>, at_genesis: bool) {
         if at_genesis {
+            if self.sequencer_sync_mode.is_el() && self.el_reports_syncing().await {
+                if let Some(head) = head {
+                    self.engine.seed_state(EngineSyncStateUpdate {
+                        unsafe_head: Some(head),
+                        ..Default::default()
+                    });
+                    self.publish_unsafe_head();
+                }
+                info!(target: "engine", "Bootstrap: EL sync pending at genesis");
+                return;
+            }
+
             match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
                 Ok(_) => {
-                    if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
-                        let new_head = self.engine.state().sync_state.unsafe_head();
-                        unsafe_head_tx.send_if_modified(|val| {
-                            (*val != new_head).then(|| *val = new_head).is_some()
-                        });
-                    }
+                    self.publish_unsafe_head();
                 }
                 Err(err) => {
                     warn!(target: "engine", ?err, "Engine startup bootstrap failed; will initialize on first task");
                 }
             }
         } else if let Some(head) = head {
+            if !self.sequencer_sync_mode.is_el() {
+                self.bootstrap_validator(Some(head)).await;
+                return;
+            }
+
             let safe = self
                 .client
                 .l2_block_info_by_label(BlockNumberOrTag::Safe)
@@ -640,14 +707,15 @@ where
             };
 
             if !el_confirmed {
-                self.engine.seed_state(probe_update);
+                let seed_update = if self.sequencer_sync_mode.is_el() {
+                    EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() }
+                } else {
+                    probe_update
+                };
+                self.engine.seed_state(seed_update);
             }
 
-            if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
-                let new_head = self.engine.state().sync_state.unsafe_head();
-                unsafe_head_tx
-                    .send_if_modified(|val| (*val != new_head).then(|| *val = new_head).is_some());
-            }
+            self.publish_unsafe_head();
 
             if el_confirmed {
                 info!(
@@ -663,6 +731,112 @@ where
                 );
             }
         }
+    }
+
+    async fn sequencer_el_sync_probe_update(
+        &self,
+        role: BootstrapRole,
+        head: L2BlockInfo,
+    ) -> EngineSyncStateUpdate {
+        if matches!(role, BootstrapRole::ActiveSequencer) {
+            let safe = self
+                .client
+                .l2_block_info_by_label(BlockNumberOrTag::Safe)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let finalized = self
+                .client
+                .l2_block_info_by_label(BlockNumberOrTag::Finalized)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+
+            return EngineSyncStateUpdate {
+                unsafe_head: Some(head),
+                local_safe_head: Some(safe),
+                safe_head: Some(safe),
+                finalized_head: Some(finalized),
+            };
+        }
+
+        EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() }
+    }
+
+    async fn probe_pending_sequencer_el_sync(&mut self) {
+        if !self.should_probe_sequencer_el_sync() {
+            return;
+        }
+
+        let head = match self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await {
+            Ok(Some(head)) => head,
+            Ok(None) => {
+                debug!(target: "engine", "Sequencer EL sync probe skipped: latest head unavailable");
+                return;
+            }
+            Err(err) => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query latest head");
+                return;
+            }
+        };
+
+        let role = self.resolve_bootstrap_role().await;
+        if head.block_info.hash == self.rollup.genesis.l2.hash && self.el_reports_syncing().await {
+            self.engine.seed_state(EngineSyncStateUpdate {
+                unsafe_head: Some(head),
+                ..Default::default()
+            });
+            self.publish_unsafe_head();
+            debug!(target: "engine", "Sequencer EL sync probe observed syncing genesis head");
+            return;
+        }
+
+        if head.block_info.hash == self.rollup.genesis.l2.hash
+            && matches!(role, BootstrapRole::ConductorFollower)
+        {
+            self.engine.seed_state(EngineSyncStateUpdate {
+                unsafe_head: Some(head),
+                ..Default::default()
+            });
+            self.publish_unsafe_head();
+            debug!(
+                target: "engine",
+                unsafe_head = %head.block_info.number,
+                "Sequencer EL sync probe observed genesis follower head"
+            );
+            return;
+        }
+
+        let probe_update = self.sequencer_el_sync_probe_update(role, head).await;
+        let el_confirmed = match self
+            .engine
+            .probe_el_sync_forced(Arc::clone(&self.client), Arc::clone(&self.rollup), probe_update)
+            .await
+        {
+            Ok(confirmed) => confirmed,
+            Err(err) => {
+                warn!(target: "engine", error = ?err, "Sequencer EL sync probe failed");
+                false
+            }
+        };
+
+        if !el_confirmed {
+            self.engine.seed_state(EngineSyncStateUpdate {
+                unsafe_head: Some(head),
+                ..Default::default()
+            });
+        }
+
+        self.publish_unsafe_head();
+
+        debug!(
+            target: "engine",
+            el_confirmed,
+            unsafe_head = %head.block_info.number,
+            "Sequencer EL sync probe completed"
+        );
     }
 }
 
@@ -707,12 +881,18 @@ where
             match role {
                 BootstrapRole::Validator => self.bootstrap_validator(opt_head).await,
                 BootstrapRole::ConductorFollower => {
-                    self.bootstrap_conductor_follower(opt_head).await
+                    self.bootstrap_conductor_follower(opt_head, at_genesis).await
                 }
                 BootstrapRole::ActiveSequencer => {
                     self.bootstrap_active_sequencer(opt_head, at_genesis).await
                 }
             }
+
+            let mut el_sync_probe_interval = time::interval_at(
+                TokioInstant::now() + SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+                SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+            );
+            el_sync_probe_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
             loop {
                 // Full processor iteration window: drain + recv wait + request handling.
@@ -730,18 +910,25 @@ where
                 })?;
 
                 // If the unsafe head has updated, propagate it to the outbound channels.
-                if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
-                    unsafe_head_tx.send_if_modified(|val| {
-                        let new_head = self.engine.state().sync_state.unsafe_head();
-                        (*val != new_head).then(|| *val = new_head).is_some()
-                    });
-                }
+                self.publish_unsafe_head();
 
                 // Wait for the next processing request.
-                let recv_result = base_metrics::time!(
-                    EngineMetrics::engine_processor_recv_wait_duration_seconds(),
-                    { request_channel.recv().await }
+                let recv_wait_timer = base_metrics::timed!(
+                    EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
+                let recv_result = if self.should_probe_sequencer_el_sync() {
+                    tokio::select! {
+                        recv_result = request_channel.recv() => recv_result,
+                        _ = el_sync_probe_interval.tick() => {
+                            drop(recv_wait_timer);
+                            self.probe_pending_sequencer_el_sync().await;
+                            continue;
+                        }
+                    }
+                } else {
+                    request_channel.recv().await
+                };
+                drop(recv_wait_timer);
                 let Some(request) = recv_result else {
                     error!(target: "engine", "Engine processing request receiver closed unexpectedly");
                     return Err(EngineError::ChannelClosed);
@@ -750,6 +937,14 @@ where
                 match request {
                     EngineActorRequest::BuildRequest(build_request) => {
                         let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
+                        if self.should_probe_sequencer_el_sync() {
+                            warn!(target: "engine", "Deferring sequencer build: EL sync not yet complete");
+                            result_tx
+                                .send(Err(Self::sequencer_el_syncing_build_error()))
+                                .await
+                                .map_err(|_| EngineError::ChannelClosed)?;
+                            continue;
+                        }
                         let build_result = self
                             .engine
                             .build(Arc::clone(&self.client), Arc::clone(&self.rollup), attributes)
@@ -882,8 +1077,9 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
-        Engine, EngineState, EngineTaskError, EngineTaskErrorSeverity, ForkchoiceCheckpointError,
-        ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
+        BuildTaskError, Engine, EngineBuildError, EngineState, EngineTaskError,
+        EngineTaskErrorSeverity, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
+        ForkchoiceCheckpointReader,
         test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
@@ -896,7 +1092,8 @@ mod tests {
     use crate::{
         BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
         EngineProcessorOptions, EngineRequestReceiver, MockConductor, NodeMode,
-        NoopCheckpointWriter, ResetRequest, actors::engine::client::MockEngineDerivationClient,
+        NoopCheckpointWriter, ResetRequest, SequencerSyncMode,
+        actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Test-only [`ForkchoiceCheckpointReader`] that returns pre-seeded safe/finalized heads.
@@ -1028,6 +1225,7 @@ mod tests {
                     unsafe_head_tx,
                     conductor: None,
                     sequencer_stopped: false,
+                    sequencer_sync_mode: SequencerSyncMode::Cl,
                 },
             ),
             queue_rx,
@@ -1209,6 +1407,7 @@ mod tests {
                 unsafe_head_tx: Some(unsafe_head_tx),
                 conductor: None,
                 sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::El,
             },
         );
 
@@ -1252,11 +1451,8 @@ mod tests {
                 .build(),
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
-        // In the Syncing path, seed_state advances safe_head (block_90) so
-        // send_derivation_actor_safe_head_if_updated fires after seed.
-        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
-        // notify_sync_completed must NOT be called: el_sync_finished is still false.
+        // No derivation calls: el_sync_finished is still false and EL-sync mode only seeds unsafe.
+        let mock_derivation = MockEngineDerivationClient::new();
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
@@ -1275,6 +1471,7 @@ mod tests {
                 unsafe_head_tx: Some(unsafe_head_tx),
                 conductor: None,
                 sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::El,
             },
         );
 
@@ -1301,6 +1498,315 @@ mod tests {
             matches!(response, Err(EngineClientError::ELSyncing)),
             "expected ELSyncing while snap-sync is in progress, got {response:?}"
         );
+
+        drop(req_tx);
+        let _ = handle.await;
+    }
+
+    /// In EL-sync mode a Syncing bootstrap may publish reth's latest unsafe head for status and
+    /// admin preflight, but must not seed safe/finalized heads until reth confirms the FCU.
+    #[tokio::test]
+    async fn el_sync_mode_syncing_bootstrap_seeds_only_unsafe_head() {
+        let head = test_block_info(100);
+        let safe = test_block_info(90);
+        let finalized = test_block_info(80);
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, safe)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, finalized)
+                .with_fork_choice_updated_v3_response(syncing_fcu())
+                .build(),
+        );
+
+        let mock_derivation = MockEngineDerivationClient::new();
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: None,
+                sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::El,
+            },
+        );
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = processor.start(req_rx);
+
+        state_rx
+            .clone()
+            .wait_for(|s| s.sync_state.unsafe_head().block_info.number == 100)
+            .await
+            .expect("state channel closed before unsafe head was seeded");
+
+        let state = state_rx.borrow();
+        assert!(!state.el_sync_finished, "EL sync must remain pending after Syncing FCU");
+        assert_eq!(
+            state.sync_state.safe_head(),
+            L2BlockInfo::default(),
+            "EL-sync mode must not seed safe head before FCU confirmation"
+        );
+        assert_eq!(
+            state.sync_state.finalized_head(),
+            L2BlockInfo::default(),
+            "EL-sync mode must not seed finalized head before FCU confirmation"
+        );
+        drop(state);
+
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        req_tx
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx })))
+            .await
+            .expect("failed to send reset request");
+
+        let response = result_rx.recv().await.expect("response channel closed");
+        assert!(
+            matches!(response, Err(EngineClientError::ELSyncing)),
+            "expected ELSyncing while snap-sync is in progress, got {response:?}"
+        );
+
+        drop(req_tx);
+        let _ = handle.await;
+    }
+
+    /// EL-sync sequencers should keep re-probing reth after an initial Syncing response. Once
+    /// reth returns Valid, derivation is notified and safe/finalized heads become usable.
+    #[tokio::test]
+    async fn el_sync_mode_reprobe_completes_after_reth_becomes_valid() {
+        let head = test_block_info(100);
+        let safe = test_block_info(90);
+        let finalized = test_block_info(80);
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, safe)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, finalized)
+                .with_fork_choice_updated_v3_response(syncing_fcu())
+                .build(),
+        );
+
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, queue_rx) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+
+        let mut processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: None,
+                sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::El,
+            },
+        );
+
+        processor.bootstrap_active_sequencer(Some(head), false).await;
+        assert!(!processor.engine.state().el_sync_finished);
+        assert_eq!(processor.engine.state().sync_state.unsafe_head(), head);
+        assert_eq!(processor.engine.state().sync_state.safe_head(), L2BlockInfo::default());
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            head.block_info.number + EngineProcessorOptions::MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP + 1,
+            B256::with_last_byte(1),
+            B256::with_last_byte(2),
+        ));
+        assert_eq!(*queue_rx.borrow(), 0, "deep external unsafe payload should be left to EL sync");
+
+        client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+        processor.probe_pending_sequencer_el_sync().await;
+        assert!(processor.engine.state().el_sync_finished);
+        assert_eq!(processor.engine.state().sync_state.safe_head(), safe);
+        assert_eq!(processor.engine.state().sync_state.finalized_head(), finalized);
+
+        processor.drain().await.expect("drain should notify derivation after EL sync");
+    }
+
+    #[tokio::test]
+    async fn el_sync_mode_reprobe_rechecks_same_seeded_forkchoice() {
+        let head = test_block_info(100);
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_fork_choice_updated_v3_response(syncing_fcu())
+                .build(),
+        );
+
+        let mock_derivation = MockEngineDerivationClient::new();
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+
+        let mut processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: None,
+                sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::El,
+            },
+        );
+
+        processor.bootstrap_active_sequencer(Some(head), false).await;
+        assert!(!processor.engine.state().el_sync_finished);
+        assert_eq!(processor.engine.state().sync_state.unsafe_head(), head);
+
+        client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+        processor.probe_pending_sequencer_el_sync().await;
+
+        assert!(
+            processor.engine.state().el_sync_finished,
+            "same-head re-probe must force an FCU after tentative seeding"
+        );
+        assert_eq!(processor.engine.state().sync_state.unsafe_head(), head);
+        assert_eq!(processor.engine.state().sync_state.safe_head(), L2BlockInfo::default());
+    }
+
+    #[tokio::test]
+    async fn el_sync_mode_at_genesis_waits_when_el_reports_syncing() {
+        let head = test_block_info(0);
+        let cfg = Arc::new(RollupConfig {
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 0, hash: head.block_info.hash },
+                l1: BlockNumHash { number: 0, hash: B256::ZERO },
+                system_config: Some(SystemConfig::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_config(Arc::clone(&cfg))
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_el_syncing(true)
+                .build(),
+        );
+
+        let mock_derivation = MockEngineDerivationClient::new();
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+
+        let mut processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::clone(&cfg),
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: None,
+                sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::El,
+            },
+        );
+
+        processor.bootstrap_active_sequencer(Some(head), true).await;
+
+        assert!(!processor.engine.state().el_sync_finished);
+        assert_eq!(processor.engine.state().sync_state.unsafe_head(), head);
+        assert_eq!(processor.engine.state().sync_state.safe_head(), L2BlockInfo::default());
+    }
+
+    #[tokio::test]
+    async fn reset_severity_defers_while_el_sync_is_incomplete() {
+        let (mut processor, _) = unsafe_payload_processor(
+            NodeMode::Sequencer,
+            false,
+            l2_head(10, B256::with_last_byte(10)),
+            None,
+        );
+        processor.sequencer_sync_mode = SequencerSyncMode::El;
+
+        processor
+            .handle_engine_task_error_severity(
+                EngineTaskErrorSeverity::Reset,
+                "invalid forkchoice".to_string(),
+            )
+            .await
+            .expect("reset severity should defer instead of resetting during EL sync");
+    }
+
+    #[tokio::test]
+    async fn el_sync_mode_defers_sequencer_build_until_el_sync_completes() {
+        let parent = test_block_info(1);
+        let client = Arc::new(test_engine_client_builder().build());
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+
+        let initial_state = TestEngineStateBuilder::new()
+            .with_unsafe_head(parent)
+            .with_el_sync_finished(false)
+            .build();
+        let (state_tx, _) = watch::channel(initial_state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(initial_state, state_tx, queue_tx);
+        let (unsafe_head_tx, _) = watch::channel(parent);
+
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: None,
+                sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::El,
+            },
+        );
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = processor.start(req_rx);
+
+        let attributes = TestAttributesBuilder::new().with_parent(parent).build();
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        req_tx
+            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
+                attributes,
+                result_tx,
+                otel_cx: opentelemetry::Context::new(),
+            })))
+            .await
+            .expect("failed to send build request");
+
+        let build_result =
+            tokio::time::timeout(std::time::Duration::from_secs(5), result_rx.recv())
+                .await
+                .expect("timed out waiting for build result")
+                .expect("build result channel closed before response");
+
+        assert!(matches!(
+            build_result,
+            Err(BuildTaskError::EngineBuildError(EngineBuildError::EngineSyncing))
+        ));
 
         drop(req_tx);
         let _ = handle.await;
@@ -1353,6 +1859,7 @@ mod tests {
                 unsafe_head_tx: Some(unsafe_head_tx),
                 conductor: Some(Arc::new(mock_conductor)),
                 sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::El,
             },
         );
 
@@ -1427,6 +1934,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::Cl,
             },
         );
 
@@ -1495,6 +2003,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::Cl,
             },
         );
 
@@ -1562,6 +2071,7 @@ mod tests {
                 unsafe_head_tx,
                 conductor,
                 sequencer_stopped,
+                sequencer_sync_mode: SequencerSyncMode::Cl,
             },
         )
     }
@@ -1718,6 +2228,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::Cl,
             },
         );
 
@@ -1910,6 +2421,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::Cl,
             },
             Arc::new(TestCheckpointReader { safe: Some(safe_checkpoint), finalized: None }),
             Arc::new(NoopCheckpointWriter),
@@ -1995,6 +2507,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                sequencer_sync_mode: SequencerSyncMode::Cl,
             },
         );
 

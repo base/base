@@ -3,6 +3,7 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_consensus_engine::EngineState;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
 use tokio::sync::{mpsc, watch};
@@ -49,6 +50,9 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
 
     /// Returns the current unsafe head [`L2BlockInfo`].
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo>;
+
+    /// Returns whether the engine has completed EL sync.
+    async fn el_sync_finished(&self) -> EngineClientResult<bool>;
 }
 
 /// Blanket implementation so [`Arc<T>`] can be used wherever `T: SequencerEngineClient`.
@@ -87,6 +91,10 @@ impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
         (**self).get_unsafe_head().await
     }
+
+    async fn el_sync_finished(&self) -> EngineClientResult<bool> {
+        (**self).el_sync_finished().await
+    }
 }
 
 /// Queue-based implementation of the [`SequencerEngineClient`] trait. This handles all
@@ -97,12 +105,18 @@ pub struct QueuedSequencerEngineClient {
     pub engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
     /// A channel to receive the latest unsafe head [`L2BlockInfo`].
     pub unsafe_head_rx: watch::Receiver<L2BlockInfo>,
+    /// A channel to receive the latest engine state.
+    pub engine_state_rx: watch::Receiver<EngineState>,
 }
 
 #[async_trait]
 impl SequencerEngineClient for QueuedSequencerEngineClient {
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
         Ok(*self.unsafe_head_rx.borrow())
+    }
+
+    async fn el_sync_finished(&self) -> EngineClientResult<bool> {
+        Ok(self.engine_state_rx.borrow().el_sync_finished)
     }
 
     async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
@@ -281,8 +295,9 @@ mod tests {
     async fn insert_unsafe_payload_returns_engine_ack() {
         let (request_tx, mut request_rx) = mpsc::channel(1);
         let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (_, engine_state_rx) = watch::channel(base_consensus_engine::EngineState::default());
         let inserted_head = l2_head(1);
-        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx);
+        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx);
 
         let insert_handle =
             tokio::spawn(async move { client.insert_unsafe_payload(dummy_envelope()).await });
