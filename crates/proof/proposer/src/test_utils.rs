@@ -1,9 +1,9 @@
 //! Shared test utilities: reusable mock stubs for L1/L2 clients, contract clients, and proposer.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
@@ -213,6 +213,8 @@ pub struct MockDisputeGameFactory {
     pub game_count_override: Option<u64>,
     /// UUID-keyed game proxy lookups for `games()`.
     pub uuid_games: HashMap<(u32, B256, Bytes), Address>,
+    /// Ordered responses for repeated `games()` calls.
+    pub uuid_game_responses: Option<Mutex<VecDeque<Address>>>,
     /// When true, all `games()` calls return an error.
     pub games_should_fail: bool,
     /// Optional counter incremented on every `game_count()` call.
@@ -226,8 +228,17 @@ impl MockDisputeGameFactory {
             games,
             game_count_override: None,
             uuid_games: HashMap::new(),
+            uuid_game_responses: None,
             games_should_fail: false,
             game_count_calls: None,
+        }
+    }
+
+    /// Creates a mock whose `games()` calls pop from the given responses.
+    pub fn with_uuid_game_responses(responses: impl IntoIterator<Item = Address>) -> Self {
+        Self {
+            uuid_game_responses: Some(Mutex::new(responses.into_iter().collect())),
+            ..Self::with_games(vec![])
         }
     }
 }
@@ -260,6 +271,9 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     ) -> Result<Address, ContractError> {
         if self.games_should_fail {
             return Err(ContractError::Validation("mock: simulated games() RPC failure".into()));
+        }
+        if let Some(responses) = &self.uuid_game_responses {
+            return Ok(responses.lock().unwrap().pop_front().unwrap_or(Address::ZERO));
         }
         let key = (game_type, root_claim, extra_data);
         Ok(self.uuid_games.get(&key).copied().unwrap_or(Address::ZERO))
@@ -585,14 +599,20 @@ impl ProofRequesterProvider for MockProofRequester {
 /// Mock output proposer that succeeds unless configured with a create error.
 #[derive(Debug, Default)]
 pub struct MockOutputProposer {
+    /// Number of `propose_output()` calls.
+    pub created: std::sync::Mutex<u32>,
+    /// Game addresses passed to `verify_proposal_proof()`.
+    pub verified: std::sync::Mutex<Vec<Address>>,
     /// Error returned by the next `propose_output` call.
     pub create_error: std::sync::Mutex<Option<ProposerError>>,
+    /// Error returned by the next `verify_proposal_proof` call.
+    pub verify_error: std::sync::Mutex<Option<ProposerError>>,
 }
 
 impl MockOutputProposer {
     /// Creates a mock that fails the next output proposal.
     pub fn with_create_error(error: ProposerError) -> Self {
-        Self { create_error: std::sync::Mutex::new(Some(error)) }
+        Self { create_error: std::sync::Mutex::new(Some(error)), ..Default::default() }
     }
 }
 
@@ -604,6 +624,7 @@ impl OutputProposer for MockOutputProposer {
         _parent_address: Address,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
+        *self.created.lock().unwrap() += 1;
         if let Some(error) = self.create_error.lock().unwrap().take() {
             return Err(error);
         }
@@ -612,9 +633,13 @@ impl OutputProposer for MockOutputProposer {
 
     async fn verify_proposal_proof(
         &self,
-        _game_address: Address,
+        game_address: Address,
         _proposal: &Proposal,
     ) -> Result<(), ProposerError> {
+        self.verified.lock().unwrap().push(game_address);
+        if let Some(error) = self.verify_error.lock().unwrap().take() {
+            return Err(error);
+        }
         Ok(())
     }
 }

@@ -153,14 +153,6 @@ pub struct ProposerArgs {
     )]
     pub recovery_scan_concurrency: NonZeroUsize,
 
-    /// Address of the `TEEProverRegistry` contract on L1.
-    /// When set, the proposer validates signers before onchain submission.
-    #[arg(
-        long = "tee-prover-registry-address",
-        env = cli_env!("TEE_PROVER_REGISTRY_ADDRESS")
-    )]
-    pub tee_prover_registry_address: Option<Address>,
-
     /// Transaction manager configuration.
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
