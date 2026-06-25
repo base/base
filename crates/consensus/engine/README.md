@@ -6,39 +6,29 @@ An extensible implementation of the [Base][base-specs] rollup node engine client
 
 ## Overview
 
-The `base-consensus-engine` crate provides a task-based engine client for interacting with Ethereum execution layers. It implements the Engine API specification and manages the execution layer state through a priority-driven task queue system.
+The `base-consensus-engine` crate provides an engine client for interacting with Ethereum execution layers. It implements the Engine API specification and manages execution layer state through direct engine methods.
 
 ## Key Components
 
 - **[`Engine`](crate::Engine)** - Main engine state owner that executes engine operations atomically
 - **[`EngineClient`](crate::EngineClient)** - HTTP client for Engine API communication with JWT authentication
 - **[`EngineState`](crate::EngineState)** - Tracks the current state of the execution layer
-- **Task Types** - Specialized tasks for different engine operations:
-  - [`InsertTask`](crate::InsertTask) - Insert new payloads into the execution engine
-  - [`ConsolidateTask`](crate::ConsolidateTask) - Consolidate unsafe payloads to advance the safe chain
-  - [`FinalizeTask`](crate::FinalizeTask) - Finalize safe payloads on L1 confirmation
-  - [`SynchronizeTask`](crate::SynchronizeTask) - Internal task for execution layer forkchoice synchronization
+- **[`SynchronizeTask`](crate::SynchronizeTask)** - Internal helper for execution layer forkchoice synchronization
 
 ## Architecture
 
-The engine implements a task-driven architecture where operations are queued and executed atomically:
+The engine owns state directly. Engine actor request paths call `Engine` methods directly, keeping state mutation serialized through one mutable owner:
 
 ```text
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│   Engine    │◄───┤  Task Queue  │◄───┤  Engine     │
-│   Client    │    │   (Priority) │    │  Tasks      │
-└─────────────┘    └──────────────┘    └─────────────┘
-       │                   │                   │
-       ▼                   ▼                   ▼
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│ Engine API  │    │ Engine State │    │  Rollup     │
-│ (HTTP/JWT)  │    │   Updates    │    │  Config     │
-└─────────────┘    └──────────────┘    └─────────────┘
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│ EngineActor │───▶│   Engine    │───▶│ Engine API  │
+│  Requests   │    │   State     │    │ (HTTP/JWT)  │
+└─────────────┘    └─────────────┘    └─────────────┘
 ```
 
 - **Automatic Forkchoice Handling**: [`Engine::build`](crate::Engine::build) automatically performs forkchoice updates during block building, eliminating the need for explicit forkchoice management in user code.
-- **Internal Synchronization**: [`SynchronizeTask`](crate::SynchronizeTask) handles internal execution layer synchronization and is primarily used by other tasks rather than directly by users.
-- **Priority-Based Execution**: Tasks are executed in priority order to ensure optimal sequencer performance and block processing efficiency.
+- **Internal Synchronization**: [`SynchronizeTask`](crate::SynchronizeTask) handles internal execution layer synchronization and is primarily used by direct engine methods rather than directly by users.
+- **Serialized Execution**: The engine actor owns one mutable [`Engine`](crate::Engine), so each request updates execution-layer state before the next request is processed.
 
 ## Engine API Compatibility
 
@@ -56,7 +46,7 @@ Version selection follows Base upgrade activation times (Bedrock, Canyon, Delta,
 
 ## Module Organization
 
-- **Task Queue** - Core engine task queue and execution logic via [`Engine`](crate::Engine)
+- **Engine** - State owner and operation logic via [`Engine`](crate::Engine)
 - **Client** - HTTP client for Engine API communication via [`EngineClient`](crate::EngineClient)
 - **State** - Engine state management and synchronization via [`EngineState`](crate::EngineState)
 - **Versions** - Engine API version selection via [`EngineForkchoiceVersion`](crate::EngineForkchoiceVersion),
@@ -79,15 +69,15 @@ Add the dependency to your `Cargo.toml`:
 base-consensus-engine = { workspace = true }
 ```
 
-Submit engine tasks via the `Engine`:
+Call engine operations through `Engine`:
 
 ```rust,ignore
-use base_consensus_engine::{Engine, EngineClient, InsertTask};
+use base_consensus_engine::{Engine, EngineClient};
 
 let client = EngineClient::new(engine_url, jwt_secret)?;
-let engine = Engine::new(client, rollup_config);
+let mut engine = Engine::new(initial_state, state_tx);
 
-engine.submit(InsertTask::new(payload)).await?;
+engine.insert_unsafe_payload(client, rollup_config, payload).await?;
 ```
 
 ## License

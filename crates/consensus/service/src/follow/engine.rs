@@ -4,13 +4,18 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
-    EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskExt, InsertTask,
-    SynchronizeTask,
+    Engine, EngineClient, EngineState, EngineSyncStateUpdate, EngineTaskError,
+    EngineTaskErrorSeverity, InsertPayloadSafety, SynchronizeTask,
 };
 use base_protocol::L2BlockInfo;
-use tokio::sync::Mutex;
+use tokio::{
+    sync::Mutex,
+    time::{Duration, sleep},
+};
 
 use crate::follow::error::FollowError;
+
+const TEMPORARY_ENGINE_ERROR_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 #[async_trait]
 pub(super) trait FollowEngine: Debug + Send + Sync {
@@ -58,15 +63,27 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
         &self,
         envelope: BaseExecutionPayloadEnvelope,
     ) -> Result<(), FollowError> {
-        let task = InsertTask::unsafe_payload(
-            Arc::clone(&self.client),
-            Arc::clone(&self.rollup_config),
-            envelope,
-        );
-        EngineTask::Insert(Box::new(task))
-            .execute(&mut *self.state.lock().await)
-            .await
-            .map_err(FollowError::engine_task)
+        loop {
+            let result = {
+                let mut state = self.state.lock().await;
+                Engine::insert_payload_with_state(
+                    &mut state,
+                    Arc::clone(&self.client),
+                    Arc::clone(&self.rollup_config),
+                    envelope.clone(),
+                    InsertPayloadSafety::Unsafe,
+                )
+                .await
+            };
+
+            match result {
+                Ok(_) => return Ok(()),
+                Err(err) if err.severity() == EngineTaskErrorSeverity::Temporary => {
+                    sleep(TEMPORARY_ENGINE_ERROR_RETRY_DELAY).await;
+                }
+                Err(err) => return Err(FollowError::engine_task(err)),
+            }
+        }
     }
 
     async fn update_safe_finalized_blocks(

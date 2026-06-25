@@ -8,7 +8,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::PayloadId;
 use base_common_genesis::RollupConfig;
-use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
+use base_consensus_derive::{AttributesBuilder, PipelineErrorKind, ResetError};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use tracing::instrument;
 
@@ -173,6 +173,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         {
             Ok(attrs) => attrs,
             Err(PipelineErrorKind::Temporary(_)) => return Ok(None),
+            Err(PipelineErrorKind::Reset(err @ ResetError::BlockNotFound(_))) => {
+                warn!(
+                    target: "sequencer",
+                    error = ?err,
+                    "Pipeline reset error while preparing payload attributes, resetting engine"
+                );
+                self.engine_client.reset_engine_forkchoice().await?;
+                return Ok(None);
+            }
             Err(PipelineErrorKind::Reset(err)) => {
                 // The attributes builder returned a reset error. These errors fall into two
                 // categories, neither of which requires an engine reset here:
@@ -187,6 +196,9 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
                 //    block's timestamp. This is a timing condition — the origin selector will
                 //    pick a different L1 block on the next tick. Engine reset would rewind the
                 //    unsafe head to the safe head, discarding sequenced progress unnecessarily.
+                //
+                // Hash-based BlockNotFound is handled above: that means the selected L1 origin
+                // was reorged out, so retrying will never succeed without resetting forkchoice.
                 //
                 // Return Ok(None) and let the ticker retry on the next block interval.
                 warn!(

@@ -19,7 +19,7 @@ Usage:
   grpc.sh list-proofs [target] [limit] [offset] [status_filter]
 
 Targets:
-  devnet   -> ZK_PROVER_DEVNET_ENDPOINT, defaults to localhost:9000 with -plaintext
+  devnet   -> ZK_PROVER_DEVNET_ENDPOINT, defaults to localhost:19000 with -plaintext
   zeronet  -> ZK_PROVER_ZERONET_ENDPOINT
   sepolia  -> ZK_PROVER_SEPOLIA_ENDPOINT
   mainnet  -> ZK_PROVER_MAINNET_ENDPOINT
@@ -56,7 +56,7 @@ base64_decode() {
 
 resolve_endpoint() {
   case "$1" in
-    devnet) echo "${ZK_PROVER_DEVNET_ENDPOINT:-localhost:9000}" ;;
+    devnet) echo "${ZK_PROVER_DEVNET_ENDPOINT:-localhost:19000}" ;;
     zeronet) : "${ZK_PROVER_ZERONET_ENDPOINT:?set ZK_PROVER_ZERONET_ENDPOINT}" && echo "$ZK_PROVER_ZERONET_ENDPOINT" ;;
     sepolia) : "${ZK_PROVER_SEPOLIA_ENDPOINT:?set ZK_PROVER_SEPOLIA_ENDPOINT}" && echo "$ZK_PROVER_SEPOLIA_ENDPOINT" ;;
     mainnet) : "${ZK_PROVER_MAINNET_ENDPOINT:?set ZK_PROVER_MAINNET_ENDPOINT}" && echo "$ZK_PROVER_MAINNET_ENDPOINT" ;;

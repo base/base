@@ -103,7 +103,7 @@ L2_BASE_RPC_CL_P2P_PORT=8103
 BATCHER_METRICS_PORT=6060
 
 # ZK Prover Ports
-ZK_PROVER_GRPC_PORT=9000
+ZK_PROVER_GRPC_PORT=19000
 ZK_PROVER_POSTGRES_PORT=5433
 
 # L2 Sequencer-1 Ports
@@ -177,7 +177,7 @@ MINIO_CONSOLE_PORT=7001
 # When non-zero, the client's derivation pipeline stays this many L1 blocks
 # behind the L1 head before deriving L2 safe blocks.
 # Set to 0 to disable (default). Try 4 to test delayed safe head.
-BASE_NODE_VERIFIER_L1_CONFS=15
+BASE_NODE_VERIFIER_L1_CONFS=0
 
 # Chain Configuration
 L1_CHAIN_ID=1337

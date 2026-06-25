@@ -63,7 +63,7 @@ pub struct B20ZkProvingConfig {
     #[arg(long, default_value = "http://localhost:8649")]
     pub rollup_rpc_url: Url,
     /// ZK prover RPC URL.
-    #[arg(long, default_value = "http://localhost:9000")]
+    #[arg(long, default_value = "http://localhost:19000")]
     pub zk_prover_url: Url,
     /// Local benchmark L2 chain ID.
     #[arg(long, default_value_t = 84538453)]

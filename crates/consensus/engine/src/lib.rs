@@ -9,13 +9,12 @@
 #[macro_use]
 extern crate tracing;
 
-mod task_queue;
-pub use task_queue::{
-    BuildTaskError, ConsolidateInput, ConsolidateTask, ConsolidateTaskError, Engine,
-    EngineBuildError, EngineResetError, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, EngineTaskExt, FinalizeTask, FinalizeTaskError, InsertPayloadSafety,
-    InsertTask, InsertTaskError, InsertTaskResult, SealTask, SealTaskError, SynchronizeTask,
-    SynchronizeTaskError,
+mod operations;
+pub use operations::{
+    BuildTaskError, ConsolidateInput, ConsolidateTaskError, DelegatedForkchoiceTaskError,
+    DelegatedForkchoiceUpdate, Engine, EngineBuildError, EngineResetError, EngineTaskError,
+    EngineTaskErrorSeverity, FinalizeTaskError, InsertPayloadSafety, InsertTaskError,
+    InsertTaskResult, SealTaskError, SynchronizeTask, SynchronizeTaskError,
 };
 
 mod attributes;

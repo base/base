@@ -1,11 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
+use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
 };
-use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
+use base_consensus_derive::{
+    BuilderError, PipelineErrorKind, ResetError, test_utils::TestAttributesBuilder,
+};
 use base_consensus_engine::SealTaskError;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use jsonrpsee::core::ClientError;
@@ -234,6 +237,35 @@ async fn test_build_unsealed_payload_prepare_payload_attributes_error(
     } else {
         assert!(result.is_ok());
     }
+}
+
+#[tokio::test]
+async fn test_build_unsealed_payload_block_not_found_reset_resets_engine() {
+    let mut client = MockSequencerEngineClient::new();
+
+    let unsafe_head = L2BlockInfo::default();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
+    client.expect_start_build_block().times(0);
+    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+
+    let l1_origin = BlockInfo::default();
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(1).return_once(move |_, _| Ok(l1_origin));
+
+    let attributes_builder = TestAttributesBuilder {
+        attributes: vec![Err(PipelineErrorKind::Reset(ResetError::BlockNotFound(BlockId::Hash(
+            B256::from([0x11; 32]).into(),
+        ))))],
+    };
+
+    let mut actor = test_actor();
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.engine_client = Arc::new(client);
+    actor.builder.attributes_builder = attributes_builder;
+
+    let result = actor.builder.build().await;
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_none());
 }
 
 // --- seal_payload tests ---
