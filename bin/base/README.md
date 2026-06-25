@@ -61,9 +61,6 @@ Useful sequencer-specific flags include:
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
 - `--flashblocks.port` selects the Flashblocks websocket port.
 
-`--sequencer.max-safe-lag` is currently accepted for CLI compatibility, but it is not enforced by
-the sequencer runtime.
-
 ## `base update`
 
 `base update` updates the installed `base` binary by running `baseup --bin base` against the same
