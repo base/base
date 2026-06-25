@@ -24,14 +24,21 @@ tracing = { workspace = true, features = ["std"] }
 [dev-dependencies]
 # base
 base-test-utils.workspace = true
+base-common-precompiles.workspace = true
 base-common-consensus.workspace = true
 base-execution-chainspec.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # alloy
+alloy-eips.workspace = true
+alloy-signer.workspace = true
+alloy-genesis.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
 
 # misc
 eyre.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

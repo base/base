@@ -54,6 +54,11 @@ impl<'a> JournalStorageProvider<'a> {
     /// `caller`. Block metadata (number, timestamp, chain id, beneficiary,
     /// origin) is snapshotted from the journal's block/transaction environment.
     pub fn new(internals: EvmInternals<'a>, caller: Address) -> Self {
+        // Truncating to `u64` is safe: EVM block numbers are bounded far below
+        // `u64::MAX` and `block_env().number()` is only `U256` for ABI uniformity.
+        // (Unlike the block *timestamp*, which the EIP-8130 executor converts with
+        // a checked `try_into` because it feeds consensus-critical expiry checks,
+        // the block number here only backs the `block_number()` getter.)
         let block_number = internals.block_env().number().to::<u64>();
         let timestamp = internals.block_env().timestamp();
         let chain_id = internals.chain_id();
@@ -96,14 +101,15 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
-        let info = {
-            let state_load = self
-                .internals
-                .load_account(address)
-                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-            state_load.data.info.clone()
-        };
-        f(&info);
+        // Pass the journal's borrowed `AccountInfo` straight to the callback. The
+        // callback cannot re-enter the provider (it has no `self` access), so the
+        // outstanding borrow is safe and we avoid cloning the full `AccountInfo`
+        // (including a potentially large `code` `Bytecode`) on every read.
+        let state_load = self
+            .internals
+            .load_account(address)
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+        f(&state_load.data.info);
         Ok(())
     }
 
@@ -120,10 +126,17 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        // Writing only mutates the storage trie; it deliberately does not touch
+        // nonce/balance/code. Code-less enshrined system accounts that hold
+        // persistent storage (e.g. the 2D `NonceManager`) are instead made
+        // EIP-161-non-empty out of band by a one-byte code stub planted at the
+        // Cobalt transition (see `ensure_eip8130_system_accounts`), so their
+        // storage survives end-of-block state clearing without a per-write guard.
         self.internals
             .sstore(address, key, value)
-            .map(|_| ())
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+
+        Ok(())
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {

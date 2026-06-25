@@ -694,7 +694,11 @@ mod tests {
     }
 
     fn proof_result() -> ProofResult {
-        ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![1, 2, 3].into() })
+        ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![1, 2, 3].into(),
+            execution_stats: None,
+        })
     }
 
     #[tokio::test]

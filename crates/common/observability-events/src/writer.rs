@@ -1,24 +1,20 @@
 use std::{
+    fmt,
+    fs::{File, OpenOptions, create_dir_all},
+    io::{self, Write},
     path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 
-use tokio::{
-    fs::{OpenOptions, create_dir_all},
-    io::{AsyncWrite, AsyncWriteExt, BufWriter},
-    sync::mpsc,
-    task::JoinHandle,
-    time::{MissedTickBehavior, interval},
-};
-use tracing::{error, warn};
+use tracing::warn;
+use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
 
 use crate::{
-    DEFAULT_FLUSH_INTERVAL, DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent,
-    TransactionEventProducer, TransactionEventValidationError,
+    DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent, TransactionEventProducer,
+    TransactionEventValidationError,
 };
 
 /// Configuration for the dedicated transaction event JSONL writer.
@@ -30,8 +26,6 @@ pub struct TransactionEventWriterConfig {
     pub file_path: PathBuf,
     /// Bounded queue capacity before producers drop instead of blocking.
     pub queue_capacity: usize,
-    /// Periodic flush interval for the background file writer.
-    pub flush_interval: Duration,
     /// If true, initialization errors are returned to the caller.
     pub required: bool,
     /// Producer identity expected for events written through this handle.
@@ -51,7 +45,6 @@ impl TransactionEventWriterConfig {
             enabled: false,
             file_path: file_path.into(),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
-            flush_interval: DEFAULT_FLUSH_INTERVAL,
             required: false,
             producer,
             network: network.into(),
@@ -60,24 +53,65 @@ impl TransactionEventWriterConfig {
 }
 
 /// Non-blocking handle for appending transaction events to JSONL.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TransactionEventWriter {
     inner: Arc<WriterInner>,
 }
 
-#[derive(Debug)]
 struct WriterInner {
-    tx: Option<mpsc::Sender<QueuedEvent>>,
-    queued: Arc<AtomicUsize>,
-    _task: Option<JoinHandle<()>>,
+    writer: Option<NonBlocking>,
+    dropped: Option<ErrorCounter>,
+    observed_drops: AtomicUsize,
+    _guard: Option<WorkerGuard>,
     config: TransactionEventWriterConfig,
 }
 
+impl fmt::Debug for TransactionEventWriter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TransactionEventWriter")
+            .field("enabled", &self.inner.writer.is_some())
+            .field("config", &self.inner.config)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug)]
-struct QueuedEvent {
-    event_id: String,
-    tx_hash: Option<String>,
-    line: Vec<u8>,
+struct MetricWriter<W> {
+    inner: W,
+}
+
+impl<W> MetricWriter<W> {
+    const fn new(inner: W) -> Self {
+        Self { inner }
+    }
+}
+
+impl<W> Write for MetricWriter<W>
+where
+    W: Write,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self.inner.write(buf) {
+            Ok(bytes) => {
+                Metrics::bytes_written().increment(bytes as u64);
+                Ok(bytes)
+            }
+            Err(err) => {
+                Metrics::write_errors("write").increment(1);
+                Err(err)
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self.inner.flush() {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                Metrics::write_errors("flush").increment(1);
+                Err(err)
+            }
+        }
+    }
 }
 
 impl TransactionEventWriter {
@@ -87,18 +121,12 @@ impl TransactionEventWriter {
     /// metric. If initialization fails and `required = false`, returns the same
     /// disabled handle after recording the error. If `required = true`, returns
     /// the initialization error.
-    pub async fn from_config(config: TransactionEventWriterConfig) -> eyre::Result<Self> {
+    pub fn from_config(config: TransactionEventWriterConfig) -> eyre::Result<Self> {
         if !config.enabled {
             return Ok(Self::disabled(config));
         }
 
-        let file = async {
-            if let Some(parent) = config.file_path.parent() {
-                create_dir_all(parent).await?;
-            }
-            OpenOptions::new().create(true).append(true).open(&config.file_path).await
-        }
-        .await;
+        let file = open_file(&config);
 
         let file = match file {
             Ok(file) => file,
@@ -120,20 +148,21 @@ impl TransactionEventWriter {
         };
 
         let queue_capacity = config.queue_capacity.max(1);
-        let flush_interval = if config.flush_interval.is_zero() {
-            DEFAULT_FLUSH_INTERVAL
-        } else {
-            config.flush_interval
-        };
-        let (tx, rx) = mpsc::channel(queue_capacity);
-        let queued = Arc::new(AtomicUsize::new(0));
-        let task_queued = Arc::clone(&queued);
-        let task = tokio::spawn(async move {
-            run_writer(BufWriter::new(file), rx, task_queued, flush_interval).await;
-        });
+        let (writer, guard) = NonBlockingBuilder::default()
+            .lossy(true)
+            .buffered_lines_limit(queue_capacity)
+            .thread_name("transaction-event-writer")
+            .finish(MetricWriter::new(file));
+        let dropped = writer.error_counter();
 
         Ok(Self {
-            inner: Arc::new(WriterInner { tx: Some(tx), queued, _task: Some(task), config }),
+            inner: Arc::new(WriterInner {
+                writer: Some(writer),
+                dropped: Some(dropped),
+                observed_drops: AtomicUsize::new(0),
+                _guard: Some(guard),
+                config,
+            }),
         })
     }
 
@@ -141,9 +170,10 @@ impl TransactionEventWriter {
     pub fn disabled(config: TransactionEventWriterConfig) -> Self {
         Self {
             inner: Arc::new(WriterInner {
-                tx: None,
-                queued: Arc::new(AtomicUsize::new(0)),
-                _task: None,
+                writer: None,
+                dropped: None,
+                observed_drops: AtomicUsize::new(0),
+                _guard: None,
                 config,
             }),
         }
@@ -151,7 +181,7 @@ impl TransactionEventWriter {
 
     /// Attempts to enqueue one event without blocking the caller.
     pub fn try_write(&self, event: &TransactionEvent) -> Result<(), WriteEventError> {
-        let Some(tx) = &self.inner.tx else {
+        let Some(writer) = &self.inner.writer else {
             Metrics::dropped_events("disabled").increment(1);
             return Err(WriteEventError::Disabled);
         };
@@ -167,44 +197,40 @@ impl TransactionEventWriter {
         })?;
         line.push(b'\n');
 
-        let queued_event = QueuedEvent {
-            event_id: event.event_id.clone(),
-            tx_hash: event.tx_hash.map(|tx_hash| format!("{tx_hash:#x}")),
-            line,
-        };
-
-        self.inner.queued.fetch_add(1, Ordering::Relaxed);
-
-        match tx.try_send(queued_event) {
-            Ok(()) => {
-                let depth = self.inner.queued.load(Ordering::Relaxed);
-                Metrics::emitted_events().increment(1);
-                Metrics::queue_depth().set(depth as f64);
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                let depth = decrement_queued(&self.inner.queued);
-                Metrics::dropped_events("backpressure").increment(1);
-                Metrics::queue_depth().set(depth as f64);
-                Err(WriteEventError::Backpressure)
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                let depth = decrement_queued(&self.inner.queued);
-                Metrics::dropped_events("closed").increment(1);
-                Metrics::queue_depth().set(depth as f64);
-                Err(WriteEventError::Closed)
-            }
-        }
-    }
-
-    /// Returns the approximate number of queued events.
-    pub fn queue_depth(&self) -> usize {
-        self.inner.queued.load(Ordering::Relaxed)
+        let _ = writer.clone().write_all(&line);
+        self.observe_dropped_events();
+        Metrics::submitted_events().increment(1);
+        Ok(())
     }
 
     /// Returns the configured network label for this writer.
     pub fn network(&self) -> &str {
         &self.inner.config.network
+    }
+
+    fn observe_dropped_events(&self) -> usize {
+        let Some(dropped) = &self.inner.dropped else {
+            return 0;
+        };
+
+        loop {
+            let current = dropped.dropped_lines();
+            let previous = self.inner.observed_drops.load(Ordering::Relaxed);
+            if current <= previous {
+                return 0;
+            }
+
+            if self
+                .inner
+                .observed_drops
+                .compare_exchange_weak(previous, current, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                let delta = current - previous;
+                Metrics::dropped_events("backpressure").increment(delta as u64);
+                return delta;
+            }
+        }
     }
 }
 
@@ -214,12 +240,6 @@ pub enum WriteEventError {
     /// Writer is disabled.
     #[error("transaction event writer is disabled")]
     Disabled,
-    /// Bounded queue is full.
-    #[error("transaction event writer queue is full")]
-    Backpressure,
-    /// Background writer task has stopped.
-    #[error("transaction event writer task is closed")]
-    Closed,
     /// Serialization failed.
     #[error("failed to serialize transaction event: {0}")]
     Serialize(serde_json::Error),
@@ -228,79 +248,25 @@ pub enum WriteEventError {
     Invalid(TransactionEventValidationError),
 }
 
-/// Drains queued events to the JSONL file.
-///
-/// Runtime write and flush failures are observable through metrics and logs but
-/// do not block or fail transaction-serving paths. A write failure permanently
-/// drops the affected queued event, and storage failures can leave a partial
-/// JSONL line on disk. Collectors should tolerate and skip malformed lines.
-/// Callers that require startup-time fail closed behavior should configure
-/// [`TransactionEventWriterConfig::required`].
-async fn run_writer<W>(
-    mut writer: BufWriter<W>,
-    mut rx: mpsc::Receiver<QueuedEvent>,
-    queued: Arc<AtomicUsize>,
-    flush_interval: Duration,
-) where
-    W: AsyncWrite + Unpin,
-{
-    let mut ticker = interval(flush_interval);
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-    loop {
-        tokio::select! {
-            maybe_event = rx.recv() => {
-                let Some(event) = maybe_event else {
-                    if let Err(err) = writer.flush().await {
-                        Metrics::write_errors("flush").increment(1);
-                        error!(error = %err, "failed to flush transaction event journal on shutdown");
-                    }
-                    Metrics::queue_depth().set(0.0);
-                    break;
-                };
-
-                let depth = decrement_queued(&queued);
-                Metrics::queue_depth().set(depth as f64);
-
-                let bytes = event.line.len();
-                match writer.write_all(&event.line).await {
-                    Ok(()) => Metrics::bytes_written().increment(bytes as u64),
-                    Err(err) => {
-                        Metrics::write_errors("write").increment(1);
-                        error!(
-                            error = %err,
-                            event_id = %event.event_id,
-                            tx_hash = ?event.tx_hash,
-                            "failed to write transaction event journal entry; queued event dropped"
-                        );
-                    }
-                }
-            }
-            _ = ticker.tick() => {
-                if let Err(err) = writer.flush().await {
-                    Metrics::write_errors("flush").increment(1);
-                    error!(error = %err, "failed to flush transaction event journal");
-                }
-            }
-        }
+fn open_file(config: &TransactionEventWriterConfig) -> io::Result<File> {
+    if let Some(parent) = config.file_path.parent() {
+        create_dir_all(parent)?;
     }
-}
-
-fn decrement_queued(queued: &AtomicUsize) -> usize {
-    queued
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_sub(1))
-        .map(|previous| previous - 1)
-        .unwrap_or(0)
+    OpenOptions::new().create(true).append(true).open(&config.file_path)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::Duration};
+    use std::{
+        fs,
+        io::{self, ErrorKind},
+        thread,
+        time::Duration,
+    };
 
     use alloy_primitives::TxHash;
     use chrono::{DateTime, Utc};
     use serde_json::{Map, Value, json};
-    use tokio::io;
 
     use super::*;
     use crate::{
@@ -326,6 +292,36 @@ mod tests {
         .with_network("base-mainnet")
         .with_tx_hash(tx_hash)
         .with_data(Map::from_iter([("pool".to_string(), json!("pending"))]))
+    }
+
+    fn writer_with_sink<W>(sink: W, queue_capacity: usize) -> TransactionEventWriter
+    where
+        W: Write + Send + 'static,
+    {
+        let config = TransactionEventWriterConfig {
+            enabled: true,
+            file_path: PathBuf::from("test.jsonl"),
+            queue_capacity,
+            required: true,
+            producer: TransactionEventProducer::BaseRethNode,
+            network: "base-mainnet".to_string(),
+        };
+        let (writer, guard) = NonBlockingBuilder::default()
+            .lossy(true)
+            .buffered_lines_limit(queue_capacity)
+            .thread_name("transaction-event-writer-test")
+            .finish(MetricWriter::new(sink));
+        let dropped = writer.error_counter();
+
+        TransactionEventWriter {
+            inner: Arc::new(WriterInner {
+                writer: Some(writer),
+                dropped: Some(dropped),
+                observed_drops: AtomicUsize::new(0),
+                _guard: Some(guard),
+                config,
+            }),
+        }
     }
 
     #[test]
@@ -506,26 +502,22 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn writer_appends_jsonl() {
+    #[test]
+    fn writer_appends_jsonl() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("transaction-events.jsonl");
         let writer = TransactionEventWriter::from_config(TransactionEventWriterConfig {
             enabled: true,
             file_path: path.clone(),
             queue_capacity: 8,
-            flush_interval: Duration::from_millis(10),
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         })
-        .await
         .unwrap();
 
         writer.try_write(&sample_event()).unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
         drop(writer);
-        tokio::time::sleep(Duration::from_millis(20)).await;
 
         let contents = fs::read_to_string(path).unwrap();
         let lines = contents.lines().collect::<Vec<_>>();
@@ -534,58 +526,56 @@ mod tests {
         assert_eq!(value["schema_version"], SCHEMA_VERSION);
     }
 
-    #[tokio::test]
-    async fn writer_drops_on_backpressure() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("transaction-events.jsonl");
-        let writer = TransactionEventWriter::from_config(TransactionEventWriterConfig {
-            enabled: true,
-            file_path: path,
-            queue_capacity: 1,
-            flush_interval: Duration::from_secs(30),
-            required: true,
-            producer: TransactionEventProducer::BaseRethNode,
-            network: "base-mainnet".to_string(),
-        })
-        .await
-        .unwrap();
+    #[test]
+    fn writer_observes_aggregate_backpressure_drops() {
+        struct SlowWriter;
 
-        writer.try_write(&sample_event()).unwrap();
-        let mut saw_backpressure = false;
+        impl Write for SlowWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                thread::sleep(Duration::from_millis(50));
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let writer = writer_with_sink(SlowWriter, 0);
+
         for _ in 0..10_000 {
-            if matches!(writer.try_write(&sample_event()), Err(WriteEventError::Backpressure)) {
-                saw_backpressure = true;
+            writer.try_write(&sample_event()).unwrap();
+            if writer.inner.observed_drops.load(Ordering::Relaxed) > 0 {
                 break;
             }
         }
 
-        assert!(saw_backpressure, "bounded writer should eventually reject without blocking");
+        let dropped = writer.inner.observed_drops.load(Ordering::Relaxed);
+        assert!(dropped > 0, "lossy writer should report aggregate drops under backpressure");
     }
 
-    #[tokio::test]
-    async fn writer_creates_parent_directories() {
+    #[test]
+    fn writer_creates_parent_directories() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing").join("transaction-events.jsonl");
         let writer = TransactionEventWriter::from_config(TransactionEventWriterConfig {
             enabled: true,
             file_path: path.clone(),
             queue_capacity: 8,
-            flush_interval: Duration::from_millis(10),
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         })
-        .await
         .unwrap();
 
         writer.try_write(&sample_event()).unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        drop(writer);
 
         assert!(path.exists());
     }
 
-    #[tokio::test]
-    async fn required_writer_fails_closed_on_init_error() {
+    #[test]
+    fn required_writer_fails_closed_on_init_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("transaction-events-dir");
         fs::create_dir(&path).unwrap();
@@ -593,70 +583,35 @@ mod tests {
             enabled: true,
             file_path: path,
             queue_capacity: 8,
-            flush_interval: Duration::from_millis(10),
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         })
-        .await
         .unwrap_err();
 
         assert!(err.to_string().contains("required transaction event writer"));
     }
 
-    #[tokio::test]
-    async fn runtime_write_failure_does_not_close_writer() {
+    #[test]
+    fn metric_writer_propagates_runtime_write_failure() {
         struct FailingWriter;
 
-        impl AsyncWrite for FailingWriter {
-            fn poll_write(
-                self: std::pin::Pin<&mut Self>,
-                _cx: &mut std::task::Context<'_>,
-                _buf: &[u8],
-            ) -> std::task::Poll<io::Result<usize>> {
-                std::task::Poll::Ready(Err(io::Error::other("disk full")))
+        impl Write for FailingWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("disk full"))
             }
 
-            fn poll_flush(
-                self: std::pin::Pin<&mut Self>,
-                _cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<io::Result<()>> {
-                std::task::Poll::Ready(Ok(()))
-            }
-
-            fn poll_shutdown(
-                self: std::pin::Pin<&mut Self>,
-                _cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<io::Result<()>> {
-                std::task::Poll::Ready(Ok(()))
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::other("flush failed"))
             }
         }
 
-        let (tx, rx) = mpsc::channel(2);
-        let queued = Arc::new(AtomicUsize::new(0));
-        let task = tokio::spawn(run_writer(
-            BufWriter::new(FailingWriter),
-            rx,
-            Arc::clone(&queued),
-            Duration::from_millis(10),
-        ));
+        let mut writer = MetricWriter::new(FailingWriter);
 
-        tx.send(QueuedEvent {
-            event_id: "event-1".to_string(),
-            tx_hash: None,
-            line: Vec::from(&b"{}\n"[..]),
-        })
-        .await
-        .unwrap();
-        tx.send(QueuedEvent {
-            event_id: "event-2".to_string(),
-            tx_hash: None,
-            line: Vec::from(&b"{}\n"[..]),
-        })
-        .await
-        .unwrap();
-        drop(tx);
+        let err = writer.write_all(b"{}\n").unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
 
-        task.await.unwrap();
+        let err = writer.flush().unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
     }
 }

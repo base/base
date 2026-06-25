@@ -38,7 +38,7 @@ sp1-sdk = { workspace = true, features = ["network"] }
 backoff.workspace = true
 async-trait.workspace = true
 tokio-util.workspace = true
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 # error handling
 thiserror.workspace = true

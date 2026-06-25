@@ -103,6 +103,15 @@ pub struct ChallengerArgs {
     )]
     pub max_proof_duration: Duration,
 
+    /// Retryable TEE submission failures to tolerate before falling back to ZK.
+    /// Set to 0 to fall back immediately on the first retryable TEE tx error.
+    #[arg(
+        long = "tee-submit-retry-limit",
+        env = cli_env!("TEE_SUBMIT_RETRY_LIMIT"),
+        default_value = "3"
+    )]
+    pub tee_submit_retry_limit: u32,
+
     /// Signer configuration (local private key or remote sidecar).
     #[command(flatten)]
     pub signer: SignerCli,

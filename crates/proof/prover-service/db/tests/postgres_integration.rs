@@ -1449,7 +1449,11 @@ async fn test_full_snark_pipeline() {
     assert_eq!(
         result,
         ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_receipt.into() }
+            proof: ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: snark_receipt.into(),
+                execution_stats: None
+            }
         })
     );
     assert!(req.completed_at.is_some());
@@ -1530,7 +1534,11 @@ async fn expire_lock(pool: &PgPool, id: Uuid) {
 }
 
 fn compressed_result(bytes: Vec<u8>) -> ProtocolProofResult {
-    ProtocolProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: bytes.into() })
+    ProtocolProofResult::Compressed(ZkProofResult {
+        zk_vm: ZkVm::Sp1,
+        proof: bytes.into(),
+        execution_stats: None,
+    })
 }
 
 fn uppercase_uuid_session_id() -> (Uuid, String) {
@@ -1881,7 +1889,11 @@ async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
             lock_id: Uuid::new_v4(),
             worker_id: "non-owner".to_owned(),
             result: ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![0x01].into() },
+                proof: ZkProofResult {
+                    zk_vm: ZkVm::Sp1,
+                    proof: vec![0x01].into(),
+                    execution_stats: None,
+                },
             }),
         })
         .await
@@ -1895,7 +1907,11 @@ async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
             lock_id,
             worker_id: "mismatch-worker".to_owned(),
             result: ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![0x01].into() },
+                proof: ZkProofResult {
+                    zk_vm: ZkVm::Sp1,
+                    proof: vec![0x01].into(),
+                    execution_stats: None,
+                },
             }),
         })
         .await

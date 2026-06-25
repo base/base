@@ -1,6 +1,9 @@
 //! Receipt types for RPC
 
+use alloc::vec::Vec;
+
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
+use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types_eth::Log;
 use alloy_serde::OtherFields;
 use base_common_consensus::{
@@ -19,6 +22,26 @@ pub struct BaseTransactionReceipt {
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
+    /* --------------------------------------- EIP-8130 --------------------------------------- */
+    /// Gas payer address for EIP-8130 transactions: the sender for self-pay, or the
+    /// specified payer for sponsored transactions.
+    ///
+    /// Always null for non-EIP-8130 transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer: Option<Address>,
+    /// Per-phase execution statuses for EIP-8130 transactions.
+    ///
+    /// Each entry is `0x01` (success) or `0x00` (reverted); phases after a revert are
+    /// not executed and reported as `0x00`. Empty for non-EIP-8130 transactions or when
+    /// the transaction's `calls` was empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty", with = "alloy_serde::quantity::vec")]
+    pub phase_statuses: Vec<u8>,
+    /// Opaque transaction metadata for EIP-8130 transactions, committed to by the sender
+    /// and payer signatures but otherwise uninterpreted by the protocol.
+    ///
+    /// Always null for non-EIP-8130 transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Bytes>,
 }
 
 impl alloy_network_primitives::ReceiptResponse for BaseTransactionReceipt {
@@ -238,7 +261,9 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
                 Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
             }
             BaseReceipt::Eip8130(receipt) => {
-                Self::Eip8130(convert_standard_receipt(receipt, logs_bloom))
+                // The consensus envelope only carries the standard receipt; the
+                // EIP-8130 `phaseStatuses` live on the RPC receipt, not in RLP.
+                Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
             }
             BaseReceipt::Deposit(receipt) => {
                 let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();

@@ -412,6 +412,10 @@ impl ZkProver for NetworkZkProver {
         let proof = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
             .map_err(|e| backend_error!("failed to serialize proof: {e}"))?;
 
-        Ok(ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() }))
+        Ok(ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: proof.into(),
+            execution_stats: None,
+        }))
     }
 }

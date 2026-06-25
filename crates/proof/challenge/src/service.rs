@@ -193,6 +193,7 @@ impl ChallengerService {
         let driver_config = DriverConfig {
             poll_interval: config.poll_interval,
             max_proof_duration: config.max_proof_duration,
+            tee_submit_retry_limit: config.tee_submit_retry_limit,
             cancel: cancel.child_token(),
         };
         let driver = Driver::new(

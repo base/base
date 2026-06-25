@@ -12,7 +12,7 @@ pub use session::ProofSessionId;
 
 mod types;
 pub use types::{
-    BackendSession, BackendSessionState, DeleteProofRequest, GetNextProofRequest,
+    BackendSession, BackendSessionState, DeleteProofRequest, ExecutionStats, GetNextProofRequest,
     GetNextProofResponse, GetProofRequest, GetProofResponse, GetProofSessionRequest,
     GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse, ListProofsRequest,
     ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofJob, ProofJobStatus, ProofRequest,
