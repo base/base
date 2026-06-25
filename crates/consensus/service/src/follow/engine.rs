@@ -72,7 +72,6 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
                     Arc::clone(&self.rollup_config),
                     envelope.clone(),
                     InsertPayloadSafety::Unsafe,
-                    false,
                 )
                 .await
             };

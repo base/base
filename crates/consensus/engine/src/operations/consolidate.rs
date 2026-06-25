@@ -5,13 +5,13 @@ use std::{sync::Arc, time::Instant};
 use alloy_rpc_types_eth::Block;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction;
-use base_protocol::{AttributesWithParent, L2BlockInfo};
+use base_protocol::{AttributesWithParent, FromBlockError, L2BlockInfo};
 use thiserror::Error;
 
 use crate::{
-    BuildTaskError, Engine, EngineClient, EngineState, EngineSyncStateUpdate, EngineTaskError,
-    EngineTaskErrorSeverity, InsertPayloadSafety, Metrics, SealTaskError, SynchronizeTask,
-    SynchronizeTaskError,
+    BuildTaskError, Engine, EngineClient, EngineClientError, EngineState, EngineSyncStateUpdate,
+    EngineTaskError, EngineTaskErrorSeverity, InsertPayloadSafety, Metrics, SealTaskError,
+    SynchronizeTask, SynchronizeTaskError,
 };
 
 /// An error that occurs when consolidating the engine state.
@@ -21,8 +21,11 @@ pub enum ConsolidateTaskError {
     #[error("Unsafe L2 block is missing {0}")]
     MissingUnsafeL2Block(u64),
     /// Failed to fetch the unsafe L2 block.
-    #[error("Failed to fetch the unsafe L2 block")]
-    FailedToFetchUnsafeL2Block,
+    #[error("Failed to fetch the unsafe L2 block: {0}")]
+    FailedToFetchUnsafeL2Block(#[source] EngineClientError),
+    /// Failed to convert the unsafe L2 block into block info.
+    #[error(transparent)]
+    L2BlockInfoConstruction(#[from] FromBlockError),
     /// The build task failed.
     #[error(transparent)]
     BuildTaskFailed(#[from] BuildTaskError),
@@ -38,7 +41,8 @@ impl EngineTaskError for ConsolidateTaskError {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
             Self::MissingUnsafeL2Block(_) => EngineTaskErrorSeverity::Reset,
-            Self::FailedToFetchUnsafeL2Block => EngineTaskErrorSeverity::Temporary,
+            Self::FailedToFetchUnsafeL2Block(_) => EngineTaskErrorSeverity::Temporary,
+            Self::L2BlockInfoConstruction(_) => EngineTaskErrorSeverity::Critical,
             Self::BuildTaskFailed(inner) => inner.severity(),
             Self::SealTaskFailed(inner) => inner.severity(),
             Self::ForkchoiceUpdateFailed(inner) => inner.severity(),
@@ -107,13 +111,15 @@ impl Engine {
     where
         EngineClient_: EngineClient + 'static,
     {
+        let input = Arc::new(input);
+
         self.retry_with_severity(Metrics::CONSOLIDATE_TASK_LABEL, move |state| {
             let client = Arc::clone(&client);
             let config = Arc::clone(&config);
-            let input = input.clone();
-            Box::pin(
-                async move { Self::consolidate_with_state(state, client, config, input).await },
-            )
+            let input = Arc::clone(&input);
+            Box::pin(async move {
+                Self::consolidate_with_state(state, client, config, input.as_ref()).await
+            })
         })
         .await
     }
@@ -123,7 +129,7 @@ impl Engine {
         state: &mut EngineState,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
-        input: ConsolidateInput,
+        input: &ConsolidateInput,
     ) -> Result<(), ConsolidateTaskError> {
         // Behavior depends on how the safe head is provided:
         //
@@ -241,7 +247,7 @@ impl Engine {
         state: &mut EngineState,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
-        input: ConsolidateInput,
+        input: &ConsolidateInput,
     ) -> Result<(), ConsolidateTaskError> {
         let global_start = Instant::now();
 
@@ -259,7 +265,7 @@ impl Engine {
                     error = %err,
                     "Failed to fetch unsafe l2 block for consolidation"
                 );
-                return Err(ConsolidateTaskError::FailedToFetchUnsafeL2Block);
+                return Err(ConsolidateTaskError::FailedToFetchUnsafeL2Block(err));
             }
         };
         let block_fetch_duration = fetch_start.elapsed();
@@ -333,9 +339,14 @@ impl Engine {
 
                     return Ok(());
                 }
-                Err(e) => {
-                    warn!(target: "engine", error = ?e, "Failed to construct L2BlockInfo, proceeding to safe payload rebuild");
-                }
+                Err(err) => match input {
+                    ConsolidateInput::Attributes(_) => {
+                        warn!(target: "engine", error = ?err, "Failed to construct L2BlockInfo, proceeding to safe payload rebuild");
+                    }
+                    ConsolidateInput::BlockInfo(_) => {
+                        return Err(ConsolidateTaskError::L2BlockInfoConstruction(err));
+                    }
+                },
             }
         }
 
@@ -423,11 +434,12 @@ mod tests {
                 .build(),
         );
 
+        let input = ConsolidateInput::from(attributes);
         let result = Engine::consolidate_with_state(
             &mut state,
             client,
             Arc::new(RollupConfig::default()),
-            ConsolidateInput::from(attributes),
+            &input,
         )
         .await;
 
@@ -482,16 +494,55 @@ mod tests {
                 .with_l2_block_by_label(BlockNumberOrTag::Number(block_number), unsafe_block)
                 .build(),
         );
-        let result = Engine::consolidate_with_state(
-            &mut state,
-            client,
-            Arc::new(cfg),
-            ConsolidateInput::from(attributes),
-        )
-        .await;
+        let input = ConsolidateInput::from(attributes);
+        let result =
+            Engine::consolidate_with_state(&mut state, client, Arc::new(cfg), &input).await;
 
         assert!(result.is_err());
         assert_eq!(state.sync_state.safe_head(), original_safe_head);
         assert_eq!(state.sync_state.local_safe_head(), original_local_safe_head);
+    }
+
+    #[tokio::test]
+    async fn consolidate_block_info_returns_malformed_block_error_without_reconciling() {
+        let safe_l2 = crate::test_utils::test_block_info(35);
+        let unsafe_head = crate::test_utils::test_block_info(76);
+
+        let mut malformed_block = RpcBlock::<BaseTransaction>::default();
+        malformed_block.header.hash = safe_l2.block_info.hash;
+        malformed_block.header.inner.number = safe_l2.block_info.number;
+        malformed_block.header.inner.parent_hash = safe_l2.block_info.parent_hash;
+        malformed_block.header.inner.timestamp = safe_l2.block_info.timestamp;
+
+        let mut state = TestEngineStateBuilder::new()
+            .with_unsafe_head(unsafe_head)
+            .with_safe_head(crate::test_utils::test_block_info(34))
+            .build();
+        let original_state = state.sync_state;
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_l2_block_by_label(
+                    BlockNumberOrTag::Number(safe_l2.block_info.number),
+                    malformed_block,
+                )
+                .build(),
+        );
+        let input = ConsolidateInput::from(safe_l2);
+
+        let result = Engine::consolidate_with_state(
+            &mut state,
+            client,
+            Arc::new(RollupConfig::default()),
+            &input,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(ConsolidateTaskError::L2BlockInfoConstruction(
+                base_protocol::FromBlockError::MissingL1InfoDeposit(_)
+            ))
+        ));
+        assert_eq!(state.sync_state, original_state);
     }
 }

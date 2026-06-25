@@ -111,7 +111,7 @@ impl Engine {
         let _task_timer =
             base_metrics::timed!(Metrics::engine_task_duration(Metrics::INSERT_TASK_LABEL));
 
-        let result = Self::insert_payload_with_state(
+        let result = Self::insert_payload_with_state_inner(
             &mut self.state,
             client,
             config,
@@ -163,7 +163,7 @@ impl Engine {
             let config = Arc::clone(&config);
             let envelope = envelope.clone();
             Box::pin(async move {
-                Self::insert_payload_with_state(
+                Self::insert_payload_with_state_inner(
                     state,
                     client,
                     config,
@@ -179,6 +179,24 @@ impl Engine {
 
     /// Inserts a payload into the execution engine using the provided state.
     pub async fn insert_payload_with_state<EngineClient_: EngineClient>(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        rollup_config: Arc<RollupConfig>,
+        envelope: BaseExecutionPayloadEnvelope,
+        payload_safety: InsertPayloadSafety,
+    ) -> InsertTaskResult {
+        Self::insert_payload_with_state_inner(
+            state,
+            client,
+            rollup_config,
+            envelope,
+            payload_safety,
+            false,
+        )
+        .await
+    }
+
+    async fn insert_payload_with_state_inner<EngineClient_: EngineClient>(
         state: &mut EngineState,
         client: Arc<EngineClient_>,
         rollup_config: Arc<RollupConfig>,

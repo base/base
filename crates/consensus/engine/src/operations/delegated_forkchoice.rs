@@ -69,13 +69,9 @@ impl Engine {
         update: DelegatedForkchoiceUpdate,
     ) -> Result<(), DelegatedForkchoiceTaskError> {
         if state.sync_state.safe_head() != update.safe_l2 {
-            Self::consolidate_with_state(
-                state,
-                Arc::clone(&client),
-                Arc::clone(&config),
-                ConsolidateInput::BlockInfo(update.safe_l2),
-            )
-            .await?;
+            let input = ConsolidateInput::BlockInfo(update.safe_l2);
+            Self::consolidate_with_state(state, Arc::clone(&client), Arc::clone(&config), &input)
+                .await?;
         } else {
             debug!(
                 target: "engine",
@@ -109,12 +105,14 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::transaction::Recovered;
     use alloy_eips::BlockNumberOrTag;
-    use alloy_primitives::B256;
+    use alloy_primitives::{Address, B256};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
-    use alloy_rpc_types_eth::Block as RpcBlock;
+    use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_rpc_types::Transaction as BaseTransaction;
-    use base_protocol::BlockInfo;
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock};
 
     use super::*;
     use crate::test_utils::{TestEngineStateBuilder, test_block_info, test_engine_client_builder};
@@ -129,11 +127,35 @@ mod tests {
         }
     }
 
+    fn l1_info_deposit_tx() -> BaseTxEnvelope {
+        BaseTxEnvelope::from(TxDeposit {
+            input: L1BlockInfoBedrock::default().encode_calldata(),
+            ..Default::default()
+        })
+    }
+
+    fn rpc_transaction(tx: BaseTxEnvelope, block_number: u64) -> BaseTransaction {
+        BaseTransaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: Recovered::new_unchecked(tx, Address::ZERO),
+                block_hash: None,
+                block_number: Some(block_number),
+                block_timestamp: None,
+                effective_gas_price: Some(0),
+                transaction_index: Some(0),
+            },
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        }
+    }
+
     fn block_with_hash(number: u64, hash: B256) -> RpcBlock<BaseTransaction> {
         let mut block = RpcBlock::<BaseTransaction>::default();
         block.header.hash = hash;
         block.header.inner.number = number;
         block.header.inner.timestamp = number * 2;
+        block.transactions =
+            BlockTransactions::Full(vec![rpc_transaction(l1_info_deposit_tx(), number)]);
         block
     }
 
@@ -154,8 +176,9 @@ mod tests {
             test_engine_client_builder()
                 .with_l2_block_by_label(
                     BlockNumberOrTag::Number(delegated_safe_number),
-                    block_with_hash(delegated_safe_number, delegated_safe_hash),
+                    block_with_hash(delegated_safe_number, B256::from([0x22; 32])),
                 )
+                .with_fork_choice_updated_v2_response(syncing_fcu())
                 .with_fork_choice_updated_v3_response(syncing_fcu())
                 .build(),
         );

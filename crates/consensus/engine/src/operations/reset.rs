@@ -1,16 +1,19 @@
 //! Engine reset and startup synchronization operations.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use base_common_genesis::RollupConfig;
 use base_protocol::{BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
+use tokio::time::sleep;
 
 use crate::{
     Engine, EngineClient, EngineSyncStateUpdate, EngineTaskError, EngineTaskErrorSeverity,
     ForkchoiceCheckpointReader, Metrics, NoopForkchoiceCheckpointReader, SyncStartError,
     SynchronizeTask, SynchronizeTaskError, find_starting_forkchoice_with_checkpoint_reader,
 };
+
+const ENGINE_RESET_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 impl Engine {
     /// Resets the engine by finding a plausible sync starting point via
@@ -63,6 +66,7 @@ impl Engine {
                 | EngineTaskErrorSeverity::Flush
                 | EngineTaskErrorSeverity::Reset => {
                     warn!(target: "engine", ?err, "Forkchoice update failed during reset. Trying again...");
+                    sleep(ENGINE_RESET_RETRY_DELAY).await;
                     start = find_starting_forkchoice_with_checkpoint_reader(
                         &config,
                         client.as_ref(),

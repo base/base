@@ -327,7 +327,6 @@ impl Engine {
             Arc::clone(&config),
             payload,
             payload_safety,
-            false,
         )
         .await
         {

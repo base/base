@@ -236,6 +236,11 @@ impl L2BlockInfo {
                 .ok_or(FromBlockError::MissingL1InfoDeposit(block_info.hash))?;
             let mut first_tx = first_tx.as_ref();
             let tx = BaseTxEnvelope::decode_2718(&mut first_tx)?;
+            if !first_tx.is_empty() {
+                return Err(FromBlockError::TxEnvelopeDecodeError(Eip2718Error::RlpError(
+                    alloy_rlp::Error::ListLengthMismatch { expected: 0, got: first_tx.len() },
+                )));
+            }
             let Some(tx) = tx.as_deposit() else {
                 return Err(FromBlockError::FirstTxNonDeposit(tx.tx_type() as u8));
             };
@@ -283,8 +288,10 @@ mod tests {
     use alloc::{string::ToString, vec};
 
     use alloy_consensus::{Header, TxEnvelope};
-    use alloy_primitives::b256;
-    use base_common_consensus::BaseBlock;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, Bloom, U256, b256};
+    use alloy_rpc_types_engine::ExecutionPayloadV1;
+    use base_common_consensus::{BaseBlock, TxDeposit};
 
     use super::*;
     use crate::test_utils::RAW_BEDROCK_INFO_TX;
@@ -380,6 +387,46 @@ mod tests {
         let block = block.into_consensus();
         let derived = L2BlockInfo::from_block_and_genesis(&block, &genesis).unwrap();
         assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn from_payload_header_and_genesis_rejects_trailing_l1_info_tx_bytes() {
+        let genesis = ChainGenesis {
+            l1: BlockNumHash { hash: B256::from([4; 32]), number: 2 },
+            l2: BlockNumHash { hash: B256::from([5; 32]), number: 1 },
+            ..Default::default()
+        };
+        let tx = BaseTxEnvelope::from(TxDeposit {
+            input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
+            ..Default::default()
+        });
+        let mut tx_bytes = tx.encoded_2718();
+        tx_bytes.extend_from_slice(b"trailing bytes");
+        let payload = BaseExecutionPayload::V1(ExecutionPayloadV1 {
+            parent_hash: genesis.l2.hash,
+            fee_recipient: Address::ZERO,
+            state_root: B256::ZERO,
+            receipts_root: B256::ZERO,
+            logs_bloom: Bloom::ZERO,
+            prev_randao: B256::ZERO,
+            block_number: 2,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            timestamp: 1,
+            extra_data: Default::default(),
+            base_fee_per_gas: U256::ZERO,
+            block_hash: B256::from([6; 32]),
+            transactions: vec![tx_bytes.into()],
+        });
+
+        let err = L2BlockInfo::from_payload_header_and_genesis(&payload, &genesis).unwrap_err();
+
+        assert_eq!(
+            err,
+            FromBlockError::TxEnvelopeDecodeError(Eip2718Error::RlpError(
+                alloy_rlp::Error::ListLengthMismatch { expected: 0, got: b"trailing bytes".len() },
+            ))
+        );
     }
 
     #[test]
