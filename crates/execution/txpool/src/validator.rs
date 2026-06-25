@@ -77,6 +77,11 @@ struct Eip8130ValidationState {
     payer_balance_after_auth: U256,
     sender_nonce: u64,
     sender_bytecode_hash: Option<B256>,
+    /// Payer-authentication gas metered on top of `gas_limit`. The execution
+    /// path charges the operator fee on `gas_limit + payer_auth`, so admission
+    /// must do the same to avoid admitting operator-fee-underfunded sponsored
+    /// transactions. Zero for self-pay transactions.
+    payer_auth: u64,
 }
 
 /// Read-only precompile storage adapter backed by a reth state provider.
@@ -412,10 +417,10 @@ where
                 bytecode_hash: state.sender_bytecode_hash,
                 authorities: (state.payer != state.sender).then_some(vec![state.payer]),
             };
-            return self.apply_base_checks(outcome);
+            return self.apply_base_checks(outcome, state.payer_auth);
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-        self.apply_base_checks(outcome)
+        self.apply_base_checks(outcome, 0)
     }
 
     /// Runs full EIP-8130 admission checks that require account/precompile state:
@@ -553,6 +558,7 @@ where
             payer_balance_after_auth: payer_account.balance.saturating_sub(payer_auth_charge),
             sender_nonce,
             sender_bytecode_hash: sender_account.bytecode_hash,
+            payer_auth: intrinsic.payer_auth,
         })
     }
 
@@ -1107,9 +1113,18 @@ where
     }
 
     /// Performs the necessary Base-specific checks based on top of the regular eth outcome.
+    ///
+    /// `operator_fee_gas_addition` is gas charged the operator fee on top of the
+    /// transaction's signed `gas_limit`. It is zero for ordinary transactions; for
+    /// EIP-8130 it is the payer-authentication gas, because the execution path meters
+    /// the operator fee on `gas_limit + payer_auth` (the gas-price portion of that
+    /// payer-auth gas is already reflected in the reduced `balance`). Mirroring it here
+    /// prevents admitting sponsored transactions that are operator-fee-underfunded and
+    /// would never execute.
     fn apply_base_checks(
         &self,
         outcome: TransactionValidationOutcome<Tx>,
+        operator_fee_gas_addition: u64,
     ) -> TransactionValidationOutcome<Tx> {
         if !self.requires_l1_data_gas_fee() {
             // no need to check L1 gas fee
@@ -1156,7 +1171,9 @@ where
             let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), self.block_timestamp());
             let cost_addition = l1_block_info.tx_cost(
                 &encoded,
-                U256::from(valid_tx.transaction().gas_limit()),
+                U256::from(
+                    valid_tx.transaction().gas_limit().saturating_add(operator_fee_gas_addition),
+                ),
                 spec_id,
             );
             let cost = valid_tx.transaction().cost().saturating_add(cost_addition);

@@ -18,7 +18,7 @@ stdout/stderr and the normal Kubernetes log pipeline.
 - **`EventIdBuilder`**: Helper for deterministic event IDs so downstream ingest
   can deduplicate retries.
 - **`TransactionEventWriter`**: Non-blocking JSONL append writer with bounded
-  queueing, dropped-event metrics, write-error metrics, queue depth, and bytes
+  queueing, aggregate dropped-event metrics, write-error metrics, and bytes
   written metrics.
 - **`TransactionEventBuilder`** and **`transaction_event!`**: Helpers for
   producer call sites that use the process-global transaction event writer while

@@ -1,6 +1,6 @@
 //! JSON-RPC request and response types for the shared prover service protocol.
 
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
@@ -176,6 +176,24 @@ pub struct ZkProofResult {
     pub zk_vm: ZkVm,
     /// Serialized proof bytes.
     pub proof: Bytes,
+    /// Local execution statistics, present for dry-run ZK results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_stats: Option<ExecutionStats>,
+}
+
+/// Local SP1 execution statistics for a dry-run ZK proof.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExecutionStats {
+    /// Total RISC-V instruction cycles reported by SP1.
+    pub total_instruction_cycles: u64,
+    /// Total SP1 gas reported by SP1.
+    pub total_sp1_gas: u64,
+    /// Per-section cycle tracker values reported by the range program.
+    pub cycle_tracker: HashMap<String, u64>,
+    /// Time spent generating the witness, in milliseconds.
+    pub witness_generation_ms: u64,
+    /// Time spent executing the SP1 range program, in milliseconds.
+    pub execution_ms: u64,
 }
 
 /// Groth16 SNARK proof result.
@@ -441,6 +459,8 @@ pub struct RecordProofSessionResponse {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use alloy_primitives::{Bytes, address};
     use serde_json::json;
 
@@ -498,6 +518,49 @@ mod tests {
         }));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn zk_result_omits_execution_stats_unless_present() {
+        let result = ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: Bytes::from_static(&[0xab, 0xcd]),
+            execution_stats: None,
+        });
+        let value = serde_json::to_value(result).expect("zk result should serialize");
+        assert!(value["payload"].get("execution_stats").is_none());
+
+        let result = ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: Bytes::new(),
+            execution_stats: Some(ExecutionStats {
+                total_instruction_cycles: 10,
+                total_sp1_gas: 20,
+                cycle_tracker: HashMap::from([("section".to_owned(), 30)]),
+                witness_generation_ms: 40,
+                execution_ms: 50,
+            }),
+        });
+        let value = serde_json::to_value(result).expect("zk result should serialize");
+        assert_eq!(
+            value,
+            json!({
+                "proof_type": "compressed",
+                "payload": {
+                    "zk_vm": "sp1",
+                    "proof": "0x",
+                    "execution_stats": {
+                        "total_instruction_cycles": 10,
+                        "total_sp1_gas": 20,
+                        "cycle_tracker": {
+                            "section": 30
+                        },
+                        "witness_generation_ms": 40,
+                        "execution_ms": 50
+                    }
+                }
+            })
+        );
     }
 
     #[test]
@@ -830,6 +893,7 @@ mod tests {
             result: ProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: vec![1, 2, 3].into(),
+                execution_stats: None,
             }),
         };
 

@@ -200,6 +200,7 @@ async fn worker_claim_heartbeat_submit_round_trip() {
             result: ProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: vec![1, 2, 3].into(),
+                execution_stats: None,
             }),
         })
         .await
@@ -233,6 +234,7 @@ async fn worker_submit_unknown_session_is_not_found() {
             result: ProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: vec![9].into(),
+                execution_stats: None,
             }),
         })
         .await

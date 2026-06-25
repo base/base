@@ -1,9 +1,9 @@
 //! Shared test utilities: reusable mock stubs for L1/L2 clients, contract clients, and proposer.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
@@ -24,9 +24,9 @@ use base_proof_rpc::{BaseBlock, L1Provider, L2Provider, RollupProvider, RpcError
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind as ApiProofRequestKind,
-    ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
-    TeeKind, TeeProofResult,
+    PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestIdCollisionMessage,
+    ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
+    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
 };
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
@@ -213,6 +213,8 @@ pub struct MockDisputeGameFactory {
     pub game_count_override: Option<u64>,
     /// UUID-keyed game proxy lookups for `games()`.
     pub uuid_games: HashMap<(u32, B256, Bytes), Address>,
+    /// Ordered responses for repeated `games()` calls.
+    pub uuid_game_responses: Option<Mutex<VecDeque<Address>>>,
     /// When true, all `games()` calls return an error.
     pub games_should_fail: bool,
     /// Optional counter incremented on every `game_count()` call.
@@ -226,8 +228,17 @@ impl MockDisputeGameFactory {
             games,
             game_count_override: None,
             uuid_games: HashMap::new(),
+            uuid_game_responses: None,
             games_should_fail: false,
             game_count_calls: None,
+        }
+    }
+
+    /// Creates a mock whose `games()` calls pop from the given responses.
+    pub fn with_uuid_game_responses(responses: impl IntoIterator<Item = Address>) -> Self {
+        Self {
+            uuid_game_responses: Some(Mutex::new(responses.into_iter().collect())),
+            ..Self::with_games(vec![])
         }
     }
 }
@@ -260,6 +271,9 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     ) -> Result<Address, ContractError> {
         if self.games_should_fail {
             return Err(ContractError::Validation("mock: simulated games() RPC failure".into()));
+        }
+        if let Some(responses) = &self.uuid_game_responses {
+            return Ok(responses.lock().unwrap().pop_front().unwrap_or(Address::ZERO));
         }
         let key = (game_type, root_claim, extra_data);
         Ok(self.uuid_games.get(&key).copied().unwrap_or(Address::ZERO))
@@ -467,6 +481,8 @@ pub struct MockProofRequester {
     pub failed_sessions: std::sync::Mutex<HashMap<String, String>>,
     /// Reject every `prove_block_range` call with a timeout.
     pub reject_prove: AtomicBool,
+    /// Reject every `prove_block_range` call with an L1 head conflict.
+    pub reject_l1_head_conflict: AtomicBool,
     /// Override the accepted session id returned by `prove_block_range`.
     pub accepted_session_id: std::sync::Mutex<Option<String>>,
     /// Number of `prove_block_range` calls accepted.
@@ -486,6 +502,16 @@ impl ProofRequesterProvider for MockProofRequester {
         }
 
         let session_id = request.proof.session_id.clone();
+        if self.reject_l1_head_conflict.load(Ordering::SeqCst) {
+            return Err(ProverServiceClientError::from(JsonRpcClientError::Call(
+                ErrorObjectOwned::owned(
+                    ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+                    ProofRequestIdCollisionMessage::for_field(session_id, "l1_head"),
+                    None::<()>,
+                ),
+            )));
+        }
+
         self.prove_count.fetch_add(1, Ordering::SeqCst);
         self.requests.lock().unwrap().insert(session_id.clone(), request);
         if let Some(session_id) = self.accepted_session_id.lock().unwrap().clone() {
@@ -573,14 +599,20 @@ impl ProofRequesterProvider for MockProofRequester {
 /// Mock output proposer that succeeds unless configured with a create error.
 #[derive(Debug, Default)]
 pub struct MockOutputProposer {
+    /// Number of `propose_output()` calls.
+    pub created: std::sync::Mutex<u32>,
+    /// Game addresses passed to `verify_proposal_proof()`.
+    pub verified: std::sync::Mutex<Vec<Address>>,
     /// Error returned by the next `propose_output` call.
     pub create_error: std::sync::Mutex<Option<ProposerError>>,
+    /// Error returned by the next `verify_proposal_proof` call.
+    pub verify_error: std::sync::Mutex<Option<ProposerError>>,
 }
 
 impl MockOutputProposer {
     /// Creates a mock that fails the next output proposal.
     pub fn with_create_error(error: ProposerError) -> Self {
-        Self { create_error: std::sync::Mutex::new(Some(error)) }
+        Self { create_error: std::sync::Mutex::new(Some(error)), ..Default::default() }
     }
 }
 
@@ -592,6 +624,7 @@ impl OutputProposer for MockOutputProposer {
         _parent_address: Address,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
+        *self.created.lock().unwrap() += 1;
         if let Some(error) = self.create_error.lock().unwrap().take() {
             return Err(error);
         }
@@ -600,9 +633,13 @@ impl OutputProposer for MockOutputProposer {
 
     async fn verify_proposal_proof(
         &self,
-        _game_address: Address,
+        game_address: Address,
         _proposal: &Proposal,
     ) -> Result<(), ProposerError> {
+        self.verified.lock().unwrap().push(game_address);
+        if let Some(error) = self.verify_error.lock().unwrap().take() {
+            return Err(error);
+        }
         Ok(())
     }
 }

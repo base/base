@@ -38,7 +38,7 @@ use crate::{
     proof_collector::ProofCollector,
     proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
     proof_recovery::{ProofRecovery, ProofRecoveryConfig},
-    proof_submitter::{ProofSubmitter, ProofSubmitterConfig},
+    proof_submitter::ProofSubmitter,
 };
 
 const SUBMIT_TIMEOUT_SLACK: Duration = Duration::from_mins(2);
@@ -70,7 +70,6 @@ impl ProposerService {
             rpc_timeout = ?config.rpc_timeout,
             health_addr = %config.health_addr,
             admin_addr = ?config.admin_addr,
-            tee_prover_registry = ?config.tee_prover_registry_address,
             "Resolved configuration"
         );
 
@@ -220,10 +219,8 @@ impl ProposerService {
 
         let driver_config = DriverConfig {
             poll_interval: config.poll_interval,
-            max_retries: 8,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
             submit_timeout,
-            tee_prover_registry_address: config.tee_prover_registry_address,
             block_interval,
             intermediate_block_interval,
             game_type: config.game_type,
@@ -234,31 +231,17 @@ impl ProposerService {
         };
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
-            Arc::clone(&l1_client),
-            Arc::clone(&l2_client),
-            Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: driver_config.proposer_address,
-                allow_non_finalized: driver_config.allow_non_finalized,
-                intermediate_block_interval: driver_config.intermediate_block_interval,
-                tee_image_hash: driver_config.tee_image_hash,
-            },
+            Arc::<L1Client>::clone(&l1_client),
+            Arc::<L2Client>::clone(&l2_client),
+            Arc::<RollupClient>::clone(&rollup_client),
+            ProofDispatcherConfig::from(&driver_config),
         );
         let proof_submitter = ProofSubmitter::new(
             output_proposer,
-            Arc::clone(&rollup_client),
-            Arc::clone(&l1_client),
+            Arc::<RollupClient>::clone(&rollup_client),
             Arc::clone(&factory_client),
             Arc::clone(&verifier_client),
-            ProofSubmitterConfig {
-                proposer_address: driver_config.proposer_address,
-                game_type: driver_config.game_type,
-                block_interval: driver_config.block_interval,
-                intermediate_block_interval: driver_config.intermediate_block_interval,
-                tee_image_hash: driver_config.tee_image_hash,
-                tee_prover_registry_address: driver_config.tee_prover_registry_address,
-                output_fetch_concurrency: driver_config.recovery_scan_concurrency,
-            },
+            &driver_config,
         );
         let proof_recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {
@@ -269,7 +252,7 @@ impl ProposerService {
                 anchor_state_registry_address: driver_config.anchor_state_registry_address,
                 scan_concurrency: driver_config.recovery_scan_concurrency,
             },
-            Arc::clone(&rollup_client),
+            Arc::<RollupClient>::clone(&rollup_client),
             anchor_registry,
             factory_client,
         ));

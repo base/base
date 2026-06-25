@@ -3622,6 +3622,7 @@ dependencies = [
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
+ "base-proof-submission",
  "base-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",
@@ -5256,8 +5257,8 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
- "tokio",
  "tracing",
+ "tracing-appender",
 ]
 
 [[package]]
@@ -5994,7 +5995,6 @@ dependencies = [
  "alloy-provider 2.0.5",
  "alloy-rpc-types-eth 2.0.5",
  "alloy-signer-local 2.0.5",
- "alloy-sol-types",
  "async-trait",
  "base-balance-monitor",
  "base-cli-utils",
@@ -6017,7 +6017,6 @@ dependencies = [
  "jsonrpsee",
  "metrics",
  "metrics-util",
- "rstest",
  "rustls 0.23.40",
  "serde",
  "serde_json",

@@ -15,7 +15,6 @@ workspace = true
 # Alloy
 alloy-eips.workspace = true
 alloy-provider.workspace = true
-alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 
@@ -75,7 +74,6 @@ url.workspace = true
 humantime.workspace = true
 
 [dev-dependencies]
-rstest.workspace = true
 serde_json.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true

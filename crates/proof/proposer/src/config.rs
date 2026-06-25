@@ -59,9 +59,6 @@ pub struct ProposerConfig {
     pub tx_manager: Option<base_tx_manager::TxManagerConfig>,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
-    /// Optional address of the `TEEProverRegistry` contract on L1.
-    /// When set, the proposer validates signers before onchain submission.
-    pub tee_prover_registry_address: Option<Address>,
 }
 
 impl ProposerConfig {
@@ -150,7 +147,6 @@ impl ProposerConfig {
             signing,
             tx_manager,
             recovery_scan_concurrency: proposer.recovery_scan_concurrency.get(),
-            tee_prover_registry_address: proposer.tee_prover_registry_address,
         })
     }
 }

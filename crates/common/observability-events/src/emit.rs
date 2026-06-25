@@ -1,11 +1,10 @@
 //! Transaction event emission helpers and process-global writer access.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use alloy_primitives::{B256, TxHash};
 use chrono::Utc;
 use serde_json::{Map, Value};
-use tokio::sync::OnceCell;
 use tracing::debug;
 
 use crate::{
@@ -13,7 +12,8 @@ use crate::{
     TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
 };
 
-static GLOBAL_TRANSACTION_EVENT_WRITER: OnceCell<TransactionEventWriter> = OnceCell::const_new();
+static GLOBAL_TRANSACTION_EVENT_WRITER: OnceLock<TransactionEventWriter> = OnceLock::new();
+static GLOBAL_TRANSACTION_EVENT_WRITER_INIT_LOCK: Mutex<()> = Mutex::new(());
 
 /// Result of initializing the process-global transaction event writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +41,7 @@ pub struct GlobalTransactionEventWriter;
 
 impl GlobalTransactionEventWriter {
     /// Initializes the process-global transaction event writer.
-    pub async fn init(
+    pub fn init(
         config: Option<TransactionEventWriterConfig>,
     ) -> eyre::Result<GlobalTransactionEventWriterInitStatus> {
         let Some(config) = config else {
@@ -55,19 +55,16 @@ impl GlobalTransactionEventWriter {
             return Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized);
         }
 
-        let initialized = AtomicBool::new(false);
-        GLOBAL_TRANSACTION_EVENT_WRITER
-            .get_or_try_init(|| async {
-                initialized.store(true, Ordering::Relaxed);
-                TransactionEventWriter::from_config(config).await
-            })
-            .await?;
-
-        if initialized.load(Ordering::Relaxed) {
-            Ok(GlobalTransactionEventWriterInitStatus::Initialized)
-        } else {
-            Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized)
+        let _guard = GLOBAL_TRANSACTION_EVENT_WRITER_INIT_LOCK
+            .lock()
+            .map_err(|_| eyre::eyre!("transaction event writer init lock poisoned"))?;
+        if GLOBAL_TRANSACTION_EVENT_WRITER.get().is_some() {
+            return Ok(GlobalTransactionEventWriterInitStatus::AlreadyInitialized);
         }
+
+        let writer = TransactionEventWriter::from_config(config)?;
+        let _ = GLOBAL_TRANSACTION_EVENT_WRITER.set(writer);
+        Ok(GlobalTransactionEventWriterInitStatus::Initialized)
     }
 
     /// Returns the process-global transaction event writer, if configured.
@@ -361,7 +358,7 @@ macro_rules! transaction_event {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Duration};
+    use std::path::PathBuf;
 
     use alloy_primitives::{B256, TxHash};
     use serde_json::{Map, json};
@@ -377,7 +374,6 @@ mod tests {
             enabled: false,
             file_path: PathBuf::from("/tmp/transaction-events.jsonl"),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
-            flush_interval: Duration::from_secs(1),
             required: false,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-devnet".to_string(),

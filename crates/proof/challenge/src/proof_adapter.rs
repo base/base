@@ -251,7 +251,11 @@ mod tests {
     #[test]
     fn snark_groth16_dispute_proof_bytes_prefixes_zk_type() {
         let result = ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: Bytes::from_static(&[0xab, 0xcd]) },
+            proof: ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: Bytes::from_static(&[0xab, 0xcd]),
+                execution_stats: None,
+            },
         });
 
         let proof_bytes =

@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, FixedBytes};
 use alloy_provider::RootProvider;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolError, sol};
 use async_trait::async_trait;
 
 use crate::ContractError;
@@ -18,6 +18,9 @@ sol! {
     /// `NitroEnclaveVerifier` contract interface (revocation subset).
     #[sol(rpc)]
     interface INitroEnclaveVerifier {
+        /// Thrown when the caller is neither the owner nor configured revoker.
+        error CallerNotOwnerOrRevoker();
+
         /// Revokes a cached intermediate certificate by its accumulated path digest.
         function revokeCert(bytes32 certHash) external;
 
@@ -25,6 +28,11 @@ sol! {
         /// revoked. Persistent across cache overwrites.
         function revokedCerts(bytes32 certHash) external view returns (bool);
     }
+}
+
+/// The 4-byte selector for `CallerNotOwnerOrRevoker()`.
+pub const fn caller_not_owner_or_revoker_selector() -> [u8; 4] {
+    INitroEnclaveVerifier::CallerNotOwnerOrRevoker::SELECTOR
 }
 
 /// Reads the durable revocation sentinel from the onchain
@@ -102,6 +110,7 @@ mod tests {
     #[rstest]
     fn revocation_selectors_are_nonzero_and_distinct() {
         let selectors = [
+            caller_not_owner_or_revoker_selector(),
             INitroEnclaveVerifier::revokeCertCall::SELECTOR,
             INitroEnclaveVerifier::revokedCertsCall::SELECTOR,
         ];

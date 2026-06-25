@@ -15,7 +15,7 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
-use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
+use base_proof_rpc::RollupProvider;
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -32,19 +32,11 @@ use crate::pipeline::ProvingPipeline;
 pub struct DriverConfig {
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
-    /// Maximum proof request dispatch retries for a single target block before
-    /// dropping the cached recovery. Collector-side proof/session failures and
-    /// submit errors do not count against this budget.
-    pub max_retries: u32,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
     /// Optional maximum duration for a single inline submit (validation + L1
-    /// transaction). When exceeded, the pipeline restarts without counting
-    /// against the retry budget. `None` disables the outer pipeline timeout.
+    /// transaction). `None` disables the outer pipeline timeout.
     pub submit_timeout: Option<Duration>,
-    /// Optional address of the `TEEProverRegistry` contract on L1.
-    /// When set, the pipeline validates signers via `isValidSigner` before submission.
-    pub tee_prover_registry_address: Option<Address>,
     /// Number of L2 blocks between proposals (read from `AggregateVerifier` at startup).
     pub block_interval: u64,
     /// Number of L2 blocks between intermediate output root checkpoints.
@@ -70,10 +62,8 @@ impl Default for DriverConfig {
     fn default() -> Self {
         Self {
             poll_interval: Duration::from_secs(12),
-            max_retries: 8,
             recovery_scan_concurrency: 8,
             submit_timeout: None,
-            tee_prover_registry_address: None,
             block_interval: 512,
             intermediate_block_interval: 512,
             game_type: 0,
@@ -127,22 +117,18 @@ struct Session {
 
 /// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
 /// and stopped at runtime (e.g. via the admin RPC).
-pub struct PipelineHandle<L1, L2, R>
+pub struct PipelineHandle<R>
 where
-    L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
-    pipeline: Arc<ProvingPipeline<L1, L2, R>>,
+    pipeline: Arc<ProvingPipeline<R>>,
     session: TokioMutex<Session>,
     global_cancel: CancellationToken,
     running: Arc<AtomicBool>,
 }
 
-impl<L1, L2, R> std::fmt::Debug for PipelineHandle<L1, L2, R>
+impl<R> std::fmt::Debug for PipelineHandle<R>
 where
-    L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -152,14 +138,12 @@ where
     }
 }
 
-impl<L1, L2, R> PipelineHandle<L1, L2, R>
+impl<R> PipelineHandle<R>
 where
-    L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     /// Creates a new [`PipelineHandle`] wrapping the given proving pipeline.
-    pub fn new(pipeline: ProvingPipeline<L1, L2, R>, global_cancel: CancellationToken) -> Self {
+    pub fn new(pipeline: ProvingPipeline<R>, global_cancel: CancellationToken) -> Self {
         let session = Session { cancel: global_cancel.child_token(), task: None };
         Self {
             pipeline: Arc::new(pipeline),
@@ -171,10 +155,8 @@ where
 }
 
 #[async_trait]
-impl<L1, L2, R> ProposerDriverControl for PipelineHandle<L1, L2, R>
+impl<R> ProposerDriverControl for PipelineHandle<R>
 where
-    L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     async fn start_proposer(&self) -> Result<(), String> {
@@ -248,7 +230,7 @@ mod tests {
     use super::*;
     use crate::{
         ProofCollector, ProofDispatcher, ProofDispatcherConfig, ProofRecovery, ProofRecoveryConfig,
-        ProofSubmitter, ProofSubmitterConfig,
+        ProofSubmitter,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
@@ -256,9 +238,7 @@ mod tests {
         },
     };
 
-    fn test_pipeline_handle(
-        global_cancel: CancellationToken,
-    ) -> PipelineHandle<MockL1, MockL2, MockRollupClient> {
+    fn test_pipeline_handle(global_cancel: CancellationToken) -> PipelineHandle<MockRollupClient> {
         let l1 = Arc::new(MockL1::new(1000));
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
         let rollup = Arc::new(MockRollupClient {
@@ -282,9 +262,7 @@ mod tests {
         let config = DriverConfig {
             poll_interval: Duration::from_secs(3600),
             submit_timeout: Some(std::time::Duration::from_secs(60)),
-            max_retries: 3,
             recovery_scan_concurrency: 8,
-            tee_prover_registry_address: None,
             block_interval: 512,
             intermediate_block_interval: 512,
             ..Default::default()
@@ -292,31 +270,17 @@ mod tests {
 
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
-            Arc::clone(&l1),
-            Arc::clone(&l2),
-            Arc::clone(&rollup),
-            ProofDispatcherConfig {
-                proposer_address: config.proposer_address,
-                allow_non_finalized: config.allow_non_finalized,
-                intermediate_block_interval: config.intermediate_block_interval,
-                tee_image_hash: config.tee_image_hash,
-            },
+            Arc::<MockL1>::clone(&l1),
+            l2,
+            Arc::<MockRollupClient>::clone(&rollup),
+            ProofDispatcherConfig::from(&config),
         );
         let proof_submitter = ProofSubmitter::new(
             output_proposer,
-            Arc::clone(&rollup),
-            Arc::clone(&l1),
+            Arc::<MockRollupClient>::clone(&rollup),
             Arc::clone(&factory),
             verifier,
-            ProofSubmitterConfig {
-                proposer_address: config.proposer_address,
-                game_type: config.game_type,
-                block_interval: config.block_interval,
-                intermediate_block_interval: config.intermediate_block_interval,
-                tee_image_hash: config.tee_image_hash,
-                tee_prover_registry_address: config.tee_prover_registry_address,
-                output_fetch_concurrency: config.recovery_scan_concurrency,
-            },
+            &config,
         );
         let proof_recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {
@@ -327,7 +291,7 @@ mod tests {
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
             },
-            Arc::clone(&rollup),
+            Arc::<MockRollupClient>::clone(&rollup),
             anchor_registry,
             factory,
         ));
