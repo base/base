@@ -104,6 +104,14 @@ impl TransactionAuthorizer {
         for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
                 AccountChange::Create(entry) => {
+                    // A create coexisting with a delegation is the same semantic
+                    // violation regardless of entry order: surface it as
+                    // `CreateAndDelegation` here too (the delegation arm reports
+                    // it for the `Create … Delegation` order) rather than letting
+                    // the position check below mask it as `InvalidCreatePosition`.
+                    if applied.delegation.is_some() {
+                        return Err(ApplyError::CreateAndDelegation.into());
+                    }
                     if index != 0 || applied.created.is_some() {
                         return Err(ApplyError::InvalidCreatePosition.into());
                     }
@@ -451,6 +459,60 @@ mod tests {
     }
 
     #[test]
+    fn delegation_then_create_in_same_tx_is_rejected_as_create_and_delegation() {
+        // Reverse ordering of `create_and_delegation_in_same_tx_are_mutually_exclusive`:
+        // a `Delegation` preceding the `Create` is the same semantic violation and
+        // must surface the same `CreateAndDelegation` error, not the position-only
+        // `InvalidCreatePosition` that the create's `index != 0` check would
+        // otherwise produce.
+        let k = key(0x12);
+        let signer_addr = addr(&k);
+        let actor_id_k = B256::from_slice(&{
+            let mut id = [0u8; 32];
+            id[..20].copy_from_slice(signer_addr.as_slice());
+            id
+        });
+        let initial_actors = vec![InitialActor { actor_id: actor_id_k, authenticator: K1 }];
+        let create_entry = CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors: initial_actors.clone(),
+        };
+        let derived = AccountChangeApplier::compute_address(
+            create_entry.user_salt,
+            create_entry.code.as_ref(),
+            &initial_actors,
+        )
+        .expect("address derivation");
+
+        let delegation = AccountChange::Delegation(Delegation { target: derived });
+        let tx = TxEip8130 {
+            chain_id: LOCAL,
+            sender: Some(derived),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 5_000_000_000,
+            gas_limit: 250_000,
+            account_changes: vec![delegation, AccountChange::Create(create_entry)],
+            calls: vec![],
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let hash = tx.sender_signature_hash();
+        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
+        with_storage(|acc| {
+            let err = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
+                .expect_err("delegation + create must be rejected");
+            assert!(
+                matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
+                "expected CreateAndDelegation, got {err:?}"
+            );
+        });
+    }
+
+    #[test]
     fn config_changes_authorized_before_final_sender_check() {
         // Account changes are authorized and applied first; the sender/payer
         // signatures are only checked against the resulting post-apply state. A
@@ -550,9 +612,12 @@ mod tests {
             id
         });
         let initial_actors = vec![InitialActor { actor_id: actor_id_val, authenticator: K1 }];
+        // Non-empty runtime code so the derived CREATE2 address and code hash
+        // match a production-admissible transaction: the structural validator
+        // rejects an empty-code create before it reaches authorize_and_apply.
         let create = CreateEntry {
             user_salt: B256::ZERO,
-            code: Bytes::new(),
+            code: Bytes::from_static(&[0x60, 0x00]),
             initial_actors: initial_actors.clone(),
         };
         let derived = AccountChangeApplier::compute_address(
