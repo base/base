@@ -132,7 +132,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::transaction::Recovered;
-    use alloy_eips::{BlockId, BlockNumberOrTag, Encodable2718};
+    use alloy_eips::{BlockId, BlockNumberOrTag};
     use alloy_primitives::{Address, B256};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
     use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};

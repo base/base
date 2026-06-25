@@ -1242,9 +1242,8 @@ mod tests {
         #[case] test_case: UnsafePayloadProcessingCase,
     ) {
         let expected_unsafe_head = if test_case.expect_unsafe_head_advance {
-            L2BlockInfo::from_payload_and_genesis(
-                test_case.envelope.execution_payload.clone(),
-                test_case.envelope.parent_beacon_block_root,
+            L2BlockInfo::from_payload_header_and_genesis(
+                &test_case.envelope.execution_payload,
                 &RollupConfig::default().genesis,
             )
             .expect("test payload should convert to L2BlockInfo")
