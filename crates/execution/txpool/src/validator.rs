@@ -288,6 +288,15 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
         Ok(())
     }
 
+    // NOTE: account *info* (nonce, balance, code hash) is intentionally not
+    // overlaid — it delegates to the read-only inner provider, so a
+    // counterfactual-create account reads back as empty/default here. This is
+    // sound only because the authorize-and-apply admission flow reads account
+    // state exclusively through `sload`/`sstore` (which the overlay buffers);
+    // the protocol nonce / balance / code checks run separately against the
+    // `state` snapshot. If a future change reads `AccountInfo` for the sender
+    // inside that flow, it would see stale data for created accounts and the
+    // overlay would need to buffer account info too.
     fn with_account_info(
         &mut self,
         address: Address,
