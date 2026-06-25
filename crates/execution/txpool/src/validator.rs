@@ -708,6 +708,15 @@ where
 
         let (nonce_key_first_use, sender_nonce) =
             self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
+        // Conservatively assume auto-delegation fires unless the transaction itself
+        // carries an explicit `Delegation` or `Create` change. This intentionally
+        // ignores the sender's current on-chain code state: a sender that is
+        // already delegated (has code) at admission time may lose its delegation
+        // before inclusion (e.g. via a native EIP-7702 revocation), so always
+        // budgeting `DELEGATION_DEPOSIT_COST` in `gas_limit` prevents a hard
+        // intrinsic-gas error at block production time. The overestimate is safe:
+        // if execution finds the sender already has code, `auto_delegate_codeless_sender`
+        // is a no-op and the reserved gas flows into execution gas instead.
         let sender_auto_delegated = !signed.tx().account_changes.iter().any(|change| {
             matches!(change, AccountChange::Create(_) | AccountChange::Delegation(_))
         });
