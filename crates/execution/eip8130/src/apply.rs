@@ -127,6 +127,14 @@ pub enum ApplyError {
     #[error("at most one delegation entry is allowed")]
     MultipleDelegations,
 
+    /// A delegation entry appears in the same transaction as a create entry.
+    /// These are mutually exclusive: a create establishes the account's initial
+    /// state (code is set by the protocol) and a delegation modifies an
+    /// existing account's code. Having both is undefined by the spec and
+    /// rejected as a structural invariant violation.
+    #[error("a create entry and a delegation entry may not coexist in the same transaction")]
+    CreateAndDelegation,
+
     /// A channel sequence would overflow `u64`.
     #[error("account-change sequence overflow")]
     SequenceOverflow,

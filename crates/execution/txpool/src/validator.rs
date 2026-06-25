@@ -904,6 +904,7 @@ where
             ApplyError::CreateAddressMismatch { .. } => "create address does not match the sender",
             ApplyError::InvalidCreatePosition => "create entry must be the only one, at index 0",
             ApplyError::MultipleDelegations => "at most one delegation is allowed",
+            ApplyError::CreateAndDelegation => "create and delegation may not coexist",
             ApplyError::SequenceOverflow => "config change sequence overflow",
         }
     }
@@ -1157,6 +1158,9 @@ where
                 AccountChange::Delegation(_) => {
                     delegation_count += 1;
                     if delegation_count > 1 {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    if create_count > 0 {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                 }
@@ -2048,17 +2052,36 @@ mod tests {
     }
 
     #[test]
-    fn accepts_eip8130_with_create_followed_by_delegation_and_config() {
+    fn rejects_eip8130_create_and_delegation_coexistence() {
+        // A transaction must not contain both a Create and a Delegation entry.
+        // These are mutually exclusive: create establishes a fresh account
+        // (code installed by the protocol) while delegation modifies an
+        // existing account's code pointer.
+        let account_changes = vec![
+            AccountChange::Create(make_valid_create_entry()),
+            AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
+        ];
+        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_create_config_and_delegation_coexistence() {
+        // Same invariant with a config change interleaved between the create and
+        // the delegation — the delegation is still rejected.
         let account_changes = vec![
             AccountChange::Create(make_valid_create_entry()),
             AccountChange::ConfigChange(make_valid_config_change()),
             AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
         ];
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id(),)
-                .is_ok()
-        );
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
     }
 
     /// L1 attribute deposit calldata that activates Isthmus and seeds a non-zero

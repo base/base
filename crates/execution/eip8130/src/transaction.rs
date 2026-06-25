@@ -141,6 +141,9 @@ impl TransactionAuthorizer {
                     if applied.delegation.is_some() {
                         return Err(ApplyError::MultipleDelegations.into());
                     }
+                    if applied.created.is_some() {
+                        return Err(ApplyError::CreateAndDelegation.into());
+                    }
                     applied.delegation =
                         Some(DelegationEffect { account: sender_account, target: *target });
                 }
@@ -167,7 +170,9 @@ mod tests {
     use k256::ecdsa::SigningKey as K256SigningKey;
 
     use super::*;
-    use crate::{AccountChangeApplier, AuthorizeError, ConfigChangeAuthorizer, Operation};
+    use crate::{
+        AccountChangeApplier, ApplyError, AuthorizeError, ConfigChangeAuthorizer, Operation,
+    };
 
     const NOW: u64 = 1_000;
     const LOCAL: u64 = 8453;
@@ -392,13 +397,12 @@ mod tests {
     }
 
     #[test]
-    fn create_and_delegation_entries_do_not_consume_a_sequence() {
-        // A Create followed by a Delegation is a valid SA create pattern:
-        // neither entry carries an independent config-change signature, so
-        // `config_changes` must be empty and the sender must be unrestricted.
-        //
-        // (Config changes combined with a Create are rejected by the txpool and
-        // are a separate concern from the sequence-accounting tested here.)
+    fn create_and_delegation_in_same_tx_are_mutually_exclusive() {
+        // Create and Delegation are mutually exclusive: Create establishes a
+        // fresh account (code installed by the protocol from the create entry's
+        // bytecode field) while Delegation modifies an *existing* account's
+        // code pointer. Having both in a single transaction is undefined by the
+        // spec and rejected with CreateAndDelegation.
         let k = key(0x11);
         let signer_addr = addr(&k);
         let actor_id_k = B256::from_slice(&{
@@ -437,11 +441,12 @@ mod tests {
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
-            assert!(out.actors.sender.resolved.is_unrestricted());
-            assert_eq!(out.config_changes.len(), 0, "create + delegation carry no config changes");
-            assert!(out.applied.created.is_some(), "create entry applied");
-            assert!(out.applied.delegation.is_some(), "delegation effect recorded");
+            let err = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
+                .expect_err("create + delegation must be rejected");
+            assert!(
+                matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
+                "expected CreateAndDelegation, got {err:?}"
+            );
         });
     }
 
@@ -748,6 +753,33 @@ mod tests {
             assert!(
                 TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).is_err(),
                 "create without explicit sender must be rejected"
+            );
+        });
+    }
+
+    #[test]
+    fn create_and_delegation_in_same_tx_is_rejected() {
+        // A transaction must not contain both a Create entry and a Delegation
+        // entry: these are mutually exclusive operations. Create establishes a
+        // fresh account (code installed by the protocol); Delegation modifies
+        // an existing account's code pointer. Having both is structurally invalid.
+        let k = key(0xc9);
+        let (_derived, mut signed) = create_tx_and_signed(&k, vec![]);
+        // Append a delegation after the create.
+        let delegation = AccountChange::Delegation(Delegation { target: Address::ZERO });
+        let tx = signed.tx().clone();
+        let mut changes = tx.account_changes.clone();
+        changes.push(delegation);
+        let new_tx = TxEip8130 { account_changes: changes, ..tx };
+        let hash = new_tx.sender_signature_hash();
+        signed = Eip8130Signed::new(new_tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
+
+        with_storage(|acc| {
+            let err = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
+                .expect_err("create + delegation must be rejected");
+            assert!(
+                matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
+                "expected CreateAndDelegation, got {err:?}"
             );
         });
     }
