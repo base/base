@@ -362,6 +362,14 @@ impl Eip8130Executor {
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
         StorageCtx::enter(&mut provider, |sctx| {
+            // Ordering note: the apply step (1) and code effects (2) write journal
+            // storage *before* the nonce is validated (3). Any `Err` returned from
+            // this closure propagates out of `authorize_and_apply` and is reverted
+            // wholesale by the caller's journal checkpoint in `execute` (taken
+            // before this call, reverted on error), so these earlier writes never
+            // persist for a rejected transaction. This mirrors the
+            // caller-MUST-discard contract documented on
+            // `TransactionAuthorizer::authorize_and_apply`.
             let mut acc = AccountConfigurationStorage::new(sctx);
 
             // 1. Authorize and apply the account changes interleaved against the
