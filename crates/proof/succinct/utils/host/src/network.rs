@@ -50,7 +50,7 @@ pub async fn get_network_signer(use_kms_requester: bool) -> Result<NetworkSigner
         let kms_key_arn = env::var("NETWORK_PRIVATE_KEY")
             .context("NETWORK_PRIVATE_KEY must be set when USE_KMS_REQUESTER is true")?;
         let signer = NetworkSigner::aws_kms(&kms_key_arn).await?;
-        tracing::info!("Using KMS requester with address: {:?}", signer.address());
+        tracing::info!(address = ?signer.address(), "using KMS requester");
 
         signer
     } else {
@@ -62,7 +62,7 @@ pub async fn get_network_signer(use_kms_requester: bool) -> Result<NetworkSigner
             "0x0000000000000000000000000000000000000000000000000000000000000001".to_string()
         });
         let signer = NetworkSigner::local(&private_key)?;
-        tracing::info!("Using local requester with address: {:?}", signer.address());
+        tracing::info!(address = ?signer.address(), "using local requester");
 
         signer
     };
