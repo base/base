@@ -1457,7 +1457,9 @@ impl Eip8130Executor {
 mod tests {
     use alloy_evm::{Evm, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
-    use base_common_consensus::{BaseTxEnvelope, Call, Eip8130Signed, Predeploys, TxEip8130};
+    use base_common_consensus::{
+        BaseTxEnvelope, Call, CreateEntry, Eip8130Signed, InitialActor, Predeploys, TxEip8130,
+    };
     use k256::ecdsa::SigningKey;
     use revm::{
         Database,
@@ -2007,6 +2009,86 @@ mod tests {
         assert_eq!(&data[..4], &expected_selector[..4]);
         assert_eq!(&data[4..36], actor_id.as_slice());
         assert_eq!(&data[36..68], target.into_word().as_slice());
+    }
+
+    /// Builds a counterfactual-create [`Eip8130Signed`] for `key`'s owner whose
+    /// derived CREATE2 address is the transaction sender, deploying `code` and
+    /// dispatching `calls`. Returns the derived address alongside the signed tx.
+    fn counterfactual_create_signed(
+        key: &SigningKey,
+        code: Bytes,
+        calls: Vec<Vec<Call>>,
+    ) -> (Address, Eip8130Signed) {
+        let owner = eoa_address(key);
+        let actor_id = {
+            let mut id = [0u8; 32];
+            id[..20].copy_from_slice(owner.as_slice());
+            B256::from_slice(&id)
+        };
+        let initial_actors =
+            vec![InitialActor { actor_id, authenticator: Eip8130Constants::K1_AUTHENTICATOR }];
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            code: code.clone(),
+            initial_actors: initial_actors.clone(),
+        };
+        let derived =
+            AccountChangeApplier::compute_address(create.user_salt, &code, &initial_actors)
+                .expect("address derivation");
+
+        let mut tx = base_tx();
+        tx.sender = Some(derived);
+        tx.account_changes = vec![AccountChange::Create(create)];
+        tx.calls = calls;
+        (derived, configured_signed(tx, key))
+    }
+
+    #[test]
+    fn counterfactual_create_executes_and_is_included() {
+        // End-to-end regression for the counterfactual smart-account CREATE bug
+        // (PR #3766): a `0x7b` create whose sender is the not-yet-existent CREATE2
+        // address must authorize and be *included* through the full
+        // `Eip8130Executor::execute` pipeline — not just the unit-level
+        // `authorize_and_apply`. Before the fix this returned
+        // `BaseTransactionError::Eip8130("...NotBound")` and was rejected at every
+        // flashblock. Non-empty runtime code mirrors the on-chain account.
+        let key = signing_key(0xc1);
+        let (derived, signed) = counterfactual_create_signed(&key, bytes!("00"), Vec::new());
+
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with(initial_balance, derived);
+        let outcome =
+            evm.transact_raw(into_base_tx(&signed)).expect("counterfactual create should execute");
+
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        // The create installed the account's runtime code and bumped its nonce.
+        let created = outcome.state.get(&derived).expect("created account in state");
+        assert_eq!(created.info.nonce, 1, "create sender nonce bumped");
+        assert!(!created.info.is_empty_code_hash(), "created account has code");
+        assert!(created.info.balance < initial_balance, "self-paid create charged");
+    }
+
+    #[test]
+    fn counterfactual_create_then_call_executes_and_is_included() {
+        // The created account must be able to dispatch its `calls` in the same
+        // transaction it is created in: the sender authenticates against the
+        // freshly-installed unrestricted owner, then the calls run from the
+        // created sender. Exercises the create-apply + call-dispatch path through
+        // `Eip8130Executor::execute` end-to-end.
+        let key = signing_key(0xc2);
+        let target = address!("0x00000000000000000000000000000000000000ca");
+        let (derived, signed) = counterfactual_create_signed(
+            &key,
+            bytes!("00"),
+            vec![vec![Call { to: target, data: Bytes::new() }]],
+        );
+
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with_accounts(initial_balance, derived, &[(target, bytes!("00"))]);
+        let outcome = evm
+            .transact_raw(into_base_tx(&signed))
+            .expect("counterfactual create + call should execute");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
     }
 
     #[test]
