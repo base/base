@@ -101,6 +101,8 @@ pub struct ChallengerConfig {
     pub zk_request_timeout: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
     pub max_proof_duration: Duration,
+    /// Retryable TEE submission failures to tolerate before falling back to ZK.
+    pub tee_submit_retry_limit: u32,
     /// Signing configuration for L1 transaction submission.
     pub signing: SignerConfig,
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
@@ -221,6 +223,7 @@ impl ChallengerConfig {
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
             max_proof_duration: cli.challenger.max_proof_duration,
+            tee_submit_retry_limit: cli.challenger.tee_submit_retry_limit,
             signing,
             tx_manager,
             bond_discovery_lookback_games: cli.challenger.bond_discovery_lookback_games,
@@ -290,6 +293,7 @@ mod tests {
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.zk_connect_timeout, Duration::from_secs(10));
         assert_eq!(config.zk_request_timeout, Duration::from_secs(30));
+        assert_eq!(config.tee_submit_retry_limit, 3);
         assert_eq!(
             config.anchor_state_registry_addr,
             "0x2234567890123456789012345678901234567890".parse::<Address>().unwrap()
@@ -310,6 +314,14 @@ mod tests {
         let cli = cli_from_args(&all_args);
         let config = ChallengerConfig::from_cli(cli).unwrap();
         assert_eq!(config.bond_discovery_lookback_games, 2048);
+    }
+
+    #[test]
+    fn test_tee_submit_retry_limit_configurable() {
+        let all_args = [&SIGNER_ARGS[..], &["--tee-submit-retry-limit", "7"]].concat();
+        let cli = cli_from_args(&all_args);
+        let config = ChallengerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.tee_submit_retry_limit, 7);
     }
 
     #[rstest]

@@ -87,6 +87,7 @@ fn test_driver_with_tee(
     let config = DriverConfig {
         poll_interval: Duration::from_millis(10),
         max_proof_duration: Duration::from_secs(4 * 60 * 60),
+        tee_submit_retry_limit: 3,
         cancel: CancellationToken::new(),
     };
 
@@ -389,6 +390,7 @@ async fn test_step_scan_error_propagated() {
     let config = DriverConfig {
         poll_interval: Duration::from_millis(10),
         max_proof_duration: Duration::from_secs(4 * 60 * 60),
+        tee_submit_retry_limit: 3,
         cancel: CancellationToken::new(),
     };
 

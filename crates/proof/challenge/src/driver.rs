@@ -48,6 +48,8 @@ pub struct DriverConfig {
     pub poll_interval: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
     pub max_proof_duration: Duration,
+    /// Retryable TEE submission failures to tolerate before falling back to ZK.
+    pub tee_submit_retry_limit: u32,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
 }
@@ -123,6 +125,8 @@ where
     pub poll_interval: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
     pub max_proof_duration: Duration,
+    /// Retryable TEE submission failures to tolerate before falling back to ZK.
+    pub tee_submit_retry_limit: u32,
     /// Token used to signal graceful shutdown.
     pub cancel: CancellationToken,
 }
@@ -134,6 +138,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt
         f.debug_struct("Driver")
             .field("pending_proofs", &self.pending_proofs.len())
             .field("poll_interval", &self.poll_interval)
+            .field("tee_submit_retry_limit", &self.tee_submit_retry_limit)
             .finish_non_exhaustive()
     }
 }
@@ -156,6 +161,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             bond_manager: components.bond_manager,
             poll_interval: config.poll_interval,
             max_proof_duration: config.max_proof_duration,
+            tee_submit_retry_limit: config.tee_submit_retry_limit,
             cancel: config.cancel,
         }
     }
@@ -878,9 +884,33 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                         );
                     }
                     _ if targets_tee => {
+                        let Some(pending) = self.pending_proofs.get_mut(&game_address) else {
+                            return Ok(());
+                        };
+                        let has_zk_fallback = pending.kind.has_zk_fallback();
+
+                        if has_zk_fallback
+                            && pending.tee_submit_retry_count >= self.tee_submit_retry_limit
+                        {
+                            warn!(
+                                error = %e,
+                                game = %game_address,
+                                retry_count = pending.tee_submit_retry_count,
+                                retry_limit = self.tee_submit_retry_limit,
+                                "TEE dispute tx retry limit reached, falling back to ZK"
+                            );
+                            pending.phase = ProofPhase::NeedsRetry;
+                            return self.handle_proof_retry(game_address).await;
+                        }
+
+                        pending.tee_submit_retry_count =
+                            pending.tee_submit_retry_count.saturating_add(1);
                         warn!(
                             error = %e,
                             game = %game_address,
+                            retry_count = pending.tee_submit_retry_count,
+                            retry_limit = self.tee_submit_retry_limit,
+                            has_zk_fallback,
                             "TEE dispute tx failed, will retry next tick"
                         );
                         return Ok(());
@@ -971,6 +1001,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                     p.kind = ProofKind::Zk { prove_request: fallback_request.clone() };
                     p.intent = fallback_intent;
                     p.retry_count = 0;
+                    p.tee_submit_retry_count = 0;
                 }
 
                 fallback_request
@@ -1085,6 +1116,7 @@ mod tests {
             DriverConfig {
                 poll_interval: Duration::from_millis(10),
                 max_proof_duration: Duration::from_secs(60),
+                tee_submit_retry_limit: 3,
                 cancel: CancellationToken::new(),
             },
             components,
@@ -1122,6 +1154,7 @@ mod tests {
                 invalid_index: 0,
                 expected_root: B256::repeat_byte(0x22),
                 retry_count: 0,
+                tee_submit_retry_count: 0,
                 intent: DisputeIntent::Nullify,
             },
         );
@@ -1228,8 +1261,33 @@ mod tests {
         driver.poll_or_submit(addr(0)).await.unwrap();
 
         assert_ready_tee_proof(&driver);
+        let pending = driver.pending_proofs.get(&addr(0)).expect("pending proof should remain");
+        assert_eq!(pending.tee_submit_retry_count, 1);
         let state = proof_requester.state.lock().unwrap();
         assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tee_submit_retry_limit_falls_back_to_zk() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_manager(MockTxManager::with_responses(vec![
+                Err(TxManagerError::NonceTooLow),
+                Err(TxManagerError::NonceTooLow),
+            ]));
+        driver.tee_submit_retry_limit = 1;
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_ready_tee_proof(&driver);
+        {
+            let state = proof_requester.state.lock().unwrap();
+            assert!(state.prove_block_range_log.is_empty());
+        }
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_zk_fallback_requested(&driver, &proof_requester);
     }
 
     #[tokio::test]
