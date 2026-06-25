@@ -133,13 +133,17 @@ impl Eip8130Constants {
     pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 10;
 
     /// Maximum number of actor entries the mempool accepts in a single
-    /// `Create.initial_actors` or `ConfigChange.actor_changes` slice. Bounds
-    /// per-transaction memory and CPU spent on duplicate-actor_id detection
-    /// at admission time. Combined with [`Self::MAX_CONFIG_CHANGES_PER_TX`]
-    /// this caps total actor work per tx at
-    /// `MAX_CONFIG_CHANGES_PER_TX * MAX_ACTORS_PER_ENTRY + MAX_ACTORS_PER_ENTRY`
-    /// (config-change `actor_changes` + one `Create.initial_actors`).
+    /// `Create.initial_actors` slice. Bounds per-transaction memory and CPU
+    /// spent on duplicate-actor_id detection at admission time.
     pub const MAX_ACTORS_PER_ENTRY: usize = 32;
+
+    /// Maximum number of `actorChanges` the mempool accepts within a single
+    /// `ConfigChange` entry. An interim conservative cap that keeps the
+    /// per-config-change work (ABI decode, duplicate detection, authenticator
+    /// validation) small and bounded. Deliberately lower than
+    /// [`Self::MAX_ACTORS_PER_ENTRY`]; can be raised toward that value once
+    /// the interleaved admission flow is proven out.
+    pub const MAX_ACTOR_CHANGES_PER_CONFIG: usize = 5;
 
     /// Maximum runtime bytecode size for a create entry, matching EIP-170's
     /// `MAX_CODE_SIZE` limit. EIP-8130 places runtime code directly, so the

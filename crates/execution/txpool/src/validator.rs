@@ -1191,8 +1191,8 @@ where
         Ok(())
     }
 
-    /// Validates `ConfigChange.actor_changes`: the same length cap and
-    /// `actor_id`-uniqueness rules as [`Self::validate_initial_actors`], plus the
+    /// Validates `ConfigChange.actor_changes`: the slice is bounded by
+    /// [`Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG`], plus the
     /// reserved-window authenticator bound for the *new* actor of each
     /// `Authorize`. The authenticator lives in the ABI-encoded `data`
     /// (`abi.encode(ActorConfig, bytes)`), where `ActorConfig.authenticator` is
@@ -1200,7 +1200,7 @@ where
     /// `data[12..32]` without a full decode (the leading 12 padding bytes must be
     /// zero, matching ABI encoding); the remaining structure is validated where
     /// the change is applied. A `Revoke` carries empty `data` and names no
-    /// authenticator, so only the cap and uniqueness apply.
+    /// authenticator, so only the cap applies.
     ///
     /// Per EIP-8130 a config change MAY authorize a non-canonical authenticator
     /// (for in-EVM use such as recovery keys); only the reserved window
@@ -1209,7 +1209,7 @@ where
     /// names no authenticator and MUST carry empty `data`; a non-empty `data` is
     /// malformed and rejected at the gate.
     fn validate_actor_changes(changes: &[ActorChange]) -> Result<(), InvalidPoolTransactionError> {
-        if changes.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
+        if changes.len() > Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let mut seen = BTreeSet::new();
@@ -1888,8 +1888,23 @@ mod tests {
     }
 
     #[test]
+    fn accepts_eip8130_config_change_with_exactly_max_actor_changes() {
+        let actor_changes = (0..Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG)
+            .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
+            .collect();
+        let cfg = ConfigChange { actor_changes, ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
+    }
+
+    #[test]
     fn rejects_eip8130_config_change_with_too_many_actor_changes() {
-        let actor_changes = (0..(Eip8130Constants::MAX_ACTORS_PER_ENTRY + 1))
+        let actor_changes = (0..(Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG + 1))
             .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
             .collect();
         let cfg = ConfigChange { actor_changes, ..make_valid_config_change() };
