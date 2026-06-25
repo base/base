@@ -8,9 +8,14 @@ use base_consensus_engine::{
     EngineTaskErrorSeverity, InsertPayloadSafety, SynchronizeTask,
 };
 use base_protocol::L2BlockInfo;
-use tokio::{sync::Mutex, task::yield_now};
+use tokio::{
+    sync::Mutex,
+    time::{Duration, sleep},
+};
 
 use crate::follow::error::FollowError;
+
+const TEMPORARY_ENGINE_ERROR_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 #[async_trait]
 pub(super) trait FollowEngine: Debug + Send + Sync {
@@ -75,7 +80,7 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
             match result {
                 Ok(_) => return Ok(()),
                 Err(err) if err.severity() == EngineTaskErrorSeverity::Temporary => {
-                    yield_now().await;
+                    sleep(TEMPORARY_ENGINE_ERROR_RETRY_DELAY).await;
                 }
                 Err(err) => return Err(FollowError::engine_task(err)),
             }

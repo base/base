@@ -28,8 +28,8 @@ pub enum SealTaskError {
     #[error("Deposit-only payload failed to import")]
     DepositOnlyPayloadFailed,
     /// Failed to re-attempt payload import with deposit-only payload.
-    #[error("Failed to re-attempt payload import with deposit-only payload")]
-    DepositOnlyPayloadReattemptFailed,
+    #[error("Failed to re-attempt payload import with deposit-only payload: {0}")]
+    DepositOnlyPayloadReattemptFailed(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// The payload is invalid, and the derivation pipeline must
     /// be flushed post-holocene.
     #[error("Invalid payload, must flush post-holocene")]
@@ -88,7 +88,7 @@ impl SealTaskError {
             | Self::UnsafeHeadChangedSinceBuild
             | Self::UnexpectedPayloadVersion(_) => false,
             Self::DepositOnlyPayloadFailed
-            | Self::DepositOnlyPayloadReattemptFailed
+            | Self::DepositOnlyPayloadReattemptFailed(_)
             | Self::FromBlock(_)
             | Self::MpscSend(_)
             | Self::ClockWentBackwards => true,
@@ -105,7 +105,7 @@ impl EngineTaskError for SealTaskError {
             }
             Self::HoloceneInvalidFlush => EngineTaskErrorSeverity::Flush,
             Self::UnsafeHeadChangedSinceBuild => EngineTaskErrorSeverity::Reset,
-            Self::DepositOnlyPayloadReattemptFailed
+            Self::DepositOnlyPayloadReattemptFailed(_)
             | Self::DepositOnlyPayloadFailed
             | Self::FromBlock(_)
             | Self::MpscSend(_)
@@ -359,7 +359,16 @@ impl Engine {
                 .await
                 {
                     Ok(payload_id) => payload_id,
-                    Err(_) => return Err(SealTaskError::DepositOnlyPayloadReattemptFailed),
+                    Err(err) => {
+                        error!(
+                            target: "engine",
+                            error = %err,
+                            "Deposit-only build reattempt failed"
+                        );
+                        return Err(SealTaskError::DepositOnlyPayloadReattemptFailed(Box::new(
+                            err,
+                        )));
+                    }
                 };
 
                 match Box::pin(Self::seal_started_payload_with_state(
@@ -379,7 +388,14 @@ impl Engine {
                         );
                         Err(SealTaskError::HoloceneInvalidFlush)
                     }
-                    Err(_) => Err(SealTaskError::DepositOnlyPayloadReattemptFailed),
+                    Err(err) => {
+                        error!(
+                            target: "engine",
+                            error = %err,
+                            "Deposit-only seal reattempt failed"
+                        );
+                        Err(SealTaskError::DepositOnlyPayloadReattemptFailed(Box::new(err)))
+                    }
                 }
             }
             Err(err) => {
@@ -505,7 +521,12 @@ mod tests {
     #[case::holocene_invalid_flush(SealTaskError::HoloceneInvalidFlush, false)]
     #[case::unsafe_head_changed(SealTaskError::UnsafeHeadChangedSinceBuild, false)]
     #[case::deposit_only_failed(SealTaskError::DepositOnlyPayloadFailed, true)]
-    #[case::deposit_only_reattempt_failed(SealTaskError::DepositOnlyPayloadReattemptFailed, true)]
+    #[case::deposit_only_reattempt_failed(
+        SealTaskError::DepositOnlyPayloadReattemptFailed(Box::new(
+            FromBlockError::InvalidGenesisHash,
+        )),
+        true
+    )]
     #[case::from_block(SealTaskError::FromBlock(FromBlockError::InvalidGenesisHash), true)]
     #[case::clock_went_backwards(SealTaskError::ClockWentBackwards, true)]
     fn test_seal_task_error_is_fatal(#[case] err: SealTaskError, #[case] expected: bool) {
@@ -578,12 +599,10 @@ mod tests {
             B256::with_last_byte(2),
             timestamp,
         ));
-        let expected_unsafe_head = L2BlockInfo::from_payload_and_genesis(
-            BaseExecutionPayload::V3(fallback_payload.clone()),
-            Some(B256::ZERO),
-            &cfg.genesis,
-        )
-        .expect("fallback payload should convert to L2BlockInfo");
+        let expected_payload = BaseExecutionPayload::V3(fallback_payload.clone());
+        let expected_unsafe_head =
+            L2BlockInfo::from_payload_header_and_genesis(&expected_payload, &cfg.genesis)
+                .expect("fallback payload should convert to L2BlockInfo");
 
         let payload_id = PayloadId::new([0x11; 8]);
         let client = Arc::new(

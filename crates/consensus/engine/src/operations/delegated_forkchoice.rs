@@ -68,13 +68,22 @@ impl Engine {
         config: Arc<RollupConfig>,
         update: DelegatedForkchoiceUpdate,
     ) -> Result<(), DelegatedForkchoiceTaskError> {
-        Self::consolidate_with_state(
-            state,
-            Arc::clone(&client),
-            Arc::clone(&config),
-            ConsolidateInput::BlockInfo(update.safe_l2),
-        )
-        .await?;
+        if state.sync_state.safe_head() != update.safe_l2 {
+            Self::consolidate_with_state(
+                state,
+                Arc::clone(&client),
+                Arc::clone(&config),
+                ConsolidateInput::BlockInfo(update.safe_l2),
+            )
+            .await?;
+        } else {
+            debug!(
+                target: "engine",
+                safe_hash = %update.safe_l2.block_info.hash,
+                safe_number = update.safe_l2.block_info.number,
+                "Skipping delegated safe update already reflected in engine state"
+            );
+        }
 
         let actual_safe = state.sync_state.safe_head().block_info.number;
         let Some(remote_finalized) = update.finalized_l2_number else { return Ok(()) };

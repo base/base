@@ -3,7 +3,9 @@
 use alloc::vec::Vec;
 
 use alloy_consensus::{Block, Transaction};
-use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
+use alloy_eips::{
+    BlockNumHash, Decodable2718, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH,
+};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
@@ -198,6 +200,42 @@ impl L2BlockInfo {
             }
 
             let tx = block.body.transactions[0].as_ref();
+            let Some(tx) = tx.as_deposit() else {
+                return Err(FromBlockError::FirstTxNonDeposit(tx.tx_type() as u8));
+            };
+
+            let l1_info = L1BlockInfoTx::decode_calldata(tx.input().as_ref())
+                .map_err(FromBlockError::BlockInfoDecodeError)?;
+            (l1_info.id(), l1_info.sequence_number())
+        };
+
+        Ok(Self { block_info, l1_origin, seq_num: sequence_number })
+    }
+
+    /// Constructs an [`L2BlockInfo`] from a payload's header fields and first transaction.
+    pub fn from_payload_header_and_genesis(
+        payload: &BaseExecutionPayload,
+        genesis: &ChainGenesis,
+    ) -> Result<Self, FromBlockError> {
+        let block_info = BlockInfo {
+            hash: payload.block_hash(),
+            number: payload.block_number(),
+            parent_hash: payload.parent_hash(),
+            timestamp: payload.timestamp(),
+        };
+
+        let (l1_origin, sequence_number) = if block_info.number == genesis.l2.number {
+            if block_info.hash != genesis.l2.hash {
+                return Err(FromBlockError::InvalidGenesisHash);
+            }
+            (genesis.l1, 0)
+        } else {
+            let first_tx = payload
+                .transactions()
+                .first()
+                .ok_or(FromBlockError::MissingL1InfoDeposit(block_info.hash))?;
+            let mut first_tx = first_tx.as_ref();
+            let tx = BaseTxEnvelope::decode_2718(&mut first_tx)?;
             let Some(tx) = tx.as_deposit() else {
                 return Err(FromBlockError::FirstTxNonDeposit(tx.tx_type() as u8));
             };

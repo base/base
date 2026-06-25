@@ -2,16 +2,11 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_rpc_types_engine::{
-    CancunPayloadFields, ExecutionPayloadInputV2, PayloadStatusEnum, PraguePayloadFields,
-};
+use alloy_rpc_types_engine::{ExecutionPayloadInputV2, PayloadStatusEnum};
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
-    BasePayloadError,
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadError,
 };
 use base_protocol::{FromBlockError, L2BlockInfo};
 use thiserror::Error;
@@ -127,10 +122,11 @@ impl Engine {
         .await;
 
         self.state_sender.send_replace(self.state);
-        Metrics::engine_task_count(Metrics::INSERT_TASK_LABEL).increment(1);
         if let Err(err) = &result {
             Metrics::engine_task_failure(Metrics::INSERT_TASK_LABEL, err.severity().as_label())
                 .increment(1);
+        } else {
+            Metrics::engine_task_count(Metrics::INSERT_TASK_LABEL).increment(1);
         }
 
         result
@@ -150,8 +146,8 @@ impl Engine {
         self.insert_payload_with_retry_inner(client, config, envelope, payload_safety, false).await
     }
 
-    /// Inserts a payload and retries temporary failures.
-    pub async fn insert_payload_with_retry_inner<EngineClient_>(
+    /// Inserts a payload and retries temporary failures with the requested unsafe-head invariant.
+    async fn insert_payload_with_retry_inner<EngineClient_>(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
@@ -193,29 +189,13 @@ impl Engine {
         let total_insert_start = Instant::now();
         let BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload } = envelope;
         let parent_beacon_block_root = parent_beacon_block_root.unwrap_or_default();
-        let block: BaseBlock = match &execution_payload {
-            BaseExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload.clone())
-                .try_into_block()
-                .map_err(InsertTaskError::FromBlockError)?,
-            BaseExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload.clone())
-                .try_into_block()
-                .map_err(InsertTaskError::FromBlockError)?,
-            BaseExecutionPayload::V3(payload) => BaseExecutionPayload::V3(payload.clone())
-                .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
-                    CancunPayloadFields::new(parent_beacon_block_root, vec![]),
-                ))
-                .map_err(InsertTaskError::FromBlockError)?,
-            BaseExecutionPayload::V4(payload) => BaseExecutionPayload::V4(payload.clone())
-                .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
-                    CancunPayloadFields::new(parent_beacon_block_root, vec![]),
-                    PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
-                ))
-                .map_err(InsertTaskError::FromBlockError)?,
-        };
 
         let advances_safe_head = payload_safety.advances_safe_head();
-        let new_block_ref = L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis)
-            .map_err(InsertTaskError::L2BlockInfoConstruction)?;
+        let new_block_ref = L2BlockInfo::from_payload_header_and_genesis(
+            &execution_payload,
+            &rollup_config.genesis,
+        )
+        .map_err(InsertTaskError::L2BlockInfoConstruction)?;
 
         if !Self::is_unsafe_payload_applicable(state, payload_safety, &new_block_ref) {
             return Ok(state.sync_state.unsafe_head());

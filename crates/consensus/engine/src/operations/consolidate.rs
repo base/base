@@ -253,8 +253,12 @@ impl Engine {
                 warn!(target: "engine", block_num, "Received `None` block");
                 return Err(ConsolidateTaskError::MissingUnsafeL2Block(block_num));
             }
-            Err(_) => {
-                warn!(target: "engine", "Failed to fetch unsafe l2 block for consolidation");
+            Err(err) => {
+                warn!(
+                    target: "engine",
+                    error = %err,
+                    "Failed to fetch unsafe l2 block for consolidation"
+                );
                 return Err(ConsolidateTaskError::FailedToFetchUnsafeL2Block);
             }
         };

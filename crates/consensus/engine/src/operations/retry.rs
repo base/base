@@ -2,9 +2,11 @@
 
 use std::{fmt::Display, future::Future, pin::Pin};
 
-use tokio::task::yield_now;
+use tokio::time::{Duration, sleep};
 
 use crate::{Engine, EngineState, EngineTaskError, EngineTaskErrorSeverity, Metrics};
+
+const TEMPORARY_ENGINE_ERROR_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 impl Engine {
     /// Retries an engine operation until it succeeds or returns a non-temporary error.
@@ -39,7 +41,7 @@ impl Engine {
                     match severity {
                         EngineTaskErrorSeverity::Temporary => {
                             trace!(target: "engine", error = %err, "Temporary engine error");
-                            yield_now().await;
+                            sleep(TEMPORARY_ENGINE_ERROR_RETRY_DELAY).await;
                         }
                         EngineTaskErrorSeverity::Critical => {
                             error!(target: "engine", error = %err, "Critical engine error");
