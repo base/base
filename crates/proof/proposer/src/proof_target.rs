@@ -5,7 +5,7 @@ use base_proof_rpc::RollupProvider;
 use tracing::{error, warn};
 
 /// Shared proposal target helpers.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct ProofTarget;
 
 impl ProofTarget {
@@ -16,21 +16,14 @@ impl ProofTarget {
             return None;
         }
 
-        current_block.checked_add(block_interval).map_or_else(
-            || {
-                error!(current_block, block_interval, "Overflow computing next target block");
-                None
-            },
-            Some,
-        )
+        current_block.checked_add(block_interval).or_else(|| {
+            error!(current_block, block_interval, "Overflow computing next target block");
+            None
+        })
     }
 
     /// Fetches the canonical output root for a proposal target.
-    pub async fn canonical_output_root<R>(
-        rollup_client: &R,
-        target_block: u64,
-        caller: &'static str,
-    ) -> Option<B256>
+    pub async fn canonical_output_root<R>(rollup_client: &R, target_block: u64) -> Option<B256>
     where
         R: RollupProvider + ?Sized,
     {
@@ -39,7 +32,6 @@ impl ProofTarget {
             Err(e) => {
                 warn!(
                     target_block,
-                    caller = %caller,
                     error = %e,
                     "Failed to fetch canonical output root"
                 );
@@ -54,18 +46,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn next_block_returns_none_for_zero_interval() {
-        assert_eq!(ProofTarget::next_block(100, 0), None);
-    }
-
-    #[test]
-    fn next_block_adds_interval_to_parent() {
-        assert_eq!(ProofTarget::next_block(100, 100), Some(200));
-        assert_eq!(ProofTarget::next_block(150, 100), Some(250));
-    }
-
-    #[test]
-    fn next_block_returns_none_on_overflow() {
-        assert_eq!(ProofTarget::next_block(u64::MAX, 1), None);
+    fn next_block_handles_interval_cases() {
+        for (current_block, block_interval, expected) in
+            [(100, 0, None), (100, 100, Some(200)), (150, 100, Some(250)), (u64::MAX, 1, None)]
+        {
+            assert_eq!(
+                ProofTarget::next_block(current_block, block_interval),
+                expected,
+                "next_block({current_block}, {block_interval})"
+            );
+        }
     }
 }

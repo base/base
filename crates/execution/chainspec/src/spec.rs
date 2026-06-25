@@ -1114,7 +1114,7 @@ mod tests {
         let genesis = base_zeronet_spec.genesis_header();
         assert_eq!(
             genesis.hash_slow(),
-            b256!("0x1842d6ef4c40e2a4794458e167f6d327269df919b626979111c37ad3a96047bf")
+            b256!("0x572a15dd7e69df35913f7f2217376609fc20d59276169977de92c01684637162")
         );
     }
 

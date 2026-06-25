@@ -66,6 +66,7 @@ std = [
 	"base-common-flz/std",
 	"base-common-genesis/std",
 	"base-common-precompiles/std",
+	"base-metrics?/std",
 	"base-precompile-storage/std",
 	"dep:base-execution-eip8130",
 	"revm/std",
@@ -83,7 +84,13 @@ serde = [
 	"revm/serde",
 ]
 reth = [ "dep:reth-evm", "std" ]
-metrics = [ "base-metrics/metrics", "dep:base-metrics", "dep:metrics", "std" ]
+metrics = [
+	"base-metrics/metrics",
+	"dep:base-metrics",
+	"dep:metrics",
+	"reth-evm?/metrics",
+	"std",
+]
 bn = [ "base-common-precompiles/bn", "revm/bn" ]
 blst = [ "base-common-precompiles/blst", "revm/blst" ]
 c-kzg = [ "base-common-precompiles/c-kzg", "revm/c-kzg" ]

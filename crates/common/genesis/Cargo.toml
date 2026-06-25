@@ -52,6 +52,7 @@ std = [
 	"alloy-sol-types/std",
 	"derive_more/std",
 	"serde?/std",
+	"spin/std",
 	"thiserror/std",
 	"tracing/std",
 ]

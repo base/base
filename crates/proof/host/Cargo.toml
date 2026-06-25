@@ -67,6 +67,7 @@ proptest.workspace = true
 [features]
 disk = [ "dep:rocksdb" ]
 metrics = [
+	"base-common-evm/metrics",
 	"base-consensus-providers/metrics",
 	"base-metrics/metrics",
 	"dep:metrics",

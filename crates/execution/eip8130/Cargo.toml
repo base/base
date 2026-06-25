@@ -40,4 +40,7 @@ thiserror.workspace = true
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
 
 [features]
-test-utils = [ "base-precompile-storage/test-utils" ]
+test-utils = [
+	"base-common-precompiles/test-utils",
+	"base-precompile-storage/test-utils",
+]

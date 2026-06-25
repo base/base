@@ -194,12 +194,8 @@ impl ProofDispatcher {
                 break;
             }
 
-            let Some(claimed_l2_output_root) = ProofTarget::canonical_output_root(
-                self.rollup_client.as_ref(),
-                target_block,
-                "dispatcher",
-            )
-            .await
+            let Some(claimed_l2_output_root) =
+                ProofTarget::canonical_output_root(self.rollup_client.as_ref(), target_block).await
             else {
                 break;
             };

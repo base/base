@@ -80,7 +80,7 @@ where
         query_started_at: Instant,
         sender: oneshot::Sender<RollupConfig>,
     ) {
-        if let Err(error) = sender.send((*self.rollup_config).clone()) {
+        if let Err(error) = sender.send(self.rollup_config.with_runtime_upgrade_overrides()) {
             warn!(
                 target: "l1_watcher",
                 elapsed_ms = query_started_at.elapsed().as_millis() as u64,

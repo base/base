@@ -28,8 +28,8 @@ use lru::LruCache;
 use tokio::sync::Mutex;
 
 use crate::{
-    Behaviour, BlockHandler, ConnectionGate, ConnectionGater, Event, GossipDriverBuilder, Handler,
-    Metrics, PublishError,
+    Behaviour, BlockHandler, ConnectionGate, ConnectionGater, ConnectionLimitsConfig, Event,
+    GossipDriverBuilder, Handler, Metrics, PublishError,
 };
 
 /// Configuration applied when constructing a [`GossipDriver`].
@@ -39,6 +39,8 @@ pub struct GossipDriverConfig {
     pub max_identify_peerstore_peers: NonZeroUsize,
     /// Peer score monitoring config.
     pub peer_monitoring: Option<PeerMonitoring>,
+    /// The configured libp2p connection limits enforced by the swarm.
+    pub connection_limits_config: ConnectionLimitsConfig,
 }
 
 /// A driver for a [`Swarm`] instance.
@@ -74,6 +76,8 @@ pub struct GossipDriver<G: ConnectionGate> {
     pub peer_connection_start: HashMap<PeerId, Instant>,
     /// The connection gate.
     pub connection_gate: G,
+    /// The configured libp2p connection limits enforced by the swarm.
+    pub connection_limits_config: ConnectionLimitsConfig,
     /// Tracks ping times for peers.
     pub ping: Arc<Mutex<HashMap<PeerId, Duration>>>,
 }
@@ -112,6 +116,7 @@ where
             sync_handler,
             sync_protocol: Some(sync_protocol),
             connection_gate: gate,
+            connection_limits_config: config.connection_limits_config,
             ping: Arc::new(Mutex::new(Default::default())),
         }
     }

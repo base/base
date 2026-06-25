@@ -44,4 +44,9 @@ testcontainers-modules = { workspace = true, features = ["postgres", "minio"] }
 
 [features]
 default = [ "metrics" ]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = [
+	"base-metrics/metrics",
+	"base-observability-events/metrics",
+	"dep:metrics",
+	"tower-http/metrics",
+]

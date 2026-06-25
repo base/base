@@ -559,15 +559,15 @@ const ZERONET: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: None,
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
-    azul_timestamp: Some(1_775_152_800),
-    beryl_timestamp: Some(1_780_678_800),
+    azul_timestamp: Some(1_782_348_888),
+    beryl_timestamp: Some(1_782_349_188),
     cobalt_timestamp: None,
 
-    genesis_l1_hash: b256!("b7d4b69971ff31d5179be5e1b83f5a4f438f4cd1db886a6630623b7047f32cfd"),
-    genesis_l1_number: 2_450_277,
-    genesis_l2_hash: b256!("1842d6ef4c40e2a4794458e167f6d327269df919b626979111c37ad3a96047bf"),
+    genesis_l1_hash: b256!("acb2c60e3887888b5111b05c8d8f32e2761c7d4a0f10562d199253ab072c3a71"),
+    genesis_l1_number: 3_083_762,
+    genesis_l2_hash: b256!("572a15dd7e69df35913f7f2217376609fc20d59276169977de92c01684637162"),
     genesis_l2_number: 0,
-    genesis_l2_time: 1_773_959_340,
+    genesis_l2_time: 1_782_348_588,
     genesis_batcher_address: address!("4c810fec547f6c143db51953af51a1de79bead21"),
     genesis_overhead: U256::ZERO,
     genesis_scalar: uint!(0x010000000000000000000000000000000000000000000000000c3c9d00000558_U256),
@@ -578,8 +578,8 @@ const ZERONET: ChainConfig = ChainConfig {
     eip1559_denominator_canyon: 250,
 
     batch_inbox_address: address!("00975f9c430b216f84ec52374d7f5eb8eec3139a"),
-    deposit_contract_address: address!("7b9fb81a8e041814903c9385b22d88ac303df699"),
-    system_config_address: address!("cc7c76564bea74a963a0bd75e0bc9bce3ff0ea80"),
+    deposit_contract_address: address!("7e3b97c95c823f385ff6770411f6e12f8e09ac9b"),
+    system_config_address: address!("0a111c7980152bde41d71f48e2e1d8184f5f6187"),
     protocol_versions_address: address!("646c8604cf62b23e0cf094f2e790c6c75547ff85"),
 
     unsafe_block_signer: Some(address!("cf17274338d3128f6C96d9af54511a17e8b38a08")),
@@ -637,8 +637,8 @@ mod tests {
 
     #[test]
     fn zeronet_beryl_is_scheduled() {
-        assert_eq!(ChainConfig::zeronet().beryl_timestamp, Some(1_780_678_800));
-        assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_780_678_800));
+        assert_eq!(ChainConfig::zeronet().beryl_timestamp, Some(1_782_349_188));
+        assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_782_349_188));
         assert_eq!(ChainConfig::zeronet().cobalt_timestamp, None);
         assert_eq!(ChainConfig::zeronet().upgrade_config().base.cobalt, None);
     }

@@ -47,7 +47,7 @@ fn main() {
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(());
-        StandardBaseRethNode::install_upgrade_signal_metrics_extension(&mut runner, &rollup_args)?;
+        StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();
             Ok(())

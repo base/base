@@ -3,7 +3,7 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 /// Controls which local schedule mutation paths are enabled for the L1 upgrade signal.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum UpgradeSignalMode {
-    /// Read the L1 signal and record metrics without mutating local fork schedules.
+    /// Do not mutate local upgrade schedules; live L1 metrics are still observed.
     #[default]
     MetricsOnly,
     /// Apply the L1 signal once before startup; live polling remains metrics-only.
