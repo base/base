@@ -116,13 +116,26 @@ impl Eip8130Constants {
 
     /// Maximum number of `account_changes` entries (of any kind: `Create`,
     /// `ConfigChange`, `Delegation`) the mempool accepts in a single
-    /// transaction. This is an **interim** total-entry admission cap that
-    /// currently sits *below* [`Self::MAX_CONFIG_CHANGES_PER_TX`]: while the
-    /// interleaved authorize-and-apply admission flow beds in, it keeps the
+    /// transaction. This is an **interim** total-entry admission cap that keeps
     /// per-transaction admission work (and the in-memory overlay it applies
-    /// against) small and bounded. It can be raised toward
-    /// `MAX_CONFIG_CHANGES_PER_TX` (which then becomes the binding per-type cap)
-    /// once that flow is proven out.
+    /// against) small and bounded while the interleaved authorize-and-apply
+    /// admission flow beds in.
+    ///
+    /// Relationship to the per-type caps ([`Self::MAX_CONFIG_CHANGES_PER_TX`]
+    /// and the implicit ≤1 `Create` / ≤1 `Delegation` structural limits):
+    ///
+    /// - **While this cap is the smallest** (3 < 10 today), it is the *binding*
+    ///   admission constraint — a transaction can never reach
+    ///   `MAX_CONFIG_CHANGES_PER_TX` config changes because the total cap stops
+    ///   it first. The per-type caps are effectively dormant.
+    /// - **Once this is raised to or above `MAX_CONFIG_CHANGES_PER_TX`**, the
+    ///   per-type caps become the binding constraints: `MAX_CONFIG_CHANGES_PER_TX`
+    ///   bounds config changes, and the ≤1 `Create` / ≤1 `Delegation` structural
+    ///   rules bound the rest. Raising this cap therefore *relaxes* admission up
+    ///   to (but never beyond) the per-type ceilings.
+    ///
+    /// Keep this value `<= MAX_CONFIG_CHANGES_PER_TX + 2` (one create + one
+    /// delegation) if the intent is for the total cap to stay the binding limit.
     pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 3;
 
     /// Maximum `expiry` window (in seconds beyond the current wall-clock time)

@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -216,8 +216,11 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
         Address::ZERO
     }
 
-    fn replace_caller(&mut self, caller: Address) -> Address {
-        caller
+    // Per the trait contract, returns the *previous* caller. This provider does
+    // not track a mutable caller (`caller()` is always `Address::ZERO`), so the
+    // previous value is always `Address::ZERO` — not the `caller` argument.
+    fn replace_caller(&mut self, _caller: Address) -> Address {
+        Address::ZERO
     }
 
     fn checkpoint(&mut self) -> JournalCheckpoint {
@@ -250,15 +253,20 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
 /// deferred account-*code* effects an apply surfaces are not needed for
 /// admission (no `SLOAD` reads account bytecode through this provider), so
 /// `set_code` is accepted and discarded.
+// `BTreeMap` (not `HashMap`) for deterministic iteration order. The overlay
+// only performs point reads/writes today so ordering is not observed, but
+// precompile storage feeds consensus-relevant state — a `BTreeMap` keeps a
+// future iteration-sensitive change from silently depending on
+// `HashMap`'s non-deterministic order.
 struct OverlayPrecompileStorage<'a> {
     inner: StateProviderPrecompileStorage<'a>,
-    storage: HashMap<(Address, U256), U256>,
-    transient: HashMap<(Address, U256), U256>,
+    storage: BTreeMap<(Address, U256), U256>,
+    transient: BTreeMap<(Address, U256), U256>,
 }
 
 impl<'a> OverlayPrecompileStorage<'a> {
-    fn new(inner: StateProviderPrecompileStorage<'a>) -> Self {
-        Self { inner, storage: HashMap::new(), transient: HashMap::new() }
+    const fn new(inner: StateProviderPrecompileStorage<'a>) -> Self {
+        Self { inner, storage: BTreeMap::new(), transient: BTreeMap::new() }
     }
 }
 
@@ -386,9 +394,10 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
         Address::ZERO
     }
 
+    // Per the trait contract, returns the *previous* caller. The overlay does
+    // not track a mutable caller (`caller()` is always `Address::ZERO`), so the
+    // previous value is always `Address::ZERO` — not the `caller` argument.
     fn replace_caller(&mut self, _caller: Address) -> Address {
-        // The overlay does not track caller state — admission never reads it.
-        // Return the fixed Address::ZERO to satisfy the "returns previous" contract.
         Address::ZERO
     }
 
