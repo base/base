@@ -82,19 +82,23 @@ impl TransactionAuthorizer {
         // config changes mutate this account and a create must derive to it. For
         // the configured path it is the explicit wire `sender`; for the EOA path
         // it is the recovered signer. The sender's *authorization* is deferred to
-        // the final post-apply check (step 4 below).
-        let sender_account = match signed.explicit_sender() {
-            Some(account) => account,
-            None => RecoveredActorId::recover_eoa_sender(signed)
-                .map_err(|_| TxAuthError::SenderRecovery)?
-                .ok_or(TxAuthError::SenderRecovery)?
-                .address(),
+        // the final post-apply check (step 4 below). The EOA recovery token is
+        // kept and threaded into that final check so the secp256k1 ecrecover runs
+        // exactly once per transaction rather than again inside `verify`.
+        let (sender_account, recovered_sender) = match signed.explicit_sender() {
+            Some(account) => (account, None),
+            None => {
+                let recovered = RecoveredActorId::recover_eoa_sender(signed)
+                    .map_err(|_| TxAuthError::SenderRecovery)?
+                    .ok_or(TxAuthError::SenderRecovery)?;
+                (recovered.address(), Some(recovered))
+            }
         };
 
         // 1–3. Walk the account changes in order, applying each against the
         //       evolving state and authorizing every config change as it is
         //       reached. Structural invariants (one create at index 0, at most
-        //       one delegation) mirror `AccountChangeApplier::apply`.
+        //       one delegation) are enforced inline.
         let mut applied = AppliedAccountChanges::default();
         let mut config_changes = Vec::new();
         for (index, change) in signed.tx().account_changes.iter().enumerate() {
@@ -143,8 +147,10 @@ impl TransactionAuthorizer {
             }
         }
 
-        // 4. Authenticate sender + payer against the final post-apply state.
-        let actors = ActorTxVerifier::verify(signed, storage, now)?;
+        // 4. Authenticate sender + payer against the final post-apply state,
+        //    reusing the EOA sender token recovered above (no second ecrecover).
+        let actors =
+            ActorTxVerifier::verify_with_recovered_sender(signed, storage, now, recovered_sender)?;
 
         Ok(AppliedTransaction { actors, config_changes, applied })
     }

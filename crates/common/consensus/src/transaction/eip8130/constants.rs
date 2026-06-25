@@ -114,6 +114,17 @@ impl Eip8130Constants {
     /// here that downstream operators can revisit once the spec finalises.
     pub const MAX_CONFIG_CHANGES_PER_TX: usize = 10;
 
+    /// Maximum number of `account_changes` entries (of any kind: `Create`,
+    /// `ConfigChange`, `Delegation`) the mempool accepts in a single
+    /// transaction. This is an **interim** total-entry admission cap that
+    /// currently sits *below* [`Self::MAX_CONFIG_CHANGES_PER_TX`]: while the
+    /// interleaved authorize-and-apply admission flow beds in, it keeps the
+    /// per-transaction admission work (and the in-memory overlay it applies
+    /// against) small and bounded. It can be raised toward
+    /// `MAX_CONFIG_CHANGES_PER_TX` (which then becomes the binding per-type cap)
+    /// once that flow is proven out.
+    pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 3;
+
     /// Maximum `expiry` window (in seconds beyond the current wall-clock time)
     /// the mempool accepts for nonce-free-mode transactions
     /// (`nonce_key == NONCE_KEY_MAX`). Per the spec ("Nodes SHOULD reject
