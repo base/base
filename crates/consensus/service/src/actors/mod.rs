@@ -5,29 +5,35 @@
 mod traits;
 pub use traits::{CancellableContext, NodeActor};
 
+mod checkpoint;
+pub use checkpoint::{
+    CheckpointActor, CheckpointClient, CheckpointDB, CheckpointError, CheckpointRequest,
+    CheckpointWriter, NoopCheckpointWriter,
+};
+
 mod engine;
 #[cfg(test)]
 pub use engine::MockEngineDerivationClient;
 pub use engine::{
     BootstrapRole, BuildRequest, EngineActor, EngineActorRequest, EngineClientError,
-    EngineClientResult, EngineConfig, EngineDerivationClient, EngineError, EngineProcessingRequest,
-    EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
-    EngineRpcRequestReceiver, GetPayloadRequest, QueuedEngineDerivationClient, ResetRequest,
-    SealRequest,
+    EngineClientResult, EngineConfig, EngineDerivationClient, EngineError, EngineProcessor,
+    EngineProcessorOptions, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, QueuedEngineDerivationClient, ResetRequest,
 };
 
 mod rpc;
+pub(crate) use rpc::launch_rpc_server;
 pub use rpc::{
     QueuedEngineRpcClient, QueuedSequencerAdminAPIClient, RpcActor, RpcActorError, RpcContext,
 };
 
 mod derivation;
 pub use derivation::{
-    DelegateDerivationActor, DelegateL2Client, DelegateL2ClientError, DelegateL2DerivationActor,
-    DerivationActor, DerivationActorRequest, DerivationClientError, DerivationClientResult,
-    DerivationDelegateClient, DerivationDelegateClientError, DerivationEngineClient,
-    DerivationError, DerivationState, DerivationStateMachine, DerivationStateTransitionError,
-    DerivationStateUpdate, L2Finalizer, L2SourceClient, QueuedDerivationEngineClient,
+    DelegateDerivationActor, DerivationActor, DerivationActorRequest, DerivationClientError,
+    DerivationClientResult, DerivationDelegateClient, DerivationDelegateClientError,
+    DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
+    DerivationStateTransitionError, DerivationStateUpdate, L2Finalizer,
+    QueuedDerivationEngineClient,
 };
 
 mod l1_watcher;
@@ -51,9 +57,10 @@ mod sequencer;
 pub use sequencer::{
     Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
-    PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard, SealState,
-    SealStepError, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient, UnsealedPayloadHandle,
+    PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard,
+    ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
+    SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
+    UnsealedPayloadHandle,
 };
 #[cfg(test)]
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};

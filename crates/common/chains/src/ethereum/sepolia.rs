@@ -47,6 +47,7 @@ impl Sepolia {
             cancun_time: alloy_hardforks::EthereumHardfork::Cancun.sepolia_activation_timestamp(),
             prague_time: alloy_hardforks::EthereumHardfork::Prague.sepolia_activation_timestamp(),
             osaka_time: alloy_hardforks::EthereumHardfork::Osaka.sepolia_activation_timestamp(),
+            amsterdam_time: None,
             bpo1_time: alloy_hardforks::EthereumHardfork::Bpo1.sepolia_activation_timestamp(),
             bpo2_time: alloy_hardforks::EthereumHardfork::Bpo2.sepolia_activation_timestamp(),
             bpo3_time: alloy_hardforks::EthereumHardfork::Bpo3.sepolia_activation_timestamp(),
@@ -61,6 +62,7 @@ impl Sepolia {
             parlia: None,
             extra_fields: Default::default(),
             terminal_total_difficulty_passed: false,
+            _non_exhaustive: (),
         }
     }
 }

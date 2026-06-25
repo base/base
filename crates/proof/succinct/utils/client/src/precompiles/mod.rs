@@ -1,25 +1,26 @@
-//! [`PrecompileProvider`] for FPVM-accelerated OP Stack precompiles.
+//! [`PrecompileProvider`] for FPVM-accelerated rollup precompiles.
 
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 
-use alloy_primitives::{Address, Bytes};
-use base_common_evm::{BasePrecompiles, OpSpecId};
+use alloy_evm::precompiles::PrecompilesMap;
+#[cfg(target_os = "zkvm")]
+use alloy_evm::precompiles::{DynPrecompile, Precompile};
+use alloy_primitives::Address;
+use base_common_evm::{BasePrecompiles, BaseSpecId};
+use base_common_precompiles::PrecompileCallObserver;
+#[cfg(any(test, target_os = "zkvm"))]
+use revm::precompile::PrecompileId;
 use revm::{
     context::{Cfg, ContextTr},
-    handler::{EthPrecompiles, PrecompileProvider},
-    interpreter::{CallInput, CallInputs, Gas, InstructionResult, InterpreterResult},
-    precompile::{Precompile as PrecompileWithAddress, PrecompileError, Precompiles},
-    primitives::hardfork::SpecId,
+    handler::PrecompileProvider,
+    interpreter::{CallInputs, InterpreterResult},
 };
-#[cfg(any(test, target_os = "zkvm"))]
-use revm_precompile::PrecompileId;
-use revm_precompile::{bn254, kzg_point_evaluation, secp256k1, secp256r1};
 
 mod custom;
 pub use custom::CustomCrypto;
 
 mod factory;
-pub use factory::ZkvmOpEvmFactory;
+pub use factory::ZkvmBaseEvmFactory;
 
 /// Tracker names for accelerated precompiles.
 /// These names are used in cycle-tracker-report events and must match
@@ -62,48 +63,6 @@ pub mod cycle_tracker {
     }
 }
 
-/// Get the ZKVM-accelerated precompiles.
-fn get_precompiles() -> Vec<PrecompileWithAddress> {
-    vec![
-        bn254::add::ISTANBUL,
-        bn254::mul::ISTANBUL,
-        bn254::pair::ISTANBUL,
-        secp256k1::ECRECOVER,
-        secp256r1::P256VERIFY,
-        kzg_point_evaluation::POINT_EVALUATION,
-    ]
-}
-
-/// Cache of leaked precompiles per [`OpSpecId`], ensuring each spec variant is only
-/// allocated once rather than on every [`OpZkvmPrecompiles::set_spec`] call.
-static PRECOMPILE_CACHE: spin::Mutex<Vec<(OpSpecId, &'static Precompiles)>> =
-    spin::Mutex::new(Vec::new());
-
-/// Returns a `&'static Precompiles` for the given spec, creating and caching it on first use.
-fn get_or_create_precompiles(spec: OpSpecId) -> &'static Precompiles {
-    let cache = PRECOMPILE_CACHE.lock();
-    if let Some((_, precompiles)) = cache.iter().find(|(s, _)| *s == spec) {
-        return precompiles;
-    }
-    drop(cache);
-
-    let base = match spec {
-        spec @ (OpSpecId::BEDROCK | OpSpecId::REGOLITH | OpSpecId::CANYON | OpSpecId::ECOTONE) => {
-            Precompiles::new(spec.into_eth_spec().into()).clone()
-        }
-        OpSpecId::FJORD => BasePrecompiles::fjord().clone(),
-        OpSpecId::GRANITE | OpSpecId::HOLOCENE => BasePrecompiles::granite().clone(),
-        OpSpecId::ISTHMUS | OpSpecId::JOVIAN => BasePrecompiles::isthmus().clone(),
-        OpSpecId::AZUL => BasePrecompiles::azul().clone(),
-    };
-    let mut precompiles = base;
-    precompiles.extend(get_precompiles());
-    let leaked: &'static Precompiles = alloc::boxed::Box::leak(alloc::boxed::Box::new(precompiles));
-
-    PRECOMPILE_CACHE.lock().push((spec, leaked));
-    leaked
-}
-
 /// Get the cycle tracker name for a precompile by its ID.
 /// Returns None if the precompile is not accelerated/tracked.
 #[cfg(any(test, target_os = "zkvm"))]
@@ -120,27 +79,100 @@ const fn get_precompile_tracker_name(id: &PrecompileId) -> Option<&'static str> 
     }
 }
 
-/// The ZKVM-cycle-tracking precompiles.
-#[derive(Debug)]
-pub struct OpZkvmPrecompiles {
-    /// The default [`EthPrecompiles`] provider.
-    inner: EthPrecompiles,
-    /// The [`OpSpecId`] of the precompiles.
-    spec: OpSpecId,
-}
+/// SP1 cycle-tracker observer for Base-native precompile operations.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Sp1CycleObserver;
 
-impl OpZkvmPrecompiles {
-    /// Create a new precompile provider with the given [`OpSpecId`].
-    #[inline]
-    pub fn new_with_spec(spec: OpSpecId) -> Self {
-        let precompiles = get_or_create_precompiles(spec);
-        Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
+impl PrecompileCallObserver for Sp1CycleObserver {
+    fn start(&self, label: &'static str) {
+        let _ = label;
+        #[cfg(target_os = "zkvm")]
+        println!("cycle-tracker-report-start: {label}");
+    }
+
+    fn end(&self, label: &'static str) {
+        let _ = label;
+        #[cfg(target_os = "zkvm")]
+        println!("cycle-tracker-report-end: {label}");
     }
 }
 
-impl<CTX> PrecompileProvider<CTX> for OpZkvmPrecompiles
+/// The ZKVM-cycle-tracking precompiles.
+#[derive(Debug)]
+pub struct BaseZkvmPrecompiles {
+    /// The installed Base precompile map, with ZKVM-specific wrappers layered on top.
+    inner: PrecompilesMap,
+    /// The [`BaseSpecId`] of the precompiles.
+    spec: BaseSpecId,
+    /// Activation registry admin address.
+    activation_admin_address: Option<Address>,
+}
+
+impl BaseZkvmPrecompiles {
+    /// Create a new precompile provider with the given [`BaseSpecId`].
+    #[inline]
+    pub fn new_with_spec(spec: BaseSpecId) -> Self {
+        Self::new_with_spec_and_activation_admin_address(spec, None)
+    }
+
+    /// Create a new precompile provider with the given [`BaseSpecId`] and activation admin.
+    #[inline]
+    pub fn new_with_spec_and_activation_admin_address(
+        spec: BaseSpecId,
+        activation_admin_address: Option<Address>,
+    ) -> Self {
+        let inner = Self::installed_precompiles(spec, activation_admin_address);
+
+        Self { inner, spec, activation_admin_address }
+    }
+
+    /// Rebuilds this provider with `activation_admin_address`.
+    #[inline]
+    pub fn with_activation_admin_address(self, activation_admin_address: Option<Address>) -> Self {
+        Self::new_with_spec_and_activation_admin_address(self.spec, activation_admin_address)
+    }
+
+    /// Returns the activation registry admin address.
+    pub const fn activation_admin_address(&self) -> Option<Address> {
+        self.activation_admin_address
+    }
+
+    fn installed_precompiles(
+        spec: BaseSpecId,
+        activation_admin_address: Option<Address>,
+    ) -> PrecompilesMap {
+        let mut precompiles = BasePrecompiles::new_with_spec(spec)
+            .with_activation_admin_address(activation_admin_address)
+            .install_with_observer(Sp1CycleObserver);
+        Self::install_cycle_trackers(&mut precompiles);
+        precompiles
+    }
+
+    #[cfg(target_os = "zkvm")]
+    fn install_cycle_trackers(precompiles: &mut PrecompilesMap) {
+        precompiles.map_cacheable_precompiles(|_, precompile| {
+            let id = precompile.precompile_id().clone();
+            if let Some(tracker_name) = get_precompile_tracker_name(&id) {
+                DynPrecompile::new(id, move |input| {
+                    println!("cycle-tracker-report-start: precompile-{}", tracker_name);
+                    let result = precompile.call(input);
+                    println!("cycle-tracker-report-end: precompile-{}", tracker_name);
+                    result
+                })
+            } else {
+                precompile
+            }
+        });
+    }
+
+    #[cfg(not(target_os = "zkvm"))]
+    const fn install_cycle_trackers(_precompiles: &mut PrecompilesMap) {}
+}
+
+impl<CTX> PrecompileProvider<CTX> for BaseZkvmPrecompiles
 where
-    CTX: ContextTr<Cfg: Cfg<Spec = OpSpecId>>,
+    CTX: ContextTr<Cfg: Cfg<Spec = BaseSpecId>>,
+    PrecompilesMap: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     type Output = InterpreterResult;
 
@@ -149,7 +181,8 @@ where
         if spec == self.spec {
             return false;
         }
-        *self = Self::new_with_spec(spec);
+        *self =
+            Self::new_with_spec_and_activation_admin_address(spec, self.activation_admin_address);
         true
     }
 
@@ -159,93 +192,37 @@ where
         context: &mut CTX,
         inputs: &CallInputs,
     ) -> Result<Option<Self::Output>, String> {
-        let mut result = InterpreterResult {
-            result: InstructionResult::Return,
-            gas: Gas::new(inputs.gas_limit),
-            output: Bytes::new(),
-        };
-
-        use revm::context::LocalContextTr;
-        // NOTE: this snippet is refactored from the revm source code.
-        // See https://github.com/bluealloy/revm/blob/9bc0c04fda0891e0e8d2e2a6dfd0af81c2af18c4/crates/handler/src/precompile_provider.rs#L111-L122.
-        let shared_buffer;
-        let input_bytes = match &inputs.input {
-            CallInput::SharedBuffer(range) => {
-                shared_buffer = context.local().shared_memory_buffer_slice(range.clone());
-                shared_buffer.as_deref().unwrap_or(&[])
-            }
-            CallInput::Bytes(bytes) => bytes.0.iter().as_slice(),
-        };
-
-        // Priority:
-        // 1. If the precompile has an accelerated version, use that.
-        // 2. If the precompile is not accelerated, use the default version.
-        // 3. If the precompile is not found, return None.
-        let output = if let Some(precompile) = self.inner.precompiles.get(&inputs.bytecode_address)
-        {
-            // Track cycles for accelerated precompiles
-            #[cfg(target_os = "zkvm")]
-            let tracker_name = get_precompile_tracker_name(precompile.id());
-
-            #[cfg(target_os = "zkvm")]
-            if let Some(name) = tracker_name {
-                println!("cycle-tracker-report-start: precompile-{}", name);
-            }
-
-            let result = precompile.execute(input_bytes, inputs.gas_limit);
-
-            #[cfg(target_os = "zkvm")]
-            if let Some(name) = tracker_name {
-                println!("cycle-tracker-report-end: precompile-{}", name);
-            }
-
-            result
-        } else {
-            return Ok(None);
-        };
-
-        match output {
-            Ok(output) => {
-                let underflow = result.gas.record_cost(output.gas_used);
-                assert!(underflow, "Gas underflow is not possible");
-                result.result = InstructionResult::Return;
-                result.output = output.bytes;
-            }
-            Err(PrecompileError::Fatal(e)) => return Err(e),
-            Err(e) => {
-                result.result = if e.is_oog() {
-                    InstructionResult::PrecompileOOG
-                } else {
-                    InstructionResult::PrecompileError
-                };
-            }
-        }
-
-        Ok(Some(result))
+        <PrecompilesMap as PrecompileProvider<CTX>>::run(&mut self.inner, context, inputs)
     }
 
     #[inline]
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
-        self.inner.warm_addresses()
+    fn warm_addresses(&self) -> &revm::primitives::AddressSet {
+        <PrecompilesMap as PrecompileProvider<CTX>>::warm_addresses(&self.inner)
     }
 
     #[inline]
     fn contains(&self, address: &Address) -> bool {
-        self.inner.contains(address)
+        self.inner.get(address).is_some()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::U256;
-    use base_common_evm::{BaseContext, DefaultBase as _};
+    use alloc::vec::Vec;
+
+    use alloy_evm::precompiles::PrecompilesMap;
+    use alloy_primitives::{B256, Bytes, U256};
+    use base_common_evm::{BaseContext, BaseUpgrade, DefaultBase as _};
+    use base_common_precompiles::{
+        ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
+    };
     use revm::{
         Context,
         database::EmptyDB,
         handler::PrecompileProvider,
-        interpreter::{CallInput, CallScheme, CallValue},
+        interpreter::{CallInput, CallScheme, CallValue, InstructionResult},
     };
-    use revm_precompile::PrecompileId;
+    use revm_precompile::secp256r1;
 
     use super::*;
 
@@ -264,7 +241,9 @@ mod tests {
             scheme: CallScheme::Call,
             is_static: false,
             return_memory_offset: 0..0,
-            known_bytecode: None,
+            known_bytecode: Default::default(),
+            reservoir: 0,
+            charged_new_account_state_gas: false,
         }
     }
 
@@ -279,7 +258,8 @@ mod tests {
     #[test]
     fn test_precompile_lookup_uses_bytecode_address() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+        let mut precompiles =
+            BaseZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         // SHA256 precompile at address 0x02
         let sha256_addr = revm::precompile::u64_to_address(2);
@@ -303,7 +283,8 @@ mod tests {
     #[test]
     fn test_run_nonexistent_precompile() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+        let mut precompiles =
+            BaseZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         let fake_addr = Address::from_slice(&[0xFFu8; 20]);
         let call_inputs = create_call_inputs(fake_addr, Bytes::new(), u64::MAX);
@@ -316,7 +297,8 @@ mod tests {
     #[test]
     fn test_run_out_of_gas() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+        let mut precompiles =
+            BaseZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         let sha256_addr = revm::precompile::u64_to_address(2);
         let call_inputs = create_call_inputs(sha256_addr, Bytes::from_static(b"test"), 0);
@@ -332,7 +314,8 @@ mod tests {
     #[test]
     fn test_run_with_shared_buffer_empty() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+        let mut precompiles =
+            BaseZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         let sha256_addr = revm::precompile::u64_to_address(2);
         let call_inputs = CallInputs {
@@ -345,7 +328,9 @@ mod tests {
             scheme: CallScheme::Call,
             is_static: false,
             return_memory_offset: 0..0,
-            known_bytecode: None,
+            known_bytecode: Default::default(),
+            reservoir: 0,
+            charged_new_account_state_gas: false,
         };
 
         let result = precompiles.run(&mut ctx, &call_inputs).unwrap();
@@ -412,17 +397,88 @@ mod tests {
     // ===== Consistency Tests =====
 
     #[test]
-    fn test_all_accelerated_precompiles_have_tracker_names() {
-        let precompiles = get_precompiles();
-        assert_eq!(precompiles.len(), 6, "Expected 6 accelerated precompiles");
+    fn test_zkvm_precompiles_match_base_evm_precompiles() {
+        for spec in BaseUpgrade::VARIANTS.iter().copied().map(BaseSpecId::new) {
+            let base_precompiles = BasePrecompiles::new_with_spec(spec).install();
+            let zkvm_precompiles = BaseZkvmPrecompiles::new_with_spec(spec);
 
-        for precompile in &precompiles {
-            let tracker = get_precompile_tracker_name(precompile.id());
-            assert!(
-                tracker.is_some(),
-                "Precompile {:?} is missing a cycle tracker name",
-                precompile.id()
+            let base_addresses: Vec<_> =
+                <PrecompilesMap as PrecompileProvider<TestContext>>::warm_addresses(
+                    &base_precompiles,
+                )
+                .iter()
+                .copied()
+                .collect();
+            let zkvm_addresses: Vec<_> =
+                <BaseZkvmPrecompiles as PrecompileProvider<TestContext>>::warm_addresses(
+                    &zkvm_precompiles,
+                )
+                .iter()
+                .copied()
+                .collect();
+
+            assert_eq!(
+                zkvm_addresses.len(),
+                base_addresses.len(),
+                "ZKVM and Base EVM precompile counts must match for {spec:?}",
             );
+
+            for address in &base_addresses {
+                assert!(
+                    <BaseZkvmPrecompiles as PrecompileProvider<TestContext>>::contains(
+                        &zkvm_precompiles,
+                        address,
+                    ),
+                    "ZKVM precompiles missing Base EVM precompile {address:?} for {spec:?}",
+                );
+            }
+
+            for address in &zkvm_addresses {
+                assert!(
+                    <PrecompilesMap as PrecompileProvider<TestContext>>::contains(
+                        &base_precompiles,
+                        address,
+                    ),
+                    "ZKVM precompiles contain non-Base EVM precompile {address:?} for {spec:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_zkvm_precompiles_match_beryl_dynamic_installation() {
+        let (token_address, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+
+        let installed_addresses = [
+            B20FactoryStorage::ADDRESS,
+            PolicyRegistryStorage::ADDRESS,
+            ActivationRegistryStorage::ADDRESS,
+            token_address,
+        ];
+
+        for (upgrade, expected) in
+            [(BaseUpgrade::Azul, false), (BaseUpgrade::Beryl, true), (BaseUpgrade::Cobalt, true)]
+        {
+            let spec = BaseSpecId::new(upgrade);
+            let base_precompiles = BasePrecompiles::new_with_spec(spec).install();
+            let zkvm_precompiles = BaseZkvmPrecompiles::new_with_spec(spec);
+
+            for address in installed_addresses {
+                assert_eq!(
+                    base_precompiles.get(&address).is_some(),
+                    expected,
+                    "Base EVM install state changed for {address:?} at {upgrade:?}",
+                );
+                assert_eq!(
+                    <BaseZkvmPrecompiles as PrecompileProvider<TestContext>>::contains(
+                        &zkvm_precompiles,
+                        &address,
+                    ),
+                    expected,
+                    "ZKVM install state diverged for {address:?} at {upgrade:?}",
+                );
+            }
         }
     }
 
@@ -450,6 +506,31 @@ mod tests {
                 "Key '{key}' contains underscores (should use dashes)"
             );
         }
+    }
+
+    #[test]
+    fn test_azul_uses_osaka_p256verify() {
+        let p256_addr = *secp256r1::P256VERIFY.address();
+
+        let jovian_set = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian));
+        let azul_set = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul));
+
+        let jovian_p256 =
+            jovian_set.precompiles().get(&p256_addr).expect("JOVIAN must have P256VERIFY");
+        let azul_p256 = azul_set.precompiles().get(&p256_addr).expect("AZUL must have P256VERIFY");
+
+        // Legacy P256VERIFY costs 3,450 gas. With 5,000 gas it should succeed.
+        assert!(
+            jovian_p256.execute(&[], 5_000, 0).is_ok(),
+            "JOVIAN P256VERIFY must succeed with 5,000 gas (legacy pricing, 3,450 base fee)",
+        );
+
+        // Osaka P256VERIFY costs 6,900 gas. With 5,000 gas it must fail with OOG.
+        let azul_result = azul_p256.execute(&[], 5_000, 0);
+        assert!(
+            matches!(&azul_result, Ok(output) if output.halt_reason().is_some()),
+            "AZUL P256VERIFY must fail with 5,000 gas (Osaka pricing, 6,900 base fee)",
+        );
     }
 
     #[test]

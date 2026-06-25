@@ -4,7 +4,7 @@ use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_cli_utils::{LogConfig, MetricsConfig};
-use base_proof_rpc::RetryConfig;
+use base_retry::RetryConfig;
 use thiserror::Error;
 use url::Url;
 
@@ -222,7 +222,7 @@ fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
 impl From<&ProposerArgs> for RetryConfig {
     fn from(args: &ProposerArgs) -> Self {
         Self {
-            max_attempts: args.rpc_max_retries,
+            max_attempts: Some(args.rpc_max_retries),
             initial_delay: args.rpc_retry_initial_delay,
             max_delay: args.rpc_retry_max_delay,
         }

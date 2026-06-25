@@ -5,28 +5,8 @@ use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use anyhow::Result;
 use base_common_network::Base;
+use base_optimism_rpc::OptimismRollupProviderExt;
 use tracing::debug;
-
-/// L2 output root at a specific block.
-#[derive(serde::Deserialize, Debug)]
-pub(super) struct OutputAtBlock {
-    #[serde(rename = "blockRef")]
-    pub block_ref: BlockRef,
-}
-
-/// Block number and hash reference.
-#[derive(serde::Deserialize, Debug)]
-pub(super) struct BlockRef {
-    #[serde(rename = "l1origin")]
-    pub l1_origin: L1Origin,
-}
-
-/// L1 origin info for an L2 block.
-#[derive(serde::Deserialize, Debug)]
-pub(super) struct L1Origin {
-    /// L1 block number.
-    pub number: u64,
-}
 
 /// Computes safe L1 head blocks for proof ranges.
 #[derive(Debug)]
@@ -51,10 +31,10 @@ impl L1HeadCalculator {
         );
 
         let l1_provider = ProviderBuilder::new().connect_http(l1_node_url.parse()?);
-        let op_provider = ProviderBuilder::<Identity, Identity, Base>::default()
+        let base_provider = ProviderBuilder::<Identity, Identity, Base>::default()
             .connect_http(base_consensus_url.parse()?);
 
-        let l1_origin = Self::get_l1_origin_num(&op_provider, l2_block_number).await?;
+        let l1_origin = Self::get_l1_origin_num(&base_provider, l2_block_number).await?;
         debug!(l1_origin = l1_origin, l2_block_number = l2_block_number, "retrieved L1 origin");
 
         let desired_l1_head = l1_origin + sequence_window;
@@ -88,18 +68,15 @@ impl L1HeadCalculator {
     }
 
     /// Get L1 origin block number from `optimism_outputAtBlock`.
-    pub async fn get_l1_origin_num<OP>(op_provider: &OP, l2_block_number: u64) -> Result<u64>
+    pub async fn get_l1_origin_num<OP>(base_provider: &OP, l2_block_number: u64) -> Result<u64>
     where
         OP: Provider<Base>,
     {
-        let response: OutputAtBlock = op_provider
-            .raw_request(
-                "optimism_outputAtBlock".into(),
-                (BlockNumberOrTag::Number(l2_block_number),),
-            )
+        let response = base_provider
+            .optimism_output_at_block(BlockNumberOrTag::Number(l2_block_number))
             .await?;
 
-        Ok(response.block_ref.l1_origin.number)
+        Ok(response.block_ref.l1origin.number)
     }
 
     /// Get block hash at a specific height.

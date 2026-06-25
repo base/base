@@ -1,6 +1,6 @@
-//! A program to verify an Optimism L2 block STF with Ethereum DA in the zkVM.
+//! A program to verify a Base L2 block STF with Ethereum DA in the zkVM.
 //!
-//! This binary contains the client program for executing the Optimism rollup state transition
+//! This binary contains the client program for executing the Base rollup state transition
 //! across a range of blocks, which can be used to generate an on-chain validity proof. Depending on
 //! the compilation pipeline, it will compile to be run either in native mode or in zkVM mode. In
 //! native mode, the data for verifying the batch validity is fetched from RPC, while in zkVM mode,
@@ -24,14 +24,12 @@ fn main() {
         let witness_rkyv_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
         let witness_data = rkyv::from_bytes::<DefaultWitnessData, Error>(&witness_rkyv_bytes)
             .expect("Failed to deserialize witness data.");
-        let intermediate_root_interval: u64 = sp1_zkvm::io::read();
 
         let (oracle, beacon) = witness_data
             .get_oracle_and_blob_provider()
             .await
             .expect("Failed to load oracle and blob provider");
 
-        run_range_program(ETHDAWitnessExecutor::new(), oracle, beacon, intermediate_root_interval)
-            .await;
+        run_range_program(ETHDAWitnessExecutor::new(), oracle, beacon).await;
     });
 }

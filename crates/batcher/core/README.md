@@ -36,7 +36,7 @@ transaction based on the L1 DA backlog. `ThrottleController` takes a `ThrottleCo
 `ThrottleStrategy::Off` disables throttling entirely. `ThrottleStrategy::Step` applies full
 intensity when the backlog exceeds the configured threshold. `ThrottleStrategy::Linear` grows
 intensity linearly from zero at the threshold to `max_intensity` at twice the threshold, which
-matches the op-batcher reference implementation. `ThrottleParams` carries a fractional `intensity`
+matches the reference batcher implementation. `ThrottleParams` carries a fractional `intensity`
 value and the corresponding `max_block_size` and `max_tx_size` byte limits computed by
 interpolating between the upper and lower limits in `ThrottleConfig`. `DaThrottle` wraps a
 `ThrottleController` and a `ThrottleClient` with a last-applied dedup cache so that the

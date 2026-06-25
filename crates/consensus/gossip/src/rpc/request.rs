@@ -234,7 +234,7 @@ impl P2pRpcRequest {
         let peer_ids: Vec<PeerId> = if connected {
             gossip.swarm.connected_peers().copied().collect()
         } else {
-            gossip.peerstore.keys().copied().collect()
+            gossip.peerstore.iter().map(|(peer_id, _)| *peer_id).collect()
         };
 
         // Get the set of actually connected peers from the swarm for accurate connectedness

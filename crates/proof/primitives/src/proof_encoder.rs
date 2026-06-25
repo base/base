@@ -240,6 +240,17 @@ impl ProofEncoder {
 
         Ok(Bytes::from(buf))
     }
+
+    /// Encodes raw ZK proof bytes into the compact format expected by dispute game entry points.
+    ///
+    /// Format: `proofType(1) + rawZkProof`.
+    pub fn encode_zk_dispute_proof_bytes(proof: impl AsRef<[u8]>) -> Bytes {
+        let proof = proof.as_ref();
+        let mut proof_data = Vec::with_capacity(PROOF_TYPE_LEN + proof.len());
+        proof_data.push(PROOF_TYPE_ZK);
+        proof_data.extend_from_slice(proof);
+        Bytes::from(proof_data)
+    }
 }
 
 #[cfg(test)]
@@ -413,5 +424,12 @@ mod tests {
         assert_eq!(proof[97], 27);
         assert_eq!(&proof[98..130], B256::repeat_byte(0xB2).as_slice());
         assert_eq!(proof[194], 28);
+    }
+
+    #[test]
+    fn test_encode_zk_dispute_proof_bytes_prefixes_zk_type() {
+        let proof = ProofEncoder::encode_zk_dispute_proof_bytes(Bytes::from_static(&[0xab, 0xcd]));
+
+        assert_eq!(proof.as_ref(), &[PROOF_TYPE_ZK, 0xab, 0xcd]);
     }
 }

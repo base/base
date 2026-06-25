@@ -34,7 +34,7 @@ impl PreimageServerStarter for HostConfig {
     }
 }
 
-/// Host interface for OP Succinct proof generation.
+/// Host interface for Succinct proof generation.
 #[async_trait]
 pub trait OPSuccinctHost: Send + Sync + 'static {
     /// Host arguments (e.g. [`HostConfig`]).
@@ -51,6 +51,8 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
     /// - `l2_start_block`: The starting L2 block number.
     /// - `l2_end_block`: The ending L2 block number.
     /// - `l1_head_hash`: Optionally supplied L1 head block hash used as the L1 origin.
+    /// - `intermediate_block_interval`: L2 blocks between intermediate output roots, must match
+    ///   on-chain `INTERMEDIATE_BLOCK_INTERVAL` (same field committed into [`BootInfo`]).
     /// - `safe_db_fallback`: Flag to indicate whether to fallback to timestamp-based L1 head
     ///   estimation when `SafeDB` is not available.
     async fn fetch(
@@ -58,6 +60,7 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
         l2_start_block: u64,
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
+        intermediate_block_interval: u64,
         safe_db_fallback: bool,
     ) -> Result<Self::Args>;
 

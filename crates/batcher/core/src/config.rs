@@ -15,7 +15,7 @@ pub struct BatchDriverConfig {
     pub drain_timeout: Duration,
     /// When `true` and DA-backlog throttling is active, force the encoder to
     /// emit blob-typed submissions even when its configured `da_type` is
-    /// calldata. Mirrors op-batcher behaviour: blobs amortise DA cost more
+    /// calldata. Mirrors reference batcher behavior: blobs amortise DA cost more
     /// efficiently when the L1 is congested with batcher data.
     ///
     /// No-op when the encoder is already configured for blob DA.

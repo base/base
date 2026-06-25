@@ -48,13 +48,14 @@ impl L1BlockInfoTx {
         system_config: &SystemConfig,
         sequence_number: u64,
         l1_header: &Header,
+        l2_parent_block_time: u64,
         l2_block_time: u64,
     ) -> Result<Self, BlockInfoError> {
         // In the first block of Ecotone, the L1Block contract has not been upgraded yet due to the
         // upgrade transactions being placed after the L1 info transaction. Because of this,
         // for the first block of Ecotone, we send a Bedrock style L1 block info transaction
         if !rollup_config.is_ecotone_active(l2_block_time)
-            || rollup_config.is_first_ecotone_block(l2_block_time)
+            || rollup_config.is_first_ecotone_block(l2_block_time, l2_parent_block_time)
         {
             return Ok(Self::Bedrock(L1BlockInfoBedrock::new(
                 l1_header.number,
@@ -100,11 +101,11 @@ impl L1BlockInfoTx {
                     // where the sequencer followed the incorrect chain, using the legacy Cancun blob fee
                     // schedule instead of the new Prague blob fee schedule. This portion of the chain was
                     // chosen to be canonicalized in favor of the prospect of a deep reorg imposed by the
-                    // sequencers of the testnet chains. An optional hardfork was introduced for Sepolia only,
-                    // where if present, activates the use of the Prague blob fee schedule. If the hardfork is
+                    // sequencers of the testnet chains. An optional upgrade was introduced for Sepolia only,
+                    // where if present, activates the use of the Prague blob fee schedule. If the upgrade is
                     // not present, and L1 has activated pectra, the Prague blob fee schedule is used
                     // immediately.
-                    (rollup_config.hardforks.pectra_blob_schedule_time.is_none() ||
+                    (rollup_config.upgrades.pectra_blob_schedule_time.is_none() ||
                         rollup_config.is_pectra_blob_schedule_active(l1_header.timestamp)) =>
                 {
                     BlobParams::prague()
@@ -117,7 +118,7 @@ impl L1BlockInfoTx {
         let base_fee = l1_header.base_fee_per_gas.unwrap_or(0);
 
         if rollup_config.is_jovian_active(l2_block_time)
-            && !rollup_config.is_first_jovian_block(l2_block_time)
+            && !rollup_config.is_first_jovian_block(l2_block_time, l2_parent_block_time)
         {
             let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
             let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();
@@ -146,7 +147,7 @@ impl L1BlockInfoTx {
         }
 
         if rollup_config.is_isthmus_active(l2_block_time)
-            && !rollup_config.is_first_isthmus_block(l2_block_time)
+            && !rollup_config.is_first_isthmus_block(l2_block_time, l2_parent_block_time)
         {
             let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
             let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();
@@ -188,6 +189,7 @@ impl L1BlockInfoTx {
         system_config: &SystemConfig,
         sequence_number: u64,
         l1_header: &Header,
+        l2_parent_block_time: u64,
         l2_block_time: u64,
     ) -> Result<(Self, Sealed<TxDeposit>), BlockInfoError> {
         let l1_info = Self::try_new(
@@ -196,6 +198,7 @@ impl L1BlockInfoTx {
             system_config,
             sequence_number,
             l1_header,
+            l2_parent_block_time,
             l2_block_time,
         )?;
 
@@ -215,7 +218,7 @@ impl L1BlockInfoTx {
             input: l1_info.encode_calldata(),
         };
 
-        // With the regolith hardfork, system transactions were deprecated, and we allocate
+        // With the regolith upgrade, system transactions were deprecated, and we allocate
         // a constant amount of gas for special transactions like L1 block info.
         if rollup_config.is_regolith_active(l2_block_time) {
             deposit_tx.is_system_transaction = false;
@@ -392,7 +395,7 @@ mod tests {
 
     use alloy_primitives::{address, b256};
     use base_common_chains::Sepolia;
-    use base_common_genesis::HardForkConfig;
+    use base_common_genesis::UpgradeConfig;
     use rstest::rstest;
 
     use super::*;
@@ -720,7 +723,7 @@ mod tests {
         let system_config = SystemConfig::default();
         let sequence_number = 0;
         let l1_header = Header::default();
-        let l2_block_time = 0;
+        let l2_block_time = 0u64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -728,6 +731,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -749,14 +753,14 @@ mod tests {
     #[test]
     fn test_try_new_ecotone() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { ecotone_time: Some(1), ..Default::default() },
+            upgrades: UpgradeConfig { ecotone_time: Some(1), ..Default::default() },
             ..Default::default()
         };
         let l1_config = Sepolia::l1_config();
         let system_config = SystemConfig::default();
         let sequence_number = 0;
         let l1_header = Header::default();
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -764,6 +768,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -796,6 +801,32 @@ mod tests {
         assert_eq!(l1_info.base_fee_scalar(), base_fee_scalar);
     }
 
+    #[test]
+    fn test_try_new_ecotone_same_second_boundary_uses_parent_timestamp() {
+        let l2_block_time = 0xFFu64;
+        let rollup_config = RollupConfig {
+            upgrades: UpgradeConfig { ecotone_time: Some(l2_block_time), ..Default::default() },
+            ..Default::default()
+        };
+        let l1_config = Sepolia::l1_config();
+        let system_config = SystemConfig::default();
+        let sequence_number = 0;
+        let l1_header = Header::default();
+
+        let l1_info = L1BlockInfoTx::try_new(
+            &rollup_config,
+            &l1_config,
+            &system_config,
+            sequence_number,
+            &l1_header,
+            l2_block_time,
+            l2_block_time,
+        )
+        .unwrap();
+
+        assert!(matches!(l1_info, L1BlockInfoTx::Ecotone(_)));
+    }
+
     #[rstest]
     #[case::fork_active(true, false)]
     #[case::fork_inactive(false, false)]
@@ -808,7 +839,7 @@ mod tests {
         #[case] use_wrong_params: bool,
     ) {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 ecotone_time: Some(1),
                 pectra_blob_schedule_time: Some(2),
                 ..Default::default()
@@ -827,7 +858,7 @@ mod tests {
             requests_hash: Some(B256::ZERO),
             ..Default::default()
         };
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -835,6 +866,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -879,7 +911,7 @@ mod tests {
     #[test]
     fn test_try_new_isthmus_before_pectra_blob_schedule() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 isthmus_time: Some(1),
                 pectra_blob_schedule_time: Some(1713121140),
                 ..Default::default()
@@ -902,7 +934,7 @@ mod tests {
             requests_hash: Some(B256::ZERO),
             ..Default::default()
         };
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -910,6 +942,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -952,7 +985,7 @@ mod tests {
     #[test]
     fn test_try_new_isthmus() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { isthmus_time: Some(1), ..Default::default() },
+            upgrades: UpgradeConfig { isthmus_time: Some(1), ..Default::default() },
             ..Default::default()
         };
         let l1_config = Sepolia::l1_config();
@@ -969,7 +1002,7 @@ mod tests {
             base_fee_per_gas: Some(10445852825),
             ..Default::default()
         };
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let l1_info = L1BlockInfoTx::try_new(
             &rollup_config,
@@ -977,6 +1010,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();
@@ -1017,7 +1051,7 @@ mod tests {
     #[test]
     fn test_try_new_with_deposit_tx() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { isthmus_time: Some(1), ..Default::default() },
+            upgrades: UpgradeConfig { isthmus_time: Some(1), ..Default::default() },
             ..Default::default()
         };
         let l1_config = Sepolia::l1_config();
@@ -1034,7 +1068,7 @@ mod tests {
             base_fee_per_gas: Some(10445852825),
             ..Default::default()
         };
-        let l2_block_time = 0xFF;
+        let l2_block_time = 0xFFu64;
 
         let (l1_info, deposit_tx) = L1BlockInfoTx::try_new_with_deposit_tx(
             &rollup_config,
@@ -1042,6 +1076,7 @@ mod tests {
             &system_config,
             sequence_number,
             &l1_header,
+            l2_block_time.saturating_sub(2),
             l2_block_time,
         )
         .unwrap();

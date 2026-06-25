@@ -3,6 +3,7 @@
 //! Provides stateless validation logic for flashblock sequencing and chain reorg detection.
 
 use alloy_primitives::B256;
+use base_common_flashblocks::FlashblockId;
 
 /// Result of validating a flashblock's position in the sequence.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +28,13 @@ pub enum SequenceValidationResult {
         /// The invalid (non-zero) index received.
         index: u64,
     },
+    /// Incoming flashblock does not link back to the currently tracked latest flashblock.
+    NonSequentialPredecessor {
+        /// Expected predecessor flashblock id.
+        expected: FlashblockId,
+        /// Actual predecessor flashblock id reported by the incoming flashblock.
+        actual: FlashblockId,
+    },
 }
 
 /// Stateless validator for flashblock sequence ordering.
@@ -34,43 +42,53 @@ pub enum SequenceValidationResult {
 pub struct FlashblockSequenceValidator;
 
 impl FlashblockSequenceValidator {
-    /// Validates whether an incoming flashblock follows the expected sequence.
-    ///
-    /// Returns the appropriate [`SequenceValidationResult`] based on:
-    /// - Same block, index + 1 → `NextInSequence`
-    /// - Next block, index 0 → `FirstOfNextBlock`
-    /// - Same block and index → `Duplicate`
-    /// - Same block, wrong index → `NonSequentialGap`
-    /// - Different block, non-zero index or block gap → `InvalidNewBlockIndex`
-    pub const fn validate(
+    /// Validates whether an incoming flashblock links to the current latest flashblock.
+    pub fn validate(
         latest_block_number: u64,
         latest_flashblock_index: u64,
         incoming_block_number: u64,
         incoming_index: u64,
+        incoming_prev_flashblock_id: FlashblockId,
     ) -> SequenceValidationResult {
-        // Next flashblock within the current block
-        if incoming_block_number == latest_block_number
-            && incoming_index == latest_flashblock_index + 1
+        let latest_flashblock_id =
+            FlashblockId { block_number: latest_block_number, index: latest_flashblock_index };
+
+        if incoming_block_number == latest_block_number && incoming_index == latest_flashblock_index
         {
-            SequenceValidationResult::NextInSequence
-        // First flashblock of the next block
-        } else if incoming_block_number == latest_block_number + 1 && incoming_index == 0 {
-            SequenceValidationResult::FirstOfNextBlock
-        // New block with non-zero index or block gap
-        } else if incoming_block_number != latest_block_number {
-            SequenceValidationResult::InvalidNewBlockIndex {
-                block_number: incoming_block_number,
-                index: incoming_index,
-            }
-        } else if incoming_index == latest_flashblock_index {
-            // Duplicate flashblock
-            SequenceValidationResult::Duplicate
-        } else {
-            // Non-sequential index within the same block
-            SequenceValidationResult::NonSequentialGap {
-                expected: latest_flashblock_index + 1,
+            return SequenceValidationResult::Duplicate;
+        }
+
+        // We can remove this `incoming_prev_flashblock_id != FlashblockId::default()` check later
+        // but it is currently necessary as client nodes may be updated before the builder is
+        // and they need to be able to handle the lack of `prev_flashblock_id` in the stream
+        if incoming_prev_flashblock_id != FlashblockId::default()
+            && incoming_prev_flashblock_id != latest_flashblock_id
+        {
+            return SequenceValidationResult::NonSequentialPredecessor {
+                expected: latest_flashblock_id,
+                actual: incoming_prev_flashblock_id,
+            };
+        }
+
+        let next_flashblock_index = latest_flashblock_index.saturating_add(1);
+        if incoming_block_number == latest_block_number && incoming_index == next_flashblock_index {
+            return SequenceValidationResult::NextInSequence;
+        }
+
+        if incoming_block_number == latest_block_number + 1 && incoming_index == 0 {
+            return SequenceValidationResult::FirstOfNextBlock;
+        }
+
+        if incoming_block_number == latest_block_number {
+            return SequenceValidationResult::NonSequentialGap {
+                expected: next_flashblock_index,
                 actual: incoming_index,
-            }
+            };
+        }
+
+        SequenceValidationResult::InvalidNewBlockIndex {
+            block_number: incoming_block_number,
+            index: incoming_index,
         }
     }
 }
@@ -197,37 +215,60 @@ mod tests {
     // ==================== FlashblockSequenceValidator Tests ====================
 
     #[rstest]
-    // NextInSequence: consecutive indices within the same block
-    #[case(100, 2, 100, 3, SequenceValidationResult::NextInSequence)]
-    #[case(100, 0, 100, 1, SequenceValidationResult::NextInSequence)]
-    #[case(100, 999, 100, 1000, SequenceValidationResult::NextInSequence)]
-    #[case(0, 0, 0, 1, SequenceValidationResult::NextInSequence)]
-    #[case(100, u64::MAX - 1, 100, u64::MAX, SequenceValidationResult::NextInSequence)]
-    // FirstOfNextBlock: index 0 of the next block
-    #[case(0, 0, 1, 0, SequenceValidationResult::FirstOfNextBlock)]
-    #[case(100, 5, 101, 0, SequenceValidationResult::FirstOfNextBlock)]
-    #[case(100, 0, 101, 0, SequenceValidationResult::FirstOfNextBlock)]
-    #[case(999999, 10, 1000000, 0, SequenceValidationResult::FirstOfNextBlock)]
-    #[case(0, 5, 1, 0, SequenceValidationResult::FirstOfNextBlock)]
-    #[case(u64::MAX - 1, 0, u64::MAX, 0, SequenceValidationResult::FirstOfNextBlock)]
-    // Duplicate: same block and index
-    #[case(100, 5, 100, 5, SequenceValidationResult::Duplicate)]
-    #[case(100, 0, 100, 0, SequenceValidationResult::Duplicate)]
-    // NonSequentialGap: non-consecutive indices within the same block
-    #[case(100, 2, 100, 4, SequenceValidationResult::NonSequentialGap { expected: 3, actual: 4 })]
-    #[case(100, 0, 100, 10, SequenceValidationResult::NonSequentialGap { expected: 1, actual: 10 })]
-    #[case(100, 5, 100, 3, SequenceValidationResult::NonSequentialGap { expected: 6, actual: 3 })]
-    // InvalidNewBlockIndex: new block with non-zero index or block gap
-    #[case(100, 5, 101, 1, SequenceValidationResult::InvalidNewBlockIndex { block_number: 101, index: 1 })]
-    #[case(100, 5, 105, 3, SequenceValidationResult::InvalidNewBlockIndex { block_number: 105, index: 3 })]
-    #[case(100, 5, 102, 0, SequenceValidationResult::InvalidNewBlockIndex { block_number: 102, index: 0 })]
-    #[case(100, 5, 99, 0, SequenceValidationResult::InvalidNewBlockIndex { block_number: 99, index: 0 })]
-    #[case(100, 5, 99, 5, SequenceValidationResult::InvalidNewBlockIndex { block_number: 99, index: 5 })]
+    #[case(100, 5, 100, 6, FlashblockId { block_number: 100, index: 5 }, SequenceValidationResult::NextInSequence)]
+    #[case(100, 5, 100, 6, FlashblockId::default(), SequenceValidationResult::NextInSequence)]
+    #[case(100, 5, 101, 0, FlashblockId { block_number: 100, index: 5 }, SequenceValidationResult::FirstOfNextBlock)]
+    #[case(100, 5, 101, 0, FlashblockId::default(), SequenceValidationResult::FirstOfNextBlock)]
+    #[case(100, 5, 100, 5, FlashblockId::default(), SequenceValidationResult::Duplicate)]
+    #[case(
+        100,
+        5,
+        100,
+        7,
+        FlashblockId { block_number: 100, index: 5 },
+        SequenceValidationResult::NonSequentialGap { expected: 6, actual: 7 }
+    )]
+    #[case(
+        100,
+        5,
+        101,
+        3,
+        FlashblockId { block_number: 100, index: 5 },
+        SequenceValidationResult::InvalidNewBlockIndex { block_number: 101, index: 3 }
+    )]
+    #[case(
+        100,
+        5,
+        105,
+        0,
+        FlashblockId { block_number: 100, index: 5 },
+        SequenceValidationResult::InvalidNewBlockIndex { block_number: 105, index: 0 }
+    )]
+    #[case(
+        100,
+        5,
+        101,
+        0,
+        FlashblockId { block_number: 100, index: 4 },
+        SequenceValidationResult::NonSequentialPredecessor {
+            expected: FlashblockId { block_number: 100, index: 5 },
+            actual: FlashblockId { block_number: 100, index: 4 },
+        }
+    )]
+    #[case(
+        100,
+        5,
+        99,
+        0,
+        FlashblockId { block_number: 100, index: 5 },
+        SequenceValidationResult::InvalidNewBlockIndex { block_number: 99, index: 0 }
+    )]
     fn test_sequence_validator(
         #[case] latest_block: u64,
         #[case] latest_idx: u64,
         #[case] incoming_block: u64,
         #[case] incoming_idx: u64,
+        #[case] incoming_prev_flashblock_id: FlashblockId,
         #[case] expected: SequenceValidationResult,
     ) {
         let result = FlashblockSequenceValidator::validate(
@@ -235,6 +276,7 @@ mod tests {
             latest_idx,
             incoming_block,
             incoming_idx,
+            incoming_prev_flashblock_id,
         );
         assert_eq!(result, expected);
     }

@@ -20,6 +20,9 @@ use crate::{
     db::{HashedStorageKey, StorageTrieKey},
 };
 
+/// Type alias for bulk storage branch entries: a list of (hashed address, storage nodes) pairs.
+pub type StorageBranchEntries = Vec<(B256, Vec<(Nibbles, Option<BranchNodeCompact>)>)>;
+
 /// Diff of trie updates and post state for a block.
 #[derive(Debug, Clone, Default)]
 pub struct BlockStateDiff {
@@ -89,6 +92,11 @@ pub trait BaseProofsStore: Send + Sync + Debug {
     where
         Self: 'tx;
 
+    /// Transaction type used by request-scoped cursor factories.
+    type Tx<'tx>: Debug + Send + Sync
+    where
+        Self: 'tx;
+
     /// Get the earliest block number and hash that has been stored
     ///
     /// This is used to determine the block number of trie nodes with block number 0.
@@ -100,29 +108,74 @@ pub trait BaseProofsStore: Send + Sync + Debug {
 
     /// Get a trie cursor for the storage backend
     fn storage_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>;
 
     /// Get a trie cursor for the account backend
     fn account_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>;
 
     /// Get a storage cursor for the storage backend
     fn storage_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>;
 
     /// Get an account hashed cursor for the storage backend
     fn account_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>;
+
+    /// Open a transaction for a request-scoped cursor factory.
+    fn ro_tx<'tx>(&'tx self) -> BaseProofsStorageResult<Self::Tx<'tx>>;
+
+    /// Storage trie cursor reusing `tx`.
+    fn storage_trie_cursor_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
+    where
+        Self: 'db,
+        'db: 'tx;
+
+    /// Account trie cursor reusing `tx`.
+    fn account_trie_cursor_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
+    where
+        Self: 'db,
+        'db: 'tx;
+
+    /// Storage hashed cursor reusing `tx`.
+    fn storage_hashed_cursor_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
+    where
+        Self: 'db,
+        'db: 'tx;
+
+    /// Account hashed cursor reusing `tx`.
+    fn account_hashed_cursor_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
+    where
+        Self: 'db,
+        'db: 'tx;
 
     /// Store a batch of trie updates.
     ///
@@ -161,6 +214,117 @@ pub trait BaseProofsStore: Send + Sync + Debug {
         block_number: u64,
         hash: B256,
     ) -> BaseProofsStorageResult<()>;
+}
+
+/// Session-scoped store of trie updates that amortizes write overhead across multiple
+/// block writes within a single batch.
+///
+/// Reads through the session observe writes from earlier [`BaseProofsBatchSession::store_trie_updates`]
+/// calls in the same session, enabling cold catch-up where `block N+1` is computed against
+/// `block N` written earlier in the same session.
+///
+/// All cursor methods mirror [`BaseProofsStore`] but read through the session's active view.
+#[auto_impl(&mut)]
+pub trait BaseProofsBatchSession: Send + Sync + Debug {
+    /// Cursor for iterating over storage trie branches in the active session.
+    type StorageTrieCursor<'a>: TrieStorageCursor + 'a
+    where
+        Self: 'a;
+
+    /// Cursor for iterating over account trie branches in the active session.
+    type AccountTrieCursor<'a>: TrieCursor + 'a
+    where
+        Self: 'a;
+
+    /// Cursor for iterating over storage leaves in the active session.
+    type StorageCursor<'a>: HashedStorageCursor<Value = U256> + Send + Sync + 'a
+    where
+        Self: 'a;
+
+    /// Cursor for iterating over account leaves in the active session.
+    type AccountHashedCursor<'a>: HashedCursor<Value = Account> + Send + Sync + 'a
+    where
+        Self: 'a;
+
+    /// Earliest stored block number/hash visible to the active transaction.
+    fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>>;
+
+    /// Latest stored block number/hash visible to this session (including writes from
+    /// earlier [`store_trie_updates`] calls in this session).
+    fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>>;
+
+    /// Storage trie cursor reading through the active transaction.
+    fn storage_trie_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'_>>;
+
+    /// Account trie cursor reading through the active transaction.
+    fn account_trie_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'_>>;
+
+    /// Storage hashed cursor reading through the active transaction.
+    fn storage_hashed_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'_>>;
+
+    /// Account hashed cursor reading through the active transaction.
+    fn account_hashed_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>>;
+
+    /// Append-only write of `block_state_diff` for `block_ref` to the active session.
+    /// Subsequent reads through this session observe the new state immediately.
+    /// Durability semantics are backend-dependent; see [`BaseProofsBatchStore`].
+    fn store_trie_updates(
+        &mut self,
+        block_ref: BlockWithParent,
+        block_state_diff: BlockStateDiff,
+    ) -> BaseProofsStorageResult<WriteCounts>;
+}
+
+/// Storage that can open a [`BaseProofsBatchSession`] for amortized multi-block writes.
+///
+/// **Atomicity is backend-dependent.** Callers must not rely on rollback:
+/// - `MDBX`: commits atomically on `Ok`, rolls back on `Err`.
+/// - `RocksDB`: each [`BaseProofsBatchSession::store_trie_updates`] call commits immediately;
+///   if the closure returns `Err` after writing N blocks, those N blocks remain durable.
+/// - In-memory (test double): no transactional rollback; partial writes remain visible.
+///
+/// The invariant all backends guarantee is **write ordering**: blocks are stored in strictly
+/// ascending order of block number. Callers that need crash recovery must unwind to the last
+/// consistent block rather than relying on atomic rollback.
+pub trait BaseProofsBatchStore: BaseProofsStore {
+    /// Session type for this backend.
+    type BatchSession<'a>: BaseProofsBatchSession + 'a
+    where
+        Self: 'a;
+
+    /// Run `f` inside one batch session. Atomicity and error-recovery semantics are
+    /// backend-dependent; see the trait-level documentation.
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>;
+}
+
+impl<T: BaseProofsBatchStore + 'static> BaseProofsBatchStore for std::sync::Arc<T> {
+    type BatchSession<'a>
+        = T::BatchSession<'a>
+    where
+        Self: 'a;
+
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
+    {
+        (**self).with_batch_session(f)
+    }
 }
 
 /// Status of the initial state anchor.
@@ -217,6 +381,21 @@ pub trait BaseProofsInitialStateStore: Send + Sync + Debug {
         storage_nodes: Vec<(Nibbles, Option<BranchNodeCompact>)>,
     ) -> BaseProofsStorageResult<()>;
 
+    /// Store storage trie branches for multiple addresses in a single batch operation.
+    ///
+    /// The default implementation loops and calls [`Self::store_storage_branches`] per address.
+    /// Override this method on backends that can merge all writes into one durable commit (e.g.
+    /// a single `RocksDB` `WriteBatch`) to avoid the per-address fsync cost during initialization.
+    fn store_storage_branches_bulk(
+        &self,
+        entries: StorageBranchEntries,
+    ) -> BaseProofsStorageResult<()> {
+        for (hashed_address, nodes) in entries {
+            self.store_storage_branches(hashed_address, nodes)?;
+        }
+        Ok(())
+    }
+
     /// Store a batch of account trie leaf nodes. Used for saving existing state.
     fn store_hashed_accounts(
         &self,
@@ -229,6 +408,21 @@ pub trait BaseProofsInitialStateStore: Send + Sync + Debug {
         hashed_address: B256,
         storages: Vec<(B256, U256)>,
     ) -> BaseProofsStorageResult<()>;
+
+    /// Store hashed storage slots for multiple addresses in a single batch operation.
+    ///
+    /// The default implementation loops and calls [`Self::store_hashed_storages`] per address.
+    /// Override this method on backends that can merge all writes into one durable commit (e.g.
+    /// a single `RocksDB` `WriteBatch`) to avoid the per-address fsync cost during initialization.
+    fn store_hashed_storages_bulk(
+        &self,
+        entries: Vec<(B256, Vec<(B256, U256)>)>,
+    ) -> BaseProofsStorageResult<()> {
+        for (hashed_address, storages) in entries {
+            self.store_hashed_storages(hashed_address, storages)?;
+        }
+        Ok(())
+    }
 
     /// Commit the initial state - mark the anchor as completed and also set the earliest block
     /// number to anchor.

@@ -1,0 +1,25 @@
+[package]
+name = "base-precompile-macros"
+description = "Procedural macros for type-safe EVM storage abstractions for Base native precompiles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+syn.workspace = true
+quote.workspace = true
+proc-macro2.workspace = true
+
+[dev-dependencies]
+alloy-primitives.workspace = true

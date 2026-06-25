@@ -4,7 +4,7 @@ use alloy_chains::Chain;
 use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, address, b256, uint};
 use base_common_genesis::{
-    ChainGenesis, FeeConfig, HardForkConfig, HardforkConfig, RollupConfig, SystemConfig,
+    BaseUpgradeConfig, ChainGenesis, FeeConfig, RollupConfig, SystemConfig, UpgradeConfig,
 };
 
 /// Complete configuration for a Base chain
@@ -51,6 +51,10 @@ pub struct ChainConfig {
     pub jovian_timestamp: u64,
     /// Base Azul activation timestamp (optional).
     pub azul_timestamp: Option<u64>,
+    /// Beryl activation timestamp (optional).
+    pub beryl_timestamp: Option<u64>,
+    /// Cobalt activation timestamp (optional).
+    pub cobalt_timestamp: Option<u64>,
 
     // Genesis
     /// L1 genesis block hash.
@@ -93,21 +97,87 @@ pub struct ChainConfig {
     // Roles
     /// Unsafe block signer address.
     pub unsafe_block_signer: Option<Address>,
-
     // Gas limits
     /// Maximum gas limit for L2 blocks.
     pub max_gas_limit: u64,
+    /// Maximum number of entries deleted per execution-layer pruning batch.
+    pub prune_delete_limit: usize,
 
     // Networking
-    /// Raw bootnode strings (ENR or enode format) for consensus discovery.
-    pub bootnodes: &'static [&'static str],
+    /// Bootnodes for peer discovery, split by stack layer.
+    pub bootnodes: Bootnodes,
 
     // Execution genesis
     /// Embedded genesis JSON for reth alloc tables.
     pub genesis_json: &'static str,
 }
 
+/// Raw bootnode strings split by the stack layer that should consume them.
+///
+/// Execution and consensus run independent discv5 networks (different protocol
+/// IDs and ports). Mixing them at bootstrap time is wasted work — and broken,
+/// since each side will fail to authenticate the other's packets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bootnodes {
+    /// Bootnodes for the execution-layer discv5 network (enode URLs on the
+    /// EL discovery ports, e.g. 30301 / 9200).
+    pub execution: &'static [&'static str],
+    /// Bootnodes for the consensus-layer discv5 network (ENRs on the CL
+    /// discovery port, e.g. 9222).
+    pub consensus: &'static [&'static str],
+}
+
+impl Bootnodes {
+    /// Empty bootnodes for both layers.
+    pub const EMPTY: Self = Self { execution: &[], consensus: &[] };
+
+    /// Total number of raw bootnode entries across both layers.
+    pub const fn total(&self) -> usize {
+        self.execution.len() + self.consensus.len()
+    }
+}
+
+/// Base Mainnet activation registry admin used by Beryl before Cobalt state-backed admin storage.
+pub const MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
+    address!("cE3a3bEE7E72E2A24079f3c0Cb3b97740ED425A9");
+
+/// Base Sepolia activation registry admin used by Beryl before Cobalt state-backed admin storage.
+pub const SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
+    address!("5F43072722f59964d886CBb507F6a85ca0759D42");
+
+/// Base Zeronet activation registry admin used by Beryl before Cobalt state-backed admin storage.
+pub const ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS: Address =
+    address!("F5969A85a555671EeD766C4ff0C61426AA626b11");
+
 impl ChainConfig {
+    /// CLI chain name for Base Mainnet.
+    pub const MAINNET_NAME: &'static str = "base";
+    /// CLI chain name for Base Sepolia.
+    pub const SEPOLIA_NAME: &'static str = "base-sepolia";
+    /// Legacy CLI chain name for Base Sepolia.
+    pub const SEPOLIA_ALIAS: &'static str = "base_sepolia";
+    /// CLI chain name for Base Zeronet.
+    pub const ZERONET_NAME: &'static str = "base-zeronet";
+    /// CLI chain name for the local Base devnet.
+    pub const DEVNET_NAME: &'static str = "dev";
+    /// All chain names accepted by Base chain parsers.
+    pub const SUPPORTED_NAMES: &'static [&'static str] = &[
+        Self::MAINNET_NAME,
+        Self::SEPOLIA_ALIAS,
+        Self::SEPOLIA_NAME,
+        Self::ZERONET_NAME,
+        Self::DEVNET_NAME,
+    ];
+
+    /// Base Mainnet chain configuration.
+    pub const MAINNET: &'static Self = Self::mainnet();
+    /// Base Sepolia chain configuration.
+    pub const SEPOLIA: &'static Self = Self::sepolia();
+    /// Local dev chain configuration (all forks active at genesis).
+    pub const DEVNET: &'static Self = Self::devnet();
+    /// Base Zeronet chain configuration.
+    pub const ZERONET: &'static Self = Self::zeronet();
+
     /// Base Mainnet chain configuration.
     pub const fn mainnet() -> &'static Self {
         &MAINNET
@@ -133,14 +203,51 @@ impl ChainConfig {
         [&MAINNET, &SEPOLIA, &DEVNET, &ZERONET]
     }
 
+    /// Looks up a chain config by CLI chain name.
+    pub fn by_name(name: &str) -> Option<&'static Self> {
+        match name {
+            Self::MAINNET_NAME => Some(Self::mainnet()),
+            Self::SEPOLIA_NAME | Self::SEPOLIA_ALIAS => Some(Self::sepolia()),
+            Self::ZERONET_NAME => Some(Self::zeronet()),
+            Self::DEVNET_NAME => Some(Self::devnet()),
+            _ => None,
+        }
+    }
+
     /// Looks up a chain config by L2 chain ID.
     pub const fn by_chain_id(id: u64) -> Option<&'static Self> {
         match id {
             8453 => Some(&MAINNET),
             84532 => Some(&SEPOLIA),
+            1337 => Some(&DEVNET),
             763360 => Some(&ZERONET),
             _ => None,
         }
+    }
+
+    /// Returns the Beryl activation registry admin address for built-in chains that need one.
+    pub const fn beryl_activation_admin_address_by_chain_id(id: u64) -> Option<Address> {
+        match id {
+            8453 => Some(MAINNET_BERYL_ACTIVATION_ADMIN_ADDRESS),
+            84532 => Some(SEPOLIA_BERYL_ACTIVATION_ADMIN_ADDRESS),
+            763360 => Some(ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS),
+            _ => None,
+        }
+    }
+
+    /// Returns the Beryl activation registry admin address for this chain, if configured.
+    pub const fn beryl_activation_admin_address(&self) -> Option<Address> {
+        Self::beryl_activation_admin_address_by_chain_id(self.chain_id)
+    }
+
+    /// Returns the full [`RollupConfig`] for the given L2 chain ID.
+    pub fn rollup_config_by_chain_id(id: u64) -> Option<RollupConfig> {
+        Self::by_chain_id(id).map(Self::rollup_config)
+    }
+
+    /// Returns the full [`RollupConfig`] for the given [`Chain`] identifier.
+    pub fn rollup_config_by_chain(chain: &Chain) -> Option<RollupConfig> {
+        Self::rollup_config_by_chain_id(chain.id())
     }
 
     /// Returns the EIP-1559 [`FeeConfig`] for this chain.
@@ -152,9 +259,9 @@ impl ChainConfig {
         }
     }
 
-    /// Returns the [`HardForkConfig`] (Base upgrade activation timestamps) for this chain.
-    pub const fn hardfork_config(&self) -> HardForkConfig {
-        HardForkConfig {
+    /// Returns the [`UpgradeConfig`] (Base upgrade activation timestamps) for this chain.
+    pub const fn upgrade_config(&self) -> UpgradeConfig {
+        UpgradeConfig {
             regolith_time: Some(self.regolith_timestamp),
             canyon_time: Some(self.canyon_timestamp),
             delta_time: Some(self.delta_timestamp),
@@ -165,7 +272,11 @@ impl ChainConfig {
             pectra_blob_schedule_time: self.pectra_blob_schedule_timestamp,
             isthmus_time: Some(self.isthmus_timestamp),
             jovian_time: Some(self.jovian_timestamp),
-            base: HardforkConfig { azul: self.azul_timestamp },
+            base: BaseUpgradeConfig {
+                azul: self.azul_timestamp,
+                beryl: self.beryl_timestamp,
+                cobalt: self.cobalt_timestamp,
+            },
         }
     }
 
@@ -203,7 +314,7 @@ impl ChainConfig {
             granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
             l1_chain_id: self.l1_chain_id,
             l2_chain_id: Chain::from_id(self.chain_id),
-            hardforks: self.hardfork_config(),
+            upgrades: self.upgrade_config(),
             batch_inbox_address: self.batch_inbox_address,
             deposit_contract_address: self.deposit_contract_address,
             l1_system_config_address: self.system_config_address,
@@ -220,9 +331,9 @@ impl From<&ChainConfig> for FeeConfig {
     }
 }
 
-impl From<&ChainConfig> for HardForkConfig {
+impl From<&ChainConfig> for UpgradeConfig {
     fn from(cfg: &ChainConfig) -> Self {
-        cfg.hardfork_config()
+        cfg.upgrade_config()
     }
 }
 
@@ -258,7 +369,9 @@ const MAINNET: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: None,
     isthmus_timestamp: 1_746_806_401,
     jovian_timestamp: 1_764_691_201,
-    azul_timestamp: Some(1_778_695_200),
+    azul_timestamp: Some(1_779_991_200),
+    beryl_timestamp: Some(1_782_410_400),
+    cobalt_timestamp: None,
 
     genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
     genesis_l1_number: 17_481_768,
@@ -282,24 +395,29 @@ const MAINNET: ChainConfig = ChainConfig {
     unsafe_block_signer: Some(address!("Af6E19BE0F9cE7f8afd49a1824851023A8249e8a")),
 
     max_gas_limit: 105_000_000,
+    prune_delete_limit: 20_000,
 
-    bootnodes: &[
-        "enr:-J24QNz9lbrKbN4iSmmjtnr7SjUMk4zB7f1krHZcTZx-JRKZd0kA2gjufUROD6T3sOWDVDnFJRvqBBo62zuF-hYCohOGAYiOoEyEgmlkgnY0gmlwhAPniryHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQKNVFlCxh_B-716tTs-h1vMzZkSs1FTu_OYTNjgufplG4N0Y3CCJAaDdWRwgiQG",
-        "enr:-J24QH-f1wt99sfpHy4c0QJM-NfmsIfmlLAMMcgZCUEgKG_BBYFc6FwYgaMJMQN5dsRBJApIok0jFn-9CS842lGpLmqGAYiOoDRAgmlkgnY0gmlwhLhIgb2Hb3BzdGFja4OFQgCJc2VjcDI1NmsxoQJ9FTIv8B9myn1MWaC_2lJ-sMoeCDkusCsk4BYHjjCq04N0Y3CCJAaDdWRwgiQG",
-        "enr:-J24QDXyyxvQYsd0yfsN0cRr1lZ1N11zGTplMNlW4xNEc7LkPXh0NAJ9iSOVdRO95GPYAIc6xmyoCCG6_0JxdL3a0zaGAYiOoAjFgmlkgnY0gmlwhAPckbGHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQJwoS7tzwxqXSyFL7g0JM-KWVbgvjfB8JA__T7yY_cYboN0Y3CCJAaDdWRwgiQG",
-        "enr:-J24QHmGyBwUZXIcsGYMaUqGGSl4CFdx9Tozu-vQCn5bHIQbR7On7dZbU61vYvfrJr30t0iahSqhc64J46MnUO2JvQaGAYiOoCKKgmlkgnY0gmlwhAPnCzSHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQINc4fSijfbNIiGhcgvwjsjxVFJHUstK9L1T8OTKUjgloN0Y3CCJAaDdWRwgiQG",
-        "enr:-J24QG3ypT4xSu0gjb5PABCmVxZqBjVw9ca7pvsI8jl4KATYAnxBmfkaIuEqy9sKvDHKuNCsy57WwK9wTt2aQgcaDDyGAYiOoGAXgmlkgnY0gmlwhDbGmZaHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQIeAK_--tcLEiu7HvoUlbV52MspE0uCocsx1f_rYvRenIN0Y3CCJAaDdWRwgiQG",
-        "enode://87a32fd13bd596b2ffca97020e31aef4ddcc1bbd4b95bb633d16c1329f654f34049ed240a36b449fda5e5225d70fe40bc667f53c304b71f8e68fc9d448690b51@3.231.138.188:30301",
-        "enode://87a32fd13bd596b2ffca97020e31aef4ddcc1bbd4b95bb633d16c1329f654f34049ed240a36b449fda5e5225d70fe40bc667f53c304b71f8e68fc9d448690b51@3.231.138.188:9200",
-        "enode://ca21ea8f176adb2e229ce2d700830c844af0ea941a1d8152a9513b966fe525e809c3a6c73a2c18a12b74ed6ec4380edf91662778fe0b79f6a591236e49e176f9@184.72.129.189:30301",
-        "enode://ca21ea8f176adb2e229ce2d700830c844af0ea941a1d8152a9513b966fe525e809c3a6c73a2c18a12b74ed6ec4380edf91662778fe0b79f6a591236e49e176f9@184.72.129.189:9200",
-        "enode://acf4507a211ba7c1e52cdf4eef62cdc3c32e7c9c47998954f7ba024026f9a6b2150cd3f0b734d9c78e507ab70d59ba61dfe5c45e1078c7ad0775fb251d7735a2@3.220.145.177:30301",
-        "enode://acf4507a211ba7c1e52cdf4eef62cdc3c32e7c9c47998954f7ba024026f9a6b2150cd3f0b734d9c78e507ab70d59ba61dfe5c45e1078c7ad0775fb251d7735a2@3.220.145.177:9200",
-        "enode://8a5a5006159bf079d06a04e5eceab2a1ce6e0f721875b2a9c96905336219dbe14203d38f70f3754686a6324f786c2f9852d8c0dd3adac2d080f4db35efc678c5@3.231.11.52:30301",
-        "enode://8a5a5006159bf079d06a04e5eceab2a1ce6e0f721875b2a9c96905336219dbe14203d38f70f3754686a6324f786c2f9852d8c0dd3adac2d080f4db35efc678c5@3.231.11.52:9200",
-        "enode://cdadbe835308ad3557f9a1de8db411da1a260a98f8421d62da90e71da66e55e98aaa8e90aa7ce01b408a54e4bd2253d701218081ded3dbe5efbbc7b41d7cef79@54.198.153.150:30301",
-        "enode://cdadbe835308ad3557f9a1de8db411da1a260a98f8421d62da90e71da66e55e98aaa8e90aa7ce01b408a54e4bd2253d701218081ded3dbe5efbbc7b41d7cef79@54.198.153.150:9200",
-    ],
+    bootnodes: Bootnodes {
+        execution: &[
+            "enode://87a32fd13bd596b2ffca97020e31aef4ddcc1bbd4b95bb633d16c1329f654f34049ed240a36b449fda5e5225d70fe40bc667f53c304b71f8e68fc9d448690b51@3.231.138.188:30301",
+            "enode://87a32fd13bd596b2ffca97020e31aef4ddcc1bbd4b95bb633d16c1329f654f34049ed240a36b449fda5e5225d70fe40bc667f53c304b71f8e68fc9d448690b51@3.231.138.188:9200",
+            "enode://ca21ea8f176adb2e229ce2d700830c844af0ea941a1d8152a9513b966fe525e809c3a6c73a2c18a12b74ed6ec4380edf91662778fe0b79f6a591236e49e176f9@184.72.129.189:30301",
+            "enode://ca21ea8f176adb2e229ce2d700830c844af0ea941a1d8152a9513b966fe525e809c3a6c73a2c18a12b74ed6ec4380edf91662778fe0b79f6a591236e49e176f9@184.72.129.189:9200",
+            "enode://acf4507a211ba7c1e52cdf4eef62cdc3c32e7c9c47998954f7ba024026f9a6b2150cd3f0b734d9c78e507ab70d59ba61dfe5c45e1078c7ad0775fb251d7735a2@3.220.145.177:30301",
+            "enode://acf4507a211ba7c1e52cdf4eef62cdc3c32e7c9c47998954f7ba024026f9a6b2150cd3f0b734d9c78e507ab70d59ba61dfe5c45e1078c7ad0775fb251d7735a2@3.220.145.177:9200",
+            "enode://8a5a5006159bf079d06a04e5eceab2a1ce6e0f721875b2a9c96905336219dbe14203d38f70f3754686a6324f786c2f9852d8c0dd3adac2d080f4db35efc678c5@3.231.11.52:30301",
+            "enode://8a5a5006159bf079d06a04e5eceab2a1ce6e0f721875b2a9c96905336219dbe14203d38f70f3754686a6324f786c2f9852d8c0dd3adac2d080f4db35efc678c5@3.231.11.52:9200",
+            "enode://cdadbe835308ad3557f9a1de8db411da1a260a98f8421d62da90e71da66e55e98aaa8e90aa7ce01b408a54e4bd2253d701218081ded3dbe5efbbc7b41d7cef79@54.198.153.150:30301",
+            "enode://cdadbe835308ad3557f9a1de8db411da1a260a98f8421d62da90e71da66e55e98aaa8e90aa7ce01b408a54e4bd2253d701218081ded3dbe5efbbc7b41d7cef79@54.198.153.150:9200",
+        ],
+        consensus: &[
+            "enr:-J24QNz9lbrKbN4iSmmjtnr7SjUMk4zB7f1krHZcTZx-JRKZd0kA2gjufUROD6T3sOWDVDnFJRvqBBo62zuF-hYCohOGAYiOoEyEgmlkgnY0gmlwhAPniryHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQKNVFlCxh_B-716tTs-h1vMzZkSs1FTu_OYTNjgufplG4N0Y3CCJAaDdWRwgiQG",
+            "enr:-J24QH-f1wt99sfpHy4c0QJM-NfmsIfmlLAMMcgZCUEgKG_BBYFc6FwYgaMJMQN5dsRBJApIok0jFn-9CS842lGpLmqGAYiOoDRAgmlkgnY0gmlwhLhIgb2Hb3BzdGFja4OFQgCJc2VjcDI1NmsxoQJ9FTIv8B9myn1MWaC_2lJ-sMoeCDkusCsk4BYHjjCq04N0Y3CCJAaDdWRwgiQG",
+            "enr:-J24QDXyyxvQYsd0yfsN0cRr1lZ1N11zGTplMNlW4xNEc7LkPXh0NAJ9iSOVdRO95GPYAIc6xmyoCCG6_0JxdL3a0zaGAYiOoAjFgmlkgnY0gmlwhAPckbGHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQJwoS7tzwxqXSyFL7g0JM-KWVbgvjfB8JA__T7yY_cYboN0Y3CCJAaDdWRwgiQG",
+            "enr:-J24QHmGyBwUZXIcsGYMaUqGGSl4CFdx9Tozu-vQCn5bHIQbR7On7dZbU61vYvfrJr30t0iahSqhc64J46MnUO2JvQaGAYiOoCKKgmlkgnY0gmlwhAPnCzSHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQINc4fSijfbNIiGhcgvwjsjxVFJHUstK9L1T8OTKUjgloN0Y3CCJAaDdWRwgiQG",
+            "enr:-J24QG3ypT4xSu0gjb5PABCmVxZqBjVw9ca7pvsI8jl4KATYAnxBmfkaIuEqy9sKvDHKuNCsy57WwK9wTt2aQgcaDDyGAYiOoGAXgmlkgnY0gmlwhDbGmZaHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQIeAK_--tcLEiu7HvoUlbV52MspE0uCocsx1f_rYvRenIN0Y3CCJAaDdWRwgiQG",
+        ],
+    },
 
     genesis_json: include_str!("../res/genesis/base.json"),
 };
@@ -325,6 +443,8 @@ const SEPOLIA: ChainConfig = ChainConfig {
     isthmus_timestamp: 1_744_905_600,
     jovian_timestamp: 1_763_568_001,
     azul_timestamp: Some(1_776_708_000),
+    beryl_timestamp: Some(1_781_805_600),
+    cobalt_timestamp: None,
 
     genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
     genesis_l1_number: 4_370_868,
@@ -348,15 +468,20 @@ const SEPOLIA: ChainConfig = ChainConfig {
     unsafe_block_signer: Some(address!("b830b99c95Ea32300039624Cb567d324D4b1D83C")),
 
     max_gas_limit: 45_000_000,
+    prune_delete_limit: 10_000,
 
-    bootnodes: &[
-        "enode://548f715f3fc388a7c917ba644a2f16270f1ede48a5d88a4d14ea287cc916068363f3092e39936f1a3e7885198bef0e5af951f1d7b1041ce8ba4010917777e71f@18.210.176.114:30301",
-        "enode://548f715f3fc388a7c917ba644a2f16270f1ede48a5d88a4d14ea287cc916068363f3092e39936f1a3e7885198bef0e5af951f1d7b1041ce8ba4010917777e71f@18.210.176.114:9200",
-        "enode://6f10052847a966a725c9f4adf6716f9141155b99a0fb487fea3f51498f4c2a2cb8d534e680ee678f9447db85b93ff7c74562762c3714783a7233ac448603b25f@107.21.251.55:30301",
-        "enode://6f10052847a966a725c9f4adf6716f9141155b99a0fb487fea3f51498f4c2a2cb8d534e680ee678f9447db85b93ff7c74562762c3714783a7233ac448603b25f@107.21.251.55:9200",
-        "enr:-J64QFa3qMsONLGphfjEkeYyF6Jkil_jCuJmm7_a42ckZeUQGLVzrzstZNb1dgBp1GGx9bzImq5VxJLP-BaptZThGiWGAYrTytOvgmlkgnY0gmlwhGsV-zeHb3BzdGFja4S0lAUAiXNlY3AyNTZrMaEDahfSECTIS_cXyZ8IyNf4leANlZnrsMEWTkEYxf4GMCmDdGNwgiQGg3VkcIIkBg",
-        "enr:-J64QBwRIWAco7lv6jImSOjPU_W266lHXzpAS5YOh7WmgTyBZkgLgOwo_mxKJq3wz2XRbsoBItbv1dCyjIoNq67mFguGAYrTxM42gmlkgnY0gmlwhBLSsHKHb3BzdGFja4S0lAUAiXNlY3AyNTZrMaEDmoWSi8hcsRpQf2eJsNUx-sqv6fH4btmo2HsAzZFAKnKDdGNwgiQGg3VkcIIkBg",
-    ],
+    bootnodes: Bootnodes {
+        execution: &[
+            "enode://548f715f3fc388a7c917ba644a2f16270f1ede48a5d88a4d14ea287cc916068363f3092e39936f1a3e7885198bef0e5af951f1d7b1041ce8ba4010917777e71f@18.210.176.114:30301",
+            "enode://548f715f3fc388a7c917ba644a2f16270f1ede48a5d88a4d14ea287cc916068363f3092e39936f1a3e7885198bef0e5af951f1d7b1041ce8ba4010917777e71f@18.210.176.114:9200",
+            "enode://6f10052847a966a725c9f4adf6716f9141155b99a0fb487fea3f51498f4c2a2cb8d534e680ee678f9447db85b93ff7c74562762c3714783a7233ac448603b25f@107.21.251.55:30301",
+            "enode://6f10052847a966a725c9f4adf6716f9141155b99a0fb487fea3f51498f4c2a2cb8d534e680ee678f9447db85b93ff7c74562762c3714783a7233ac448603b25f@107.21.251.55:9200",
+        ],
+        consensus: &[
+            "enr:-J64QFa3qMsONLGphfjEkeYyF6Jkil_jCuJmm7_a42ckZeUQGLVzrzstZNb1dgBp1GGx9bzImq5VxJLP-BaptZThGiWGAYrTytOvgmlkgnY0gmlwhGsV-zeHb3BzdGFja4S0lAUAiXNlY3AyNTZrMaEDahfSECTIS_cXyZ8IyNf4leANlZnrsMEWTkEYxf4GMCmDdGNwgiQGg3VkcIIkBg",
+            "enr:-J64QBwRIWAco7lv6jImSOjPU_W266lHXzpAS5YOh7WmgTyBZkgLgOwo_mxKJq3wz2XRbsoBItbv1dCyjIoNq67mFguGAYrTxM42gmlkgnY0gmlwhBLSsHKHb3BzdGFja4S0lAUAiXNlY3AyNTZrMaEDmoWSi8hcsRpQf2eJsNUx-sqv6fH4btmo2HsAzZFAKnKDdGNwgiQGg3VkcIIkBg",
+        ],
+    },
 
     genesis_json: include_str!("../res/genesis/sepolia_base.json"),
 };
@@ -382,6 +507,8 @@ const DEVNET: ChainConfig = ChainConfig {
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
     azul_timestamp: Some(0),
+    beryl_timestamp: None,
+    cobalt_timestamp: None,
 
     genesis_l1_hash: B256::ZERO,
     genesis_l1_number: 0,
@@ -405,8 +532,9 @@ const DEVNET: ChainConfig = ChainConfig {
     unsafe_block_signer: None,
 
     max_gas_limit: 30_000_000,
+    prune_delete_limit: 20_000,
 
-    bootnodes: &[],
+    bootnodes: Bootnodes::EMPTY,
 
     genesis_json: include_str!("../res/genesis/dev.json"),
 };
@@ -432,6 +560,8 @@ const ZERONET: ChainConfig = ChainConfig {
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
     azul_timestamp: Some(1_775_152_800),
+    beryl_timestamp: Some(1_780_678_800),
+    cobalt_timestamp: None,
 
     genesis_l1_hash: b256!("b7d4b69971ff31d5179be5e1b83f5a4f438f4cd1db886a6630623b7047f32cfd"),
     genesis_l1_number: 2_450_277,
@@ -455,15 +585,20 @@ const ZERONET: ChainConfig = ChainConfig {
     unsafe_block_signer: Some(address!("cf17274338d3128f6C96d9af54511a17e8b38a08")),
 
     max_gas_limit: 25_000_000,
+    prune_delete_limit: 10_000,
 
-    bootnodes: &[
-        "enr:-J-4QDS5Z5P4BoDbOlLGOcdXjcv2Nc5_PgP28lIxP4lKU6qYR-m10c8rHdcHk0DdmTvZpndoSpuK__688dmX-tlOsNKGAZ22NI20gmlkgnY0gmlwhCzGBHaHb3BzdGFja4WA-80FAIlzZWNwMjU2azGhA4Qs8_ZWeMdUNldNdjnAxd018gjWofqKoW4_pr0qzvTtg3RjcIIkBoN1ZHCCJAY",
-        "enode://cd4528698249ad8b36fa7b1cad75aa5683ad355e6f0776629eaff1d83cfbb575062330d711efefbfa0d531c86969c2daf9a88fb28cddbbad216f46ac367981eb@44.198.4.118:30301",
-        "enode://cd4528698249ad8b36fa7b1cad75aa5683ad355e6f0776629eaff1d83cfbb575062330d711efefbfa0d531c86969c2daf9a88fb28cddbbad216f46ac367981eb@44.198.4.118:9200",
-        "enr:-J-4QKgMF6zAv7u_75LTXLJKgLtEn4HcI8gaqsDAl78nfw7VQE-EN6dUZCZW4_CI42MAOWUCinrV8rP5hbBu3aje-u-GAZ22LUBogmlkgnY0gmlwhDQCC1-Hb3BzdGFja4WA-80FAIlzZWNwMjU2azGhArwjzoKlEKQiEXtuZ0qT23Wy_3IeEXbAJo7VKDO2Yovig3RjcIIkBoN1ZHCCJAY",
-        "enode://ea188fb5482ff8eb372956d674ecb6d09cbd42e6874121957a47b2ad252f54953c49866d2dcabcfc272fcc63e163a67b097fe4354283e56ddf077fc017b2a127@52.2.11.95:30301",
-        "enode://ea188fb5482ff8eb372956d674ecb6d09cbd42e6874121957a47b2ad252f54953c49866d2dcabcfc272fcc63e163a67b097fe4354283e56ddf077fc017b2a127@52.2.11.95:9200",
-    ],
+    bootnodes: Bootnodes {
+        execution: &[
+            "enode://cd4528698249ad8b36fa7b1cad75aa5683ad355e6f0776629eaff1d83cfbb575062330d711efefbfa0d531c86969c2daf9a88fb28cddbbad216f46ac367981eb@44.198.4.118:30301",
+            "enode://cd4528698249ad8b36fa7b1cad75aa5683ad355e6f0776629eaff1d83cfbb575062330d711efefbfa0d531c86969c2daf9a88fb28cddbbad216f46ac367981eb@44.198.4.118:9200",
+            "enode://ea188fb5482ff8eb372956d674ecb6d09cbd42e6874121957a47b2ad252f54953c49866d2dcabcfc272fcc63e163a67b097fe4354283e56ddf077fc017b2a127@52.2.11.95:30301",
+            "enode://ea188fb5482ff8eb372956d674ecb6d09cbd42e6874121957a47b2ad252f54953c49866d2dcabcfc272fcc63e163a67b097fe4354283e56ddf077fc017b2a127@52.2.11.95:9200",
+        ],
+        consensus: &[
+            "enr:-J-4QDS5Z5P4BoDbOlLGOcdXjcv2Nc5_PgP28lIxP4lKU6qYR-m10c8rHdcHk0DdmTvZpndoSpuK__688dmX-tlOsNKGAZ22NI20gmlkgnY0gmlwhCzGBHaHb3BzdGFja4WA-80FAIlzZWNwMjU2azGhA4Qs8_ZWeMdUNldNdjnAxd018gjWofqKoW4_pr0qzvTtg3RjcIIkBoN1ZHCCJAY",
+            "enr:-J-4QKgMF6zAv7u_75LTXLJKgLtEn4HcI8gaqsDAl78nfw7VQE-EN6dUZCZW4_CI42MAOWUCinrV8rP5hbBu3aje-u-GAZ22LUBogmlkgnY0gmlwhDQCC1-Hb3BzdGFja4WA-80FAIlzZWNwMjU2azGhArwjzoKlEKQiEXtuZ0qT23Wy_3IeEXbAJo7VKDO2Yovig3RjcIIkBoN1ZHCCJAY",
+        ],
+    },
 
     genesis_json: include_str!("../res/genesis/zeronet_base.json"),
 };
@@ -477,5 +612,34 @@ mod tests {
         // Guard against drift between the hardcoded `FeeConfig::BASE_MAINNET` constant
         // (used as a serde default) and the canonical `ChainConfig::mainnet().fee_config()`.
         assert_eq!(ChainConfig::mainnet().fee_config(), FeeConfig::base_mainnet());
+    }
+
+    #[test]
+    fn supported_chain_names_resolve() {
+        for name in ChainConfig::SUPPORTED_NAMES {
+            assert!(ChainConfig::by_name(name).is_some(), "{name} should resolve");
+        }
+        assert_eq!(ChainConfig::by_name(ChainConfig::SEPOLIA_ALIAS), Some(ChainConfig::sepolia()));
+        assert_eq!(
+            ChainConfig::by_chain_id(ChainConfig::devnet().chain_id),
+            Some(ChainConfig::devnet())
+        );
+        assert_eq!(
+            ChainConfig::rollup_config_by_chain_id(ChainConfig::devnet().chain_id)
+                .map(|cfg| cfg.l2_chain_id.id()),
+            Some(ChainConfig::devnet().chain_id)
+        );
+        assert_eq!(ChainConfig::MAINNET, ChainConfig::mainnet());
+        assert_eq!(ChainConfig::SEPOLIA, ChainConfig::sepolia());
+        assert_eq!(ChainConfig::DEVNET, ChainConfig::devnet());
+        assert_eq!(ChainConfig::ZERONET, ChainConfig::zeronet());
+    }
+
+    #[test]
+    fn zeronet_beryl_is_scheduled() {
+        assert_eq!(ChainConfig::zeronet().beryl_timestamp, Some(1_780_678_800));
+        assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_780_678_800));
+        assert_eq!(ChainConfig::zeronet().cobalt_timestamp, None);
+        assert_eq!(ChainConfig::zeronet().upgrade_config().base.cobalt, None);
     }
 }

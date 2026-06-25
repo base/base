@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
-use base_protocol::{DERIVATION_VERSION_0, Frame};
+use base_protocol::{
+    BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, DERIVATION_VERSION_0, Frame,
+};
 
 /// Errors returned by [`BlobEncoder::encode`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -33,7 +35,7 @@ impl BlobEncoder {
     /// bytes (4 x 31 payload bytes + 3 reassembled bytes). With 1024 rounds that
     /// gives `127 * 1024 = 130_048` bytes, minus 4 bytes for the version +
     /// 3-byte length header in field element 0.
-    pub const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4; // 130_044
+    pub const BLOB_MAX_DATA_SIZE: usize = PROTOCOL_BLOB_MAX_DATA_SIZE;
 
     /// Number of encoding rounds (one per group of 4 field elements).
     pub const BLOB_ENCODING_ROUNDS: usize = 1024;

@@ -45,6 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         session_id: None,
         prover_address: None,
         l1_head: None,
+        intermediate_root_interval: Some(30),
     };
 
     let response = client.prove_block(request).await?;
@@ -106,6 +107,7 @@ impl ZkProofProvider for MockProvider {
             status: ProofJobStatus::Succeeded.into(),
             receipt: vec![1, 2, 3],
             error_message: None,
+            execution_stats: None,
         })
     }
 }

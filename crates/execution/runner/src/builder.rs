@@ -25,7 +25,7 @@ type BaseComponents = <BaseComponentsBuilder as NodeComponentsBuilder<BaseNodeTy
 /// payload service builder), this type is identical regardless of which payload service is used.
 pub type BaseNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
 
-/// Convenience alias for the OP Eth API type exposed by the reth RPC add-ons.
+/// Convenience alias for the Base Eth API type exposed by the reth RPC add-ons.
 type BaseEthApi = <ConcreteBaseAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;
 
 /// Convenience alias for the full Base node handle produced after launch.
@@ -88,7 +88,7 @@ impl NodeHooks {
     /// Applies all accumulated hooks to the given configured builder.
     ///
     /// This is generic over `CB` so that it works with any payload service whose component
-    /// builder produces the same concrete `Components` type as the default OP builder.
+    /// builder produces the same concrete `Components` type as the default payload builder.
     pub fn apply_to<CB>(self, mut builder: RethNodeBuilder<CB>) -> RethNodeBuilder<CB>
     where
         CB: NodeComponentsBuilder<BaseNodeTypes, Components = BaseComponents>,

@@ -18,6 +18,9 @@ pub use driver::{Driver, DriverComponents, DriverConfig, TeeConfig};
 mod pending;
 pub use pending::{DisputeIntent, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate};
 
+mod proof_adapter;
+pub use proof_adapter::ChallengerProofAdapter;
+
 mod error;
 pub use error::ChallengeSubmitError;
 
@@ -25,7 +28,7 @@ mod metrics;
 pub use metrics::ChallengerMetrics;
 
 mod scanner;
-pub use scanner::{CandidateGame, GameCategory, GameScanner, ScannerConfig};
+pub use scanner::{CandidateGame, GameCategory, GameEvaluation, GameScanner};
 
 mod service;
 pub use service::ChallengerService;

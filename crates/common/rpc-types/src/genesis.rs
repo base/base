@@ -1,5 +1,6 @@
 //! Base types for genesis data.
 
+use alloy_primitives::Address;
 use alloy_serde::OtherFields;
 use serde::de::Error;
 
@@ -32,13 +33,19 @@ impl TryFrom<&OtherFields> for ChainInfo {
     }
 }
 
-/// Base-specific hardfork configuration in a genesis file.
+/// Base-specific upgrade configuration in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HardforkInfo {
-    /// Base Azul hardfork timestamp.
+pub struct UpgradeInfo {
+    /// Base Azul upgrade timestamp.
     #[serde(alias = "v1")]
     pub azul: Option<u64>,
+    /// Beryl upgrade timestamp.
+    #[serde(alias = "v2")]
+    pub beryl: Option<u64>,
+    /// Cobalt upgrade timestamp.
+    #[serde(alias = "v3")]
+    pub cobalt: Option<u64>,
 }
 
 /// The Base chain-specific genesis block specification.
@@ -47,25 +54,28 @@ pub struct HardforkInfo {
 pub struct GenesisInfo {
     /// bedrock block number
     pub bedrock_block: Option<u64>,
-    /// regolith hardfork timestamp
+    /// regolith upgrade timestamp
     pub regolith_time: Option<u64>,
-    /// canyon hardfork timestamp
+    /// canyon upgrade timestamp
     pub canyon_time: Option<u64>,
-    /// ecotone hardfork timestamp
+    /// ecotone upgrade timestamp
     pub ecotone_time: Option<u64>,
-    /// fjord hardfork timestamp
+    /// fjord upgrade timestamp
     pub fjord_time: Option<u64>,
-    /// granite hardfork timestamp
+    /// granite upgrade timestamp
     pub granite_time: Option<u64>,
-    /// holocene hardfork timestamp
+    /// holocene upgrade timestamp
     pub holocene_time: Option<u64>,
-    /// isthmus hardfork timestamp
+    /// isthmus upgrade timestamp
     pub isthmus_time: Option<u64>,
-    /// jovian hardfork timestamp
+    /// jovian upgrade timestamp
     pub jovian_time: Option<u64>,
-    /// Base-specific hardfork activation times.
+    /// Base-specific upgrade activation times.
     #[serde(default)]
-    pub base: HardforkInfo,
+    pub base: UpgradeInfo,
+    /// Activation registry admin address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_admin_address: Option<Address>,
 }
 
 impl GenesisInfo {
@@ -96,8 +106,7 @@ pub struct FeeInfo {
 }
 
 impl FeeInfo {
-    /// Extracts the Base chain base fee info by looking for the `optimism` key. It is intended to be
-    /// parsed from a genesis file.
+    /// Extracts the Base chain base fee info from the legacy `optimism` genesis key.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
     }
@@ -107,8 +116,8 @@ impl TryFrom<&OtherFields> for FeeInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
-        if let Some(Ok(op_chain_base_fee_info)) = others.get_deserialized::<Self>("optimism") {
-            Ok(op_chain_base_fee_info)
+        if let Some(Ok(base_chain_base_fee_info)) = others.get_deserialized::<Self>("optimism") {
+            Ok(base_chain_base_fee_info)
         } else {
             Err(serde_json::Error::missing_field("optimism"))
         }
@@ -120,7 +129,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_op_chain_genesis_info() {
+    fn test_extract_base_chain_genesis_info() {
         let genesis_info = r#"
         {
           "bedrockBlock": 10,
@@ -128,7 +137,8 @@ mod tests {
           "canyonTime": 0,
           "ecotoneTime": 0,
           "base": {
-            "v1": 14
+            "v1": 14,
+            "v2": 16
           }
         }
         "#;
@@ -148,13 +158,14 @@ mod tests {
                 holocene_time: None,
                 isthmus_time: None,
                 jovian_time: None,
-                base: HardforkInfo { azul: Some(14) },
+                base: UpgradeInfo { azul: Some(14), beryl: Some(16), cobalt: None },
+                activation_admin_address: None,
             }
         );
     }
 
     #[test]
-    fn test_extract_op_chain_base_fee_info() {
+    fn test_extract_base_chain_base_fee_info() {
         let base_fee_info = r#"
         {
           "optimism": {
@@ -179,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_op_chain_info() {
+    fn test_extract_base_chain_info() {
         let chain_info = r#"
         {
           "bedrockBlock": 10,
@@ -187,7 +198,8 @@ mod tests {
           "canyonTime": 0,
           "ecotoneTime": 0,
           "base": {
-            "v1": 14
+            "v1": 14,
+            "v2": 16
           },
           "optimism": {
             "eip1559Denominator": 8,
@@ -212,7 +224,8 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { azul: Some(14) },
+                    base: UpgradeInfo { azul: Some(14), beryl: Some(16), cobalt: None },
+                    activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
@@ -237,7 +250,8 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { azul: Some(14) },
+                    base: UpgradeInfo { azul: Some(14), beryl: Some(16), cobalt: None },
+                    activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
@@ -249,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_op_chain_info_no_base_fee() {
+    fn test_extract_base_chain_info_no_base_fee() {
         let chain_info = r#"
         {
           "bedrockBlock": 10,
@@ -280,7 +294,8 @@ mod tests {
                     holocene_time: Some(0),
                     isthmus_time: Some(0),
                     jovian_time: Some(0),
-                    base: HardforkInfo::default(),
+                    base: UpgradeInfo::default(),
+                    activation_admin_address: None,
                 }),
                 base_fee_info: None,
             }

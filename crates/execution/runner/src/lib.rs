@@ -14,7 +14,7 @@ mod extension;
 pub use extension::{BaseNodeExtension, FromExtensionConfig};
 
 mod runner;
-pub use runner::BaseNodeRunner;
+pub use runner::{BaseNodeRunner, LaunchedBaseNode};
 
 mod service;
 pub use service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder};

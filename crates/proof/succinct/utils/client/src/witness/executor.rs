@@ -21,7 +21,7 @@ use tracing::info;
 
 use crate::{
     client::{advance_to_target, fetch_safe_head_hash},
-    precompiles::{CustomCrypto, ZkvmOpEvmFactory},
+    precompiles::{CustomCrypto, ZkvmBaseEvmFactory},
 };
 
 // Gets the inputs for constructing the derivation pipeline.
@@ -32,7 +32,7 @@ pub async fn get_inputs_for_pipeline<O>(
     oracle: Arc<O>,
 ) -> Result<(
     BootInfo,
-    Option<(Arc<RwLock<PipelineCursor>>, OracleL1ChainProvider<O>, OracleL2ChainProvider<O>)>,
+    (Arc<RwLock<PipelineCursor>>, OracleL1ChainProvider<O>, OracleL2ChainProvider<O>),
     u64,
 )>
 where
@@ -90,7 +90,7 @@ where
     .await?;
     l2_provider.set_cursor(Arc::clone(&cursor));
 
-    Ok((boot_clone, Some((cursor, l1_provider, l2_provider)), safe_head_number))
+    Ok((boot_clone, (cursor, l1_provider, l2_provider), safe_head_number))
 }
 
 /// Constructs a derivation pipeline and executes block derivation.
@@ -120,15 +120,18 @@ pub trait WitnessExecutor {
         l2_provider: Self::L2,
     ) -> Result<OraclePipeline<Self::O, Self::L1, Self::L2, Self::DA>>;
 
-    /// Run derivation and block execution to produce the proven boot info.
+    /// Run derivation and block execution to produce the proven boot info and derived L2 block.
+    ///
+    /// The intermediate root sampling interval is taken from
+    /// [`BootInfo::intermediate_block_interval`] (committed via preimage key 9, same source as
+    /// the TEE), so callers do not need to pass it explicitly.
     async fn run<O, DP, P>(
         &self,
         boot: BootInfo,
         pipeline: DP,
         cursor: Arc<RwLock<PipelineCursor>>,
         l2_provider: OracleL2ChainProvider<O>,
-        intermediate_root_interval: u64,
-    ) -> Result<(BootInfo, Vec<alloy_primitives::B256>)>
+    ) -> Result<(BootInfo, u64, Vec<alloy_primitives::B256>)>
     where
         O: CommsClient + FlushableCache + Send + Sync + Debug,
         DP: DriverPipeline<P> + Send + Sync + Debug,
@@ -138,6 +141,8 @@ pub trait WitnessExecutor {
         revm::precompile::install_crypto(CustomCrypto::default());
 
         let boot_clone = boot.clone();
+        let activation_admin_address = boot.activation_admin_address;
+        let intermediate_block_interval = boot.intermediate_block_interval.max(1);
 
         let rollup_config = Arc::new(boot.rollup_config);
 
@@ -145,7 +150,7 @@ pub trait WitnessExecutor {
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider,
-            ZkvmOpEvmFactory::new(),
+            ZkvmBaseEvmFactory::new_with_activation_admin_address(activation_admin_address),
             None,
         );
         let mut driver = Driver::new(cursor, executor, pipeline);
@@ -159,7 +164,7 @@ pub trait WitnessExecutor {
             &mut driver,
             rollup_config.as_ref(),
             Some(boot.claimed_l2_block_number),
-            intermediate_root_interval,
+            intermediate_block_interval,
         )
         .await?;
         #[cfg(target_os = "zkvm")]
@@ -169,10 +174,13 @@ pub trait WitnessExecutor {
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
 
+        let derived_l2_block_number = safe_head.block_info.number;
+        ensure_derived_block_matches_claim(derived_l2_block_number, boot.claimed_l2_block_number)?;
+
         if output_root != boot.claimed_l2_output_root {
             return Err(anyhow!(
                 "Failed to validate L2 block #{number} with claimed output root {claimed_output_root}. Got {output_root} instead",
-                number = safe_head.block_info.number,
+                number = derived_l2_block_number,
                 output_root = output_root,
                 claimed_output_root = boot.claimed_l2_output_root,
             ));
@@ -180,9 +188,9 @@ pub trait WitnessExecutor {
 
         info!(
             target: "client",
-            "Successfully validated L2 block #{number} with output root {output_root}",
-            number = safe_head.block_info.number,
-            output_root = output_root
+            block_number = derived_l2_block_number,
+            output_root = %output_root,
+            "successfully validated L2 block"
         );
 
         // SAFETY: Inside the zkVM, the process exits after proof generation completes.
@@ -195,6 +203,52 @@ pub trait WitnessExecutor {
             std::mem::forget(rollup_config);
         }
 
-        Ok((boot_clone, intermediate_roots))
+        Ok((boot_clone, derived_l2_block_number, intermediate_roots))
+    }
+}
+
+/// Ensures the derived L2 safe-head block number matches the boot's claimed L2 block number.
+pub fn ensure_derived_block_matches_claim(
+    safe_head_number: u64,
+    claimed_block_number: u64,
+) -> Result<()> {
+    if safe_head_number != claimed_block_number {
+        return Err(anyhow!(
+            "Derived safe head L2 block #{safe_head_number} does not match claimed L2 block number #{claimed_block_number}",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_derived_block_matches_claim;
+
+    #[test]
+    fn returns_ok_when_derived_equals_claimed() {
+        assert!(ensure_derived_block_matches_claim(0, 0).is_ok());
+        assert!(ensure_derived_block_matches_claim(123_456, 123_456).is_ok());
+        assert!(ensure_derived_block_matches_claim(u64::MAX, u64::MAX).is_ok());
+    }
+
+    #[test]
+    fn returns_err_with_both_numbers_when_derived_below_claimed() {
+        let err = ensure_derived_block_matches_claim(50, 100).expect_err("expected mismatch error");
+        let msg = err.to_string();
+        assert!(msg.contains("#50"), "missing derived block number in: {msg}");
+        assert!(msg.contains("#100"), "missing claimed block number in: {msg}");
+        assert!(
+            msg.contains("Derived safe head") && msg.contains("claimed L2 block number"),
+            "missing expected labels in: {msg}",
+        );
+    }
+
+    #[test]
+    fn returns_err_with_both_numbers_when_derived_above_claimed() {
+        let err =
+            ensure_derived_block_matches_claim(150, 100).expect_err("expected mismatch error");
+        let msg = err.to_string();
+        assert!(msg.contains("#150"));
+        assert!(msg.contains("#100"));
     }
 }

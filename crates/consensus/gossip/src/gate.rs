@@ -1,11 +1,11 @@
 //! Connection Gate for the libp2p Gossip Swarm.
 
-use std::net::IpAddr;
+use std::{net::IpAddr, time::Duration};
 
 use ipnet::IpNet;
 use libp2p::{Multiaddr, PeerId};
 
-use crate::{Connectedness, DialError};
+use crate::ConnectionError;
 
 /// Connection Gate
 ///
@@ -13,12 +13,17 @@ use crate::{Connectedness, DialError};
 /// logic for which peers are allowed to connect to the
 /// gossip swarm.
 pub trait ConnectionGate {
-    /// Checks if a peer is allowed to connect to the gossip swarm.
-    /// Returns Ok(()) if the peer can be dialed, or Err(DialError) with the reason why not.
-    fn can_dial(&mut self, peer_id: &Multiaddr) -> Result<(), DialError>;
+    /// Checks if an outbound peer is allowed to connect to the gossip swarm.
+    /// Returns Ok(()) if the peer can be dialed, or Err(ConnectionError) with the reason why not.
+    fn can_connect_outbound(&mut self, addr: &Multiaddr) -> Result<(), ConnectionError>;
 
-    /// Returns the [`Connectedness`] for a given peer id.
-    fn connectedness(&self, peer_id: &PeerId) -> Connectedness;
+    /// Checks if an inbound peer is allowed to connect to the gossip swarm.
+    /// Returns Ok(()) if the peer can be accepted, or Err(ConnectionError) with the reason why not.
+    fn can_connect_inbound(
+        &mut self,
+        peer_id: &PeerId,
+        addr: &Multiaddr,
+    ) -> Result<(), ConnectionError>;
 
     /// Marks an address as currently being dialed.
     fn dialing(&mut self, addr: &Multiaddr);
@@ -28,6 +33,16 @@ pub trait ConnectionGate {
 
     /// Removes a peer id from the current dials set.
     fn remove_dial(&mut self, peer: &PeerId);
+
+    /// Lists peer ids with outbound dials currently in progress.
+    fn pending_dials(&self) -> Vec<PeerId>;
+
+    /// Returns pending outbound dials that exceeded their configured timeout.
+    ///
+    /// The returned duration is how long the dial has been pending.
+    fn expired_pending_dials(&self) -> Vec<(PeerId, Duration)> {
+        Vec::new()
+    }
 
     /// Checks if a peer can be removed from the gossip swarm.
     ///
@@ -70,4 +85,8 @@ pub trait ConnectionGate {
 
     /// Lists all protected peers.
     fn list_protected_peers(&self) -> Vec<PeerId>;
+
+    /// Periodic housekeeping. Called by the network actor on a fixed cadence.
+    /// Default impl is a no-op for gates that hold no expiring state.
+    fn prune(&mut self) {}
 }

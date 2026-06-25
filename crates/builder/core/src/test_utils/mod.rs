@@ -20,14 +20,14 @@ pub use external::*;
 pub use instance::*;
 use k256::sha2::{Digest, Sha256};
 use reth_node_builder::NodeConfig;
-use reth_primitives::Recovered;
+use reth_primitives_traits::Recovered;
 pub use txs::*;
 pub use utils::*;
 
 use crate::BuilderConfig;
 
 /// Signs a Base transaction and returns the recovered signed transaction.
-pub fn sign_op_tx(
+pub fn sign_base_tx(
     signer: &PrivateKeySigner,
     mut tx: BaseTypedTransaction,
 ) -> eyre::Result<Recovered<BaseTransactionSigned>> {

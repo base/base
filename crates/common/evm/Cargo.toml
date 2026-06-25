@@ -22,6 +22,12 @@ alloy-primitives.workspace = true
 # base
 base-common-flz.workspace = true
 base-common-chains.workspace = true
+base-common-genesis.workspace = true
+base-common-precompiles.workspace = true
+# Only used by the enshrined EIP-8130 executor, which is `std`-only; kept
+# optional so `no_std` (proof/zkVM) builds do not pull in a `std` crate.
+base-precompile-storage = { workspace = true, optional = true }
+base-execution-eip8130 = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["evm"] }
 
 # revm
@@ -30,14 +36,18 @@ revm.workspace = true
 # misc
 auto_impl.workspace = true
 thiserror.workspace = true
-strum = { workspace = true, features = ["derive"] }
 serde = { workspace = true, optional = true }
+
+# metrics
+base-metrics = { workspace = true, optional = true }
+metrics = { workspace = true, optional = true }
 
 # reth
 reth-evm = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
+k256 = { workspace = true, features = ["ecdsa"] }
 sha2 = { workspace = true, default-features = false }
 alloy-hardforks.workspace = true
 alloy-sol-types = { workspace = true, default-features = false }
@@ -54,9 +64,12 @@ std = [
 	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-flz/std",
+	"base-common-genesis/std",
+	"base-common-precompiles/std",
+	"base-precompile-storage/std",
+	"dep:base-execution-eip8130",
 	"revm/std",
 	"serde?/std",
-	"strum/std",
 	"thiserror/std",
 ]
 serde = [
@@ -65,19 +78,39 @@ serde = [
 	"alloy-primitives/serde",
 	"base-common-chains/serde",
 	"base-common-consensus/serde",
+	"base-common-genesis/serde",
 	"dep:serde",
 	"revm/serde",
 ]
 reth = [ "dep:reth-evm", "std" ]
-bn = [ "revm/bn" ]
-blst = [ "revm/blst" ]
-c-kzg = [ "revm/c-kzg" ]
-portable = [ "revm/portable" ]
-secp256k1 = [ "revm/secp256k1" ]
-memory_limit = [ "revm/memory_limit" ]
-optional_no_base_fee = [ "revm/optional_no_base_fee" ]
-optional_eip3541 = [ "revm/optional_eip3541" ]
-optional_eip3607 = [ "revm/optional_eip3607" ]
-optional_fee_charge = [ "revm/optional_fee_charge" ]
-optional_balance_check = [ "revm/optional_balance_check" ]
-optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
+metrics = [ "base-metrics/metrics", "dep:base-metrics", "dep:metrics", "std" ]
+bn = [ "base-common-precompiles/bn", "revm/bn" ]
+blst = [ "base-common-precompiles/blst", "revm/blst" ]
+c-kzg = [ "base-common-precompiles/c-kzg", "revm/c-kzg" ]
+portable = [ "base-common-precompiles/portable", "revm/portable" ]
+secp256k1 = [ "base-common-precompiles/secp256k1", "revm/secp256k1" ]
+memory_limit = [ "base-common-precompiles/memory_limit", "revm/memory_limit" ]
+optional_no_base_fee = [
+	"base-common-precompiles/optional_no_base_fee",
+	"revm/optional_no_base_fee",
+]
+optional_eip3541 = [
+	"base-common-precompiles/optional_eip3541",
+	"revm/optional_eip3541",
+]
+optional_eip3607 = [
+	"base-common-precompiles/optional_eip3607",
+	"revm/optional_eip3607",
+]
+optional_fee_charge = [
+	"base-common-precompiles/optional_fee_charge",
+	"revm/optional_fee_charge",
+]
+optional_balance_check = [
+	"base-common-precompiles/optional_balance_check",
+	"revm/optional_balance_check",
+]
+optional_block_gas_limit = [
+	"base-common-precompiles/optional_block_gas_limit",
+	"revm/optional_block_gas_limit",
+]

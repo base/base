@@ -36,6 +36,7 @@ use std::{
     },
 };
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Signature, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
@@ -763,7 +764,7 @@ where
         &self,
         cache: &mut Option<CachedRecovery>,
     ) -> Result<RecoveredState, ProposerError> {
-        let (count, anchor) = tokio::try_join!(
+        let (count, snapshot) = tokio::try_join!(
             async {
                 self.factory_client.game_count().await.map_err(|e| {
                     ProposerError::Contract(format!("recovery game_count failed: {e}"))
@@ -771,11 +772,12 @@ where
             },
             async {
                 self.anchor_registry
-                    .get_anchor_root()
+                    .anchor_snapshot()
                     .await
-                    .map_err(|e| ProposerError::Contract(format!("get_anchor_root failed: {e}")))
+                    .map_err(|e| ProposerError::Contract(format!("anchor_snapshot failed: {e}")))
             },
         )?;
+        let anchor = snapshot.anchor_root;
 
         // The anchor only advances when games resolve, so a cached tip stays
         // valid until the anchor catches up to it.
@@ -998,14 +1000,19 @@ where
         let (agreed_l2_head, claimed_output, l1_head) = tokio::try_join!(
             async {
                 self.l2_client
-                    .header_by_number(Some(starting_block_number))
+                    .header_by_number(BlockNumberOrTag::Number(starting_block_number))
                     .await
                     .map_err(ProposerError::Rpc)
             },
             async {
                 self.rollup_client.output_at_block(target_block).await.map_err(ProposerError::Rpc)
             },
-            async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
+            async {
+                self.l1_client
+                    .header_by_number(BlockNumberOrTag::Latest)
+                    .await
+                    .map_err(ProposerError::Rpc)
+            },
         )?;
 
         let request = ProofRequest {
@@ -1149,7 +1156,7 @@ where
     ) -> Result<C::Return, ProposerError> {
         let result = self
             .l1_client
-            .call_contract(registry_address, call.abi_encode().into(), None)
+            .call_contract(registry_address, call.abi_encode().into(), BlockNumberOrTag::Latest)
             .await
             .map_err(ProposerError::Rpc)?;
         C::abi_decode_returns(&result).map_err(|e| {

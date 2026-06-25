@@ -12,6 +12,8 @@
 
 use alloy_rlp::{Decodable, Encodable};
 
+use crate::BatchDecodingError;
+
 /// The Batch Type.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u8)]
@@ -31,30 +33,27 @@ impl BatchType {
     pub const SPAN: u8 = 0x01;
 }
 
-impl From<u8> for BatchType {
-    fn from(val: u8) -> Self {
+impl TryFrom<u8> for BatchType {
+    type Error = BatchDecodingError;
+    fn try_from(val: u8) -> Result<Self, Self::Error> {
         match val {
-            Self::SINGLE => Self::Single,
-            Self::SPAN => Self::Span,
-            _ => panic!("Invalid batch type: {val}"),
+            Self::SINGLE => Ok(Self::Single),
+            Self::SPAN => Ok(Self::Span),
+            _ => Err(BatchDecodingError::InvalidBatchType(val)),
         }
     }
 }
 
 impl Encodable for BatchType {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        let val = match self {
-            Self::Single => Self::SINGLE,
-            Self::Span => Self::SPAN,
-        };
-        val.encode(out);
+        (*self as u8).encode(out);
     }
 }
 
 impl Decodable for BatchType {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let val = u8::decode(buf)?;
-        Ok(Self::from(val))
+        Self::try_from(val).map_err(|_| alloy_rlp::Error::Custom("invalid batch type"))
     }
 }
 
@@ -66,10 +65,17 @@ mod tests {
 
     #[test]
     fn test_batch_type_rlp_roundtrip() {
-        let batch_type = BatchType::Single;
-        let mut buf = Vec::new();
-        batch_type.encode(&mut buf);
-        let decoded = BatchType::decode(&mut buf.as_slice()).unwrap();
-        assert_eq!(batch_type, decoded);
+        for batch_type in [BatchType::Single, BatchType::Span] {
+            let mut buf = Vec::new();
+            batch_type.encode(&mut buf);
+            let decoded = BatchType::decode(&mut buf.as_slice()).unwrap();
+            assert_eq!(batch_type, decoded);
+        }
+    }
+
+    #[test]
+    fn test_invalid_batch_type() {
+        let result = BatchType::decode(&mut [2u8].as_slice());
+        assert!(result.is_err());
     }
 }

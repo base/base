@@ -8,27 +8,39 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_network::Base;
 use base_common_rpc_types::GenesisInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use reth_provider::{BlockNumReader, BlockReader, ChainSpecProvider};
+use reth_provider::{BlockNumReader, BlockReader, BlockReaderIdExt, ChainSpecProvider};
 use tokio::time::sleep;
 
 use crate::{
     BaseNodeExtension, FromExtensionConfig,
     test_utils::{
-        BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
-        NODE_STARTUP_DELAY_MS,
+        BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, NODE_STARTUP_DELAY_MS,
         engine::{EngineApi, IpcEngine},
         node::{LocalNode, LocalNodeProvider},
         tracing::init_silenced_tracing,
     },
 };
+
+/// A block that has been built and accepted via `engine_newPayload` but not yet
+/// promoted to the canonical head via a forkchoice update.
+#[derive(Debug, Clone, Copy)]
+pub struct PreparedBlock {
+    /// Hash of the parent the new block was built on.
+    pub parent_hash: B256,
+    /// Hash of the newly-built block.
+    pub new_block_hash: B256,
+    /// Number of the newly-built block.
+    pub new_block_number: u64,
+}
 
 /// Builder for configuring and launching a test harness.
 #[derive(Debug, Default)]
@@ -134,13 +146,18 @@ impl TestHarness {
         Ok(RpcClient::new_http(url))
     }
 
-    /// Build a block using the provided transactions and push it through the engine.
-    pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
-        // Ensure the block always starts with the required L1 block info deposit.
-        if transactions.first().is_none_or(|tx| tx != &L1_BLOCK_INFO_DEPOSIT_TX) {
-            transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX);
-        }
+    /// Direct access to the IPC-backed Engine API client.
+    pub const fn engine(&self) -> &EngineApi<IpcEngine> {
+        &self.engine
+    }
 
+    /// Build a block using the provided transactions and push it through the engine
+    /// up to (but not including) the final canonical forkchoice update.
+    ///
+    /// Returns the parent hash and the new block hash so callers can issue the
+    /// final FCU themselves — useful for benchmarks that want to time only the
+    /// canonical FCU step.
+    pub async fn prepare_unsafe_block(&self, transactions: Vec<Bytes>) -> Result<PreparedBlock> {
         let latest_block = self
             .provider()
             .get_block_by_number(BlockNumberOrTag::Latest)
@@ -148,6 +165,7 @@ impl TestHarness {
             .ok_or_else(|| eyre!("No genesis block found"))?;
 
         let parent_hash = latest_block.header.hash;
+        let new_block_number = latest_block.header.number + 1;
         let parent_beacon_block_root =
             latest_block.header.parent_beacon_block_root.unwrap_or(B256::ZERO);
         let next_timestamp = latest_block.header.timestamp + BLOCK_TIME_SECONDS;
@@ -158,19 +176,24 @@ impl TestHarness {
         let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
             | (base_fee_params.elasticity_multiplier as u64);
 
-        let payload_attributes = BasePayloadAttributes {
-            payload_attributes: PayloadAttributes {
-                timestamp: next_timestamp,
-                parent_beacon_block_root: Some(parent_beacon_block_root),
-                withdrawals: Some(vec![]),
-                ..Default::default()
+        let payload_attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+            parent_hash,
+            BasePayloadAttributes {
+                payload_attributes: PayloadAttributes {
+                    timestamp: next_timestamp,
+                    parent_beacon_block_root: Some(parent_beacon_block_root),
+                    withdrawals: Some(vec![]),
+                    slot_number: None,
+                    ..Default::default()
+                },
+                transactions: Some(transactions),
+                gas_limit: Some(GAS_LIMIT),
+                no_tx_pool: Some(true),
+                min_base_fee: Some(min_base_fee),
+                eip_1559_params: Some(B64::from(eip_1559_params)),
             },
-            transactions: Some(transactions),
-            gas_limit: Some(GAS_LIMIT),
-            no_tx_pool: Some(true),
-            min_base_fee: Some(min_base_fee),
-            eip_1559_params: Some(B64::from(eip_1559_params)),
-        };
+            3,
+        )?;
 
         let forkchoice_result = self
             .engine
@@ -214,9 +237,47 @@ impl TestHarness {
             .latest_valid_hash
             .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
 
+        Ok(PreparedBlock { parent_hash, new_block_hash, new_block_number })
+    }
+
+    /// Build a block using the provided transactions and push it through the engine.
+    pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
+        let PreparedBlock { parent_hash, new_block_hash, new_block_number } =
+            self.prepare_unsafe_block(transactions).await?;
+
         self.engine.update_forkchoice(parent_hash, new_block_hash, None).await?;
+        self.wait_for_header(new_block_hash, new_block_number).await?;
 
         Ok(())
+    }
+
+    /// Wait for a given block to become available
+    pub async fn wait_for_header(&self, block_hash: B256, block_number: u64) -> Result<()> {
+        const HEADER_PERSIST_TIMEOUT: Duration = Duration::from_secs(5);
+        const HEADER_PERSIST_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+        let deadline = tokio::time::Instant::now() + HEADER_PERSIST_TIMEOUT;
+        let provider = self.blockchain_provider();
+
+        loop {
+            let latest_header =
+                provider.sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)?;
+            if provider.best_block_number()? >= block_number
+                && latest_header.is_some_and(|header| {
+                    header.number == block_number && header.hash() == block_hash
+                })
+            {
+                return Ok(());
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                return Err(eyre!(
+                    "timed out waiting for canonical header {block_hash} at block {block_number} to persist"
+                ));
+            }
+
+            sleep(HEADER_PERSIST_POLL_INTERVAL).await;
+        }
     }
 
     /// Advance the canonical chain by `n` empty blocks.

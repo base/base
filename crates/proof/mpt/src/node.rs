@@ -439,9 +439,12 @@ impl TrieNode {
     fn try_decode_leaf_or_extension_payload(buf: &mut &[u8]) -> TrieNodeResult<Self> {
         // Decode the path and value of the leaf or extension node.
         let path = Bytes::decode(buf).map_err(TrieNodeError::RLPError)?;
-        let first_nibble = path[0] >> NIBBLE_WIDTH;
+        let Some(first_byte) = path.first() else {
+            return Err(TrieNodeError::InvalidNodeType);
+        };
+        let first_nibble = first_byte >> NIBBLE_WIDTH;
         let first = match first_nibble {
-            PREFIX_EXTENSION_ODD | PREFIX_LEAF_ODD => Some(path[0] & 0x0F),
+            PREFIX_EXTENSION_ODD | PREFIX_LEAF_ODD => Some(first_byte & 0x0F),
             PREFIX_EXTENSION_EVEN | PREFIX_LEAF_EVEN => None,
             _ => return Err(TrieNodeError::InvalidNodeType),
         };
@@ -707,6 +710,13 @@ mod tests {
         let expected =
             TrieNode::Leaf { prefix: Nibbles::unpack(bytes!("646f")), value: bytes!("76657262FF") };
         assert_eq!(expected, TrieNode::decode(&mut LEAF_RLP.as_slice()).unwrap());
+    }
+
+    #[test]
+    fn test_decode_leaf_or_extension_empty_path_errors() {
+        const EMPTY_PATH_LEAF_OR_EXTENSION_RLP: [u8; 3] = hex!("c28080");
+
+        assert!(TrieNode::decode(&mut EMPTY_PATH_LEAF_OR_EXTENSION_RLP.as_slice()).is_err());
     }
 
     #[test]

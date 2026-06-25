@@ -20,7 +20,6 @@ serde.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 dotenvy.workspace = true
-rdkafka.workspace = true
 jsonrpsee.workspace = true
 base-bundles.workspace = true
 alloy-provider.workspace = true

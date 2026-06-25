@@ -1,0 +1,37 @@
+# Load Test Configuration - Base Zeronet
+#
+# Requires FUNDER_KEY environment variable with a funded private key.
+# Must use a DIFFERENT funder key and seed from the primary config.
+
+# Install the /load-testing skill and ask your agent to use the Zeronet config
+
+transaction_submission_rpcs:
+  - "https://<zeronet-rpc-url>"
+
+query_rpc: "https://<zeronet-rpc-url>"
+
+txpool_nodes: []
+
+flashblocks_ws: "wss://<zeronet-rollup-boost-proxy-url>/ws"
+
+sender_count: 100
+target_gps: 15000000
+in_flight_per_sender: 128
+batch_size: 200
+batch_timeout: "20ms"
+duration: "30s"
+seed: 1
+
+funding_amount: "10000000000000000"
+b20_mint_amount: "1000000000000000000000"
+
+transactions:
+  #- weight: 100
+  #  type: uniswap_v3
+  #  router: "0x4e036047d0615513bbcabc7dacc0f4cb0c8d196a"
+  #  token_in: "0xb9357f8D2897A3F8Dc07Fe7362866c19372eF62c"
+  #  token_out: "0xc7c9752Be96855a05A540001CE68fd6262531a2b"
+  #  fee: 3000
+  # B-20 precompile token transfer (requires Beryl activation):
+  - weight: 100
+    type: b20

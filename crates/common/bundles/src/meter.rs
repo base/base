@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OpcodeGas {
+    /// Address of the contract/precompile whose execution consumed this gas.
+    #[serde(default)]
+    pub contract_address: Address,
     /// Opcode or precompile name (e.g., "SSTORE", "BLAKE2F").
     pub opcode: String,
     /// Number of times this opcode/precompile was executed in the transaction.
@@ -114,16 +117,39 @@ mod tests {
             tx_hash: B256::default(),
             value: U256::from(1_000_000_000_000_000_000u64),
             execution_time_us: 500,
-            opcode_gas: vec![],
+            opcode_gas: vec![OpcodeGas {
+                contract_address: address!("0x3333333333333333333333333333333333333333"),
+                opcode: "SSTORE".to_string(),
+                count: 1,
+                gas_used: 20_000,
+            }],
         };
 
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"fromAddress\":\"0x1111111111111111111111111111111111111111\""));
         assert!(json.contains("\"toAddress\":\"0x2222222222222222222222222222222222222222\""));
         assert!(json.contains("\"gasUsed\":21000"));
+        assert!(
+            json.contains("\"contractAddress\":\"0x3333333333333333333333333333333333333333\"")
+        );
 
         let deserialized: TransactionResult = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, result);
+    }
+
+    #[test]
+    fn test_opcode_gas_deserialization_without_contract_address() {
+        let json = r#"{
+            "opcode": "SSTORE",
+            "count": 1,
+            "gasUsed": 20000
+        }"#;
+
+        let deserialized: OpcodeGas = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.contract_address, Address::ZERO);
+        assert_eq!(deserialized.opcode, "SSTORE");
+        assert_eq!(deserialized.count, 1);
+        assert_eq!(deserialized.gas_used, 20_000);
     }
 
     #[test]

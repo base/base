@@ -69,6 +69,18 @@ pub async fn cluster_setup_keys()
     .await?
 }
 
+/// Set up only the range proving key via blocking `CpuProver`.
+///
+/// Runs in `spawn_blocking` because `CpuProver` creates its own tokio runtime
+/// internally, which would panic if called directly from an async context.
+pub async fn cluster_setup_range_key() -> Result<SP1ProvingKey> {
+    tokio::task::spawn_blocking(|| {
+        let cpu_prover = CpuProver::new();
+        cpu_prover.setup(Elf::Static(get_range_elf_embedded())).context("range ELF setup failed")
+    })
+    .await?
+}
+
 /// Compute only the verifying keys for the range and aggregation ELFs.
 ///
 /// Uses [`LightProver`] which skips the expensive proving-key generation,

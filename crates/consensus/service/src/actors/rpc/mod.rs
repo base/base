@@ -1,6 +1,7 @@
 //! RPC actor and engine/sequencer RPC client wrappers.
 
 mod actor;
+pub(crate) use actor::launch_rpc_server;
 pub use actor::{RpcActor, RpcContext};
 
 mod engine_rpc_client;

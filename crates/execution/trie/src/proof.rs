@@ -4,6 +4,7 @@ use alloy_primitives::{
     Address, B256, Bytes, keccak256,
     map::{B256Map, HashMap},
 };
+use reth_db::DatabaseError;
 use reth_execution_errors::{StateProofError, StateRootError, StorageRootError, TrieWitnessError};
 use reth_trie::{
     StateRoot, StorageRoot, TrieType,
@@ -14,8 +15,9 @@ use reth_trie::{
     witness::TrieWitness,
 };
 use reth_trie_common::{
-    AccountProof, HashedPostState, HashedPostStateSorted, HashedStorage, MultiProof,
-    MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
+    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
+    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
+    updates::TrieUpdates,
 };
 
 use crate::{
@@ -23,11 +25,24 @@ use crate::{
     BaseProofsTrieCursorFactory,
 };
 
-/// Extends [`Proof`] with operations specific for working with [`BaseProofsStorage`].
-pub trait DatabaseProof<'tx, S> {
-    /// Creates a new `DatabaseProof` instance from external storage.
-    fn from_tx(storage: &'tx BaseProofsStorage<S>, block_number: u64) -> Self;
+/// Build the trie + hashed cursor factories sharing one read transaction at the given block.
+const fn from_tx<'tx, 'db, S>(
+    storage: &'db BaseProofsStorage<S>,
+    tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx<'db>,
+    block_number: u64,
+) -> (BaseProofsTrieCursorFactory<'tx, 'db, S>, BaseProofsHashedAccountCursorFactory<'tx, 'db, S>)
+where
+    S: BaseProofsStore + 'db,
+    'db: 'tx,
+{
+    (
+        BaseProofsTrieCursorFactory::new(storage, tx, block_number),
+        BaseProofsHashedAccountCursorFactory::new(storage, tx, block_number),
+    )
+}
 
+/// Extends [`Proof`] with operations specific for working with [`BaseProofsStorage`].
+pub trait DatabaseProof<'tx, S: BaseProofsStore + 'tx> {
     /// Generates the state proof for target account based on [`TrieInput`].
     fn overlay_account_proof(
         storage: &'tx BaseProofsStorage<S>,
@@ -47,19 +62,13 @@ pub trait DatabaseProof<'tx, S> {
 }
 
 impl<'tx, S> DatabaseProof<'tx, S>
-    for Proof<BaseProofsTrieCursorFactory<'tx, S>, BaseProofsHashedAccountCursorFactory<'tx, S>>
+    for Proof<
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
+    >
 where
-    S: BaseProofsStore + Clone,
+    S: BaseProofsStore + 'tx + Clone,
 {
-    /// Create a new [`Proof`] instance from [`BaseProofsStorage`].
-    fn from_tx(storage: &'tx BaseProofsStorage<S>, block_number: u64) -> Self {
-        Self::new(
-            BaseProofsTrieCursorFactory::new(storage, block_number),
-            BaseProofsHashedAccountCursorFactory::new(storage, block_number),
-        )
-    }
-
-    /// Generates the state proof for target account based on [`TrieInput`].
     fn overlay_account_proof(
         storage: &'tx BaseProofsStorage<S>,
         block_number: u64,
@@ -69,20 +78,18 @@ where
     ) -> Result<AccountProof, StateProofError> {
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
-        Self::from_tx(storage, block_number)
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(
-                BaseProofsTrieCursorFactory::new(storage, block_number),
-                &nodes_sorted,
-            ))
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
+        Proof::new(trie_factory.clone(), hashed_factory.clone())
+            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
             .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
+                hashed_factory,
                 &state_sorted,
             ))
             .with_prefix_sets_mut(input.prefix_sets)
             .account_proof(address, slots)
     }
 
-    /// Generates the state [`MultiProof`] for target hashed account and storage keys.
     fn overlay_multiproof(
         storage: &'tx BaseProofsStorage<S>,
         block_number: u64,
@@ -91,13 +98,12 @@ where
     ) -> Result<MultiProof, StateProofError> {
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
-        Self::from_tx(storage, block_number)
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(
-                BaseProofsTrieCursorFactory::new(storage, block_number),
-                &nodes_sorted,
-            ))
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
+        Proof::new(trie_factory.clone(), hashed_factory.clone())
+            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
             .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
+                hashed_factory,
                 &state_sorted,
             ))
             .with_prefix_sets_mut(input.prefix_sets)
@@ -106,10 +112,7 @@ where
 }
 
 /// Extends [`StorageProof`] with operations specific for working with [`BaseProofsStorage`].
-pub trait DatabaseStorageProof<'tx, S> {
-    /// Create a new [`StorageProof`] from [`BaseProofsStorage`] and account address.
-    fn from_tx(storage: &'tx BaseProofsStorage<S>, block_number: u64, address: Address) -> Self;
-
+pub trait DatabaseStorageProof<'tx, S: BaseProofsStore + 'tx> {
     /// Generates the storage proof for target slot based on [`TrieInput`].
     fn overlay_storage_proof(
         storage: &'tx BaseProofsStorage<S>,
@@ -132,21 +135,12 @@ pub trait DatabaseStorageProof<'tx, S> {
 impl<'tx, S> DatabaseStorageProof<'tx, S>
     for proof::StorageProof<
         'static,
-        BaseProofsTrieCursorFactory<'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, S>,
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
     >
 where
     S: BaseProofsStore + 'tx + Clone,
 {
-    /// Create a new [`StorageProof`] from [`BaseProofsStorage`] and account address.
-    fn from_tx(storage: &'tx BaseProofsStorage<S>, block_number: u64, address: Address) -> Self {
-        Self::new(
-            BaseProofsTrieCursorFactory::new(storage, block_number),
-            BaseProofsHashedAccountCursorFactory::new(storage, block_number),
-            address,
-        )
-    }
-
     fn overlay_storage_proof(
         storage: &'tx BaseProofsStorage<S>,
         block_number: u64,
@@ -160,9 +154,11 @@ where
             Default::default(),
             HashMap::from_iter([(hashed_address, hashed_storage.into_sorted())]),
         );
-        Self::from_tx(storage, block_number, address)
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
+        proof::StorageProof::new(trie_factory, hashed_factory.clone(), address)
             .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
+                hashed_factory,
                 &state_sorted,
             ))
             .with_prefix_set_mut(prefix_set)
@@ -183,9 +179,11 @@ where
             Default::default(),
             HashMap::from_iter([(hashed_address, hashed_storage.into_sorted())]),
         );
-        Self::from_tx(storage, block_number, address)
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
+        proof::StorageProof::new(trie_factory, hashed_factory.clone(), address)
             .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
+                hashed_factory,
                 &state_sorted,
             ))
             .with_prefix_set_mut(prefix_set)
@@ -233,7 +231,10 @@ pub trait DatabaseStateRoot<'tx, S: BaseProofsStore + 'tx + Clone>: Sized {
 }
 
 impl<'tx, S> DatabaseStateRoot<'tx, S>
-    for StateRoot<BaseProofsTrieCursorFactory<'tx, S>, BaseProofsHashedAccountCursorFactory<'tx, S>>
+    for StateRoot<
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
+    >
 where
     S: BaseProofsStore + 'tx + Clone,
 {
@@ -244,12 +245,11 @@ where
     ) -> Result<B256, StateRootError> {
         let prefix_sets = post_state.construct_prefix_sets().freeze();
         let state_sorted = post_state.into_sorted();
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
         StateRoot::new(
-            BaseProofsTrieCursorFactory::new(storage, block_number),
-            HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
-                &state_sorted,
-            ),
+            trie_factory,
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
         )
         .with_prefix_sets(prefix_sets)
         .root()
@@ -262,12 +262,11 @@ where
     ) -> Result<(B256, TrieUpdates), StateRootError> {
         let prefix_sets = post_state.construct_prefix_sets().freeze();
         let state_sorted = post_state.into_sorted();
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
         StateRoot::new(
-            BaseProofsTrieCursorFactory::new(storage, block_number),
-            HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
-                &state_sorted,
-            ),
+            trie_factory,
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
         )
         .with_prefix_sets(prefix_sets)
         .root_with_updates()
@@ -280,15 +279,11 @@ where
     ) -> Result<B256, StateRootError> {
         let state_sorted = input.state.into_sorted();
         let nodes_sorted = input.nodes.into_sorted();
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
         StateRoot::new(
-            InMemoryTrieCursorFactory::new(
-                BaseProofsTrieCursorFactory::new(storage, block_number),
-                &nodes_sorted,
-            ),
-            HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
-                &state_sorted,
-            ),
+            InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted),
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
         )
         .with_prefix_sets(input.prefix_sets.freeze())
         .root()
@@ -301,15 +296,11 @@ where
     ) -> Result<(B256, TrieUpdates), StateRootError> {
         let state_sorted = input.state.into_sorted();
         let nodes_sorted = input.nodes.into_sorted();
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
         StateRoot::new(
-            InMemoryTrieCursorFactory::new(
-                BaseProofsTrieCursorFactory::new(storage, block_number),
-                &nodes_sorted,
-            ),
-            HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
-                &state_sorted,
-            ),
+            InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted),
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
         )
         .with_prefix_sets(input.prefix_sets.freeze())
         .root_with_updates()
@@ -329,8 +320,8 @@ pub trait DatabaseStorageRoot<'tx, S: BaseProofsStore + 'tx + Clone> {
 
 impl<'tx, S> DatabaseStorageRoot<'tx, S>
     for StorageRoot<
-        BaseProofsTrieCursorFactory<'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, S>,
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
     >
 where
     S: BaseProofsStore + 'tx + Clone,
@@ -344,15 +335,14 @@ where
         let prefix_set = hashed_storage.construct_prefix_set().freeze();
         let state_sorted =
             HashedPostState::from_hashed_storage(keccak256(address), hashed_storage).into_sorted();
+        let tx = storage.ro_tx().map_err(Into::<DatabaseError>::into)?;
+        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
         StorageRoot::new(
-            BaseProofsTrieCursorFactory::new(storage, block_number),
-            HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
-                &state_sorted,
-            ),
+            trie_factory,
+            HashedPostStateCursorFactory::new(hashed_factory, &state_sorted),
             address,
             prefix_set,
-            TrieRootMetrics::new(TrieType::Custom("op_historical_proofs_storage")),
+            TrieRootMetrics::new(TrieType::Custom("base_historical_proofs_storage")),
         )
         .root()
     }
@@ -360,52 +350,73 @@ where
 
 /// Extends [`TrieWitness`] with operations specific for working with [`BaseProofsStorage`].
 pub trait DatabaseTrieWitness<'tx, S: BaseProofsStore + 'tx + Clone> {
-    /// Creates a new [`TrieWitness`] instance from [`BaseProofsStorage`].
-    fn from_tx(storage: &'tx BaseProofsStorage<S>, block_number: u64) -> Self;
-
     /// Generates the trie witness for the target state based on [`TrieInput`].
     fn overlay_witness(
         storage: &'tx BaseProofsStorage<S>,
         block_number: u64,
         input: TrieInput,
         target: HashedPostState,
+        mode: ExecutionWitnessMode,
     ) -> Result<B256Map<Bytes>, TrieWitnessError>;
+
+    /// Generates the trie witness for the target state, reusing `tx`.
+    fn overlay_witness_with_tx<'cursor>(
+        storage: &'tx BaseProofsStorage<S>,
+        tx: &'cursor <BaseProofsStorage<S> as BaseProofsStore>::Tx<'tx>,
+        block_number: u64,
+        input: TrieInput,
+        target: HashedPostState,
+        mode: ExecutionWitnessMode,
+    ) -> Result<B256Map<Bytes>, TrieWitnessError>
+    where
+        'tx: 'cursor;
 }
 
 impl<'tx, S> DatabaseTrieWitness<'tx, S>
     for TrieWitness<
-        BaseProofsTrieCursorFactory<'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, S>,
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
     >
 where
     S: BaseProofsStore + 'tx + Clone,
 {
-    fn from_tx(storage: &'tx BaseProofsStorage<S>, block_number: u64) -> Self {
-        Self::new(
-            BaseProofsTrieCursorFactory::new(storage, block_number),
-            BaseProofsHashedAccountCursorFactory::new(storage, block_number),
-        )
-    }
-
     fn overlay_witness(
         storage: &'tx BaseProofsStorage<S>,
         block_number: u64,
         input: TrieInput,
         target: HashedPostState,
+        mode: ExecutionWitnessMode,
     ) -> Result<B256Map<Bytes>, TrieWitnessError> {
+        let tx = storage.ro_tx().map_err(|error| {
+            let error = Into::<DatabaseError>::into(error);
+            StateProofError::from(error)
+        })?;
+        Self::overlay_witness_with_tx(storage, &tx, block_number, input, target, mode)
+    }
+
+    fn overlay_witness_with_tx<'cursor>(
+        storage: &'tx BaseProofsStorage<S>,
+        tx: &'cursor <BaseProofsStorage<S> as BaseProofsStore>::Tx<'tx>,
+        block_number: u64,
+        input: TrieInput,
+        target: HashedPostState,
+        mode: ExecutionWitnessMode,
+    ) -> Result<B256Map<Bytes>, TrieWitnessError>
+    where
+        'tx: 'cursor,
+    {
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
-        Self::from_tx(storage, block_number)
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(
-                BaseProofsTrieCursorFactory::new(storage, block_number),
-                &nodes_sorted,
-            ))
+        let (trie_factory, hashed_factory) = from_tx(storage, tx, block_number);
+        TrieWitness::new(trie_factory.clone(), hashed_factory.clone())
+            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
             .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                BaseProofsHashedAccountCursorFactory::new(storage, block_number),
+                hashed_factory,
                 &state_sorted,
             ))
             .with_prefix_sets_mut(input.prefix_sets)
             .always_include_root_node()
+            .with_execution_witness_mode(mode)
             .compute(target)
     }
 }

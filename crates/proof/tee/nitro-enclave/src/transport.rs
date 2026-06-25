@@ -36,7 +36,7 @@ const MAX_WRITE_SIZE: usize = 28 * 1024;
 
 /// Length-prefixed bincode codec over `AsyncRead`/`AsyncWrite`.
 ///
-/// Wire format: `[4B big-endian length][bincode payload]`
+/// Wire format: `[8B big-endian length][bincode payload]`
 ///
 /// Writes are throttled to [`MAX_WRITE_SIZE`]-byte segments to avoid
 /// triggering a Linux kernel vsock corruption bug.
@@ -52,12 +52,9 @@ impl Frame {
         let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())
             .map_err(|e| TransportError::Codec(e.to_string()))?;
 
-        let len = u32::try_from(payload.len())
-            .map_err(|_| TransportError::Codec("payload exceeds u32::MAX".into()))?;
-
         debug!(payload_bytes = payload.len(), "frame write start");
 
-        writer.write_u32(len).await?;
+        writer.write_u64(payload.len() as u64).await?;
         Self::write_throttled(writer, &payload).await?;
         writer.flush().await?;
 
@@ -67,13 +64,14 @@ impl Frame {
 
     /// Read a value from a length-prefixed bincode frame.
     ///
-    /// The peer-supplied length can be up to `u32::MAX` (~4 `GiB`). This is safe
-    /// because all transport peers are local (enclave ↔ host over vsock) and
-    /// witness bundles can legitimately be very large.
+    /// The peer-supplied length can be up to `u64::MAX`. This is safe because
+    /// all transport peers are local (enclave ↔ host over vsock) and witness
+    /// bundles can legitimately exceed 4 `GiB`.
     pub async fn read<T: serde::de::DeserializeOwned>(
         reader: &mut (impl AsyncReadExt + Unpin),
     ) -> TransportResult<T> {
-        let len = reader.read_u32().await? as usize;
+        let len = usize::try_from(reader.read_u64().await?)
+            .map_err(|_| TransportError::Codec("frame length exceeds u64::MAX".into()))?;
 
         debug!(payload_bytes = len, "frame read start");
 

@@ -119,6 +119,13 @@ pub enum BuildError {
         /// The hash of the transaction missing a receipt.
         tx_hash: B256,
     },
+
+    /// Cannot build pending blocks when the same transaction is added twice.
+    #[error("duplicate transaction: transaction {tx_hash} was added more than once to the builder")]
+    DuplicateTransaction {
+        /// The hash of the duplicated transaction.
+        tx_hash: B256,
+    },
 }
 
 /// Errors that can occur during flashblock state processing.

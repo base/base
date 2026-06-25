@@ -82,7 +82,7 @@ impl LocalNode {
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
         rpc_args.auth_ipc_path = unique_ipc_path;
 
-        let op_node = BaseNode::new(RollupArgs::default());
+        let base_node = BaseNode::new(RollupArgs::default());
 
         let (db, db_path) = Self::create_test_database()?;
 
@@ -90,6 +90,12 @@ impl LocalNode {
             .with_network(network_config)
             .with_rpc(rpc_args)
             .with_unused_ports();
+
+        // The Engine API test harness builds blocks back-to-back and expects each canonical head to
+        // be immediately usable as the next payload parent. Persist canonical blocks immediately so
+        // follow-up payload validation can resolve parent headers from the database-backed paths
+        // that reth 2.3.0 now consults during state-root/proof work.
+        node_config.engine.persistence_threshold = 0;
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config
@@ -99,8 +105,8 @@ impl LocalNode {
             .with_database(db)
             .with_launch_context(exec.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
-            .with_components(op_node.components())
-            .with_add_ons(op_node.add_ons())
+            .with_components(base_node.components())
+            .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
         let NodeHandle { node: node_handle, node_exit_future } = extensions

@@ -171,6 +171,7 @@ where
             &sys_config,
             sequence_number,
             &l1_header,
+            l2_parent.block_info.timestamp,
             next_l2_time,
         )
         .map_err(|e| {
@@ -203,6 +204,8 @@ where
                 suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
                 parent_beacon_block_root: parent_beacon_root,
                 withdrawals,
+                slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some(txs),
             no_tx_pool: Some(true),
@@ -262,7 +265,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
     use base_common_chains::Sepolia;
-    use base_common_genesis::{HardForkConfig, SystemConfig, SystemConfigUpdate};
+    use base_common_genesis::{SystemConfig, SystemConfigUpdate, UpgradeConfig};
     use base_protocol::{BlockInfo, DepositDecodeError};
 
     use super::*;
@@ -487,6 +490,7 @@ mod tests {
                 suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
                 parent_beacon_block_root: None,
                 withdrawals: None,
+                slot_number: None,
             },
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
@@ -506,7 +510,7 @@ mod tests {
         let timestamp = 100;
         let cfg = Arc::new(RollupConfig {
             block_time,
-            hardforks: HardForkConfig { canyon_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { canyon_time: Some(0), ..Default::default() },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
@@ -539,6 +543,7 @@ mod tests {
                 suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
                 parent_beacon_block_root: None,
                 withdrawals: Some(Vec::default()),
+                slot_number: None,
             },
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
@@ -558,7 +563,7 @@ mod tests {
         let timestamp = 100;
         let cfg = Arc::new(RollupConfig {
             block_time,
-            hardforks: HardForkConfig { ecotone_time: Some(102), ..Default::default() },
+            upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
@@ -592,6 +597,7 @@ mod tests {
                 suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
                 parent_beacon_block_root,
                 withdrawals: Some(vec![]),
+                slot_number: None,
             },
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
@@ -611,7 +617,7 @@ mod tests {
         let timestamp = 100;
         let cfg = Arc::new(RollupConfig {
             block_time,
-            hardforks: HardForkConfig { fjord_time: Some(102), ..Default::default() },
+            upgrades: UpgradeConfig { fjord_time: Some(102), ..Default::default() },
             ..Default::default()
         });
         let l1_cfg = Arc::new(Sepolia::l1_config());
@@ -644,6 +650,7 @@ mod tests {
                 suggested_fee_recipient: Predeploys::SEQUENCER_FEE_VAULT,
                 parent_beacon_block_root: Some(B256::ZERO),
                 withdrawals: Some(vec![]),
+                slot_number: None,
             },
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),

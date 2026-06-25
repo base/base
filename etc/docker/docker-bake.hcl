@@ -2,8 +2,16 @@ variable "PROFILE" {
   default = "release"
 }
 
+variable "ZK_PROVER_PROFILE" {
+  default = "release"
+}
+
 variable "RUST_VERSION" {
-  default = "1.93"
+  default = "1.94.1"
+}
+
+variable "BASE_SUCCINCT_ELF_REQUIRE" {
+  default = "1"
 }
 
 variable "REGISTRY_IMAGE" {
@@ -15,28 +23,32 @@ variable "PLATFORM_PAIR" {
 }
 
 group "default" {
-  targets = ["client"]
+  targets = ["base"]
 }
 
 group "rust-services" {
   targets = [
-    "client",
-    "builder",
-    "consensus",
+    "base",
     "proposer",
     "websocket-proxy",
     "ingress-rpc",
     "audit-archiver",
     "batcher",
+    "zk-prover",
   ]
 }
 
 group "devnet" {
-  targets = ["builder", "consensus", "client", "batcher"]
+  targets = ["base", "batcher", "zk-prover"]
 }
 
 group "ingress" {
-  targets = ["builder", "consensus", "client", "ingress-rpc", "audit-archiver", "batcher"]
+  targets = [
+    "base",
+    "ingress-rpc",
+    "audit-archiver",
+    "batcher",
+  ]
 }
 
 target "_rust-service-common" {
@@ -49,30 +61,10 @@ target "_rust-service-common" {
   cache-from = ["type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}"]
 }
 
-target "client" {
+target "base" {
   inherits = ["_rust-service-common"]
-  target = "client"
-  tags = ["base-reth-node:local"]
-}
-
-target "builder" {
-  inherits = ["_rust-service-common"]
-  target = "builder"
-  tags = ["base-builder:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-builder-${PLATFORM_PAIR}",
-  ]
-}
-
-target "consensus" {
-  inherits = ["_rust-service-common"]
-  target = "consensus"
-  tags = ["base-consensus:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-consensus-${PLATFORM_PAIR}",
-  ]
+  target = "base"
+  tags = ["base:local"]
 }
 
 target "proposer" {
@@ -106,5 +98,19 @@ target "batcher" {
   cache-from = [
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
     "type=registry,ref=${REGISTRY_IMAGE}:cache-batcher-${PLATFORM_PAIR}",
+  ]
+}
+
+target "zk-prover" {
+  inherits = ["_rust-service-common"]
+  target = "zk-prover"
+  args = {
+    PROFILE                   = "${ZK_PROVER_PROFILE}"
+    BASE_SUCCINCT_ELF_REQUIRE = "${BASE_SUCCINCT_ELF_REQUIRE}"
+  }
+  tags = ["base-prover-zk:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-zk-prover-${PLATFORM_PAIR}",
   ]
 }

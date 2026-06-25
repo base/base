@@ -1,30 +1,33 @@
 use alloy_chains::Chain;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
-use base_common_chains::BaseUpgrade;
-use derive_more::From;
+use alloy_primitives::Address;
+use base_common_genesis::BaseUpgrade;
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_primitives_traits::SealedHeader;
 
-use crate::BaseChainSpec;
+use crate::{BaseChainSpec, BaseChainSpecError};
 
 /// Chain spec builder for a Base chain.
-#[derive(Debug, Default, From)]
+#[derive(Debug, Default)]
 pub struct BaseChainSpecBuilder {
     /// [`ChainSpecBuilder`]
     inner: ChainSpecBuilder,
+    /// Activation registry admin address.
+    activation_admin_address: Option<Address>,
 }
 
 impl BaseChainSpecBuilder {
     /// Construct a new builder from the Base Mainnet chain spec.
     pub fn base_mainnet() -> Self {
+        let base_mainnet = BaseChainSpec::mainnet();
         let mut inner = ChainSpecBuilder::default()
-            .chain(crate::BASE_MAINNET.chain)
-            .genesis(crate::BASE_MAINNET.genesis.clone());
-        let forks = crate::BASE_MAINNET.hardforks.clone();
+            .chain(base_mainnet.chain)
+            .genesis(base_mainnet.genesis.clone());
+        let forks = base_mainnet.hardforks.clone();
         inner = inner.with_forks(forks);
-        Self { inner }
+        Self { inner, activation_admin_address: base_mainnet.activation_admin_address }
     }
 
     /// Set the chain ID.
@@ -48,6 +51,18 @@ impl BaseChainSpecBuilder {
     /// Add the given forks with the given activation condition to the spec.
     pub fn with_forks(mut self, forks: ChainHardforks) -> Self {
         self.inner = self.inner.with_forks(forks);
+        self
+    }
+
+    /// Set the activation registry admin address.
+    pub const fn activation_admin_address(mut self, address: Address) -> Self {
+        self.activation_admin_address = Some(address);
+        self
+    }
+
+    /// Set or clear the activation registry admin address.
+    pub const fn optional_activation_admin_address(mut self, address: Option<Address>) -> Self {
+        self.activation_admin_address = address;
         self
     }
 
@@ -130,18 +145,47 @@ impl BaseChainSpecBuilder {
         self
     }
 
-    /// Build the resulting [`BaseChainSpec`].
+    /// Enable Beryl at genesis.
+    pub fn beryl_activated(mut self) -> Self {
+        self = self.azul_activated();
+        self.inner = self.inner.with_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(0));
+        self
+    }
+
+    /// Enable Cobalt at genesis.
+    pub fn cobalt_activated(mut self) -> Self {
+        self = self.beryl_activated();
+        self.inner = self.inner.with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(0));
+        self
+    }
+
+    /// Tries to build the resulting [`BaseChainSpec`].
     ///
     /// # Panics
     ///
     /// This function panics if the chain ID and genesis is not set ([`Self::chain`] and
     /// [`Self::genesis`]).
-    pub fn build(self) -> BaseChainSpec {
+    pub fn try_build(self) -> Result<BaseChainSpec, BaseChainSpecError> {
         let mut inner = self.inner.build();
+        BaseChainSpec::validate_beryl_activation_admin(
+            &inner.hardforks,
+            self.activation_admin_address,
+            inner.chain.id(),
+        )?;
         inner.genesis_header = SealedHeader::seal_slow(BaseChainSpec::make_genesis_header(
             &inner.genesis,
             &inner.hardforks,
         ));
-        BaseChainSpec { inner }
+        Ok(BaseChainSpec { inner, activation_admin_address: self.activation_admin_address })
+    }
+
+    /// Build the resulting [`BaseChainSpec`].
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the chain ID and genesis is not set ([`Self::chain`] and
+    /// [`Self::genesis`]), or if Beryl is scheduled without an activation registry admin address.
+    pub fn build(self) -> BaseChainSpec {
+        self.try_build().expect("Beryl-enabled chain spec requires activation admin")
     }
 }

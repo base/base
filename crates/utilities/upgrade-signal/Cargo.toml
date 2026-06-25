@@ -1,0 +1,40 @@
+[package]
+name = "base-upgrade-signal"
+description = "L1 upgrade signal reader utilities"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-metrics.workspace = true
+base-common-genesis = { workspace = true, features = ["std"] }
+
+# alloy
+alloy-provider.workspace = true
+alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+
+# general
+url.workspace = true
+tracing.workspace = true
+futures.workspace = true
+metrics = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["time"] }
+thiserror = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "env"] }
+serde = { workspace = true, features = ["derive", "std"] }
+
+[features]
+default = []
+metrics = [ "base-metrics/metrics", "dep:metrics" ]
+
+[dev-dependencies]
+rstest.workspace = true

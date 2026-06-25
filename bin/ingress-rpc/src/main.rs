@@ -1,21 +1,17 @@
 //! Ingress RPC binary entry point.
 
-use alloy_provider::ProviderBuilder;
-use audit_archiver_lib::{
-    AuditConnector, BundleEvent, KafkaBundleEventPublisher, load_kafka_config_from_file,
-};
+use std::time::Duration;
+
+use alloy_provider::RootProvider;
+use audit_archiver_lib::{AuditConnector, BundleEvent, RpcBundleEventPublisher};
 use base_bundles::MeterBundleResponse;
 use base_cli_utils::LogConfig;
 use base_common_network::Base;
 use clap::Parser;
-use ingress_rpc_lib::{
-    BuilderConnector, Config, HealthServer, IngressApiServer, IngressService, KafkaMessageQueue,
-    Providers,
-};
+use ingress_rpc_lib::{BuilderConnector, Config, HealthServer, IngressApiServer, IngressService};
 use jsonrpsee::server::Server;
-use rdkafka::{ClientConfig, producer::FutureProducer};
 use tokio::sync::{broadcast, mpsc};
-use tracing::info;
+use tracing::{info, warn};
 
 base_cli_utils::define_log_args!("TIPS_INGRESS");
 base_cli_utils::define_metrics_args!("TIPS_INGRESS", 9002);
@@ -54,43 +50,38 @@ async fn main() -> anyhow::Result<()> {
         message = "Starting ingress service",
         address = %config.address,
         port = config.port,
-        mempool_url = %config.mempool_url,
         simulation_rpc = %config.simulation_rpc,
         metrics_addr = %metrics_addr,
         metrics_port = metrics_port,
         health_check_address = %config.health_check_addr,
     );
 
-    let providers = Providers {
-        mempool: ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .network::<Base>()
-            .connect_http(config.mempool_url),
-        simulation: ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .network::<Base>()
-            .connect_http(config.simulation_rpc),
-        raw_tx_forward: config.raw_tx_forward_rpc.clone().map(|url| {
-            ProviderBuilder::new().disable_recommended_fillers().network::<Base>().connect_http(url)
-        }),
-    };
+    if config.deprecated_mempool_url.is_some() {
+        warn!(
+            env = "TIPS_INGRESS_RPC_MEMPOOL",
+            "Deprecated ingress mempool forwarding config is set and will be ignored"
+        );
+    }
+    if config.deprecated_raw_tx_forward_rpc.is_some() {
+        warn!(
+            env = "TIPS_INGRESS_RAW_TX_FORWARD_RPC",
+            "Deprecated ingress raw transaction forwarder config is set and will be ignored"
+        );
+    }
 
-    let ingress_client_config =
-        ClientConfig::from_iter(load_kafka_config_from_file(&config.ingress_kafka_properties)?);
+    let simulation_provider = RootProvider::<Base>::new_http(config.simulation_rpc.clone());
 
-    let queue_producer: FutureProducer = ingress_client_config.create()?;
-
-    let queue = KafkaMessageQueue::new(queue_producer);
-
-    let audit_client_config =
-        ClientConfig::from_iter(load_kafka_config_from_file(&config.audit_kafka_properties)?);
-
-    let audit_producer: FutureProducer = audit_client_config.create()?;
-
-    let audit_publisher =
-        KafkaBundleEventPublisher::new(audit_producer, config.audit_topic.clone());
+    let audit_publisher = RpcBundleEventPublisher::new(
+        config.audit_rpc_url.as_str(),
+        Duration::from_secs(config.audit_rpc_timeout_secs),
+    )?;
     let (audit_tx, audit_rx) = mpsc::channel::<BundleEvent>(config.audit_channel_capacity);
-    AuditConnector::connect(audit_rx, audit_publisher);
+    AuditConnector::connect_batched(
+        audit_rx,
+        audit_publisher,
+        config.audit_batch_max_size,
+        Duration::from_millis(config.audit_batch_max_wait_ms),
+    );
 
     let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
@@ -112,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let bind_addr = format!("{}:{}", config.address, config.port);
-    let service = IngressService::new(providers, queue, audit_tx, builder_tx, cli.config);
+    let service = IngressService::new(simulation_provider, audit_tx, builder_tx, cli.config);
 
     let server = Server::builder().build(&bind_addr).await?;
     let addr = server.local_addr()?;

@@ -7,6 +7,7 @@
 
 use std::{num::NonZeroUsize, sync::Arc};
 
+use base_runtime::{Spawner, TokioRuntime};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tracing::{debug, warn};
 
@@ -30,20 +31,36 @@ pub struct SendResult<T> {
 /// `Clone` produces a handle to the same queue — clones share the semaphore and
 /// underlying [`TxManager`], so backpressure limits apply across all handles.
 #[derive(Debug, Clone)]
-pub struct TxQueue<M> {
+pub struct TxQueue<M, R = TokioRuntime> {
     tx_mgr: Arc<M>,
     semaphore: Arc<Semaphore>,
+    runtime: R,
 }
 
-impl<M: TxManager + 'static> TxQueue<M> {
+impl<M: TxManager + 'static> TxQueue<M, TokioRuntime> {
     /// Creates a new `TxQueue`.
     ///
     /// `max_pending` controls how many transactions may be in-flight at once.
     /// `None` means unlimited (no backpressure).
     pub fn new(tx_mgr: Arc<M>, max_pending: Option<NonZeroUsize>) -> Self {
+        Self::with_runtime(tx_mgr, max_pending, TokioRuntime::new())
+    }
+}
+
+impl<M, R> TxQueue<M, R>
+where
+    M: TxManager + 'static,
+    R: Spawner,
+{
+    /// Creates a new `TxQueue` backed by an explicit task spawner.
+    ///
+    /// Production callers normally use [`TxQueue::new`]. Tests can pass
+    /// `base_runtime::deterministic::Context` to make background completion
+    /// task ordering reproducible.
+    pub fn with_runtime(tx_mgr: Arc<M>, max_pending: Option<NonZeroUsize>, runtime: R) -> Self {
         let permits = max_pending.map(|n| n.get()).unwrap_or(Semaphore::MAX_PERMITS);
         debug!(max_pending = permits, "tx queue created");
-        Self { tx_mgr, semaphore: Arc::new(Semaphore::new(permits)) }
+        Self { tx_mgr, semaphore: Arc::new(Semaphore::new(permits)), runtime }
     }
 
     /// Queues a transaction for sending, blocking if the queue is full.
@@ -124,7 +141,7 @@ impl<M: TxManager + 'static> TxQueue<M> {
     ) {
         debug!("dispatching send_async");
         let handle = self.tx_mgr.send_async(candidate).await;
-        tokio::spawn(async move {
+        self.runtime.spawn(async move {
             let result = handle.await;
             let success = result.is_ok();
             // Release the permit before sending the result to avoid deadlock:
@@ -141,12 +158,16 @@ impl<M: TxManager + 'static> TxQueue<M> {
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     };
 
     use alloy_primitives::Address;
-    use tokio::sync::{Notify, mpsc};
+    use base_runtime::{
+        Clock,
+        deterministic::{Config, Runner},
+    };
+    use tokio::sync::{Notify, mpsc, oneshot};
 
     use super::*;
     use crate::{SendHandle, TxManagerError, test_utils::StubReceipt};
@@ -244,6 +265,44 @@ mod tests {
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
             let (tx, rx) = tokio::sync::oneshot::channel();
             tx.send(Err(TxManagerError::NonceTooLow)).expect("receiver not dropped");
+            SendHandle::new(rx)
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    // ── ControlledTxManager ─────────────────────────────────────────────
+
+    /// A mock whose receipt responders are held by the test.
+    #[derive(Debug)]
+    struct ControlledTxManager {
+        call_count: AtomicU64,
+        responders: Mutex<Vec<Option<oneshot::Sender<SendResponse>>>>,
+    }
+
+    impl ControlledTxManager {
+        fn new() -> Self {
+            Self { call_count: AtomicU64::new(0), responders: Mutex::new(Vec::new()) }
+        }
+
+        fn complete(&self, index: usize) {
+            let responder =
+                self.responders.lock().unwrap()[index].take().expect("responder present");
+            responder.send(Ok(StubReceipt::success())).expect("receiver not dropped");
+        }
+    }
+
+    impl TxManager for ControlledTxManager {
+        async fn send(&self, _candidate: TxCandidate) -> SendResponse {
+            Ok(StubReceipt::success())
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            let (tx, rx) = oneshot::channel();
+            self.responders.lock().unwrap().push(Some(tx));
             SendHandle::new(rx)
         }
 
@@ -396,5 +455,52 @@ mod tests {
         let second = recv_timeout(&mut result_rx, 2).await;
         assert_eq!(second.id, 2);
         assert_eq!(second.result.unwrap_err(), TxManagerError::NonceTooLow);
+    }
+
+    #[test]
+    fn permit_releases_before_blocked_result_send_under_deterministic_runtime() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mgr = Arc::new(ControlledTxManager::new());
+            let queue = TxQueue::with_runtime(
+                Arc::clone(&mgr),
+                Some(NonZeroUsize::new(1).unwrap()),
+                ctx.clone(),
+            );
+            let (result_tx, mut result_rx) = mpsc::channel::<SendResult<u64>>(1);
+
+            result_tx
+                .try_send(SendResult { id: 0, result: Ok(StubReceipt::success()) })
+                .expect("result channel should accept sentinel");
+
+            queue.send(1, stub_candidate(), result_tx.clone()).await;
+            assert_eq!(mgr.call_count.load(Ordering::SeqCst), 1);
+
+            mgr.complete(0);
+            ctx.sleep(std::time::Duration::from_millis(1)).await;
+
+            assert_eq!(
+                result_rx.len(),
+                1,
+                "first result task should be blocked on the full result channel"
+            );
+            assert!(
+                queue.try_send(2, stub_candidate(), result_tx.clone()).await.is_ok(),
+                "permit must be released before the first result send can complete"
+            );
+            assert_eq!(
+                mgr.call_count.load(Ordering::SeqCst),
+                2,
+                "second send must dispatch while first result delivery is still blocked"
+            );
+
+            let sentinel = result_rx.recv().await.expect("sentinel result");
+            assert_eq!(sentinel.id, 0);
+            let first = result_rx.recv().await.expect("first result");
+            assert_eq!(first.id, 1);
+
+            mgr.complete(1);
+            let second = result_rx.recv().await.expect("second result");
+            assert_eq!(second.id, 2);
+        });
     }
 }

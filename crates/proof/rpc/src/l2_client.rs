@@ -10,12 +10,14 @@ use alloy_rpc_types_eth::{BlockId, EIP1186AccountProofResponse, Header};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
+use base_optimism_rpc::DebugProviderExt;
+use base_retry::RetryConfig;
 use url::Url;
 
 use super::{
     L2HttpProvider,
     cache::MeteredCache,
-    config::{DEFAULT_CACHE_SIZE, RetryConfig},
+    config::DEFAULT_CACHE_SIZE,
     error::{RpcError, RpcResult},
     traits::L2Provider,
     types::BaseBlock,
@@ -193,18 +195,13 @@ impl L2Provider for L2Client {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         let backoff = self.retry_config.to_backoff_builder();
 
-        (|| async {
-            self.provider
-                .raw_request::<_, serde_json::Value>("debug_chainConfig".into(), ())
-                .await
-                .map_err(RpcError::from)
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::chain_config");
-        })
-        .await
+        (|| async { self.provider.debug_chain_config().await.map_err(RpcError::from) })
+            .retry(backoff)
+            .when(|e| e.is_retryable())
+            .notify(|err, dur| {
+                tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::chain_config");
+            })
+            .await
     }
 
     async fn get_proof(
@@ -223,7 +220,8 @@ impl L2Provider for L2Client {
 
         let proof: EIP1186AccountProofResponse = (|| async {
             self.provider
-                .raw_request("eth_getProof".into(), (address, empty_keys.clone(), block_hash))
+                .get_proof(address, empty_keys.clone())
+                .hash(block_hash)
                 .await
                 .map_err(RpcError::from)
         })
@@ -240,9 +238,8 @@ impl L2Provider for L2Client {
         Ok(proof)
     }
 
-    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
-        let block_id: BlockId =
-            number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<Header> {
+        let block_id: BlockId = block.into();
 
         let backoff = self.retry_config.to_backoff_builder();
 
@@ -265,9 +262,8 @@ impl L2Provider for L2Client {
         Ok(header)
     }
 
-    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<BaseBlock> {
-        let block_id: BlockId =
-            number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
+    async fn block_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseBlock> {
+        let block_id: BlockId = block.into();
 
         let backoff = self.retry_config.to_backoff_builder();
 

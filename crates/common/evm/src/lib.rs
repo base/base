@@ -5,8 +5,10 @@
 
 extern crate alloc;
 
+pub use base_common_genesis::BaseUpgrade;
+
 mod spec;
-pub use spec::OpSpecId;
+pub use spec::BaseSpecId;
 
 mod result;
 pub use result::BaseHaltReason;
@@ -17,27 +19,29 @@ pub use l1block::L1BlockInfo;
 mod transaction;
 pub use transaction::{
     BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr, BuildError,
-    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
+    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, EIP8130_TRANSACTION_TYPE,
+    Eip8130TransactionParts,
 };
 
 mod handler;
 pub use handler::{BaseHandler, IsTxError};
 
 mod precompiles;
-pub use precompiles::{
-    BasePrecompiles, GRANITE, GRANITE_MAX_INPUT_SIZE, ISTHMUS_G1_MSM,
-    ISTHMUS_G1_MSM_MAX_INPUT_SIZE, ISTHMUS_G2_MSM, ISTHMUS_G2_MSM_MAX_INPUT_SIZE, ISTHMUS_PAIRING,
-    ISTHMUS_PAIRING_MAX_INPUT_SIZE, JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE,
-    JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
-    JOVIAN_PAIRING_MAX_INPUT_SIZE, run_g1_msm_isthmus, run_g1_msm_jovian, run_g2_msm_isthmus,
-    run_g2_msm_jovian, run_pair_granite, run_pair_jovian, run_pairing_isthmus, run_pairing_jovian,
-};
+pub use precompiles::BasePrecompiles;
+
+mod beryl_metrics;
+pub use beryl_metrics::BerylPrecompileMetricsObserver;
 
 mod api;
 pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};
 
 mod evm;
 pub use evm::BaseEvm;
+
+#[cfg(feature = "std")]
+mod eip8130;
+#[cfg(feature = "std")]
+pub use eip8130::{Eip8130Executor, Eip8130Outcome};
 
 mod factory;
 pub use factory::BaseEvmFactory;

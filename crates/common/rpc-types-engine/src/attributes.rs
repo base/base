@@ -26,7 +26,7 @@ pub struct BasePayloadAttributes {
     /// Transactions is a field for rollups: the transactions list is forced into the block
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub transactions: Option<Vec<Bytes>>,
-    /// If true, the no transactions are taken out of the tx-pool, only transactions from the above
+    /// If true, no transactions are taken from the tx-pool; only transactions from the above
     /// Transactions list will be included.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub no_tx_pool: Option<bool>,
@@ -57,7 +57,7 @@ impl BasePayloadAttributes {
     ///
     /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
     ///
-    /// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for a hardfork.
+    /// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for an upgrade.
     /// See also <https://github.com/ethereum-optimism/op-geth/blob/d401af16f2dd94b010a72eaef10e07ac10b31931/miner/payload_building.go#L59-L59>
     pub fn payload_id(&self, parent: &B256, payload_version: u8) -> PayloadId {
         let mut hasher = sha2::Sha256::new();
@@ -121,7 +121,7 @@ impl BasePayloadAttributes {
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 
-    /// Extracts the Holocene 1599 parameters from the encoded form:
+    /// Extracts the Holocene EIP-1559 parameters from the encoded form:
     /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md#eip1559params-encoding>
     ///
     /// Returns (`elasticity`, `denominator`)
@@ -148,14 +148,10 @@ impl BasePayloadAttributes {
     ///
     /// This iterator will be empty if there are no transactions in the attributes.
     pub fn decoded_transactions(&self) -> impl Iterator<Item = Eip2718Result<BaseTxEnvelope>> + '_ {
-        self.transactions.iter().flatten().map(|tx_bytes| {
-            let mut buf = tx_bytes.as_ref();
-            let tx = BaseTxEnvelope::decode_2718(&mut buf).map_err(alloy_rlp::Error::from)?;
-            if !buf.is_empty() {
-                return Err(alloy_rlp::Error::UnexpectedLength.into());
-            }
-            Ok(tx)
-        })
+        self.transactions
+            .iter()
+            .flatten()
+            .map(|tx_bytes| BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref()))
     }
 
     /// Returns iterator over decoded transactions with their original encoded bytes.
@@ -169,7 +165,7 @@ impl BasePayloadAttributes {
             .flatten()
             .cloned()
             .zip(self.decoded_transactions())
-            .map(|(tx_bytes, result)| result.map(|op_tx| WithEncoded::new(tx_bytes, op_tx)))
+            .map(|(tx_bytes, result)| result.map(|base_tx| WithEncoded::new(tx_bytes, base_tx)))
     }
 
     /// Returns an iterator over the recovered [`BaseTxEnvelope`] in this attributes.
@@ -210,7 +206,7 @@ impl BasePayloadAttributes {
             .flatten()
             .cloned()
             .zip(self.recovered_transactions())
-            .map(|(tx_bytes, result)| result.map(|op_tx| WithEncoded::new(tx_bytes, op_tx)))
+            .map(|(tx_bytes, result)| result.map(|base_tx| WithEncoded::new(tx_bytes, base_tx)))
     }
 }
 
@@ -239,6 +235,7 @@ mod test {
                 suggested_fee_recipient: address!("0x4200000000000000000000000000000000000011"),
                 withdrawals: Some([].into()),
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
+                slot_number: None,
             },
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
@@ -272,6 +269,7 @@ mod test {
                 suggested_fee_recipient: address!("0x4200000000000000000000000000000000000011"),
                 withdrawals: Some([].into()),
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
+                slot_number: None,
             },
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
@@ -300,6 +298,7 @@ mod test {
                 suggested_fee_recipient: Address::ZERO,
                 withdrawals: Default::default(),
                 parent_beacon_block_root: Some(B256::ZERO),
+                slot_number: None,
             },
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
@@ -323,6 +322,7 @@ mod test {
                 suggested_fee_recipient: Address::ZERO,
                 withdrawals: Default::default(),
                 parent_beacon_block_root: Some(B256::ZERO),
+                slot_number: None,
             },
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
@@ -364,6 +364,7 @@ mod test {
                 suggested_fee_recipient: Address::ZERO,
                 withdrawals: Default::default(),
                 parent_beacon_block_root: Some(B256::ZERO),
+                slot_number: None,
             },
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
@@ -387,6 +388,7 @@ mod test {
                 suggested_fee_recipient: Address::ZERO,
                 withdrawals: Default::default(),
                 parent_beacon_block_root: Some(B256::ZERO),
+                slot_number: None,
             },
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),

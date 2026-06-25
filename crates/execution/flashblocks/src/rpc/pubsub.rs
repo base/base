@@ -21,6 +21,7 @@ use reth_rpc_eth_api::{
     EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction,
     pubsub::EthPubSubApiServer as RethEthPubSubApiServer,
 };
+use reth_tasks::Runtime;
 use serde::Serialize;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
@@ -67,8 +68,12 @@ pub struct EthPubSub<Eth, FB> {
 
 impl<Eth, FB> EthPubSub<Eth, FB> {
     /// Creates a new instance with the given eth API and flashblocks state.
-    pub fn new(eth_api: Eth, flashblocks_state: Arc<FB>) -> Self {
-        Self { inner: RethEthPubSub::new(eth_api), flashblocks_state }
+    pub fn new(
+        eth_api: Eth,
+        subscription_task_spawner: Runtime,
+        flashblocks_state: Arc<FB>,
+    ) -> Self {
+        Self { inner: RethEthPubSub::new(eth_api, subscription_task_spawner), flashblocks_state }
     }
 
     /// Returns a stream that yields all new flashblocks as RPC blocks

@@ -10,6 +10,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use tracing::instrument;
 
 use crate::{
     Metrics, PoolActivation,
@@ -66,12 +67,12 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// Starts building the next L2 block on top of an explicit `parent`, returning a handle to
     /// the in-flight payload.
     ///
-    /// Unlike [`Self::build`], this bypasses the watch channel and uses the provided
-    /// `parent` directly. Call this when the correct parent is already known (e.g., the
-    /// block just sealed) to avoid racing against the engine's internal state update.
+    /// Use this when the caller already knows the correct parent, such as after an acknowledged
+    /// local insert. That avoids racing the unsafe-head watch channel publication path.
     ///
     /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
     /// next tick.
+    #[instrument(skip_all, fields(parent_num = parent.block_info.number, l1_origin_num = tracing::field::Empty))]
     pub async fn build_on(
         &mut self,
         parent: L2BlockInfo,
@@ -79,6 +80,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         let Some(l1_origin) = self.get_next_payload_l1_origin(parent).await? else {
             return Ok(None);
         };
+        tracing::Span::current().record("l1_origin_num", l1_origin.number);
 
         info!(
             target: "sequencer",
@@ -93,14 +95,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             return Ok(None);
         };
 
-        Metrics::sequencer_attributes_build_duration().set(attributes_build_start.elapsed());
+        Metrics::sequencer_attributes_build_duration().record(attributes_build_start.elapsed());
 
         let build_request_start = Instant::now();
 
         let payload_id =
             self.engine_client.start_build_block(attributes_with_parent.clone()).await?;
 
-        Metrics::sequencer_block_building_start_task_duration().set(build_request_start.elapsed());
+        Metrics::sequencer_block_building_start_task_duration()
+            .record(build_request_start.elapsed());
 
         Ok(Some(UnsealedPayloadHandle { payload_id, attributes_with_parent }))
     }
@@ -202,10 +205,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         self.rollup_config.log_upgrade_activation(
             unsafe_head.block_info.number.saturating_add(1),
             attributes.payload_attributes.timestamp,
+            unsafe_head.block_info.timestamp,
         );
         let activator = PoolActivation::new(Arc::clone(&self.rollup_config));
-        attributes.no_tx_pool =
-            Some(!activator.is_enabled(self.recovery_mode.get(), l1_origin, &attributes));
+        attributes.no_tx_pool = Some(!activator.is_enabled(
+            self.recovery_mode.get(),
+            l1_origin,
+            unsafe_head.block_info.timestamp,
+            &attributes,
+        ));
 
         let attrs_with_parent = AttributesWithParent::new(attributes, unsafe_head, None, false);
         Ok(Some(attrs_with_parent))

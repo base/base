@@ -140,6 +140,7 @@ mod tests {
                 inner: recovered,
                 block_hash: Some(B256::ZERO),
                 block_number: Some(42),
+                block_timestamp: None,
                 transaction_index: Some(3),
                 effective_gas_price: Some(1_000_000_000),
             },

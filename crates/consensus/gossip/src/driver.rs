@@ -1,7 +1,8 @@
 //! Consensus-layer gossipsub driver for Base.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    num::NonZeroUsize,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -16,16 +17,29 @@ use futures::{AsyncWriteExt, stream::StreamExt};
 use libp2p::{
     Multiaddr, PeerId, Swarm, TransportError,
     gossipsub::{IdentTopic, MessageId},
-    swarm::SwarmEvent,
+    swarm::{
+        SwarmEvent,
+        dial_opts::{DialOpts, PeerCondition},
+    },
 };
 use libp2p_identity::Keypair;
 use libp2p_stream::IncomingStreams;
+use lru::LruCache;
 use tokio::sync::Mutex;
 
 use crate::{
     Behaviour, BlockHandler, ConnectionGate, ConnectionGater, Event, GossipDriverBuilder, Handler,
     Metrics, PublishError,
 };
+
+/// Configuration applied when constructing a [`GossipDriver`].
+#[derive(Debug, Clone)]
+pub struct GossipDriverConfig {
+    /// Maximum number of peers to retain identify metadata for.
+    pub max_identify_peerstore_peers: NonZeroUsize,
+    /// Peer score monitoring config.
+    pub peer_monitoring: Option<PeerMonitoring>,
+}
 
 /// A driver for a [`Swarm`] instance.
 ///
@@ -51,8 +65,8 @@ pub struct GossipDriver<G: ConnectionGate> {
     /// TODO: remove the sync-req-resp protocol once it is fully deprecated upstream.
     #[debug(skip)]
     pub sync_protocol: Option<IncomingStreams>,
-    /// A mapping from [`PeerId`] to [`Multiaddr`].
-    pub peerstore: HashMap<PeerId, libp2p::identify::Info>,
+    /// LRU cache of identify metadata keyed by [`PeerId`].
+    pub peerstore: LruCache<PeerId, libp2p::identify::Info>,
     /// If set, the gossip layer will monitor peer scores and ban peers that are below a given
     /// threshold.
     pub peer_monitoring: Option<PeerMonitoring>,
@@ -86,13 +100,14 @@ where
         sync_handler: libp2p_stream::Control,
         sync_protocol: IncomingStreams,
         gate: G,
+        config: GossipDriverConfig,
     ) -> Self {
         Self {
             swarm,
             addr,
             handler,
-            peerstore: Default::default(),
-            peer_monitoring: None,
+            peerstore: LruCache::new(config.max_identify_peerstore_peers),
+            peer_monitoring: config.peer_monitoring,
             peer_connection_start: Default::default(),
             sync_handler,
             sync_protocol: Some(sync_protocol),
@@ -143,7 +158,10 @@ where
             return;
         };
 
-        // Spawn a new task to handle the sync request/response protocol.
+        // Spawn a single task to handle all inbound sync substreams serially.
+        // The response is a constant 2-byte write — no I/O wait benefits from per-stream
+        // concurrency. Inlining eliminates per-substream task allocation and bounds
+        // heap exposure.
         tokio::spawn(async move {
             loop {
                 let Some((peer_id, mut inbound_stream)) = sync_protocol.next().await else {
@@ -151,22 +169,24 @@ where
                     return;
                 };
 
-                info!(target: "gossip", peer_id = %peer_id, "Received a sync request, spawning a new task to handle it");
+                trace!(target: "gossip", peer_id = %peer_id, "Received sync request");
+                Metrics::sync_requests().increment(1);
 
-                tokio::spawn(async move {
-                    // We return: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
-                    // Response format: <response> = <res><version><payload>
-                    // No payload is returned.
-                    const OUTPUT: [u8; 2] = hex!("0100");
+                // We return: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
+                // Response format: <response> = <res><version><payload>
+                // No payload is returned.
+                const OUTPUT: [u8; 2] = hex!("0100");
+                const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
-                    // We only write that we're not supporting the sync request.
-                    if let Err(e) = inbound_stream.write_all(&OUTPUT).await {
-                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write the sync response");
-                        return;
-                    };
-
-                    debug!(target: "gossip", bytes_sent = OUTPUT.len(), peer_id = %peer_id, "Sent outbound sync response");
-                });
+                match tokio::time::timeout(WRITE_TIMEOUT, inbound_stream.write_all(&OUTPUT)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write sync response");
+                    }
+                    Err(_) => {
+                        warn!(target: "gossip", peer_id = %peer_id, "Sync response write timed out");
+                    }
+                }
             }
         });
     }
@@ -221,6 +241,40 @@ where
         self.swarm.connected_peers().count()
     }
 
+    /// Aborts pending outbound dials that exceeded the connection gate timeout.
+    ///
+    /// Established peers are removed from pending bookkeeping but are not disconnected.
+    pub fn clear_expired_pending_connections(&mut self) -> usize {
+        let expired = self.connection_gate.expired_pending_dials();
+        let mut cleared = 0;
+
+        for (peer_id, age) in expired {
+            if self.swarm.connected_peers().any(|connected| connected == &peer_id) {
+                self.connection_gate.remove_dial(&peer_id);
+                debug!(
+                    target: "gossip",
+                    peer_id = %peer_id,
+                    pending_dial_age_seconds = age.as_secs_f64(),
+                    "Cleared pending dial bookkeeping for connected peer"
+                );
+                cleared += 1;
+                continue;
+            }
+
+            let _ = self.swarm.disconnect_peer_id(peer_id);
+            self.connection_gate.remove_dial(&peer_id);
+            debug!(
+                target: "gossip",
+                peer_id = %peer_id,
+                pending_dial_age_seconds = age.as_secs_f64(),
+                "Aborted expired pending outbound dial"
+            );
+            cleared += 1;
+        }
+
+        cleared
+    }
+
     /// Dials the given [`Enr`].
     pub fn dial(&mut self, enr: Enr) {
         let validation = EnrValidation::validate(&enr, self.handler.rollup_config.l2_chain_id.id());
@@ -239,8 +293,8 @@ where
     /// Dials the given [`Multiaddr`].
     pub fn dial_multiaddr(&mut self, addr: Multiaddr) {
         // Check if we're allowed to dial the address.
-        if let Err(dial_error) = self.connection_gate.can_dial(&addr) {
-            debug!(target: "gossip", ?dial_error, "unable to dial peer");
+        if let Err(connect_error) = self.connection_gate.can_connect_outbound(&addr) {
+            debug!(target: "gossip", ?connect_error, "unable to dial peer");
             return;
         }
 
@@ -260,8 +314,12 @@ where
         // Note: libp2p-dns will automatically resolve DNS multiaddrs at the transport layer.
         self.connection_gate.dialing(&addr);
 
-        // Dial
-        match self.swarm.dial(addr.clone()) {
+        let dial_opts = DialOpts::peer_id(peer_id)
+            .addresses(vec![addr.clone()])
+            .condition(PeerCondition::DisconnectedAndNotDialing)
+            .build();
+
+        match self.swarm.dial(dial_opts) {
             Ok(_) => {
                 trace!(target: "gossip", peer=?addr, "Dialed peer");
                 self.connection_gate.dialed(&addr);
@@ -273,6 +331,27 @@ where
                 Metrics::dial_peer_error("connection_error").increment(1.0);
             }
         }
+    }
+
+    /// Aborts every outbound connection attempt currently tracked as pending.
+    pub fn clear_pending_connections(&mut self) -> usize {
+        let pending_dials = self.connection_gate.pending_dials();
+        let count = pending_dials.len();
+
+        for peer_id in pending_dials {
+            let _ = self.swarm.disconnect_peer_id(peer_id);
+            self.connection_gate.remove_dial(&peer_id);
+        }
+
+        if count > 0 {
+            info!(
+                target: "gossip",
+                count,
+                "Cleared pending outgoing connections"
+            );
+        }
+
+        count
     }
 
     fn handle_gossip_event(&mut self, event: Event) -> Option<NetworkPayloadEnvelope> {
@@ -314,7 +393,8 @@ where
         match event {
             libp2p::identify::Event::Received { connection_id, peer_id, info } => {
                 debug!(target: "gossip", ?connection_id, peer_id = %peer_id, ?info, "Received identify info from peer");
-                self.peerstore.insert(peer_id, info);
+                self.prune_peerstore_for_new_peer(peer_id);
+                self.peerstore.put(peer_id, info);
             }
             libp2p::identify::Event::Sent { connection_id, peer_id } => {
                 debug!(target: "gossip", ?connection_id, peer_id = %peer_id, "Sent identify info to peer");
@@ -326,6 +406,30 @@ where
                 error!(target: "gossip", ?connection_id, peer_id = %peer_id, ?error, "Error raised while attempting to identify remote");
             }
         }
+    }
+
+    fn prune_peerstore_for_new_peer(&mut self, peer_id: PeerId) {
+        if self.peerstore.contains(&peer_id) || self.peerstore.len() < self.peerstore.cap().get() {
+            return;
+        }
+
+        let connected_peers = self.swarm.connected_peers().copied().collect::<HashSet<_>>();
+        let peer_to_remove = peerstore_eviction_candidate(&self.peerstore, &connected_peers)
+            .expect("peerstore is non-empty when at capacity");
+
+        self.peerstore.pop(&peer_to_remove);
+
+        // This is a cache-level cap, not Lighthouse's full peer lifecycle model. Lighthouse
+        // keeps explicit connection state and evicts excess disconnected, untrusted peers; Base
+        // currently only has identify metadata here, so prefer disconnected entries and bound
+        // the cache until we model peer lifecycle state directly.
+        debug!(
+            target: "gossip",
+            peer_id = %peer_to_remove,
+            peerstore_size = self.peerstore.len(),
+            peerstore_limit = self.peerstore.cap().get(),
+            "Evicted identify info from peerstore"
+        );
     }
 
     /// Handles a [`libp2p::gossipsub::Event`].
@@ -377,7 +481,19 @@ where
             SwarmEvent::Behaviour(behavior_event) => {
                 return self.handle_gossip_event(behavior_event);
             }
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, .. } => {
+                self.connection_gate.remove_dial(&peer_id);
+
+                if endpoint.is_listener() {
+                    let addr = endpoint.get_remote_address();
+                    if let Err(error) = self.connection_gate.can_connect_inbound(&peer_id, addr) {
+                        debug!(target: "gossip", peer_id = %peer_id, addr = %addr, error = ?error, "Closing blocked inbound connection");
+                        self.swarm.close_connection(connection_id);
+                        Metrics::gossipsub_connection("blocked_inbound").increment(1.0);
+                        return None;
+                    }
+                }
+
                 let peer_count = self.swarm.connected_peers().count();
                 debug!(target: "gossip", peer_id = %peer_id, peer_count, "Connection established");
                 Metrics::gossipsub_connection("connected").increment(1.0);
@@ -440,5 +556,164 @@ where
         };
 
         None
+    }
+}
+
+fn peerstore_eviction_candidate<T>(
+    peerstore: &LruCache<PeerId, T>,
+    connected_peers: &HashSet<PeerId>,
+) -> Option<PeerId> {
+    peerstore
+        .iter()
+        .rev()
+        .map(|(peer_id, _)| *peer_id)
+        .find(|peer_id| !connected_peers.contains(peer_id))
+        .or_else(|| peerstore.iter().next_back().map(|(peer_id, _)| *peer_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_chains::Chain;
+
+    use super::*;
+
+    fn test_driver() -> GossipDriver<ConnectionGater> {
+        let rollup_config = RollupConfig {
+            l2_chain_id: Chain::base_mainnet(),
+            block_time: 2,
+            ..Default::default()
+        };
+
+        let (driver, _signer) = GossipDriver::<ConnectionGater>::builder(
+            rollup_config,
+            Address::repeat_byte(0x11),
+            "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            Keypair::generate_secp256k1(),
+        )
+        .build()
+        .unwrap();
+
+        driver
+    }
+
+    #[tokio::test]
+    async fn clear_pending_connections_aborts_known_peer_dials() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accept_task = tokio::spawn(async move {
+            if let Ok((_socket, _addr)) = listener.accept().await {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+
+        let peer_id = PeerId::random();
+        let addr = format!("/ip4/127.0.0.1/tcp/{port}/p2p/{peer_id}").parse().unwrap();
+        let mut driver = test_driver();
+
+        driver.dial_multiaddr(addr);
+        assert!(driver.connection_gate.current_dials.contains_key(&peer_id));
+
+        assert_eq!(driver.clear_pending_connections(), 1);
+        assert!(!driver.connection_gate.current_dials.contains_key(&peer_id));
+
+        let event = tokio::time::timeout(Duration::from_secs(1), driver.next())
+            .await
+            .expect("clearing a known-peer dial should emit an event")
+            .expect("swarm should emit the aborted dial event");
+
+        match event {
+            SwarmEvent::OutgoingConnectionError {
+                peer_id: Some(aborted_peer),
+                error: libp2p::swarm::DialError::Aborted,
+                ..
+            } => assert_eq!(aborted_peer, peer_id),
+            event => panic!("expected aborted outgoing connection event, got {event:?}"),
+        }
+
+        accept_task.abort();
+    }
+
+    #[test]
+    fn clear_pending_connections_returns_zero_when_empty() {
+        let mut driver = test_driver();
+
+        assert_eq!(driver.clear_pending_connections(), 0);
+    }
+
+    #[tokio::test]
+    async fn established_connections_are_removed_from_pending_dials() {
+        let mut dialer = test_driver();
+        let mut listener = test_driver();
+        let listener_peer_id = *listener.local_peer_id();
+        let mut listener_addr = listener.start().await.unwrap();
+        listener_addr.push(libp2p::multiaddr::Protocol::P2p(listener_peer_id));
+
+        dialer.dial_multiaddr(listener_addr);
+        assert!(dialer.connection_gate.current_dials.contains_key(&listener_peer_id));
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        while tokio::time::Instant::now() < deadline
+            && dialer.connection_gate.current_dials.contains_key(&listener_peer_id)
+        {
+            tokio::select! {
+                event = dialer.next() => {
+                    if let Some(event) = event {
+                        dialer.handle_event(event);
+                    }
+                }
+                event = listener.next() => {
+                    if let Some(event) = event {
+                        listener.handle_event(event);
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => break,
+            }
+        }
+
+        assert!(!dialer.connection_gate.current_dials.contains_key(&listener_peer_id));
+    }
+
+    #[test]
+    fn test_peerstore_eviction_candidate_prefers_disconnected_peer() {
+        let connected_peer = PeerId::random();
+        let disconnected_peer = PeerId::random();
+        let mut peerstore = LruCache::new(NonZeroUsize::new(1024).unwrap());
+        peerstore.put(disconnected_peer, ());
+        peerstore.put(connected_peer, ());
+        let connected_peers = HashSet::from([connected_peer]);
+
+        let candidate = peerstore_eviction_candidate(&peerstore, &connected_peers);
+
+        assert_eq!(candidate, Some(disconnected_peer));
+    }
+
+    #[test]
+    fn test_peerstore_eviction_candidate_uses_lru_disconnected_peer() {
+        let oldest_disconnected_peer = PeerId::random();
+        let newest_disconnected_peer = PeerId::random();
+        let connected_peer = PeerId::random();
+        let mut peerstore = LruCache::new(NonZeroUsize::new(1024).unwrap());
+        peerstore.put(oldest_disconnected_peer, ());
+        peerstore.put(newest_disconnected_peer, ());
+        peerstore.put(connected_peer, ());
+        let connected_peers = HashSet::from([connected_peer]);
+
+        let candidate = peerstore_eviction_candidate(&peerstore, &connected_peers);
+
+        assert_eq!(candidate, Some(oldest_disconnected_peer));
+    }
+
+    #[test]
+    fn test_peerstore_eviction_candidate_falls_back_to_lru_connected_peer() {
+        let least_recent_peer = PeerId::random();
+        let most_recent_peer = PeerId::random();
+        let mut peerstore = LruCache::new(NonZeroUsize::new(1024).unwrap());
+        peerstore.put(least_recent_peer, ());
+        peerstore.put(most_recent_peer, ());
+        let connected_peers = HashSet::from([least_recent_peer, most_recent_peer]);
+
+        let candidate = peerstore_eviction_candidate(&peerstore, &connected_peers);
+
+        assert_eq!(candidate, Some(least_recent_peer));
     }
 }

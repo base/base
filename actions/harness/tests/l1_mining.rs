@@ -1,7 +1,18 @@
 //! Action tests for L1 block mining.
 
-use alloy_primitives::{Address, Bytes};
-use base_action_harness::{Action, ActionTestHarness, L1MinerConfig, PendingTx};
+use alloy_consensus::{Transaction, transaction::SignerRecoverable};
+use alloy_primitives::{Address, B256, Bytes};
+use alloy_signer_local::PrivateKeySigner;
+use base_action_harness::{Action, ActionTestHarness, L1MinerConfig, L1TxBuilder};
+
+fn test_signer() -> PrivateKeySigner {
+    PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")
+}
+
+fn signed_tx(input: Bytes, nonce: u64, to: Address) -> alloy_consensus::TxEnvelope {
+    L1TxBuilder::signed_calldata(&test_signer(), 1, nonce, to, input)
+        .expect("test transaction signs")
+}
 
 /// Mine a single block and verify the chain advances.
 #[test]
@@ -105,33 +116,35 @@ fn action_impl_returns_block_number() {
     assert_eq!(h.l1.act().unwrap(), 3);
 }
 
-/// Batcher transactions submitted before mining appear in the block body.
+/// Signed transactions submitted before mining appear in the block body.
 #[test]
-fn batcher_txs_included_in_mined_block() {
-    let batcher_addr = Address::repeat_byte(0xAB);
+fn signed_transactions_included_in_mined_block() {
     let inbox_addr = Address::repeat_byte(0xCD);
     let frame_data = Bytes::from_static(b"\x00frame_bytes_here");
+    let expected_sender = test_signer().address();
 
     let mut h = ActionTestHarness::default();
-    h.l1.submit_tx(PendingTx { from: batcher_addr, to: inbox_addr, input: frame_data.clone() });
+    h.l1.submit_transaction(signed_tx(frame_data.clone(), 0, inbox_addr));
     h.l1.mine_block();
 
     let block = h.l1.latest();
-    assert_eq!(block.batcher_txs.len(), 1);
-    assert_eq!(block.batcher_txs[0].from, batcher_addr);
-    assert_eq!(block.batcher_txs[0].to, inbox_addr);
-    assert_eq!(block.batcher_txs[0].input, frame_data);
+    assert_eq!(block.transactions.len(), 1);
+    assert_eq!(block.transactions[0].recover_signer().unwrap(), expected_sender);
+    assert_eq!(block.transactions[0].to(), Some(inbox_addr));
+    assert_eq!(block.transactions[0].input(), &frame_data);
+    assert_eq!(block.transaction_receipts[0].from, expected_sender);
+    assert_eq!(block.transaction_receipts[0].to, Some(inbox_addr));
 }
 
 /// Pending transactions are cleared after each block — they don't carry over.
 #[test]
-fn batcher_txs_do_not_carry_over_to_next_block() {
+fn signed_transactions_do_not_carry_over_to_next_block() {
     let mut h = ActionTestHarness::default();
-    h.l1.submit_tx(PendingTx { from: Address::ZERO, to: Address::ZERO, input: Bytes::new() });
+    h.l1.submit_transaction(signed_tx(Bytes::new(), 0, Address::ZERO));
     h.l1.mine_block(); // consumes the tx
     h.l1.mine_block(); // nothing pending
 
-    assert!(h.l1.latest().batcher_txs.is_empty());
+    assert!(h.l1.latest().transactions.is_empty());
 }
 
 // ── Reorg scenarios ───────────────────────────────────────────────────────────
@@ -147,11 +160,10 @@ fn reorg_shortens_chain() {
     assert_eq!(h.l1.latest_number(), 2);
 }
 
-/// Batcher transactions included in reorged-out blocks are returned to the
+/// Signed transactions included in reorged-out blocks are returned to the
 /// caller and are no longer part of the canonical chain.
 #[test]
-fn reorg_surfaces_lost_batcher_txs() {
-    let batcher = Address::repeat_byte(0xBA);
+fn reorg_surfaces_lost_transactions() {
     let inbox = Address::repeat_byte(0xCA);
     let frame = Bytes::from_static(b"\x00reorged_frame");
 
@@ -159,7 +171,7 @@ fn reorg_surfaces_lost_batcher_txs() {
     h.mine_l1_blocks(2); // blocks 1–2, no batches
 
     // Submit a batch and mine it into block 3.
-    h.l1.submit_tx(PendingTx { from: batcher, to: inbox, input: frame.clone() });
+    h.l1.submit_transaction(signed_tx(frame.clone(), 0, inbox));
     h.l1.mine_block(); // block 3 contains the batch
 
     h.mine_l1_blocks(2); // blocks 4–5, empty
@@ -168,11 +180,11 @@ fn reorg_surfaces_lost_batcher_txs() {
     let discarded = h.l1.reorg_to(2).unwrap();
     assert_eq!(h.l1.latest_number(), 2);
     let batch_block = discarded.iter().find(|b| b.number() == 3).unwrap();
-    assert_eq!(batch_block.batcher_txs.len(), 1);
-    assert_eq!(batch_block.batcher_txs[0].input, frame);
+    assert_eq!(batch_block.transactions.len(), 1);
+    assert_eq!(batch_block.transactions[0].input(), &frame);
 
-    // Canonical chain no longer has any batcher txs.
-    let canonical_txs: usize = h.l1.chain().iter().map(|b| b.batcher_txs.len()).sum();
+    // Canonical chain no longer has any signed batch transactions.
+    let canonical_txs: usize = h.l1.chain().iter().map(|b| b.transactions.len()).sum();
     assert_eq!(canonical_txs, 0);
 }
 
@@ -215,14 +227,13 @@ fn post_reorg_blocks_differ_from_originals() {
 /// appear in the next mined block on the new fork.
 #[test]
 fn resubmit_after_reorg_lands_on_new_fork() {
-    let from = Address::repeat_byte(0x01);
     let to = Address::repeat_byte(0x02);
     let input = Bytes::from_static(b"\x00resubmitted");
 
     let mut h = ActionTestHarness::default();
-    h.l1.submit_tx(PendingTx { from, to, input: input.clone() });
+    h.l1.submit_transaction(signed_tx(input.clone(), 0, to));
     h.l1.mine_block(); // block 1 contains the batch
-    let original_tx_hash = h.l1.block_by_number(1).unwrap().batcher_txs[0].input.clone();
+    let original_input = h.l1.block_by_number(1).unwrap().transactions[0].input().clone();
 
     // Mine a second block and reorg it away, simulating a short reorg while
     // keeping the first (batch-carrying) block on the canonical chain.
@@ -230,11 +241,11 @@ fn resubmit_after_reorg_lands_on_new_fork() {
     h.l1.reorg_to(1).unwrap(); // discard block 2
 
     // Resubmit the same frame data on the new fork.
-    h.l1.submit_tx(PendingTx { from, to, input });
+    h.l1.submit_transaction(signed_tx(input, 1, to));
     h.l1.mine_block(); // new block 2 on fork 1
 
     assert_eq!(h.l1.latest_number(), 2);
-    assert_eq!(h.l1.latest().batcher_txs[0].input, original_tx_hash);
+    assert_eq!(h.l1.latest().transactions[0].input(), &original_input);
 }
 
 /// Configurable block time is respected.

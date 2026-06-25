@@ -260,17 +260,26 @@ fn websocket_handler(
         }
     };
 
-    ws.on_failed_upgrade(move |e: Error| {
-        info!(
-            message = "failed to upgrade connection",
-            error = e.to_string(),
-            client = addr.to_string()
-        )
-    })
-    .on_upgrade(async move |socket| {
-        let client = ClientConnection::new(client_addr, ticket, socket, filter);
-        state.registry.subscribe(client).await;
-    })
+    // Downstream clients are primarily receive-only (flashblock broadcast). Limit inbound
+    // frame and message sizes to prevent clients from forcing large allocations
+    // that the proxy never uses. Only small control frames (ping, pong, close) are
+    // expected from clients.
+    const MAX_CLIENT_MESSAGE_SIZE: usize = 4 * 1024;
+    const MAX_CLIENT_FRAME_SIZE: usize = 4 * 1024;
+
+    ws.max_message_size(MAX_CLIENT_MESSAGE_SIZE)
+        .max_frame_size(MAX_CLIENT_FRAME_SIZE)
+        .on_failed_upgrade(move |e: Error| {
+            info!(
+                message = "failed to upgrade connection",
+                error = e.to_string(),
+                client = addr.to_string()
+            )
+        })
+        .on_upgrade(async move |socket| {
+            let client = ClientConnection::new(client_addr, ticket, socket, filter);
+            state.registry.subscribe(client).await;
+        })
 }
 
 fn extract_addr(header: &HeaderValue, fallback: IpAddr) -> IpAddr {

@@ -11,7 +11,6 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use alloy_provider::ProviderBuilder;
-use alloy_signer_local::PrivateKeySigner;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
@@ -35,6 +34,7 @@ use base_proof_tee_tdx_attestation_prover::{
 use base_proof_tee_tdx_collateral::{DEFAULT_TDX_MAX_QUOTE_AGE_SECS, TdxAttestationConfig};
 use base_proof_tee_tdx_verifier::TDXTcbStatus;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use boundless_market::alloy::signers::local::PrivateKeySigner;
 use clap::{Args, Parser, ValueEnum};
 use eyre::WrapErr;
 use tokio_util::sync::CancellationToken;

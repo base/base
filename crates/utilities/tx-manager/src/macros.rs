@@ -6,6 +6,10 @@
 /// ```rust,ignore
 /// base_tx_manager::define_tx_manager_cli!("BASE_TX_MANAGER");
 /// base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
+/// base_tx_manager::define_tx_manager_cli!(
+///     "BASE_PROPOSER",
+///     tx_send_timeout_default = "10m",
+/// );
 /// ```
 ///
 /// The generated struct exposes confirmations, fee limits, timeouts, polling
@@ -35,6 +39,9 @@
 #[macro_export]
 macro_rules! define_tx_manager_cli {
     ($prefix:literal) => {
+        $crate::define_tx_manager_cli!($prefix, tx_send_timeout_default = "0s");
+    };
+    ($prefix:literal, tx_send_timeout_default = $tx_send_timeout_default:literal $(,)?) => {
         /// CLI arguments for the transaction manager.
         ///
         /// Designed to be `#[command(flatten)]`-ed into parent CLI structs
@@ -134,7 +141,7 @@ macro_rules! define_tx_manager_cli {
             #[arg(
                 long = "tx-manager.tx-send-timeout",
                 env = concat!($prefix, "_", "TX_SEND_TIMEOUT"),
-                default_value = "0s",
+                default_value = $tx_send_timeout_default,
                 value_parser = ::humantime::parse_duration
             )]
             pub tx_send_timeout: ::std::time::Duration,

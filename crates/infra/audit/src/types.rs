@@ -123,7 +123,7 @@ impl BundleEvent {
         }
     }
 
-    /// Generates the event key used as both the Kafka message key and S3 object name.
+    /// Generates the event key used as the S3 object name.
     ///
     /// For `Received` events, derived from `bundle_hash` so that the same
     /// bundle on different ingress pods produces the same key.

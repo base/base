@@ -78,6 +78,7 @@ impl AddressList {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "serde")]
     use alloy_primitives::address;
 
     use super::*;

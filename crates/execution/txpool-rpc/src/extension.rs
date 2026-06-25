@@ -1,6 +1,7 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
+use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
     AdminTxPoolApiImpl, AdminTxPoolApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
@@ -32,7 +33,8 @@ impl BaseNodeExtension for TxPoolRpcExtension {
 
             // Register AdminTxPoolApi
             let admin_txpool_api = AdminTxPoolApiImpl::new(ctx.pool().clone());
-            ctx.modules.merge_configured(admin_txpool_api.into_rpc())?;
+            ctx.modules
+                .merge_if_module_configured(RethRpcModule::Admin, admin_txpool_api.into_rpc())?;
 
             Ok(())
         })

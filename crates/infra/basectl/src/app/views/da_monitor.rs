@@ -8,12 +8,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Action, Resources, View, views::TransactionPane},
-    commands::{
-        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter,
-        L1BlocksTableParams, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration,
-        format_rate, render_da_backlog_bar, render_l1_blocks_table, target_usage_color,
-        truncate_block_number,
+    app::{
+        Action, L1_BLOCK_WINDOW, L1BlockFilter, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S,
+        Resources, View, views::TransactionPane,
+    },
+    output::{
+        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_SELECTED, L1BlocksTableParams,
+        block_color, format_bytes as fmt_bytes, format_duration as fmt_dur, format_rate,
+        render_da_backlog_bar, render_l1_blocks_table, target_usage_color, truncate_block_number,
     },
     tui::{Keybinding, Toast},
 };
@@ -377,7 +379,7 @@ fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources, filt
             Span::raw("  "),
             Span::styled("Last: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                time_since.map(format_duration).unwrap_or_else(|| "-".to_string()),
+                time_since.map(fmt_dur).unwrap_or_else(|| "-".to_string()),
                 Style::default().fg(Color::White),
             ),
             Span::raw("  "),
@@ -403,10 +405,6 @@ fn render_blocks_panel(
     table_state: &TableState,
 ) {
     use ratatui::widgets::{Cell, Row, Table};
-
-    use crate::commands::{
-        COLOR_ROW_SELECTED, block_color, format_bytes as fmt_bytes, format_duration as fmt_dur,
-    };
 
     let tracker = &resources.da.tracker;
     let border_color = if is_active { Color::Rgb(100, 255, 100) } else { Color::Green };

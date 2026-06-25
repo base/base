@@ -63,14 +63,18 @@ where
                 self.prev.next_data().await?.ok_or(PipelineError::ChannelReaderEmpty.temp())?;
 
             let origin = self.prev.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-            let max_rlp_bytes_per_channel = if self.cfg.is_fjord_active(origin.timestamp) {
+            let fjord_active = self.cfg.is_fjord_active(origin.timestamp);
+            let max_rlp_bytes_per_channel = if fjord_active {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
             } else {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
             };
 
-            self.next_batch =
-                Some(BatchReader::new(&channel[..], max_rlp_bytes_per_channel as usize));
+            self.next_batch = Some(BatchReader::new(
+                &channel[..],
+                max_rlp_bytes_per_channel as usize,
+                fjord_active,
+            ));
             Metrics::pipeline_batch_reader_set().set(1);
         }
         Ok(())
@@ -119,7 +123,11 @@ where
 
         // SAFETY: The batch reader must be set above.
         let next_batch = self.next_batch.as_mut().expect("Batch reader must be set");
-        match next_batch.decompress() {
+        let decompress_result =
+            base_metrics::time!(Metrics::pipeline_batch_decompress_duration_seconds(), {
+                next_batch.decompress()
+            });
+        match decompress_result {
             Ok(()) => {
                 // Record the decompressed size and type.
                 let size = next_batch.decompressed.len() as f64;
@@ -139,7 +147,11 @@ where
         }
 
         // Read the next batch from the reader's decompressed data
-        match next_batch.next_batch(self.cfg.as_ref()).ok_or(PipelineError::NotEnoughData.temp()) {
+        let batch_result =
+            base_metrics::time!(Metrics::pipeline_batch_decode_duration_seconds(), {
+                next_batch.next_batch(self.cfg.as_ref())
+            });
+        match batch_result.ok_or(PipelineError::NotEnoughData.temp()) {
             Ok(batch) => {
                 Metrics::pipeline_read_batches(batch.to_string()).increment(1.0);
                 Ok(batch)
@@ -196,7 +208,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;
-    use base_common_genesis::{HardForkConfig, SystemConfig};
+    use base_common_genesis::{SystemConfig, UpgradeConfig};
 
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChannelReaderProvider};
@@ -216,6 +228,7 @@ mod tests {
         reader.next_batch = Some(BatchReader::new(
             new_compressed_batch_data(),
             RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+            true,
         ));
         reader.flush_channel().await.unwrap();
         assert!(reader.next_batch.is_none());
@@ -228,6 +241,7 @@ mod tests {
         reader.next_batch = Some(BatchReader::new(
             vec![0x00, 0x01, 0x02],
             RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+            true,
         ));
         assert!(!reader.prev.reset);
         reader.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
@@ -278,7 +292,7 @@ mod tests {
     async fn test_flush_post_holocene() {
         let raw = new_compressed_batch_data();
         let config = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
             ..Default::default()
         });
         let mock = TestChannelReaderProvider::new(vec![Ok(Some(raw))]);

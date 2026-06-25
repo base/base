@@ -8,13 +8,13 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod block;
-pub use block::Flashblock;
+pub use block::{Flashblock, MAX_DECOMPRESSED_FLASHBLOCK_BYTES};
 
 mod error;
 pub use error::FlashblockDecodeError;
 
 mod metadata;
-pub use metadata::Metadata;
+pub use metadata::{FlashblockId, FlashblockIdParseError, Metadata};
 
 mod payload;
 pub use payload::{

@@ -1,5 +1,7 @@
 //! Configuration for the `Network`.
 
+use std::num::NonZeroUsize;
+
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
@@ -43,6 +45,8 @@ pub struct NetworkConfig {
     pub gater_config: GaterConfig,
     /// The connection limits enforced by the libp2p swarm.
     pub connection_limits_config: ConnectionLimitsConfig,
+    /// Maximum number of peers to retain identify metadata for.
+    pub max_identify_peerstore_peers: NonZeroUsize,
     /// An optional list of bootnode ENRs to start the node with.
     pub bootnodes: BootNodes,
     /// The [`RollupConfig`].
@@ -93,6 +97,8 @@ impl NetworkConfig {
             bootstore: Default::default(),
             gater_config: Default::default(),
             connection_limits_config: Default::default(),
+            max_identify_peerstore_peers:
+                base_consensus_gossip::DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
             gossip_config: base_consensus_gossip::default_config(),
             scoring: Default::default(),
             topic_scoring: Default::default(),

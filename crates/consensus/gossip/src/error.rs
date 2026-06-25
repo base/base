@@ -70,9 +70,9 @@ pub enum GossipDriverBuilderError {
     SyncReqRespAlreadyAccepted,
 }
 
-/// An error type representing reasons why a peer cannot be dialed.
+/// An error type representing reasons why a peer connection cannot be established.
 #[derive(Debug, Clone, Error)]
-pub enum DialError {
+pub enum ConnectionError {
     /// Failed to extract `PeerId` from Multiaddr.
     #[error("Failed to extract PeerId from Multiaddr: {addr}")]
     InvalidMultiaddr {

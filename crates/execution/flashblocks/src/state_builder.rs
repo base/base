@@ -109,6 +109,22 @@ where
         self.evm.db_mut()
     }
 
+    /// Seeds block-level offsets when appending transactions to an already-executed pending block.
+    pub const fn set_execution_offsets(&mut self, cumulative_gas_used: u64, next_log_index: usize) {
+        self.cumulative_gas_used = cumulative_gas_used;
+        self.next_log_index = next_log_index;
+    }
+
+    /// Returns the cumulative gas used for the current pending block.
+    pub const fn cumulative_gas_used(&self) -> u64 {
+        self.cumulative_gas_used
+    }
+
+    /// Returns the next log index for the current pending block.
+    pub const fn next_log_index(&self) -> usize {
+        self.next_log_index
+    }
+
     /// Executes a single transaction and updates internal state.
     /// Should be called in order for each transaction.
     #[instrument(level = "debug", skip_all, fields(tx_hash = %transaction.tx_hash(), idx = idx))]
@@ -165,9 +181,6 @@ where
         ChainSpec: Clone,
     {
         let spec = self.receipt_builder.chain_spec();
-        let state_clear_flag = spec.is_spurious_dragon_active_at_block(self.pending_block.number);
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
         let mut system_caller = SystemCaller::new(spec.clone());
         system_caller
             .apply_blockhashes_contract_call(parent_hash, &mut self.evm)
@@ -208,6 +221,7 @@ where
                 inner: transaction,
                 block_hash: None,
                 block_number: Some(self.pending_block.number),
+                block_timestamp: Some(self.pending_block.timestamp),
                 transaction_index: Some(idx as u64),
                 effective_gas_price: Some(effective_gas_price),
             },
@@ -220,6 +234,13 @@ where
             .checked_add(receipt.inner.gas_used)
             .ok_or(ExecutionError::GasOverflow)?;
         self.next_log_index += receipt.inner.logs().len();
+
+        for address in state.keys() {
+            self.evm.db_mut().basic(*address).map_err(|err| {
+                StateProcessorError::Execution(ExecutionError::EvmEnv(err.to_string()))
+            })?;
+        }
+        self.evm.db_mut().commit(state.clone());
 
         Ok(ExecutedPendingTransaction {
             rpc_transaction,
@@ -282,7 +303,7 @@ where
 
         match transact_result {
             Ok(ResultAndState { state, result }) => {
-                let gas_used = result.gas_used();
+                let gas_used = result.tx_gas_used();
                 for (addr, acc) in &state {
                     let existing_override = self.state_overrides.entry(*addr).or_default();
                     existing_override.balance = Some(acc.info.balance);
@@ -360,6 +381,7 @@ where
                         inner: transaction,
                         block_hash: None,
                         block_number: Some(self.pending_block.number),
+                        block_timestamp: Some(self.pending_block.timestamp),
                         transaction_index: Some(idx as u64),
                         effective_gas_price: Some(effective_gas_price),
                     },
@@ -614,7 +636,7 @@ mod tests {
                 withdrawals_root: B256::ZERO,
                 blob_gas_used: None,
             },
-            metadata: Metadata { block_number: header.number },
+            metadata: Metadata::new(header.number),
         }]);
         pending_blocks_builder.with_receipt(tx_hash, first_result.receipt.clone());
         pending_blocks_builder.with_transaction_state(tx_hash, first_result.state.clone());
@@ -808,6 +830,157 @@ mod tests {
         assert_eq!(
             blob_gas_used, 0,
             "blob_gas_used should be 0 for deposit tx even when Jovian is active"
+        );
+    }
+
+    /// Regression test: `execute_with_cached_data` must commit the cached `EvmState` to the EVM
+    /// database so that subsequent transactions see the correct post-tx state.
+    ///
+    /// Without the commit, a fresh tx executed after a cached one runs against stale state
+    /// (e.g. missing nonce increment, stale storage), producing logs that differ from what
+    /// the final block-building executor produces. This causes a receipt root mismatch
+    /// during block validation because the sequencer re-executes everything from scratch.
+    #[test]
+    fn cached_execute_commits_state_so_subsequent_fresh_txs_see_updated_nonce() {
+        // Phase 1: execute tx A freshly to obtain the real EvmState and receipt
+        // that would be stored in PendingBlocks after the first flashblock round.
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let sender = Address::ZERO;
+
+        let header = Header {
+            number: 1,
+            timestamp: 100,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+
+        let mut inner_db = InMemoryDB::default();
+        inner_db.insert_account_info(
+            sender,
+            AccountInfo {
+                balance: U256::from(1_000_000_000_000_000_000u128),
+                nonce: 0,
+                ..Default::default()
+            },
+        );
+        let db = State::builder().with_database(inner_db).build();
+
+        let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
+        let evm = evm_config.evm_with_env(db, evm_env);
+        let pending_block = Block { header: header.clone(), body: Default::default() };
+        let mut first_builder = PendingStateBuilder::new(
+            (*chain_spec).clone(),
+            evm,
+            pending_block,
+            None,
+            L1BlockInfo::default(),
+            StateOverride::default(),
+        );
+
+        let tx_a = create_legacy_tx();
+        let tx_a_hash = tx_a.tx_hash();
+        let first_result =
+            first_builder.execute_transaction(0, tx_a).expect("first execution failed");
+
+        // Sanity-check: fresh execution increments the sender nonce from 0 to 1.
+        let (first_db, _) = first_builder.into_db_and_state_overrides();
+        let sender_nonce_after_tx_a = first_db
+            .cache
+            .accounts
+            .get(&sender)
+            .and_then(|a| a.account_info())
+            .map(|info| info.nonce)
+            .expect("sender should be in cache after tx A");
+
+        assert_eq!(sender_nonce_after_tx_a, 1, "tx A should increment nonce to 1");
+
+        // Phase 2: store the result of tx A in PendingBlocks, simulating what the
+        // processor does after the first flashblock is built.
+        let mut pending_blocks_builder = crate::PendingBlocksBuilder::new();
+        pending_blocks_builder
+            .with_header(alloy_consensus::Sealed::new_unchecked(header.clone(), B256::ZERO));
+        pending_blocks_builder.with_flashblocks([Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash: B256::ZERO,
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                block_number: header.number,
+                gas_limit: header.gas_limit,
+                timestamp: header.timestamp,
+                extra_data: Default::default(),
+                base_fee_per_gas: U256::from(header.base_fee_per_gas.unwrap_or_default()),
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Default::default(),
+                gas_used: first_result.receipt.inner.gas_used,
+                block_hash: B256::ZERO,
+                transactions: vec![],
+                withdrawals: vec![],
+                withdrawals_root: B256::ZERO,
+                blob_gas_used: None,
+            },
+            metadata: Metadata::new(header.number),
+        }]);
+        pending_blocks_builder.with_transaction_sender(tx_a_hash, sender);
+        pending_blocks_builder.with_receipt(tx_a_hash, first_result.receipt.clone());
+        pending_blocks_builder.with_transaction_state(tx_a_hash, first_result.state.clone());
+        pending_blocks_builder.with_transaction_result(tx_a_hash, first_result.result);
+
+        let prev_pending_blocks =
+            Arc::new(pending_blocks_builder.build().expect("should build pending blocks"));
+
+        // Phase 3: build a second flashblock whose EVM starts from scratch (nonce 0).
+        // tx A is now in prev_pending_blocks so execute_transaction will take the cached
+        // path (execute_with_cached_data). After that call the EVM database must reflect
+        // the committed state of tx A (nonce 1) so any subsequent fresh tx executes
+        // against the correct state.
+        let mut inner_db2 = InMemoryDB::default();
+        inner_db2.insert_account_info(
+            sender,
+            AccountInfo {
+                balance: U256::from(1_000_000_000_000_000_000u128),
+                nonce: 0,
+                ..Default::default()
+            },
+        );
+        let db2 = State::builder().with_database(inner_db2).build();
+        let second_evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
+        let second_evm = evm_config.evm_with_env(db2, second_evm_env);
+        let second_pending_block = Block { header, body: Default::default() };
+        let mut second_builder = PendingStateBuilder::new(
+            (*chain_spec).clone(),
+            second_evm,
+            second_pending_block,
+            Some(prev_pending_blocks),
+            L1BlockInfo::default(),
+            StateOverride::default(),
+        );
+
+        second_builder
+            .execute_transaction(0, create_legacy_tx())
+            .expect("cached tx A execution failed");
+
+        // The EVM database must now show nonce 1 for the sender, proving that
+        // execute_with_cached_data committed the state before returning.
+        let (second_db_after, _) = second_builder.into_db_and_state_overrides();
+        let sender_nonce_after_cached_tx_a = second_db_after
+            .cache
+            .accounts
+            .get(&sender)
+            .and_then(|a| a.account_info())
+            .map(|info| info.nonce)
+            .expect("sender should be in cache after cached tx A");
+
+        assert_eq!(
+            sender_nonce_after_cached_tx_a, 1,
+            "cached tx A must commit state so the sender nonce is 1 (not 0)"
         );
     }
 }

@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # database
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-native-tls"] }
+futures.workspace = true
 
 # serialization
 serde_json.workspace = true

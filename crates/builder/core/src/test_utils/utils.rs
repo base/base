@@ -18,7 +18,7 @@ use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConf
 use super::{
     BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, FUNDED_PRIVATE_KEY, PrivateKeySigner, Protocol,
     TransactionBuilder, driver::ChainDriver, flashblocks_number_contract::FlashblocksNumber,
-    sign_op_tx,
+    sign_base_tx,
 };
 
 /// Extension methods on [`TransactionBuilder`] for common test transaction patterns.
@@ -139,7 +139,7 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
             };
 
             let signer = PrivateKeySigner::random();
-            let signed_tx = sign_op_tx(&signer, BaseTypedTransaction::Deposit(deposit))?;
+            let signed_tx = sign_base_tx(&signer, BaseTypedTransaction::Deposit(deposit))?;
             let signed_tx_rlp = signed_tx.encoded_2718();
             txs.push(signed_tx_rlp.into());
         }
@@ -160,7 +160,7 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
         };
 
         let signer = PrivateKeySigner::random();
-        let signed_tx = sign_op_tx(&signer, BaseTypedTransaction::Deposit(deposit))?;
+        let signed_tx = sign_base_tx(&signer, BaseTypedTransaction::Deposit(deposit))?;
         let signed_tx_rlp = signed_tx.encoded_2718();
         Ok(self.build_new_block_with_txs(vec![signed_tx_rlp.into()]).await?.header.hash)
     }

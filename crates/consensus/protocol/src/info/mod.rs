@@ -6,11 +6,11 @@
 //! embedding to emulate inheritance.  By `a < b` we denote that the fields of
 //! struct `a` are a subset of the fields of struct `b`.  Delegation is
 //! implemented through accessors and by help of the `ambassador` crate.  The
-//! hardforks `Bedrock` and `Ecotone` each contain both fields that are used by
-//! all later hardforks and some that are not.  They are implemented by
+//! upgrades `Bedrock` and `Ecotone` each contain both fields that are used by
+//! all later upgrades and some that are not.  They are implemented by
 //! splitting them in two, e.g.  `L1BlockInfoBedrockBase` and
 //! `L1BlockInfoBedrock`, where the former contains exactly the fields are used
-//! by later hardforks and the latter embeds the former and then adds some
+//! by later upgrades and the latter embeds the former and then adds some
 //! fields.
 //!
 //! The chains of embedding are:

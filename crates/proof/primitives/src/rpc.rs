@@ -37,6 +37,33 @@ pub trait ProverApi {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult>;
 }
 
+/// Trait-object friendly proof client used by proposer pipelines.
+#[cfg(feature = "rpc-client")]
+#[async_trait::async_trait]
+pub trait ProverClient: core::fmt::Debug + Send + Sync {
+    /// Run the proof pipeline for a single request.
+    async fn prove(
+        &self,
+        request: ProofRequest,
+    ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+#[cfg(feature = "rpc-client")]
+#[async_trait::async_trait]
+impl<T> ProverClient for T
+where
+    T: ProverApiClient + core::fmt::Debug + Send + Sync,
+{
+    async fn prove(
+        &self,
+        request: ProofRequest,
+    ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
+        ProverApiClient::prove(self, request)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+    }
+}
+
 /// JSON-RPC interface for querying enclave signer information.
 #[cfg_attr(
     all(feature = "rpc-server", feature = "rpc-client"),

@@ -18,4 +18,7 @@ pub enum EngineError {
     /// Engine task error.
     #[error(transparent)]
     EngineTask(#[from] EngineTaskErrors),
+    /// A critical engine task error was already forwarded to the request caller.
+    #[error("critical engine task error: {0}")]
+    CriticalEngineTask(String),
 }

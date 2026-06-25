@@ -8,24 +8,19 @@ pub use health::HealthServer;
 mod metrics;
 pub use metrics::Metrics;
 
-/// Kafka message queue publishing.
-mod queue;
-pub use queue::{BundleQueuePublisher, KafkaMessageQueue, MessageQueue};
-
 /// Core RPC service implementation.
 mod service;
-pub use service::{IngressApiServer, IngressService, Providers};
+pub use service::{IngressApiServer, IngressService};
 
 /// Transaction validation implementation.
 mod validation;
 use std::{
     net::{IpAddr, SocketAddr},
-    str::FromStr,
     sync::Arc,
 };
 
 use alloy_primitives::TxHash;
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, RootProvider};
 use base_bundles::MeterBundleResponse;
 use base_common_network::Base;
 use clap::Args;
@@ -36,35 +31,6 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 use url::Url;
 pub use validation::{AccountInfo, AccountInfoLookup, L1BlockInfoLookup, validate_bundle};
-
-/// Method used to submit transactions to the mempool and/or Kafka.
-#[derive(Debug, Clone, Copy)]
-pub enum TxSubmissionMethod {
-    /// Submit via the mempool RPC only.
-    Mempool,
-    /// Submit via Kafka only.
-    Kafka,
-    /// Submit via both mempool RPC and Kafka.
-    MempoolAndKafka,
-    /// Do not submit transactions.
-    None,
-}
-
-impl FromStr for TxSubmissionMethod {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "mempool" => Ok(Self::Mempool),
-            "kafka" => Ok(Self::Kafka),
-            "mempool,kafka" | "kafka,mempool" => Ok(Self::MempoolAndKafka),
-            "none" => Ok(Self::None),
-            _ => Err(format!(
-                "Invalid submission method: '{s}'. Valid options: mempool, kafka, mempool,kafka, kafka,mempool, none"
-            )),
-        }
-    }
-}
 
 /// Configuration for the tips ingress RPC service.
 #[derive(Args, Debug, Clone)]
@@ -77,29 +43,26 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_PORT", default_value = "8080")]
     pub port: u16,
 
-    /// URL of the mempool service to proxy transactions to
-    #[arg(long, env = "TIPS_INGRESS_RPC_MEMPOOL")]
-    pub mempool_url: Url,
+    /// Deprecated. Ingress no longer proxies transactions to the mempool.
+    #[arg(long = "mempool-url", env = "TIPS_INGRESS_RPC_MEMPOOL", hide = true)]
+    pub deprecated_mempool_url: Option<Url>,
 
-    /// Method to submit transactions to the mempool
-    #[arg(long, env = "TIPS_INGRESS_TX_SUBMISSION_METHOD", default_value = "mempool")]
-    pub tx_submission_method: TxSubmissionMethod,
+    /// URL of the audit-archiver RPC endpoint that receives bundle events via
+    /// `base_persistBatchedBundleEvent`.
+    #[arg(long, env = "TIPS_INGRESS_AUDIT_RPC_URL")]
+    pub audit_rpc_url: Url,
 
-    /// Kafka brokers for publishing mempool events
-    #[arg(long, env = "TIPS_INGRESS_KAFKA_INGRESS_PROPERTIES_FILE")]
-    pub ingress_kafka_properties: String,
+    /// Per-request timeout for audit RPC calls, in seconds.
+    #[arg(long, env = "TIPS_INGRESS_AUDIT_RPC_TIMEOUT_SECS", default_value = "2")]
+    pub audit_rpc_timeout_secs: u64,
 
-    /// Kafka topic for queuing transactions before the DB Writer
-    #[arg(long, env = "TIPS_INGRESS_KAFKA_INGRESS_TOPIC", default_value = "tips-ingress")]
-    pub ingress_topic: String,
+    /// Flush the audit batch when it reaches this many events.
+    #[arg(long, env = "TIPS_INGRESS_AUDIT_BATCH_MAX_SIZE", default_value = "50")]
+    pub audit_batch_max_size: usize,
 
-    /// Kafka properties file for audit events
-    #[arg(long, env = "TIPS_INGRESS_KAFKA_AUDIT_PROPERTIES_FILE")]
-    pub audit_kafka_properties: String,
-
-    /// Kafka topic for audit events
-    #[arg(long, env = "TIPS_INGRESS_KAFKA_AUDIT_TOPIC", default_value = "tips-audit")]
-    pub audit_topic: String,
+    /// Maximum time (ms) the first event in a batch waits before forced flush.
+    #[arg(long, env = "TIPS_INGRESS_AUDIT_BATCH_MAX_WAIT_MS", default_value = "25")]
+    pub audit_batch_max_wait_ms: u64,
 
     /// Default lifetime for sent transactions in seconds (default: 3 hours)
     #[arg(
@@ -137,9 +100,9 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_CHAIN_ID", default_value = "11")]
     pub chain_id: u64,
 
-    /// URL of third-party RPC endpoint to forward raw transactions to (enables forwarding if set)
-    #[arg(long, env = "TIPS_INGRESS_RAW_TX_FORWARD_RPC")]
-    pub raw_tx_forward_rpc: Option<Url>,
+    /// Deprecated. Ingress no longer forwards raw transactions to another RPC endpoint.
+    #[arg(long = "raw-tx-forward-rpc", env = "TIPS_INGRESS_RAW_TX_FORWARD_RPC", hide = true)]
+    pub deprecated_raw_tx_forward_rpc: Option<Url>,
 
     /// TTL for bundle cache in seconds
     #[arg(long, env = "TIPS_INGRESS_BUNDLE_CACHE_TTL", default_value = "20")]
@@ -148,7 +111,7 @@ pub struct Config {
     /// Capacity of the bounded audit event channel.
     ///
     /// When the channel is full, new audit events are dropped to avoid blocking
-    /// the RPC handler. Size this to handle peak tx throughput × Kafka stall time.
+    /// the RPC handler.
     #[arg(long, env = "TIPS_INGRESS_AUDIT_CHANNEL_CAPACITY", default_value = "512")]
     pub audit_channel_capacity: usize,
 
@@ -171,11 +134,8 @@ impl BuilderConnector {
     /// that slow responses don't block the recv loop and risk broadcast channel
     /// lag.
     pub fn connect(metering_rx: broadcast::Receiver<MeterBundleResponse>, builder_rpc: Url) {
-        let rpc_url: Arc<str> = Arc::from(builder_rpc.as_str());
-        let builder: RootProvider<Base> = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .network::<Base>()
-            .connect_http(builder_rpc);
+        let rpc_url = builder_rpc.clone();
+        let builder: RootProvider<Base> = RootProvider::new_http(builder_rpc);
 
         tokio::spawn(async move {
             let mut event_rx = metering_rx;
@@ -206,7 +166,7 @@ impl BuilderConnector {
                             break;
                         };
                         let builder = builder.clone();
-                        let url = Arc::clone(&rpc_url);
+                        let url = rpc_url.clone();
                         join_set.spawn(async move {
                             match builder
                                 .client()

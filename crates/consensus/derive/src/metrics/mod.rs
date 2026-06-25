@@ -76,6 +76,22 @@ base_metrics::define_metrics! {
     #[describe("The time it takes to validate a span batch")]
     pipeline_check_batch_prefix: histogram,
 
+    #[describe("Wall-clock duration to decompress channel batch data")]
+    pipeline_batch_decompress_duration_seconds: histogram,
+
+    #[describe("Wall-clock duration to decode the next batch from decompressed channel data")]
+    pipeline_batch_decode_duration_seconds: histogram,
+
+    #[describe("Wall-clock duration to fetch L1 block info and transactions for data availability")]
+    #[label(name = "source", default = ["blobs", "calldata"])]
+    pipeline_data_availability_l1_fetch_duration_seconds: histogram,
+
+    #[describe("Wall-clock duration to fetch and validate blobs")]
+    pipeline_blob_fetch_duration_seconds: histogram,
+
+    #[describe("Wall-clock duration to get the next item from the data availability provider")]
+    pipeline_l1_retrieval_provider_next_duration_seconds: histogram,
+
     #[describe("The time it takes to build payload attributes")]
     pipeline_attributes_build_duration: histogram,
 

@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use alloy_consensus::{Block, BlockHeader, Sealable, Transaction};
 use alloy_eips::{Encodable2718, eip4895::Withdrawal, eip7685::Requests};
-use alloy_primitives::{B256, Signature, keccak256};
+use alloy_primitives::{B256, Bytes, Signature, keccak256};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
 };
@@ -124,12 +124,19 @@ pub struct ExecutionData {
     pub payload: BaseExecutionPayload,
     /// Additional fork-specific fields.
     pub sidecar: BaseExecutionPayloadSidecar,
+    /// Optional Amsterdam block access list RLP bytes.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub block_access_list: Option<Bytes>,
 }
 
 impl ExecutionData {
     /// Creates new instance of [`ExecutionData`].
-    pub const fn new(payload: BaseExecutionPayload, sidecar: BaseExecutionPayloadSidecar) -> Self {
-        Self { payload, sidecar }
+    pub const fn new(
+        payload: BaseExecutionPayload,
+        sidecar: BaseExecutionPayloadSidecar,
+        block_access_list: Option<Bytes>,
+    ) -> Self {
+        Self { payload, sidecar, block_access_list }
     }
 
     /// Conversion from [`alloy_consensus::Block`]. Also returns the [`BaseExecutionPayloadSidecar`]
@@ -145,7 +152,7 @@ impl ExecutionData {
     {
         let (payload, sidecar) = BaseExecutionPayload::from_block_slow(block);
 
-        Self::new(payload, sidecar)
+        Self::new(payload, sidecar, None)
     }
 
     /// Conversion from [`alloy_consensus::Block`]. Also returns the [`BaseExecutionPayloadSidecar`]
@@ -157,16 +164,30 @@ impl ExecutionData {
         T: Encodable2718 + Transaction,
         H: BlockHeader,
     {
+        Self::from_block_unchecked_with_extras(block_hash, block, None)
+    }
+
+    /// Conversion from [`alloy_consensus::Block`] with optional Amsterdam block access list RLP
+    /// bytes.
+    pub fn from_block_unchecked_with_extras<T, H>(
+        block_hash: B256,
+        block: &Block<T, H>,
+        block_access_list: Option<Bytes>,
+    ) -> Self
+    where
+        T: Encodable2718 + Transaction,
+        H: BlockHeader,
+    {
         let (payload, sidecar) = BaseExecutionPayload::from_block_unchecked(block_hash, block);
 
-        Self::new(payload, sidecar)
+        Self::new(payload, sidecar, block_access_list)
     }
 
     /// Creates a new instance from args to engine API method `newPayloadV2`.
     ///
     /// Spec: <https://specs.base.org/protocol/execution#engine_newpayloadv2>
     pub fn v2(payload: ExecutionPayloadInputV2) -> Self {
-        Self::new(BaseExecutionPayload::v2(payload), BaseExecutionPayloadSidecar::default())
+        Self::new(BaseExecutionPayload::v2(payload), BaseExecutionPayloadSidecar::default(), None)
     }
 
     /// Creates a new instance from args to engine API method `newPayloadV3`.
@@ -183,6 +204,7 @@ impl ExecutionData {
                 parent_beacon_block_root,
                 versioned_hashes,
             )),
+            None,
         )
     }
 
@@ -201,6 +223,7 @@ impl ExecutionData {
                 CancunPayloadFields::new(parent_beacon_block_root, versioned_hashes),
                 PraguePayloadFields::new(execution_requests),
             ),
+            None,
         )
     }
 
@@ -219,8 +242,8 @@ impl ExecutionData {
             BaseExecutionPayload::V3(execution_payload_v3) => {
                 Some(execution_payload_v3.withdrawals())
             }
-            BaseExecutionPayload::V4(op_execution_payload_v4) => {
-                Some(op_execution_payload_v4.payload_inner.withdrawals())
+            BaseExecutionPayload::V4(base_execution_payload_v4) => {
+                Some(base_execution_payload_v4.payload_inner.withdrawals())
             }
         }
     }
@@ -578,7 +601,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "serde")]
-    fn test_serde_roundtrip_op_execution_payload_envelope() {
+    fn test_serde_roundtrip_base_execution_payload_envelope() {
         let envelope_str = r#"{
             "executionPayload": {"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0","withdrawalsRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119"},
             "parentBeaconBlockRoot": "0x9999999999999999999999999999999999999999999999999999999999999999"

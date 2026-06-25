@@ -141,7 +141,7 @@ pub trait BaseTxApi {
 
 ## PR 4: Node Integration
 
-**Crate:** New `crates/client/tx-forwarding/` extension crate
+**Crate:** New `crates/execution/tx-forwarding/` extension crate
 
 Wires consumer + forwarder into the node using the `BaseNodeExtension` pattern.
 

@@ -18,35 +18,7 @@ workspace = true
 [dependencies]
 # workspace
 base-cli-utils.workspace = true
-base-client-cli.workspace = true
-
-# alloy
-alloy-chains.workspace = true
-alloy-provider.workspace = true
-alloy-primitives.workspace = true
-base-common-network.workspace = true
-
-# consensus
-base-common-chains.workspace = true
-base-common-genesis.workspace = true
-base-consensus-node = { workspace = true, features = ["metrics"] }
-base-consensus-providers = { workspace = true, features = ["metrics"] }
+base-consensus-cli.workspace = true
 
 # cli
-strum.workspace = true
 clap = { workspace = true, features = ["env"] }
-
-# tracing
-tracing = { workspace = true, features = ["std"] }
-
-# metrics
-metrics.workspace = true
-
-# misc
-url.workspace = true
-eyre.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-
-[dev-dependencies]
-rstest.workspace = true

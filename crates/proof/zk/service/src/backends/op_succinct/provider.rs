@@ -1,4 +1,4 @@
-//! Witness generation for OP-Succinct proving.
+//! Witness generation for Succinct proving.
 
 use std::{fmt, sync::Arc};
 
@@ -13,7 +13,30 @@ use tracing::{debug, info};
 
 use crate::backends::utils::L1HeadCalculator;
 
-/// Provider wrapping the OP Succinct host for witness generation and proving.
+/// Inputs to [`OpSuccinctProvider::generate_witness`].
+///
+/// Grouped so the call site reads as named fields rather than 7 positional values of similar
+/// primitive types.
+#[derive(Debug, Clone, Copy)]
+pub struct WitnessParams<'a> {
+    /// First L2 block in the range (inclusive).
+    pub start_block: u64,
+    /// Block past the last L2 block in the range (exclusive).
+    pub end_block: u64,
+    /// Sequence-window size used for L1-head fallback when `l1_head` is `None`.
+    pub sequence_window: u64,
+    /// L1 execution-layer RPC, used for the sequence-window fallback path.
+    pub l1_node_url: &'a str,
+    /// Base consensus-layer RPC, used for the sequence-window fallback path.
+    pub base_consensus_url: &'a str,
+    /// Optional caller-pinned L1 head hash. When `None`, `SafeDB` is tried first then
+    /// sequence-window fallback.
+    pub l1_head: Option<B256>,
+    /// Number of L2 blocks between sampled intermediate output roots.
+    pub intermediate_root_interval: u64,
+}
+
+/// Provider wrapping the Succinct host for witness generation and proving.
 #[derive(Clone)]
 pub struct OpSuccinctProvider {
     host: Arc<SingleChainOPSuccinctHost>,
@@ -28,7 +51,7 @@ impl fmt::Debug for OpSuccinctProvider {
 impl OpSuccinctProvider {
     /// Create a new provider with an initialized host.
     pub fn new(fetcher: Arc<OPSuccinctDataFetcher>) -> Self {
-        info!("initializing OP-Succinct provider with Ethereum DA");
+        info!("initializing Succinct provider with Ethereum DA");
         let host = Arc::new(SingleChainOPSuccinctHost::new(fetcher));
         Self { host }
     }
@@ -41,18 +64,20 @@ impl OpSuccinctProvider {
 
     /// Generate witness (`SP1Stdin`) for a block range.
     ///
-    /// When `l1_head` is `Some`, the provided hash is used directly (bypassing
-    /// `SafeDB` and sequence-window calculation). When `None`, tries `SafeDB`
-    /// first, then falls back to sequence-window.
-    pub async fn generate_witness(
-        &self,
-        start_block: u64,
-        end_block: u64,
-        sequence_window: u64,
-        l1_node_url: &str,
-        base_consensus_url: &str,
-        l1_head: Option<B256>,
-    ) -> Result<SP1Stdin> {
+    /// When `params.l1_head` is `Some`, the provided hash is used directly (bypassing `SafeDB` and
+    /// sequence-window calculation). When `None`, tries `SafeDB` first, then falls back to
+    /// sequence-window.
+    pub async fn generate_witness(&self, params: WitnessParams<'_>) -> Result<SP1Stdin> {
+        let WitnessParams {
+            start_block,
+            end_block,
+            sequence_window,
+            l1_node_url,
+            base_consensus_url,
+            l1_head,
+            intermediate_root_interval,
+        } = params;
+
         info!(
             start_block = start_block,
             end_block = end_block,
@@ -64,9 +89,15 @@ impl OpSuccinctProvider {
         let host_args = match l1_head {
             Some(hash) => {
                 info!(hash = %hash, "using caller-provided l1_head");
-                self.host.fetch(start_block, end_block, Some(hash), false).await?
+                self.host
+                    .fetch(start_block, end_block, Some(hash), intermediate_root_interval, false)
+                    .await?
             }
-            None => match self.host.fetch(start_block, end_block, None, false).await {
+            None => match self
+                .host
+                .fetch(start_block, end_block, None, intermediate_root_interval, false)
+                .await
+            {
                 Ok(args) => {
                     info!("l1 head calculated via SafeDB (optimism_safeHeadAtL1Block)");
                     args
@@ -88,7 +119,15 @@ impl OpSuccinctProvider {
                         l1_head_hash = %l1_head_hash,
                         "l1 head via sequence_window fallback"
                     );
-                    self.host.fetch(start_block, end_block, Some(l1_head_hash), false).await?
+                    self.host
+                        .fetch(
+                            start_block,
+                            end_block,
+                            Some(l1_head_hash),
+                            intermediate_root_interval,
+                            false,
+                        )
+                        .await?
                 }
             },
         };
@@ -97,10 +136,7 @@ impl OpSuccinctProvider {
 
         let witness = self.host.run(&host_args).await?;
 
-        let stdin = self.host.witness_generator().get_sp1_stdin(
-            witness,
-            base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
-        )?;
+        let stdin = self.host.witness_generator().get_sp1_stdin(witness)?;
 
         info!(start_block = start_block, end_block = end_block, "witness generation completed");
 

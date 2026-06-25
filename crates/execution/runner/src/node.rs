@@ -5,10 +5,10 @@ use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::eth::BaseEthApiBuilder;
-use base_execution_storage::BaseStorage;
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
     BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
+    BaseStorage,
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePoolBuilder},
 };
@@ -28,15 +28,15 @@ use crate::{BaseAddOns, BaseAddOnsBuilder};
 pub struct BaseNode {
     /// Additional Base args
     pub args: RollupArgs,
-    /// Data availability configuration for the OP builder.
+    /// Data availability configuration for the payload builder.
     ///
     /// Used to throttle the size of the data availability payloads (configured by the batcher via
     /// the `miner_` api).
     ///
     /// By default no throttling is applied.
     pub da_config: BaseDAConfig,
-    /// Gas limit configuration for the OP builder.
-    /// Used to control the gas limit of the blocks produced by the OP builder. (configured by the
+    /// Gas limit configuration for the payload builder.
+    /// Used to control the gas limit of the blocks produced by the payload builder (configured by the
     /// batcher via the `miner_` api)
     pub gas_limit_config: GasLimitConfig,
 }
@@ -51,13 +51,13 @@ impl BaseNode {
         }
     }
 
-    /// Configure the data availability configuration for the OP builder.
+    /// Configure the data availability configuration for the payload builder.
     pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = da_config;
         self
     }
 
-    /// Configure the gas limit configuration for the OP builder.
+    /// Configure the gas limit configuration for the payload builder.
     pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = gas_limit_config;
         self
@@ -68,11 +68,19 @@ impl BaseNode {
     where
         Node: FullNodeTypes<Types: BaseNodeTypes>,
     {
-        let RollupArgs { disable_txpool_gossip, compute_pending_block, discovery_v4, .. } =
-            self.args;
+        let RollupArgs {
+            disable_txpool_gossip,
+            compute_pending_block,
+            discovery_v4,
+            max_inflight_delegated_slots,
+            ..
+        } = self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
-            .pool(BasePoolBuilder::default())
+            .pool(
+                BasePoolBuilder::default()
+                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots),
+            )
             .executor(BaseExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 BasePayloadBuilder::new(compute_pending_block)
@@ -95,27 +103,28 @@ impl BaseNode {
 
     /// Instantiates the [`ProviderFactoryBuilder`] for a Base node.
     ///
-    /// # Open a Providerfactory in read-only mode from a datadir
+    /// # Open a `ProviderFactory` in read-only mode from a datadir
     ///
     /// See also: [`ProviderFactoryBuilder`] and
     /// [`ReadOnlyConfig`](reth_provider::providers::ReadOnlyConfig).
     ///
     /// ```no_run
-    /// use base_execution_chainspec::BASE_MAINNET;
+    /// use base_execution_chainspec::BaseChainSpec;
     /// use base_node_runner::BaseNode;
     /// use reth_provider::providers::ReadOnlyConfig;
+    /// use std::sync::Arc;
     ///
     /// let runtime = reth_tasks::Runtime::test();
     /// let factory = BaseNode::provider_factory_builder()
     ///     .open_read_only(
-    ///         BASE_MAINNET.clone(),
+    ///         Arc::new(BaseChainSpec::mainnet()),
     ///         ReadOnlyConfig::from_datadir("datadir").no_watch(),
     ///         runtime,
     ///     )
     ///     .unwrap();
     /// ```
     ///
-    /// # Open a Providerfactory manually with all required components
+    /// # Open a `ProviderFactory` manually with all required components
     ///
     /// ```no_run
     /// use base_execution_chainspec::BaseChainSpecBuilder;

@@ -5,7 +5,35 @@ TEE prover host server for AWS Nitro Enclaves.
 ## Subcommands
 
 - **`server`** — Runs the JSON-RPC server on the EC2 host, forwarding proving requests to the enclave over vsock.
+- **`server`** with `--features worker` — Runs as a prover-service worker instead of binding JSON-RPC, claiming Nitro TEE jobs from `PROVER_SERVICE_ENDPOINT`.
 - **`local`** *(feature-gated)* — Runs server and enclave in a single process for local development.
+- **`local`** with `--features local,worker` — Runs as a prover-service worker backed by in-process local enclave instances.
+
+## Worker Mode
+
+Worker mode is selected at build time:
+
+```bash
+cargo build --package base-prover-nitro-host --features worker
+```
+
+The worker build keeps the `server` subcommand name, but it does not accept
+`LISTEN_ADDR` and does not expose the prover or enclave JSON-RPC APIs. It
+requires `PROVER_SERVICE_ENDPOINT` and claims AWS Nitro TEE jobs through the
+prover-service worker API.
+
+For local worker development, enable both feature flags and use `local`:
+
+```bash
+cargo run --package base-prover-nitro-host --features local,worker -- local \
+  --prover-service-endpoint "$PROVER_SERVICE_ENDPOINT" \
+  --l1-eth-url "$L1_ETH_URL" \
+  --l2-eth-url "$L2_ETH_URL" \
+  --l1-beacon-url "$L1_BEACON_URL" \
+  --l2-chain-id "$L2_CHAIN_ID"
+```
+
+The `just tee nitro-local-worker` recipe wraps the same command.
 
 ## Inspecting the enclave
 

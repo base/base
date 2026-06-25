@@ -39,6 +39,7 @@ alloy-rpc-types = { workspace = true, features = ["debug"] }
 
 # async
 tokio.workspace = true
+futures.workspace = true
 
 # crypto
 ark-ff.workspace = true

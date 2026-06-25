@@ -5,17 +5,19 @@ use std::{
     time::Duration,
 };
 
-use alloy_signer_local::PrivateKeySigner;
+use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_runtime::TokioRuntime;
+use base_tx_manager::SignerConfig;
 use clap::{Args, Parser, ValueEnum};
 use tracing::info;
 use url::Url;
 
 base_cli_utils::define_log_args!("BATCHER");
 base_cli_utils::define_metrics_args!("BATCHER", 7300);
+base_tx_manager::define_signer_cli!("BATCHER");
 
 /// The Base Batcher CLI.
 #[derive(Parser, Clone, Debug)]
@@ -75,6 +77,13 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "l2-ws-url", env = "BATCHER_L2_WS_URL")]
     pub l2_ws_url: Option<Url>,
 
+    /// Optional derived-parity validator L2 RPC endpoint.
+    ///
+    /// When set, the batcher compares derived L2 block hashes from this
+    /// validator against the configured sequencer L2 RPC endpoint.
+    #[arg(long = "parity-validator-l2-rpc-url", env = "BATCHER_PARITY_VALIDATOR_L2_RPC_URL")]
+    pub parity_validator_l2_rpc_url: Option<Url>,
+
     /// Rollup node RPC endpoint(s).
     ///
     /// Accepts a comma-separated list with the same connection-time failover
@@ -87,9 +96,32 @@ pub(crate) struct BatcherArgs {
     )]
     pub rollup_rpc_url: Vec<Url>,
 
-    /// Batcher private key (hex-encoded 32-byte secret).
-    #[arg(long = "private-key", env = "BATCHER_PRIVATE_KEY")]
-    pub private_key: PrivateKeySigner,
+    /// Optional L1 beacon API endpoint.
+    ///
+    /// Used by shadow-mode parity monitoring to fetch EIP-4844 blob sidecars.
+    #[arg(long = "l1-beacon-url", env = "BATCHER_L1_BEACON_URL")]
+    pub l1_beacon_url: Option<Url>,
+
+    /// Signer configuration.
+    #[command(flatten)]
+    pub signer: SignerCli,
+
+    /// Enable explicit shadow-mode guardrails for dangerous overrides.
+    ///
+    /// This flag does nothing by itself. It must be set together with
+    /// `--dangerously-override-batch-inbox-address` so canonical deployments
+    /// cannot accidentally redirect DA submissions.
+    #[arg(long = "shadow-mode", env = "BATCHER_SHADOW_MODE")]
+    pub shadow_mode: bool,
+
+    /// Dangerous shadow-mode batch inbox override.
+    ///
+    /// Requires `--shadow-mode`. Canonical deployments must not set this flag.
+    #[arg(
+        long = "dangerously-override-batch-inbox-address",
+        env = "BATCHER_DANGEROUSLY_OVERRIDE_BATCH_INBOX_ADDRESS"
+    )]
+    pub dangerously_override_batch_inbox_address: Option<Address>,
 
     /// L2 block polling interval in seconds.
     #[arg(long = "poll-interval", default_value = "1", env = "BATCHER_POLL_INTERVAL")]
@@ -115,6 +147,10 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "target-num-frames", default_value = "1", env = "BATCHER_TARGET_NUM_FRAMES")]
     pub target_num_frames: usize,
 
+    /// Maximum number of L2 blocks to accumulate into one span batch.
+    #[arg(long = "max-blocks-per-span-batch", env = "BATCHER_MAX_BLOCKS_PER_SPAN_BATCH")]
+    pub max_blocks_per_span_batch: Option<usize>,
+
     /// Batch encoding mode.
     ///
     /// Accepts `single` / `0` and `span` / `1`. Span batches require Fjord
@@ -135,7 +171,7 @@ pub(crate) struct BatcherArgs {
     ///
     /// Only relevant when `--batch-type=span`. Should be slightly below the
     /// typical observed ratio to avoid creating a small leftover frame.
-    /// Matches op-batcher's `--approx-compr-ratio` default.
+    /// Matches the reference batcher's `--approx-compr-ratio` default.
     #[arg(long = "approx-compr-ratio", default_value = "0.6", env = "BATCHER_APPROX_COMPR_RATIO")]
     pub approx_compr_ratio: f64,
 
@@ -162,7 +198,7 @@ pub(crate) struct BatcherArgs {
     /// DA backlog threshold in bytes at which throttling activates.
     ///
     /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
-    /// signals the sequencer to reduce block throughput. Matches op-batcher's
+    /// signals the sequencer to reduce block throughput. Matches the reference batcher's
     /// `--throttle-threshold` default of 1 MB.
     #[arg(
         long = "throttle-threshold",
@@ -173,7 +209,7 @@ pub(crate) struct BatcherArgs {
 
     /// Disable DA throttling.
     ///
-    /// By default throttling is enabled (matching op-batcher behaviour). Pass
+    /// By default throttling is enabled (matching reference batcher behavior). Pass
     /// this flag to submit batches at full rate regardless of DA backlog.
     #[arg(long = "no-throttle", env = "BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
@@ -185,7 +221,7 @@ pub(crate) struct BatcherArgs {
     /// advances the L2 block cursor past data already pending on L1. This avoids
     /// re-submitting frames after an unclean shutdown. Maximum value is 128.
     ///
-    /// A value of 0 (default) disables the scan. Matches op-batcher's
+    /// A value of 0 (default) disables the scan. Matches the reference batcher's
     /// `--check-recent-txs-depth` flag.
     #[arg(
         long = "check-recent-txs-depth",
@@ -198,7 +234,7 @@ pub(crate) struct BatcherArgs {
     /// Maximum serialized size of a single L1 calldata transaction in bytes.
     ///
     /// Safety cap that prevents oversized calldata transactions from being rejected
-    /// by the mempool. No-op for blob DA. Equivalent to op-batcher's
+    /// by the mempool. No-op for blob DA. Equivalent to the reference batcher's
     /// `--max-l1-tx-size-bytes` (default 120,000 bytes). Omit to disable the cap.
     #[arg(long = "max-l1-tx-size-bytes", env = "BATCHER_MAX_L1_TX_SIZE_BYTES")]
     pub max_l1_tx_size_bytes: Option<usize>,
@@ -230,7 +266,7 @@ pub(crate) struct BatcherArgs {
     /// Polls `optimism_syncStatus` on the poll interval until both `current_l1`
     /// and `unsafe_l2` heads are non-zero. Useful when the batcher is started
     /// alongside a fresh node so it does not race the node's initial sync.
-    /// Matches op-batcher's `--wait-node-sync`.
+    /// Matches the reference batcher's `--wait-node-sync`.
     #[arg(long = "wait-node-sync", env = "BATCHER_WAIT_NODE_SYNC")]
     pub wait_node_sync: bool,
 
@@ -248,7 +284,7 @@ pub(crate) struct BatcherArgs {
     ///
     /// By default, when DA-backlog throttling activates, the encoder is forced
     /// to emit blob-typed submissions even if `--data-availability-type=calldata`
-    /// is configured (matching op-batcher's behaviour, since blobs amortise DA
+    /// is configured (matching reference batcher behavior, since blobs amortise DA
     /// cost more efficiently under congestion). Pass this flag to keep the
     /// configured DA type regardless of throttle state. No-op for blob-configured
     /// batchers.
@@ -267,12 +303,25 @@ pub(crate) struct BatcherArgs {
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     fn into_config(self) -> eyre::Result<BatcherConfig> {
+        if self.shadow_mode != self.dangerously_override_batch_inbox_address.is_some() {
+            eyre::bail!(
+                "--shadow-mode and --dangerously-override-batch-inbox-address must be set together"
+            );
+        }
+        let signer = SignerConfig::try_from(self.signer)?;
+        let frame_size = match self.da_type {
+            base_batcher_encoder::DaType::Blob => self
+                .target_frame_size
+                .saturating_sub(base_batcher_encoder::EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE),
+            base_batcher_encoder::DaType::Calldata => self.target_frame_size,
+        };
         let encoder_config = base_batcher_encoder::EncoderConfig {
-            target_frame_size: self.target_frame_size,
-            max_frame_size: self.target_frame_size,
+            target_frame_size: frame_size,
+            max_frame_size: frame_size,
             max_channel_duration: self.max_channel_duration,
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
+            max_blocks_per_span_batch: self.max_blocks_per_span_batch,
             batch_type: self.batch_type.into(),
             da_type: self.da_type,
             approx_compr_ratio: self.approx_compr_ratio,
@@ -284,8 +333,12 @@ impl BatcherArgs {
             l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
             l2_ws_url: self.l2_ws_url,
+            parity_validator_l2_rpc_url: self.parity_validator_l2_rpc_url,
             rollup_rpc_url: self.rollup_rpc_url,
-            batcher_private_key: Some(self.private_key),
+            l1_beacon_url: self.l1_beacon_url,
+            signer: Some(signer),
+            metrics_enabled: self.metrics.enabled,
+            batch_inbox_override: self.dangerously_override_batch_inbox_address,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,
@@ -349,7 +402,7 @@ mod tests {
 
     use super::*;
 
-    fn base_args() -> Vec<&'static str> {
+    fn base_args_without_signer() -> Vec<&'static str> {
         vec![
             "base-batcher",
             "--l1-rpc-url",
@@ -358,9 +411,16 @@ mod tests {
             "http://localhost:9545",
             "--rollup-rpc-url",
             "http://localhost:7545",
+        ]
+    }
+
+    fn base_args() -> Vec<&'static str> {
+        let mut args = base_args_without_signer();
+        args.extend_from_slice(&[
             "--private-key",
             "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        ]
+        ]);
+        args
     }
 
     fn parse_cli(extra: &[&'static str]) -> Cli {
@@ -378,11 +438,96 @@ mod tests {
     }
 
     #[test]
+    fn into_config_accepts_remote_signer() {
+        let mut args = base_args_without_signer();
+        args.extend_from_slice(&[
+            "--signer-endpoint",
+            "http://127.0.0.1:9000",
+            "--signer-address",
+            "0x4242424242424242424242424242424242424242",
+        ]);
+        let cli = Cli::try_parse_from(args).expect("CLI should parse");
+        let config = cli.args.into_config().expect("config should build");
+
+        let signer = config.signer.expect("signer should be configured");
+        assert_eq!(signer.address(), Address::repeat_byte(0x42));
+    }
+
+    #[test]
+    fn into_config_sets_metrics_enabled() {
+        let cli = parse_cli(&["--metrics.enabled"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert!(config.metrics_enabled);
+    }
+
+    #[test]
+    fn into_config_rejects_shadow_mode_without_batch_inbox_override() {
+        let cli = parse_cli(&["--shadow-mode"]);
+        let err = cli.args.into_config().expect_err("shadow mode alone should fail");
+
+        assert!(
+            err.to_string()
+                .contains("--shadow-mode and --dangerously-override-batch-inbox-address")
+        );
+    }
+
+    #[test]
+    fn into_config_rejects_batch_inbox_override_without_shadow_mode() {
+        let cli = parse_cli(&[
+            "--dangerously-override-batch-inbox-address",
+            "0x1111111111111111111111111111111111111111",
+        ]);
+        let err = cli.args.into_config().expect_err("override without shadow mode should fail");
+
+        assert!(
+            err.to_string()
+                .contains("--shadow-mode and --dangerously-override-batch-inbox-address")
+        );
+    }
+
+    #[test]
+    fn into_config_accepts_shadow_batch_inbox_override() {
+        let cli = parse_cli(&[
+            "--shadow-mode",
+            "--dangerously-override-batch-inbox-address",
+            "0x1111111111111111111111111111111111111111",
+        ]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.batch_inbox_override, Some(Address::repeat_byte(0x11)));
+    }
+
+    #[test]
     fn into_config_accepts_numeric_span_alias() {
         let cli = parse_cli(&["--batch-type", "1"]);
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.encoder_config.batch_type, base_protocol::BatchType::Span);
+    }
+
+    #[test]
+    fn into_config_accepts_max_blocks_per_span_batch() {
+        let cli = parse_cli(&["--max-blocks-per-span-batch", "2"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.max_blocks_per_span_batch, Some(2));
+    }
+
+    #[test]
+    fn into_config_rejects_zero_max_blocks_per_span_batch() {
+        let cli = parse_cli(&["--max-blocks-per-span-batch", "0"]);
+        let err = cli.args.into_config().expect_err("zero span batch block cap should fail");
+
+        assert!(err.to_string().contains("max_blocks_per_span_batch"));
+    }
+
+    #[test]
+    fn into_config_rejects_one_max_blocks_per_span_batch() {
+        let cli = parse_cli(&["--max-blocks-per-span-batch", "1"]);
+        let err = cli.args.into_config().expect_err("one-block span batch cap should fail");
+
+        assert!(err.to_string().contains("max_blocks_per_span_batch"));
     }
 
     #[test]
@@ -394,11 +539,42 @@ mod tests {
     }
 
     #[test]
+    fn into_config_reserves_blob_derivation_prefix_from_target_frame_size() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(
+            config.encoder_config.target_frame_size,
+            base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
+        );
+        assert_eq!(config.encoder_config.max_frame_size, config.encoder_config.target_frame_size);
+    }
+
+    #[test]
+    fn into_config_reserves_blob_prefix_for_explicit_target_frame_size() {
+        let cli = parse_cli(&["--target-frame-size", "130000"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.target_frame_size, 129_999);
+        assert_eq!(config.encoder_config.max_frame_size, 129_999);
+    }
+
+    #[test]
     fn into_config_accepts_calldata_da_mode() {
         let cli = parse_cli(&["--data-availability-type", "calldata"]);
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
+    }
+
+    #[test]
+    fn into_config_does_not_reserve_blob_prefix_for_calldata_da_mode() {
+        let cli =
+            parse_cli(&["--data-availability-type", "calldata", "--target-frame-size", "130000"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.target_frame_size, 130_000);
+        assert_eq!(config.encoder_config.max_frame_size, 130_000);
     }
 
     #[test]
@@ -432,6 +608,22 @@ mod tests {
         assert_eq!(config.l1_rpc_url.len(), 1);
         assert_eq!(config.l2_rpc_url.len(), 1);
         assert_eq!(config.rollup_rpc_url.len(), 1);
+    }
+
+    #[test]
+    fn into_config_accepts_l1_beacon_url() {
+        let cli = parse_cli(&["--l1-beacon-url", "http://localhost:5052"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.l1_beacon_url.unwrap().as_str(), "http://localhost:5052/");
+    }
+
+    #[test]
+    fn into_config_accepts_parity_validator_l2_rpc_url() {
+        let cli = parse_cli(&["--parity-validator-l2-rpc-url", "http://127.0.0.1:9545"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.parity_validator_l2_rpc_url.unwrap().as_str(), "http://127.0.0.1:9545/");
     }
 
     #[test]

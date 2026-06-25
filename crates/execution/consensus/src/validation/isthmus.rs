@@ -1,4 +1,4 @@
-//! Block verification w.r.t. consensus rules new in Isthmus hardfork.
+//! Block verification w.r.t. consensus rules new in Isthmus upgrade.
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;

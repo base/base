@@ -1,8 +1,6 @@
 //! Contains the shadow compressor for Base.
 //!
-//! This is a port of the [ShadowCompressor][sc] from the op-batcher.
-//!
-//! [sc]: https://github.com/ethereum-optimism/optimism/blob/develop/op-batcher/compressor/shadow_compressor.go#L18
+//! This is a port of the reference batcher's shadow compressor.
 
 use alloc::vec::Vec;
 

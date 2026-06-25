@@ -1,16 +1,18 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, Predeploys};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BasePayloadAttributes, ExecutionData,
+    ExecutionData,
 };
 use base_execution_consensus::isthmus;
-use base_execution_payload_builder::{BaseExecutionPayloadValidator, BasePayloadTypes};
+use base_execution_payload_builder::{
+    BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
+};
 use reth_consensus::ConsensusError;
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
@@ -22,7 +24,7 @@ use reth_node_api::{
     validate_version_specific_fields,
 };
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SignedTransaction};
-use reth_provider::StateProviderFactory;
+use reth_provider::{StateProvider, StateProviderFactory};
 use reth_trie_common::{HashedPostState, KeyHasher};
 
 /// The types used in the Base beacon consensus engine.
@@ -32,23 +34,31 @@ pub struct BaseEngineTypes<T: PayloadTypes = BasePayloadTypes> {
     _marker: PhantomData<T>,
 }
 
-impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for BaseEngineTypes<T> {
+impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for BaseEngineTypes<T>
+where
+    ExecutionData: From<T::BuiltPayload>,
+{
     type ExecutionData = T::ExecutionData;
     type BuiltPayload = T::BuiltPayload;
     type PayloadAttributes = T::PayloadAttributes;
-    type PayloadBuilderAttributes = T::PayloadBuilderAttributes;
 
     fn block_to_payload(
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
+        bal: Option<Bytes>,
     ) -> <T as PayloadTypes>::ExecutionData {
-        ExecutionData::from_block_unchecked(block.hash(), &block.into_block().into_ethereum_block())
+        ExecutionData::from_block_unchecked_with_extras(
+            block.hash(),
+            &block.into_block().into_ethereum_block(),
+            bal,
+        )
     }
 }
 
 impl<T: PayloadTypes<ExecutionData = ExecutionData>> EngineTypes for BaseEngineTypes<T>
 where
+    ExecutionData: From<T::BuiltPayload>,
     T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = BaseBlock>>
         + TryInto<ExecutionPayloadV1>
         + TryInto<ExecutionPayloadEnvelopeV2>
@@ -110,6 +120,81 @@ where
     pub fn chain_spec(&self) -> &ChainSpec {
         self.inner.chain_spec()
     }
+
+    /// Verifies upgrade-gated post-execution rules against the supplied parent state.
+    ///
+    /// Authoritative implementation of all Base-specific post-execution checks that require
+    /// access to parent state (currently: Isthmus' L2-to-L1 message-passer storage root).
+    /// Callers supply `parent_state` explicitly so engine pipelines can pass in-memory-aware
+    /// overlay providers when the parent block isn't canonical yet.
+    ///
+    /// To add a check for a future upgrade, extend the body with another
+    /// `if chain_spec.is_<X>_active_at_timestamp(...)` arm.
+    pub fn validate_block_post_execution_with_state<DB, H>(
+        &self,
+        state_updates: &HashedPostState,
+        parent_state: DB,
+        header: H,
+    ) -> Result<(), ConsensusError>
+    where
+        DB: StateProvider,
+        H: BlockHeader,
+    {
+        if !self.chain_spec().is_isthmus_active_at_timestamp(header.timestamp()) {
+            return Ok(());
+        }
+
+        let predeploy_storage_updates = state_updates
+            .storages
+            .get(&self.hashed_addr_l2tol1_msg_passer)
+            .cloned()
+            .unwrap_or_default();
+        isthmus::verify_withdrawals_root_prehashed(predeploy_storage_updates, parent_state, header)
+            .map_err(|err| {
+                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
+                    format!("failed to verify block post-execution: {err}"),
+                )))
+            })
+    }
+}
+
+/// Extension trait that exposes [`BaseEngineValidator::validate_block_post_execution_with_state`]
+/// through generic engine pipelines (e.g. `base-engine-tree`'s `V` validator parameter).
+///
+/// The inherent method on [`BaseEngineValidator`] is the source of truth; this trait is just a
+/// dispatch surface so callers that don't know the concrete validator type can still invoke it.
+pub trait BasePostExecutionValidator<Types: PayloadTypes>:
+    PayloadValidator<Types, Block = BaseBlock>
+{
+    /// See [`BaseEngineValidator::validate_block_post_execution_with_state`].
+    fn validate_block_post_execution_with_parent_state<DB: StateProvider>(
+        &self,
+        state_updates: &HashedPostState,
+        parent_state: DB,
+        block: &RecoveredBlock<BaseBlock>,
+    ) -> Result<(), ConsensusError>;
+}
+
+impl<Types, P, Tx, ChainSpec> BasePostExecutionValidator<Types>
+    for BaseEngineValidator<P, Tx, ChainSpec>
+where
+    Types: PayloadTypes,
+    Self: PayloadValidator<Types, Block = BaseBlock>,
+    ChainSpec: Upgrades,
+{
+    fn validate_block_post_execution_with_parent_state<DB: StateProvider>(
+        &self,
+        state_updates: &HashedPostState,
+        parent_state: DB,
+        block: &RecoveredBlock<BaseBlock>,
+    ) -> Result<(), ConsensusError> {
+        Self::validate_block_post_execution_with_state(
+            self,
+            state_updates,
+            parent_state,
+            block.header(),
+        )
+    }
 }
 
 impl<P, Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
@@ -126,29 +211,20 @@ where
         state_updates: &HashedPostState,
         block: &RecoveredBlock<Self::Block>,
     ) -> Result<(), ConsensusError> {
-        if self.chain_spec().is_isthmus_active_at_timestamp(block.timestamp()) {
-            let Ok(state) = self.provider.state_by_block_hash(block.parent_hash()) else {
-                // FIXME: we don't necessarily have access to the parent block here because the
-                // parent block isn't necessarily part of the canonical chain yet. Instead this
-                // function should receive the list of in memory blocks as input
-                return Ok(());
-            };
-            let predeploy_storage_updates = state_updates
-                .storages
-                .get(&self.hashed_addr_l2tol1_msg_passer)
-                .cloned()
-                .unwrap_or_default();
-            isthmus::verify_withdrawals_root_prehashed(
-                predeploy_storage_updates,
-                state,
-                block.header(),
-            )
-            .map_err(|err| {
-                ConsensusError::Other(format!("failed to verify block post-execution: {err}"))
-            })?
+        if !self.chain_spec().is_isthmus_active_at_timestamp(block.timestamp()) {
+            return Ok(());
         }
 
-        Ok(())
+        let parent_state =
+            self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
+                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
+                    format!(
+                        "failed to load parent state for Isthmus withdrawals root validation: {err}"
+                    ),
+                )))
+            })?;
+
+        self.validate_block_post_execution_with_state(state_updates, parent_state, block.header())
     }
 
     fn convert_payload_to_block(
@@ -162,7 +238,7 @@ where
 impl<Types, P, Tx, ChainSpec> EngineApiValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
 where
     Types: PayloadTypes<
-            PayloadAttributes = BasePayloadAttributes,
+            PayloadAttributes = BasePayloadBuilderAttributes<Tx>,
             ExecutionData = ExecutionData,
             BuiltPayload: BuiltPayload<Primitives: NodePrimitives<SignedTx = Tx>>,
         >,
@@ -203,7 +279,7 @@ where
         validate_version_specific_fields(
             self.chain_spec(),
             version,
-            PayloadOrAttributes::<ExecutionData, BasePayloadAttributes>::PayloadAttributes(
+            PayloadOrAttributes::<ExecutionData, Types::PayloadAttributes>::PayloadAttributes(
                 attributes,
             ),
         )?;
@@ -283,7 +359,8 @@ pub fn validate_withdrawals_presence(
         EngineApiMessageVersion::V2
         | EngineApiMessageVersion::V3
         | EngineApiMessageVersion::V4
-        | EngineApiMessageVersion::V5 => {
+        | EngineApiMessageVersion::V5
+        | EngineApiMessageVersion::V6 => {
             if is_shanghai && !has_withdrawals {
                 return Err(message_validation_kind
                     .to_error(VersionSpecificValidationError::NoWithdrawalsPostShanghai));
@@ -303,12 +380,21 @@ mod tests {
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::ChainConfig;
-    use base_execution_chainspec::BASE_SEPOLIA;
+    use base_common_consensus::BaseTxEnvelope;
+    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_execution_chainspec::BaseChainSpec;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
 
     use super::*;
     use crate::engine;
+
+    fn validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
+        BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::new::<KeccakKeyHasher>(
+            Arc::new(BaseChainSpec::sepolia()),
+            NoopProvider::default(),
+        )
+    }
 
     macro_rules! assert_invalid_params_error {
         ($result:expr, $msg:expr) => {{
@@ -322,33 +408,36 @@ mod tests {
         }};
     }
 
-    const fn get_attributes(
+    fn get_attributes(
         eip_1559_params: Option<B64>,
         min_base_fee: Option<u64>,
         timestamp: u64,
-    ) -> BasePayloadAttributes {
-        BasePayloadAttributes {
-            gas_limit: Some(1000),
-            eip_1559_params,
-            min_base_fee,
-            transactions: None,
-            no_tx_pool: None,
-            payload_attributes: PayloadAttributes {
-                timestamp,
-                prev_randao: B256::ZERO,
-                suggested_fee_recipient: Address::ZERO,
-                withdrawals: Some(vec![]),
-                parent_beacon_block_root: Some(B256::ZERO),
+    ) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+        BasePayloadBuilderAttributes::try_new(
+            B256::ZERO,
+            BasePayloadAttributes {
+                gas_limit: Some(1000),
+                eip_1559_params,
+                min_base_fee,
+                transactions: None,
+                no_tx_pool: None,
+                payload_attributes: PayloadAttributes {
+                    timestamp,
+                    prev_randao: B256::ZERO,
+                    suggested_fee_recipient: Address::ZERO,
+                    withdrawals: Some(vec![]),
+                    parent_beacon_block_root: Some(B256::ZERO),
+                    slot_number: None,
+                },
             },
-        }
+            3,
+        )
+        .expect("valid test payload attributes")
     }
 
     #[test]
     fn test_well_formed_attributes_pre_holocene() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(None, None, 1732633199);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -361,10 +450,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_no_eip1559_params() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(None, None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -377,10 +463,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_eip1559_params_zero_denominator() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000008")), None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -393,10 +476,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_eip1559_params_zero_elasticity() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000000")), None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -409,10 +489,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_valid() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000008")), None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -425,10 +502,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_valid_all_zero() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -441,10 +515,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_jovian_valid() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(
             Some(b64!("0000000000000000")),
             Some(1),
@@ -462,10 +533,7 @@ mod tests {
     /// After Jovian (and holocene), eip1559 params must be Some
     #[test]
     fn test_malformed_attributes_jovian_with_eip_1559_params_none() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(None, Some(1), ChainConfig::sepolia().jovian_timestamp);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -479,10 +547,7 @@ mod tests {
     /// Before Jovian, min base fee must be None
     #[test]
     fn test_malformed_attributes_pre_jovian_with_min_base_fee() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), Some(1), 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -496,10 +561,7 @@ mod tests {
     /// After Jovian, min base fee must be Some
     #[test]
     fn test_malformed_attributes_post_jovian_with_min_base_fee_none() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(
             Some(b64!("0000000000000000")),
             None,

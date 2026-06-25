@@ -18,8 +18,9 @@ use crate::{
     storage::EventWriter,
 };
 
-/// Archives audit events from Kafka to S3 storage.
-pub struct KafkaAuditArchiver<R, W>
+/// Archives audit events from a generic [`EventReader`] to
+/// an [`EventWriter`] (typically S3) via a worker pool.
+pub struct AuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,
@@ -29,17 +30,17 @@ where
     _phantom: PhantomData<W>,
 }
 
-impl<R, W> fmt::Debug for KafkaAuditArchiver<R, W>
+impl<R, W> fmt::Debug for AuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("KafkaAuditArchiver").finish_non_exhaustive()
+        f.debug_struct("AuditArchiver").finish_non_exhaustive()
     }
 }
 
-impl<R, W> KafkaAuditArchiver<R, W>
+impl<R, W> AuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,
@@ -118,7 +119,7 @@ where
             let read_start = Instant::now();
             match self.reader.read_event().await {
                 Ok(event) => {
-                    Metrics::kafka_read_duration().record(read_start.elapsed().as_secs_f64());
+                    Metrics::read_duration().record(read_start.elapsed().as_secs_f64());
 
                     let now_ms = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -137,7 +138,7 @@ where
                     if let Err(e) = self.reader.commit().await {
                         error!(error = %e, "Failed to commit message");
                     }
-                    Metrics::kafka_commit_duration().record(commit_start.elapsed().as_secs_f64());
+                    Metrics::commit_duration().record(commit_start.elapsed().as_secs_f64());
                 }
                 Err(e) => {
                     error!(error = %e, "Error reading events");

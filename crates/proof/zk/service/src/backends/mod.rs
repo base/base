@@ -1,13 +1,15 @@
 //! Proving backends for ZK proof generation.
 
-mod mock;
-pub use mock::MockBackend;
-
-mod network;
-pub use network::NetworkBackend;
-
 mod op_succinct;
-pub use op_succinct::{OpSuccinctBackend, OpSuccinctProvider};
+pub use op_succinct::{
+    ClusterBackend as OpSuccinctClusterBackend,
+    DRY_RUN_METADATA_KEY as OP_SUCCINCT_DRY_RUN_METADATA_KEY,
+    DryRunBackend as OpSuccinctDryRunBackend,
+    EXECUTION_STATS_METADATA_KEY as OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY,
+    MockBackend as OpSuccinctMockBackend, NetworkBackend as OpSuccinctNetworkBackend,
+    OpSuccinctProvider, StoredExecutionStats as OpSuccinctStoredExecutionStats,
+    WitnessParams as OpSuccinctWitnessParams,
+};
 
 mod traits;
 pub use traits::{

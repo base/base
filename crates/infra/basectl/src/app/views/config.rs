@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View},
-    commands::COLOR_BASE_BLUE,
+    output::COLOR_BASE_BLUE,
     tui::Keybinding,
 };
 
@@ -86,7 +86,10 @@ fn render_chain_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
         ("RPC", config.rpc.as_str()),
         ("Flashblocks WS", config.flashblocks_ws.as_str()),
         ("L1 RPC", config.l1_rpc.as_str()),
-        ("Op-Node RPC", config.op_node_rpc.as_ref().map(|u| u.as_str()).unwrap_or("-")),
+        (
+            "Consensus Node RPC",
+            config.consensus_node_rpc.as_ref().map(|u| u.as_str()).unwrap_or("-"),
+        ),
         ("Batcher Address", &batcher_str),
     ];
 

@@ -72,7 +72,7 @@ pub enum BaseEnrError {
 impl TryFrom<&Enr> for BaseEnr {
     type Error = BaseEnrError;
     fn try_from(enr: &Enr) -> Result<Self, Self::Error> {
-        let Some(mut opstack) = enr.get_raw_rlp(Self::OP_CL_KEY) else {
+        let Some(mut opstack) = enr.get_raw_rlp(Self::OPSTACK_ENR_KEY) else {
             return Err(BaseEnrError::MissingKey);
         };
         let base_enr =
@@ -88,7 +88,7 @@ impl TryFrom<&Enr> for BaseEnr {
 
 impl BaseEnr {
     /// The [`Enr`] key literal string for the consensus layer.
-    pub const OP_CL_KEY: &str = "opstack";
+    pub const OPSTACK_ENR_KEY: &str = "opstack";
 
     /// Constructs a [`BaseEnr`] from a chain id.
     pub const fn from_chain_id(chain_id: u64) -> Self {
@@ -146,7 +146,7 @@ mod tests {
         let base_enr = BaseEnr::from_chain_id(8453);
         let mut base_enr_bytes = Vec::new();
         base_enr.encode(&mut base_enr_bytes);
-        enr.insert_raw_rlp(BaseEnr::OP_CL_KEY, base_enr_bytes.into(), &key).unwrap();
+        enr.insert_raw_rlp(BaseEnr::OPSTACK_ENR_KEY, base_enr_bytes.into(), &key).unwrap();
         assert!(EnrValidation::validate(&enr, 8453).is_valid());
         assert!(EnrValidation::validate(&enr, 84532).is_invalid());
     }
@@ -159,7 +159,7 @@ mod tests {
         base_enr.version = 1;
         let mut base_enr_bytes = Vec::new();
         base_enr.encode(&mut base_enr_bytes);
-        enr.insert_raw_rlp(BaseEnr::OP_CL_KEY, base_enr_bytes.into(), &key).unwrap();
+        enr.insert_raw_rlp(BaseEnr::OPSTACK_ENR_KEY, base_enr_bytes.into(), &key).unwrap();
         assert!(EnrValidation::validate(&enr, 8453).is_invalid());
     }
 

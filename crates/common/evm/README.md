@@ -4,12 +4,12 @@ EVM implementation.
 
 ## Overview
 
-Provides Base-specific EVM execution support. Maps hardfork activation timestamps to revm
+Provides Base-specific EVM execution support. Maps upgrade activation timestamps to revm
 `SpecId` values, and exposes `BaseEvm`, `BaseEvmFactory`, `BaseBlockExecutor`, and
 `BaseBlockExecutorFactory` for executing blocks with the correct gas rules and precompile sets for
-each hardfork. Also provides `AlloyReceiptBuilder` and `BaseReceiptBuilder` for constructing Base
+each upgrade. Also provides `AlloyReceiptBuilder` and `BaseReceiptBuilder` for constructing Base
 receipts and
-`ensure_create2_deployer` for Canyon hardfork compatibility.
+`ensure_create2_deployer` for Canyon upgrade compatibility.
 
 ## Usage
 
@@ -21,10 +21,10 @@ base-common-evm = { workspace = true }
 ```
 
 ```rust,ignore
-use base_common_evm::{BaseEvmFactory, BasePrecompiles, OpSpecId};
+use base_common_evm::{BaseEvmFactory, BasePrecompiles, BaseSpecId, BaseUpgrade};
 
 let factory = BaseEvmFactory::default();
-let precompiles = BasePrecompiles::new_with_spec(OpSpecId::ISTHMUS);
+let precompiles = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus));
 ```
 
 ## License

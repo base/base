@@ -1,17 +1,17 @@
 //! A task for importing a block that has already been started.
 use std::{sync::Arc, time::Instant};
 
-use alloy_rpc_types_engine::{ExecutionPayload, PayloadId};
+use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
 use super::SealTaskError;
 use crate::{
-    EngineClient, EngineGetPayloadVersion, EngineState, EngineTaskExt, InsertTask,
+    Engine, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety, InsertTask,
     InsertTaskError::{self},
     task_queue::build_and_seal,
 };
@@ -39,8 +39,8 @@ pub struct SealTask<EngineClient_: EngineClient> {
     pub payload_id: PayloadId,
     /// The [`AttributesWithParent`] to instruct the execution layer to build.
     pub attributes: AttributesWithParent,
-    /// Whether or not the payload was derived, or created by the sequencer.
-    pub is_attributes_derived: bool,
+    /// Whether the sealed payload should advance the safe head.
+    pub payload_safety: InsertPayloadSafety,
     /// An optional sender to convey success/failure result of the built
     /// [`BaseExecutionPayloadEnvelope`] after the block has been built, imported, and canonicalized
     /// or the [`SealTaskError`] that occurred during processing.
@@ -65,73 +65,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         payload_id: PayloadId,
         payload_attrs: AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
-        let payload_timestamp = payload_attrs.attributes().payload_attributes.timestamp;
-
-        debug!(
-            target: "engine",
-            payload_id = payload_id.to_string(),
-            l2_time = payload_timestamp,
-            "Sealing payload"
-        );
-
-        let get_payload_version = EngineGetPayloadVersion::from_cfg(cfg, payload_timestamp);
-        let payload_envelope = match get_payload_version {
-            EngineGetPayloadVersion::V5 => {
-                let payload = engine.get_payload_v5(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                // V5 drops parent_beacon_block_root from the get_payload response; source it
-                // from the attributes instead so InsertTask can still pass it to new_payload.
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: payload_attrs
-                        .attributes()
-                        .payload_attributes
-                        .parent_beacon_block_root,
-                    execution_payload: BaseExecutionPayload::V4(payload.execution_payload),
-                }
-            }
-            EngineGetPayloadVersion::V4 => {
-                let payload = engine.get_payload_v4(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: Some(payload.parent_beacon_block_root),
-                    execution_payload: BaseExecutionPayload::V4(payload.execution_payload),
-                }
-            }
-            EngineGetPayloadVersion::V3 => {
-                let payload = engine.get_payload_v3(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: Some(payload.parent_beacon_block_root),
-                    execution_payload: BaseExecutionPayload::V3(payload.execution_payload),
-                }
-            }
-            EngineGetPayloadVersion::V2 => {
-                let payload = engine.get_payload_v2(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: None,
-                    execution_payload: match payload.execution_payload.into_payload() {
-                        ExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload),
-                        ExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload),
-                        _ => unreachable!("the response should be a V1 or V2 payload"),
-                    },
-                }
-            }
-        };
-
-        Ok(payload_envelope)
+        Engine::<EngineClient_>::fetch_payload(cfg, engine, payload_id, &payload_attrs).await
     }
 
     /// Inserts a payload into the engine with Holocene fallback support.
@@ -152,7 +86,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             Arc::clone(&self.engine),
             Arc::clone(&self.cfg),
             new_payload.clone(),
-            self.is_attributes_derived,
+            self.payload_safety,
         )
         .execute(state)
         .await
@@ -179,7 +113,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                     Arc::clone(&self.engine),
                     Arc::clone(&self.cfg),
                     deposits_only_attrs.clone(),
-                    self.is_attributes_derived,
+                    self.payload_safety,
                 )
                 .await
                 {
@@ -191,11 +125,20 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                 };
             }
             Err(e) => {
-                error!(target: "engine", error = %e, "Payload import failed");
+                error!(
+                    target: "engine",
+                    error = %e,
+                    payload_safety = self.payload_safety.as_label(),
+                    "Payload import failed"
+                );
                 return Err(Box::new(e).into());
             }
             Ok(_) => {
-                info!(target: "engine", "Successfully imported payload")
+                info!(
+                    target: "engine",
+                    payload_safety = self.payload_safety.as_label(),
+                    "Successfully imported payload"
+                );
             }
         }
 
@@ -234,9 +177,9 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             target: "engine",
             l2_number = new_block_ref.block_info.number,
             l2_time = new_block_ref.block_info.timestamp,
+            payload_safety = self.payload_safety.as_label(),
             block_import_duration = ?block_import_duration,
-            "Built and imported new {} block",
-            if self.is_attributes_derived { "safe" } else { "unsafe" },
+            "Built and imported new block",
         );
 
         Ok(new_payload)
@@ -257,8 +200,8 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         // and this task will always succeed. If not, task failure will be relayed to the caller.
         if let Some(tx) = &self.result_tx {
             tx.send(res).await.map_err(|e| SealTaskError::MpscSend(Box::new(e)))?;
-        } else if let Err(x) = res {
-            return Err(x);
+        } else {
+            res?;
         }
 
         Ok(())
@@ -280,7 +223,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SealTask<EngineClient_> {
         );
 
         // NOTE: the reference node does not compare the current unsafe head against the
-        // attributes parent before sealing.  The BuildTask already sent an FCU
+        // attributes parent before sealing. The build step already sent an FCU
         // with `attributes.parent` as the head, so the EL is building on the
         // correct parent regardless of where the engine's in-memory unsafe head
         // sits.  During consolidation the safe head is intentionally behind the

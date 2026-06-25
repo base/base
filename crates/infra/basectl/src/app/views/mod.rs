@@ -4,7 +4,7 @@ mod command_center;
 pub use command_center::CommandCenterView;
 
 mod conductor;
-pub use conductor::ConductorView;
+pub use conductor::{ActionMenuItem, ConductorView, ConfirmButton, Overlay, PendingAction};
 
 mod config;
 pub use config::ConfigView;
@@ -21,8 +21,8 @@ pub use flashblocks::FlashblocksView;
 mod home;
 pub use home::HomeView;
 
-mod load_test;
-pub use load_test::LoadTestView;
+mod pods;
+pub use pods::PodsView;
 
 mod proofs;
 pub use proofs::ProofsView;

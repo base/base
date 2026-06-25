@@ -1,4 +1,4 @@
-//! RPC Types for Optimism Rollup
+//! RPC types for rollup outputs.
 //!
 //! These types are copied from kona-rpc to avoid bringing in rollup-boost dependencies.
 
@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use base_protocol::{L2BlockInfo, SyncStatus};
 use serde::{Deserialize, Serialize};
 
-/// An [output response][or] for Optimism Rollup.
+/// An [output response][or] for rollup outputs.
 ///
 /// [or]: https://github.com/ethereum-optimism/optimism/blob/f20b92d3eb379355c876502c4f28e72a91ab902f/op-service/eth/output.go#L10-L17
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

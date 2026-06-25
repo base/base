@@ -34,6 +34,10 @@ impl Payload for StoragePayload {
         "storage"
     }
 
+    fn uses_runner_recipient(&self) -> bool {
+        false
+    }
+
     fn generate(&self, rng: &mut SeededRng, _from: Address, _to: Address) -> TransactionRequest {
         let seed: u64 = rng.random();
         let data = Self::encode_fill_storage(self.slots_per_tx, seed);

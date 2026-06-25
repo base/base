@@ -8,7 +8,6 @@ cache_exclude_status = [429]
 accept = [200, 403, 429, 502, 503] # 403 is often returned by private repos instead of 404; 429 is rate limiting; 502/503 is transient GitHub unavailability
 exclude_path = [
     "crates/utilities/test-utils/contracts/",
-    "docs/specs/",
     "README\\.md",
 ]
 exclude = [
@@ -38,7 +37,8 @@ exclude = [
     # Moved/deleted source files (links in docs that predate refactors)
     'https://github\.com/base/base/blob/main/crates/execution/upgrades/src/chain\.rs',
     'https://github\.com/base/base/blob/main/crates/common/genesis/src/rollup\.rs',
-    'https://github\.com/base/base/blob/main/crates/common/genesis/src/chain/hardfork\.rs',
+    'https://github\.com/base/base/blob/main/crates/common/genesis/src/chain/upgrade\.rs',
+    'https://github\.com/base/base/blob/main/crates/common/chains/tests/upgrade_consistency\.rs',
 
     # Internal / staging sites not meant for link checking
     'https://rustup\.rs/',

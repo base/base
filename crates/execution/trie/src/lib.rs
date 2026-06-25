@@ -12,18 +12,29 @@
 use reth_ethereum_primitives as _;
 
 pub mod api;
-pub use api::{BaseProofsInitialStateStore, BaseProofsStore, BlockStateDiff};
+pub use api::{
+    BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStore,
+    BlockStateDiff, StorageBranchEntries,
+};
 
 pub mod initialize;
 pub use initialize::InitializationJob;
 
 pub mod in_memory;
 pub use in_memory::{
-    InMemoryAccountCursor, InMemoryProofsStorage, InMemoryStorageCursor, InMemoryTrieCursor,
+    InMemoryAccountCursor, InMemoryBatchSession, InMemoryProofsStorage, InMemoryStorageCursor,
+    InMemoryTrieCursor,
 };
 
 pub mod db;
-pub use db::{MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor};
+pub use db::{
+    MdbxAccountCursor, MdbxBatchSession, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor,
+    ProofWindowValue, RocksDbHistoryTable, RocksDbLatestVersionResult, RocksdbAccountCursor,
+    RocksdbBatchSession, RocksdbHistoryDeleteBatch, RocksdbPreparedHistoryDeletes,
+    RocksdbPreparedPrune, RocksdbProofsStorage, RocksdbProofsStorageOptions, RocksdbPrunePlan,
+    RocksdbReadSnapshot, RocksdbReplacementState, RocksdbStorageCursor, RocksdbTrieCursor,
+    RocksdbVersionedCursor,
+};
 
 pub mod metrics;
 #[cfg(feature = "metrics")]
@@ -40,6 +51,9 @@ pub mod proof;
 
 pub mod provider;
 
+mod batch_provider;
+pub use batch_provider::BaseProofsBatchStateProviderRef;
+
 pub mod live;
 
 pub mod cursor;
@@ -49,7 +63,10 @@ pub use cursor::{
 };
 
 pub mod cursor_factory;
-pub use cursor_factory::{BaseProofsHashedAccountCursorFactory, BaseProofsTrieCursorFactory};
+pub use cursor_factory::{
+    BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
+    BaseProofsHashedAccountCursorFactory, BaseProofsTrieCursorFactory,
+};
 
 pub mod error;
 pub use error::{BaseProofsStorageError, BaseProofsStorageResult};

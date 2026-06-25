@@ -1,7 +1,7 @@
 //! Shared test utilities for the `base-proof-tee-nitro-host` crate.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -72,6 +72,8 @@ pub struct AddressBasedMockRegistry {
     pub call_count: Arc<AtomicUsize>,
     /// When `true`, all calls return an error.
     pub should_fail: Arc<AtomicBool>,
+    /// Per-address override; calls for any signer in this set return an error.
+    pub fail_signers: Arc<Mutex<HashSet<Address>>>,
 }
 
 impl AddressBasedMockRegistry {
@@ -81,6 +83,7 @@ impl AddressBasedMockRegistry {
             validity_map: Arc::new(Mutex::new(validity_map)),
             call_count: Arc::new(AtomicUsize::new(0)),
             should_fail: Arc::new(AtomicBool::new(false)),
+            fail_signers: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 }
@@ -93,6 +96,9 @@ impl TEEProverRegistryClient for AddressBasedMockRegistry {
     ) -> Result<bool, base_proof_contracts::ContractError> {
         self.call_count.fetch_add(1, Ordering::Relaxed);
         if self.should_fail.load(Ordering::Relaxed) {
+            return Err(base_proof_contracts::ContractError::Validation("mock RPC failure".into()));
+        }
+        if self.fail_signers.lock().expect("fail_signers poisoned").contains(&signer) {
             return Err(base_proof_contracts::ContractError::Validation("mock RPC failure".into()));
         }
         let map = self.validity_map.lock().expect("validity map poisoned");

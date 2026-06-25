@@ -3,7 +3,6 @@
 use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
-use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use async_trait::async_trait;
 use base_proof_tee_attestation::{
@@ -13,6 +12,7 @@ use base_proof_tee_tdx_verifier::TDXVerifierJournal;
 use boundless_market::{
     Client, NotProvided,
     alloy::providers::DynProvider,
+    alloy::signers::local::PrivateKeySigner,
     contracts::{Predicate, RequestId, RequestStatus},
     request_builder::{RequestParams, RequirementParams, StandardRequestBuilder},
 };

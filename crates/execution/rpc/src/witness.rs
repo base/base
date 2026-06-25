@@ -7,20 +7,33 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chains::Upgrades;
 use base_execution_payload_builder::{Attributes, BasePayloadBuilder, PayloadPrimitives};
 use base_execution_txpool::BasePooledTx;
+use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, NodePrimitives};
 use reth_primitives_traits::{SealedHeader, TxTy};
-use reth_rpc_api::DebugExecutionWitnessApiServer;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_storage_api::{
     BlockReaderIdExt, NodePrimitivesProvider, StateProviderFactory,
     errors::{ProviderError, ProviderResult},
 };
-use reth_tasks::TaskSpawner;
+use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
 use tokio::sync::{Semaphore, oneshot};
+
+#[cfg_attr(not(test), rpc(server, namespace = "debug"))]
+#[cfg_attr(test, rpc(server, client, namespace = "debug"))]
+/// RPC trait for the `debug_executePayload` endpoint.
+pub trait DebugExecutionWitnessApi<Attributes> {
+    /// Executes a payload and returns the execution witness.
+    #[method(name = "executePayload")]
+    async fn execute_payload(
+        &self,
+        parent_block_hash: B256,
+        attributes: Attributes,
+    ) -> RpcResult<ExecutionWitness>;
+}
 
 /// An extension to the `debug_` namespace of the RPC API.
 pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs> {
@@ -31,7 +44,7 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
     /// Creates a new instance of the `BaseDebugWitnessApi`.
     pub fn new(
         provider: Provider,
-        task_spawner: Box<dyn TaskSpawner>,
+        task_spawner: Runtime,
         builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(3));
@@ -78,6 +91,7 @@ where
             NextBlockEnvCtx: BuildNextEnv<Attrs, Provider::Header, Provider::ChainSpec>,
         > + 'static,
     Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
+    Attrs::RpcPayloadAttributes: Send + Sync + 'static,
 {
     async fn execute_payload(
         &self,
@@ -90,10 +104,10 @@ where
 
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
-        self.inner.task_spawner.spawn_blocking_task(Box::pin(async move {
+        self.inner.task_spawner.spawn_blocking_task(async move {
             let res = this.inner.builder.payload_witness(parent_header, attributes);
             let _ = tx.send(res);
-        }));
+        });
 
         rx.await
             .map_err(|err| internal_rpc_err(err.to_string()))?
@@ -119,6 +133,6 @@ impl<Pool, Provider, EvmConfig, Attrs> Debug
 struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs> {
     provider: Provider,
     builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
-    task_spawner: Box<dyn TaskSpawner>,
+    task_spawner: Runtime,
     semaphore: Arc<Semaphore>,
 }

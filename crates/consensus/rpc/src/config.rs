@@ -35,6 +35,11 @@ impl RpcBuilder {
         self.dev_enabled
     }
 
+    /// Returns whether the admin RPC namespace is enabled.
+    pub const fn admin_enabled(&self) -> bool {
+        self.enable_admin
+    }
+
     /// Returns the socket address of the [`RpcBuilder`].
     pub const fn socket(&self) -> SocketAddr {
         self.socket

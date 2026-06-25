@@ -4,14 +4,12 @@ use alloc::{boxed::Box, vec};
 
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::Bytes;
+pub use base_protocol::BLOB_MAX_DATA_SIZE;
 
 use crate::{BlobDecodingError, BlobProviderError};
 
 /// The blob encoding version
 pub const BLOB_ENCODING_VERSION: u8 = 0;
-
-/// Maximum blob data size
-pub const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4; // 130044
 
 /// Blob Encoding/Decoding Rounds
 pub const BLOB_ENCODING_ROUNDS: usize = 1024;

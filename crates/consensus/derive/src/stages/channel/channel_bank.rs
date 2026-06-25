@@ -16,7 +16,7 @@ use crate::{
 /// The maximum size of a channel bank.
 pub const MAX_CHANNEL_BANK_SIZE: usize = 100_000_000;
 
-/// The maximum size of a channel bank after the Fjord Hardfork.
+/// The maximum size of a channel bank after the Fjord Upgrade.
 pub const FJORD_MAX_CHANNEL_BANK_SIZE: usize = 1_000_000_000;
 
 /// [`ChannelBank`] is a stateful stage that does the following:
@@ -232,7 +232,7 @@ where
     P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     /// Reset clears all buffered channel state. This represents a discontinuity in the L1 data
-    /// stream (reorg, hardfork boundary, or explicit flush).
+    /// stream (reorg, upgrade boundary, or explicit flush).
     async fn reset(
         &mut self,
         l1_origin: alloy_eips::BlockNumHash,
@@ -264,12 +264,11 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use alloy_eips::BlockNumHash;
-    use base_common_genesis::{HardForkConfig, SystemConfig};
+    use base_common_genesis::{SystemConfig, UpgradeConfig};
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
-    use crate::test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage};
+    use crate::test_utils::TestNextFrameProvider;
 
     #[test]
     fn test_try_read_channel_at_index_missing_channel() {
@@ -379,7 +378,7 @@ mod tests {
     fn test_read_channel_active() {
         let mock = TestNextFrameProvider::new(vec![]);
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { canyon_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { canyon_time: Some(0), ..Default::default() },
             ..Default::default()
         });
         let mut channel_bank = ChannelBank::new(cfg, mock);
@@ -438,7 +437,7 @@ mod tests {
         assert!(channel_bank.prev.reset);
     }
 
-    /// `Activation` is a hardfork-boundary signal and must discard buffered
+    /// `Activation` is an upgrade-boundary signal and must discard buffered
     /// channel data, just like `Reset`.
     #[tokio::test]
     async fn test_activation_clears_channels() {
@@ -472,10 +471,7 @@ mod tests {
 
     #[test]
     fn test_ingest_invalid_frame() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let mock = TestNextFrameProvider::new(vec![]);
         let mut channel_bank = ChannelBank::new(Arc::new(RollupConfig::default()), mock);
@@ -523,7 +519,7 @@ mod tests {
         let mut frames = crate::frames!(0xFF, 0, vec![0xDD; 50], 100000);
         let mock = TestNextFrameProvider::new(vec![]);
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+            upgrades: UpgradeConfig { fjord_time: Some(0), ..Default::default() },
             ..Default::default()
         });
         let mut channel_bank = ChannelBank::new(cfg, mock);
@@ -560,14 +556,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_channel_timeout() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let configs: [RollupConfig; 2] = [
-            base_common_chains::Registry::rollup_config(8453).cloned().unwrap(),
-            base_common_chains::Registry::rollup_config(84532).cloned().unwrap(),
+            base_common_chains::rollup_config!(base_common_chains::ChainConfig::MAINNET),
+            base_common_chains::rollup_config!(base_common_chains::ChainConfig::SEPOLIA),
         ];
 
         for cfg in configs {

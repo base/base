@@ -6,7 +6,7 @@ use alloy_consensus::{Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEnvelope, Tx
 use alloy_primitives::{B256, Bytes, Log, keccak256};
 use alloy_provider::{Provider, ProviderBuilder, network::eip2718::Encodable2718};
 use alloy_rlp::Decodable;
-use alloy_rpc_types::BlockTransactions;
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, BlockTransactions};
 use reqwest::Url;
 
 use crate::{TrieNode, TrieProvider, ordered_trie_with_encoder};
@@ -24,15 +24,14 @@ pub(crate) async fn get_live_derivable_receipts_list()
     let provider =
         ProviderBuilder::new().connect_http(Url::parse(RPC_URL).expect("invalid rpc url"));
 
-    let block_number = 19005266;
     let block = provider
-        .get_block(block_number.into())
+        .get_block_by_number(BlockNumberOrTag::Finalized)
         .full()
         .await
         .map_err(|_| TestTrieProviderError("Missing block"))?
         .ok_or(TestTrieProviderError("Missing block"))?;
     let receipts = provider
-        .get_block_receipts(block_number.into())
+        .get_block_receipts(BlockId::Hash(block.header.hash.into()))
         .await
         .map_err(|_| TestTrieProviderError("Missing receipts"))?
         .ok_or(TestTrieProviderError("Missing receipts"))?;
@@ -94,9 +93,8 @@ pub(crate) async fn get_live_derivable_transactions_list()
     let provider =
         ProviderBuilder::new().connect_http(Url::parse(RPC_URL).expect("invalid rpc url"));
 
-    let block_number = 19005266;
     let block = provider
-        .get_block(block_number.into())
+        .get_block_by_number(BlockNumberOrTag::Finalized)
         .full()
         .await
         .map_err(|_| TestTrieProviderError("Missing block"))?

@@ -1,7 +1,9 @@
 use base_zk_client::{ProveBlockRequest, ProveBlockResponse};
-use base_zk_db::{CreateProofRequest, ProofType};
+use base_zk_db::{
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, ProofType,
+};
 use tonic::{Request, Response, Status};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{metrics, server::ProverServiceServer};
@@ -66,6 +68,23 @@ impl ProverServiceServer {
             })?;
         }
 
+        if let Some(interval) = prove_block_request.intermediate_root_interval {
+            // Reject `intermediate_root_interval == 0`
+            if interval == 0 {
+                return Err(Status::invalid_argument(
+                    "Invalid intermediate_root_interval: must be greater than 0",
+                ));
+            }
+            // Reject misaligned ranges: `number_of_blocks_to_prove` must end on an
+            // intermediate-root boundary
+            if !prove_block_request.number_of_blocks_to_prove.is_multiple_of(interval) {
+                return Err(Status::invalid_argument(format!(
+                    "Invalid number_of_blocks_to_prove ({}): must be a multiple of intermediate_root_interval ({})",
+                    prove_block_request.number_of_blocks_to_prove, interval,
+                )));
+            }
+        }
+
         let session_id = match prove_block_request.session_id {
             Some(ref id_str) => {
                 let parsed = Uuid::parse_str(id_str)
@@ -83,18 +102,64 @@ impl ProverServiceServer {
             session_id,
             prover_address: prove_block_request.prover_address,
             l1_head: prove_block_request.l1_head,
+            intermediate_root_interval: prove_block_request.intermediate_root_interval,
         };
 
-        let proof_request_id = self
-            .repo
-            .create_with_outbox(db_request)
-            .await
-            .map_err(|e| Status::internal(format!("Database error: {e}")))?;
+        let outcome =
+            self.repo.create_with_outbox(db_request, self.max_proof_retries).await.map_err(|e| match e {
+            CreateProofRequestError::IdCollision { id, field } => {
+                warn!(
+                    proof_request_id = %id,
+                    mismatched_field = field,
+                    "rejected ProveBlock: session_id already bound to a different request"
+                );
+                Status::failed_precondition(format!(
+                    "session_id {id} already exists with a different {field}"
+                ))
+            }
+            CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
+                warn!(
+                    proof_request_id = %id,
+                    "rejected ProveBlock: session_id row missing after insert conflict"
+                );
+                Status::unavailable(format!(
+                    "session_id {id} is temporarily unavailable after conflict; retry prove_block"
+                ))
+            }
+            CreateProofRequestError::Sqlx(e) => Status::internal(format!("Database error: {e}")),
+        })?;
 
-        info!(
-            proof_request_id = %proof_request_id,
-            "Created proof request and outbox entry"
-        );
+        let proof_request_id = outcome.id();
+        match outcome {
+            CreateProofRequestOutcome::RetryExhausted(id) => {
+                warn!(
+                    proof_request_id = %id,
+                    max_proof_retries = self.max_proof_retries,
+                    "rejected ProveBlock: proof request retry budget exhausted for this session_id",
+                );
+                return Err(Status::resource_exhausted(format!(
+                    "session_id {id}: proof request retry budget exhausted; use get_proof for the stored terminal failure",
+                )));
+            }
+            CreateProofRequestOutcome::Created(id) => {
+                info!(
+                    proof_request_id = %id,
+                    "Created proof request and outbox entry"
+                );
+            }
+            CreateProofRequestOutcome::Requeued(id) => {
+                info!(
+                    proof_request_id = %id,
+                    "Requeued previously failed proof request"
+                );
+            }
+            CreateProofRequestOutcome::Replayed(id) => {
+                info!(
+                    proof_request_id = %id,
+                    "Idempotent replay of in-flight or succeeded proof request"
+                );
+            }
+        }
 
         let response = ProveBlockResponse { session_id: proof_request_id.to_string() };
 
@@ -130,5 +195,10 @@ mod tests {
         assert_eq!(metrics::grpc_status_code_str(tonic::Code::InvalidArgument), "INVALID_ARGUMENT");
         assert_eq!(metrics::grpc_status_code_str(tonic::Code::Internal), "INTERNAL");
         assert_eq!(metrics::grpc_status_code_str(tonic::Code::NotFound), "NOT_FOUND");
+        assert_eq!(
+            metrics::grpc_status_code_str(tonic::Code::ResourceExhausted),
+            "RESOURCE_EXHAUSTED"
+        );
+        assert_eq!(metrics::grpc_status_code_str(tonic::Code::Unavailable), "UNAVAILABLE");
     }
 }

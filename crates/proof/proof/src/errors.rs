@@ -65,12 +65,12 @@ pub enum OracleProviderError {
     /// formats, or unsupported block versions.
     #[error("From block error: {0}")]
     BlockInfo(FromBlockError),
-    /// Base specific block conversion error.
+    /// Base-specific block conversion error.
     ///
     /// This error occurs when converting between different Base block
-    /// formats fails due to incompatible data structures, missing OP-specific
+    /// formats fails due to incompatible data structures, missing rollup-specific
     /// fields, or version mismatches between block formats.
-    #[error("Op block conversion error: {0}")]
+    #[error("Block conversion error: {0}")]
     BaseBlockConversion(BaseBlockConversionError),
     /// RLP (Recursive Length Prefix) encoding or decoding error.
     ///
@@ -122,6 +122,16 @@ pub enum OracleProviderError {
         boot_chain_id: u64,
         /// The L2 chain ID claimed by the loaded rollup config.
         rollup_config_chain_id: u64,
+    },
+    /// A Beryl-enabled chain is missing a trusted activation registry admin address.
+    ///
+    /// This error occurs when proof boot data resolves a rollup config with Beryl scheduled but no
+    /// activation admin address from a built-in chain config. The admin affects precompile execution;
+    /// oracle-only Beryl configs are rejected until the admin has an explicit committed source.
+    #[error("Missing activation admin address for Beryl-enabled chain ID: {chain_id}")]
+    MissingActivationAdminAddress {
+        /// The chain ID whose Beryl-enabled config lacks a trusted activation admin address.
+        chain_id: u64,
     },
     /// Blob KZG commitment verification failed.
     ///

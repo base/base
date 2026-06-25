@@ -1,10 +1,4 @@
-//! Task and its associated types for building and importing a new block.
-
-mod task;
-pub use task::BuildTask;
+//! Errors for starting an execution-layer block build.
 
 mod error;
 pub use error::{BuildTaskError, EngineBuildError};
-
-#[cfg(test)]
-mod task_test;

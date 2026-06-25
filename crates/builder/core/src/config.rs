@@ -18,7 +18,7 @@ pub struct BuilderConfig {
     /// sequencer.
     pub block_time: Duration,
 
-    /// Data Availability configuration for the OP builder
+    /// Data Availability configuration for the payload builder.
     /// Defines constraints for the maximum size of data availability transactions.
     pub da_config: BaseDAConfig,
 

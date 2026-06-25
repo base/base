@@ -1,4 +1,4 @@
-//! RPC errors specific to OP.
+//! RPC errors specific to Base.
 
 use std::convert::Infallible;
 
@@ -75,6 +75,20 @@ pub enum BaseInvalidTransactionError {
     /// The encoded transaction was missing during evm execution.
     #[error("missing enveloped transaction bytes")]
     MissingEnvelopedTx,
+    /// An EIP-8130 (account-abstraction) transaction was submitted via
+    /// `eth_sendRawTransaction` before the Cobalt fork was active.
+    ///
+    /// The transaction type byte (`0x7B`) is recognised by the consensus layer for
+    /// decoding/serialization purposes, but RPC admission is rejected until the
+    /// Cobalt fork is active. The txpool validator enforces the same fork gate for
+    /// transactions arriving over devp2p.
+    #[error("{}", base_common_consensus::EIP8130_REJECTION_MSG)]
+    Eip8130NotAccepted,
+    /// An EIP-8130 (account-abstraction) transaction was rejected during its
+    /// enshrined execution pipeline (authorization, nonce, intrinsic gas, fee, or
+    /// account-change apply). The string carries the underlying rejection reason.
+    #[error("EIP-8130 transaction rejected: {0}")]
+    Eip8130Rejected(String),
 }
 
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -82,7 +96,9 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
         match err {
             BaseInvalidTransactionError::DepositSystemTxPostRegolith
             | BaseInvalidTransactionError::HaltedDepositPostRegolith
-            | BaseInvalidTransactionError::MissingEnvelopedTx => {
+            | BaseInvalidTransactionError::MissingEnvelopedTx
+            | BaseInvalidTransactionError::Eip8130NotAccepted
+            | BaseInvalidTransactionError::Eip8130Rejected(_) => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
         }
@@ -99,6 +115,7 @@ impl TryFrom<BaseTransactionError> for BaseInvalidTransactionError {
             }
             BaseTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
             BaseTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
+            BaseTransactionError::Eip8130(reason) => Ok(Self::Eip8130Rejected(reason)),
             BaseTransactionError::Base(err) => Err(err),
         }
     }
@@ -142,6 +159,7 @@ where
             EVMError::Database(err) => Self::Eth(err.into()),
             EVMError::Header(err) => Self::Eth(err.into()),
             EVMError::Custom(err) => Self::Eth(EthApiError::EvmCustom(err)),
+            EVMError::CustomAny(err) => Self::Eth(EthApiError::EvmCustom(err.to_string())),
         }
     }
 }

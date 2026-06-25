@@ -133,7 +133,7 @@ impl ArtifactStorageConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendType {
-    /// OP-Succinct with SP1 proving.
+    /// SP1 proving through the Succinct backend.
     OpSuccinct,
 }
 
@@ -168,7 +168,7 @@ impl From<ProofType> for BackendType {
 /// Configuration for initializing a proving backend.
 #[derive(Clone)]
 pub enum BackendConfig {
-    /// OP-Succinct backend settings.
+    /// Succinct backend settings.
     OpSuccinct {
         /// Base consensus node RPC URL.
         base_consensus_url: String,

@@ -1,0 +1,69 @@
+# Load Test Configuration - Local/Shadow Mainnet Snapshot WETH/USDC Swaps
+#
+# This config is for a local or shadow-builder environment restored from a Base
+# mainnet snapshot. Do not point it at public Base mainnet RPCs with a real key.
+#
+# Requires FUNDER_KEY with enough local/shadow ETH to fund deterministic
+# sender accounts. Setup wraps sender ETH into WETH, swaps WETH into USDC
+# through the explicit acquisition route, approves both measured routers, and
+# then runs the existing random-direction Uniswap V3 + Aerodrome CL swap mix.
+
+transaction_submission_rpcs:
+  - "http://127.0.0.1:8545"
+query_rpc: "http://127.0.0.1:8545"
+txpool_nodes: []
+flashblocks_ws: "ws://127.0.0.1:7111"
+
+chain_id: 8453
+sender_count: 10
+target_gps: 20000000
+in_flight_per_sender: 64
+batch_size: 20
+batch_timeout: "10ms"
+duration: "60s"
+seed: 654789
+
+# 0.2 ETH per account covers WETH setup plus local/shadow setup and swap gas.
+funding_amount: "200000000000000000"
+
+real_token_setup:
+  enabled: true
+  allow_chain_id_8453: true
+  weth: "0x4200000000000000000000000000000000000006"
+  # Target WETH balance left after pair-token acquisition.
+  weth_amount_per_sender: "50000000000000000" # 0.05 WETH
+  pair_token:
+    token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" # USDC
+    amount_per_sender: "10000000" # 10 USDC raw units
+    acquisition:
+      type: uniswap_v3_exact_input
+      router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+      fee: 500
+      amount_in: "10000000000000000" # 0.01 WETH
+      min_amount_out: "0"
+
+transactions:
+  - weight: 50
+    type: uniswap_v3
+    router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+    token_in: "0x4200000000000000000000000000000000000006"
+    token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    fee: 500
+    # WETH -> USDC amount range, denominated in WETH wei.
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+    # USDC -> WETH amount range, denominated in USDC raw units.
+    reverse_min_amount: "10000"
+    reverse_max_amount: "100000"
+  - weight: 50
+    type: aerodrome_cl
+    router: "0xBE6D8f0d05cC4be24d5167a3eF062215bE6D18a5"
+    token_in: "0x4200000000000000000000000000000000000006"
+    token_out: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    tick_spacing: 100
+    # WETH -> USDC amount range, denominated in WETH wei.
+    min_amount: "10000000000000"
+    max_amount: "100000000000000"
+    # USDC -> WETH amount range, denominated in USDC raw units.
+    reverse_min_amount: "10000"
+    reverse_max_amount: "100000"

@@ -14,7 +14,7 @@ use alloy_evm::{
 };
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
 use base_common_evm::{
-    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseTxEnv, OpSpecId,
+    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BaseTxEnv,
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -56,7 +56,7 @@ impl<'a, P, H, Evm> StatelessL2Builder<'a, P, H, Evm>
 where
     P: TrieDBProvider + Debug,
     H: TrieHinter + Debug,
-    Evm: EvmFactory<Spec = OpSpecId, BlockEnv = BlockEnv> + 'static,
+    Evm: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + 'static,
     <Evm as EvmFactory>::Tx:
         FromTxWithEncoded<BaseTxEnvelope> + FromRecoveredTx<BaseTxEnvelope> + BaseTxEnv,
 {
@@ -110,7 +110,7 @@ where
             attrs.payload_attributes.timestamp,
         )?;
         let evm_env = self.evm_env(
-            OpSpecId::from_timestamp(self.config, attrs.payload_attributes.timestamp),
+            BaseSpecId::from_timestamp(self.config, attrs.payload_attributes.timestamp),
             self.trie_db.parent_block_header(),
             &attrs,
             &base_fee_params,
@@ -138,11 +138,8 @@ where
         );
 
         // Step 2. Create the executor, using the trie database.
-        let mut state = State::builder()
-            .with_database(&mut self.trie_db)
-            .with_bundle_update()
-            .without_state_clear()
-            .build();
+        let mut state =
+            State::builder().with_database(&mut self.trie_db).with_bundle_update().build();
         let evm = self.factory.evm_factory().create_evm(&mut state, evm_env);
         let ctx = BaseBlockExecutionCtx {
             parent_hash,

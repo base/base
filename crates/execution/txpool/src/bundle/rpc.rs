@@ -10,8 +10,9 @@ use reth_primitives_traits::SignedTransaction;
 use reth_transaction_pool::TransactionPool;
 use tracing::debug;
 
+use super::metrics::Metrics as BundleApiMetrics;
 use crate::{
-    BasePooledTransaction,
+    BasePooledTransaction, PoolRejectionLabel,
     transaction::{MAX_BUNDLE_ADVANCE_BLOCKS, MAX_BUNDLE_ADVANCE_MILLIS},
 };
 
@@ -79,6 +80,11 @@ fn rpc_err(code: ErrorCode, msg: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(code.code(), msg.into(), None::<()>)
 }
 
+fn validation_err(reason: &'static str, msg: impl Into<String>) -> ErrorObjectOwned {
+    BundleApiMetrics::validation_errors(reason).increment(1);
+    rpc_err(ErrorCode::InvalidParams, msg)
+}
+
 /// Validates the structural constraints on a [`SendBundleRequest`].
 ///
 /// Returns `Ok(())` if all restrictions pass, or an RPC error describing the
@@ -88,8 +94,8 @@ fn validate_bundle_request(
     current_block: u64,
 ) -> Result<(), ErrorObjectOwned> {
     if req.txs.len() != 1 {
-        return Err(rpc_err(
-            ErrorCode::InvalidParams,
+        return Err(validation_err(
+            "invalid_tx_count",
             format!("txs must contain exactly 1 transaction, got {}", req.txs.len()),
         ));
     }
@@ -98,15 +104,15 @@ fn validate_bundle_request(
 
     if let Some(block_number) = req.block_number {
         if block_number < current_block {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
+            return Err(validation_err(
+                "block_number_past",
                 format!("blockNumber {block_number} is in the past (current {current_block})",),
             ));
         }
         let max_block = current_block + MAX_BUNDLE_ADVANCE_BLOCKS;
         if block_number > max_block {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
+            return Err(validation_err(
+                "block_number_too_far",
                 format!(
                     "blockNumber {block_number} is too far ahead (max {max_block}, current {current_block})",
                 ),
@@ -117,8 +123,8 @@ fn validate_bundle_request(
     if let Some(min_ts) = req.min_timestamp {
         let max_allowed = now_ms + MAX_BUNDLE_ADVANCE_MILLIS;
         if min_ts > max_allowed {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
+            return Err(validation_err(
+                "min_timestamp_too_far",
                 format!("minTimestamp {min_ts}ms is too far ahead (max {max_allowed}ms)"),
             ));
         }
@@ -126,15 +132,15 @@ fn validate_bundle_request(
 
     if let Some(max_ts) = req.max_timestamp {
         if max_ts < now_ms {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
+            return Err(validation_err(
+                "max_timestamp_past",
                 format!("maxTimestamp {max_ts}ms is in the past (now {now_ms}ms)"),
             ));
         }
         let max_allowed = now_ms + MAX_BUNDLE_ADVANCE_MILLIS;
         if max_ts > max_allowed {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
+            return Err(validation_err(
+                "max_timestamp_too_far",
                 format!("maxTimestamp {max_ts}ms is too far ahead (max {max_allowed}ms)"),
             ));
         }
@@ -143,22 +149,22 @@ fn validate_bundle_request(
     if let (Some(min_ts), Some(max_ts)) = (req.min_timestamp, req.max_timestamp)
         && min_ts > max_ts
     {
-        return Err(rpc_err(
-            ErrorCode::InvalidParams,
+        return Err(validation_err(
+            "min_after_max_timestamp",
             format!("minTimestamp {min_ts}ms is after maxTimestamp {max_ts}ms"),
         ));
     }
 
     if req.reverting_tx_hashes.as_ref().is_some_and(|v| !v.is_empty()) {
-        return Err(rpc_err(ErrorCode::InvalidParams, "revertingTxHashes is not supported"));
+        return Err(validation_err("unsupported_field", "revertingTxHashes is not supported"));
     }
 
     if req.replacement_uuid.is_some() {
-        return Err(rpc_err(ErrorCode::InvalidParams, "replacementUuid is not supported"));
+        return Err(validation_err("unsupported_field", "replacementUuid is not supported"));
     }
 
     if req.builders.as_ref().is_some_and(|v| !v.is_empty()) {
-        return Err(rpc_err(ErrorCode::InvalidParams, "builders is not supported"));
+        return Err(validation_err("unsupported_field", "builders is not supported"));
     }
 
     Ok(())
@@ -171,6 +177,7 @@ where
 {
     async fn send_bundle(&self, bundle: SendBundleRequest) -> RpcResult<TxHash> {
         if !self.enabled {
+            BundleApiMetrics::not_enabled().increment(1);
             return Err(rpc_err(ErrorCode::MethodNotFound, "eth_sendBundle is not enabled"));
         }
 
@@ -179,10 +186,12 @@ where
 
         let raw = &bundle.txs[0];
         let consensus_tx = BaseTransactionSigned::decode_2718(&mut raw.as_ref()).map_err(|e| {
+            BundleApiMetrics::decode_errors().increment(1);
             rpc_err(ErrorCode::InvalidParams, format!("failed to decode transaction: {e:?}"))
         })?;
 
         let recovered = consensus_tx.try_into_recovered().map_err(|e| {
+            BundleApiMetrics::recovery_errors().increment(1);
             rpc_err(ErrorCode::InvalidParams, format!("failed to recover signer: {e:?}"))
         })?;
 
@@ -204,9 +213,11 @@ where
         );
 
         self.pool.add_external_transaction(pool_tx).await.map_err(|e| {
+            BundleApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
             rpc_err(ErrorCode::InternalError, format!("pool rejected transaction: {e}"))
         })?;
 
+        BundleApiMetrics::txs_inserted().increment(1);
         Ok(tx_hash)
     }
 }

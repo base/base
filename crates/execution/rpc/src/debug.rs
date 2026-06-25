@@ -31,7 +31,8 @@ use reth_revm::{State, database::StateProviderDatabase, witness::ExecutionWitnes
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
-use reth_tasks::TaskSpawner;
+use reth_tasks::Runtime;
+use reth_trie_common::ExecutionWitnessMode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 
@@ -70,7 +71,7 @@ pub trait DebugApiOverride<Attributes> {
 }
 
 #[derive(Debug)]
-/// Overrides applied to the `debug_` namespace of the RPC API for the OP Proofs `ExEx`.
+/// Overrides applied to the `debug_` namespace of the RPC API for the proofs `ExEx`.
 pub struct DebugApiExt<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs> {
     inner: Arc<DebugApiExtInner<Eth, Storage, Provider, EvmConfig, Attrs>>,
 }
@@ -88,7 +89,7 @@ where
         provider: Provider,
         eth_api: Eth,
         preimage_store: BaseProofsStorage<Storage>,
-        task_spawner: Box<dyn TaskSpawner>,
+        task_spawner: Runtime,
         evm_config: EvmConfig,
     ) -> Self {
         Self {
@@ -111,7 +112,7 @@ pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs
     storage: BaseProofsStorage<Storage>,
     state_provider_factory: BaseStateProviderFactory<Eth, Storage>,
     evm_config: EvmConfig,
-    task_spawner: Box<dyn TaskSpawner>,
+    task_spawner: Runtime,
     semaphore: Semaphore,
     _attrs: PhantomData<Attrs>,
 }
@@ -127,7 +128,7 @@ where
         provider: Provider,
         eth_api: Eth,
         storage: BaseProofsStorage<P>,
-        task_spawner: Box<dyn TaskSpawner>,
+        task_spawner: Runtime,
         evm_config: EvmConfig,
     ) -> Self {
         Self {
@@ -171,7 +172,8 @@ where
     ErrorObject<'static>: From<Eth::Error>,
     P: BaseProofsStore + Clone + 'static,
     Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
-    N: PayloadPrimitives,
+    Attrs::RpcPayloadAttributes: Send + Sync + 'static,
+    N: PayloadPrimitives<_TX = base_common_consensus::BaseTransactionSigned>,
     EvmConfig: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Provider::ChainSpec>,
@@ -183,9 +185,6 @@ where
         + HeaderProvider<Header = N::BlockHeader>
         + Clone
         + 'static,
-    base_common_consensus::BasePooledTransaction:
-        TryFrom<<N as PayloadPrimitives>::_TX, Error: core::error::Error>,
-    <N as PayloadPrimitives>::_TX: From<base_common_consensus::BasePooledTransaction>,
 {
     async fn execute_payload(
         &self,
@@ -199,14 +198,15 @@ where
 
             let (tx, rx) = oneshot::channel();
             let this = Arc::clone(&self.inner);
-            self.inner.task_spawner.spawn_blocking_task(Box::pin(async move {
+            self.inner.task_spawner.spawn_blocking_task(async move {
                 let result = async {
                     let parent_hash = parent_header.hash();
                     let attributes = Attrs::try_new(parent_hash, attributes, 3)
                         .map_err(PayloadBuilderError::other)?;
+                    let payload_id = attributes.payload_job_id();
 
                     let config =
-                        PayloadConfig { parent_header: Arc::new(parent_header), attributes };
+                        PayloadConfig::new(Arc::new(parent_header), attributes, payload_id);
                     let ctx = BasePayloadBuilderCtx {
                         evm_config: this.evm_config.clone(),
                         chain_spec: this.provider.chain_spec(),
@@ -223,19 +223,14 @@ where
                         .map_err(PayloadBuilderError::other)?;
 
                     let builder = Builder::new(|_| {
-                        NoopPayloadTransactions::<
-                            BasePooledTransaction<
-                                <N as PayloadPrimitives>::_TX,
-                                base_common_consensus::BasePooledTransaction,
-                            >,
-                        >::default()
+                        NoopPayloadTransactions::<BasePooledTransaction>::default()
                     });
 
                     builder.witness(state_provider, &ctx).map_err(PayloadBuilderError::other)
                 };
 
                 let _ = tx.send(result.await);
-            }));
+            });
 
             rx.await
                 .map_err(|err| internal_rpc_err(err.to_string()))?
@@ -268,9 +263,10 @@ where
 
             let mut witness_record = ExecutionWitnessRecord::default();
 
+            let mode = ExecutionWitnessMode::default();
             let _ = block_executor
                 .execute_with_state_closure(&block, |statedb: &State<_>| {
-                    witness_record.record_executed_state(statedb);
+                    witness_record.record_executed_state(statedb, mode);
                 })
                 .map_err(EthApiError::from)?;
 
@@ -278,7 +274,7 @@ where
                 witness_record;
 
             let state = state_provider
-                .witness(Default::default(), hashed_state)
+                .witness(Default::default(), hashed_state, mode)
                 .map_err(EthApiError::from)?;
             let mut exec_witness = ExecutionWitness { state, codes, keys, ..Default::default() };
 

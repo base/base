@@ -1,8 +1,7 @@
 //! Contains the payload builder trait.
 
-use reth_node_api::PayloadBuilderAttributes;
 use reth_payload_builder::PayloadBuilderError;
-use reth_payload_primitives::BuiltPayload;
+use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 
 use crate::{BlockCell, BuildArguments};
 
@@ -14,7 +13,7 @@ use crate::{BlockCell, BuildArguments};
 #[async_trait::async_trait]
 pub trait PayloadBuilder: Send + Sync + Clone {
     /// The payload attributes type to accept for building.
-    type Attributes: PayloadBuilderAttributes;
+    type Attributes: PayloadAttributes;
     /// The type of the built payload.
     type BuiltPayload: BuiltPayload;
 

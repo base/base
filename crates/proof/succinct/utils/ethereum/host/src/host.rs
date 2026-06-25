@@ -10,7 +10,7 @@ use base_proof_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, host::OPSuc
 
 use crate::witness_generator::ETHDAWitnessGenerator;
 
-/// Single-chain OP Succinct host backed by Ethereum DA.
+/// Single-chain SP1 host backed by Ethereum DA.
 #[derive(Clone)]
 pub struct SingleChainOPSuccinctHost {
     /// L1/L2 data fetcher.
@@ -38,6 +38,7 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
         l2_start_block: u64,
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
+        intermediate_block_interval: u64,
         safe_db_fallback: bool,
     ) -> Result<HostConfig> {
         // Calculate L1 head hash using simple logic if not provided.
@@ -48,7 +49,10 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
             }
         };
 
-        let host = self.fetcher.get_host_args(l2_start_block, l2_end_block, l1_head_hash).await?;
+        let host = self
+            .fetcher
+            .get_host_args(l2_start_block, l2_end_block, l1_head_hash, intermediate_block_interval)
+            .await?;
         Ok(host)
     }
 

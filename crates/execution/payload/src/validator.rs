@@ -65,7 +65,9 @@ where
     ChainSpec: Upgrades,
     T: SignedTransaction,
 {
-    let ExecutionData { payload, sidecar } = payload;
+    // BAL bytes are carried through `ExecutionData` for Amsterdam-aware paths, but payload
+    // well-formedness here is defined by the encoded execution payload + sidecar alone.
+    let ExecutionData { payload, sidecar, .. } = payload;
 
     let expected_hash = payload.block_hash();
 

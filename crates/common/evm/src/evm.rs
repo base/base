@@ -1,12 +1,12 @@
 use core::ops::{Deref, DerefMut};
 
-use alloy_evm::{Database, Evm, EvmEnv};
+use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
 use revm::{
-    DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm,
-    InspectSystemCallEvm, Inspector, SystemCallEvm,
+    Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
+    InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm,
     context::{
-        BlockEnv, ContextError, ContextSetters, Evm as RevmEvm, FrameStack, TxEnv,
+        BlockEnv, CfgEnv, ContextError, ContextSetters, Evm as RevmEvm, FrameStack, TxEnv,
         result::ExecResultAndState,
     },
     context_interface::{
@@ -22,9 +22,11 @@ use revm::{
     state::EvmState,
 };
 
+#[cfg(feature = "std")]
+use crate::Eip8130Executor;
 use crate::{
-    BaseContext, BaseHaltReason, BasePrecompiles, BaseTransaction, BaseTransactionError, OpSpecId,
-    handler::BaseHandler,
+    BaseContext, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
+    BaseTransactionError, BaseTxTr, handler::BaseHandler,
 };
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
@@ -41,13 +43,13 @@ type InnerEvm<DB, I, P> = RevmEvm<
 ///
 /// Parameterized over a database [`DB`], inspector [`I`], and precompile set [`P`]
 /// (defaulting to [`BasePrecompiles`]). All Base-specific context configuration —
-/// [`OpSpecId`], [`BaseTransaction`], and [`crate::L1BlockInfo`] — is fixed by [`BaseContext`].
+/// [`BaseSpecId`], [`BaseTransaction`], and [`crate::L1BlockInfo`] — is fixed by [`BaseContext`].
 ///
 /// The `inspect` flag controls whether [`Inspector`] callbacks are invoked during
 /// [`Evm::transact`]. When `false`, the inspector is present in the type but silent,
 /// enabling zero-cost tracing toggling at runtime without type changes.
 #[allow(missing_debug_implementations)] // revm::Context does not implement Debug
-pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
+pub struct BaseEvm<DB: RevmDatabase, I, P = BasePrecompiles> {
     /// Inner revm EVM with Base-specific context, fixed [`EthInstructions`] and
     /// [`EthFrame`], and generic precompile set [`P`].
     pub(crate) inner: InnerEvm<DB, I, P>,
@@ -55,7 +57,7 @@ pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
     pub(crate) inspect: bool,
 }
 
-impl<DB: Database, I, P> BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
     /// Constructs a [`BaseEvm`] from a pre-built [`RevmEvm`] and an inspect flag.
     ///
     /// Prefer [`crate::Builder::build_base`] or [`crate::Builder::build_with_inspector`]
@@ -98,7 +100,7 @@ impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> Deref for BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I, P> Deref for BaseEvm<DB, I, P> {
     type Target = BaseContext<DB>;
 
     #[inline]
@@ -107,7 +109,7 @@ impl<DB: Database, I, P> Deref for BaseEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> DerefMut for BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I, P> DerefMut for BaseEvm<DB, I, P> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.ctx_mut()
@@ -116,7 +118,7 @@ impl<DB: Database, I, P> DerefMut for BaseEvm<DB, I, P> {
 
 impl<DB, I, P> EvmTr for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Context = BaseContext<DB>;
@@ -167,7 +169,7 @@ where
 
 impl<DB, I, P> InspectorEvmTr for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: ContextTr<Journal: JournalExt> + ContextSetters,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
@@ -203,7 +205,7 @@ where
 
 impl<DB, I, P> ExecuteEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -220,6 +222,15 @@ where
     }
 
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
+        // EIP-8130 transactions must run through the enshrined pre-call pipeline
+        // (`Evm::transact_raw`); the standard single-frame handler would
+        // mis-execute the placeholder `TxEnv`. Reject them here so the failure
+        // is explicit rather than silent for any direct `ExecuteEvm` caller.
+        if tx.is_eip8130() {
+            return Err(EVMError::Transaction(BaseTransactionError::eip8130(
+                "EIP-8130 transactions must be executed via Evm::transact_raw",
+            )));
+        }
         self.inner.ctx.set_tx(tx);
         let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
         h.run(self)
@@ -242,7 +253,7 @@ where
 
 impl<DB, I, P> ExecuteCommitEvm for BaseEvm<DB, I, P>
 where
-    DB: Database + DatabaseCommit,
+    DB: RevmDatabase + DatabaseCommit,
     BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -255,7 +266,7 @@ where
 
 impl<DB, I, P> InspectEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -269,6 +280,13 @@ where
     }
 
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
+        // See `transact_one`: EIP-8130 transactions are not handled by the
+        // single-frame (inspector) handler and must use `Evm::transact_raw`.
+        if tx.is_eip8130() {
+            return Err(EVMError::Transaction(BaseTransactionError::eip8130(
+                "EIP-8130 transactions must be executed via Evm::transact_raw",
+            )));
+        }
         self.inner.ctx.set_tx(tx);
         let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
         h.inspect_run(self)
@@ -277,7 +295,7 @@ where
 
 impl<DB, I, P> InspectCommitEvm for BaseEvm<DB, I, P>
 where
-    DB: Database + DatabaseCommit,
+    DB: RevmDatabase + DatabaseCommit,
     BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -288,7 +306,7 @@ where
 
 impl<DB, I, P> SystemCallEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr<Tx: SystemCallTx>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -317,7 +335,7 @@ where
 
 impl<DB, I, P> InspectSystemCallEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt, Tx: SystemCallTx>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -345,20 +363,30 @@ where
     }
 }
 
+// The `Journal: core::fmt::Debug` bound is required by the EIP-8130 path:
+// `Eip8130Executor::execute` borrows the journal through
+// `EvmInternals::from_context`, whose bounds require `Debug`. This is a public
+// API surface addition over the prior `JournalExt`-only bound, but revm's
+// journal types derive `Debug`, so it is satisfied by every in-tree consumer.
 impl<DB, I, P> Evm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: AlloyDatabase,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
-        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
+        + ContextTr<
+            Db = DB,
+            Tx = BaseTransaction<TxEnv>,
+            Block = BlockEnv,
+            Journal: JournalExt + core::fmt::Debug,
+        >,
 {
     type DB = DB;
     type Tx = BaseTransaction<TxEnv>;
     type Error = EVMError<DB::Error, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
-    type Spec = OpSpecId;
+    type Spec = BaseSpecId;
     type BlockEnv = BlockEnv;
     type Precompiles = P;
     type Inspector = I;
@@ -371,6 +399,10 @@ where
         self.cfg.chain_id
     }
 
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        &self.cfg
+    }
+
     /// Executes `tx`, invoking the [`Inspector`] iff `self.inspect` is `true`.
     /// Uses [`InspectEvm::inspect_tx`] for the instrumented path and [`ExecuteEvm::transact`]
     /// for the uninstrumented path; both finalize the journal and return [`ResultAndState`].
@@ -378,6 +410,33 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
+        // EIP-8130 transactions are executed by the enshrined pre-call pipeline,
+        // around (not inside) an EVM call frame, so they bypass both the mainnet
+        // single-frame handler and the inspector frame loop. The pipeline lives
+        // behind the `std` feature; `no_std` builds reject 8130 transactions
+        // rather than mis-executing the placeholder `TxEnv`.
+        //
+        // The inspector is intentionally not driven here: there is no call frame
+        // to step through, and the `Inspector` trait has no transaction-level
+        // start/end hook to emit instead. Tracing integration for 8130 is
+        // deferred until the path is reachable via RPC; until then 8130 txns
+        // produce no inspector output.
+        if tx.is_eip8130() {
+            #[cfg(feature = "std")]
+            {
+                self.inner.ctx.set_tx(tx);
+                let result = Eip8130Executor::execute(self)?;
+                let state = self.inner.ctx.journal_mut().finalize();
+                return Ok(ResultAndState::new(result, state));
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                let _ = tx;
+                return Err(EVMError::Transaction(BaseTransactionError::eip8130(
+                    "EIP-8130 execution is unavailable in no_std builds",
+                )));
+            }
+        }
         if self.inspect { InspectEvm::inspect_tx(self, tx) } else { ExecuteEvm::transact(self, tx) }
     }
 
@@ -422,15 +481,16 @@ mod tests {
         precompiles::{Precompile, PrecompileInput},
     };
     use alloy_primitives::{Address, U256};
+    use base_common_precompiles::{
+        JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
+        JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
+        JOVIAN_PAIRING_MAX_INPUT_SIZE,
+    };
     use revm::{context::CfgEnv, database::EmptyDB};
     use rstest::rstest;
 
     use super::*;
-    use crate::{
-        BaseEvmFactory, JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
-        JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
-        JOVIAN_PAIRING_MAX_INPUT_SIZE, OpSpecId,
-    };
+    use crate::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
 
     #[rstest]
     #[case::bn254_pair(*JOVIAN.address(), JOVIAN_MAX_INPUT_SIZE)]
@@ -440,7 +500,10 @@ mod tests {
     fn precompile_jovian_at_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
+            EvmEnv::new(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)),
+                BlockEnv::default(),
+            ),
         );
         let (precompiles, ctx) = (&mut evm.inner.precompiles, &mut evm.inner.ctx);
         let precompile = precompiles.get(&address).unwrap();
@@ -452,6 +515,7 @@ mod tests {
             is_static: false,
             target_address: Address::ZERO,
             bytecode_address: Address::ZERO,
+            reservoir: 0,
             internals: EvmInternals::from_context(ctx),
         });
         assert!(result.is_ok(), "precompile {address} should succeed at max input size");
@@ -465,7 +529,10 @@ mod tests {
     fn precompile_jovian_over_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
+            EvmEnv::new(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)),
+                BlockEnv::default(),
+            ),
         );
         let (precompiles, ctx) = (&mut evm.inner.precompiles, &mut evm.inner.ctx);
         let precompile = precompiles.get(&address).unwrap();
@@ -477,8 +544,12 @@ mod tests {
             is_static: false,
             target_address: Address::ZERO,
             bytecode_address: Address::ZERO,
+            reservoir: 0,
             internals: EvmInternals::from_context(ctx),
         });
-        assert!(result.is_err(), "precompile {address} should fail over max input size");
+        assert!(
+            matches!(&result, Ok(output) if output.halt_reason().is_some()),
+            "precompile {address} should halt over max input size, got {result:?}"
+        );
     }
 }

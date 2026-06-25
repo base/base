@@ -5,10 +5,9 @@ Audit library for tracking and archiving bundle events.
 ## Overview
 
 Provides event publishing, storage, and retrieval for bundle lifecycle events. `AuditConnector`
-wires an event receiver to a publisher, `KafkaBundleEventPublisher` publishes events to Kafka,
-and `S3EventReaderWriter` archives events to S3 for long-term retention. `KafkaAuditLogReader`
-enables replaying the event history. Also exposes `LoggingBundleEventPublisher` for local
-development.
+wires an event receiver to a publisher, `RpcBundleEventPublisher` publishes events over RPC,
+and `S3EventReaderWriter` archives events to S3 for long-term retention. Also exposes
+`LoggingBundleEventPublisher` for local development.
 
 ## Usage
 
@@ -20,11 +19,10 @@ audit-archiver-lib = { workspace = true }
 ```
 
 ```rust,ignore
-use audit_archiver_lib::{AuditConnector, KafkaBundleEventPublisher};
+use audit_archiver_lib::{AuditConnector, RpcBundleEventPublisher};
 
-let publisher = KafkaBundleEventPublisher::new(kafka_config).await?;
-let connector = AuditConnector::new(event_rx, publisher);
-connector.run().await;
+let publisher = RpcBundleEventPublisher::new(rpc_url, timeout)?;
+AuditConnector::connect_batched(event_rx, publisher, batch_size, batch_wait);
 ```
 
 ## License

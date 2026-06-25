@@ -11,11 +11,11 @@ all-targets: contracts elfs
     cargo build --workspace --all-targets
 
 # Builds all targets with ci profile
-ci: contracts elfs
+ci: contracts
     cargo build --locked --workspace --all-targets --profile ci
 
 # Builds only affected packages with ci profile
-affected-ci base="main": contracts elfs
+affected-ci base="main": contracts
     #!/usr/bin/env bash
     set -euo pipefail
     pkg_args_output="$(python3 {{justfile_directory()}}/etc/scripts/local/affected-crates.py {{ base }} --cargo-args)"
@@ -31,7 +31,7 @@ affected-ci base="main": contracts elfs
     cargo build --locked --all-targets --profile ci "${pkg_args[@]}"
 
 elfs:
-    just succinct ensure-elfs
+    just succinct build-elfs
 
 # Builds the workspace with maxperf
 maxperf:

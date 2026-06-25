@@ -7,7 +7,7 @@ max-threads = 1
 [test-groups.builder-integration]
 max-threads = 1
 
-[test-groups.devnet]
+[test-groups.system-tests]
 max-threads = 6
 
 [profile.ci]
@@ -35,7 +35,7 @@ test-group = 'builder-integration'
 retries = 1
 
 [[profile.default.overrides]]
-filter = 'package(devnet)'
-test-group = 'devnet'
+filter = 'package(base-system-tests)'
+test-group = 'system-tests'
 retries = 1
 slow-timeout = { period = "120s", terminate-after = 3 }

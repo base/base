@@ -15,6 +15,7 @@ impl TryFrom<&ChainConfig> for BootNodes {
     fn try_from(config: &ChainConfig) -> Result<Self, Self::Error> {
         config
             .bootnodes
+            .consensus
             .iter()
             .map(|raw| BootNode::parse_bootnode(raw))
             .collect::<Result<Vec<_>, _>>()
@@ -61,36 +62,34 @@ mod tests {
 
     #[test]
     fn test_validate_bootnode_lens() {
-        assert_eq!(ChainConfig::mainnet().bootnodes.len(), 15);
-        assert_eq!(ChainConfig::sepolia().bootnodes.len(), 6);
-        assert_eq!(ChainConfig::zeronet().bootnodes.len(), 6);
+        assert_eq!(ChainConfig::mainnet().bootnodes.execution.len(), 10);
+        assert_eq!(ChainConfig::mainnet().bootnodes.consensus.len(), 5);
+        assert_eq!(ChainConfig::sepolia().bootnodes.execution.len(), 4);
+        assert_eq!(ChainConfig::sepolia().bootnodes.consensus.len(), 2);
+        assert_eq!(ChainConfig::zeronet().bootnodes.execution.len(), 4);
+        assert_eq!(ChainConfig::zeronet().bootnodes.consensus.len(), 2);
     }
 
     #[test]
     fn test_parse_raw_bootnodes() {
-        for raw in ChainConfig::mainnet().bootnodes {
-            BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse");
-        }
-
-        for raw in ChainConfig::sepolia().bootnodes {
-            BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse");
-        }
-
-        for raw in ChainConfig::zeronet().bootnodes {
-            BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse");
+        for cfg in [ChainConfig::mainnet(), ChainConfig::sepolia(), ChainConfig::zeronet()] {
+            for raw in cfg.bootnodes.execution.iter().chain(cfg.bootnodes.consensus.iter()) {
+                BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse");
+            }
         }
     }
 
     #[test]
     fn test_bootnodes_from_chain_id() {
+        // `BootNodes::from_chain_id` returns CL bootnodes only.
         let mainnet = BootNodes::from_chain_id(ChainConfig::mainnet().chain_id);
-        assert_eq!(mainnet.len(), 15);
+        assert_eq!(mainnet.len(), 5);
 
         let testnet = BootNodes::from_chain_id(ChainConfig::sepolia().chain_id);
-        assert_eq!(testnet.len(), 6);
+        assert_eq!(testnet.len(), 2);
 
         let zeronet = BootNodes::from_chain_id(ChainConfig::zeronet().chain_id);
-        assert_eq!(zeronet.len(), 6);
+        assert_eq!(zeronet.len(), 2);
 
         let unknown = BootNodes::from_chain_id(0);
         assert!(unknown.is_empty());
@@ -98,11 +97,12 @@ mod tests {
 
     #[test]
     fn test_bootnodes_len() {
+        // `BootNodes::mainnet`/`testnet` return CL bootnodes only.
         let bootnodes = BootNodes::mainnet();
-        assert_eq!(bootnodes.len(), 15);
+        assert_eq!(bootnodes.len(), 5);
 
         let bootnodes = BootNodes::testnet();
-        assert_eq!(bootnodes.len(), 6);
+        assert_eq!(bootnodes.len(), 2);
     }
 
     #[test]

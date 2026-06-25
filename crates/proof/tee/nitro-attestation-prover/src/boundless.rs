@@ -20,7 +20,6 @@
 use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
-use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_attestation::{
     TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
 };
@@ -29,6 +28,7 @@ use base_proof_tee_nitro_verifier::{VerifierInput, VerifierJournal};
 // re-export `DynProvider` directly — access it via the SDK's alloy so
 // the type in `BoundlessClient` matches the one inside `Client`.
 use boundless_market::alloy::providers::DynProvider;
+use boundless_market::alloy::signers::local::PrivateKeySigner;
 use boundless_market::{
     Client, NotProvided,
     contracts::{Predicate, RequestId, RequestStatus},

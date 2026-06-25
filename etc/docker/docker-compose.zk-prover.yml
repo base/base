@@ -1,0 +1,66 @@
+services:
+  zk-prover-postgres:
+    image: postgres:17-alpine
+    ports:
+      - "${ZK_PROVER_POSTGRES_PORT:-5433}:5432"
+    environment:
+      - POSTGRES_DB=prover
+      - POSTGRES_USER=prover
+      - POSTGRES_PASSWORD=prover
+    volumes:
+      - ../../.zk-prover/${ZK_PROVER_NETWORK:-local}/postgres:/var/lib/postgresql/data
+      - ../../crates/proof/zk/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  base-prover-zk:
+    image: base-prover-zk:local
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.rust-services
+      args:
+        PROFILE: "${ZK_PROVER_PROFILE:-release}"
+      target: zk-prover
+    depends_on:
+      zk-prover-postgres:
+        condition: service_healthy
+    ports:
+      - "${ZK_PROVER_GRPC_PORT:-9000}:9000"
+    environment:
+      - SP1_PROVER=${SP1_PROVER:-dry-run}
+      - SP1_CLUSTER_API_ENDPOINT=${SP1_CLUSTER_API_ENDPOINT:-}
+      - SP1_CLUSTER_TIMEOUT_HOURS=${SP1_CLUSTER_TIMEOUT_HOURS:-24}
+      - CLI_S3_BUCKET=${CLI_S3_BUCKET:-}
+      - CLI_S3_REGION=${CLI_S3_REGION:-us-east-1}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - AWS_ENDPOINT_URL=${AWS_ENDPOINT_URL:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      - PROXY_ENABLE=${PROXY_ENABLE:-false}
+      - RUST_LOG=${RUST_LOG:-}
+      - GRPC_LISTEN_ADDR=0.0.0.0:9000
+      - BASE_CONSENSUS_ADDRESS=${BASE_CONSENSUS_ADDRESS:-}
+      - L1_NODE_ADDRESS=${L1_NODE_ADDRESS:-}
+      - L1_BEACON_ADDRESS=${L1_BEACON_ADDRESS:-}
+      - L2_NODE_ADDRESS=${L2_NODE_ADDRESS:-}
+      - DEFAULT_SEQUENCE_WINDOW=${DEFAULT_SEQUENCE_WINDOW:-50}
+      - POSTGRES_HOST=zk-prover-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=prover
+      - POSTGRES_USER=prover
+      - POSTGRES_PASSWORD=prover
+      - POSTGRES_SSLMODE=disable
+      - OTEL_SERVICE_NAME=base-prover-zk-${ZK_PROVER_NETWORK:-local}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped

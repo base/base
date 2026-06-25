@@ -73,11 +73,16 @@ async fn block_not_safe_returns_error() {
 
 #[tokio::test]
 async fn block_not_found_returns_error() {
-    // safe_head = 10, block_number = 7, no block registered → mock returns None.
+    // safe_head = 10, finalized_head = 5, block_number = 7, no block registered → mock returns None.
+    // finalized_head must be below block_number so the monotonicity guard does not fire.
     let client = test_engine_client_builder().build();
-    let head = test_block_info(10);
-    let mut state =
-        TestEngineStateBuilder::new().with_safe_head(head).with_unsafe_head(head).build();
+    let safe = test_block_info(10);
+    let finalized = test_block_info(5);
+    let mut state = TestEngineStateBuilder::new()
+        .with_unsafe_head(safe)
+        .with_safe_head(safe)
+        .with_finalized_head(finalized)
+        .build();
 
     let task = FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 7);
     let result = task.execute(&mut state).await;
@@ -136,6 +141,29 @@ async fn fcu_failure_propagates_as_forkchoice_update_failed() {
     assert!(
         matches!(result, Err(FinalizeTaskError::ForkchoiceUpdateFailed(_))),
         "expected ForkchoiceUpdateFailed, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn stale_task_does_not_regress_finalized_head() {
+    // finalized_head = 10, block_number = 7: simulates a BinaryHeap pop-order regression.
+    // The task must no-op without making any RPC calls (no blocks or FCU registered).
+    let client = test_engine_client_builder().build();
+    let head = test_block_info(10);
+    let mut state = TestEngineStateBuilder::new()
+        .with_unsafe_head(head)
+        .with_safe_head(head)
+        .with_finalized_head(head)
+        .build();
+
+    let task = FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 7);
+    let result = task.execute(&mut state).await;
+
+    assert!(result.is_ok(), "stale FinalizeTask should succeed as a no-op, got {result:?}");
+    assert_eq!(
+        state.sync_state.finalized_head().block_info.number,
+        10,
+        "finalized_head must not regress"
     );
 }
 

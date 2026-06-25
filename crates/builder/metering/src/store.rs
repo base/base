@@ -18,10 +18,11 @@ use moka::{notification::RemovalCause, policy::EvictionPolicy, sync::Cache};
 pub struct MeteringStore {
     /// LRU cache mapping transaction hash to metering data.
     cache: Cache<TxHash, MeterBundleResponse>,
-    /// Records when `get()` first returned `None` for a tx hash — the moment
-    /// the builder needed metering data but didn't have it. Cleared when the
-    /// tx is skipped (`MeteringDataPending`) so only txs that were actually
-    /// included without data retain their entry for late-arrival detection.
+    /// Records when a transaction was committed without metering data.
+    ///
+    /// Late-arriving data is only terminal for transactions that were already
+    /// included without it. A plain lookup miss is not enough because the
+    /// transaction may be skipped for a transient reason and retried later.
     needed_at: Cache<TxHash, Instant>,
     /// Whether resource metering is enabled.
     metering_enabled: AtomicBool,
@@ -85,14 +86,7 @@ impl MeteringProvider for MeteringStore {
             return None;
         }
 
-        let Some(entry) = self.cache.get(tx_hash) else {
-            // Atomically record the first miss — later flashblock iterations
-            // must not overwrite the original timestamp.
-            self.needed_at.entry_by_ref(tx_hash).or_insert(Instant::now());
-            return None;
-        };
-
-        Some(entry)
+        self.cache.get(tx_hash)
     }
 
     fn is_enabled(&self) -> bool {
@@ -115,6 +109,16 @@ impl MeteringProvider for MeteringStore {
 
         self.cache.insert(tx_hash, metering);
         BuilderMetrics::metering_store_size().set(self.cache.entry_count() as f64);
+    }
+
+    fn mark_included_without_metering(&self, tx_hash: &TxHash) {
+        if !self.metering_enabled.load(Ordering::Relaxed) || self.cache.get(tx_hash).is_some() {
+            return;
+        }
+
+        // Atomically record the first unmetered inclusion. Later flashblock
+        // iterations must not overwrite the original timestamp.
+        self.needed_at.entry_by_ref(tx_hash).or_insert(Instant::now());
     }
 
     fn skip(&self, tx_hash: &TxHash) {
@@ -234,12 +238,25 @@ mod tests {
     }
 
     #[test]
-    fn test_late_insert_after_inclusion() {
+    fn test_insert_after_lookup_miss_is_cached() {
         let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
 
-        // get() miss → tx included without data → data arrives late
+        // A lookup miss alone does not mean the transaction was included.
         assert!(store.get(&tx_hash).is_none());
+        assert!(!store.needed_at.contains_key(&tx_hash));
+
+        // Data that arrives after a miss is still needed if the tx remains pending.
+        store.insert(tx_hash, create_test_metering(42000));
+        assert!(store.get(&tx_hash).is_some(), "metering should cache after a plain miss");
+    }
+
+    #[test]
+    fn test_late_insert_after_unmetered_inclusion() {
+        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
+        let tx_hash = TxHash::random();
+
+        store.mark_included_without_metering(&tx_hash);
         assert!(store.needed_at.contains_key(&tx_hash));
 
         // Late-arriving data is consumed by insert(), does not enter cache
@@ -254,8 +271,7 @@ mod tests {
         let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
 
-        // get() miss → tx skipped (MeteringDataPending)
-        assert!(store.get(&tx_hash).is_none());
+        store.mark_included_without_metering(&tx_hash);
         assert!(store.needed_at.contains_key(&tx_hash));
 
         store.skip(&tx_hash);
@@ -282,10 +298,21 @@ mod tests {
         let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
 
-        assert!(store.get(&tx_hash).is_none());
+        store.mark_included_without_metering(&tx_hash);
         assert!(store.needed_at.contains_key(&tx_hash));
 
         store.clear();
+        assert!(!store.needed_at.contains_key(&tx_hash));
+    }
+
+    #[test]
+    fn test_mark_included_without_metering_ignores_cached_data() {
+        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
+        let tx_hash = TxHash::random();
+
+        store.insert(tx_hash, create_test_metering(21000));
+        store.mark_included_without_metering(&tx_hash);
+
         assert!(!store.needed_at.contains_key(&tx_hash));
     }
 

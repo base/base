@@ -2,9 +2,13 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
+use alloy_chains::Chain;
 use base_common_chains::ChainConfig as BuiltInChainConfig;
+use base_consensus_cli::ConsensusChainArgs;
+use base_execution_chainspec::BaseChainSpec;
 use eyre::WrapErr;
 use figment::{
     Figment,
@@ -25,6 +29,8 @@ pub(crate) enum BuiltInChain {
     Sepolia,
     /// Base zeronet.
     Zeronet,
+    /// Local Base devnet.
+    Dev,
 }
 
 impl BuiltInChain {
@@ -34,6 +40,7 @@ impl BuiltInChain {
             Self::Mainnet => "mainnet",
             Self::Sepolia => "sepolia",
             Self::Zeronet => "zeronet",
+            Self::Dev => "dev",
         }
     }
 
@@ -43,6 +50,7 @@ impl BuiltInChain {
             Self::Mainnet => BuiltInChainConfig::mainnet(),
             Self::Sepolia => BuiltInChainConfig::sepolia(),
             Self::Zeronet => BuiltInChainConfig::zeronet(),
+            Self::Dev => BuiltInChainConfig::devnet(),
         }
     }
 }
@@ -61,8 +69,9 @@ impl FromStr for BuiltInChain {
             "mainnet" => Ok(Self::Mainnet),
             "sepolia" => Ok(Self::Sepolia),
             "zeronet" => Ok(Self::Zeronet),
+            "dev" => Ok(Self::Dev),
             _ => Err(format!(
-                "unsupported built-in chain `{value}`; expected one of mainnet, sepolia, zeronet"
+                "unsupported built-in chain `{value}`; expected one of mainnet, sepolia, zeronet, dev"
             )),
         }
     }
@@ -147,6 +156,20 @@ impl ResolvedChainConfig {
             source,
         }
     }
+
+    /// Returns the execution chainspec for this chain.
+    pub(crate) fn execution_chain_spec(&self) -> eyre::Result<Arc<BaseChainSpec>> {
+        let config =
+            base_common_chains::ChainConfig::by_chain_id(self.l2_chain_id).ok_or_else(|| {
+                eyre::eyre!("no built-in execution chainspec for L2 chain ID {}", self.l2_chain_id)
+            })?;
+        Ok(Arc::new(BaseChainSpec::try_from(config)?))
+    }
+
+    /// Returns the consensus chain arguments for this chain.
+    pub(crate) fn consensus_chain_args(&self) -> ConsensusChainArgs {
+        ConsensusChainArgs { l2_chain_id: Chain::from(self.l2_chain_id) }
+    }
 }
 
 /// Resolves a chain selection into a concrete config.
@@ -206,6 +229,7 @@ mod tests {
 
     use super::*;
 
+    #[allow(clippy::result_large_err)]
     fn with_cleared_env(test: impl FnOnce(&mut Jail) -> figment::Result<()>) {
         Jail::expect_with(|jail| {
             jail.clear_env();
@@ -214,6 +238,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::result_large_err)]
     fn resolves_mainnet_builtin() {
         with_cleared_env(|_| {
             let resolved =
@@ -229,6 +254,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::result_large_err)]
     fn resolves_sepolia_builtin() {
         with_cleared_env(|_| {
             let resolved =
@@ -243,6 +269,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::result_large_err)]
     fn resolves_zeronet_builtin() {
         with_cleared_env(|_| {
             let resolved =
@@ -257,6 +284,23 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::result_large_err)]
+    fn resolves_dev_builtin() {
+        with_cleared_env(|_| {
+            let resolved =
+                ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Dev)).resolve().unwrap();
+
+            assert_eq!(resolved.name, "dev");
+            assert_eq!(resolved.l2_chain_id, 1337);
+            assert_eq!(resolved.l1_chain_id, 900);
+            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn(BuiltInChain::Dev));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[allow(clippy::result_large_err)]
     fn resolves_custom_toml_file() {
         with_cleared_env(|jail| {
             let path = jail.directory().join("chain.toml");

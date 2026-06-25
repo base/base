@@ -10,20 +10,20 @@ use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
-    DisputeGameFactoryContractClient,
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
+    DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig};
+use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
-use base_zk_client::{ZkProofClient, ZkProofClientConfig};
 use eyre::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
     BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverComponents,
-    DriverConfig, GameScanner, OutputValidator, ScannerConfig,
+    DriverConfig, GameScanner, OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -109,57 +109,51 @@ impl ChallengerService {
         );
 
         let verifier_client = AggregateVerifierContractClient::new(l1_rpc_url.clone())?;
+        let anchor_registry_client = AnchorStateRegistryContractClient::new(
+            config.anchor_state_registry_addr,
+            l1_rpc_url.clone(),
+        )?;
+        info!(
+            address = %config.anchor_state_registry_addr,
+            "AnchorStateRegistry client initialized"
+        );
 
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
+        let anchor_registry_client = Arc::new(anchor_registry_client);
 
         // ── 5. L2 client ─────────────────────────────────────────────────────
         let l2_config = L2ClientConfig::new(config.l2_eth_rpc.as_ref().clone());
         let l2_client = Arc::new(L2Client::new(l2_config)?);
         info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 
-        // ── 6. ZK proof client ───────────────────────────────────────────────
-        let zk_config = ZkProofClientConfig {
-            endpoint: config.zk_rpc_url.as_ref().clone(),
-            connect_timeout: config.zk_connect_timeout,
-            request_timeout: config.zk_request_timeout,
-        };
-        let zk_client = Arc::new(ZkProofClient::new(&zk_config)?);
-        info!(endpoint = %config.zk_rpc_url, "ZK proof client initialized");
+        // ── 6. Prover-service requester client ───────────────────────────────
+        let proof_requester_config = ProverServiceClientConfig::new(config.zk_rpc_url.to_string())
+            .with_request_timeout(config.zk_request_timeout);
+        let proof_requester = Arc::new(ProofRequesterClient::connect(&proof_requester_config)?);
+        info!(endpoint = %config.zk_rpc_url, "Prover-service requester client initialized");
 
-        // ── 6b. TEE proof client (optional) ─────────────────────────────────
-        let tee = if let Some(ref tee_url) = config.tee_rpc_url {
-            let request_timeout = config.tee_request_timeout.ok_or_else(|| {
-                eyre::eyre!("tee_request_timeout must be set when tee_rpc_url is configured")
-            })?;
-            let client = jsonrpsee::http_client::HttpClientBuilder::default()
-                .request_timeout(request_timeout)
-                .build(tee_url.as_str())
-                .map_err(|e| eyre::eyre!("failed to create TEE RPC client: {e}"))?;
-            info!(endpoint = %tee_url, "TEE proof client initialized");
-            let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
-            let l1_client = L1Client::new(l1_config)
-                .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
-            Some(crate::TeeConfig {
-                provider: Arc::new(client),
-                l1_head_provider: Arc::new(l1_client),
-                request_timeout,
-            })
-        } else {
-            info!("TEE proof sourcing disabled (no --tee-rpc-url)");
-            None
-        };
+        // ── 6b. TEE proof config ────────────────────────────────────────────
+        //
+        // TEE-first proof sourcing is the steady-state mode. TEE proofs flow
+        // through the same `proof_requester` as ZK proofs; the TEE config only
+        // carries an L1 head provider used to build the TEE proof request
+        // envelope. The driver automatically falls back to the ZK path when a
+        // TEE proof is unavailable for a given session, so TEE-first is safe
+        // to run even in deployments where TEE proofs are not yet generated
+        // for every session.
+        let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
+        let l1_client = L1Client::new(l1_config)
+            .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
+        let tee = Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) });
 
-        // ── 7. Assemble scanner, validator, and driver ───────────────────────
-        let scanner_config = ScannerConfig { lookback_games: config.lookback_games };
-
-        // ── 7b. Bond manager (optional) ─────────────────────────────────────
+        // ── 7. Bond manager (optional) ─────────────────────────────────────
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
             let mut bm = BondManager::new(
                 config.bond_claim_addresses,
                 l1_rpc_url,
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
-                config.lookback_games,
+                config.bond_discovery_lookback_games,
                 config.bond_discovery_interval,
                 TokioRuntime::new(),
             );
@@ -180,8 +174,9 @@ impl ChallengerService {
             None
         };
 
+        // ── 7b. Assemble scanner, validator, and driver ─────────────────────
         let scanner =
-            GameScanner::new(factory_client, Arc::clone(&verifier_client), scanner_config);
+            GameScanner::new(factory_client, Arc::clone(&verifier_client), anchor_registry_client);
 
         let validator = OutputValidator::new(l2_client);
 
@@ -197,21 +192,27 @@ impl ChallengerService {
         // ── 9. Run driver ────────────────────────────────────────────────────
         let driver_config = DriverConfig {
             poll_interval: config.poll_interval,
+            max_proof_duration: config.max_proof_duration,
+            tee_submit_retry_limit: config.tee_submit_retry_limit,
             cancel: cancel.child_token(),
-            ready: Arc::clone(&ready),
         };
         let driver = Driver::new(
             driver_config,
             DriverComponents {
                 scanner,
                 validator,
-                zk_prover: zk_client,
+                proof_requester,
                 submitter,
                 tee,
                 verifier_client,
                 bond_manager,
             },
         );
+
+        // Signal readiness immediately after initialization — the driver loop
+        // itself is purely operational work that should not gate readiness probes.
+        ready.store(true, Ordering::SeqCst);
+        info!("service is ready");
 
         // Drop guard ensures child tasks are cancelled even if the driver panics.
         let cancel_guard = cancel.clone().drop_guard();

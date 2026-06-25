@@ -16,7 +16,7 @@ pub enum CompressorError {
 
 /// The type of compressor to use.
 ///
-/// See: <https://github.com/ethereum-optimism/optimism/blob/042433b89ce38ccc15456e9673829f6783bb97ac/op-batcher/compressor/compressors.go#L20>
+/// Matches the reference batcher's compressor variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressorType {
     /// The ratio compression.

@@ -1,11 +1,11 @@
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{B64, Bytes};
 
-use super::{EIP1559ParamError, encode_eip_1559_params};
+use super::{EIP1559ParamEncoder, EIP1559ParamError};
 
 const VERSION_BYTE: u8 = 0;
 
-/// EIP-1559 extra data encoding for the Holocene hardfork.
+/// EIP-1559 extra data encoding for the Holocene upgrade.
 ///
 /// Holocene extra data is 9 bytes:
 /// - 1 byte version (always `0`)
@@ -49,7 +49,7 @@ impl HoloceneExtraData {
         default_base_fee_params: BaseFeeParams,
     ) -> Result<Bytes, EIP1559ParamError> {
         let mut extra_data = [0u8; 9];
-        encode_eip_1559_params(eip_1559_params, default_base_fee_params, &mut extra_data)?;
+        EIP1559ParamEncoder::encode(eip_1559_params, default_base_fee_params, &mut extra_data)?;
         Ok(Bytes::copy_from_slice(&extra_data))
     }
 }

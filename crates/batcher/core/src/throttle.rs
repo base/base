@@ -2,7 +2,7 @@
 
 /// Configuration for the throttle controller.
 ///
-/// Defaults match the op-batcher reference implementation:
+/// Defaults match the reference batcher implementation:
 /// 1 MB threshold, full intensity, linear strategy.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThrottleConfig {
@@ -28,7 +28,7 @@ pub struct ThrottleConfig {
 
 impl Default for ThrottleConfig {
     fn default() -> Self {
-        // Match op-batcher's defaults.
+        // Match the reference batcher defaults.
         Self {
             threshold_bytes: 1_000_000,
             max_intensity: 1.0,

@@ -13,7 +13,13 @@ pub mod app;
 pub mod chainspec;
 /// Base CLI commands.
 pub mod commands;
-
+mod node;
+pub use node::{
+    ExecutionNodeArgs, ExecutionNodeConfigArgs, ExecutionNodeLaunchConfig,
+    ExecutionNodeRuntimeConfig,
+};
+/// Standard Base execution-node runner wiring.
+mod standard_node;
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
@@ -34,7 +40,15 @@ use reth_node_core::{
 // This allows us to manually enable node metrics features, required for proper jemalloc metric
 // reporting
 use reth_node_metrics as _;
-use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
+use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
+pub use standard_node::{
+    MeteringArgs, RpcStandardNodeArgs, StandardBaseRethNode, StandardNodeArgs,
+};
+mod upgrade_signal;
+pub use upgrade_signal::{
+    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalMetricsExtension,
+    ExecutionUpgradeSignalRuntimeRefresher,
+};
 
 /// The main base-reth cli interface.
 ///
@@ -43,7 +57,7 @@ use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
 #[command(author, name = version_metadata().name_client.as_ref(), version = version_metadata().short_version.as_ref(), long_version = version_metadata().long_version.as_ref(), about = "Reth", long_about = None)]
 pub struct Cli<
     Ext: clap::Args + fmt::Debug = RollupArgs,
-    Rpc: RpcModuleValidator = DefaultRpcModuleValidator,
+    Rpc: RpcModuleValidator = LenientRpcModuleValidator,
 > {
     /// The command to run
     #[command(subcommand)]
@@ -119,7 +133,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_execution_chainspec::{BASE_DEV, BASE_MAINNET};
+    use base_execution_chainspec::BaseChainSpec;
     use base_node_core::args::RollupArgs;
     use clap::Parser;
     use reth_cli_commands::{NodeCommand, node::NoArgs};
@@ -129,7 +143,7 @@ mod tests {
     #[test]
     fn parse_dev() {
         let cmd = NodeCommand::<BaseChainSpecParser, NoArgs>::parse_from(["base-reth", "--dev"]);
-        let chain = BASE_DEV.clone();
+        let chain = BaseChainSpec::devnet();
         assert_eq!(cmd.chain.chain, chain.chain);
         assert_eq!(cmd.chain.genesis_hash(), chain.genesis_hash());
         assert_eq!(
@@ -189,7 +203,7 @@ mod tests {
 
         match cmd.command {
             Commands::Node(command) => {
-                assert_eq!(command.chain.as_ref(), BASE_MAINNET.as_ref());
+                assert_eq!(command.chain.as_ref(), &BaseChainSpec::mainnet());
             }
             _ => panic!("unexpected command"),
         }

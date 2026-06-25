@@ -1,9 +1,9 @@
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use alloy_primitives::Address;
-use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_tdx_collateral::TdxAttestationConfig;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
+use boundless_market::alloy::signers::local::PrivateKeySigner;
 use url::Url;
 
 use crate::SignerAttestationKind;

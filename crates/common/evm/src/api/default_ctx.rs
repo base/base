@@ -1,15 +1,16 @@
 //! Contains trait [`DefaultBase`] used to create a default context.
+use base_common_genesis::BaseUpgrade;
 use revm::{
     Context, Journal, MainContext,
     context::{BlockEnv, CfgEnv, TxEnv},
     database_interface::EmptyDB,
 };
 
-use crate::{BaseTransaction, L1BlockInfo, OpSpecId};
+use crate::{BaseSpecId, BaseTransaction, L1BlockInfo};
 
 /// Type alias for the default context type of the `BaseEvm`.
 pub type BaseContext<DB> =
-    Context<BlockEnv, BaseTransaction<TxEnv>, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
+    Context<BlockEnv, BaseTransaction<TxEnv>, CfgEnv<BaseSpecId>, DB, Journal<DB>, L1BlockInfo>;
 
 /// Trait that allows for a default context to be created.
 pub trait DefaultBase {
@@ -21,7 +22,7 @@ impl DefaultBase for BaseContext<EmptyDB> {
     fn base() -> Self {
         Context::mainnet()
             .with_tx(BaseTransaction::builder().build_fill())
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK))
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)))
             .with_chain(L1BlockInfo::default())
     }
 }

@@ -7,8 +7,11 @@ base_metrics::define_metrics! {
     #[describe("Challenger is running")]
     up: gauge,
 
-    #[describe("Total number of games evaluated during scanning")]
+    #[describe("Total number of game indices evaluated during scanning, including tracked games")]
     games_scanned_total: counter,
+
+    #[describe("Number of in-progress game indices retained by the game scanner")]
+    scan_tracked_in_progress: gauge,
 
     #[describe("Latest factory index scanned by the game scanner")]
     scan_head: gauge,
@@ -45,8 +48,23 @@ base_metrics::define_metrics! {
     #[describe("Total number of proof retries after failure")]
     proof_retries_total: counter,
 
+    #[describe(
+        "Total number of proof sessions dropped after exceeding the maximum retry count"
+    )]
+    proof_retries_exhausted_total: counter,
+
+    #[describe("Total number of retryable proof session failures by reason")]
+    #[label(
+        name = "reason",
+        default = ["timeout", "malformed", "failed", "tee_validation_failed"]
+    )]
+    proof_session_failures_total: counter,
+
     #[describe("Number of in-flight proof sessions")]
     pending_proofs: gauge,
+
+    #[describe("Number of games ignored after terminal proof-submission reverts")]
+    ignored_games: gauge,
 
     #[describe("Total number of TEE proof attempts")]
     tee_proof_attempts_total: counter,
@@ -154,4 +172,19 @@ impl ChallengerMetrics {
 
     /// Label value for a bond phase determination failure.
     pub const EVAL_ERROR_PHASE_READ: &str = "phase_read";
+
+    /// Label value for a proof session that exceeded its time budget.
+    pub const PROOF_FAILURE_TIMEOUT: &str = "timeout";
+
+    /// Label value for a proof session that returned `Succeeded` without a
+    /// usable result payload.
+    pub const PROOF_FAILURE_MALFORMED: &str = "malformed";
+
+    /// Label value for a proof session that explicitly reported `Failed`.
+    pub const PROOF_FAILURE_FAILED: &str = "failed";
+
+    /// Label value for a TEE proof whose result failed local validation
+    /// (e.g. signature or root mismatch) and is being retried via the ZK
+    /// fallback path.
+    pub const PROOF_FAILURE_TEE_VALIDATION: &str = "tee_validation_failed";
 }

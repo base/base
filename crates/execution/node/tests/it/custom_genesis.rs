@@ -5,6 +5,8 @@ use std::sync::Arc;
 use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
 use alloy_primitives::B256;
+use alloy_rpc_types_engine::ForkchoiceState;
+use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_execution_chainspec::BaseChainSpecBuilder;
 use base_node_core::{BaseNode, utils::payload_attributes};
 use reth_chainspec::EthChainSpec;
@@ -14,13 +16,15 @@ use reth_e2e_test_utils::{
 };
 use reth_node_builder::{EngineNodeLauncher, Node, NodeBuilder, NodeConfig};
 use reth_node_core::args::DatadirArgs;
-use reth_provider::{HeaderProvider, StageCheckpointReader, providers::BlockchainProvider};
+use reth_provider::{
+    BlockReaderIdExt, HeaderProvider, StageCheckpointReader, providers::BlockchainProvider,
+};
 use reth_stages_types::StageId;
 use tokio::sync::Mutex;
 
 /// Tests that a Base node can initialize with a custom genesis block number.
-#[tokio::test]
-async fn test_op_node_custom_genesis_number() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_base_node_custom_genesis_number() {
     reth_tracing::init_test_tracing();
 
     let genesis_number = 1000;
@@ -66,6 +70,20 @@ async fn test_op_node_custom_genesis_number() {
         .expect("Failed to launch node");
 
     let mut node = NodeTestContext::new(node_handle.node, payload_attributes).await.unwrap();
+
+    let genesis_hash = node
+        .inner
+        .provider
+        .sealed_header_by_number_or_tag(BlockNumberOrTag::Number(genesis_number))
+        .unwrap()
+        .expect("genesis header should exist")
+        .hash();
+    node.inner
+        .add_ons_handle
+        .beacon_engine_handle
+        .fork_choice_updated(ForkchoiceState::same_hash(genesis_hash), None)
+        .await
+        .expect("able to seed forkchoice for custom genesis");
 
     // Verify stage checkpoints are initialized to genesis block number (1000)
     for stage in StageId::ALL {

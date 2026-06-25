@@ -27,7 +27,7 @@ async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
     let sender = funded_signer().address();
     let transfer_value = U256::from(42);
 
-    // Use high addresses to avoid overlap with EVM precompiles or OP predeploys
+    // Use high addresses to avoid overlap with EVM precompiles or Base predeploys.
     let recipient_a = "0xAA00000000000000000000000000000000000001".parse::<Address>()?;
     let recipient_b = "0xBB00000000000000000000000000000000000002".parse::<Address>()?;
     let tx_a = driver
@@ -106,11 +106,11 @@ async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
-/// Verify that post-Base-Azul flashblock metadata contains `access_list` but
-/// omits `receipts` and `new_account_balances`.
+/// Verify that post-Base-Azul flashblock metadata omits `access_list`,
+/// `receipts`, and `new_account_balances`.
 ///
 /// After Base Azul activates the builder stops including per-transaction
-/// receipts and balance diffs, replacing them with a flashblock access list.
+/// receipts and balance diffs.
 #[tokio::test]
 async fn test_flashblock_metadata_post_base_azul() -> eyre::Result<()> {
     let config =

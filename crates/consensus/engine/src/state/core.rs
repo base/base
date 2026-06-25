@@ -146,7 +146,7 @@ impl EngineState {
     ///
     /// [Consolidation] is only performed by a rollup node when the unsafe head
     /// is ahead of the safe head. When the two are equal, consolidation isn't
-    /// required and the [`crate::BuildTask`] can be used to build the block.
+    /// required and [`crate::Engine::build`] can be used to build the block.
     ///
     /// [Consolidation]: https://specs.base.org/protocol/consensus/derivation#l1-consolidation-payload-attributes-matching
     pub fn needs_consolidation(&self) -> bool {

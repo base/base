@@ -2,11 +2,13 @@
 
 use alloc::{boxed::Box, sync::Arc};
 
+use alloy_consensus::Receipt;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
+use tracing::{info, warn};
 
 use crate::{
     ChainProvider, L1RetrievalProvider, Metrics, OriginAdvancer, OriginProvider, PipelineError,
@@ -68,6 +70,32 @@ impl<F: ChainProvider> PollingTraversal<F> {
         self.block = Some(block);
         Metrics::pipeline_origin().set(block.number as f64);
     }
+
+    /// Updates the system config with receipts, logging each applied update and any errors,
+    /// and setting the appropriate metrics gauges.
+    pub fn update_system_config_with_receipts(
+        &mut self,
+        receipts: &[Receipt],
+        l1_system_config_address: Address,
+        ecotone_active: bool,
+        block_number: u64,
+    ) {
+        let (updates, errors) = self.system_config.update_with_receipts(
+            receipts,
+            l1_system_config_address,
+            ecotone_active,
+        );
+        for kind in &updates {
+            info!(target: "traversal", %kind, block_number, "Applied system config update");
+        }
+        if !updates.is_empty() {
+            Metrics::pipeline_latest_sys_config_update().set(block_number as f64);
+        }
+        for err in &errors {
+            warn!(target: "traversal", error = ?err, block_number, "Malformed system config update (skipped)");
+            Metrics::pipeline_sys_config_update_error().set(block_number as f64);
+        }
+    }
 }
 
 #[async_trait]
@@ -99,11 +127,12 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
         let receipts =
             self.data_source.receipts_by_hash(next_l1_origin.hash).await.map_err(Into::into)?;
 
-        super::update_system_config_with_receipts(
-            &mut self.system_config,
+        let l1_system_config_address = self.rollup_config.l1_system_config_address;
+        let ecotone_active = self.rollup_config.is_ecotone_active(next_l1_origin.timestamp);
+        self.update_system_config_with_receipts(
             &receipts,
-            self.rollup_config.l1_system_config_address,
-            self.rollup_config.is_ecotone_active(next_l1_origin.timestamp),
+            l1_system_config_address,
+            ecotone_active,
             next_l1_origin.number,
         );
 

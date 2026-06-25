@@ -1,4 +1,4 @@
-//! Verification of blocks w.r.t. Base hardforks.
+//! Verification of blocks w.r.t. Base upgrades.
 
 pub mod canyon;
 pub mod isthmus;
@@ -231,9 +231,9 @@ mod tests {
     use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
-    use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt};
-    use base_execution_chainspec::{BASE_SEPOLIA, BaseChainSpec};
+    use base_common_genesis::BaseUpgrade;
+    use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 
     use super::*;
@@ -246,19 +246,19 @@ mod tests {
     const CANYON_TIMESTAMP: u64 = 1699981200;
 
     fn holocene_chainspec() -> Arc<BaseChainSpec> {
-        let mut chainspec = BASE_SEPOLIA.as_ref().clone();
+        let mut chainspec = BaseChainSpec::sepolia();
         chainspec.set_fork(BaseUpgrade::Holocene, ForkCondition::Timestamp(HOLOCENE_TIMESTAMP));
         Arc::new(chainspec)
     }
 
     fn isthmus_chainspec() -> BaseChainSpec {
-        let mut chainspec = BASE_SEPOLIA.as_ref().clone();
+        let mut chainspec = BaseChainSpec::sepolia();
         chainspec.set_fork(BaseUpgrade::Isthmus, ForkCondition::Timestamp(ISTHMUS_TIMESTAMP));
         chainspec
     }
 
     fn jovian_chainspec() -> BaseChainSpec {
-        let mut chainspec = BASE_SEPOLIA.as_ref().clone();
+        let mut chainspec = BaseChainSpec::sepolia();
         chainspec.set_fork(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
         chainspec
     }
@@ -289,7 +289,7 @@ mod tests {
         let receipts_with_bloom =
             receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
         let receipts_root =
-            calculate_receipt_root(&receipts_with_bloom, BASE_SEPOLIA.as_ref(), timestamp);
+            calculate_receipt_root(&receipts_with_bloom, BaseChainSpec::sepolia(), timestamp);
         let logs_bloom = receipts_with_bloom
             .iter()
             .fold(Bloom::ZERO, |bloom, receipt| bloom | receipt.bloom_ref());
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_get_base_fee_pre_holocene() {
-        let op_chain_spec = BASE_SEPOLIA.clone();
+        let base_chain_spec = BaseChainSpec::sepolia();
         let parent = Header {
             base_fee_per_gas: Some(1),
             gas_used: 15763614,
@@ -314,19 +314,19 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             0,
         );
         assert_eq!(
             base_fee.unwrap(),
-            op_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
+            base_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
         );
     }
 
     #[test]
     fn test_get_base_fee_holocene_extra_data_not_set() {
-        let op_chain_spec = holocene_chainspec();
+        let base_chain_spec = holocene_chainspec();
         let parent = Header {
             base_fee_per_gas: Some(1),
             gas_used: 15763614,
@@ -336,13 +336,13 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             HOLOCENE_TIMESTAMP + 5,
         );
         assert_eq!(
             base_fee.unwrap(),
-            op_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
+            base_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
         );
     }
 
@@ -383,7 +383,7 @@ mod tests {
         };
 
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &*BASE_SEPOLIA,
+            &BaseChainSpec::sepolia(),
             &parent,
             1735315546,
         )
@@ -412,7 +412,7 @@ mod tests {
         };
 
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &*BASE_SEPOLIA,
+            &BaseChainSpec::sepolia(),
             &parent,
             1735315546,
         );
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_get_base_fee_jovian_extra_data_and_min_base_fee_not_set() {
-        let op_chain_spec = jovian_chainspec();
+        let base_chain_spec = jovian_chainspec();
 
         let mut extra_data = Vec::new();
         extra_data.push(JOVIAN_EXTRA_DATA_VERSION_BYTE);
@@ -441,7 +441,7 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
         );
@@ -462,7 +462,7 @@ mod tests {
         extra_data.append(&mut MIN_BASE_FEE.to_be_bytes().to_vec());
         let extra_data = Bytes::from(extra_data);
 
-        let op_chain_spec = jovian_chainspec();
+        let base_chain_spec = jovian_chainspec();
         let parent = Header {
             base_fee_per_gas: Some(CURR_BASE_FEE),
             gas_used: 15763614,
@@ -472,7 +472,7 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
         );
@@ -492,7 +492,7 @@ mod tests {
         extra_data.append(&mut MIN_BASE_FEE.to_be_bytes().to_vec());
         let extra_data = Bytes::from(extra_data);
 
-        let op_chain_spec = jovian_chainspec();
+        let base_chain_spec = jovian_chainspec();
 
         // If we're currently at the minimum base fee, the next block base fee cannot decrease.
         let parent = Header {
@@ -504,7 +504,7 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
         );
@@ -520,7 +520,7 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + 2 * BLOCK_TIME_SECONDS,
         );
@@ -539,7 +539,7 @@ mod tests {
         extra_data.append(&mut MIN_BASE_FEE.to_be_bytes().to_vec());
         let extra_data = Bytes::from(extra_data);
 
-        let op_chain_spec = jovian_chainspec();
+        let base_chain_spec = jovian_chainspec();
 
         let parent = Header {
             base_fee_per_gas: Some(100 * MIN_BASE_FEE),
@@ -550,14 +550,14 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
         )
         .unwrap();
         assert_eq!(
             base_fee,
-            op_chain_spec
+            base_chain_spec
                 .inner
                 .next_block_base_fee(&parent, JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS)
                 .unwrap()
@@ -637,13 +637,13 @@ mod tests {
 
     #[test]
     fn trusts_precomputed_receipt_root_after_canyon() {
-        assert!(should_trust_precomputed_receipt_root(BASE_SEPOLIA.as_ref(), CANYON_TIMESTAMP));
+        assert!(should_trust_precomputed_receipt_root(&BaseChainSpec::sepolia(), CANYON_TIMESTAMP));
     }
 
     #[test]
     fn ignores_precomputed_receipt_root_before_canyon() {
         assert!(!should_trust_precomputed_receipt_root(
-            BASE_SEPOLIA.as_ref(),
+            &BaseChainSpec::sepolia(),
             PRE_CANYON_TIMESTAMP
         ));
 
@@ -658,7 +658,7 @@ mod tests {
 
         validate_block_post_execution(
             &header,
-            BASE_SEPOLIA.as_ref(),
+            BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
         )
@@ -683,7 +683,7 @@ mod tests {
         assert!(matches!(
             validate_block_post_execution(
                 &header,
-                BASE_SEPOLIA.as_ref(),
+                BaseChainSpec::sepolia(),
                 &result,
                 Some((invalid_receipts_root, logs_bloom)),
             )
@@ -705,7 +705,7 @@ mod tests {
 
         validate_block_post_execution(
             &header,
-            BASE_SEPOLIA.as_ref(),
+            BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
         )

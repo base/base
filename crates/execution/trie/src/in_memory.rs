@@ -17,7 +17,10 @@ use reth_trie_common::{
 
 use crate::{
     BaseProofsStorageError, BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
-    api::{BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus, WriteCounts},
+    api::{
+        BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore,
+        InitialStateAnchor, InitialStateStatus, WriteCounts,
+    },
     db::{HashedStorageKey, StorageTrieKey},
 };
 
@@ -113,11 +116,13 @@ impl InMemoryStorageInner {
                         result.hashed_storages_written_total += 1;
                     }
                 }
-            } else {
-                for (slot, value) in storage.storage_slots_ref() {
-                    self.hashed_storages.insert((block_number, *hashed_address, *slot), *value);
-                    result.hashed_storages_written_total += 1;
-                }
+            }
+            // Persist any new slots that arrive in the same block as the wipe (e.g. SELFDESTRUCT
+            // + same-block re-CREATE2 produces `wiped = true` together with fresh
+            // `storage_slots_ref()` for the recreated contract). Mirrors the MDBX backend.
+            for (slot, value) in storage.storage_slots_ref() {
+                self.hashed_storages.insert((block_number, *hashed_address, *slot), *value);
+                result.hashed_storages_written_total += 1;
             }
         }
 
@@ -135,7 +140,7 @@ impl Default for InMemoryProofsStorage {
 }
 
 impl InMemoryProofsStorage {
-    /// Create a new in-memory op proofs storage instance
+    /// Create a new in-memory Base proofs storage instance.
     pub fn new() -> Self {
         Self { inner: Arc::new(RwLock::new(InMemoryStorageInner::default())) }
     }
@@ -537,6 +542,10 @@ impl BaseProofsStore for InMemoryProofsStorage {
     type AccountTrieCursor<'tx> = InMemoryTrieCursor;
     type StorageCursor<'tx> = InMemoryStorageCursor;
     type AccountHashedCursor<'tx> = InMemoryAccountCursor;
+    type Tx<'tx>
+        = ()
+    where
+        Self: 'tx;
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         let inner = self.inner.read();
@@ -551,7 +560,7 @@ impl BaseProofsStore for InMemoryProofsStorage {
     }
 
     fn storage_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
@@ -559,14 +568,14 @@ impl BaseProofsStore for InMemoryProofsStorage {
     }
 
     fn account_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
         Ok(InMemoryTrieCursor::new(Arc::clone(&self.inner), None, max_block_number))
     }
 
     fn storage_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
@@ -574,11 +583,65 @@ impl BaseProofsStore for InMemoryProofsStorage {
     }
 
     fn account_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let inner = self.inner.try_read().ok_or(BaseProofsStorageError::TryLockError)?;
         Ok(InMemoryAccountCursor::new(&inner, max_block_number))
+    }
+
+    fn ro_tx<'tx>(&'tx self) -> BaseProofsStorageResult<Self::Tx<'tx>> {
+        Ok(())
+    }
+
+    fn storage_trie_cursor_with_tx<'tx, 'db>(
+        &self,
+        _tx: &'tx Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        self.storage_trie_cursor(hashed_address, max_block_number)
+    }
+
+    fn account_trie_cursor_with_tx<'tx, 'db>(
+        &self,
+        _tx: &'tx Self::Tx<'db>,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        self.account_trie_cursor(max_block_number)
+    }
+
+    fn storage_hashed_cursor_with_tx<'tx, 'db>(
+        &self,
+        _tx: &'tx Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        self.storage_hashed_cursor(hashed_address, max_block_number)
+    }
+
+    fn account_hashed_cursor_with_tx<'tx, 'db>(
+        &self,
+        _tx: &'tx Self::Tx<'db>,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        self.account_hashed_cursor(max_block_number)
     }
 
     fn store_trie_updates(
@@ -733,6 +796,94 @@ impl BaseProofsStore for InMemoryProofsStorage {
         let mut inner = self.inner.write();
         inner.earliest_block = Some((block_number, hash));
         Ok(())
+    }
+}
+
+/// Degenerate batch session for [`InMemoryProofsStorage`]: writes go directly to shared
+/// storage and are visible to subsequent reads. There is no commit/abort distinction —
+/// the in-memory store does not provide cross-block atomicity.
+#[derive(Debug)]
+pub struct InMemoryBatchSession<'a> {
+    storage: &'a InMemoryProofsStorage,
+}
+
+impl BaseProofsBatchSession for InMemoryBatchSession<'_> {
+    type StorageTrieCursor<'a>
+        = InMemoryTrieCursor
+    where
+        Self: 'a;
+    type AccountTrieCursor<'a>
+        = InMemoryTrieCursor
+    where
+        Self: 'a;
+    type StorageCursor<'a>
+        = InMemoryStorageCursor
+    where
+        Self: 'a;
+    type AccountHashedCursor<'a>
+        = InMemoryAccountCursor
+    where
+        Self: 'a;
+
+    fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
+        self.storage.get_earliest_block_number()
+    }
+
+    fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
+        self.storage.get_latest_block_number()
+    }
+
+    fn storage_trie_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'_>> {
+        self.storage.storage_trie_cursor(hashed_address, max_block_number)
+    }
+
+    fn account_trie_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'_>> {
+        self.storage.account_trie_cursor(max_block_number)
+    }
+
+    fn storage_hashed_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'_>> {
+        self.storage.storage_hashed_cursor(hashed_address, max_block_number)
+    }
+
+    fn account_hashed_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>> {
+        self.storage.account_hashed_cursor(max_block_number)
+    }
+
+    fn store_trie_updates(
+        &mut self,
+        block_ref: BlockWithParent,
+        block_state_diff: BlockStateDiff,
+    ) -> BaseProofsStorageResult<WriteCounts> {
+        self.storage.store_trie_updates(block_ref, block_state_diff)
+    }
+}
+
+impl BaseProofsBatchStore for InMemoryProofsStorage {
+    type BatchSession<'a>
+        = InMemoryBatchSession<'a>
+    where
+        Self: 'a;
+
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
+    {
+        let mut session = InMemoryBatchSession { storage: self };
+        f(&mut session)
     }
 }
 

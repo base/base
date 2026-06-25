@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 # Alloy
 alloy-rlp.workspace = true
+alloy-eips.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
@@ -29,16 +30,15 @@ base-balance-monitor.workspace = true
 
 # Proof
 base-proof-rpc.workspace = true
-base-zk-client.workspace = true
 base-proof-contracts.workspace = true
+base-proof-submission.workspace = true
+base-prover-service-client.workspace = true
+base-prover-service-protocol.workspace = true
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # Protocol
 base-protocol.workspace = true
 base-common-consensus.workspace = true
-
-# JSON-RPC
-jsonrpsee.workspace = true
 
 # Async
 tokio.workspace = true
@@ -76,7 +76,6 @@ base-health = { workspace = true, features = ["axum-server"] }
 # Misc
 url.workspace = true
 humantime.workspace = true
-uuid = { workspace = true, features = ["v5"] }
 derive_more = { workspace = true, features = ["debug"] }
 
 # Test utilities (optional)
@@ -86,6 +85,7 @@ serde_json = { workspace = true, optional = true }
 rstest.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
+metrics-util = { workspace = true, features = ["debugging"] }
 
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

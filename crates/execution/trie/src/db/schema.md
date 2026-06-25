@@ -1,6 +1,6 @@
 # Proof History Database Schema
 
-> Location: `crates/optimism/trie/src/db`
+> Location: `crates/execution/trie/src/db`
 > Backend: **MDBX** (via `reth-db`)
 > Purpose: Serve **historical `eth_getProof`** by storing versioned trie data in a bounded window.
 
@@ -335,7 +335,7 @@ These tables do **not** contain historical versions; they represent a single fin
 
 ### Destination database (Proofs storage)
 
-The data is copied into the **proofs history database** (`OpProofsStore`), which is a **versioned, append-only** store designed for historical proof generation.
+The data is copied into the **proofs history database** (`BaseProofsStore`), which is a **versioned, append-only** store designed for historical proof generation.
 
 ---
 

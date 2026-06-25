@@ -10,12 +10,12 @@ use base_common_network::Base;
 use base_execution_txpool::BasePooledTransaction;
 use dashmap::DashMap;
 use futures::StreamExt;
-use reth_primitives::Recovered;
+use reth_primitives_traits::Recovered;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
 use tokio::sync::watch;
 use tracing::debug;
 
-use super::{PrivateKeySigner, funded_signer, sign_op_tx};
+use super::{PrivateKeySigner, funded_signer, sign_base_tx};
 
 /// Builder for constructing and sending EIP-1559 transactions in tests.
 #[derive(Clone, Debug)]
@@ -143,7 +143,7 @@ impl TransactionBuilder {
             self.tx.max_fee_per_gas = base_fee + self.tx.max_priority_fee_per_gas;
         }
 
-        sign_op_tx(&signer, BaseTypedTransaction::Eip1559(self.tx))
+        sign_base_tx(&signer, BaseTypedTransaction::Eip1559(self.tx))
             .expect("Failed to sign transaction")
     }
 

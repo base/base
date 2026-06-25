@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 # reth
+alloy-rlp.workspace = true
 reth-db.workspace = true
 reth-discv5.workspace = true
 reth-evm.workspace = true
@@ -25,8 +26,10 @@ reth-node-api.workspace = true
 reth-consensus.workspace = true
 reth-node-core.workspace = true
 reth-chainspec.workspace = true
+reth-storage-api = { workspace = true, features = ["db-api"] }
 reth-trie-common.workspace = true
 reth-node-builder.workspace = true
+reth-network-peers.workspace = true
 reth-rpc-engine-api.workspace = true
 reth-payload-builder.workspace = true
 reth-transaction-pool.workspace = true
@@ -37,7 +40,6 @@ reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 # op-reth
 base-execution-rpc.workspace = true
 base-execution-txpool.workspace = true
-base-execution-storage.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
 base-execution-exex = { workspace = true, features = ["metrics"] }
@@ -59,6 +61,7 @@ revm = { workspace = true, features = [
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 base-common-chains.workspace = true
+base-upgrade-signal.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
@@ -81,7 +84,10 @@ alloy-genesis = { workspace = true, optional = true }
 reth-e2e-test-utils = { workspace = true, optional = true }
 
 [dev-dependencies]
+rstest.workspace = true
 reth-rpc.workspace = true
+reth-codecs = { workspace = true, features = ["test-utils"] }
+reth-prune-types.workspace = true
 reth-trie-db.workspace = true
 reth-payload-util.workspace = true
 reth-stages-types.workspace = true

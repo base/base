@@ -14,8 +14,8 @@ workspace = true
 # Alloy
 alloy-signer.workspace = true
 alloy-sol-types.workspace = true
+boundless-market.workspace = true
 alloy-primitives.workspace = true
-alloy-signer-local.workspace = true
 
 # AWS
 aws-sdk-ec2.workspace = true

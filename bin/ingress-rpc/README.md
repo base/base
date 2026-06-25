@@ -2,4 +2,4 @@
 
 JSON-RPC ingress server for the Base Stack.
 
-Receives transactions and bundles from external clients, enqueues them to Kafka, and forwards metering responses back to connected builder nodes.
+Receives transactions and bundles from external clients, submits them to the mempool, and forwards metering responses back to connected builder nodes.

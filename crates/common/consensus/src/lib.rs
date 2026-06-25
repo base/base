@@ -10,6 +10,9 @@
 
 extern crate alloc;
 
+#[cfg(feature = "evm")]
+use revm as _;
+
 #[cfg(feature = "reth")]
 mod reth_compat;
 #[cfg(feature = "reth")]
@@ -24,12 +27,15 @@ mod transaction;
 #[cfg(feature = "serde")]
 pub use transaction::serde_deposit_tx_rpc;
 pub use transaction::{
-    BasePooledTransaction, BaseTransaction, BaseTransactionInfo, BaseTxEnvelope,
-    BaseTypedTransaction, DEPOSIT_TX_TYPE_ID, DepositInfo, DepositTransaction, OpTxType, TxDeposit,
+    AccountChange, ActorChange, ActorChangeType, BasePooledTransaction, BaseTransaction,
+    BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, ConfigChange, CreateEntry,
+    DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction, EIP8130_REJECTION_MSG,
+    EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Contracts, Eip8130Signed, InitialActor, OpTxType,
+    Scope, TxDeposit, TxEip8130,
 };
 
 mod extra;
-pub use extra::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+pub use extra::{EIP1559ParamEncoder, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 
 mod source;
 pub use source::{

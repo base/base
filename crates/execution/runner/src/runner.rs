@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use base_execution_payload_builder::config::BaseDAConfig;
+use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_node_core::args::RollupArgs;
 use eyre::Result;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
@@ -17,6 +17,13 @@ use crate::{
 
 type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
 
+/// Handle to a launched Base execution node.
+#[derive(Debug)]
+pub struct LaunchedBaseNode {
+    /// The underlying reth node handle.
+    pub handle: NodeHandleFor<BaseNode>,
+}
+
 /// Wraps the Base node configuration and orchestrates builder wiring.
 pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuilder> {
     /// Rollup-specific arguments forwarded to the Base node implementation.
@@ -25,8 +32,10 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     /// Payload service builder.
     service_builder: SB,
-    /// Shared DA configuration for the node and metering extension.
+    /// Shared DA configuration for the node and payload builder.
     da_config: Option<BaseDAConfig>,
+    /// Shared gas-limit configuration for the node and payload builder.
+    gas_limit_config: Option<GasLimitConfig>,
     /// Binary-owned callbacks to run after the node has started.
     started_callbacks: Vec<StartedCallback>,
 }
@@ -39,6 +48,7 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
             extensions: Vec::new(),
             service_builder: DefaultPayloadServiceBuilder,
             da_config: None,
+            gas_limit_config: None,
             started_callbacks: Vec::new(),
         }
     }
@@ -50,6 +60,7 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
             .field("rollup_args", &self.rollup_args)
             .field("extensions", &self.extensions.len())
             .field("da_config", &self.da_config)
+            .field("gas_limit_config", &self.gas_limit_config)
             .field("started_callbacks", &self.started_callbacks.len())
             .finish()
     }
@@ -62,6 +73,12 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self
     }
 
+    /// Sets the shared gas-limit configuration.
+    pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
+        self.gas_limit_config = Some(gas_limit_config);
+        self
+    }
+
     /// Swap the payload service builder.
     pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
         BaseNodeRunner {
@@ -69,6 +86,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             extensions: self.extensions,
             service_builder: sb,
             da_config: self.da_config,
+            gas_limit_config: self.gas_limit_config,
             started_callbacks: self.started_callbacks,
         }
     }
@@ -89,18 +107,34 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Applies all Base-specific wiring to the supplied builder, launches the node, and waits for
     /// shutdown.
     pub async fn run(self, builder: BaseNodeBuilder) -> Result<()> {
-        let Self { rollup_args, extensions, service_builder, da_config, started_callbacks } = self;
-        let NodeHandle { node: _node, node_exit_future } = Self::launch_node(
+        let LaunchedBaseNode { handle: NodeHandle { node: _node, node_exit_future } } =
+            self.launch(builder).await?;
+        node_exit_future.await?;
+        Ok(())
+    }
+
+    /// Applies all Base-specific wiring to the supplied builder and returns a launched node
+    /// handle without waiting for shutdown.
+    pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
+        let Self {
             rollup_args,
             extensions,
             service_builder,
             da_config,
+            gas_limit_config,
+            started_callbacks,
+        } = self;
+        let handle = Self::launch_node(
+            rollup_args,
+            extensions,
+            service_builder,
+            da_config,
+            gas_limit_config,
             started_callbacks,
             builder,
         )
         .await?;
-        node_exit_future.await?;
-        Ok(())
+        Ok(LaunchedBaseNode { handle })
     }
 
     async fn launch_node(
@@ -108,6 +142,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         service_builder: SB,
         da_config: Option<BaseDAConfig>,
+        gas_limit_config: Option<GasLimitConfig>,
         started_callbacks: Vec<StartedCallback>,
         builder: BaseNodeBuilder,
     ) -> Result<NodeHandleFor<BaseNode>> {
@@ -116,6 +151,9 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         let mut base_node = BaseNode::new(rollup_args);
         if let Some(da_config) = da_config {
             base_node = base_node.with_da_config(da_config);
+        }
+        if let Some(gas_limit_config) = gas_limit_config {
+            base_node = base_node.with_gas_limit_config(gas_limit_config);
         }
         let components = service_builder.build_components(&base_node);
 
@@ -131,5 +169,46 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .fold(hooks, |hooks, callback| hooks.add_node_started_hook(move |_| callback()));
 
         hooks.apply_to(builder).launch().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct TestPayloadServiceBuilder;
+
+    impl crate::service::PayloadServiceBuilder for TestPayloadServiceBuilder {
+        type ComponentsBuilder = crate::types::BaseComponentsBuilder;
+
+        fn build_components(self, base_node: &BaseNode) -> Self::ComponentsBuilder {
+            base_node.components()
+        }
+    }
+
+    #[test]
+    fn service_builder_swap_preserves_shared_runtime_configs() {
+        let da_config = BaseDAConfig::new(100, 200);
+        let gas_limit_config = GasLimitConfig::new(30_000_000);
+
+        let runner = BaseNodeRunner::new(RollupArgs::default())
+            .with_da_config(da_config.clone())
+            .with_gas_limit_config(gas_limit_config.clone())
+            .with_service_builder(TestPayloadServiceBuilder);
+
+        let configured_da = runner.da_config.expect("DA config should be preserved");
+        let configured_gas = runner.gas_limit_config.expect("gas-limit config should be preserved");
+
+        assert_eq!(configured_da.max_da_tx_size(), Some(100));
+        assert_eq!(configured_da.max_da_block_size(), Some(200));
+        assert_eq!(configured_gas.gas_limit(), Some(30_000_000));
+
+        da_config.set_max_da_size(300, 400);
+        gas_limit_config.set_gas_limit(40_000_000);
+
+        assert_eq!(configured_da.max_da_tx_size(), Some(300));
+        assert_eq!(configured_da.max_da_block_size(), Some(400));
+        assert_eq!(configured_gas.gas_limit(), Some(40_000_000));
     }
 }

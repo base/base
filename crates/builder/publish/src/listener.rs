@@ -71,6 +71,7 @@ impl Listener {
 
                     tokio::spawn(async move {
                         let (pos_tx, pos_rx) = tokio::sync::oneshot::channel();
+                        #[allow(clippy::result_large_err)]
                         let handshake = accept_hdr_async(connection, move |req: &http::Request<()>, resp| {
                             let _ = pos_tx.send(parse_resume_position(req));
                             Ok(resp)

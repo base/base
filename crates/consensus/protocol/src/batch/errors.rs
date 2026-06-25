@@ -46,6 +46,9 @@ pub enum BatchDecodingError {
     /// Error decoding a span batch
     #[error("Error decoding a span batch: {0}")]
     SpanBatchError(#[from] SpanBatchError),
+    /// Invalid batch type
+    #[error("Invalid batch type: {0}")]
+    InvalidBatchType(u8),
 }
 
 /// Decoding Error
@@ -82,6 +85,9 @@ pub enum SpanDecodingError {
     /// Invalid transaction data
     #[error("Invalid transaction data")]
     InvalidTransactionData,
+    /// Invalid EIP-8130 authentication data
+    #[error("Invalid EIP-8130 auth data")]
+    InvalidAuthData,
     /// Invalid transaction signature
     #[error("Invalid transaction signature")]
     InvalidTransactionSignature,

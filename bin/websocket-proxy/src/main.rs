@@ -215,6 +215,7 @@ async fn main() {
                     brotli::CompressorWriter::new(&mut compressed_data_bytes, 4096, 5, 22);
                 compressor.write_all(data_bytes).unwrap();
             }
+            Metrics::bytes_compressed().increment(compressed_data_bytes.len() as u64);
             compressed_data_bytes
         } else {
             data.into_bytes()

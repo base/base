@@ -245,7 +245,7 @@ mod tests {
     }
 
     /// Creates a dummy `AttributesWithParent` for testing
-    fn dummy_op_attributes() -> AttributesWithParent {
+    fn dummy_base_attributes() -> AttributesWithParent {
         AttributesWithParent {
             attributes: BasePayloadAttributes::default(),
             parent: dummy_l2_block_info(),
@@ -256,7 +256,7 @@ mod tests {
 
     // This is just here to shrink the #[case(...)] statements below for readability.
     fn attrs() -> Box<AttributesWithParent> {
-        Box::new(dummy_op_attributes())
+        Box::new(dummy_base_attributes())
     }
 
     // This is just here to shrink the #[case(...)] statements below for readability.
@@ -394,7 +394,7 @@ mod tests {
         machine.update(&ELSyncCompleted(Box::new(initial_safe_head))).unwrap();
 
         // Derive new attributes
-        machine.update(&NewAttributesDerived(Box::new(dummy_op_attributes()))).unwrap();
+        machine.update(&NewAttributesDerived(Box::new(dummy_base_attributes()))).unwrap();
 
         let new_safe_head = L2BlockInfo {
             block_info: BlockInfo {

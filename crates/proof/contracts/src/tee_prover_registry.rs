@@ -16,6 +16,30 @@ sol! {
     /// `TEEProverRegistry` contract interface.
     #[sol(rpc)]
     interface ITEEProverRegistry {
+        /// Thrown when the attestation document is too old.
+        error AttestationTooOld();
+
+        /// Thrown when the ZK attestation verification fails.
+        error AttestationVerificationFailed();
+
+        /// Thrown when the attestation's public key is malformed.
+        error InvalidPublicKey();
+
+        /// Thrown when PCR0 is not found in the attestation's PCR list.
+        error PCR0NotFound();
+
+        /// Thrown when the attestation PCR0 does not match the expected image.
+        error PCR0Mismatch();
+
+        /// Thrown when the dispute game factory is not configured.
+        error DisputeGameFactoryNotSet();
+
+        /// Thrown when reading `TEE_IMAGE_HASH` from the `AggregateVerifier` fails.
+        error ImageHashReadFailed();
+
+        /// Thrown when the selected game type has no `TEE_IMAGE_HASH`.
+        error InvalidGameType();
+
         /// Registers a signer using a ZK-proven AWS Nitro attestation.
         function registerSigner(bytes calldata output, bytes calldata proofBytes) external;
 
@@ -80,24 +104,21 @@ impl TEEProverRegistryContractClient {
 #[async_trait]
 impl TEEProverRegistryClient for TEEProverRegistryContractClient {
     async fn is_valid_signer(&self, signer: Address) -> Result<bool, ContractError> {
-        self.contract.isValidSigner(signer).call().await.map_err(|e| ContractError::Call {
-            context: format!("isValidSigner({signer})"),
-            source: e,
-        })
+        contract_call!(
+            self.contract.isValidSigner(signer).call(),
+            format!("isValidSigner({signer})")
+        )
     }
 
     async fn is_registered_signer(&self, signer: Address) -> Result<bool, ContractError> {
-        self.contract.isRegisteredSigner(signer).call().await.map_err(|e| ContractError::Call {
-            context: format!("isRegisteredSigner({signer})"),
-            source: e,
-        })
+        contract_call!(
+            self.contract.isRegisteredSigner(signer).call(),
+            format!("isRegisteredSigner({signer})")
+        )
     }
 
     async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError> {
-        self.contract.getRegisteredSigners().call().await.map_err(|e| ContractError::Call {
-            context: "getRegisteredSigners()".into(),
-            source: e,
-        })
+        contract_call!(self.contract.getRegisteredSigners().call(), "getRegisteredSigners()")
     }
 }
 

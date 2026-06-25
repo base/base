@@ -73,7 +73,7 @@ pub trait TrieHinter {
     ///
     /// ## Takes
     /// - `parent_hash` - The hash of the parent block.
-    /// - `op_payload_attributes` - The attributes of the operation payload.
+    /// - `base_payload_attributes` - The attributes of the Base payload.
     ///
     /// ## Returns
     /// - Ok(()): If the hint was successful.
@@ -81,6 +81,6 @@ pub trait TrieHinter {
     fn hint_execution_witness(
         &self,
         parent_hash: B256,
-        op_payload_attributes: &BasePayloadAttributes,
+        base_payload_attributes: &BasePayloadAttributes,
     ) -> Result<(), Self::Error>;
 }

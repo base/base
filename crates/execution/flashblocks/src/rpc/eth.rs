@@ -62,6 +62,7 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::{Filter, Log};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130CobaltGate};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -111,6 +112,7 @@ pub trait EthApiOverride {
         &self,
         address: Address,
         block_number: Option<BlockId>,
+        nonce_key: Option<U256>,
     ) -> RpcResult<U256>;
 
     /// Returns transaction by hash, checking flashblocks first.
@@ -184,6 +186,10 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
     Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
+    <Eth as reth_rpc_eth_api::RpcNodeCore>::Provider:
+        reth_chainspec::ChainSpecProvider + reth_provider::BlockReaderIdExt,
+    <<Eth as reth_rpc_eth_api::RpcNodeCore>::Provider as reth_chainspec::ChainSpecProvider>::ChainSpec:
+        base_common_chains::Upgrades,
     FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
@@ -264,13 +270,44 @@ where
         &self,
         address: Address,
         block_number: Option<BlockId>,
+        nonce_key: Option<U256>,
     ) -> RpcResult<U256> {
         debug!(
             message = "rpc::get_transaction_count",
             address = %address,
+            nonce_key = ?nonce_key,
         );
 
         let block_id = block_number.unwrap_or_default();
+
+        // EIP-8130 channel read. Only `nonce_key != 0` uses the precompile
+        // path.
+        if let Some(key) = nonce_key
+            && key != U256::ZERO
+        {
+            Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+            Metrics::rpc_get_transaction_count().increment(1);
+            let (resolved_block, overrides) = if block_id.is_pending() {
+                let pending_blocks = self.flashblocks_state.get_pending_blocks();
+                (
+                    pending_blocks.get_canonical_block_number().into(),
+                    pending_blocks.get_state_overrides(),
+                )
+            } else {
+                (block_id, None)
+            };
+            return ChannelNonceReader::read(
+                &self.eth_api,
+                address,
+                key,
+                resolved_block,
+                overrides.as_ref(),
+            )
+            .await;
+        }
+
+        // Protocol nonce path. `canon + flashblock_delta` on pending,
+        // standard resolution otherwise.
         if block_id.is_pending() {
             Metrics::rpc_get_transaction_count().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
@@ -445,9 +482,14 @@ where
         state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
         let final_overrides = state_overrides_builder.build();
 
-        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, Some(final_overrides))
-            .await
-            .map_err(Into::into)
+        EthCall::estimate_gas_at(
+            &self.eth_api,
+            transaction,
+            block_id,
+            EvmOverrides::new(Some(final_overrides), pending_overrides.block),
+        )
+        .await
+        .map_err(Into::into)
     }
 
     async fn simulate_v1(

@@ -20,7 +20,7 @@ mod fixtures;
 pub use fixtures::{create_provider_factory, load_chain_spec};
 
 mod harness;
-pub use harness::{TestHarness, TestHarnessBuilder};
+pub use harness::{PreparedBlock, TestHarness, TestHarnessBuilder};
 
 mod node;
 pub use node::{LocalNode, LocalNodeProvider};

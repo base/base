@@ -139,10 +139,10 @@ records (a method for distributing node records through the domain name system).
 
 Different layers of the Ethereum stack use ENR extension keys for chain-specific metadata. On
 Ethereum L1's execution layer, ENRs carry an `eth` key with fork ID information. On the L1 consensus
-layer, they carry an `eth2` key with the fork digest and attestation subnet bitfield. On Base (and
-OP Stack chains more broadly), every ENR includes an `opstack` key that encodes the L2 chain ID and
-a version number. This is how nodes on different chains (say, Base Mainnet vs Base Sepolia) can tell
-each other apart during discovery. The textual representation of an ENR is a base64-encoded string
+layer, they carry an `eth2` key with the fork digest and attestation subnet bitfield. Base ENRs
+include an `opstack` key that encodes the L2 chain ID and a version number. This is how nodes on
+different chains (say, Base Mainnet vs Base Sepolia) can tell each other apart during discovery.
+The textual representation of an ENR is a base64-encoded string
 prefixed with `enr:`, which you will see in configuration files and bootnode lists.
 
 The [`BaseEnr`](https://github.com/base/base/blob/main/crates/consensus/peers/src/enr.rs) struct
@@ -159,7 +159,7 @@ pub struct BaseEnr {
 
 impl BaseEnr {
     /// The ENR key literal string for the consensus layer.
-    pub const OP_CL_KEY: &str = "opstack";
+    pub const OPSTACK_ENR_KEY: &str = "opstack";
 
     /// Constructs a BaseEnr from a chain id.
     pub const fn from_chain_id(chain_id: u64) -> Self {
@@ -257,7 +257,7 @@ single receiver — it is the primary way components communicate in async Rust. 
 persists the current set of known ENRs to the boot store every 60 seconds.
 
 The driver communicates with the rest of the system through a
-[`Discv5Handler`](https://github.com/base/base/blob/main/crates/consensus/disc/src/handler.rs),
+[`Discv5Handler`](../../crates/consensus/disc/src/handler.rs),
 which is just a thin wrapper around an `mpsc::Sender`. Other parts of the system can request
 metrics, peer lists, the local ENR, or ask the discovery service to ban specific addresses. This
 channel-based design avoids the need for shared mutable state across async boundaries.
@@ -340,7 +340,7 @@ blocks_v4_topic: IdentTopic::new(format!("/optimism/{chain_id}/3/blocks")),
 ```
 
 For Base Mainnet (chain ID 8453), these resolve to `/optimism/8453/0/blocks` through
-`/optimism/8453/3/blocks`. The version is selected based on which hardfork (a protocol upgrade that
+`/optimism/8453/3/blocks`. The version is selected based on which upgrade (a protocol upgrade that
 changes the rules of the network, activated at a specific timestamp) is active at the block's
 timestamp. V1 is for pre-Canyon blocks, V2 for Canyon/Delta, V3 for Ecotone, and V4 for Isthmus.
 Each version uses a slightly different encoding for the execution payload envelope. When a node
@@ -472,9 +472,9 @@ The `ping` behaviour sends periodic keepalive pings to connected peers and measu
 times. The `gossipsub` behaviour handles the actual block gossip. The `identify` behaviour exchanges
 capability information between peers when they first connect (the Base node advertises its agent
 version as `"base"`). The `sync_req_resp` behaviour supports a legacy request-response protocol
-called `payload_by_number` that is part of the OP Stack spec. This is being deprecated, and the Base
-implementation responds with "not found" to all requests, but it is still present so that op-nodes
-don't penalize Base nodes for not supporting it.
+called `payload_by_number` that is part of the legacy rollup P2P spec. This is being deprecated, and the Base
+implementation responds with "not found" to all requests, but it is still present so that legacy
+peers don't penalize Base nodes for not supporting it.
 
 The `GossipDriver`
 ([`gossip/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/driver.rs))
@@ -484,7 +484,7 @@ the listener is up,
 and then returns. Its `publish()` method takes an execution payload envelope (the signed wrapper
 around a block's contents — transactions, state root, gas used, etc.), selects
 the appropriate topic
-based on the block's timestamp and active hardfork, encodes it with version-appropriate
+based on the block's timestamp and active upgrade, encodes it with version-appropriate
 serialization, and publishes it to gossipsub. Its `dial()` method takes an ENR from discovery,
 validates the chain ID, extracts the TCP multiaddr (a self-describing network address format used by
 libp2p, e.g. `/ip4/192.168.1.1/tcp/9222`), checks the connection gate, and initiates a connection.
@@ -553,7 +553,7 @@ mutable state.
 ### CL startup flow from the command line
 
 When you launch the Base consensus binary, the P2P configuration comes from CLI flags defined in
-[`base-client-cli`](https://github.com/base/base/tree/main/crates/client/cli). The key flags include
+[`base-consensus-cli`](../../crates/consensus/cli). The key flags include
 `--p2p.listen.tcp` (default 9222) and `--p2p.listen.udp` (default 9223) for the local bind
 addresses, `--p2p.advertise.ip` for NAT (Network Address Translation) scenarios where the node is
 behind a router and its public IP address differs from its local IP, `--p2p.priv.path` for the
@@ -865,7 +865,7 @@ mesh overlay for efficient message distribution.
 
 **GRAFT / PRUNE** — Gossipsub control messages for adding or removing a peer from the mesh.
 
-**Hardfork** — A protocol upgrade that changes the rules of the network, activated at a specific
+**Upgrade** — A protocol upgrade that changes the rules of the network, activated at a specific
 timestamp.
 
 **IHAVE / IWANT** — Gossipsub control messages for the lazy repair mechanism (advertising and

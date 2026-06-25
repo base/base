@@ -1,0 +1,49 @@
+[package]
+name = "base-prover-service"
+description = "Base prover service JSON-RPC definitions and server implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+base-prover-service-db.workspace = true
+base-prover-service-protocol.workspace = true
+
+# RPC
+jsonrpsee = { workspace = true, optional = true }
+
+# Async
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+# Serialization
+serde_json.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+# Error handling
+anyhow.workspace = true
+
+# Observability
+metrics.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+chrono.workspace = true
+jsonrpsee = { workspace = true, features = ["http-client"] }
+metrics-util = { workspace = true, features = ["debugging"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }
+
+[lints]
+workspace = true
+
+[features]
+default = [ "rpc-server" ]
+rpc-server = [
+	"base-prover-service-protocol/rpc-server",
+	"dep:jsonrpsee",
+	"jsonrpsee/server",
+]

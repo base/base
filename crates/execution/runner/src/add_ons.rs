@@ -5,11 +5,10 @@ use base_execution_payload_builder::{
     config::{BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
-    MinerApiExtServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
-    miner::BaseMinerExtApi,
-    witness::BaseDebugWitnessApi,
+    miner::{BaseMinerExtApi, MinerApiExtServer},
+    witness::{BaseDebugWitnessApi, DebugExecutionWitnessApiServer},
 };
 use base_execution_txpool::BasePooledTx;
 use base_node_core::{BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder};
@@ -24,7 +23,7 @@ use reth_node_builder::{
     },
 };
 use reth_primitives_traits::header::HeaderMut;
-use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer};
+use reth_rpc_api::DebugApiServer;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
 use reth_transaction_pool::TransactionPool;
@@ -46,9 +45,9 @@ pub struct BaseAddOns<
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
     /// and eth-api.
     pub rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
-    /// Data availability configuration for the OP builder.
+    /// Data availability configuration for the payload builder.
     pub da_config: BaseDAConfig,
-    /// Gas limit configuration for the OP builder.
+    /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
 }
 
@@ -181,8 +180,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
+            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     Attrs,
@@ -197,7 +195,10 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    Attrs: Attributes<
+            Transaction = TxTy<N::Types>,
+            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
+        >,
     <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
@@ -215,10 +216,10 @@ where
             ctx.node.provider().clone(),
             ctx.node.evm_config().clone(),
         );
-        // install additional OP specific rpc methods
+        // Install additional rollup-specific RPC methods.
         let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
             ctx.node.provider().clone(),
-            Box::new(ctx.node.task_executor().clone()),
+            ctx.node.task_executor().clone(),
             builder,
         );
         let miner_ext = BaseMinerExtApi::new(da_config, gas_limit_config);
@@ -261,8 +262,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
+            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     Attrs,
@@ -277,7 +277,10 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    Attrs: Attributes<
+            Transaction = TxTy<N::Types>,
+            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
+        >,
     <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type EthApi = EthB::EthApi;
@@ -308,14 +311,14 @@ where
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
-    /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
-    /// network.
+    /// Sequencer client, configured to forward submitted transactions to sequencer of the given
+    /// Base network.
     sequencer_url: Option<String>,
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,
-    /// Data availability configuration for the OP builder.
+    /// Data availability configuration for the payload builder.
     da_config: Option<BaseDAConfig>,
-    /// Gas limit configuration for the OP builder.
+    /// Gas limit configuration for the payload builder.
     gas_limit_config: Option<GasLimitConfig>,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,
@@ -439,6 +442,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
                 EB::default(),
                 EVB::default(),
                 rpc_middleware,
+                Identity::new(),
             )
             .with_tokio_runtime(tokio_runtime),
             da_config.unwrap_or_default(),

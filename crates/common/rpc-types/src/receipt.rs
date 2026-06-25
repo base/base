@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// Base transaction receipt type
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[doc(alias = "OpTxReceipt")]
+#[doc(alias = "BaseTxReceipt")]
 pub struct BaseTransactionReceipt {
     /// Regular eth transaction receipt including deposit receipts
     #[serde(flatten)]
@@ -89,13 +89,13 @@ pub struct TransactionReceiptFields {
     /* --------------------------------------- Regolith --------------------------------------- */
     /// Deposit nonce for deposit transactions.
     ///
-    /// Always null prior to the Regolith hardfork.
+    /// Always null prior to the Regolith upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_nonce: Option<u64>,
     /* ---------------------------------------- Canyon ---------------------------------------- */
     /// Deposit receipt version for deposit transactions.
     ///
-    /// Always null prior to the Canyon hardfork.
+    /// Always null prior to the Canyon upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_receipt_version: Option<u64>,
 }
@@ -168,34 +168,34 @@ pub struct L1BlockInfo {
     /* ---------------------------------------- Ecotone ---------------------------------------- */
     /// L1 base fee scalar. Applied to base fee to compute weighted gas price multiplier.
     ///
-    /// Always null prior to the Ecotone hardfork.
+    /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_base_fee_scalar: Option<u128>,
     /// L1 blob base fee.
     ///
-    /// Always null prior to the Ecotone hardfork.
+    /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_blob_base_fee: Option<u128>,
     /// L1 blob base fee scalar. Applied to blob base fee to compute weighted gas price multiplier.
     ///
-    /// Always null prior to the Ecotone hardfork.
+    /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_blob_base_fee_scalar: Option<u128>,
     /* ---------------------------------------- Isthmus ---------------------------------------- */
     /// Operator fee scalar.
     ///
-    /// Always null prior to the Isthmus hardfork.
+    /// Always null prior to the Isthmus upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub operator_fee_scalar: Option<u128>,
     /// Operator fee constant.
     ///
-    /// Always null prior to the Isthmus hardfork.
+    /// Always null prior to the Isthmus upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub operator_fee_constant: Option<u128>,
     /* ---------------------------------------- Jovian ---------------------------------------- */
     /// DA footprint gas scalar. Used to set the DA footprint block limit on the L2.
     ///
-    /// Always null prior to the Jovian hardfork.
+    /// Always null prior to the Jovian upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub da_footprint_gas_scalar: Option<u16>,
 }
@@ -236,6 +236,9 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
             }
             BaseReceipt::Eip7702(receipt) => {
                 Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
+            }
+            BaseReceipt::Eip8130(receipt) => {
+                Self::Eip8130(convert_standard_receipt(receipt, logs_bloom))
             }
             BaseReceipt::Deposit(receipt) => {
                 let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();
@@ -302,21 +305,21 @@ mod tests {
     }
 
     #[test]
-    fn serialize_empty_op_chain_transaction_receipt_fields_struct() {
-        let op_fields = TransactionReceiptFields::default();
+    fn serialize_empty_base_chain_transaction_receipt_fields_struct() {
+        let base_fields = TransactionReceiptFields::default();
 
-        let json = serde_json::to_value(op_fields).unwrap();
+        let json = serde_json::to_value(base_fields).unwrap();
         assert_eq!(json, json!({}));
     }
 
     #[test]
     fn serialize_l1_fee_scalar() {
-        let op_fields = TransactionReceiptFields {
+        let base_fields = TransactionReceiptFields {
             l1_block_info: L1BlockInfo { l1_fee_scalar: Some(0.678), ..Default::default() },
             ..Default::default()
         };
 
-        let json = serde_json::to_value(op_fields).unwrap();
+        let json = serde_json::to_value(base_fields).unwrap();
 
         assert_eq!(json["l1FeeScalar"], serde_json::Value::String("0.678".to_string()));
     }
@@ -327,19 +330,19 @@ mod tests {
             "l1FeeScalar": "0.678"
         });
 
-        let op_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, Some(0.678f64));
+        let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
+        assert_eq!(base_fields.l1_block_info.l1_fee_scalar, Some(0.678f64));
 
         let json = json!({
             "l1FeeScalar": Value::Null
         });
 
-        let op_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
+        let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
+        assert_eq!(base_fields.l1_block_info.l1_fee_scalar, None);
 
         let json = json!({});
 
-        let op_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
+        let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
+        assert_eq!(base_fields.l1_block_info.l1_fee_scalar, None);
     }
 }

@@ -22,6 +22,9 @@ pub use polling::PollingSource;
 mod subscription;
 pub use subscription::BlockSubscription;
 
+mod stream_subscription;
+pub use stream_subscription::{KeepAliveSubscription, PendingSubscription, StreamSubscription};
+
 mod hybrid;
 pub use hybrid::HybridBlockSource;
 

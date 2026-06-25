@@ -180,8 +180,8 @@ where
     /// Stops the sequencer. If a seal pipeline is in-flight, the response is deferred
     /// until the pipeline completes so the returned hash reflects the fully inserted head.
     ///
-    /// Any pre-built payload and stashed `next_build_parent` are discarded so that a subsequent
-    /// restart always builds on a fresh, accurate head rather than a potentially stale one.
+    /// Any pre-built payload is discarded so that a subsequent restart always builds on a fresh,
+    /// accurate head.
     pub(super) async fn stop_sequencer(
         &mut self,
         next_payload: &mut Option<UnsealedPayloadHandle>,
@@ -189,10 +189,9 @@ where
     ) {
         info!(target: "sequencer", "Stopping sequencer");
         self.is_active = false;
-        // Discard any pre-built payload and stashed parent so a subsequent start_sequencer
-        // always builds on a fresh, accurate head rather than a potentially stale one.
+        // Discard any pre-built payload so a subsequent start_sequencer always builds on a fresh,
+        // accurate head.
         next_payload.take();
-        self.next_build_parent = None;
         self.update_metrics();
 
         if self.sealer.is_some() {

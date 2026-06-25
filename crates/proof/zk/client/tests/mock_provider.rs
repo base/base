@@ -25,6 +25,7 @@ impl ZkProofProvider for MockZkProvider {
             status: ProofJobStatus::Succeeded.into(),
             receipt: vec![0xDE, 0xAD, 0xBE, 0xEF],
             error_message: None,
+            execution_stats: None,
         })
     }
 }
@@ -60,6 +61,7 @@ async fn mock_prove_block_returns_session_id() {
         session_id: None,
         prover_address: None,
         l1_head: None,
+        intermediate_root_interval: None,
     };
 
     let response = provider.prove_block(request).await.expect("prove_block should succeed");

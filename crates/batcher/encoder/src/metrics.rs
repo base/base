@@ -18,6 +18,20 @@ base_metrics::define_metrics! {
     da_bytes_submitted_total: counter,
     #[describe("Total bytes of frame payload packed into EIP-4844 blobs")]
     blob_used_bytes_total: counter,
+    #[describe("Number of input bytes to a channel")]
+    #[label(name = "stage", default = ["added", "closed"])]
+    input_bytes: gauge,
+    #[describe("Number of compressed output bytes from a channel")]
+    output_bytes: gauge,
+    #[describe("Total number of input bytes to channels")]
+    input_bytes_total: counter,
+    #[describe("Total number of compressed output bytes from channels")]
+    output_bytes_total: counter,
+    #[describe("Total number of frames in the closed channel")]
+    channel_num_frames: gauge,
+    #[describe("Batcher signer account balance in ether")]
+    #[no_zero]
+    balance: gauge,
     #[describe("Number of frames currently waiting for L1 submission")]
     pending_frames: gauge,
     #[describe("Number of L2 blocks buffered in the encoder input queue")]
@@ -44,6 +58,12 @@ impl BatcherMetrics {
 
     /// Channel discarded without producing frames because the span batch exceeded limits.
     pub const REASON_DISCARD: &'static str = "discard";
+
+    /// Channel input bytes after blocks have been added.
+    pub const STAGE_ADDED: &'static str = "added";
+
+    /// Channel input bytes after the channel has been closed.
+    pub const STAGE_CLOSED: &'static str = "closed";
 
     /// Submission accepted and handed to the tx manager.
     pub const OUTCOME_SUBMITTED: &'static str = "submitted";

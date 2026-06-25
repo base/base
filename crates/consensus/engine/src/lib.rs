@@ -11,11 +11,11 @@ extern crate tracing;
 
 mod task_queue;
 pub use task_queue::{
-    BuildTask, BuildTaskError, ConsolidateInput, ConsolidateTask, ConsolidateTaskError,
-    DelegatedForkchoiceTask, DelegatedForkchoiceTaskError, DelegatedForkchoiceUpdate, Engine,
+    BuildTaskError, ConsolidateInput, ConsolidateTask, ConsolidateTaskError, Engine,
     EngineBuildError, EngineResetError, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, EngineTaskExt, FinalizeTask, FinalizeTaskError, GetPayloadTask, InsertTask,
-    InsertTaskError, SealTask, SealTaskError, SynchronizeTask, SynchronizeTaskError,
+    EngineTaskErrors, EngineTaskExt, FinalizeTask, FinalizeTaskError, InsertPayloadSafety,
+    InsertTask, InsertTaskError, InsertTaskResult, SealTask, SealTaskError, SynchronizeTask,
+    SynchronizeTaskError,
 };
 
 mod attributes;
@@ -23,6 +23,9 @@ pub use attributes::{AttributesMatch, AttributesMismatch};
 
 mod client;
 pub use client::{BaseEngineClient, EngineClient, EngineClientBuilder, EngineClientError};
+
+mod trace_layer;
+pub use trace_layer::{TraceContextLayer, TraceContextService};
 
 mod ws_connect;
 pub use ws_connect::JwtWsConnect;
@@ -43,7 +46,11 @@ mod metrics;
 pub use metrics::Metrics;
 
 mod sync;
-pub use sync::{L2ForkchoiceState, SyncStartError, find_starting_forkchoice};
+pub use sync::{
+    ForkchoiceCheckpointError, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
+    L2ForkchoiceState, NoopForkchoiceCheckpointReader, SyncStartError, find_starting_forkchoice,
+    find_starting_forkchoice_with_checkpoint_reader,
+};
 
 #[cfg(any(test, feature = "test-utils"))]
 /// Utilities that are useful when creating unit tests using structs within this library.

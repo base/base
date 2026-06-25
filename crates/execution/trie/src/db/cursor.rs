@@ -357,7 +357,10 @@ where
     }
 }
 
-impl HashedStorageCursor for MdbxStorageCursor<Dup<'_, HashedStorageHistory>> {
+impl<Cursor> HashedStorageCursor for MdbxStorageCursor<Cursor>
+where
+    Cursor: DbCursorRO<HashedStorageHistory> + DbDupCursorRO<HashedStorageHistory> + Send + Sync,
+{
     fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
         Ok(self.seek(B256::ZERO)?.is_none())
     }

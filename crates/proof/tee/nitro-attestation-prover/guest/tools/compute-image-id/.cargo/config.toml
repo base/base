@@ -1,0 +1,5 @@
+# Ensure this tool uses default rustflags. It builds for the host target
+# and must not pick up any workspace-level rustflags that may be added
+# in the future.
+[build]
+rustflags = []

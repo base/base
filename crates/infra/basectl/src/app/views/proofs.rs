@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View},
-    commands::COLOR_BASE_BLUE,
+    output::COLOR_BASE_BLUE,
     rpc::{LatestProposal, ProofsSnapshot},
     tui::Keybinding,
 };

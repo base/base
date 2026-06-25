@@ -12,7 +12,7 @@ use tracing::{debug, info};
 
 /// Maximum depth allowed for the recent-transaction startup scan.
 ///
-/// Matches the limit used by op-batcher's `--check-recent-txs-depth` flag.
+/// Matches the limit used by the reference batcher's `--check-recent-txs-depth` flag.
 pub const MAX_CHECK_RECENT_TXS_DEPTH: u64 = 128;
 
 /// Maximum number of L1 block fetches in flight during the startup scan.
@@ -160,13 +160,14 @@ impl RecentTxScanner {
     ) {
         let Some(data) = channel.frame_data() else { return };
         let max_rlp = rollup_config.max_rlp_bytes_per_channel(inclusion_timestamp) as usize;
-        let mut reader = BatchReader::new(data.to_vec(), max_rlp);
+        let brotli_supported = rollup_config.is_fjord_active(inclusion_timestamp);
+        let mut reader = BatchReader::new(data.to_vec(), max_rlp, brotli_supported);
         while let Some(batch) = reader.next_batch(rollup_config) {
             let last_timestamp = match &batch {
                 Batch::Single(sb) => sb.timestamp,
                 Batch::Span(sb) => sb.final_timestamp(),
             };
-            let relative = rollup_config.block_number_from_timestamp(last_timestamp);
+            let relative = rollup_config.block_number_lower_bound_from_timestamp(last_timestamp);
             let l2_block = rollup_config.genesis.l2.number + relative;
             *highest_l2 = Some(highest_l2.map_or(l2_block, |h| h.max(l2_block)));
         }

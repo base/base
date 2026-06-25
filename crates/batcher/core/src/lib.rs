@@ -22,7 +22,7 @@ mod throttle_client;
 pub use throttle_client::{NoopThrottleClient, ThrottleClient};
 
 mod submissions;
-pub use submissions::SubmissionQueue;
+pub use submissions::{BatchTxCandidateBuilder, SubmissionQueue};
 
 mod config;
 pub use config::BatchDriverConfig;

@@ -43,7 +43,7 @@ impl Batch {
         }
 
         // Read the batch type
-        let batch_type = BatchType::from(r[0]);
+        let batch_type = BatchType::try_from(r[0])?;
         r.advance(1);
 
         match batch_type {

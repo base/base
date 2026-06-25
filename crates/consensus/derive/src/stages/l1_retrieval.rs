@@ -9,8 +9,8 @@ use base_common_genesis::SystemConfig;
 use base_protocol::BlockInfo;
 
 use crate::{
-    DataAvailabilityProvider, FrameQueueProvider, OriginAdvancer, OriginProvider, PipelineError,
-    PipelineErrorKind, PipelineResult, StageReset,
+    DataAvailabilityProvider, FrameQueueProvider, Metrics, OriginAdvancer, OriginProvider,
+    PipelineError, PipelineErrorKind, PipelineResult, StageReset,
 };
 
 /// Provides L1 blocks for the [`L1Retrieval`] stage.
@@ -95,7 +95,11 @@ where
         // SAFETY: The above check ensures that `next` is not None.
         let next = self.next.as_ref().expect("infallible");
 
-        match self.provider.next(next, self.prev.batcher_addr()).await {
+        let provider_result =
+            base_metrics::time!(Metrics::pipeline_l1_retrieval_provider_next_duration_seconds(), {
+                self.provider.next(next, self.prev.batcher_addr()).await
+            });
+        match provider_result {
             Ok(data) => Ok(data),
             Err(e) => {
                 if let PipelineErrorKind::Temporary(PipelineError::Eof) = e {

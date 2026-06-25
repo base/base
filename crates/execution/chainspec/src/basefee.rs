@@ -8,7 +8,22 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 use reth_chainspec::{BaseFeeParams, EthChainSpec};
 
-/// Extracts the Holocene 1599 parameters from the encoded extra data from the parent header.
+fn base_fee_params_from_extra_data(
+    chain_spec: impl EthChainSpec,
+    timestamp: u64,
+    elasticity: u32,
+    denominator: u32,
+) -> Result<BaseFeeParams, EIP1559ParamError> {
+    if elasticity == 0 && denominator == 0 {
+        Ok(chain_spec.base_fee_params_at_timestamp(timestamp))
+    } else if elasticity == 0 || denominator == 0 {
+        Err(EIP1559ParamError::InvalidParams)
+    } else {
+        Ok(BaseFeeParams::new(denominator as u128, elasticity as u128))
+    }
+}
+
+/// Extracts the Holocene EIP-1559 parameters from the encoded extra data from the parent header.
 ///
 /// Caution: Caller must ensure that holocene is active in the parent header.
 ///
@@ -23,16 +38,13 @@ where
 {
     let (elasticity, denominator) = HoloceneExtraData::decode(parent.extra_data())?;
 
-    let base_fee_params = if elasticity == 0 && denominator == 0 {
-        chain_spec.base_fee_params_at_timestamp(timestamp)
-    } else {
-        BaseFeeParams::new(denominator as u128, elasticity as u128)
-    };
+    let base_fee_params =
+        base_fee_params_from_extra_data(chain_spec, timestamp, elasticity, denominator)?;
 
     Ok(parent.next_block_base_fee(base_fee_params).unwrap_or_default())
 }
 
-/// Extracts the Jovian 1599 parameters from the encoded extra data from the parent header.
+/// Extracts the Jovian EIP-1559 parameters from the encoded extra data from the parent header.
 /// Additionally to [`decode_holocene_base_fee`], checks if the next block base fee is less than the
 /// minimum base fee, then the minimum base fee is returned.
 ///
@@ -50,11 +62,8 @@ where
 {
     let (elasticity, denominator, min_base_fee) = JovianExtraData::decode(parent.extra_data())?;
 
-    let base_fee_params = if elasticity == 0 && denominator == 0 {
-        chain_spec.base_fee_params_at_timestamp(timestamp)
-    } else {
-        BaseFeeParams::new(denominator as u128, elasticity as u128)
-    };
+    let base_fee_params =
+        base_fee_params_from_extra_data(chain_spec, timestamp, elasticity, denominator)?;
 
     // Starting from Jovian, we use the maximum of the gas used and the blob gas used to calculate
     // the next base fee.
@@ -78,28 +87,27 @@ where
 mod tests {
     use alloc::sync::Arc;
 
-    use base_common_chains::BaseUpgrade;
+    use alloy_primitives::Bytes;
     use base_common_consensus::JovianExtraData;
+    use base_common_genesis::BaseUpgrade;
     use reth_chainspec::{ChainSpec, ForkCondition, Hardfork};
 
     use super::*;
-    use crate::{BASE_SEPOLIA, BaseChainSpec};
+    use crate::BaseChainSpec;
 
     const JOVIAN_TIMESTAMP: u64 = 1900000000;
 
     fn get_chainspec() -> Arc<BaseChainSpec> {
-        let mut base_sepolia_spec = BASE_SEPOLIA.inner.clone();
+        let mut base_sepolia_spec = BaseChainSpec::sepolia().inner;
         base_sepolia_spec
             .hardforks
             .insert(BaseUpgrade::Jovian.boxed(), ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
-        Arc::new(BaseChainSpec {
-            inner: ChainSpec {
-                chain: base_sepolia_spec.chain,
-                genesis: base_sepolia_spec.genesis,
-                genesis_header: base_sepolia_spec.genesis_header,
-                ..Default::default()
-            },
-        })
+        Arc::new(BaseChainSpec::from(ChainSpec {
+            chain: base_sepolia_spec.chain,
+            genesis: base_sepolia_spec.genesis,
+            genesis_header: base_sepolia_spec.genesis_header,
+            ..Default::default()
+        }))
     }
 
     #[test]
@@ -193,6 +201,34 @@ mod tests {
         assert_eq!(
             expected_base_fee,
             compute_jovian_base_fee(chain_spec, &parent, timestamp).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_next_base_fee_jovian_rejects_zero_elasticity_with_nonzero_denominator() {
+        let chain_spec = get_chainspec();
+        let mut parent = chain_spec.genesis_header().clone();
+
+        parent.extra_data =
+            Bytes::copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+        assert_eq!(
+            EIP1559ParamError::InvalidParams,
+            compute_jovian_base_fee(chain_spec, &parent, JOVIAN_TIMESTAMP).unwrap_err()
+        );
+    }
+
+    #[test]
+    fn test_next_base_fee_jovian_rejects_zero_denominator_with_nonzero_elasticity() {
+        let chain_spec = get_chainspec();
+        let mut parent = chain_spec.genesis_header().clone();
+
+        parent.extra_data =
+            Bytes::copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+        assert_eq!(
+            EIP1559ParamError::InvalidParams,
+            compute_jovian_base_fee(chain_spec, &parent, JOVIAN_TIMESTAMP).unwrap_err()
         );
     }
 }

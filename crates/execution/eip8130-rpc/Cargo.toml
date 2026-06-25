@@ -1,0 +1,41 @@
+[package]
+name = "base-execution-eip8130-rpc"
+description = "RPC-layer helpers for EIP-8130 2D nonce reads"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-common-network.workspace = true
+base-common-consensus.workspace = true
+base-common-precompiles.workspace = true
+base-common-chains.workspace = true
+
+# reth
+reth-provider.workspace = true
+reth-chainspec.workspace = true
+reth-storage-api.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-rpc-eth-types.workspace = true
+
+# alloy
+alloy-eips.workspace = true
+alloy-rpc-types.workspace = true
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
+jsonrpsee-types.workspace = true
+
+# misc
+tracing = { workspace = true, features = ["std"] }

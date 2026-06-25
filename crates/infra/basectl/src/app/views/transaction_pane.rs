@@ -9,7 +9,7 @@ use ratatui::{
 use tokio::sync::mpsc;
 
 use crate::{
-    commands::{COLOR_ACTIVE_BORDER, COLOR_ROW_SELECTED},
+    output::{COLOR_ACTIVE_BORDER, COLOR_ROW_SELECTED},
     rpc::TxSummary,
     tui::Toast,
 };

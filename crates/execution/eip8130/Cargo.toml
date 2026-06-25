@@ -1,0 +1,43 @@
+[package]
+name = "base-execution-eip8130"
+description = "EIP-8130 native validation, intrinsic gas, and fee helpers"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# crypto
+sha2.workspace = true
+base64.workspace = true
+k256 = { workspace = true, features = ["ecdsa"] }
+p256 = { workspace = true, features = ["ecdsa"] }
+
+# alloy
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+
+# base
+base-precompile-macros.workspace = true
+base-precompile-storage.workspace = true
+base-common-precompiles.workspace = true
+base-common-consensus = { workspace = true, default-features = false, features = ["k256"] }
+
+# revm
+revm.workspace = true
+
+# misc
+thiserror.workspace = true
+
+[dev-dependencies]
+base-precompile-storage = { workspace = true, features = ["test-utils"] }
+
+[features]
+test-utils = [ "base-precompile-storage/test-utils" ]

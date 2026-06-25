@@ -8,10 +8,10 @@ use base_zk_client::prover_service_server::ProverServiceServer as ProtoProverSer
 use base_zk_db::{DatabaseConfig, ProofRequestRepo};
 use base_zk_outbox::{DatabaseOutboxReader, OutboxProcessor};
 use base_zk_service::{
-    ArtifactClientWrapper, ArtifactStorageConfig, BackendConfig, BackendRegistry, MockBackend,
-    NetworkBackend, OpSuccinctBackend, OpSuccinctProvider, ProofRequestManager,
-    ProverServiceServer, ProverWorkerPool, ProxyConfigs, RateLimitConfig, StatusPoller,
-    start_all_proxies,
+    ArtifactClientWrapper, ArtifactStorageConfig, BackendConfig, BackendRegistry,
+    OpSuccinctClusterBackend, OpSuccinctDryRunBackend, OpSuccinctMockBackend,
+    OpSuccinctNetworkBackend, OpSuccinctProvider, ProofRequestManager, ProverServiceServer,
+    ProverWorkerPool, ProxyConfigs, RateLimitConfig, StatusPoller, start_all_proxies,
 };
 use clap::Parser;
 use eyre::eyre;
@@ -94,8 +94,13 @@ struct ZkArgs {
     #[arg(long, env = "STUCK_REQUEST_TIMEOUT_MINS", default_value_t = 10)]
     stuck_request_timeout_mins: i32,
 
-    #[arg(long, env = "MAX_PROOF_RETRIES", default_value_t = 3)]
-    max_proof_retries: u32,
+    #[arg(
+        long,
+        env = "MAX_PROOF_RETRIES",
+        default_value_t = 3,
+        value_parser = clap::value_parser!(i32).range(0..)
+    )]
+    max_proof_retries: i32,
 
     #[arg(long, env = "SP1_PROVER", default_value = "cluster")]
     prover_mode: String,
@@ -201,21 +206,41 @@ impl ZkArgs {
                 .map_err(|e| eyre!("invalid L2 node RPC URL: {e}"))?,
         };
 
-        info!("computing range and aggregation verifying keys");
-        let (range_pk, range_vk, agg_pk, agg_vk) =
-            base_proof_succinct_proof_utils::cluster_setup_keys()
-                .await
-                .map_err(|e| eyre!("failed to compute verifying keys: {e}"))?;
-        info!("verifying keys computed successfully");
-
         let mut backend_registry = BackendRegistry::new();
 
-        if self.prover_mode == "mock" {
+        if self.prover_mode == "dry-run" {
+            info!("SP1_PROVER=dry-run: using local SP1 execution backend");
+
+            let fetcher = Arc::new(
+                base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::from_rpc_config_with_rollup_config(rpc_config)
+                    .await
+                    .map_err(|e| eyre!("failed to create OPSuccinctDataFetcher: {e}"))?,
+            );
+            let provider = OpSuccinctProvider::new(fetcher);
+            let backend = OpSuccinctDryRunBackend::new(
+                provider,
+                self.base_consensus_address.clone(),
+                l1_url.clone(),
+                self.default_sequence_window,
+            );
+            backend_registry.register(Arc::new(backend));
+        } else if self.prover_mode == "mock" {
             info!("SP1_PROVER=mock: using MockBackend (instant fake proofs, no cluster)");
-            let mock_backend = MockBackend::new(range_vk, agg_vk);
+            info!("computing range and aggregation verifying keys");
+            let (range_vk, agg_vk) = base_proof_succinct_proof_utils::cluster_setup_vkeys()
+                .await
+                .map_err(|e| eyre!("failed to compute verifying keys: {e}"))?;
+            info!("verifying keys computed successfully");
+            let mock_backend = OpSuccinctMockBackend::new(range_vk, agg_vk);
             backend_registry.register(Arc::new(mock_backend));
         } else if self.prover_mode == "network" {
-            info!("SP1_PROVER=network: using OP-Succinct SP1 Network backend");
+            info!("SP1_PROVER=network: using Succinct SP1 Network backend");
+            info!("computing range and aggregation proving keys");
+            let (range_pk, range_vk, agg_pk, agg_vk) =
+                base_proof_succinct_proof_utils::cluster_setup_keys()
+                    .await
+                    .map_err(|e| eyre!("failed to compute proving keys: {e}"))?;
+            info!("proving keys computed successfully");
 
             let fetcher = Arc::new(
                 base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::from_rpc_config_with_rollup_config(rpc_config)
@@ -271,12 +296,17 @@ impl ZkArgs {
                 timeout_hours: self.sp1_cluster_timeout_hours,
             };
 
-            let backend = Arc::new(NetworkBackend::new(provider, config));
+            let backend = Arc::new(OpSuccinctNetworkBackend::new(provider, config));
             backend_registry.register(backend);
         } else {
-            info!("SP1_PROVER=cluster: using OP-Succinct cluster backend");
+            info!("SP1_PROVER=cluster: using Succinct cluster backend");
+            info!("computing range and aggregation verifying keys");
+            let (range_vk, _) = base_proof_succinct_proof_utils::cluster_setup_vkeys()
+                .await
+                .map_err(|e| eyre!("failed to compute verifying keys: {e}"))?;
+            info!("verifying keys computed successfully");
 
-            info!("creating OP-Succinct data fetcher");
+            info!("creating Succinct data fetcher");
             let fetcher = Arc::new(
                 base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::from_rpc_config_with_rollup_config(rpc_config)
                     .await
@@ -314,7 +344,7 @@ impl ZkArgs {
                 range_vk,
             };
 
-            let backend = Arc::new(OpSuccinctBackend::new(provider, config));
+            let backend = Arc::new(OpSuccinctClusterBackend::new(provider, config));
             backend_registry.register(backend);
         }
 
@@ -344,13 +374,14 @@ impl ZkArgs {
             manager.clone(),
             self.status_poller_interval_secs,
             self.stuck_request_timeout_mins,
-            self.max_proof_retries as i32,
+            self.max_proof_retries,
         );
         let status_handle = tokio::spawn(async move {
             status_poller.run().await;
         });
 
-        let prover_server = ProverServiceServer::new(repo.clone(), manager.clone());
+        let prover_server =
+            ProverServiceServer::new(repo.clone(), manager.clone(), self.max_proof_retries);
 
         let addr = self.grpc_listen_addr.parse()?;
 
@@ -428,15 +459,15 @@ impl ZkArgs {
     }
 
     fn validate_config(&self) -> eyre::Result<()> {
-        if !matches!(self.prover_mode.as_str(), "cluster" | "mock" | "network") {
+        if !matches!(self.prover_mode.as_str(), "cluster" | "mock" | "network" | "dry-run") {
             eyre::bail!(
-                "SP1_PROVER must be set to 'cluster', 'mock', or 'network', got '{}'",
+                "SP1_PROVER must be set to 'cluster', 'mock', 'network', or 'dry-run', got '{}'",
                 self.prover_mode
             );
         }
 
-        if self.prover_mode == "mock" {
-            info!(prover_mode = "mock", "configuration validated");
+        if matches!(self.prover_mode.as_str(), "mock" | "dry-run") {
+            info!(prover_mode = %self.prover_mode, "configuration validated");
             return Ok(());
         }
 

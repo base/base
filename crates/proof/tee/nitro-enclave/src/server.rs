@@ -254,7 +254,6 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::b256;
-    use base_common_chains::Registry;
 
     use super::*;
 
@@ -294,11 +293,11 @@ mod tests {
     }
 
     #[test]
-    fn config_hashes_match_registry() {
+    fn config_hashes_match_chain_configs() {
         for cfg in ChainConfig::all() {
             let chain_id = cfg.chain_id;
-            let Some(rollup) = Registry::rollup_config(chain_id) else { continue };
-            let Some(mut per_chain) = PerChainConfig::from_rollup_config(rollup) else {
+            let rollup = base_common_chains::rollup_config!(cfg);
+            let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) else {
                 continue;
             };
             per_chain.force_defaults();
@@ -317,14 +316,8 @@ mod tests {
     fn print_real_config_hashes() {
         for cfg in ChainConfig::all() {
             let chain_id = cfg.chain_id;
-            let rollup = match Registry::rollup_config(chain_id) {
-                Some(r) => r,
-                None => {
-                    println!("chain {chain_id}: skipped (no rollup config)");
-                    continue;
-                }
-            };
-            let mut per_chain = match PerChainConfig::from_rollup_config(rollup) {
+            let rollup = base_common_chains::rollup_config!(cfg);
+            let mut per_chain = match PerChainConfig::from_rollup_config(&rollup) {
                 Some(pc) => pc,
                 None => {
                     println!("chain {chain_id}: skipped (no system_config)");

@@ -2,7 +2,7 @@
 
 use futures::stream::BoxStream;
 
-use crate::SourceError;
+use crate::{KeepAliveSubscription, PendingSubscription, SourceError, StreamSubscription};
 
 /// A source of an L1 head number stream that may hold ancillary resources.
 ///
@@ -19,4 +19,22 @@ pub trait L1HeadSubscription: Send {
     ///
     /// Must be called at most once; implementors may panic on a second call.
     fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>>;
+}
+
+impl L1HeadSubscription for StreamSubscription<u64> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
+        Self::take_stream(self)
+    }
+}
+
+impl L1HeadSubscription for KeepAliveSubscription<u64> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
+        Self::take_stream(self)
+    }
+}
+
+impl L1HeadSubscription for PendingSubscription<u64> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
+        Self::take_stream(self)
+    }
 }

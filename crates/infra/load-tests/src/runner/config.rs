@@ -48,6 +48,9 @@ pub enum TxType {
         /// Looper contract address (required when iterations > 1).
         looper_contract: Option<Address>,
     },
+    /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
+    /// per run during setup.
+    B20,
     /// Osaka (Base Azul) opcode or precompile transaction.
     Osaka {
         /// Target Osaka feature.
@@ -67,6 +70,10 @@ pub enum TxType {
         min_amount: U256,
         /// Maximum swap amount.
         max_amount: U256,
+        /// Minimum amount when swapping `token_out` to `token_in`.
+        reverse_min_amount: U256,
+        /// Maximum amount when swapping `token_out` to `token_in`.
+        reverse_max_amount: U256,
     },
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
@@ -82,7 +89,99 @@ pub enum TxType {
         min_amount: U256,
         /// Maximum swap amount.
         max_amount: U256,
+        /// Minimum amount when swapping `token_out` to `token_in`.
+        reverse_min_amount: U256,
+        /// Maximum amount when swapping `token_out` to `token_in`.
+        reverse_max_amount: U256,
     },
+}
+
+/// Real-token setup executed before measured swap workloads.
+#[derive(Debug, Clone)]
+pub struct RealTokenSetup {
+    /// Whether chain ID 8453 is allowed for this setup.
+    pub allow_chain_id_8453: bool,
+    /// WETH contract address.
+    pub weth: Address,
+    /// Target WETH balance to leave each sender with after setup.
+    pub weth_amount_per_sender: U256,
+    /// Non-WETH token setup for bidirectional swap parity.
+    pub pair_token: RealTokenPairTokenSetup,
+    /// Allowance amount to approve for each measured router.
+    pub approval_amount: U256,
+}
+
+/// Summary of real-token balances recovered before native ETH drain.
+#[derive(Debug, Clone, Default)]
+pub struct RealTokenRecoverySummary {
+    /// Pair-token raw units swapped back into WETH.
+    pub pair_token_swapped: U256,
+    /// WETH unwrapped back into native ETH.
+    pub weth_unwrapped: U256,
+}
+
+/// Non-WETH side of the real-token pair.
+#[derive(Debug, Clone)]
+pub struct RealTokenPairTokenSetup {
+    /// Pair token contract address.
+    pub token: Address,
+    /// Target pair-token balance per sender.
+    pub amount_per_sender: U256,
+    /// How to acquire pair-token balances during setup.
+    pub acquisition: RealTokenAcquisition,
+}
+
+/// Explicit setup route for acquiring the pair token.
+#[derive(Debug, Clone)]
+pub enum RealTokenAcquisition {
+    /// Uniswap V3 `exactInputSingle` route.
+    UniswapV3ExactInput {
+        /// Router contract address.
+        router: Address,
+        /// Fee tier.
+        fee: u32,
+        /// WETH input amount per sender.
+        amount_in: U256,
+        /// Minimum pair-token output amount.
+        min_amount_out: U256,
+    },
+    /// Aerodrome Slipstream `exactInputSingle` route.
+    AerodromeClExactInput {
+        /// Router contract address.
+        router: Address,
+        /// Tick spacing.
+        tick_spacing: i32,
+        /// WETH input amount per sender.
+        amount_in: U256,
+        /// Minimum pair-token output amount.
+        min_amount_out: U256,
+    },
+}
+
+impl RealTokenAcquisition {
+    /// Returns the router used by this setup route.
+    pub const fn router(&self) -> Address {
+        match self {
+            Self::UniswapV3ExactInput { router, .. }
+            | Self::AerodromeClExactInput { router, .. } => *router,
+        }
+    }
+
+    /// Returns the input amount consumed by this setup route.
+    pub const fn amount_in(&self) -> U256 {
+        match self {
+            Self::UniswapV3ExactInput { amount_in, .. }
+            | Self::AerodromeClExactInput { amount_in, .. } => *amount_in,
+        }
+    }
+
+    /// Returns the minimum output amount expected by this setup route.
+    pub const fn min_amount_out(&self) -> U256 {
+        match self {
+            Self::UniswapV3ExactInput { min_amount_out, .. }
+            | Self::AerodromeClExactInput { min_amount_out, .. } => *min_amount_out,
+        }
+    }
 }
 
 /// Default maximum gas price cap (1000 gwei).
@@ -91,8 +190,12 @@ pub const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000_000;
 /// Configuration for a load test run.
 #[derive(Debug, Clone)]
 pub struct LoadConfig {
-    /// HTTP JSON-RPC endpoint URL.
-    pub rpc_http_url: Url,
+    /// HTTP JSON-RPC endpoints used for sharded transaction submission.
+    pub transaction_submission_rpcs: Vec<Url>,
+    /// HTTP JSON-RPC endpoint used for read/query operations.
+    pub query_rpc: Url,
+    /// Optional HTTP JSON-RPC endpoints whose txpools should be cleared before a test.
+    pub txpool_nodes: Vec<Url>,
     /// Chain ID.
     pub chain_id: u64,
     /// Number of test accounts to create.
@@ -117,17 +220,22 @@ pub struct LoadConfig {
     pub batch_timeout: Duration,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
-    /// JSON-RPC endpoint for block tracking (WebSocket subscription or HTTP polling).
-    pub block_watcher_url: Option<Url>,
-    /// WebSocket URL for flashblocks subscription.
-    pub flashblocks_ws_url: Option<Url>,
+    /// Builder flashblocks broadcast WebSocket endpoint.
+    pub flashblocks_ws: Url,
+    /// Fraction of transactions that draw a fresh recipient address instead of cycling through
+    /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
+    pub fresh_recipient_ratio: f64,
 }
 
 impl LoadConfig {
     /// Creates a new load config for devnet.
     pub fn devnet() -> Self {
         Self {
-            rpc_http_url: "http://localhost:8545".parse().expect("valid default rpc_http_url"),
+            transaction_submission_rpcs: vec![
+                "http://localhost:8545".parse().expect("valid default transaction_submission_rpc"),
+            ],
+            query_rpc: "http://localhost:8545".parse().expect("valid default query_rpc"),
+            txpool_nodes: Vec::new(),
             chain_id: 1337,
             account_count: 10,
             seed: 42,
@@ -140,13 +248,16 @@ impl LoadConfig {
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
-            block_watcher_url: Some(
-                "ws://localhost:8546".parse().expect("valid default block_watcher_url"),
-            ),
-            flashblocks_ws_url: Some(
-                "ws://localhost:7111".parse().expect("valid default flashblocks_ws_url"),
-            ),
+            flashblocks_ws: "ws://localhost:7111".parse().expect("valid default flashblocks_ws"),
+            fresh_recipient_ratio: 0.0,
         }
+    }
+
+    /// Returns the first transaction submission endpoint.
+    pub fn primary_submission_rpc(&self) -> &Url {
+        self.transaction_submission_rpcs
+            .first()
+            .expect("LoadConfig::validate guarantees at least one submission RPC")
     }
 
     /// Validates the configuration, returning an error if invalid.
@@ -165,15 +276,46 @@ impl LoadConfig {
         if self.batch_size == 0 {
             return Err(BaselineError::Config("batch_size must be > 0".into()));
         }
+        if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
+            return Err(BaselineError::Config(
+                "fresh_recipient_ratio must be between 0.0 and 1.0".into(),
+            ));
+        }
         if self.transactions.is_empty() {
             return Err(BaselineError::Config("transactions must not be empty".into()));
+        }
+        if self.transaction_submission_rpcs.is_empty() {
+            return Err(BaselineError::Config(
+                "transaction_submission_rpcs must not be empty".into(),
+            ));
+        }
+        for url in &self.transaction_submission_rpcs {
+            if !matches!(url.scheme(), "http" | "https") {
+                return Err(BaselineError::Config(
+                    "transaction_submission_rpcs must use http:// or https://".into(),
+                ));
+            }
+        }
+        if !matches!(self.query_rpc.scheme(), "http" | "https") {
+            return Err(BaselineError::Config("query_rpc must use http:// or https://".into()));
+        }
+        for url in &self.txpool_nodes {
+            if !matches!(url.scheme(), "http" | "https") {
+                return Err(BaselineError::Config(
+                    "txpool_nodes must use http:// or https://".into(),
+                ));
+            }
+        }
+        if !matches!(self.flashblocks_ws.scheme(), "ws" | "wss") {
+            return Err(BaselineError::Config("flashblocks_ws must use ws:// or wss://".into()));
         }
         Ok(())
     }
 
-    /// Sets the HTTP JSON-RPC URL.
+    /// Sets the transaction submission HTTP JSON-RPC URL.
     pub fn with_rpc_http_url(mut self, url: Url) -> Self {
-        self.rpc_http_url = url;
+        self.transaction_submission_rpcs = vec![url.clone()];
+        self.query_rpc = url;
         self
     }
 

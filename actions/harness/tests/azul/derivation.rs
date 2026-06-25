@@ -15,7 +15,7 @@ async fn azul_derivation_crosses_activation_boundary() {
         ..BatcherConfig::default()
     };
 
-    // All Optimism forks through Jovian active from genesis; Base Azul at ts=4.
+    // All inherited rollup forks through Jovian active from genesis; Base Azul at ts=4.
     // With block_time=2 and L2 genesis at ts=0:
     //   block 1 → ts=2  (pre-Base Azul)
     //   block 2 → ts=4  (first Base Azul block)

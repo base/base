@@ -17,14 +17,13 @@ use reth_basic_payload_builder::{
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
     ConfigureEvm, Database,
-    block::BlockExecutorFor,
     execute::{
         BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
     },
 };
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderAttributes};
+use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
     HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
@@ -35,8 +34,9 @@ use reth_revm::{
 };
 use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
+use reth_trie_common::ExecutionWitnessMode;
 use revm::context::{Block, BlockEnv};
-use tracing::{debug, trace, warn};
+use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
@@ -171,6 +171,10 @@ where
     /// Given build arguments including a Base client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
+    #[instrument(
+        skip_all,
+        fields(payload_id = tracing::field::Empty, parent_num = tracing::field::Empty)
+    )]
     fn build_payload<'a, Txs>(
         &self,
         args: BuildArguments<Attrs, BaseBuiltPayload<N>>,
@@ -181,7 +185,7 @@ where
             Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
     {
-        let BuildArguments { mut cached_reads, config, cancel, best_payload } = args;
+        let BuildArguments { mut cached_reads, config, cancel, best_payload, .. } = args;
 
         let ctx = BasePayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
@@ -191,6 +195,8 @@ where
             cancel,
             best_payload,
         };
+        tracing::Span::current().record("payload_id", tracing::field::display(ctx.payload_id()));
+        tracing::Span::current().record("parent_num", ctx.parent().number());
 
         let builder = Builder::new(best);
 
@@ -213,12 +219,13 @@ where
         attributes: Attrs::RpcPayloadAttributes,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
-        Attrs: PayloadBuilderAttributes,
+        Attrs: Attributes,
     {
         let attributes =
             Attrs::try_new(parent.hash(), attributes, 3).map_err(PayloadBuilderError::other)?;
 
-        let config = PayloadConfig { parent_header: Arc::new(parent), attributes };
+        let payload_id = attributes.payload_id(&parent.hash());
+        let config = PayloadConfig::new(Arc::new(parent), attributes, payload_id);
         let ctx = BasePayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             builder_config: self.config.clone(),
@@ -278,6 +285,8 @@ where
         let args = BuildArguments {
             config,
             cached_reads: Default::default(),
+            execution_cache: None,
+            trie_handle: None,
             cancel: Default::default(),
             best_payload: None,
         };
@@ -371,11 +380,18 @@ impl<Txs> Builder<'_, Txs> {
             }
         }
 
-        let BlockBuilderOutcome { execution_result, hashed_state, trie_updates, block } =
-            builder.finish(state_provider)?;
+        let block_num = ctx.parent().number().saturating_add(1);
+        let BlockBuilderOutcome {
+            execution_result,
+            hashed_state,
+            trie_updates,
+            block,
+            block_access_list,
+        } = debug_span!("finish_payload", block_num)
+            .in_scope(|| builder.finish(state_provider, None))?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
-        debug!(target: "payload_builder", id=%ctx.attributes().payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
+        debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
 
         let execution_outcome =
             BlockExecutionOutput { state: db.take_bundle(), result: execution_result };
@@ -384,15 +400,19 @@ impl<Txs> Builder<'_, Txs> {
         let executed: BuiltPayloadExecutedBlock<N> = BuiltPayloadExecutedBlock {
             recovered_block: Arc::new(block),
             execution_output: Arc::new(execution_outcome),
-            // Keep unsorted; conversion to sorted happens when needed downstream
-            hashed_state: either::Either::Left(Arc::new(hashed_state)),
-            trie_updates: either::Either::Left(Arc::new(trie_updates)),
+            hashed_state: Arc::new(hashed_state),
+            trie_updates: Arc::new(trie_updates),
         };
 
         let no_tx_pool = ctx.attributes().no_tx_pool();
 
-        let payload =
-            BaseBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed));
+        let payload = BaseBuiltPayload::new(
+            ctx.payload_id(),
+            sealed_block,
+            info.total_fees,
+            Some(executed),
+            block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
+        );
 
         if no_tx_pool {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
@@ -436,9 +456,10 @@ impl<Txs> Builder<'_, Txs> {
             _ = db.load_cache_account(Predeploys::L2_TO_L1_MESSAGE_PASSER)?;
         }
 
+        let mode = ExecutionWitnessMode::default();
         let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number: _ } =
-            ExecutionWitnessRecord::from_executed_state(&db);
-        let state = state_provider.witness(Default::default(), hashed_state)?;
+            ExecutionWitnessRecord::from_executed_state(&db, mode);
+        let state = state_provider.witness(Default::default(), hashed_state, mode)?;
         Ok(ExecutionWitness {
             state: state.into_iter().collect(),
             codes,
@@ -586,8 +607,8 @@ where
     }
 
     /// Returns the unique id for this payload job.
-    pub fn payload_id(&self) -> PayloadId {
-        self.attributes().payload_id()
+    pub const fn payload_id(&self) -> PayloadId {
+        self.config.payload_id()
     }
 
     /// Returns true if the fees are higher than the previous payload.
@@ -599,13 +620,7 @@ where
     pub fn block_builder<'a, DB: Database>(
         &'a self,
         db: &'a mut State<DB>,
-    ) -> Result<
-        impl BlockBuilder<
-            Primitives = Evm::Primitives,
-            Executor: BlockExecutorFor<'a, Evm::BlockExecutorFactory, DB>,
-        > + 'a,
-        PayloadBuilderError,
-    > {
+    ) -> Result<impl BlockBuilder<Primitives = Evm::Primitives> + 'a, PayloadBuilderError> {
         self.evm_config
             .builder_for_next_block(
                 db,
@@ -621,11 +636,26 @@ where
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
+    ///
+    /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
+    /// for the payload (derived from L1 batches by `base-consensus`), not a list of optional
+    /// pre-include candidates. In that mode an `InvalidTx` from any sequencer transaction must
+    /// be propagated as a fatal error so the EL rejects the payload, matching the strictness of
+    /// the proof executor. Silently skipping the offending transaction would diverge the EL
+    /// safe-head from the proof-derived state and break Holocene's deposit-only fallback (the
+    /// EL would freeze a skip-and-continue block while the proof path produces a deposit-only
+    /// replacement root).
+    ///
+    /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
+    /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
+    /// so the historical skip-and-continue behavior is preserved.
+    #[instrument(skip_all, fields(phase = "sequencer_txs"))]
     pub fn execute_sequencer_transactions(
         &self,
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::new();
+        let no_tx_pool = self.attributes().no_tx_pool();
 
         for sequencer_tx in self.attributes().sequencer_transactions() {
             // A sequencer's block should never contain blob transactions.
@@ -643,23 +673,21 @@ where
                 PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
-            let gas_used = match builder.execute_transaction(sequencer_tx.clone()) {
-                Ok(gas_used) => gas_used,
+            let gas_output = match builder.execute_transaction(sequencer_tx.clone()) {
+                Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
-                })) => {
+                })) if !no_tx_pool => {
                     trace!(target: "payload_builder", %error, ?sequencer_tx, "Error in sequencer transaction, skipping.");
                     continue;
                 }
                 Err(err) => {
-                    // this is an error that we should treat as fatal for this attempt
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
 
-            // add gas used by the transaction to cumulative gas used, before creating the receipt
-            info.cumulative_gas_used += gas_used;
+            info.cumulative_gas_used += gas_output.tx_gas_used();
         }
 
         Ok(info)
@@ -668,6 +696,7 @@ where
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.
+    #[instrument(skip_all, fields(phase = "mempool_txs"))]
     pub fn execute_best_transactions<Builder>(
         &self,
         info: &mut ExecutionInfo,
@@ -731,39 +760,32 @@ where
                 return Ok(Some(()));
             }
 
-            let gas_used = match builder.execute_transaction(tx.clone()) {
-                Ok(gas_used) => gas_used,
+            let gas_output = match builder.execute_transaction(tx.clone()) {
+                Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
                 })) => {
                     if error.is_nonce_too_low() {
-                        // if the nonce is too low, we can skip this transaction
                         trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
                     } else {
-                        // if the transaction is invalid, we can skip it and all of its
-                        // descendants
                         trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                     }
                     continue;
                 }
                 Err(err) => {
-                    // this is an error that we should treat as fatal for this attempt
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
 
-            // add gas used by the transaction to cumulative gas used, before creating the
-            // receipt
-            info.cumulative_gas_used += gas_used;
+            info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
 
-            // update and add to total fees
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
-            info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
+            info.total_fees += U256::from(miner_fee) * U256::from(gas_output.tx_gas_used());
         }
 
         Ok(None)

@@ -10,26 +10,32 @@ base_metrics::define_metrics! {
     derivation_critical_errors: counter,
     #[describe("Wall-clock duration of a single derivation pipeline step() call")]
     derivation_pipeline_step_duration_seconds: histogram,
+    #[describe("Wall-clock duration the derivation actor waits for an inbound request")]
+    derivation_actor_inbound_recv_wait_duration_seconds: histogram,
     #[describe("Tracks sequencer state flags")]
     #[label(active)]
     #[label(recovery)]
     sequencer_state: gauge,
     #[describe("Duration of the sequencer attributes builder")]
-    sequencer_attributes_build_duration: gauge,
+    sequencer_attributes_build_duration: histogram,
     #[describe("Duration of the sequencer block building start task")]
-    sequencer_block_building_start_task_duration: gauge,
+    sequencer_block_building_start_task_duration: histogram,
     #[describe("Duration of the sequencer block building seal task")]
-    sequencer_block_building_seal_task_duration: gauge,
-    #[describe("Duration of the sequencer conductor commitment")]
-    sequencer_conductor_commitment_duration: gauge,
+    sequencer_block_building_seal_task_duration: histogram,
     #[describe("Total count of sequenced transactions")]
     sequencer_total_transactions_sequenced: counter,
     #[describe("Sequencer seal step retries by step")]
     #[label(name = "step", default = ["conductor", "gossip", "insert"])]
     sequencer_seal_step_retries_total: counter,
     #[describe("Sequencer seal step duration by step")]
-    #[label(step)]
-    sequencer_seal_step_duration: gauge,
+    #[label(name = "step", default = ["conductor", "gossip", "insert"])]
+    sequencer_seal_step_duration: histogram,
+    #[describe("Wall-clock duration between successive successful seal completions (Ok(true) returns)")]
+    sequencer_block_to_block_duration: histogram,
+    #[describe("Wall-clock drift between the build-ticker target time and the actual fire time (>= 0; clamped to 0 when the ticker fires early)")]
+    sequencer_ticker_drift_seconds: histogram,
+    #[describe("Wall-clock duration of the full seal pipeline (conductor commit → gossip → engine insert), measured from PayloadSealer construction (after the EL seal response) until step() returns Ok(true). Excludes the EL build idle wait and the EL seal request.")]
+    sequencer_seal_pipeline_duration: histogram,
     #[describe("Seal errors by fatality")]
     #[label(name = "fatal", default = ["true", "false"])]
     sequencer_seal_errors_total: counter,

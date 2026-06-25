@@ -4,13 +4,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base_proof::{CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider};
 use base_proof_preimage::{HintWriter, NativeChannel, OracleReader};
-use base_proof_succinct_client_utils::{
-    client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
-    witness::{
-        BlobData, WitnessData,
-        executor::{WitnessExecutor, get_inputs_for_pipeline},
-        preimage_store::PreimageStore,
-    },
+use base_proof_succinct_client_utils::witness::{
+    BlobData, WitnessData,
+    executor::{WitnessExecutor, get_inputs_for_pipeline},
+    preimage_store::PreimageStore,
 };
 use sp1_sdk::SP1Stdin;
 
@@ -59,29 +56,24 @@ pub trait WitnessGenerator {
         let beacon =
             OnlineBlobStore { provider: blob_provider.clone(), store: Arc::clone(&blob_data) };
 
-        let (boot_info, input, _safe_head_number) =
+        let (boot_info, (cursor, l1_provider, l2_provider), _safe_head_number) =
             get_inputs_for_pipeline(Arc::clone(&oracle)).await?;
-        if let Some((cursor, l1_provider, l2_provider)) = input {
-            let rollup_config = Arc::new(boot_info.rollup_config.clone());
-            let l1_config = Arc::new(boot_info.l1_config.clone());
-            let pipeline = self
-                .get_executor()
-                .create_pipeline(
-                    rollup_config,
-                    l1_config,
-                    Arc::clone(&cursor),
-                    Arc::clone(&oracle),
-                    beacon,
-                    l1_provider.clone(),
-                    l2_provider.clone(),
-                )
-                .await
-                .unwrap();
-            let _ = self
-                .get_executor()
-                .run(boot_info, pipeline, cursor, l2_provider, DEFAULT_INTERMEDIATE_ROOT_INTERVAL)
-                .await?;
-        }
+        let rollup_config = Arc::new(boot_info.rollup_config.clone());
+        let l1_config = Arc::new(boot_info.l1_config.clone());
+        let pipeline = self
+            .get_executor()
+            .create_pipeline(
+                rollup_config,
+                l1_config,
+                Arc::clone(&cursor),
+                Arc::clone(&oracle),
+                beacon,
+                l1_provider.clone(),
+                l2_provider.clone(),
+            )
+            .await
+            .unwrap();
+        let _ = self.get_executor().run(boot_info, pipeline, cursor, l2_provider).await?;
 
         let witness = Self::WitnessData::from_parts(
             preimage_witness_store.lock().unwrap().clone(),
@@ -92,9 +84,9 @@ pub trait WitnessGenerator {
     }
 
     /// Build SP1 stdin from the collected witness data.
-    fn get_sp1_stdin(
-        &self,
-        witness: Self::WitnessData,
-        intermediate_root_interval: u64,
-    ) -> Result<SP1Stdin>;
+    ///
+    /// The intermediate root sampling interval is sourced from `BootInfo` inside the zkVM
+    /// (preimage key 9) — the same channel the TEE enclave reads — so it is intentionally not
+    /// passed through stdin.
+    fn get_sp1_stdin(&self, witness: Self::WitnessData) -> Result<SP1Stdin>;
 }

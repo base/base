@@ -28,9 +28,9 @@ pub struct DisplaySnapshot {
     pub rolling_tps: f64,
     /// Rolling 30s GPS.
     pub rolling_gps: f64,
-    /// Rolling 30s p50 latency.
+    /// Rolling 30s p50 block landing latency.
     pub p50_latency: Duration,
-    /// Rolling 30s p99 latency.
+    /// Rolling 30s p99 block landing latency.
     pub p99_latency: Duration,
     /// Rolling 30s flashblocks p50 latency.
     pub flashblocks_p50_latency: Duration,

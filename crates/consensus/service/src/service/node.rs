@@ -13,7 +13,7 @@ use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
-use base_consensus_engine::{Engine, EngineClient, EngineState};
+use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
 use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,
@@ -25,11 +25,12 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AlloyL1BlockFetcher, Conductor, ConductorClient, DelayedL1OriginSelectorProvider,
-    DelegateDerivationActor, DerivationActor, DerivationDelegateClient, DerivationError,
-    EngineActor, EngineActorRequest, EngineConfig, EngineProcessor, EngineRpcProcessor,
-    L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder,
-    NetworkConfig, NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
+    AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
+    Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
+    DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
+    EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRpcProcessor, L1OriginSelector,
+    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
+    NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
     RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
@@ -103,6 +104,11 @@ pub struct RollupNode {
     pub sequencer_config: SequencerConfig,
     /// Optional derivation delegate provider.
     pub derivation_delegate_provider: Option<DerivationDelegateClient>,
+    /// Path to the mandatory checkpoint database.
+    ///
+    /// The node records safe/finalized forkchoice checkpoints here so restart can recover
+    /// `L2BlockInfo` when reth has pruned old block bodies.
+    pub checkpoint_path: PathBuf,
     /// Optional path to the safe head database.
     ///
     /// When set, the node records L1→L2 safe head mappings to a persistent redb database and
@@ -224,6 +230,7 @@ impl RollupNode {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_engine_actor<E: EngineClient + 'static>(
         &self,
         engine_client: Arc<E>,
@@ -232,20 +239,31 @@ impl RollupNode {
         derivation_client: QueuedEngineDerivationClient,
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
         conductor: Option<Arc<dyn Conductor>>,
-    ) -> EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>, EngineRpcProcessor<E>> {
+        checkpoint_client: CheckpointClient,
+    ) -> (EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>>, EngineRpcProcessor<E>)
+    {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
-        let engine_processor = EngineProcessor::new(
+        let mode = self.mode();
+        let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
+            Arc::new(checkpoint_client.clone());
+        let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
+        let engine_processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
             derivation_client,
             engine,
-            if self.mode().is_sequencer() { Some(unsafe_head_tx) } else { None },
-            conductor,
-            self.sequencer_config.sequencer_stopped,
+            EngineProcessorOptions {
+                node_mode: mode,
+                unsafe_head_tx: if mode.is_sequencer() { Some(unsafe_head_tx) } else { None },
+                conductor,
+                sequencer_stopped: self.sequencer_config.sequencer_stopped,
+            },
+            checkpoint_reader,
+            checkpoint_writer,
         );
 
         let engine_rpc_processor = EngineRpcProcessor::new(
@@ -255,12 +273,10 @@ impl RollupNode {
             engine_queue_length_rx,
         );
 
-        EngineActor::new(
-            cancellation_token,
-            engine_request_rx,
-            engine_processor,
-            engine_rpc_processor,
-        )
+        let engine_actor =
+            EngineActor::new(cancellation_token, engine_request_rx, engine_processor);
+
+        (engine_actor, engine_rpc_processor)
     }
 
     /// Starts the rollup node service.
@@ -283,11 +299,19 @@ impl RollupNode {
     /// finalizes `safe` blocks that it has derived when L1 finalized block updates are
     /// received.
     pub async fn start(&self) -> Result<(), String> {
+        self.start_with_cancellation(CancellationToken::new()).await
+    }
+
+    /// Starts the rollup node service with a caller-provided cancellation token.
+    pub async fn start_with_cancellation(
+        &self,
+        cancellation: CancellationToken,
+    ) -> Result<(), String> {
         let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         let engine_client =
             Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
-        self.start_inner(engine_client, pipeline, l1_head_number).await
+        self.start_inner(engine_client, pipeline, l1_head_number, cancellation).await
     }
 
     /// Starts the rollup node service with a pre-built derivation pipeline.
@@ -312,7 +336,7 @@ impl RollupNode {
         let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let engine_client =
             Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
-        self.start_inner(engine_client, pipeline, l1_head_number).await
+        self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
     }
 
     /// Starts the rollup node with a pre-built engine client.
@@ -326,7 +350,7 @@ impl RollupNode {
     ) -> Result<(), String> {
         let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
-        self.start_inner(engine_client, pipeline, l1_head_number).await
+        self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
     }
 
     async fn start_inner<E, P>(
@@ -334,6 +358,7 @@ impl RollupNode {
         engine_client: Arc<E>,
         pipeline: P,
         l1_head_number: base_consensus_providers::L1HeadNumber,
+        cancellation: CancellationToken,
     ) -> Result<(), String>
     where
         E: EngineClient + 'static,
@@ -341,8 +366,6 @@ impl RollupNode {
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
-        let cancellation = CancellationToken::new();
-
         // Build the safe head DB pair. Both actors share the same underlying DB via Arc.
         //
         // In delegate mode the local derivation actor is replaced by a `DelegateDerivationActor`
@@ -371,28 +394,47 @@ impl RollupNode {
         let (derivation_actor_request_tx, derivation_actor_request_rx) = mpsc::channel(1024);
 
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
+        let (engine_rpc_request_tx, engine_rpc_request_rx) = mpsc::channel(1024);
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (derivation_origin_tx, derivation_origin_rx) = watch::channel(None);
+        let (checkpoint_request_tx, checkpoint_request_rx) = mpsc::channel(1024);
+        let checkpoint_db = CheckpointDB::open(&self.checkpoint_path)
+            .map_err(|e| format!("failed to open checkpoint database: {e}"))?;
+        let checkpoint_actor = CheckpointActor::new(checkpoint_db, checkpoint_request_rx);
+        let checkpoint_client = CheckpointClient::new(checkpoint_request_tx);
 
         // Create the conductor client early — the engine processor needs it for the
         // bootstrap leadership check and the sequencer actor needs it for block building.
+        // When `conductor_binary_commit` is set, commit_unsafe_payload uses the
+        // SSZ-binary endpoint; the other RPCs (leader, active, override_leader)
+        // continue to use JSON-RPC.
+        let binary_commit = self.sequencer_config.conductor_binary_commit;
+        let conductor_timeout = self.sequencer_config.conductor_rpc_timeout;
         let conductor: Option<ConductorClient> = self
             .sequencer_config
             .conductor_rpc_url
             .clone()
-            .map(ConductorClient::new_http)
+            .map(|url| {
+                if binary_commit {
+                    ConductorClient::new_http_with_binary_commit(url, conductor_timeout)
+                } else {
+                    ConductorClient::new_http(url, conductor_timeout)
+                }
+            })
             .transpose()
             .map_err(|e| format!("Failed to create conductor client: {e}"))?;
 
         let engine_conductor: Option<Arc<dyn Conductor>> =
             conductor.clone().map(|c| Arc::new(c) as Arc<dyn Conductor>);
 
-        let engine_actor = self.create_engine_actor(
+        let (engine_actor, engine_rpc_processor) = self.create_engine_actor(
             engine_client,
             cancellation.clone(),
             engine_actor_request_rx,
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
             unsafe_head_tx,
             engine_conductor,
+            checkpoint_client,
         );
 
         // Select the concrete derivation actor implementation based on
@@ -412,6 +454,7 @@ impl RollupNode {
                     derivation_actor_request_rx,
                     provider,
                     l1_provider,
+                    derivation_origin_tx,
                 )))
             } else {
                 ConfiguredDerivationActor::Normal(Box::new(DerivationActor::<_, P>::new(
@@ -422,6 +465,7 @@ impl RollupNode {
                     derivation_actor_request_rx,
                     pipeline,
                     safe_head_listener,
+                    derivation_origin_tx,
                 )))
             };
 
@@ -485,7 +529,7 @@ impl RollupNode {
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_query_rx,
-            l1_head_updates_tx.subscribe(),
+            derivation_origin_rx,
             cancellation.clone(),
         );
 
@@ -523,7 +567,6 @@ impl RollupNode {
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,
-                    next_build_parent: None,
                 }),
                 Some(QueuedSequencerAdminAPIClient::new(sequencer_admin_api_tx)),
             )
@@ -532,10 +575,14 @@ impl RollupNode {
         };
 
         // Create the RPC server actor.
-        let rpc = self.rpc_builder().map(|b| {
+        let rpc_builder = self.rpc_builder();
+        let engine_rpc_actor = rpc_builder
+            .as_ref()
+            .map(|_| (engine_rpc_processor, (cancellation.clone(), engine_rpc_request_rx)));
+        let rpc = rpc_builder.map(|b| {
             RpcActor::new(
                 b,
-                QueuedEngineRpcClient::new(engine_actor_request_tx.clone()),
+                QueuedEngineRpcClient::new(engine_rpc_request_tx),
                 sequencer_admin_client,
                 safe_db_reader,
             )
@@ -558,7 +605,9 @@ impl RollupNode {
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
                 Some((derivation, ())),
+                Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),
+                engine_rpc_actor,
             ]
         );
         Ok(())

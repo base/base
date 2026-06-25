@@ -1,7 +1,8 @@
 //! Handler related to Base chain
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 
 use base_common_consensus::Predeploys;
+use base_common_genesis::BaseUpgrade;
 use revm::{
     context::{
         LocalContextTr,
@@ -10,8 +11,9 @@ use revm::{
     },
     context_interface::{
         Block, Cfg, ContextTr, JournalTr, Transaction,
+        cfg::gas::InitialAndFloorGas,
         context::ContextError,
-        result::{EVMError, ExecutionResult, FromStringError},
+        result::{EVMError, ExecutionResult, FromStringError, ResultGas},
     },
     handler::{
         EthFrame, EvmTr, FrameResult, Handler, MainnetHandler,
@@ -26,7 +28,7 @@ use revm::{
 };
 
 use crate::{
-    BaseContextTr, BaseHaltReason, L1BlockInfo, OpSpecId,
+    BaseContextTr, BaseHaltReason, L1BlockInfo,
     transaction::{BaseTransactionError, BaseTxTr, DEPOSIT_TRANSACTION_TYPE},
 };
 
@@ -83,7 +85,7 @@ where
         if tx_type == DEPOSIT_TRANSACTION_TYPE {
             // Do not allow for a system transaction to be processed if Regolith is enabled.
             if tx.is_system_transaction()
-                && evm.ctx().cfg().spec().is_enabled_in(OpSpecId::REGOLITH)
+                && evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Regolith)
             {
                 return Err(BaseTransactionError::DepositSystemTxPostRegolith.into());
             }
@@ -101,6 +103,7 @@ where
     fn validate_against_state_and_deduct_caller(
         &self,
         evm: &mut Self::Evm,
+        _initial_and_floor_gas: &mut InitialAndFloorGas,
     ) -> Result<(), Self::Error> {
         let (block, tx, cfg, journal, chain, _) = evm.ctx().all_mut();
         let spec = cfg.spec();
@@ -182,21 +185,24 @@ where
     fn last_frame_result(
         &mut self,
         evm: &mut Self::Evm,
+        _original_reservoir: u64,
         frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
     ) -> Result<(), Self::Error> {
         let ctx = evm.ctx();
         let tx = ctx.tx();
         let is_deposit = tx.tx_type() == DEPOSIT_TRANSACTION_TYPE;
         let tx_gas_limit = tx.gas_limit();
-        let is_regolith = ctx.cfg().spec().is_enabled_in(OpSpecId::REGOLITH);
+        let is_regolith = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Regolith);
 
         let instruction_result = frame_result.interpreter_result().result;
         let gas = frame_result.gas_mut();
         let remaining = gas.remaining();
         let refunded = gas.refunded();
+        let reservoir = gas.reservoir();
+        let state_gas_spent = gas.state_gas_spent();
 
         // Spend the gas limit. Gas is reimbursed when the tx returns successfully.
-        *gas = Gas::new_spent(tx_gas_limit);
+        *gas = Gas::new_spent_with_reservoir(tx_gas_limit, reservoir);
 
         if instruction_result.is_ok() {
             if !is_deposit || is_regolith {
@@ -208,6 +214,14 @@ where
         } else if instruction_result.is_revert() && (!is_deposit || is_regolith) {
             gas.erase_cost(remaining);
         }
+
+        if instruction_result.is_ok() {
+            gas.set_state_gas_spent(state_gas_spent);
+        } else {
+            gas.set_state_gas_spent(0);
+            gas.set_reservoir(reservoir.saturating_add_signed(state_gas_spent));
+        }
+
         Ok(())
     }
 
@@ -237,7 +251,7 @@ where
         frame_result.gas_mut().record_refund(eip7702_refund);
 
         let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
-        let is_regolith = evm.ctx().cfg().spec().is_enabled_in(OpSpecId::REGOLITH);
+        let is_regolith = evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Regolith);
 
         // Prior to Regolith, deposit transactions did not receive gas refunds.
         let is_gas_refund_disabled = is_deposit && !is_regolith;
@@ -275,7 +289,7 @@ where
         };
 
         let l1_cost = l1_block_info.calculate_tx_l1_cost(enveloped_tx, spec);
-        let operator_fee_cost = if spec.is_enabled_in(OpSpecId::ISTHMUS) {
+        let operator_fee_cost = if spec.is_enabled_in(BaseUpgrade::Isthmus) {
             l1_block_info.operator_fee_charge(
                 enveloped_tx,
                 U256::from(frame_result.gas().used()),
@@ -302,6 +316,7 @@ where
         &mut self,
         evm: &mut Self::Evm,
         frame_result: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        result_gas: ResultGas,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         match core::mem::replace(evm.ctx().error(), Ok(())) {
             Err(ContextError::Db(e)) => return Err(e.into()),
@@ -309,12 +324,12 @@ where
             Ok(_) => (),
         }
 
-        let exec_result =
-            post_execution::output(evm.ctx(), frame_result).map_haltreason(BaseHaltReason::Base);
+        let exec_result = post_execution::output(evm.ctx(), frame_result, result_gas)
+            .map_haltreason(BaseHaltReason::Base);
 
         if exec_result.is_halt() {
             let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
-            if is_deposit && evm.ctx().cfg().spec().is_enabled_in(OpSpecId::REGOLITH) {
+            if is_deposit && evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Regolith) {
                 return Err(ERROR::from(BaseTransactionError::HaltedDepositPostRegolith));
             }
         }
@@ -359,10 +374,17 @@ where
             // We can now commit the changes.
             journal.commit_tx();
 
-            let gas_used =
-                if spec.is_enabled_in(OpSpecId::REGOLITH) || !is_system_tx { gas_limit } else { 0 };
+            let gas_used = if spec.is_enabled_in(BaseUpgrade::Regolith) || !is_system_tx {
+                gas_limit
+            } else {
+                0
+            };
             // clear the journal
-            output = Ok(ExecutionResult::Halt { reason: BaseHaltReason::FailedDeposit, gas_used })
+            output = Ok(ExecutionResult::Halt {
+                reason: BaseHaltReason::FailedDeposit,
+                gas: ResultGas::new_with_state_gas(gas_used, 0, 0, 0),
+                logs: Vec::new(),
+            })
         }
 
         // do the cleanup
@@ -403,7 +425,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{BaseContext, BaseTransaction, Builder, DefaultBase, L1BlockInfo, OpSpecId};
+    use crate::{BaseContext, BaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo};
 
     /// Creates frame result.
     fn call_last_frame_return(
@@ -421,7 +443,7 @@ mod tests {
         let mut handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
 
-        handler.last_frame_result(&mut evm, &mut exec_result).unwrap();
+        handler.last_frame_result(&mut evm, 0, &mut exec_result).unwrap();
         handler.refund(&mut evm, &mut exec_result, 0);
         *exec_result.gas()
     }
@@ -430,11 +452,11 @@ mod tests {
     fn test_revert_gas() {
         let ctx = Context::base()
             .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)));
 
         let gas = call_last_frame_return(ctx, InstructionResult::Revert, Gas::new(90));
         assert_eq!(gas.remaining(), 90);
-        assert_eq!(gas.spent(), 10);
+        assert_eq!(gas.total_gas_spent(), 10);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -442,11 +464,11 @@ mod tests {
     fn test_consume_gas() {
         let ctx = Context::base()
             .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::REGOLITH));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
 
         let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
         assert_eq!(gas.remaining(), 90);
-        assert_eq!(gas.spent(), 10);
+        assert_eq!(gas.total_gas_spent(), 10);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -459,19 +481,19 @@ mod tests {
                     .source_hash(B256::from([1u8; 32]))
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::REGOLITH));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
 
         let mut ret_gas = Gas::new(90);
         ret_gas.record_refund(20);
 
         let gas = call_last_frame_return(ctx.clone(), InstructionResult::Stop, ret_gas);
         assert_eq!(gas.remaining(), 90);
-        assert_eq!(gas.spent(), 10);
+        assert_eq!(gas.total_gas_spent(), 10);
         assert_eq!(gas.refunded(), 2); // min(20, 10/5)
 
         let gas = call_last_frame_return(ctx, InstructionResult::Revert, ret_gas);
         assert_eq!(gas.remaining(), 90);
-        assert_eq!(gas.spent(), 10);
+        assert_eq!(gas.total_gas_spent(), 10);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -484,10 +506,10 @@ mod tests {
                     .source_hash(B256::from([1u8; 32]))
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)));
         let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
         assert_eq!(gas.remaining(), 0);
-        assert_eq!(gas.spent(), 100);
+        assert_eq!(gas.total_gas_spent(), 100);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -501,10 +523,10 @@ mod tests {
                     .is_system_transaction()
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)));
         let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
         assert_eq!(gas.remaining(), 100);
-        assert_eq!(gas.spent(), 0);
+        assert_eq!(gas.total_gas_spent(), 0);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -525,7 +547,7 @@ mod tests {
                 l1_base_fee_scalar: U256::from(1_000),
                 ..Default::default()
             })
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::REGOLITH));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)));
         ctx.modify_tx(|tx| {
             tx.deposit.source_hash = B256::from([1u8; 32]);
             tx.deposit.mint = Some(10);
@@ -535,7 +557,10 @@ mod tests {
 
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
+        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        handler
+            .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
+            .unwrap();
 
         // Check the account balance is updated.
         let account = evm.ctx_mut().journal_mut().load_account(caller).unwrap();
@@ -562,7 +587,7 @@ mod tests {
                 l2_block: Some(U256::from(0)),
                 ..Default::default()
             })
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::REGOLITH))
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Regolith)))
             .with_tx(
                 BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(100))
@@ -576,7 +601,10 @@ mod tests {
 
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
+        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        handler
+            .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
+            .unwrap();
 
         // Check the account balance is updated.
         let account = evm.ctx_mut().journal_mut().load_account(caller).unwrap();
@@ -622,7 +650,7 @@ mod tests {
                 ..Default::default()
             })
             .with_block(BlockEnv { number: BLOCK_NUM, ..Default::default() })
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::ISTHMUS));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus)));
 
         let mut evm = ctx.build_base();
 
@@ -630,7 +658,10 @@ mod tests {
 
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
+        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        handler
+            .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
+            .unwrap();
 
         assert_eq!(
             *evm.ctx().chain(),
@@ -659,7 +690,7 @@ mod tests {
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -676,7 +707,7 @@ mod tests {
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -693,7 +724,7 @@ mod tests {
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::JOVIAN));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)));
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -710,7 +741,7 @@ mod tests {
                     .source_hash(B256::from([1u8; 32]))
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -720,13 +751,13 @@ mod tests {
 
     #[test]
     fn test_osaka_opcodes_activated_azul() {
-        assert_eq!(OpSpecId::AZUL.into_eth_spec(), SpecId::OSAKA);
+        assert_eq!(BaseSpecId::new(BaseUpgrade::Azul).into_eth_spec(), SpecId::OSAKA);
     }
 
     /// Runs CLZ bytecode (`PUSH1 0x80, CLZ, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`)
     /// against the given spec and returns the execution result.
     fn run_clz_bytecode(
-        spec: OpSpecId,
+        spec: BaseSpecId,
     ) -> revm::context_interface::result::ExecutionResult<BaseHaltReason> {
         let contract = Address::from([0x42; 20]);
         let mut db = InMemoryDB::default();
@@ -766,7 +797,7 @@ mod tests {
 
     #[test]
     fn test_clz_opcode_azul() {
-        let result = run_clz_bytecode(OpSpecId::AZUL);
+        let result = run_clz_bytecode(BaseSpecId::new(BaseUpgrade::Azul));
         assert!(result.is_success(), "CLZ opcode should execute successfully on AZUL");
 
         let output = result.output().unwrap();
@@ -777,7 +808,7 @@ mod tests {
 
     #[test]
     fn test_clz_opcode_not_on_jovian() {
-        let result = run_clz_bytecode(OpSpecId::JOVIAN);
+        let result = run_clz_bytecode(BaseSpecId::new(BaseUpgrade::Jovian));
         assert!(!result.is_success(), "CLZ opcode should not be available on JOVIAN (pre-OSAKA)");
     }
 }

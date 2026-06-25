@@ -7,13 +7,14 @@ use std::{
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_primitives::{B256, BlockHash, Bytes, TxHash, U256};
+#[cfg(any(test, feature = "test-utils"))]
+use alloy_primitives::B256;
+use alloy_primitives::{BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use base_access_lists::FBALBuilderDb;
 use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
-use base_common_evm::{BaseReceiptBuilder, L1BlockInfo, OpSpecId};
+use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
@@ -29,15 +30,14 @@ use reth_evm::{
 };
 use reth_node_api::PayloadBuilderError;
 use reth_payload_builder::PayloadId;
-use reth_payload_primitives::PayloadBuilderAttributes;
-use reth_primitives::SealedHeader;
-use reth_primitives_traits::{InMemorySize, SignedTransaction};
+use reth_payload_primitives::PayloadAttributes;
+use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, trace, warn};
+use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
@@ -127,9 +127,7 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_other: u64,
     /// Minimum effective priority fee (tip per gas) among included transactions.
     pub min_priority_fee: Option<u64>,
-    /// Transaction hashes permanently rejected due to per-tx intrinsic limits
-    /// (e.g. tx DA size exceeded, tx execution time exceeded). These will never
-    /// be includable and should be evicted from the pool.
+    /// Transaction hashes permanently rejected due to per-tx intrinsic limits.
     pub permanently_rejected_txs: Vec<TxHash>,
 }
 
@@ -285,7 +283,7 @@ pub struct BasePayloadBuilderCtx {
     /// How to build the payload.
     pub config: PayloadConfig<BasePayloadBuilderAttributes<BaseTransactionSigned>>,
     /// Evm Settings
-    pub evm_env: EvmEnv<OpSpecId>,
+    pub evm_env: EvmEnv<BaseSpecId>,
     /// Block env attributes for the current block.
     pub block_env_attributes: BaseNextBlockEnvAttributes,
     /// Marker to check whether the job has been cancelled.
@@ -350,7 +348,7 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Returns the block number for the block.
-    pub const fn block_number(&self) -> u64 {
+    pub fn block_number(&self) -> u64 {
         as_u64_saturated!(self.evm_env.block_env.number)
     }
 
@@ -414,7 +412,7 @@ impl BasePayloadBuilderCtx {
 
     /// Returns the unique id for this payload job.
     pub fn payload_id(&self) -> PayloadId {
-        self.attributes().payload_id()
+        self.attributes().payload_id(&self.parent_hash())
     }
 
     /// Returns true if regolith is active for the payload.
@@ -535,16 +533,24 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
+    ///
+    /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
+    /// for the payload (derived from L1 batches by `base-consensus`), not a list of optional
+    /// pre-include candidates. In that mode any invalid-tx error must be propagated as fatal so
+    /// the EL rejects the payload, matching the strictness of the proof executor and allowing
+    /// Holocene's deposit-only fallback to apply consistently across both consumers.
+    ///
+    /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
+    /// attribute pre-includes; pre-includes there may legitimately be skipped on invalid-tx
+    /// errors, so the historical skip-and-continue behavior is preserved.
     pub(super) fn execute_sequencer_transactions(
         &self,
         db: &mut State<impl Database>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
+        let no_tx_pool = self.attributes().no_tx_pool;
 
-        let mut fbal_db = FBALBuilderDb::new(&mut *db);
-        let min_tx_index = info.executed_transactions.iter().len() as u64;
-        fbal_db.set_index(min_tx_index);
-        let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
+        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
@@ -564,13 +570,12 @@ impl BasePayloadBuilderCtx {
 
             // Cache the depositor account prior to the state transition for the deposit nonce.
             //
-            // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
+            // Note that this *only* needs to be done post-regolith upgrade, as deposit nonces
             // were not introduced in Bedrock. In addition, regular transactions don't have deposit
             // nonces, so we don't need to touch the DB for those.
             let depositor_nonce = (self.is_regolith_active() && sequencer_tx.is_deposit())
                 .then(|| {
                     evm.db_mut()
-                        .db_mut()
                         .load_cache_account(sequencer_tx.signer())
                         .map(|acc| acc.account_info().unwrap_or_default().nonce)
                 })
@@ -584,17 +589,20 @@ impl BasePayloadBuilderCtx {
             let ResultAndState { result, state } = match evm.transact(&sequencer_tx) {
                 Ok(res) => res,
                 Err(err) => {
-                    if err.is_invalid_tx_err() {
+                    if err.is_invalid_tx_err() && !no_tx_pool {
                         trace!(target: "payload_builder", %err, ?sequencer_tx, "Error in sequencer transaction, skipping.");
                         continue;
                     }
-                    // this is an error that we should treat as fatal for this attempt
+                    // Either a fatal execution error, or an invalid-tx error from an
+                    // attribute-derived (`no_tx_pool=true`) transaction list. The latter must
+                    // be fatal so the EL rejects the payload exactly like the proof executor
+                    // does.
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
-            let gas_used = result.gas_used();
+            let gas_used = result.tx_gas_used();
             info.cumulative_gas_used += gas_used;
 
             if !sequencer_tx.is_deposit() {
@@ -618,10 +626,8 @@ impl BasePayloadBuilderCtx {
             evm.db_mut().commit(state);
 
             // append sender and transaction to the respective lists
-            // and increment the next txn index for the access list
             info.executed_senders.push(sequencer_tx.signer());
             info.executed_transactions.push(sequencer_tx.into_inner());
-            evm.db_mut().inc_index();
         }
 
         let da_footprint_gas_scalar = self
@@ -633,13 +639,6 @@ impl BasePayloadBuilderCtx {
             });
 
         info.da_footprint_scalar = da_footprint_gas_scalar;
-
-        match fbal_db.finish() {
-            Ok(fbal_builder) => info.extra.access_list_builder = fbal_builder,
-            Err(err) => {
-                error!(error = %err, "Failed to finalize FBALBuilder");
-            }
-        }
 
         Ok(info)
     }
@@ -663,10 +662,8 @@ impl BasePayloadBuilderCtx {
         let base_fee = self.base_fee();
         let mut diag = FlashblockDiagnostics::default();
 
-        let mut fbal_db = FBALBuilderDb::new(&mut *db);
         let min_tx_index = info.executed_transactions.len() as u64;
-        fbal_db.set_index(min_tx_index);
-        let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
+        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         debug!(
             target: "payload_builder",
@@ -851,10 +848,10 @@ impl BasePayloadBuilderCtx {
 
                     let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                     record_rejected_tx_priority_fee(&err, priority_fee);
-
                     if err.is_permanent() {
                         diag.permanently_rejected_txs.push(tx_hash);
                     }
+
                     log_txn(Err(err));
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
@@ -889,7 +886,15 @@ impl BasePayloadBuilderCtx {
                 return Ok(diag);
             }
 
-            let tx_simulation_start_time = Instant::now();
+            let tx_span = span!(
+                Level::TRACE,
+                "execute_transaction",
+                tx_hash = %tx_hash,
+                tx_gas_limit = tx.gas_limit(),
+            );
+            let _tx_span_guard = tx_span.enter();
+
+            let execution_start_time = Instant::now();
             let ResultAndState { result, state } = match evm.transact(&tx) {
                 Ok(res) => res,
                 Err(err) => {
@@ -924,11 +929,13 @@ impl BasePayloadBuilderCtx {
                 }
             };
 
-            let actual_execution_time_us = tx_simulation_start_time.elapsed().as_micros();
+            let execution_time = execution_start_time.elapsed();
 
-            BuilderMetrics::tx_simulation_duration().record(tx_simulation_start_time.elapsed());
+            // The "simulation" terminology comes from upstream op-rbuilder's name for
+            // locally executing a candidate transaction before committing it to the payload;
+            // this is not metering service simulation data from MeterBundleResponse.
+            BuilderMetrics::tx_simulation_duration().record(execution_time);
             BuilderMetrics::tx_byte_size().record(tx.inner().size() as f64);
-            BuilderMetrics::tx_actual_execution_time_us().record(actual_execution_time_us as f64);
             num_txs_simulated += 1;
 
             // Record state modification counts (trie work proxy)
@@ -940,16 +947,16 @@ impl BasePayloadBuilderCtx {
             // Record execution time for unmetered transactions (race condition indicator)
             if resource_usage.is_none() {
                 BuilderMetrics::unmetered_tx_actual_execution_time_us()
-                    .record(actual_execution_time_us as f64);
+                    .record(execution_time.as_micros() as f64);
             }
 
             // Record prediction accuracy
             if let Some(predicted_us) = predicted_execution_time_us {
-                let error = predicted_us as f64 - actual_execution_time_us as f64;
+                let error = predicted_us as f64 - execution_time.as_micros() as f64;
                 BuilderMetrics::execution_time_prediction_error_us().record(error);
             }
 
-            let gas_used = result.gas_used();
+            let gas_used = result.tx_gas_used();
             let is_success = result.is_success();
             if is_success {
                 log_txn(Ok(TxnOutcome::Success));
@@ -971,6 +978,9 @@ impl BasePayloadBuilderCtx {
                 diag.record_rejection(&err);
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                 record_rejected_tx_priority_fee(&err, priority_fee);
+                if err.is_permanent() {
+                    diag.permanently_rejected_txs.push(tx_hash);
+                }
                 log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -1027,22 +1037,14 @@ impl BasePayloadBuilderCtx {
                 BuilderMetrics::metering_known_transaction().increment(1);
             } else {
                 BuilderMetrics::metering_unknown_transaction().increment(1);
+                if self.builder_config.metering_provider.is_enabled() {
+                    self.builder_config.metering_provider.mark_included_without_metering(&tx_hash);
+                }
             }
 
             // append sender and transaction to the respective lists
-            // and increment the next txn index for the access list
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
-            evm.db_mut().inc_index();
-        }
-
-        match fbal_db.finish() {
-            Ok(fbal_builder) => {
-                info.extra.access_list_builder.merge(fbal_builder);
-            }
-            Err(err) => {
-                error!(error = %err, "Failed to finalize FBALBuilder");
-            }
         }
 
         // Record cumulative state root gas for the block
@@ -1113,6 +1115,9 @@ impl BasePayloadBuilderCtx {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
+use base_execution_payload_builder::payload::EthPayloadBuilderAttributes;
+
+#[cfg(any(test, feature = "test-utils"))]
 impl BasePayloadBuilderCtx {
     /// Creates a minimal [`BasePayloadBuilderCtx`] for unit tests.
     ///
@@ -1123,7 +1128,7 @@ impl BasePayloadBuilderCtx {
         let timestamp = parent.timestamp + 2;
 
         let attributes = BasePayloadBuilderAttributes {
-            payload_attributes: reth_payload_builder::EthPayloadBuilderAttributes {
+            payload_attributes: EthPayloadBuilderAttributes {
                 id: PayloadId::new([0; 8]),
                 parent: parent.hash(),
                 timestamp,
@@ -1147,7 +1152,8 @@ impl BasePayloadBuilderCtx {
             .next_evm_env(&parent, &block_env_attributes)
             .expect("failed to create test evm env");
 
-        let config = PayloadConfig::new(parent, attributes);
+        let payload_id = attributes.payload_id(&parent.hash());
+        let config = PayloadConfig::new(parent, attributes, payload_id);
 
         Self {
             evm_config,
@@ -1165,7 +1171,19 @@ impl BasePayloadBuilderCtx {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Header, TxEip1559};
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::{TxKind, U256};
+    use alloy_signer_local::PrivateKeySigner;
+    use base_common_consensus::BaseTypedTransaction;
+    use base_execution_chainspec::BaseChainSpec;
+    use reth_chainspec::ChainSpec;
+    use reth_primitives_traits::{SealedHeader, WithEncoded};
+    use reth_provider::noop::NoopProvider;
+    use reth_revm::{State, database::StateProviderDatabase};
+
     use super::*;
+    use crate::test_utils::sign_base_tx;
 
     #[test]
     fn diagnostics_report_selection_outcome() {
@@ -1283,5 +1301,80 @@ mod tests {
         assert_eq!(next.da_footprint_per_batch, Some(600));
         assert_eq!(next.execution_time_per_batch_us, Some(300_000));
         assert_eq!(next.state_root_gas_per_batch, Some(150_000));
+    }
+
+    /// Regression test: when the payload attributes are derived (`no_tx_pool=true`), an
+    /// invalid-tx error from a sequencer transaction must be propagated as a fatal error
+    /// rather than silently skipped.
+    ///
+    /// In `no_tx_pool=true` mode the attribute-supplied transaction list is the consensus
+    /// input for the payload (produced by `base-consensus` from L1 batches). The proof
+    /// executor strictly executes the full list and fails the block on any invalid tx; the
+    /// EL must do the same so Holocene's deposit-only fallback applies consistently across
+    /// both consumers of the same L1 input. Skip-and-continue here would let the EL freeze a
+    /// safe-head whose state cannot be reproduced by an honest proof client.
+    #[test]
+    fn execute_sequencer_transactions_propagates_invalid_tx_when_no_tx_pool() {
+        // Minimal Base chainspec: chain id 901 with all L1 forks through Cancun active at
+        // genesis. No inherited rollup forks, so block construction stays on the simplest
+        // path. (Mirrors the helper used by the `build_block` tests in `payload.rs`.)
+        let genesis: serde_json::Value = serde_json::json!({
+            "config": { "chainId": 901 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        });
+        let genesis = serde_json::from_value(genesis).expect("valid genesis");
+        let inner =
+            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
+        let chain_spec = Arc::new(BaseChainSpec::from(inner));
+        let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
+        let parent = Arc::new(SealedHeader::seal_slow(parent_header));
+
+        // A randomly-generated signer with no balance in the (empty) NoopProvider state.
+        // Any non-deposit transfer attempt will fail validation with
+        // `InvalidTransaction::LackOfFundForMaxFee` — an `is_invalid_tx_err()` outcome.
+        let signer = PrivateKeySigner::random();
+        let tx = TxEip1559 {
+            chain_id: 901,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(signer.address()),
+            value: U256::from(1u64),
+            ..Default::default()
+        };
+        let recovered =
+            sign_base_tx(&signer, BaseTypedTransaction::Eip1559(tx)).expect("sign sequencer tx");
+        let signed = recovered.into_inner();
+        let encoded = signed.encoded_2718().into();
+        let with_encoded = WithEncoded::new(encoded, signed);
+
+        // Strict mode: derived attributes (`no_tx_pool=true`) — the invalid tx must be fatal.
+        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, parent);
+        ctx.config.attributes.no_tx_pool = true;
+        ctx.config.attributes.transactions = vec![with_encoded];
+
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let err = ctx
+            .execute_sequencer_transactions(&mut state)
+            .expect_err("invalid sequencer tx must fail when no_tx_pool=true");
+        assert!(
+            matches!(err, PayloadBuilderError::EvmExecutionError(_)),
+            "expected EvmExecutionError, got: {err:?}"
+        );
+
+        // Mempool mode (`no_tx_pool=false`): pre-includes are still skippable. Identical
+        // input now succeeds with zero gas consumed and no receipt — this guards against
+        // accidentally tightening the legacy code path along with the strict one.
+        ctx.config.attributes.no_tx_pool = false;
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let info = ctx
+            .execute_sequencer_transactions(&mut state)
+            .expect("invalid pre-include is skipped when no_tx_pool=false");
+        assert_eq!(info.cumulative_gas_used, 0, "skipped tx should not consume gas");
+        assert!(info.receipts.is_empty(), "skipped tx should not produce a receipt");
     }
 }

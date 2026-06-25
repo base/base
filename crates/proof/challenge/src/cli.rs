@@ -56,6 +56,10 @@ pub struct ChallengerArgs {
     #[arg(long = "dispute-game-factory-addr", env = cli_env!("DISPUTE_GAME_FACTORY_ADDR"))]
     pub dispute_game_factory_addr: Address,
 
+    /// Address of the `AnchorStateRegistry` contract on L1.
+    #[arg(long = "anchor-state-registry-addr", env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
+    pub anchor_state_registry_addr: Address,
+
     /// Polling interval for new dispute games (e.g., "12s", "1m").
     #[arg(
         long = "poll-interval",
@@ -89,18 +93,24 @@ pub struct ChallengerArgs {
     )]
     pub zk_request_timeout: Duration,
 
-    /// URL of the TEE enclave RPC endpoint (optional; enables TEE-first proof sourcing).
-    #[arg(long = "tee-rpc-url", env = cli_env!("TEE_RPC_URL"))]
-    pub tee_rpc_url: Option<Url>,
-
-    /// Timeout for individual TEE proof requests (e.g., "1m", "10m").
+    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed and
+    /// retrying (e.g., "30m", "2h"). Should be set above the typical proof generation time.
     #[arg(
-        long = "tee-request-timeout",
-        env = cli_env!("TEE_REQUEST_TIMEOUT"),
-        default_value = "10m",
+        long = "max-proof-duration",
+        env = cli_env!("MAX_PROOF_DURATION"),
+        default_value = "4h",
         value_parser = humantime::parse_duration
     )]
-    pub tee_request_timeout: Duration,
+    pub max_proof_duration: Duration,
+
+    /// Retryable TEE submission failures to tolerate before falling back to ZK.
+    /// Set to 0 to fall back immediately on the first retryable TEE tx error.
+    #[arg(
+        long = "tee-submit-retry-limit",
+        env = cli_env!("TEE_SUBMIT_RETRY_LIMIT"),
+        default_value = "3"
+    )]
+    pub tee_submit_retry_limit: u32,
 
     /// Signer configuration (local private key or remote sidecar).
     #[command(flatten)]
@@ -110,9 +120,13 @@ pub struct ChallengerArgs {
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
 
-    /// Number of past games to scan on startup.
-    #[arg(long = "lookback-games", env = cli_env!("LOOKBACK_GAMES"), default_value = "1000")]
-    pub lookback_games: u64,
+    /// Number of recent factory games scanned by bond discovery.
+    #[arg(
+        long = "bond-discovery-lookback-games",
+        env = cli_env!("BOND_DISCOVERY_LOOKBACK_GAMES"),
+        default_value = "1000"
+    )]
+    pub bond_discovery_lookback_games: u64,
 
     /// How often a full rescan of the bond lookback window is performed to
     /// catch state transitions (games challenged or resolved by other actors).

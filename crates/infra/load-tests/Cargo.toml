@@ -8,11 +8,6 @@ homepage.workspace = true
 repository.workspace = true
 description = "Core library for Base network load testing and benchmarking"
 
-[[bin]]
-name = "base-load-test"
-path = "src/bin/load_test.rs"
-
-
 [lints]
 workspace = true
 
@@ -31,8 +26,8 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 # base
 base-tx-manager.workspace = true
 base-common-network.workspace = true
-base-common-rpc-types.workspace = true
 base-common-flashblocks.workspace = true
+base-common-precompiles = { workspace = true, default-features = false }
 
 # display
 indicatif.workspace = true

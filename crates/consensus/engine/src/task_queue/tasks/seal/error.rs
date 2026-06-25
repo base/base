@@ -50,6 +50,10 @@ pub enum SealTaskError {
     /// this should not happen and is a critical error.
     #[error("Unsafe head changed between build and seal")]
     UnsafeHeadChangedSinceBuild,
+    /// The execution layer returned a payload version that does not match the requested
+    /// get-payload method.
+    #[error("Unexpected payload version from get_payload: {0}")]
+    UnexpectedPayloadVersion(String),
 }
 
 impl SealTaskError {
@@ -71,13 +75,14 @@ impl SealTaskError {
                 }
                 InsertTaskError::FromBlockError(_)
                 | InsertTaskError::L2BlockInfoConstruction(_) => true,
-                InsertTaskError::InsertFailed(_) | InsertTaskError::UnexpectedPayloadStatus(_) => {
-                    false
-                }
+                InsertTaskError::InsertFailed(_)
+                | InsertTaskError::UnexpectedPayloadStatus(_)
+                | InsertTaskError::ForkchoiceUpdateDidNotAdvance => false,
             },
             Self::GetPayloadFailed(_)
             | Self::HoloceneInvalidFlush
-            | Self::UnsafeHeadChangedSinceBuild => false,
+            | Self::UnsafeHeadChangedSinceBuild
+            | Self::UnexpectedPayloadVersion(_) => false,
             Self::DepositOnlyPayloadFailed
             | Self::DepositOnlyPayloadReattemptFailed
             | Self::FromBlock(_)
@@ -91,7 +96,9 @@ impl EngineTaskError for SealTaskError {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
             Self::PayloadInsertionFailed(inner) => inner.severity(),
-            Self::GetPayloadFailed(_) => EngineTaskErrorSeverity::Temporary,
+            Self::GetPayloadFailed(_) | Self::UnexpectedPayloadVersion(_) => {
+                EngineTaskErrorSeverity::Temporary
+            }
             Self::HoloceneInvalidFlush => EngineTaskErrorSeverity::Flush,
             Self::UnsafeHeadChangedSinceBuild => EngineTaskErrorSeverity::Reset,
             Self::DepositOnlyPayloadReattemptFailed
@@ -118,6 +125,10 @@ mod tests {
 
     #[rstest]
     #[case::get_payload_failed(SealTaskError::GetPayloadFailed(rpc_error()), false)]
+    #[case::unexpected_payload_version(
+        SealTaskError::UnexpectedPayloadVersion("V3".to_string()),
+        false
+    )]
     #[case::holocene_invalid_flush(SealTaskError::HoloceneInvalidFlush, false)]
     #[case::unsafe_head_changed(SealTaskError::UnsafeHeadChangedSinceBuild, false)]
     #[case::deposit_only_failed(SealTaskError::DepositOnlyPayloadFailed, true)]

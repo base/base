@@ -16,6 +16,7 @@ workspace = true
 base-common-flashblocks.workspace = true
 alloy-evm = { workspace = true, features = ["std"] }
 base-common-evm = { workspace = true, features = ["std"] }
+base-execution-eip8130-rpc.workspace = true
 
 # reth
 reth-rpc.workspace = true
@@ -23,7 +24,8 @@ reth-evm.workspace = true
 reth-revm.workspace = true
 reth-provider.workspace = true
 reth-chainspec.workspace = true
-reth-primitives.workspace = true
+reth-tasks.workspace = true
+reth-primitives-traits.workspace = true
 reth-rpc-convert.workspace = true
 reth-rpc-eth-api.workspace = true
 base-execution-evm.workspace = true
@@ -76,6 +78,7 @@ metrics = { workspace = true, optional = true }
 url.workspace = true
 rayon.workspace = true
 arc-swap.workspace = true
+imbl.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["from"] }

@@ -26,6 +26,11 @@ pub trait Executor {
     /// The error type for the Executor.
     type Error: Error;
 
+    /// Returns whether the provided error should trigger Holocene deposit-only recovery.
+    fn is_deposit_only_retryable(_error: &Self::Error) -> bool {
+        false
+    }
+
     /// Waits for the executor to be ready for block execution.
     async fn wait_until_ready(&mut self);
 

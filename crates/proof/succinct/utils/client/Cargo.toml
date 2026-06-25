@@ -19,6 +19,7 @@ alloy-sol-types.workspace = true
 # Execution
 alloy-evm.workspace = true
 base-common-evm.workspace = true
+base-common-precompiles.workspace = true
 revm.workspace = true
 revm-precompile.workspace = true
 
