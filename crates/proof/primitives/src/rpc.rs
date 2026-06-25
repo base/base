@@ -78,11 +78,13 @@ where
     rpc(client, namespace = "enclave")
 )]
 /// Exposed by the host-side prover server; the registrar calls these endpoints
-/// to obtain the signer public key and attestation for on-chain registration.
+/// to obtain the signer public key and attestation for onchain registration.
 pub trait EnclaveApi {
     /// Return the attestation platform kind exposed by this prover.
     #[method(name = "attestationKind")]
-    async fn attestation_kind(&self) -> RpcResult<String>;
+    async fn attestation_kind(&self) -> RpcResult<String> {
+        Ok("nitro".to_owned())
+    }
 
     /// Return the 65-byte uncompressed ECDSA public key for each enclave signer.
     #[method(name = "signerPublicKey")]
