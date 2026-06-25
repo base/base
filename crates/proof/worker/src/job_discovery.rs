@@ -1,6 +1,14 @@
 //! Job discovery loop for prover-service worker claims.
 
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{GetNextProofRequest, ProofJob, ProofType, TeeKind, ZkVm};
@@ -82,6 +90,16 @@ impl JobClaimFilter {
         worker_id: String,
         lock_duration_seconds: u32,
     ) -> impl Iterator<Item = GetNextProofRequest> {
+        self.get_next_proof_requests_starting_at(worker_id, lock_duration_seconds, 0)
+    }
+
+    /// Builds the worker claim requests for this filter with a proof-type rotation offset.
+    pub fn get_next_proof_requests_starting_at(
+        &self,
+        worker_id: String,
+        lock_duration_seconds: u32,
+        proof_type_offset: usize,
+    ) -> impl Iterator<Item = GetNextProofRequest> {
         let requests = match self {
             Self::Tee { tee_kinds } => [
                 Some(GetNextProofRequest {
@@ -95,19 +113,24 @@ impl JobClaimFilter {
             ],
             Self::Zk { zk_vms } => {
                 let zk_vms = zk_vms.clone();
-                let [compressed_proof_type, snark_proof_type] = ZK_PROOF_TYPES;
+                let proof_types = if proof_type_offset.is_multiple_of(ZK_PROOF_TYPES.len()) {
+                    ZK_PROOF_TYPES
+                } else {
+                    [ProofType::SnarkGroth16, ProofType::Compressed]
+                };
+                let [first_proof_type, second_proof_type] = proof_types;
 
                 [
                     Some(GetNextProofRequest {
                         worker_id: worker_id.clone(),
-                        proof_type: compressed_proof_type,
+                        proof_type: first_proof_type,
                         tee_kinds: Vec::new(),
                         zk_vms: zk_vms.clone(),
                         lock_duration_seconds,
                     }),
                     Some(GetNextProofRequest {
                         worker_id,
-                        proof_type: snark_proof_type,
+                        proof_type: second_proof_type,
                         tee_kinds: Vec::new(),
                         zk_vms,
                         lock_duration_seconds,
@@ -197,8 +220,19 @@ impl JobDiscoveryConfig {
 
     /// Builds the worker claim requests for this host.
     pub fn get_next_proof_requests(&self) -> impl Iterator<Item = GetNextProofRequest> {
-        self.claim_filter
-            .get_next_proof_requests(self.worker_id.clone(), self.lock_duration_seconds)
+        self.get_next_proof_requests_starting_at(0)
+    }
+
+    /// Builds the worker claim requests for this host with a proof-type rotation offset.
+    pub fn get_next_proof_requests_starting_at(
+        &self,
+        proof_type_offset: usize,
+    ) -> impl Iterator<Item = GetNextProofRequest> {
+        self.claim_filter.get_next_proof_requests_starting_at(
+            self.worker_id.clone(),
+            self.lock_duration_seconds,
+            proof_type_offset,
+        )
     }
 }
 
@@ -209,6 +243,7 @@ pub struct JobDiscovery<Client, Generator> {
     proof_generator: Arc<Generator>,
     config: JobDiscoveryConfig,
     generator_permits: Arc<Semaphore>,
+    claim_offset: AtomicUsize,
 }
 
 /// Outcome of one job discovery poll.
@@ -240,7 +275,13 @@ impl<Client, Generator> JobDiscovery<Client, Generator> {
     ) -> Self {
         let generator_permits = Arc::new(Semaphore::new(config.normalized_max_concurrent_jobs()));
 
-        Self { client, proof_generator, config, generator_permits }
+        Self {
+            client,
+            proof_generator,
+            config,
+            generator_permits,
+            claim_offset: AtomicUsize::new(0),
+        }
     }
 
     /// Returns the discovery config.
@@ -340,8 +381,8 @@ where
             return Ok(JobDiscoveryPollOutcome::Empty);
         }
 
-        let mut last_error = None;
-        for request in self.config.get_next_proof_requests() {
+        let proof_type_offset = self.claim_offset.fetch_add(1, Ordering::Relaxed);
+        for request in self.config.get_next_proof_requests_starting_at(proof_type_offset) {
             let proof_type = request.proof_type;
             let response = match self.client.get_next_proof(request).await {
                 Ok(response) => response,
@@ -354,8 +395,7 @@ where
                         error = %error,
                         "job discovery claim failed for proof type"
                     );
-                    last_error = Some(error);
-                    continue;
+                    return Err(error);
                 }
             };
 
@@ -366,10 +406,6 @@ where
         }
 
         drop(permit);
-        if let Some(error) = last_error {
-            return Err(error);
-        }
-
         debug!(
             worker_id = %self.config.worker_id,
             worker_kind = self.config.claim_filter.log_label(),
@@ -717,7 +753,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn claim_once_checks_snark_after_compressed_claim_error() {
+    async fn claim_once_rotates_zk_claim_order() {
+        let client = MockWorkerClient::new(Some(snark_job()));
+        let generator = Arc::new(MockGenerator { can_claim: true, ..Default::default() });
+        let generated = Arc::clone(&generator.generated);
+        let discovery = JobDiscovery::new(
+            client.clone(),
+            generator,
+            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1]),
+        );
+        discovery.claim_offset.store(1, Ordering::Relaxed);
+
+        let outcome = discovery.claim_once().await.expect("claim should succeed");
+
+        let JobDiscoveryPollOutcome::Claimed { task } = outcome else {
+            panic!("expected proof generator task to be returned");
+        };
+        timeout(Duration::from_secs(1), task).await.expect("proof generator task should finish");
+        let requests = client.get_next_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].proof_type, ProofType::SnarkGroth16);
+        assert_eq!(
+            *generated.lock().expect("generated jobs lock should not be poisoned"),
+            vec!["session-1".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn claim_once_returns_error_after_claim_failure_without_trying_next_type() {
         let client =
             MockWorkerClient::with_failed_claims(Some(snark_job()), vec![ProofType::Compressed]);
         let generator = Arc::new(MockGenerator { can_claim: true, ..Default::default() });
@@ -728,39 +791,16 @@ mod tests {
             JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1]),
         );
 
-        let outcome = discovery.claim_once().await.expect("claim should succeed");
+        let error =
+            discovery.claim_once().await.expect_err("claim should surface the ambiguous failure");
 
-        let JobDiscoveryPollOutcome::Claimed { task } = outcome else {
-            panic!("expected proof generator task to be returned");
-        };
-        timeout(Duration::from_secs(1), task).await.expect("proof generator task should finish");
+        assert!(error.to_string().contains("simulated Compressed claim failure"));
         let requests = client.get_next_requests();
-        assert_eq!(requests.len(), 2);
+        assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].proof_type, ProofType::Compressed);
-        assert_eq!(requests[1].proof_type, ProofType::SnarkGroth16);
         assert_eq!(
             *generated.lock().expect("generated jobs lock should not be poisoned"),
-            vec!["session-1".to_string()]
+            Vec::<String>::new()
         );
-    }
-
-    #[tokio::test]
-    async fn claim_once_returns_error_when_any_claim_fails_without_job() {
-        let client = MockWorkerClient::with_failed_claims(None, vec![ProofType::SnarkGroth16]);
-        let generator = Arc::new(MockGenerator { can_claim: true, ..Default::default() });
-        let discovery = JobDiscovery::new(
-            client.clone(),
-            generator,
-            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1]),
-        );
-
-        let error =
-            discovery.claim_once().await.expect_err("claim should surface the failed proof type");
-
-        assert!(error.to_string().contains("simulated SnarkGroth16 claim failure"));
-        let requests = client.get_next_requests();
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].proof_type, ProofType::Compressed);
-        assert_eq!(requests[1].proof_type, ProofType::SnarkGroth16);
     }
 }
