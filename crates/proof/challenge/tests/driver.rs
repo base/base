@@ -904,7 +904,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
     ]);
 
     let mut driver = test_driver_with_tee(
-        factory,
+        Arc::clone(&factory),
         Arc::clone(&verifier),
         l2,
         zk,
@@ -944,15 +944,12 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
         state.proof_status = ProofStatus::Succeeded;
     }
 
-    // Simulate the on-chain effect of a successful challenge: game is
-    // resolved. This prevents the scanner from re-discovering the game
-    // after the pending proof is submitted in step 2.
-    verifier.update_game(
-        addr(0),
-        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
-    );
+    // Keep the game in-progress so the pending fallback proof reaches
+    // submit_dispute(), but remove it from the scan batch so the same tick
+    // cannot re-discover it after the successful fallback submission.
+    factory.games.lock().unwrap().clear();
 
-    // Step 3: ZK proof polled → Succeeded → entry cleaned up.
+    // Step 3: ZK proof polled → Succeeded → challenge tx submitted → entry cleaned up.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
