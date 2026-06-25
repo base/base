@@ -267,7 +267,7 @@ mod tests {
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::<RejectingProofRequester>::clone(&requester);
         let l1 = Arc::new(MockL1::new(1000));
-        let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
+        let l2 = Arc::new(MockL2);
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
             output_roots: HashMap::new(),
@@ -279,7 +279,7 @@ mod tests {
                 anchor_game: Address::ZERO,
             });
         let factory: Arc<dyn DisputeGameFactoryClient> =
-            Arc::new(MockDisputeGameFactory::with_games(vec![]));
+            Arc::new(MockDisputeGameFactory::default());
         let verifier = Arc::new(MockAggregateVerifier::default());
         let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer::default());
         let config = DriverConfig {
@@ -311,7 +311,7 @@ mod tests {
         let proof_submitter = ProofSubmitter::new(
             output_proposer,
             Arc::<MockRollupClient>::clone(&rollup),
-            Arc::new(MockDisputeGameFactory::with_games(vec![])),
+            Arc::new(MockDisputeGameFactory::default()),
             verifier,
             &config,
         );

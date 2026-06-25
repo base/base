@@ -603,7 +603,7 @@ mod tests {
         )));
         let submitter = submitter(
             Arc::clone(&output),
-            MockDisputeGameFactory::with_games(vec![]),
+            MockDisputeGameFactory::default(),
             MockAggregateVerifier::default(),
         );
 
@@ -624,8 +624,7 @@ mod tests {
     #[tokio::test]
     async fn submit_recovers_when_existing_game_l1_head_mismatches() {
         let game_address = Address::repeat_byte(0xAA);
-        let mut verifier = MockAggregateVerifier::default();
-        verifier.l1_head_map.insert(game_address, B256::repeat_byte(0xCC));
+        let verifier = MockAggregateVerifier { l1_head: B256::repeat_byte(0xCC) };
         let output = Arc::new(MockOutputProposer::default());
         let submitter = submitter(
             Arc::clone(&output),
@@ -690,7 +689,7 @@ mod tests {
         let output = Arc::new(MockOutputProposer::default());
         let submitter = submitter(
             Arc::clone(&output),
-            MockDisputeGameFactory::with_games(vec![]),
+            MockDisputeGameFactory::default(),
             MockAggregateVerifier::default(),
         );
 

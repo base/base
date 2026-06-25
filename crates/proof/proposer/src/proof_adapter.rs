@@ -76,14 +76,13 @@ impl ProposerProofAdapter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes};
-    use base_proof_primitives::Proposal;
     use base_prover_service_protocol::{
         ProofRequestKind, ProofResult, SnarkGroth16ProofResult, TeeKind, TeeProofResult,
         ZkProofResult, ZkVm,
     };
 
     use super::ProposerProofAdapter;
-    use crate::ProposerError;
+    use crate::{ProposerError, test_utils::test_proposal};
 
     fn test_request(root: B256) -> base_proof_primitives::ProofRequest {
         base_proof_primitives::ProofRequest {
@@ -96,18 +95,6 @@ mod tests {
             intermediate_block_interval: 300,
             l1_head_number: 1200,
             image_hash: B256::repeat_byte(0x05),
-        }
-    }
-
-    fn test_proposal(block_number: u64) -> Proposal {
-        Proposal {
-            output_root: B256::repeat_byte(block_number as u8),
-            signature: Bytes::from(vec![0xab; 65]),
-            l1_origin_hash: B256::repeat_byte(0x06),
-            l1_origin_number: 100 + block_number,
-            l2_block_number: block_number,
-            prev_output_root: B256::repeat_byte(0x07),
-            config_hash: B256::repeat_byte(0x08),
         }
     }
 

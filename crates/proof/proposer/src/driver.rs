@@ -240,7 +240,7 @@ mod tests {
 
     fn test_pipeline_handle(global_cancel: CancellationToken) -> PipelineHandle<MockRollupClient> {
         let l1 = Arc::new(MockL1::new(1000));
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let l2 = Arc::new(MockL2);
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
             output_roots: HashMap::new(),
@@ -252,7 +252,7 @@ mod tests {
                 anchor_game: Address::ZERO,
             });
         let factory: Arc<dyn base_proof_contracts::DisputeGameFactoryClient> =
-            Arc::new(MockDisputeGameFactory::with_games(vec![]));
+            Arc::new(MockDisputeGameFactory::default());
         let proof_requester: Arc<dyn base_prover_service_client::ProofRequesterProvider> =
             Arc::new(MockProofRequester::default());
         let verifier: Arc<dyn base_proof_contracts::AggregateVerifierClient> =
