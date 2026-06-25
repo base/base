@@ -1,9 +1,7 @@
 //! Adapters between proposer proof types and the shared prover-service protocol.
 
 use alloy_primitives::B256;
-use base_proof_primitives::{
-    ProofRequest as PrimitiveProofRequest, ProofResult as PrimitiveProofResult,
-};
+use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest, TeeKind,
     TeeProofRequest,
@@ -47,8 +45,10 @@ impl ProposerProofAdapter {
         }
     }
 
-    /// Converts a prover-service TEE proof result into the proposer proof result type.
-    pub fn tee_proof_result(result: ProofResult) -> Result<PrimitiveProofResult, ProposerError> {
+    /// Converts a prover-service TEE proof result into proposal parts.
+    pub fn tee_proof_result(
+        result: ProofResult,
+    ) -> Result<(Proposal, Vec<Proposal>), ProposerError> {
         let result = match result {
             ProofResult::Tee(result) => result,
             ProofResult::Compressed(_) => {
@@ -69,10 +69,7 @@ impl ProposerProofAdapter {
             )));
         }
 
-        Ok(PrimitiveProofResult::Tee {
-            aggregate_proposal: result.aggregate_proposal,
-            proposals: result.proposals,
-        })
+        Ok((result.aggregate_proposal, result.proposals))
     }
 }
 
@@ -133,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn tee_proof_result_converts_to_primitive_result() {
+    fn tee_proof_result_converts_to_proposal_parts() {
         let aggregate = test_proposal(600);
         let proposal = test_proposal(300);
         let result = ProofResult::Tee(TeeProofResult {
@@ -144,13 +141,7 @@ mod tests {
 
         let converted = ProposerProofAdapter::tee_proof_result(result).unwrap();
 
-        assert_eq!(
-            converted,
-            base_proof_primitives::ProofResult::Tee {
-                aggregate_proposal: aggregate,
-                proposals: vec![proposal]
-            }
-        );
+        assert_eq!(converted, (aggregate, vec![proposal]));
     }
 
     #[test]
