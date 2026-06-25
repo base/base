@@ -2254,7 +2254,11 @@ mod tests {
             vec![InitialActor { actor_id, authenticator: Eip8130Constants::K1_AUTHENTICATOR }];
         let create = CreateEntry {
             user_salt: B256::ZERO,
-            code: Bytes::new(),
+            // Non-empty code: the structural gate rejects create.code.is_empty(),
+            // so empty code would never reach validate_eip8130_full in production.
+            // Using minimal valid bytecode (PUSH1 0x00) also affects the CREATE2
+            // address derivation, exercising a more realistic admitted scenario.
+            code: Bytes::from_static(&[0x60, 0x00]),
             initial_actors: initial_actors.clone(),
         };
         let derived = AccountChangeApplier::compute_address(
